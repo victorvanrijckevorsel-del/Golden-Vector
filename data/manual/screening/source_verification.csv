@@ -1,1 +1,45 @@
 ticker,field_name,verification_status,source_date,source_url,notes
+NEM,production_oz,VERIFIED,2026-02-18,https://www.newmont.com/investors/news-release/news-details/2026/Newmont-Reports-Fourth-Quarter-and-Full-Year-2025-Results/,Imported from Production verification sheet: VERIFIED / corrected to 5.6-6.2M oz midpoint 5.9M.
+NEM,aisc_usd_per_oz,VERIFIED,2026-02-18,https://www.newmont.com/investors/news-release/default.aspx?NewsId=137493,Imported from AISC Verification sheet: VERIFIED Q3 2025 AISC 1566.
+NEM,cash_cost_usd_per_oz,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+NEM,royalty_rate,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+NEM,sustaining_capex_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+NEM,da_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+NEM,interest_expense_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+NEM,tax_rate,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+NEM,reserve_life_years,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+NEM,net_debt_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+NEM,ebitda_ltm_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+GOLD,production_oz,VERIFIED,2026-02-18,https://www.barrick.com/English/news/news-details/2026/Barrick-Reports-Q4-and-Full-Year-2025-Results/,Imported from Production verification sheet. Workbook ticker B mapped to GOLD.
+GOLD,aisc_usd_per_oz,VERIFIED,2026-02-18,https://www.barrick.com/English/news/news-details/2025/q3-2025-results/default.aspx,Imported from AISC Verification sheet. Workbook ticker B mapped to GOLD.
+GOLD,cash_cost_usd_per_oz,ESTIMATED,2026-02-18,,Imported from Screening Data sheet. Workbook ticker B mapped to GOLD.
+GOLD,royalty_rate,ESTIMATED,2026-02-18,,Imported from Screening Data sheet. Workbook ticker B mapped to GOLD.
+GOLD,sustaining_capex_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet. Workbook ticker B mapped to GOLD.
+GOLD,da_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet. Workbook ticker B mapped to GOLD.
+GOLD,interest_expense_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet. Workbook ticker B mapped to GOLD.
+GOLD,tax_rate,ESTIMATED,2026-02-18,,Imported from Screening Data sheet. Workbook ticker B mapped to GOLD.
+GOLD,reserve_life_years,ESTIMATED,2026-02-18,,Imported from Screening Data sheet. Workbook ticker B mapped to GOLD.
+GOLD,net_debt_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet. Workbook ticker B mapped to GOLD.
+GOLD,ebitda_ltm_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet. Workbook ticker B mapped to GOLD.
+AEM,production_oz,VERIFIED,2026-02-18,https://www.agnicoeagle.com/English/investor-relations/,Imported from Production verification sheet: VERIFIED 3.3-3.5M oz midpoint 3.4M.
+AEM,aisc_usd_per_oz,VERIFIED,2026-02-18,https://agnicoeagle.com/English/news-and-media/news-releases/news-details/2025/AGNICO-EAGLE-REPORTS-THIRD-QUARTER-2025-RESULTS---RECORD-ADJUSTED-NET-INCOME-WITH-ANOTHER-QUARTER-OF-STRONG-PRODUCTION-FINANCIAL-POSITION-FURTHER-STRENGTHENED-BY-REPAYMENT-OF-LONG-TERM-DEBT-AND-CASH-ACCUMULATION/default.aspx,Imported from AISC Verification sheet: updated 18-Feb-2026 to 1475.
+AEM,cash_cost_usd_per_oz,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+AEM,royalty_rate,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+AEM,sustaining_capex_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+AEM,da_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+AEM,interest_expense_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+AEM,tax_rate,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+AEM,reserve_life_years,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+AEM,net_debt_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+AEM,ebitda_ltm_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+KGC,production_oz,VERIFIED,2026-02-18,https://www.kinross.com/news-and-investors/,Imported from Production verification sheet: VERIFIED 2.0M oz +/-5% mapped to 2.05M.
+KGC,aisc_usd_per_oz,VERIFIED,2026-02-18,https://markets.businessinsider.com/news/stocks/kinross-reports-strong-2025-third-quarter-results-1035488890,Imported from AISC Verification sheet: VERIFIED 1622.
+KGC,cash_cost_usd_per_oz,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+KGC,royalty_rate,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+KGC,sustaining_capex_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+KGC,da_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+KGC,interest_expense_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+KGC,tax_rate,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+KGC,reserve_life_years,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+KGC,net_debt_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.
+KGC,ebitda_ltm_musd,ESTIMATED,2026-02-18,,Imported from Screening Data sheet in Gold_Mining_Screening_Updated_18Feb2026 (1).xlsx.

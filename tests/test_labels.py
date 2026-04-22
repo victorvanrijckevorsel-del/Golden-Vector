@@ -28,6 +28,12 @@ def test_determine_coverage_summary_distinguishes_fail_warn_and_pass():
     ) == "WARN"
     assert determine_coverage_summary(
         total_core_count=5,
+        eligible_core_count=4,
+        fail_core_count=0,
+        minimum_core_horizons_for_scoring=4,
+    ) == "PASS"
+    assert determine_coverage_summary(
+        total_core_count=5,
         eligible_core_count=5,
         fail_core_count=0,
         minimum_core_horizons_for_scoring=5,

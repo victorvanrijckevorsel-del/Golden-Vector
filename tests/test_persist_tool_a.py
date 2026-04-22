@@ -30,12 +30,14 @@ def test_persist_tool_a_outputs_writes_full_and_latest_exports(tmp_path):
         tool_a_outputs=tool_a_outputs,
     )
 
-    assert len(written_paths) == 5
+    assert len(written_paths) == 7
     latest_csv_path = next(path for path in written_paths if path.name.endswith("latest_" + run_context.run_id + ".csv"))
     latest_parquet_path = next(path for path in written_paths if path.name.endswith("latest_" + run_context.run_id + ".parquet"))
     latest_csv = pd.read_csv(latest_csv_path)
     latest_parquet = pd.read_parquet(latest_parquet_path)
+    stable_latest = pd.read_parquet(paths.latest_tool_a_snapshot_parquet_path)
 
     assert list(latest_csv["ticker"]) == ["GOLD", "NEM"]
     assert len(latest_csv.index) == 2
     assert len(latest_parquet.index) == 2
+    assert list(stable_latest["ticker"]) == ["GOLD", "NEM"]

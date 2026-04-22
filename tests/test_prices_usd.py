@@ -94,6 +94,21 @@ def test_normalize_equity_history_forward_fills_fx_only():
     assert normalized.loc[0, "fx_rate_to_usd"] == 0.75
     assert normalized.loc[0, "fx_source_date"].isoformat() == "2026-01-02"
     assert normalized.loc[0, "normalization_status"] == "OK"
+    assert int(normalized.loc[0, "fx_staleness_days"]) == 1
+
+
+def test_normalize_equity_history_flags_stale_fx_when_threshold_is_exceeded():
+    frame = _equity_frame(ticker="DPM.TO", currency="CAD", date="2026-01-10")
+    fx_history = _fx_frame(currency="CAD", date="2026-01-03", rate=0.75)
+
+    normalized = normalize_equity_history_to_usd(
+        frame=frame,
+        fx_history=fx_history,
+        max_fx_staleness_days=5,
+    )
+
+    assert int(normalized.loc[0, "fx_staleness_days"]) == 7
+    assert normalized.loc[0, "normalization_status"] == "STALE_FX"
 
 
 def test_normalize_equity_history_flags_missing_fx():

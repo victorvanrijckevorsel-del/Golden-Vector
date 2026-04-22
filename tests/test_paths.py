@@ -17,6 +17,7 @@ def test_runtime_directories_are_created(tmp_path):
     assert paths.raw_dir.exists()
     assert paths.raw_equities_dir.exists()
     assert paths.manual_screening_dir.exists()
+    assert paths.manual_screening_store_path.parent == paths.manual_screening_dir
     assert paths.output_dir.exists()
     assert paths.intermediate_usd_equities_dir.exists()
     assert paths.intermediate_market_snapshots_dir.exists()
@@ -28,6 +29,9 @@ def test_runtime_directories_are_created(tmp_path):
     assert paths.output_tool_b_dir.exists()
     assert paths.output_combined_dir.exists()
     assert paths.runs_dir.exists()
+    assert paths.latest_foundation_manifest_path.parent == paths.intermediate_status_dir
+    assert paths.latest_normalized_market_snapshots_path.parent == paths.intermediate_market_snapshots_dir
+    assert paths.latest_raw_market_snapshots_path.parent == paths.raw_market_snapshots_dir
 
     run_dir = paths.ensure_run_dir("sample-run")
     assert run_dir.exists()

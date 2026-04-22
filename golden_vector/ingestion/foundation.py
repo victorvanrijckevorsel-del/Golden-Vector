@@ -96,10 +96,12 @@ def execute_foundation_pipeline(
         normalized_equity_histories = normalize_equity_histories_to_usd(
             equity_histories=equity_histories,
             fx_histories=fx_histories,
+            max_fx_staleness_days=app_config.qa.max_fx_staleness_days,
         )
         normalized_market_snapshots = normalize_market_snapshots_to_usd(
             market_snapshots=market_snapshots,
             fx_histories=fx_histories,
+            max_fx_staleness_days=app_config.qa.max_fx_staleness_days,
         )
         normalization_qa_report = evaluate_normalization_quality(
             app_config=app_config,

@@ -1,5 +1,10 @@
 # Golden Vector Master Plan
 
+> Note: the runtime model and Combined product direction in this document are partially superseded by [product_runtime_redesign_plan.md](C:/Users/Emanuel/code/Golden-Vector/reviews/codex/product_runtime_redesign_plan.md). Use that redesign plan as the current source of truth for:
+> - explicit `update-data` refresh behavior
+> - local-first Tool A / Tool B usage
+> - de-scoping the old Combined backend in favor of a later side-by-side compare view
+
 ## 1. Title and Intent
 
 This is the north-star implementation plan for Golden Vector. The product goal is simple: identify gold stocks that both move with gold and look fundamentally attractive, using a Python engine that is auditable, deterministic, and safe against mixed-currency mistakes.

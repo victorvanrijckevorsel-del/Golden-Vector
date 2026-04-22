@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from datetime import date
 
+import numpy as np
 import pandas as pd
 
-from golden_vector.features.horizons import ParsedHorizon, resolve_horizon_start_date
+from golden_vector.features.horizons import ParsedHorizon
 
 
 RETURN_COLUMNS = [
@@ -42,21 +43,30 @@ def compute_horizon_returns_for_ticker(
         return pd.DataFrame(columns=RETURN_COLUMNS)
 
     ticker = str(overlap["ticker"].iloc[0])
-    rows: list[dict[str, object]] = []
-
-    for as_of_date in overlap["date"].tolist():
-        for horizon in horizons:
-            rows.append(
-                _compute_row(
-                    overlap=overlap,
-                    ticker=ticker,
-                    as_of_date=as_of_date,
-                    horizon=horizon,
-                    near_zero_gold_return_threshold=near_zero_gold_return_threshold,
-                )
+    date_index = pd.DatetimeIndex(overlap["date"])
+    horizon_frames: list[pd.DataFrame] = []
+    for horizon_order, horizon in enumerate(horizons):
+        horizon_frames.append(
+            _compute_horizon_frame(
+                overlap=overlap,
+                ticker=ticker,
+                date_index=date_index,
+                horizon=horizon,
+                near_zero_gold_return_threshold=near_zero_gold_return_threshold,
+                horizon_order=horizon_order,
             )
+        )
 
-    return pd.DataFrame(rows, columns=RETURN_COLUMNS)
+    materialized = [frame for frame in horizon_frames if not frame.empty]
+    if not materialized:
+        return pd.DataFrame(columns=RETURN_COLUMNS)
+
+    result = pd.concat(materialized, ignore_index=True)
+    result = result.sort_values(
+        ["as_of_date", "_horizon_order"],
+        kind="stable",
+    ).drop(columns=["_horizon_order"])
+    return result[RETURN_COLUMNS].reset_index(drop=True)
 
 
 def _build_overlap_frame(
@@ -83,88 +93,121 @@ def _build_overlap_frame(
     return overlap
 
 
-def _compute_row(
+def _compute_horizon_frame(
     *,
     overlap: pd.DataFrame,
     ticker: str,
-    as_of_date: pd.Timestamp,
+    date_index: pd.DatetimeIndex,
     horizon: ParsedHorizon,
     near_zero_gold_return_threshold: float,
-) -> dict[str, object]:
-    start_date = resolve_horizon_start_date(
-        overlap["date"],
-        as_of_date=as_of_date.date(),
-        horizon=horizon,
-    )
-    if start_date is None:
-        return _coverage_row(
-            ticker=ticker,
-            as_of_date=as_of_date.date(),
-            horizon=horizon,
-            coverage_reason="INSUFFICIENT_HISTORY",
-        )
+    horizon_order: int,
+) -> pd.DataFrame:
+    row_count = len(date_index)
+    if row_count == 0:
+        return pd.DataFrame(columns=RETURN_COLUMNS + ["_horizon_order"])
 
-    start_row = overlap.loc[overlap["date"] == pd.Timestamp(start_date)]
-    end_row = overlap.loc[overlap["date"] == as_of_date]
-    if start_row.empty or end_row.empty:
-        return _coverage_row(
-            ticker=ticker,
-            as_of_date=as_of_date.date(),
-            horizon=horizon,
-            coverage_reason="MISSING_OVERLAP",
-        )
+    start_positions = _resolve_start_positions(date_index, horizon)
+    end_positions = np.arange(row_count, dtype=np.int64)
 
-    equity_start = _as_positive_float(start_row["equity_basis_usd"].iloc[0])
-    equity_end = _as_positive_float(end_row["equity_basis_usd"].iloc[0])
-    gold_start = _as_positive_float(start_row["gold_basis_usd"].iloc[0])
-    gold_end = _as_positive_float(end_row["gold_basis_usd"].iloc[0])
+    equity_basis = pd.to_numeric(overlap["equity_basis_usd"], errors="coerce").to_numpy(dtype=float)
+    gold_basis = pd.to_numeric(overlap["gold_basis_usd"], errors="coerce").to_numpy(dtype=float)
 
-    if None in (equity_start, equity_end, gold_start, gold_end):
-        return _coverage_row(
-            ticker=ticker,
-            as_of_date=as_of_date.date(),
-            horizon=horizon,
-            coverage_reason="MISSING_RETURN_BASIS",
-            start_date=start_date,
-        )
+    equity_return = np.full(row_count, np.nan, dtype=float)
+    gold_return = np.full(row_count, np.nan, dtype=float)
+    gold_delta = np.full(row_count, np.nan, dtype=float)
+    coverage_flag = np.full(row_count, "FAIL", dtype=object)
+    coverage_reason = np.full(row_count, "INSUFFICIENT_HISTORY", dtype=object)
+    official_scoring_eligible = np.zeros(row_count, dtype=bool)
 
-    equity_return = (equity_end / equity_start) - 1.0
-    gold_return = (gold_end / gold_start) - 1.0
+    valid_history_mask = start_positions >= 0
+    if valid_history_mask.any():
+        valid_indices = end_positions[valid_history_mask]
+        start_indices = start_positions[valid_history_mask]
 
-    if abs(gold_return) < near_zero_gold_return_threshold:
-        return {
+        equity_start = equity_basis[start_indices]
+        equity_end = equity_basis[valid_indices]
+        gold_start = gold_basis[start_indices]
+        gold_end = gold_basis[valid_indices]
+
+        basis_available_mask = _positive_numeric_mask(equity_start)
+        basis_available_mask &= _positive_numeric_mask(equity_end)
+        basis_available_mask &= _positive_numeric_mask(gold_start)
+        basis_available_mask &= _positive_numeric_mask(gold_end)
+
+        missing_basis_indices = valid_indices[~basis_available_mask]
+        coverage_reason[missing_basis_indices] = "MISSING_RETURN_BASIS"
+
+        ready_indices = valid_indices[basis_available_mask]
+        ready_start_indices = start_indices[basis_available_mask]
+        if len(ready_indices) > 0:
+            ready_equity_return = (equity_basis[ready_indices] / equity_basis[ready_start_indices]) - 1.0
+            ready_gold_return = (gold_basis[ready_indices] / gold_basis[ready_start_indices]) - 1.0
+
+            equity_return[ready_indices] = ready_equity_return
+            gold_return[ready_indices] = ready_gold_return
+            coverage_flag[ready_indices] = "PASS"
+            coverage_reason[ready_indices] = "OK"
+            if horizon.mode == "core":
+                official_scoring_eligible[ready_indices] = True
+
+            near_zero_mask = np.abs(ready_gold_return) < near_zero_gold_return_threshold
+            near_zero_indices = ready_indices[near_zero_mask]
+            if len(near_zero_indices) > 0:
+                coverage_reason[near_zero_indices] = "NEAR_ZERO_GOLD_RETURN"
+                official_scoring_eligible[near_zero_indices] = False
+
+            delta_indices = ready_indices[~near_zero_mask]
+            if len(delta_indices) > 0:
+                gold_delta[delta_indices] = (
+                    equity_return[delta_indices] / gold_return[delta_indices]
+                )
+
+    start_dates = np.empty(row_count, dtype=object)
+    start_dates[:] = None
+    valid_start_indices = np.where(start_positions >= 0)[0]
+    for index in valid_start_indices.tolist():
+        start_dates[index] = date_index[start_positions[index]].date()
+
+    return pd.DataFrame(
+        {
             "ticker": ticker,
-            "as_of_date": as_of_date.date(),
+            "as_of_date": date_index.date,
             "horizon_id": horizon.horizon_id,
             "horizon_mode": horizon.mode,
             "horizon_unit": horizon.unit,
             "horizon_value": horizon.value,
-            "start_date": start_date,
-            "end_date": as_of_date.date(),
+            "start_date": start_dates,
+            "end_date": date_index.date,
             "equity_return": equity_return,
             "gold_return": gold_return,
-            "gold_delta": None,
-            "coverage_flag": "PASS",
-            "coverage_reason": "NEAR_ZERO_GOLD_RETURN",
-            "official_scoring_eligible": False,
+            "gold_delta": gold_delta,
+            "coverage_flag": coverage_flag,
+            "coverage_reason": coverage_reason,
+            "official_scoring_eligible": official_scoring_eligible,
+            "_horizon_order": horizon_order,
         }
+    )
 
-    return {
-        "ticker": ticker,
-        "as_of_date": as_of_date.date(),
-        "horizon_id": horizon.horizon_id,
-        "horizon_mode": horizon.mode,
-        "horizon_unit": horizon.unit,
-        "horizon_value": horizon.value,
-        "start_date": start_date,
-        "end_date": as_of_date.date(),
-        "equity_return": equity_return,
-        "gold_return": gold_return,
-        "gold_delta": equity_return / gold_return,
-        "coverage_flag": "PASS",
-        "coverage_reason": "OK",
-        "official_scoring_eligible": horizon.mode == "core",
-    }
+
+def _resolve_start_positions(
+    date_index: pd.DatetimeIndex,
+    horizon: ParsedHorizon,
+) -> np.ndarray:
+    if horizon.unit == "D":
+        positions = np.arange(len(date_index), dtype=np.int64) - horizon.value
+        positions[positions < 0] = -1
+        return positions
+
+    offset = (
+        pd.DateOffset(months=horizon.value)
+        if horizon.unit == "M"
+        else pd.DateOffset(years=horizon.value)
+    )
+    target_dates = pd.DatetimeIndex(date_index - offset)
+    positions = date_index.searchsorted(target_dates, side="right") - 1
+    positions = positions.astype(np.int64, copy=False)
+    positions[positions < 0] = -1
+    return positions
 
 
 def _coverage_row(
@@ -193,13 +236,5 @@ def _coverage_row(
     }
 
 
-def _as_positive_float(value: object) -> float | None:
-    if value is None or pd.isna(value):
-        return None
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return None
-    if numeric <= 0:
-        return None
-    return numeric
+def _positive_numeric_mask(values: np.ndarray) -> np.ndarray:
+    return np.isfinite(values) & (values > 0)

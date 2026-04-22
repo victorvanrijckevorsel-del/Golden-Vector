@@ -33,22 +33,18 @@ def rank_tool_a_outputs(tool_a_outputs: pd.DataFrame) -> pd.DataFrame:
 
     ranked = tool_a_outputs.copy()
     ranked["tool_a_rank"] = pd.Series([pd.NA] * len(ranked.index), dtype="Int64")
-
-    for as_of_date, group in ranked.groupby("as_of_date"):
-        eligible_mask = (
-            (ranked["as_of_date"] == as_of_date)
-            & ranked["score_eligible"].fillna(False).astype(bool)
-            & ranked["tool_a_score"].notna()
+    eligible_mask = (
+        ranked["score_eligible"].fillna(False).astype(bool)
+        & ranked["tool_a_score"].notna()
+    )
+    if eligible_mask.any():
+        eligible_rows = ranked.loc[eligible_mask].copy()
+        eligible_rows["tool_a_rank"] = (
+            pd.to_numeric(eligible_rows["tool_a_score"], errors="coerce")
+            .groupby(eligible_rows["as_of_date"])
+            .rank(method="dense", ascending=False)
+            .astype("Int64")
         )
-        eligible_scores = pd.to_numeric(
-            ranked.loc[eligible_mask, "tool_a_score"],
-            errors="coerce",
-        )
-        if eligible_scores.empty:
-            continue
-
-        ranked.loc[eligible_mask, "tool_a_rank"] = (
-            eligible_scores.rank(method="dense", ascending=False).astype("Int64")
-        )
+        ranked.loc[eligible_mask, "tool_a_rank"] = eligible_rows["tool_a_rank"].to_numpy()
 
     return ranked

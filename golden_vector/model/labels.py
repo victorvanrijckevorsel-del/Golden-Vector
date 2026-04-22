@@ -14,7 +14,7 @@ def determine_coverage_summary(
 ) -> str:
     if total_core_count == 0 or eligible_core_count < minimum_core_horizons_for_scoring:
         return "FAIL"
-    if fail_core_count > 0 or eligible_core_count < total_core_count:
+    if fail_core_count > 0:
         return "WARN"
     return "PASS"
 

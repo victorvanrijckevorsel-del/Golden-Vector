@@ -5,6 +5,7 @@ from golden_vector.contracts.config_models import (
     CombinedVerdictThresholds,
     GammaThresholds,
     HorizonsConfig,
+    QaConfig,
     ScoreWeights,
     ScreeningParamsConfig,
     StabilityThresholds,
@@ -308,3 +309,8 @@ def test_combined_verdict_thresholds_must_be_ordered():
                 "dual_pass_min_tool_a_score": 60.0,
             }
         )
+
+
+def test_qa_config_rejects_negative_fx_staleness_threshold():
+    with pytest.raises(ValidationError):
+        QaConfig.model_validate({"max_fx_staleness_days": -1})

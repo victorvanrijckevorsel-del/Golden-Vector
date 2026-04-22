@@ -75,6 +75,7 @@ class UsdEquityDaily(StrictDataModel):
     fx_rate_to_usd: float | None = None
     fx_source_date: date | None = None
     fx_source_symbol: str | None = None
+    fx_staleness_days: int | None = None
     open_usd: float | None = None
     high_usd: float | None = None
     low_usd: float | None = None
@@ -96,6 +97,7 @@ class NormalizedMarketSnapshot(StrictDataModel):
     fx_rate_to_usd: float | None = None
     fx_source_date: date | None = None
     fx_source_symbol: str | None = None
+    fx_staleness_days: int | None = None
     share_price_usd: float | None = None
     market_cap_usd: float | None = None
     shares_outstanding: float | None = None

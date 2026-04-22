@@ -3,12 +3,10 @@ from dataclasses import dataclass
 import pandas as pd
 
 from golden_vector.app.config import load_app_config
+from golden_vector.app.latest_data import LatestFoundationSnapshot
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.cli import _combine_statuses, run_tool_a
-from golden_vector.ingestion.foundation import FoundationExecutionResult
 from golden_vector.qa.horizon_quality import HorizonQaReport
-from golden_vector.qa.normalization_quality import NormalizationQaReport
-from golden_vector.qa.raw_quality import RawQaReport
 from tests.helpers import build_test_paths
 
 
@@ -18,25 +16,14 @@ class _LoadedConfigStub:
     combined_hash: str
 
 
-def _foundation_result(*, raw_status: str, normalization_status: str | None) -> FoundationExecutionResult:
-    normalization_report = (
-        None
-        if normalization_status is None
-        else NormalizationQaReport(
-            overall_status=normalization_status,
-            results=[],
-        )
-    )
-
-    class _RegistryStub:
-        def summary(self) -> dict[str, object]:
-            return {"equity_target_count": 1}
-
-    return FoundationExecutionResult(
-        registry=_RegistryStub(),
-        raw_qa_report=RawQaReport(overall_status=raw_status, results=[]),
-        normalization_qa_report=normalization_report,
-        overall_status=raw_status if normalization_status is None else normalization_status,
+def _latest_foundation_snapshot(*, raw_status: str = "PASS", normalization_status: str = "PASS") -> LatestFoundationSnapshot:
+    return LatestFoundationSnapshot(
+        refresh_run_id="refresh-run",
+        snapshot_as_of_date="2026-01-01",
+        foundation_status=normalization_status,
+        raw_qa_summary={"overall_status": raw_status},
+        normalization_qa_summary={"overall_status": normalization_status},
+        summary={"foundation_marker": True},
         gold_history=pd.DataFrame([{"date": "2026-01-01", "close_usd": 1.0, "adj_close_usd": 1.0}]),
         normalized_equity_histories={
             "NEM": pd.DataFrame(
@@ -44,11 +31,11 @@ def _foundation_result(*, raw_status: str, normalization_status: str | None) -> 
             )
         },
         normalized_market_snapshots=pd.DataFrame(),
-        summary={"foundation_marker": True},
+        manifest_path=ProjectPaths.discover().repo_root / "data" / "intermediate" / "status" / "latest_foundation_manifest.json",
     )
 
 
-def test_run_tool_a_stops_before_phase3_when_raw_qa_fails(tmp_path, monkeypatch):
+def test_run_tool_a_uses_local_snapshot_and_stops_before_phase3_when_it_is_missing(tmp_path, monkeypatch):
     paths = build_test_paths(tmp_path)
     real_loaded = load_app_config(ProjectPaths.discover()).app
 
@@ -57,15 +44,15 @@ def test_run_tool_a_stops_before_phase3_when_raw_qa_fails(tmp_path, monkeypatch)
         lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
     )
     monkeypatch.setattr(
-        "golden_vector.cli.execute_foundation_pipeline",
-        lambda **_: _foundation_result(raw_status="FAIL", normalization_status=None),
+        "golden_vector.cli.load_latest_foundation_snapshot",
+        lambda **_: (_ for _ in ()).throw(FileNotFoundError("missing local snapshot")),
     )
 
     called = {"horizon": False}
 
     def _unexpected_horizon(**kwargs):
         called["horizon"] = True
-        raise AssertionError("Horizon pipeline should not run when raw QA fails.")
+        raise AssertionError("Horizon pipeline should not run when local snapshot loading fails.")
 
     monkeypatch.setattr("golden_vector.cli.execute_horizon_pipeline", _unexpected_horizon)
 
@@ -75,7 +62,7 @@ def test_run_tool_a_stops_before_phase3_when_raw_qa_fails(tmp_path, monkeypatch)
     assert called["horizon"] is False
 
 
-def test_run_tool_a_stops_before_phase3_when_normalization_qa_fails(tmp_path, monkeypatch):
+def test_run_tool_a_uses_latest_local_snapshot_for_phase3(tmp_path, monkeypatch):
     paths = build_test_paths(tmp_path)
     real_loaded = load_app_config(ProjectPaths.discover()).app
 
@@ -84,14 +71,15 @@ def test_run_tool_a_stops_before_phase3_when_normalization_qa_fails(tmp_path, mo
         lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
     )
     monkeypatch.setattr(
-        "golden_vector.cli.execute_foundation_pipeline",
-        lambda **_: _foundation_result(raw_status="PASS", normalization_status="FAIL"),
+        "golden_vector.cli.load_latest_foundation_snapshot",
+        lambda **_: _latest_foundation_snapshot(),
     )
 
     called = {"horizon": False}
 
     def _horizon_result(**kwargs):
         called["horizon"] = True
+        assert kwargs["gold_history"].equals(_latest_foundation_snapshot().gold_history)
         return type(
             "HorizonResultStub",
             (),
@@ -115,11 +103,23 @@ def test_run_tool_a_stops_before_phase3_when_normalization_qa_fails(tmp_path, mo
         )()
 
     monkeypatch.setattr("golden_vector.cli.execute_horizon_pipeline", _horizon_result)
+    monkeypatch.setattr(
+        "golden_vector.cli.execute_tool_a_profile_pipeline",
+        lambda **_: type(
+            "ToolAResultStub",
+            (),
+            {
+                "tool_a_outputs": pd.DataFrame([{"ticker": "NEM", "as_of_date": "2026-01-01"}]),
+                "overall_status": "PASS",
+                "summary": {"tool_a_output_row_count": 1},
+            },
+        )(),
+    )
 
     exit_code = run_tool_a(paths)
 
-    assert exit_code == 1
-    assert called["horizon"] is False
+    assert exit_code == 0
+    assert called["horizon"] is True
 
 
 def test_run_tool_a_stops_before_scoring_when_horizon_qa_fails(tmp_path, monkeypatch):
@@ -131,8 +131,8 @@ def test_run_tool_a_stops_before_scoring_when_horizon_qa_fails(tmp_path, monkeyp
         lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
     )
     monkeypatch.setattr(
-        "golden_vector.cli.execute_foundation_pipeline",
-        lambda **_: _foundation_result(raw_status="PASS", normalization_status="PASS"),
+        "golden_vector.cli.load_latest_foundation_snapshot",
+        lambda **_: _latest_foundation_snapshot(),
     )
     monkeypatch.setattr(
         "golden_vector.cli.execute_horizon_pipeline",

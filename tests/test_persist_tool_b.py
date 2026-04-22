@@ -30,8 +30,10 @@ def test_persist_tool_b_outputs_writes_latest_snapshot_sorted_by_tool_b_rank(tmp
         tool_b_outputs=tool_b_outputs,
     )
 
-    assert len(written_paths) == 5
+    assert len(written_paths) == 7
     latest_csv_path = next(path for path in written_paths if path.name.endswith("latest_" + run_context.run_id + ".csv"))
     latest_csv = pd.read_csv(latest_csv_path)
+    stable_latest = pd.read_parquet(paths.latest_tool_b_snapshot_parquet_path)
 
     assert list(latest_csv["ticker"]) == ["GOLD", "NEM"]
+    assert list(stable_latest["ticker"]) == ["GOLD", "NEM"]

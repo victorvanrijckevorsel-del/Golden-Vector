@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from pathlib import Path
 from typing import Sequence
@@ -10,16 +11,35 @@ from typing import Sequence
 import pandas as pd
 
 from golden_vector.app.config import load_app_config
+from golden_vector.app.latest_data import (
+    LatestFoundationSnapshot,
+    load_latest_foundation_snapshot,
+    write_latest_foundation_manifest,
+)
 from golden_vector.app.logging import configure_logging
 from golden_vector.app.paths import ProjectPaths
-from golden_vector.app.run_context import RunContext
-from golden_vector.combined.pipeline import execute_combined_pipeline
+from golden_vector.app.run_context import RunContext, to_jsonable
 from golden_vector.features.horizons import parse_requested_horizons
 from golden_vector.features.pipeline import execute_horizon_pipeline
 from golden_vector.features.returns import RETURN_COLUMNS, compute_horizon_returns_for_ticker
 from golden_vector.ingestion.foundation import execute_foundation_pipeline
 from golden_vector.model.pipeline import execute_tool_a_profile_pipeline
+from golden_vector.screening.manual_data import (
+    bootstrap_manual_screening_data,
+    load_manual_screening_data,
+)
+from golden_vector.screening.manual_store import (
+    add_stock_note,
+    export_store_to_csv,
+    import_support_csvs_into_store,
+    list_stock_notes,
+    manual_store_exists,
+    upsert_company_input,
+    upsert_reporting_calendar,
+    upsert_source_verification,
+)
 from golden_vector.screening.pipeline import execute_tool_b_pipeline
+from golden_vector.serve.workspace import run_workspace_server
 
 LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +53,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser(
         "foundation",
-        help="Run raw ingestion, raw QA, and USD normalization for the shared backbone.",
+        help="Legacy alias for update-data; refresh raw ingestion, QA, and USD normalization.",
+    )
+    subparsers.add_parser(
+        "update-data",
+        help="Refresh market data, run QA, and publish the latest validated local artifacts.",
     )
     subparsers.add_parser(
         "tool-a",
@@ -51,16 +75,132 @@ def build_parser() -> argparse.ArgumentParser:
         help="Gold price assumption in USD per oz.",
     )
 
-    combined_parser = subparsers.add_parser(
-        "combined",
-        help="Run Tool A and Tool B together, then publish the merged combined view.",
+    manual_data_parser = subparsers.add_parser(
+        "manual-data",
+        help="Manage Tool B slow-moving manual company inputs in the local app store.",
     )
-    combined_parser.add_argument(
-        "--gold-price",
-        type=float,
+    manual_data_subparsers = manual_data_parser.add_subparsers(
+        dest="manual_data_command",
         required=True,
-        help="Gold price assumption in USD per oz.",
     )
+
+    manual_data_subparsers.add_parser(
+        "init",
+        help="Create or sync the local Tool B manual-data store for the active Tool B universe.",
+    )
+    manual_data_subparsers.add_parser(
+        "import-csv",
+        help="Import support CSV files into the local Tool B manual-data store.",
+    )
+    manual_data_subparsers.add_parser(
+        "export-csv",
+        help="Export the local Tool B manual-data store back to support CSV files.",
+    )
+
+    show_parser = manual_data_subparsers.add_parser(
+        "show",
+        help="Show the current manual Tool B record for one ticker.",
+    )
+    show_parser.add_argument("--ticker", required=True, help="Ticker to inspect.")
+
+    set_company_parser = manual_data_subparsers.add_parser(
+        "set-company",
+        help="Update one or more Tool B company-input fields for a ticker.",
+    )
+    set_company_parser.add_argument("--ticker", required=True, help="Ticker to update.")
+    set_company_parser.add_argument("--production-oz", type=float)
+    set_company_parser.add_argument("--aisc-usd-per-oz", type=float)
+    set_company_parser.add_argument("--cash-cost-usd-per-oz", type=float)
+    set_company_parser.add_argument("--royalty-rate", type=float)
+    set_company_parser.add_argument("--sustaining-capex-musd", type=float)
+    set_company_parser.add_argument("--da-musd", type=float)
+    set_company_parser.add_argument("--interest-expense-musd", type=float)
+    set_company_parser.add_argument("--tax-rate", type=float)
+    set_company_parser.add_argument("--reserve-life-years", type=float)
+    set_company_parser.add_argument("--net-debt-musd", type=float)
+    set_company_parser.add_argument("--ebitda-ltm-musd", type=float)
+    set_company_parser.add_argument(
+        "--clear-fields",
+        nargs="+",
+        choices=[
+            "production_oz",
+            "aisc_usd_per_oz",
+            "cash_cost_usd_per_oz",
+            "royalty_rate",
+            "sustaining_capex_musd",
+            "da_musd",
+            "interest_expense_musd",
+            "tax_rate",
+            "reserve_life_years",
+            "net_debt_musd",
+            "ebitda_ltm_musd",
+        ],
+        default=[],
+        help="One or more company-input fields to clear back to blank/NULL.",
+    )
+
+    set_reporting_parser = manual_data_subparsers.add_parser(
+        "set-reporting",
+        help="Update reporting-calendar fields for a ticker.",
+    )
+    set_reporting_parser.add_argument("--ticker", required=True, help="Ticker to update.")
+    set_reporting_parser.add_argument("--next-financial-report-date")
+    set_reporting_parser.add_argument("--next-production-report-date")
+    set_reporting_parser.add_argument("--notes")
+    set_reporting_parser.add_argument(
+        "--clear-fields",
+        nargs="+",
+        choices=[
+            "next_financial_report_date",
+            "next_production_report_date",
+            "notes",
+        ],
+        default=[],
+        help="One or more reporting-calendar fields to clear back to blank/NULL.",
+    )
+
+    set_verification_parser = manual_data_subparsers.add_parser(
+        "set-verification",
+        help="Update a source-verification record for one manual Tool B field.",
+    )
+    set_verification_parser.add_argument("--ticker", required=True, help="Ticker to update.")
+    set_verification_parser.add_argument("--field-name", required=True)
+    set_verification_parser.add_argument("--verification-status", required=True)
+    set_verification_parser.add_argument("--source-date")
+    set_verification_parser.add_argument("--source-url")
+    set_verification_parser.add_argument("--notes")
+    set_verification_parser.add_argument(
+        "--clear-fields",
+        nargs="+",
+        choices=["source_date", "source_url", "notes"],
+        default=[],
+        help="Optional source-verification metadata fields to clear back to blank/NULL.",
+    )
+
+    manual_note_parser = subparsers.add_parser(
+        "manual-note",
+        help="Manage per-stock follow-up notes in the local Tool B manual-data store.",
+    )
+    manual_note_subparsers = manual_note_parser.add_subparsers(
+        dest="manual_note_command",
+        required=True,
+    )
+
+    add_note_parser = manual_note_subparsers.add_parser(
+        "add",
+        help="Add a follow-up note for one stock.",
+    )
+    add_note_parser.add_argument("--ticker", required=True)
+    add_note_parser.add_argument("--note", required=True)
+    add_note_parser.add_argument("--tag")
+    add_note_parser.add_argument("--status", default="OPEN")
+
+    list_note_parser = manual_note_subparsers.add_parser(
+        "list",
+        help="List recent notes for one stock or for the whole store.",
+    )
+    list_note_parser.add_argument("--ticker")
+    list_note_parser.add_argument("--limit", type=int, default=20)
 
     compare_parser = subparsers.add_parser(
         "compare-horizons",
@@ -77,6 +217,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional CSV output path for the comparison table.",
     )
 
+    workspace_parser = subparsers.add_parser(
+        "workspace",
+        help="Start the local Golden Vector workspace for Tool B inputs, notes, and latest Tool A / Tool B outputs.",
+    )
+    workspace_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host interface to bind the local workspace server to.",
+    )
+    workspace_parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Port to bind the local workspace server to.",
+    )
+
     return parser
 
 
@@ -85,8 +241,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     paths = ProjectPaths.discover()
 
-    if args.command == "foundation":
-        return run_foundation(paths)
+    if args.command in {"foundation", "update-data"}:
+        return run_foundation(paths, command_name=args.command)
 
     if args.command == "tool-a":
         return run_tool_a(paths)
@@ -94,8 +250,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "tool-b":
         return run_tool_b(paths, gold_price=args.gold_price)
 
-    if args.command == "combined":
-        return run_combined(paths, gold_price=args.gold_price)
+    if args.command == "manual-data":
+        return run_manual_data(paths, args)
+
+    if args.command == "manual-note":
+        return run_manual_note(paths, args)
 
     if args.command == "compare-horizons":
         return run_compare_horizons(
@@ -105,18 +264,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             csv_out=args.csv_out,
         )
 
+    if args.command == "workspace":
+        return run_workspace(paths, host=args.host, port=args.port)
+
     parser.error(f"Unsupported command: {args.command}")
     return 2
 
 
-def run_foundation(paths: ProjectPaths) -> int:
+def run_foundation(paths: ProjectPaths, *, command_name: str = "foundation") -> int:
     run_context: RunContext | None = None
 
     try:
         loaded_config = load_app_config(paths)
         run_context = RunContext.start(
             paths=paths,
-            command="foundation",
+            command=command_name,
             parameters={},
             config_hash=loaded_config.combined_hash,
         )
@@ -131,7 +293,7 @@ def run_foundation(paths: ProjectPaths) -> int:
             ticker for ticker in active_tickers if ticker.tool_b_enabled
         ]
 
-        LOGGER.info("Starting foundation run %s", run_context.run_id)
+        LOGGER.info("Starting %s run %s", command_name, run_context.run_id)
         LOGGER.info(
             "Loaded %s active tickers out of %s configured.",
             len(active_tickers),
@@ -173,7 +335,7 @@ def run_foundation(paths: ProjectPaths) -> int:
             )
 
         notes = [
-            "Foundation pipeline completed.",
+            "Market-data refresh completed.",
             f"Raw QA status: {result.raw_qa_report.overall_status}.",
         ]
         if result.normalization_qa_report is None:
@@ -182,6 +344,17 @@ def run_foundation(paths: ProjectPaths) -> int:
             notes.append(
                 f"Normalization QA status: {result.normalization_qa_report.overall_status}."
             )
+        if result.overall_status != "FAIL":
+            manifest_path = write_latest_foundation_manifest(
+                paths=paths,
+                run_context=run_context,
+                app_config=loaded_config.app,
+                foundation_result=result,
+            )
+            notes.append("Latest validated local market-data snapshot was updated.")
+            notes.append(f"Snapshot manifest: {manifest_path.relative_to(paths.repo_root).as_posix()}.")
+        else:
+            notes.append("Latest validated local market-data snapshot was left unchanged.")
         run_context.finalize(
             status=result.overall_status,
             summary={**config_summary, **result.summary},
@@ -201,16 +374,16 @@ def run_foundation(paths: ProjectPaths) -> int:
         if run_context is None:
             run_context = RunContext.start(
                 paths=paths,
-                command="foundation",
+                command=command_name,
                 parameters={},
                 config_hash="UNAVAILABLE",
             )
             configure_logging(run_context.log_path)
-        LOGGER.exception("Foundation run failed.")
+        LOGGER.exception("%s run failed.", command_name)
         run_context.finalize(
             status="FAIL",
             summary={"error": str(exc)},
-            notes=["Foundation run failed before completion."],
+            notes=[f"{command_name} run failed before completion."],
         )
         return 1
 
@@ -256,75 +429,21 @@ def run_tool_a(paths: ProjectPaths) -> int:
             LOGGER.error("Tool A stopped because no active Tool A tickers are configured.")
             return 1
 
-        foundation_result = execute_foundation_pipeline(
+        foundation_snapshot = _load_latest_foundation_snapshot(
             paths=paths,
             app_config=loaded_config.app,
             run_context=run_context,
+            include_gold_history=True,
+            include_equity_histories=True,
+            include_market_snapshots=False,
         )
-        run_context.write_json("fetch_plan.json", foundation_result.registry.summary())
-        run_context.write_json("raw_qa_summary.json", foundation_result.raw_qa_report.summary())
-        if foundation_result.normalization_qa_report is not None:
-            run_context.write_json(
-                "normalization_qa_summary.json",
-                foundation_result.normalization_qa_report.summary(),
-            )
-        run_context.write_json(
-            "foundation_qa_summary.json",
-            {
-                "overall_status": foundation_result.overall_status,
-                "raw": foundation_result.raw_qa_report.summary(),
-                "normalization": (
-                    foundation_result.normalization_qa_report.summary()
-                    if foundation_result.normalization_qa_report is not None
-                    else {"overall_status": "SKIPPED"}
-                ),
-            },
-        )
-
-        if foundation_result.raw_qa_report.overall_status == "FAIL":
-            notes = [
-                "Tool A stopped because raw QA failed in the shared backbone.",
-                f"Raw QA status: {foundation_result.raw_qa_report.overall_status}.",
-            ]
-            run_context.finalize(
-                status="FAIL",
-                summary={**config_summary, **foundation_result.summary},
-                notes=notes,
-            )
-            LOGGER.error("Tool A stopped because raw QA failed.")
-            return 1
-
-        if foundation_result.normalization_qa_report is None:
-            run_context.finalize(
-                status="FAIL",
-                summary={**config_summary, **foundation_result.summary},
-                notes=["Tool A stopped because USD normalization did not run."],
-            )
-            LOGGER.error("Tool A stopped because USD normalization did not run.")
-            return 1
-        if foundation_result.normalization_qa_report.overall_status == "FAIL":
-            run_context.write_json(
-                "qa_summary.json",
-                {
-                    "overall_status": "FAIL",
-                    "raw": foundation_result.raw_qa_report.summary(),
-                    "normalization": foundation_result.normalization_qa_report.summary(),
-                },
-            )
-            run_context.finalize(
-                status="FAIL",
-                summary={**config_summary, **foundation_result.summary},
-                notes=["Tool A stopped because normalization QA failed."],
-            )
-            LOGGER.error("Tool A stopped because normalization QA failed.")
-            return 1
 
         horizon_result = execute_horizon_pipeline(
             paths=paths,
             app_config=loaded_config.app,
             run_context=run_context,
-            gold_history=foundation_result.gold_history,
-            normalized_equity_histories=foundation_result.normalized_equity_histories,
+            gold_history=foundation_snapshot.gold_history,
+            normalized_equity_histories=foundation_snapshot.normalized_equity_histories,
         )
         run_context.write_json("horizon_qa_summary.json", horizon_result.qa_report.summary())
         if horizon_result.overall_status == "FAIL":
@@ -332,8 +451,8 @@ def run_tool_a(paths: ProjectPaths) -> int:
                 "qa_summary.json",
                 {
                     "overall_status": "FAIL",
-                    "raw": foundation_result.raw_qa_report.summary(),
-                    "normalization": foundation_result.normalization_qa_report.summary(),
+                    "raw": foundation_snapshot.raw_qa_summary,
+                    "normalization": foundation_snapshot.normalization_qa_summary,
                     "horizon": horizon_result.qa_report.summary(),
                 },
             )
@@ -341,7 +460,9 @@ def run_tool_a(paths: ProjectPaths) -> int:
                 status="FAIL",
                 summary={
                     **config_summary,
-                    **foundation_result.summary,
+                    **foundation_snapshot.summary,
+                    "snapshot_refresh_run_id": foundation_snapshot.refresh_run_id,
+                    "snapshot_as_of_date": foundation_snapshot.snapshot_as_of_date,
                     **horizon_result.summary,
                 },
                 notes=["Tool A stopped because horizon QA failed."],
@@ -357,8 +478,8 @@ def run_tool_a(paths: ProjectPaths) -> int:
         run_context.write_json("tool_a_output_summary.json", tool_a_result.summary)
 
         overall_status = _combine_statuses(
-            foundation_result.raw_qa_report.overall_status,
-            foundation_result.normalization_qa_report.overall_status,
+            foundation_snapshot.raw_qa_summary.get("overall_status"),
+            foundation_snapshot.normalization_qa_summary.get("overall_status"),
             horizon_result.overall_status,
             tool_a_result.overall_status,
         )
@@ -366,16 +487,18 @@ def run_tool_a(paths: ProjectPaths) -> int:
             "qa_summary.json",
             {
                 "overall_status": overall_status,
-                "raw": foundation_result.raw_qa_report.summary(),
-                "normalization": foundation_result.normalization_qa_report.summary(),
+                "raw": foundation_snapshot.raw_qa_summary,
+                "normalization": foundation_snapshot.normalization_qa_summary,
                 "horizon": horizon_result.qa_report.summary(),
                 "tool_a_output": tool_a_result.summary,
             },
         )
         notes = [
-            "Tool A horizon and metric stages completed.",
-            f"Raw QA status: {foundation_result.raw_qa_report.overall_status}.",
-            f"Normalization QA status: {foundation_result.normalization_qa_report.overall_status}.",
+            "Tool A ran from the latest validated local market-data snapshot.",
+            f"Snapshot refresh run: {foundation_snapshot.refresh_run_id}.",
+            f"Snapshot as-of date: {foundation_snapshot.snapshot_as_of_date}.",
+            f"Raw QA status: {foundation_snapshot.raw_qa_summary.get('overall_status')}.",
+            f"Normalization QA status: {foundation_snapshot.normalization_qa_summary.get('overall_status')}.",
             f"Horizon QA status: {horizon_result.qa_report.overall_status}.",
             f"Tool A output status: {tool_a_result.overall_status}.",
         ]
@@ -383,7 +506,9 @@ def run_tool_a(paths: ProjectPaths) -> int:
             status=overall_status,
             summary={
                 **config_summary,
-                **foundation_result.summary,
+                **foundation_snapshot.summary,
+                "snapshot_refresh_run_id": foundation_snapshot.refresh_run_id,
+                "snapshot_as_of_date": foundation_snapshot.snapshot_as_of_date,
                 **horizon_result.summary,
                 **tool_a_result.summary,
             },
@@ -459,119 +584,67 @@ def run_tool_b(paths: ProjectPaths, *, gold_price: float) -> int:
             LOGGER.error("Tool B stopped because no active Tool B tickers are configured.")
             return 1
 
-        foundation_result = execute_foundation_pipeline(
+        if not manual_store_exists(paths):
+            missing_store_note = _missing_manual_store_note()
+            run_context.finalize(
+                status="FAIL",
+                summary=config_summary,
+                notes=[missing_store_note],
+            )
+            LOGGER.error("%s", missing_store_note)
+            return 1
+
+        foundation_snapshot = _load_latest_foundation_snapshot(
             paths=paths,
             app_config=loaded_config.app,
             run_context=run_context,
+            include_gold_history=False,
+            include_equity_histories=False,
+            include_market_snapshots=True,
         )
-        run_context.write_json("fetch_plan.json", foundation_result.registry.summary())
-        run_context.write_json("raw_qa_summary.json", foundation_result.raw_qa_report.summary())
-        if foundation_result.normalization_qa_report is not None:
-            run_context.write_json(
-                "normalization_qa_summary.json",
-                foundation_result.normalization_qa_report.summary(),
-            )
-        run_context.write_json(
-            "foundation_qa_summary.json",
-            {
-                "overall_status": foundation_result.overall_status,
-                "raw": foundation_result.raw_qa_report.summary(),
-                "normalization": (
-                    foundation_result.normalization_qa_report.summary()
-                    if foundation_result.normalization_qa_report is not None
-                    else {"overall_status": "SKIPPED"}
-                ),
-            },
-        )
-
-        if foundation_result.raw_qa_report.overall_status == "FAIL":
-            run_context.write_json(
-                "qa_summary.json",
-                {
-                    "overall_status": "FAIL",
-                    "raw": foundation_result.raw_qa_report.summary(),
-                    "normalization": {"overall_status": "SKIPPED"},
-                },
-            )
-            run_context.finalize(
-                status="FAIL",
-                summary={**config_summary, **foundation_result.summary},
-                notes=["Tool B stopped because raw QA failed in the shared backbone."],
-            )
-            LOGGER.error("Tool B stopped because raw QA failed.")
-            return 1
-
-        if foundation_result.normalization_qa_report is None:
-            run_context.write_json(
-                "qa_summary.json",
-                {
-                    "overall_status": "FAIL",
-                    "raw": foundation_result.raw_qa_report.summary(),
-                    "normalization": {"overall_status": "SKIPPED"},
-                },
-            )
-            run_context.finalize(
-                status="FAIL",
-                summary={**config_summary, **foundation_result.summary},
-                notes=["Tool B stopped because USD normalization did not run."],
-            )
-            LOGGER.error("Tool B stopped because USD normalization did not run.")
-            return 1
-        if foundation_result.normalization_qa_report.overall_status == "FAIL":
-            run_context.write_json(
-                "qa_summary.json",
-                {
-                    "overall_status": "FAIL",
-                    "raw": foundation_result.raw_qa_report.summary(),
-                    "normalization": foundation_result.normalization_qa_report.summary(),
-                },
-            )
-            run_context.finalize(
-                status="FAIL",
-                summary={**config_summary, **foundation_result.summary},
-                notes=["Tool B stopped because normalization QA failed."],
-            )
-            LOGGER.error("Tool B stopped because normalization QA failed.")
-            return 1
 
         tool_b_result = execute_tool_b_pipeline(
             paths=paths,
             app_config=loaded_config.app,
             run_context=run_context,
-            normalized_market_snapshots=foundation_result.normalized_market_snapshots,
+            normalized_market_snapshots=foundation_snapshot.normalized_market_snapshots,
             gold_price_assumption=gold_price,
         )
         run_context.write_json("tool_b_output_summary.json", tool_b_result.summary)
 
         overall_status = _combine_statuses(
-            foundation_result.raw_qa_report.overall_status,
-            foundation_result.normalization_qa_report.overall_status,
+            foundation_snapshot.raw_qa_summary.get("overall_status"),
+            foundation_snapshot.normalization_qa_summary.get("overall_status"),
             tool_b_result.overall_status,
         )
         run_context.write_json(
             "qa_summary.json",
             {
                 "overall_status": overall_status,
-                "raw": foundation_result.raw_qa_report.summary(),
-                "normalization": foundation_result.normalization_qa_report.summary(),
+                "raw": foundation_snapshot.raw_qa_summary,
+                "normalization": foundation_snapshot.normalization_qa_summary,
                 "tool_b_output": tool_b_result.summary,
             },
         )
         notes = [
-            "Tool B completed from normalized market snapshots and manual screening inputs.",
-            f"Raw QA status: {foundation_result.raw_qa_report.overall_status}.",
-            f"Normalization QA status: {foundation_result.normalization_qa_report.overall_status}.",
+            "Tool B ran from the latest validated local market-data snapshot and the local Tool B manual-data store.",
+            f"Snapshot refresh run: {foundation_snapshot.refresh_run_id}.",
+            f"Snapshot as-of date: {foundation_snapshot.snapshot_as_of_date}.",
+            f"Raw QA status: {foundation_snapshot.raw_qa_summary.get('overall_status')}.",
+            f"Normalization QA status: {foundation_snapshot.normalization_qa_summary.get('overall_status')}.",
             f"Tool B output status: {tool_b_result.overall_status}.",
         ]
-        if tool_b_result.summary.get("manual_template_files_created"):
-            notes.append("Missing manual template files were created automatically.")
-        if tool_b_result.summary.get("manual_template_files_updated"):
-            notes.append("Existing manual template files were updated with newly configured Tool B tickers.")
+        if tool_b_result.summary.get("manual_store_created"):
+            notes.append("A new local Tool B manual-data store was created automatically.")
+        if tool_b_result.summary.get("manual_csv_imported_files"):
+            notes.append("Legacy support CSV files were imported into the local Tool B manual-data store.")
         run_context.finalize(
             status=overall_status,
             summary={
                 **config_summary,
-                **foundation_result.summary,
+                **foundation_snapshot.summary,
+                "snapshot_refresh_run_id": foundation_snapshot.refresh_run_id,
+                "snapshot_as_of_date": foundation_snapshot.snapshot_as_of_date,
                 **tool_b_result.summary,
             },
             notes=notes,
@@ -601,312 +674,420 @@ def run_tool_b(paths: ProjectPaths, *, gold_price: float) -> int:
         return 1
 
 
-def run_combined(paths: ProjectPaths, *, gold_price: float) -> int:
+def run_manual_data(paths: ProjectPaths, args: argparse.Namespace) -> int:
     run_context: RunContext | None = None
 
     try:
-        if gold_price <= 0:
-            raise ValueError("gold price must be positive")
-
         loaded_config = load_app_config(paths)
+        command_name = f"manual-data-{args.manual_data_command}"
+        parameters = {
+            key: value
+            for key, value in vars(args).items()
+            if key not in {"command", "manual_data_command"} and value is not None
+        }
         run_context = RunContext.start(
             paths=paths,
-            command="combined",
-            parameters={"gold_price": gold_price},
+            command=command_name,
+            parameters=parameters,
             config_hash=loaded_config.combined_hash,
         )
         configure_logging(run_context.log_path)
 
-        configured_tickers = loaded_config.app.universe.tickers
-        active_tickers = [ticker for ticker in configured_tickers if ticker.active]
-        tool_a_enabled = [
-            ticker for ticker in active_tickers if ticker.tool_a_enabled
-        ]
-        tool_b_enabled = [
-            ticker for ticker in active_tickers if ticker.tool_b_enabled
-        ]
+        tool_b_tickers = _active_tool_b_tickers(loaded_config)
+        tool_b_universe = set(tool_b_tickers)
 
-        LOGGER.info("Starting combined run %s", run_context.run_id)
-        config_summary = {
-            "configured_ticker_count": len(configured_tickers),
-            "active_ticker_count": len(active_tickers),
-            "tool_a_enabled_ticker_count": len(tool_a_enabled),
-            "tool_b_enabled_ticker_count": len(tool_b_enabled),
-            "gold_price_assumption": gold_price,
-            "configured_gold_price_scenarios": loaded_config.app.screening_params.gold_price_scenarios,
-            "core_horizon_count": len(loaded_config.app.horizons.core_horizons),
-            "combined_config_hash": loaded_config.combined_hash,
-        }
-        run_context.write_json("config_summary.json", config_summary)
-        if not tool_a_enabled:
-            run_context.finalize(
-                status="FAIL",
-                summary=config_summary,
-                notes=["Combined cannot run because no active Tool A tickers are configured."],
+        if args.manual_data_command == "init":
+            loaded = bootstrap_manual_screening_data(
+                paths,
+                tickers=tool_b_tickers,
+                import_csv_if_empty=False,
             )
-            LOGGER.error("Combined stopped because no active Tool A tickers are configured.")
-            return 1
-        if not tool_b_enabled:
+            summary = {
+                "manual_store_path": str(loaded.store_path),
+                "store_created": loaded.store_created,
+                "seeded_ticker_count": len(loaded.seeded_tickers),
+                "csv_import_count": len(loaded.imported_csv_files),
+                "company_input_row_count": len(loaded.company_inputs.index),
+                "source_verification_row_count": len(loaded.source_verification.index),
+                "reporting_calendar_row_count": len(loaded.reporting_calendar.index),
+                "stock_note_row_count": len(loaded.stock_notes.index),
+            }
+            if loaded.imported_csv_files:
+                summary["imported_csv_files"] = loaded.imported_csv_files
+            run_context.write_json("manual_data_summary.json", summary)
             run_context.finalize(
-                status="FAIL",
-                summary=config_summary,
-                notes=["Combined cannot run because no active Tool B tickers are configured."],
+                status="PASS",
+                summary=summary,
+                notes=[
+                    "Manual Tool B data store is ready for direct in-tool editing.",
+                    f"Store path: {loaded.store_path.relative_to(paths.repo_root).as_posix()}.",
+                ],
             )
-            LOGGER.error("Combined stopped because no active Tool B tickers are configured.")
-            return 1
+            print(json.dumps(to_jsonable(summary), indent=2))
+            return 0
 
-        foundation_result = execute_foundation_pipeline(
-            paths=paths,
-            app_config=loaded_config.app,
-            run_context=run_context,
-        )
-        run_context.write_json("fetch_plan.json", foundation_result.registry.summary())
-        run_context.write_json("raw_qa_summary.json", foundation_result.raw_qa_report.summary())
-        if foundation_result.normalization_qa_report is not None:
-            run_context.write_json(
-                "normalization_qa_summary.json",
-                foundation_result.normalization_qa_report.summary(),
+        if args.manual_data_command == "import-csv":
+            result = import_support_csvs_into_store(paths, tickers=tool_b_tickers)
+            summary = {
+                "manual_store_path": str(result.store_path),
+                "store_created": result.created_store,
+                "seeded_ticker_count": len(result.seeded_tickers),
+                "csv_import_count": len(result.imported_csv_files),
+            }
+            if result.imported_csv_files:
+                summary["imported_csv_files"] = result.imported_csv_files
+            run_context.write_json("manual_data_import_summary.json", summary)
+            run_context.finalize(
+                status="PASS",
+                summary=summary,
+                notes=["Support CSV files were imported into the local Tool B manual-data store."],
             )
-        run_context.write_json(
-            "foundation_qa_summary.json",
-            {
-                "overall_status": foundation_result.overall_status,
-                "raw": foundation_result.raw_qa_report.summary(),
-                "normalization": (
-                    foundation_result.normalization_qa_report.summary()
-                    if foundation_result.normalization_qa_report is not None
-                    else {"overall_status": "SKIPPED"}
-                ),
-            },
-        )
+            print(json.dumps(to_jsonable(summary), indent=2))
+            return 0
 
-        if foundation_result.raw_qa_report.overall_status == "FAIL":
-            run_context.write_json(
-                "qa_summary.json",
-                {
-                    "overall_status": "FAIL",
-                    "raw": foundation_result.raw_qa_report.summary(),
-                    "normalization": {"overall_status": "SKIPPED"},
-                },
-            )
+        if args.manual_data_command == "export-csv":
+            if not manual_store_exists(paths):
+                missing_store_note = _missing_manual_store_note()
+                run_context.finalize(
+                    status="FAIL",
+                    summary={"manual_store_path": str(paths.manual_screening_store_path)},
+                    notes=[missing_store_note],
+                )
+                LOGGER.error("%s", missing_store_note)
+                return 1
+            export_result = export_store_to_csv(paths)
+            summary = {
+                "manual_store_path": str(paths.manual_screening_store_path),
+                "exported_file_count": len(export_result.exported_files),
+                "exported_files": export_result.exported_files,
+                "backup_file_count": len(export_result.backup_files),
+            }
+            if export_result.backup_files:
+                summary["backup_files"] = export_result.backup_files
+            run_context.write_json("manual_data_export_summary.json", summary)
             run_context.finalize(
-                status="FAIL",
-                summary={**config_summary, **foundation_result.summary},
-                notes=["Combined stopped because raw QA failed in the shared backbone."],
+                status="PASS",
+                summary=summary,
+                notes=[
+                    "The local Tool B manual-data store was exported to support CSV files.",
+                    "Existing support CSV files were backed up before overwrite."
+                    if export_result.backup_files
+                    else "No existing support CSV files needed backup.",
+                ],
             )
-            LOGGER.error("Combined stopped because raw QA failed.")
-            return 1
+            print(json.dumps(to_jsonable(summary), indent=2))
+            return 0
 
-        if foundation_result.normalization_qa_report is None:
-            run_context.write_json(
-                "qa_summary.json",
-                {
-                    "overall_status": "FAIL",
-                    "raw": foundation_result.raw_qa_report.summary(),
-                    "normalization": {"overall_status": "SKIPPED"},
-                },
-            )
+        ticker = str(args.ticker).strip().upper()
+        if ticker not in tool_b_universe:
             run_context.finalize(
                 status="FAIL",
-                summary={**config_summary, **foundation_result.summary},
-                notes=["Combined stopped because USD normalization did not run."],
+                summary={"ticker": ticker},
+                notes=[f"{ticker} is not an active Tool B ticker in the configured universe."],
             )
-            LOGGER.error("Combined stopped because USD normalization did not run.")
-            return 1
-        if foundation_result.normalization_qa_report.overall_status == "FAIL":
-            run_context.write_json(
-                "qa_summary.json",
-                {
-                    "overall_status": "FAIL",
-                    "raw": foundation_result.raw_qa_report.summary(),
-                    "normalization": foundation_result.normalization_qa_report.summary(),
-                },
-            )
-            run_context.finalize(
-                status="FAIL",
-                summary={**config_summary, **foundation_result.summary},
-                notes=["Combined stopped because normalization QA failed."],
-            )
-            LOGGER.error("Combined stopped because normalization QA failed.")
             return 1
 
-        horizon_result = execute_horizon_pipeline(
-            paths=paths,
-            app_config=loaded_config.app,
-            run_context=run_context,
-            gold_history=foundation_result.gold_history,
-            normalized_equity_histories=foundation_result.normalized_equity_histories,
-        )
-        run_context.write_json("horizon_qa_summary.json", horizon_result.qa_report.summary())
-        if horizon_result.overall_status == "FAIL":
-            run_context.write_json(
-                "qa_summary.json",
-                {
-                    "overall_status": "FAIL",
-                    "raw": foundation_result.raw_qa_report.summary(),
-                    "normalization": foundation_result.normalization_qa_report.summary(),
-                    "horizon": horizon_result.qa_report.summary(),
-                },
-            )
+        if not manual_store_exists(paths):
+            missing_store_note = _missing_manual_store_note()
             run_context.finalize(
                 status="FAIL",
+                summary={"ticker": ticker, "manual_store_path": str(paths.manual_screening_store_path)},
+                notes=[missing_store_note],
+            )
+            LOGGER.error("%s", missing_store_note)
+            return 1
+
+        if args.manual_data_command == "show":
+            loaded = load_manual_screening_data(paths, tickers=tool_b_tickers)
+            company_row = loaded.company_inputs[loaded.company_inputs["ticker"] == ticker].to_dict(orient="records")
+            reporting_row = loaded.reporting_calendar[loaded.reporting_calendar["ticker"] == ticker].to_dict(orient="records")
+            verification_rows = loaded.source_verification[
+                loaded.source_verification["ticker"] == ticker
+            ].to_dict(orient="records")
+            note_rows = loaded.stock_notes[
+                loaded.stock_notes["ticker"] == ticker
+            ].to_dict(orient="records")
+            payload = {
+                "ticker": ticker,
+                "company_inputs": company_row[0] if company_row else None,
+                "reporting_calendar": reporting_row[0] if reporting_row else None,
+                "source_verification": verification_rows,
+                "stock_notes": note_rows,
+                "manual_store_path": str(loaded.store_path),
+            }
+            run_context.write_json("manual_data_show.json", payload)
+            run_context.finalize(
+                status="PASS",
                 summary={
-                    **config_summary,
-                    **foundation_result.summary,
-                    **horizon_result.summary,
+                    "ticker": ticker,
+                    "verification_row_count": len(verification_rows),
+                    "stock_note_row_count": len(note_rows),
                 },
-                notes=["Combined stopped because Tool A horizon QA failed."],
+                notes=[f"Displayed local Tool B manual data for {ticker}."],
             )
-            LOGGER.error("Combined stopped because Tool A horizon QA failed.")
-            return 1
+            print(json.dumps(to_jsonable(payload), indent=2))
+            return 0
 
-        tool_a_result = execute_tool_a_profile_pipeline(
-            paths=paths,
-            app_config=loaded_config.app,
-            run_context=run_context,
-            horizon_metrics=horizon_result.horizon_metrics,
-        )
-        run_context.write_json("tool_a_output_summary.json", tool_a_result.summary)
-        if tool_a_result.overall_status == "FAIL":
-            run_context.write_json(
-                "qa_summary.json",
-                {
-                    "overall_status": "FAIL",
-                    "raw": foundation_result.raw_qa_report.summary(),
-                    "normalization": foundation_result.normalization_qa_report.summary(),
-                    "horizon": horizon_result.qa_report.summary(),
-                    "tool_a_output": tool_a_result.summary,
-                },
+        if args.manual_data_command == "set-company":
+            values = {
+                "production_oz": args.production_oz,
+                "aisc_usd_per_oz": args.aisc_usd_per_oz,
+                "cash_cost_usd_per_oz": args.cash_cost_usd_per_oz,
+                "royalty_rate": args.royalty_rate,
+                "sustaining_capex_musd": args.sustaining_capex_musd,
+                "da_musd": args.da_musd,
+                "interest_expense_musd": args.interest_expense_musd,
+                "tax_rate": args.tax_rate,
+                "reserve_life_years": args.reserve_life_years,
+                "net_debt_musd": args.net_debt_musd,
+                "ebitda_ltm_musd": args.ebitda_ltm_musd,
+            }
+            clear_fields = sorted(set(getattr(args, "clear_fields", []) or []))
+            provided_values = {
+                key: value for key, value in values.items() if value is not None
+            }
+            provided_values.update({field_name: None for field_name in clear_fields})
+            if not provided_values:
+                run_context.finalize(
+                    status="FAIL",
+                    summary={"ticker": ticker},
+                    notes=["manual-data set-company requires at least one field to update."],
+                )
+                return 1
+            upsert_company_input(paths, ticker=ticker, values=provided_values)
+            run_context.finalize(
+                status="PASS",
+                summary={"ticker": ticker, "updated_field_count": len(provided_values)},
+                notes=[f"Updated {len(provided_values)} Tool B company-input field(s) for {ticker}."],
+            )
+            print(
+                json.dumps(
+                    to_jsonable(
+                        {"ticker": ticker, "updated_fields": sorted(provided_values)}
+                    ),
+                    indent=2,
+                )
+            )
+            return 0
+
+        if args.manual_data_command == "set-reporting":
+            updates = {
+                "next_financial_report_date": args.next_financial_report_date,
+                "next_production_report_date": args.next_production_report_date,
+                "notes": args.notes,
+            }
+            clear_fields = sorted(set(getattr(args, "clear_fields", []) or []))
+            provided_updates = {
+                key: value for key, value in updates.items() if value is not None
+            }
+            provided_updates.update({field_name: None for field_name in clear_fields})
+            if not provided_updates:
+                run_context.finalize(
+                    status="FAIL",
+                    summary={"ticker": ticker},
+                    notes=["manual-data set-reporting requires at least one field to update."],
+                )
+                return 1
+            upsert_reporting_calendar(
+                paths,
+                ticker=ticker,
+                values=provided_updates,
             )
             run_context.finalize(
-                status="FAIL",
-                summary={
-                    **config_summary,
-                    **foundation_result.summary,
-                    **horizon_result.summary,
-                    **tool_a_result.summary,
-                },
-                notes=["Combined stopped because Tool A output generation failed."],
+                status="PASS",
+                summary={"ticker": ticker, "updated_field_count": len(provided_updates)},
+                notes=[f"Updated reporting-calendar data for {ticker}."],
             )
-            LOGGER.error("Combined stopped because Tool A output generation failed.")
-            return 1
+            print(json.dumps(to_jsonable({"ticker": ticker, "updated_fields": sorted(provided_updates)}), indent=2))
+            return 0
 
-        tool_b_result = execute_tool_b_pipeline(
-            paths=paths,
-            app_config=loaded_config.app,
-            run_context=run_context,
-            normalized_market_snapshots=foundation_result.normalized_market_snapshots,
-            gold_price_assumption=gold_price,
-        )
-        run_context.write_json("tool_b_output_summary.json", tool_b_result.summary)
+        if args.manual_data_command == "set-verification":
+            verification_values = {}
+            if args.source_date is not None:
+                verification_values["source_date"] = args.source_date
+            if args.source_url is not None:
+                verification_values["source_url"] = args.source_url
+            if args.notes is not None:
+                verification_values["notes"] = args.notes
+            for field_name in sorted(set(getattr(args, "clear_fields", []) or [])):
+                verification_values[field_name] = None
+            upsert_source_verification(
+                paths,
+                ticker=ticker,
+                field_name=args.field_name,
+                verification_status=args.verification_status,
+                values=verification_values,
+            )
+            run_context.finalize(
+                status="PASS",
+                summary={"ticker": ticker, "field_name": args.field_name},
+                notes=[f"Updated Tool B source verification for {ticker} / {args.field_name}."],
+            )
+            print(
+                json.dumps(
+                    to_jsonable(
+                    {
+                        "ticker": ticker,
+                        "field_name": args.field_name,
+                        "verification_status": str(args.verification_status).upper(),
+                    }
+                    ),
+                    indent=2,
+                )
+            )
+            return 0
 
-        combined_result = execute_combined_pipeline(
-            paths=paths,
-            run_context=run_context,
-            scoring_config=loaded_config.app.scoring,
-            tool_a_outputs=tool_a_result.tool_a_outputs,
-            tool_b_outputs=tool_b_result.tool_b_outputs,
-            gold_price_assumption=gold_price,
-        )
-        run_context.write_json("combined_output_summary.json", combined_result.summary)
-
-        tool_b_status_for_rollup = (
-            "WARN"
-            if tool_b_result.overall_status == "FAIL"
-            else tool_b_result.overall_status
-        )
-        overall_status = _combine_statuses(
-            foundation_result.raw_qa_report.overall_status,
-            foundation_result.normalization_qa_report.overall_status,
-            horizon_result.overall_status,
-            tool_a_result.overall_status,
-            tool_b_status_for_rollup,
-            combined_result.overall_status,
-        )
-        run_context.write_json(
-            "qa_summary.json",
-            {
-                "overall_status": overall_status,
-                "raw": foundation_result.raw_qa_report.summary(),
-                "normalization": foundation_result.normalization_qa_report.summary(),
-                "horizon": horizon_result.qa_report.summary(),
-                "tool_a_output": tool_a_result.summary,
-                "tool_b_output": tool_b_result.summary,
-                "combined_output": combined_result.summary,
-            },
-        )
-        notes = [
-            "Combined completed by joining published Tool A and Tool B outputs.",
-            f"Raw QA status: {foundation_result.raw_qa_report.overall_status}.",
-            f"Normalization QA status: {foundation_result.normalization_qa_report.overall_status}.",
-            f"Horizon QA status: {horizon_result.qa_report.overall_status}.",
-            f"Tool A output status: {tool_a_result.overall_status}.",
-            f"Tool B output status: {tool_b_result.overall_status}.",
-            f"Combined output status: {combined_result.overall_status}.",
-        ]
-        if tool_b_result.overall_status == "FAIL":
-            notes.append("Tool B produced no usable rows, so combined outputs are partial Tool A rows only.")
-        if tool_b_result.summary.get("manual_template_files_updated"):
-            notes.append("Existing manual template files were updated with newly configured Tool B tickers.")
-        run_context.finalize(
-            status=overall_status,
-            summary={
-                **config_summary,
-                **foundation_result.summary,
-                **horizon_result.summary,
-                **tool_a_result.summary,
-                **tool_b_result.summary,
-                **combined_result.summary,
-            },
-            notes=notes,
-        )
-
-        if overall_status == "FAIL":
-            LOGGER.error("Combined run completed with blocking failures.")
-            return 1
-
-        LOGGER.info("Combined run completed with status %s.", overall_status)
-        return 0
+        raise ValueError(f"Unsupported manual-data command: {args.manual_data_command}")
     except Exception as exc:
         if run_context is None:
             run_context = RunContext.start(
                 paths=paths,
-                command="combined",
-                parameters={"gold_price": gold_price},
+                command=f"manual-data-{getattr(args, 'manual_data_command', 'unknown')}",
+                parameters={},
                 config_hash="UNAVAILABLE",
             )
             configure_logging(run_context.log_path)
-        LOGGER.exception("Combined run failed.")
+        LOGGER.exception("manual-data command failed.")
         run_context.finalize(
             status="FAIL",
             summary={"error": str(exc)},
-            notes=["Combined run failed before completion."],
+            notes=["manual-data command failed before completion."],
         )
         return 1
 
 
-def run_placeholder(
+def run_manual_note(paths: ProjectPaths, args: argparse.Namespace) -> int:
+    run_context: RunContext | None = None
+
+    try:
+        loaded_config = load_app_config(paths)
+        command_name = f"manual-note-{args.manual_note_command}"
+        parameters = {
+            key: value
+            for key, value in vars(args).items()
+            if key not in {"command", "manual_note_command"} and value is not None
+        }
+        run_context = RunContext.start(
+            paths=paths,
+            command=command_name,
+            parameters=parameters,
+            config_hash=loaded_config.combined_hash,
+        )
+        configure_logging(run_context.log_path)
+
+        tool_b_tickers = _active_tool_b_tickers(loaded_config)
+        if not manual_store_exists(paths):
+            missing_store_note = _missing_manual_store_note()
+            run_context.finalize(
+                status="FAIL",
+                summary={"manual_store_path": str(paths.manual_screening_store_path)},
+                notes=[missing_store_note],
+            )
+            LOGGER.error("%s", missing_store_note)
+            return 1
+
+        if args.manual_note_command == "add":
+            ticker = str(args.ticker).strip().upper()
+            if ticker not in set(tool_b_tickers):
+                run_context.finalize(
+                    status="FAIL",
+                    summary={"ticker": ticker},
+                    notes=[f"{ticker} is not an active Tool B ticker in the configured universe."],
+                )
+                return 1
+            note_id = add_stock_note(
+                paths,
+                ticker=ticker,
+                note_text=args.note,
+                note_tag=args.tag,
+                note_status=args.status,
+            )
+            summary = {"ticker": ticker, "note_id": note_id}
+            run_context.write_json("manual_note_add.json", summary)
+            run_context.finalize(
+                status="PASS",
+                summary=summary,
+                notes=[f"Added a stock note for {ticker}."],
+            )
+            print(json.dumps(to_jsonable(summary), indent=2))
+            return 0
+
+        if args.manual_note_command == "list":
+            note_rows = list_stock_notes(
+                paths,
+                ticker=args.ticker,
+                limit=args.limit,
+            )
+            payload = {
+                "ticker": str(args.ticker).strip().upper() if args.ticker else None,
+                "limit": int(args.limit),
+                "note_count": len(note_rows.index),
+                "notes": note_rows.to_dict(orient="records"),
+            }
+            run_context.write_json("manual_note_list.json", payload)
+            run_context.finalize(
+                status="PASS",
+                summary={
+                    "note_count": len(note_rows.index),
+                    "ticker": payload["ticker"],
+                },
+                notes=["Listed stock notes from the local Tool B manual-data store."],
+            )
+            print(json.dumps(to_jsonable(payload), indent=2))
+            return 0
+
+        raise ValueError(f"Unsupported manual-note command: {args.manual_note_command}")
+    except Exception as exc:
+        if run_context is None:
+            run_context = RunContext.start(
+                paths=paths,
+                command=f"manual-note-{getattr(args, 'manual_note_command', 'unknown')}",
+                parameters={},
+                config_hash="UNAVAILABLE",
+            )
+            configure_logging(run_context.log_path)
+        LOGGER.exception("manual-note command failed.")
+        run_context.finalize(
+            status="FAIL",
+            summary={"error": str(exc)},
+            notes=["manual-note command failed before completion."],
+        )
+        return 1
+
+
+def _active_tool_b_tickers(loaded_config: object) -> list[str]:
+    return sorted(
+        {
+            ticker.ticker
+            for ticker in loaded_config.app.universe.tickers
+            if ticker.active and ticker.tool_b_enabled
+        }
+    )
+
+
+def run_workspace(
     paths: ProjectPaths,
-    command: str,
-    parameters: dict[str, object],
+    *,
+    host: str,
+    port: int,
 ) -> int:
     loaded_config = load_app_config(paths)
-    run_context = RunContext.start(
-        paths=paths,
-        command=command,
-        parameters=parameters,
-        config_hash=loaded_config.combined_hash,
-    )
-    configure_logging(run_context.log_path)
+    tool_b_tickers = _active_tool_b_tickers(loaded_config)
+    if not tool_b_tickers:
+        LOGGER.error("Workspace cannot start because no active Tool B tickers are configured.")
+        return 1
 
-    message = f"{command} is scaffolded but not implemented yet."
-    LOGGER.warning(message)
-    run_context.finalize(
-        status="NOT_IMPLEMENTED",
-        summary={"command": command},
-        notes=[message],
+    bootstrap_manual_screening_data(
+        paths,
+        tickers=tool_b_tickers,
+        import_csv_if_empty=False,
     )
-    return 1
+    return run_workspace_server(
+        paths=paths,
+        tool_b_tickers=tool_b_tickers,
+        host=host,
+        port=port,
+    )
 
 
 def run_compare_horizons(
@@ -956,59 +1137,22 @@ def run_compare_horizons(
             )
             return 1
 
-        foundation_result = execute_foundation_pipeline(
+        foundation_snapshot = _load_latest_foundation_snapshot(
             paths=paths,
             app_config=loaded_config.app,
             run_context=run_context,
+            include_gold_history=True,
+            include_equity_histories=True,
+            include_market_snapshots=False,
+            requested_tickers=[normalized_ticker],
         )
-        run_context.write_json("fetch_plan.json", foundation_result.registry.summary())
-        run_context.write_json("raw_qa_summary.json", foundation_result.raw_qa_report.summary())
-        if foundation_result.normalization_qa_report is not None:
-            run_context.write_json(
-                "normalization_qa_summary.json",
-                foundation_result.normalization_qa_report.summary(),
-            )
-
-        if foundation_result.raw_qa_report.overall_status == "FAIL":
-            run_context.finalize(
-                status="FAIL",
-                summary={"ticker": normalized_ticker},
-                notes=["compare-horizons stopped because raw QA failed."],
-            )
-            LOGGER.error("compare-horizons stopped because raw QA failed.")
-            return 1
-
-        if foundation_result.normalization_qa_report is None:
-            run_context.finalize(
-                status="FAIL",
-                summary={"ticker": normalized_ticker},
-                notes=["compare-horizons stopped because USD normalization did not run."],
-            )
-            LOGGER.error("compare-horizons stopped because USD normalization did not run.")
-            return 1
-        if foundation_result.normalization_qa_report.overall_status == "FAIL":
-            run_context.write_json(
-                "qa_summary.json",
-                {
-                    "overall_status": "FAIL",
-                    "raw": foundation_result.raw_qa_report.summary(),
-                    "normalization": foundation_result.normalization_qa_report.summary(),
-                },
-            )
-            run_context.finalize(
-                status="FAIL",
-                summary={"ticker": normalized_ticker},
-                notes=["compare-horizons stopped because normalization QA failed."],
-            )
-            LOGGER.error("compare-horizons stopped because normalization QA failed.")
-            return 1
 
         comparison = compute_horizon_returns_for_ticker(
-            usd_equity_history=foundation_result.normalized_equity_histories.get(
+            usd_equity_history=foundation_snapshot.normalized_equity_histories.get(
                 normalized_ticker,
                 pd.DataFrame(columns=RETURN_COLUMNS),
             ),
-            gold_history=foundation_result.gold_history,
+            gold_history=foundation_snapshot.gold_history,
             horizons=requested_horizons,
             near_zero_gold_return_threshold=loaded_config.app.qa.near_zero_gold_return_threshold,
         )
@@ -1045,8 +1189,8 @@ def run_compare_horizons(
         elif fail_rows > 0:
             comparison_status = "WARN"
         overall_status = _combine_statuses(
-            foundation_result.raw_qa_report.overall_status,
-            foundation_result.normalization_qa_report.overall_status,
+            foundation_snapshot.raw_qa_summary.get("overall_status"),
+            foundation_snapshot.normalization_qa_summary.get("overall_status"),
             comparison_status,
         )
         summary = {
@@ -1055,8 +1199,10 @@ def run_compare_horizons(
             "comparison_row_count": len(comparison.index),
             "pass_row_count": pass_rows,
             "fail_row_count": fail_rows,
-            "raw_qa_status": foundation_result.raw_qa_report.overall_status,
-            "normalization_qa_status": foundation_result.normalization_qa_report.overall_status,
+            "snapshot_refresh_run_id": foundation_snapshot.refresh_run_id,
+            "snapshot_as_of_date": foundation_snapshot.snapshot_as_of_date,
+            "raw_qa_status": foundation_snapshot.raw_qa_summary.get("overall_status"),
+            "normalization_qa_status": foundation_snapshot.normalization_qa_summary.get("overall_status"),
             "comparison_status": comparison_status,
             "output_csv": str(output_path),
         }
@@ -1065,8 +1211,8 @@ def run_compare_horizons(
             "qa_summary.json",
             {
                 "overall_status": overall_status,
-                "raw": foundation_result.raw_qa_report.summary(),
-                "normalization": foundation_result.normalization_qa_report.summary(),
+                "raw": foundation_snapshot.raw_qa_summary,
+                "normalization": foundation_snapshot.normalization_qa_summary,
                 "comparison": {
                     "status": comparison_status,
                     "pass_row_count": pass_rows,
@@ -1078,7 +1224,7 @@ def run_compare_horizons(
             status=overall_status,
             summary=summary,
             notes=[
-                "compare-horizons completed.",
+                "compare-horizons completed from the latest validated local market-data snapshot.",
                 "Custom horizons are exploratory only and do not change official scores.",
             ],
         )
@@ -1103,6 +1249,52 @@ def run_compare_horizons(
             notes=["compare-horizons failed before completion."],
         )
         return 1
+
+
+def _load_latest_foundation_snapshot(
+    *,
+    paths: ProjectPaths,
+    app_config: object,
+    run_context: RunContext,
+    include_gold_history: bool = True,
+    include_equity_histories: bool = True,
+    include_market_snapshots: bool = True,
+    requested_tickers: list[str] | None = None,
+) -> LatestFoundationSnapshot:
+    snapshot = load_latest_foundation_snapshot(
+        paths=paths,
+        app_config=app_config,
+        include_gold_history=include_gold_history,
+        include_equity_histories=include_equity_histories,
+        include_market_snapshots=include_market_snapshots,
+        requested_tickers=requested_tickers,
+    )
+    run_context.write_json(
+        "foundation_snapshot_summary.json",
+        {
+            "refresh_run_id": snapshot.refresh_run_id,
+            "snapshot_as_of_date": snapshot.snapshot_as_of_date,
+            "foundation_status": snapshot.foundation_status,
+            "raw": snapshot.raw_qa_summary,
+            "normalization": snapshot.normalization_qa_summary,
+            "manifest_path": _artifact_name(paths, snapshot.manifest_path),
+        },
+    )
+    return snapshot
+
+
+def _artifact_name(paths: ProjectPaths, path: Path) -> str:
+    try:
+        return path.relative_to(paths.repo_root).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _missing_manual_store_note() -> str:
+    return (
+        "No local Tool B manual-data store exists yet. "
+        "Run `python main.py manual-data init` first."
+    )
 
 
 def _combine_statuses(*statuses: str | None) -> str:

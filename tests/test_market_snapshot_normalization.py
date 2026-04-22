@@ -62,6 +62,7 @@ def test_normalize_market_snapshots_converts_non_usd_and_derives_market_cap():
     assert normalized.loc[0, "fx_rate_to_usd"] == 0.74
     assert normalized.loc[0, "share_price_usd"] == 7.4
     assert normalized.loc[0, "market_cap_usd"] == 740.0
+    assert normalized.loc[0, "fx_staleness_days"] == 0
     assert normalized.loc[0, "normalization_status"] == "OK"
 
 
@@ -74,6 +75,20 @@ def test_normalize_market_snapshots_flags_missing_fx():
     assert pd.isna(normalized.loc[0, "fx_rate_to_usd"])
     assert pd.isna(normalized.loc[0, "share_price_usd"])
     assert normalized.loc[0, "normalization_status"] == "MISSING_FX"
+
+
+def test_normalize_market_snapshots_flags_stale_fx_when_threshold_is_exceeded():
+    snapshots = _snapshot_frame(ticker="DPM.TO", currency="CAD", date="2026-01-10")
+    fx_histories = {"CAD": _fx_frame(currency="CAD", date="2026-01-03", rate=0.74)}
+
+    normalized = normalize_market_snapshots_to_usd(
+        snapshots,
+        fx_histories=fx_histories,
+        max_fx_staleness_days=5,
+    )
+
+    assert normalized.loc[0, "fx_staleness_days"] == 7
+    assert normalized.loc[0, "normalization_status"] == "STALE_FX"
 
 
 def test_normalize_market_snapshots_flags_invalid_share_price():
