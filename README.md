@@ -1,6 +1,8 @@
 # Golden Vector
 
-A Python engine for gold-stock sensitivity analysis, valuation screening, and combined ranking.
+A Python engine for gold-stock sensitivity analysis and valuation screening.
+
+Quick architecture map: [docs/golden_vector_architecture_map.md](C:/Users/Emanuel/code/Golden-Vector/docs/golden_vector_architecture_map.md)
 
 ## Setup
 
@@ -41,38 +43,54 @@ The repo now includes:
   - ranks eligible names by `as_of_date`
   - publishes both full-history and latest-snapshot CSV/parquet exports for downstream use
 - a Phase 6 Tool B layer that:
-  - loads manual mining inputs from `data/manual/screening/`
-  - creates blank manual CSV templates automatically if they are missing
+  - stores slow-moving manual mining inputs in a local SQLite store at `data/manual/screening/manual_screening.sqlite3`
+  - supports direct in-tool edits through `manual-data` and `manual-note` commands
+  - can import/export support CSV files when needed for migration or backup
   - computes Layer 1 robustness checks, Layer 2 valuation metrics, target prices, verdicts, and Tool B score/rank
   - publishes both full-history and latest-snapshot CSV/parquet exports under `data/output/tool_b/`
-- a Phase 7 combined layer that:
-  - joins published Tool A and Tool B outputs by `ticker`, `as_of_date`, and gold-price scenario
-  - emits partial rows when only one side is currently usable
-  - computes combined score, combined verdict, and combined rank only when both sides are compatible
-  - publishes both full-history and latest-snapshot CSV/parquet exports under `data/output/combined/`
+- a thin local workspace layer that:
+  - starts with `python main.py workspace`
+  - gives a browser-based local view for Tool B company inputs and stock notes
+  - shows the latest Tool A and Tool B snapshot side by side for each stock
+  - relies on stable latest Tool A / Tool B snapshot files for fast local inspection
 
-The `foundation` command now runs the shared backbone through raw ingestion, raw QA, USD normalization, and normalization QA. `tool-a` now runs that backbone plus horizon returns and the Tool A metric/ranking layer. `tool-b` now runs the shared backbone plus manual screening/valuation. `combined` now orchestrates Tool A and Tool B under one run and publishes the merged view. `compare-horizons` runs exploratory horizon comparisons for one Tool A ticker.
+Runtime model:
+- `update-data` is the explicit refresh step for Yahoo-backed market data
+- `foundation` remains as a legacy alias for the same refresh step
+- `tool-a` uses the latest validated local market-data snapshot by default
+- `tool-b` uses the latest validated local market-data snapshot plus local manual inputs by default
+- `compare-horizons` uses the latest validated local market-data snapshot by default
+- `workspace` bootstraps the local Tool B store if needed, then serves a thin local UI for manual inputs, notes, and latest outputs
+- Combined is no longer part of the active backend and will return later only as a side-by-side compare view
 
 Tool A notes:
 - names with `regime_tag = "INVERSE"` are visible in the output but intentionally remain unranked
 - Tool A ranking uses dense ranking within each `as_of_date`
 
 Tool B notes:
-- `data/manual/screening/company_inputs.csv` is intentionally blank starter data; the tool will mark missing manual fields as `INCOMPLETE`, not invent them
+- Tool B now reads from the local manual-data store at `data/manual/screening/manual_screening.sqlite3`
+- legacy support CSV files under `data/manual/screening/` are optional compatibility/import-export paths for the core Tool B support tables, not the primary workflow
+- initialize the local manual-data store explicitly with `python main.py manual-data init` before first Tool B use
+- `manual-data show` now includes record timestamps for the core manual tables
+- `manual-data export-csv` backs up existing support CSV files before overwrite
+- stock notes remain in the SQLite store and are not part of the support CSV export path
 - Tool B ranking uses dense ranking within each `as_of_date` and `gold_price_assumption`
-
-Combined notes:
-- `join_status = COMPLETE` means both Tool A and Tool B published compatible scores for that row
-- `join_status = PARTIAL` means only one side was usable, or one side was present but not score-compatible yet
-- combined score currently uses a simple 50/50 average of Tool A score and Tool B score as the v1 default
-- combined verdict reads Tool B `confidence`, but v1 does not yet downweight the verdict automatically when confidence is `ESTIMATED`; read both fields together
+- per-stock follow-up notes live in the same local store and are managed through `manual-note`
+- `workspace` is now the easiest day-to-day way to review and edit Tool B manual inputs locally
 
 ## Usage
 
 ```bash
+python main.py update-data
+# legacy alias:
 python main.py foundation
 python main.py tool-a
+python main.py manual-data init
 python main.py tool-b --gold-price 4000
-python main.py combined --gold-price 4000
+python main.py workspace
+python main.py manual-data export-csv
+python main.py manual-data set-company --ticker NEM --production-oz 6000000 --aisc-usd-per-oz 1300
+python main.py manual-data set-verification --ticker NEM --field-name production_oz --verification-status VERIFIED
+python main.py manual-note add --ticker NEM --note "Recheck after the next production report" --tag FOLLOW_UP
 python main.py compare-horizons --ticker NEM --horizons 5D,10D,45D,3M
 ```

@@ -127,3 +127,55 @@ def test_compute_horizon_returns_marks_custom_horizons_not_official():
 
     assert row["horizon_mode"] == "custom"
     assert bool(row["official_scoring_eligible"]) is False
+
+
+def test_compute_horizon_returns_emits_rows_for_each_date_and_marks_insufficient_history():
+    horizons = [parse_horizon_id("5D", core_horizon_ids={"5D"})]
+
+    result = compute_horizon_returns_for_ticker(
+        usd_equity_history=_usd_equity_history(),
+        gold_history=_gold_history(),
+        horizons=horizons,
+        near_zero_gold_return_threshold=0.005,
+    )
+
+    assert len(result.index) == 6
+    insufficient_rows = result[result["coverage_reason"] == "INSUFFICIENT_HISTORY"]
+    assert len(insufficient_rows.index) == 5
+    assert insufficient_rows["start_date"].isna().all()
+
+
+def test_compute_horizon_returns_uses_calendar_horizon_start_dates():
+    fetched_at = datetime(2026, 3, 31, tzinfo=timezone.utc)
+    usd_equity_history = pd.DataFrame(
+        [
+            {"ticker": "NEM", "date": "2026-01-30", "return_basis_usd": 100.0, "normalization_status": "OK", "fetched_at_utc": fetched_at},
+            {"ticker": "NEM", "date": "2026-02-02", "return_basis_usd": 101.0, "normalization_status": "OK", "fetched_at_utc": fetched_at},
+            {"ticker": "NEM", "date": "2026-02-27", "return_basis_usd": 110.0, "normalization_status": "OK", "fetched_at_utc": fetched_at},
+            {"ticker": "NEM", "date": "2026-03-02", "return_basis_usd": 111.0, "normalization_status": "OK", "fetched_at_utc": fetched_at},
+            {"ticker": "NEM", "date": "2026-03-31", "return_basis_usd": 121.0, "normalization_status": "OK", "fetched_at_utc": fetched_at},
+        ]
+    )
+    gold_history = pd.DataFrame(
+        [
+            {"date": "2026-01-30", "close_usd": 200.0, "adj_close_usd": 200.0, "fetched_at_utc": fetched_at},
+            {"date": "2026-02-02", "close_usd": 202.0, "adj_close_usd": 202.0, "fetched_at_utc": fetched_at},
+            {"date": "2026-02-27", "close_usd": 220.0, "adj_close_usd": 220.0, "fetched_at_utc": fetched_at},
+            {"date": "2026-03-02", "close_usd": 221.0, "adj_close_usd": 221.0, "fetched_at_utc": fetched_at},
+            {"date": "2026-03-31", "close_usd": 242.0, "adj_close_usd": 242.0, "fetched_at_utc": fetched_at},
+        ]
+    )
+    horizons = [parse_horizon_id("1M", core_horizon_ids={"1M"})]
+
+    result = compute_horizon_returns_for_ticker(
+        usd_equity_history=usd_equity_history,
+        gold_history=gold_history,
+        horizons=horizons,
+        near_zero_gold_return_threshold=0.005,
+    )
+
+    row = result[result["as_of_date"].astype(str) == "2026-03-31"].iloc[0]
+
+    assert str(row["start_date"]) == "2026-02-27"
+    assert row["coverage_flag"] == "PASS"
+    assert round(float(row["gold_delta"]), 6) == 1.0

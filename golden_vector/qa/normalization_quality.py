@@ -33,17 +33,27 @@ def evaluate_normalization_quality(
     usd_equity_histories: dict[str, pd.DataFrame],
     normalized_market_snapshots: pd.DataFrame,
 ) -> NormalizationQaReport:
-    _ = app_config
     results: list[QaCheckResult] = []
+    max_fx_staleness_days = getattr(app_config.qa, "max_fx_staleness_days", 5)
+    block_on_stale_fx = bool(getattr(app_config.qa, "block_on_stale_fx", False))
 
     for target in registry.equity_targets:
         frame = usd_equity_histories.get(target.ticker, pd.DataFrame())
-        results.extend(_equity_checks(target.ticker, frame))
+        results.extend(
+            _equity_checks(
+                target.ticker,
+                frame,
+                max_fx_staleness_days=max_fx_staleness_days,
+                block_on_stale_fx=block_on_stale_fx,
+            )
+        )
 
     results.append(
         _market_snapshot_check(
             normalized_market_snapshots=normalized_market_snapshots,
             registry=registry,
+            max_fx_staleness_days=max_fx_staleness_days,
+            block_on_stale_fx=block_on_stale_fx,
         )
     )
 
@@ -62,6 +72,9 @@ def evaluate_normalization_quality(
 def _equity_checks(
     ticker: str,
     frame: pd.DataFrame,
+    *,
+    max_fx_staleness_days: int,
+    block_on_stale_fx: bool,
 ) -> list[QaCheckResult]:
     if frame.empty:
         return [
@@ -79,18 +92,25 @@ def _equity_checks(
     ok_rows = int((statuses == "OK").sum())
     missing_fx_rows = int((statuses == "MISSING_FX").sum())
     missing_return_basis_rows = int((statuses == "MISSING_RETURN_BASIS").sum())
-    other_issue_rows = total_rows - ok_rows - missing_fx_rows - missing_return_basis_rows
+    stale_fx_rows = int((statuses == "STALE_FX").sum())
+    other_issue_rows = total_rows - ok_rows - missing_fx_rows - missing_return_basis_rows - stale_fx_rows
 
     coverage_status = "PASS"
     if ok_rows == 0:
-        coverage_status = "FAIL"
-    elif ok_rows < total_rows:
+        if stale_fx_rows > 0 and missing_fx_rows == 0 and missing_return_basis_rows == 0 and other_issue_rows == 0:
+            coverage_status = "WARN"
+        else:
+            coverage_status = "FAIL"
+    elif ok_rows < total_rows or stale_fx_rows > 0:
         coverage_status = "WARN"
+    if stale_fx_rows > 0 and block_on_stale_fx:
+        coverage_status = "FAIL"
 
     message = (
         f"{ok_rows} of {total_rows} rows normalized successfully; "
         f"missing_fx={missing_fx_rows}, "
         f"missing_return_basis={missing_return_basis_rows}, "
+        f"stale_fx={stale_fx_rows} (threshold={max_fx_staleness_days}d), "
         f"other_issues={other_issue_rows}."
     )
 
@@ -108,6 +128,9 @@ def _equity_checks(
 def _market_snapshot_check(
     normalized_market_snapshots: pd.DataFrame,
     registry: FoundationRegistry,
+    *,
+    max_fx_staleness_days: int,
+    block_on_stale_fx: bool,
 ) -> QaCheckResult:
     expected = len(registry.market_snapshot_targets)
     if expected == 0:
@@ -131,8 +154,11 @@ def _market_snapshot_check(
     statuses = normalized_market_snapshots["normalization_status"].fillna("UNKNOWN").astype(str)
     status_counts = statuses.value_counts().to_dict()
     ok_rows = int(status_counts.get("OK", 0))
+    stale_fx_rows = int(status_counts.get("STALE_FX", 0))
 
     status = "PASS" if ok_rows == expected and len(normalized_market_snapshots.index) == expected else "WARN"
+    if stale_fx_rows > 0 and block_on_stale_fx:
+        status = "FAIL"
     breakdown = ", ".join(
         f"{name}={count}" for name, count in sorted(status_counts.items())
     )
@@ -143,6 +169,7 @@ def _market_snapshot_check(
         entity="tool-b",
         message=(
             f"{ok_rows} of {expected} Tool B market snapshots normalized successfully. "
-            f"Status breakdown: {breakdown}."
+            f"Status breakdown: {breakdown}. "
+            f"FX staleness threshold: {max_fx_staleness_days}d."
         ),
     )

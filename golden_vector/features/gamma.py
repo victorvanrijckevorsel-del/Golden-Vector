@@ -23,6 +23,8 @@ def compute_gamma_proxy(metric_rows: pd.DataFrame) -> float | None:
         return None
     if working["gold_abs_return"].nunique() < 2:
         return 0.0
+    if working["gold_delta"].nunique() < 2:
+        return 0.0
 
     correlation = working["gold_abs_return"].corr(working["gold_delta"])
     if pd.isna(correlation):

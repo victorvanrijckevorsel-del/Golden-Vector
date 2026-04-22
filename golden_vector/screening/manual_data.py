@@ -1,4 +1,4 @@
-"""Manual screening input loaders and confidence helpers."""
+"""Manual screening data loading and confidence helpers."""
 
 from __future__ import annotations
 
@@ -8,38 +8,18 @@ from pathlib import Path
 import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.screening.manual_store import (
+    COMPANY_INPUT_COLUMNS,
+    NUMERIC_COMPANY_FIELDS,
+    REPORTING_CALENDAR_COLUMNS,
+    SOURCE_VERIFICATION_COLUMNS,
+    STOCK_NOTE_COLUMNS,
+    ManualStoreSyncResult,
+    ensure_manual_store,
+    load_store_tables,
+    manual_store_exists,
+)
 
-
-COMPANY_INPUT_COLUMNS = [
-    "ticker",
-    "production_oz",
-    "aisc_usd_per_oz",
-    "cash_cost_usd_per_oz",
-    "royalty_rate",
-    "sustaining_capex_musd",
-    "da_musd",
-    "interest_expense_musd",
-    "tax_rate",
-    "reserve_life_years",
-    "net_debt_musd",
-    "ebitda_ltm_musd",
-]
-
-SOURCE_VERIFICATION_COLUMNS = [
-    "ticker",
-    "field_name",
-    "verification_status",
-    "source_date",
-    "source_url",
-    "notes",
-]
-
-REPORTING_CALENDAR_COLUMNS = [
-    "ticker",
-    "next_financial_report_date",
-    "next_production_report_date",
-    "notes",
-]
 
 REQUIRED_MANUAL_FIELDS = [
     "production_oz",
@@ -55,107 +35,73 @@ REQUIRED_MANUAL_FIELDS = [
     "ebitda_ltm_musd",
 ]
 
-NUMERIC_MANUAL_FIELDS = [
-    column for column in COMPANY_INPUT_COLUMNS if column != "ticker"
-]
-
 
 @dataclass(frozen=True)
 class LoadedManualScreeningData:
     company_inputs: pd.DataFrame
     source_verification: pd.DataFrame
     reporting_calendar: pd.DataFrame
-    missing_files: list[str]
+    stock_notes: pd.DataFrame
+    store_path: Path
+    store_created: bool
+    seeded_tickers: list[str]
+    imported_csv_files: list[str]
 
 
-@dataclass(frozen=True)
-class ManualTemplateSyncResult:
-    created_files: list[str]
-    updated_files: list[str]
-
-
-def ensure_manual_screening_templates(
+def load_manual_screening_data(
     paths: ProjectPaths,
+    *,
     tickers: list[str],
-) -> ManualTemplateSyncResult:
-    manual_dir = paths.manual_screening_dir
-    manual_dir.mkdir(parents=True, exist_ok=True)
-
-    created_files: list[str] = []
-    updated_files: list[str] = []
-    company_path = manual_dir / "company_inputs.csv"
-    verification_path = manual_dir / "source_verification.csv"
-    reporting_path = manual_dir / "reporting_calendar.csv"
-
-    if not company_path.exists():
-        company_template = pd.DataFrame({"ticker": sorted(set(tickers))})
-        for column in COMPANY_INPUT_COLUMNS:
-            if column != "ticker":
-                company_template[column] = pd.NA
-        company_template.to_csv(company_path, index=False)
-        created_files.append(company_path.name)
-    elif _append_missing_ticker_rows(
-        company_path,
-        COMPANY_INPUT_COLUMNS,
-        sorted(set(tickers)),
-    ):
-        updated_files.append(company_path.name)
-
-    if not verification_path.exists():
-        pd.DataFrame(columns=SOURCE_VERIFICATION_COLUMNS).to_csv(
-            verification_path,
-            index=False,
+) -> LoadedManualScreeningData:
+    if not manual_store_exists(paths):
+        raise FileNotFoundError(
+            "No local Tool B manual-data store exists yet. "
+            "Run `python main.py manual-data init` first."
         )
-        created_files.append(verification_path.name)
-
-    if not reporting_path.exists():
-        reporting_template = pd.DataFrame({"ticker": sorted(set(tickers))})
-        for column in REPORTING_CALENDAR_COLUMNS:
-            if column != "ticker":
-                reporting_template[column] = pd.NA
-        reporting_template.to_csv(reporting_path, index=False)
-        created_files.append(reporting_path.name)
-    elif _append_missing_ticker_rows(
-        reporting_path,
-        REPORTING_CALENDAR_COLUMNS,
-        sorted(set(tickers)),
-    ):
-        updated_files.append(reporting_path.name)
-
-    return ManualTemplateSyncResult(
-        created_files=created_files,
-        updated_files=updated_files,
+    sync_result = ManualStoreSyncResult(
+        store_path=paths.manual_screening_store_path,
+        created_store=False,
+        seeded_tickers=[],
+        imported_csv_files=[],
     )
+    return _load_manual_screening_data(paths, sync_result=sync_result)
 
 
-def load_manual_screening_data(paths: ProjectPaths) -> LoadedManualScreeningData:
-    manual_dir = paths.manual_screening_dir
-    company_path = manual_dir / "company_inputs.csv"
-    verification_path = manual_dir / "source_verification.csv"
-    reporting_path = manual_dir / "reporting_calendar.csv"
-
-    missing_files: list[str] = []
-    company_inputs = _read_csv_or_empty(company_path, COMPANY_INPUT_COLUMNS, missing_files)
-    source_verification = _read_csv_or_empty(
-        verification_path,
-        SOURCE_VERIFICATION_COLUMNS,
-        missing_files,
+def bootstrap_manual_screening_data(
+    paths: ProjectPaths,
+    *,
+    tickers: list[str],
+    import_csv_if_empty: bool = False,
+) -> LoadedManualScreeningData:
+    sync_result = ensure_manual_store(
+        paths,
+        tickers=tickers,
+        import_csv_if_empty=import_csv_if_empty,
     )
-    reporting_calendar = _read_csv_or_empty(
-        reporting_path,
-        REPORTING_CALENDAR_COLUMNS,
-        missing_files,
-    )
+    return _load_manual_screening_data(paths, sync_result=sync_result)
+
+
+def _load_manual_screening_data(
+    paths: ProjectPaths,
+    *,
+    sync_result: ManualStoreSyncResult,
+) -> LoadedManualScreeningData:
+    company_inputs, source_verification, reporting_calendar, stock_notes = load_store_tables(paths)
 
     company_inputs = _normalize_company_inputs(company_inputs)
     source_verification = _normalize_source_verification(source_verification)
     reporting_calendar = _normalize_reporting_calendar(reporting_calendar)
+    stock_notes = _normalize_stock_notes(stock_notes)
 
     return LoadedManualScreeningData(
         company_inputs=company_inputs,
         source_verification=source_verification,
         reporting_calendar=reporting_calendar,
-        missing_files=missing_files,
+        stock_notes=stock_notes,
+        store_path=sync_result.store_path,
+        store_created=sync_result.created_store,
+        seeded_tickers=sync_result.seeded_tickers,
+        imported_csv_files=sync_result.imported_csv_files,
     )
 
 
@@ -174,7 +120,7 @@ def determine_manual_confidence(
         return "INCOMPLETE"
 
     verification_rows = source_verification[
-        source_verification["ticker"] == ticker
+        source_verification["ticker"] == str(ticker).upper()
     ].copy()
     if verification_rows.empty:
         return "ESTIMATED"
@@ -202,69 +148,40 @@ def missing_required_manual_fields(company_row: pd.Series) -> list[str]:
     ]
 
 
-def _read_csv_or_empty(
-    path: Path,
-    required_columns: list[str],
-    missing_files: list[str],
-) -> pd.DataFrame:
-    if not path.exists():
-        missing_files.append(path.name)
-        return pd.DataFrame(columns=required_columns)
-
-    frame = pd.read_csv(path)
-    for column in required_columns:
-        if column not in frame.columns:
-            frame[column] = pd.NA
-    return frame[required_columns].copy()
-
-
-def _append_missing_ticker_rows(
-    path: Path,
-    required_columns: list[str],
-    tickers: list[str],
-) -> bool:
-    frame = pd.read_csv(path)
-    for column in required_columns:
-        if column not in frame.columns:
-            frame[column] = pd.NA
-    working = frame[required_columns].copy()
-    working["ticker"] = working["ticker"].fillna("").astype(str).str.upper().str.strip()
-
-    existing = set(working.loc[working["ticker"] != "", "ticker"])
-    missing = [ticker for ticker in tickers if ticker not in existing]
-    if not missing:
-        return False
-
-    additions = pd.DataFrame({"ticker": missing})
-    for column in required_columns:
-        if column != "ticker":
-            additions[column] = pd.NA
-
-    updated = pd.concat([working, additions[required_columns]], ignore_index=True)
-    updated.to_csv(path, index=False)
-    return True
+def summarize_manual_store_sync(loaded: LoadedManualScreeningData) -> ManualStoreSyncResult:
+    return ManualStoreSyncResult(
+        store_path=loaded.store_path,
+        created_store=loaded.store_created,
+        seeded_tickers=loaded.seeded_tickers,
+        imported_csv_files=loaded.imported_csv_files,
+    )
 
 
 def _normalize_company_inputs(frame: pd.DataFrame) -> pd.DataFrame:
     normalized = frame.copy()
-    if "ticker" in normalized.columns:
-        normalized["ticker"] = normalized["ticker"].fillna("").astype(str).str.upper().str.strip()
-        normalized = normalized[normalized["ticker"] != ""].copy()
-        normalized = normalized.drop_duplicates(subset=["ticker"], keep="last")
-
-    for column in NUMERIC_MANUAL_FIELDS:
+    for column in COMPANY_INPUT_COLUMNS:
+        if column not in normalized.columns:
+            normalized[column] = pd.NA
+    normalized["ticker"] = normalized["ticker"].fillna("").astype(str).str.upper().str.strip()
+    normalized = normalized[normalized["ticker"] != ""].copy()
+    normalized = normalized.drop_duplicates(subset=["ticker"], keep="last")
+    for column in NUMERIC_COMPANY_FIELDS:
         normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
-
     if "royalty_rate" in normalized.columns:
         normalized["royalty_rate"] = normalized["royalty_rate"].apply(_normalize_rate)
     if "tax_rate" in normalized.columns:
         normalized["tax_rate"] = normalized["tax_rate"].apply(_normalize_rate)
-
-    return normalized.reset_index(drop=True)
+    for column in ("created_at_utc", "updated_at_utc"):
+        if column in normalized.columns:
+            normalized[column] = normalized[column].apply(_normalize_text)
+    return normalized[COMPANY_INPUT_COLUMNS].reset_index(drop=True)
 
 
 def _normalize_source_verification(frame: pd.DataFrame) -> pd.DataFrame:
     normalized = frame.copy()
+    for column in SOURCE_VERIFICATION_COLUMNS:
+        if column not in normalized.columns:
+            normalized[column] = pd.NA
     normalized["ticker"] = normalized["ticker"].fillna("").astype(str).str.upper().str.strip()
     normalized["field_name"] = normalized["field_name"].fillna("").astype(str).str.strip()
     normalized["verification_status"] = (
@@ -279,20 +196,55 @@ def _normalize_source_verification(frame: pd.DataFrame) -> pd.DataFrame:
         normalized["source_date"],
         errors="coerce",
     ).dt.date
+    normalized["source_url"] = normalized["source_url"].apply(_normalize_text)
+    normalized["notes"] = normalized["notes"].apply(_normalize_text)
+    for column in ("created_at_utc", "updated_at_utc"):
+        if column in normalized.columns:
+            normalized[column] = normalized[column].apply(_normalize_text)
     normalized = normalized[
         (normalized["ticker"] != "") & (normalized["field_name"] != "")
     ].copy()
-    return normalized.reset_index(drop=True)
+    normalized = normalized.drop_duplicates(subset=["ticker", "field_name"], keep="last")
+    return normalized[SOURCE_VERIFICATION_COLUMNS].reset_index(drop=True)
 
 
 def _normalize_reporting_calendar(frame: pd.DataFrame) -> pd.DataFrame:
     normalized = frame.copy()
+    for column in REPORTING_CALENDAR_COLUMNS:
+        if column not in normalized.columns:
+            normalized[column] = pd.NA
     normalized["ticker"] = normalized["ticker"].fillna("").astype(str).str.upper().str.strip()
     for column in ("next_financial_report_date", "next_production_report_date"):
         normalized[column] = pd.to_datetime(normalized[column], errors="coerce").dt.date
+    normalized["notes"] = normalized["notes"].apply(_normalize_text)
+    for column in ("created_at_utc", "updated_at_utc"):
+        if column in normalized.columns:
+            normalized[column] = normalized[column].apply(_normalize_text)
     normalized = normalized[normalized["ticker"] != ""].copy()
     normalized = normalized.drop_duplicates(subset=["ticker"], keep="last")
-    return normalized.reset_index(drop=True)
+    return normalized[REPORTING_CALENDAR_COLUMNS].reset_index(drop=True)
+
+
+def _normalize_stock_notes(frame: pd.DataFrame) -> pd.DataFrame:
+    normalized = frame.copy()
+    for column in STOCK_NOTE_COLUMNS:
+        if column not in normalized.columns:
+            normalized[column] = pd.NA
+    normalized["note_id"] = pd.to_numeric(normalized["note_id"], errors="coerce").astype("Int64")
+    normalized["ticker"] = normalized["ticker"].fillna("").astype(str).str.upper().str.strip()
+    normalized["note_text"] = normalized["note_text"].apply(_normalize_text)
+    normalized["note_tag"] = normalized["note_tag"].apply(_normalize_text)
+    normalized["note_status"] = (
+        normalized["note_status"]
+        .fillna("OPEN")
+        .astype(str)
+        .str.upper()
+        .str.strip()
+    )
+    normalized["created_at_utc"] = normalized["created_at_utc"].apply(_normalize_text)
+    normalized["updated_at_utc"] = normalized["updated_at_utc"].apply(_normalize_text)
+    normalized = normalized[(normalized["ticker"] != "") & (normalized["note_text"].notna())].copy()
+    return normalized[STOCK_NOTE_COLUMNS].reset_index(drop=True)
 
 
 def _normalize_rate(value: object) -> float | None:
@@ -305,6 +257,13 @@ def _normalize_rate(value: object) -> float | None:
     if numeric > 1.0:
         return numeric / 100.0
     return numeric
+
+
+def _normalize_text(value: object) -> str | None:
+    if _is_missing(value):
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _is_missing(value: object) -> bool:

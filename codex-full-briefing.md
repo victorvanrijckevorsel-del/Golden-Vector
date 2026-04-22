@@ -1,5 +1,14 @@
 # Codex Full Briefing — Golden Vector + Screening Tool
 
+> Current-state note:
+> This briefing reflects the original broader design, including an active Combined backend and CSV-first manual Tool B inputs.
+> The current product/runtime model has changed.
+> Use these as the current source of truth:
+> - [docs/golden_vector_architecture_map.md](C:/Users/Emanuel/code/Golden-Vector/docs/golden_vector_architecture_map.md)
+> - [README.md](C:/Users/Emanuel/code/Golden-Vector/README.md)
+> - [reviews/codex/product_runtime_redesign_plan.md](C:/Users/Emanuel/code/Golden-Vector/reviews/codex/product_runtime_redesign_plan.md)
+>
+
 ## Document purpose
 
 This is your complete context pack. It contains everything you need to understand, build, and review the Golden Vector project. Read this before touching any code.

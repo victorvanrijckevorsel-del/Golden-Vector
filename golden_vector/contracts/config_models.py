@@ -97,10 +97,24 @@ class QaConfig(StrictConfigModel):
     minimum_equity_history_days: int = 252
     minimum_gold_history_days: int = 252
     minimum_fx_history_days: int = 252
+    max_fx_staleness_days: int = 5
     block_on_missing_currency_map: bool = True
     block_on_missing_fx_history: bool = True
     block_on_missing_gold_history: bool = True
+    block_on_stale_fx: bool = False
     warn_on_duplicate_rows: bool = True
+
+    @field_validator(
+        "minimum_equity_history_days",
+        "minimum_gold_history_days",
+        "minimum_fx_history_days",
+        "max_fx_staleness_days",
+    )
+    @classmethod
+    def positive_day_thresholds(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("QA day thresholds must be non-negative")
+        return value
 
 
 class DeltaBucketThresholds(StrictConfigModel):

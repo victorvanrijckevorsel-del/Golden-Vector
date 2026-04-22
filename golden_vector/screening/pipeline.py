@@ -15,7 +15,6 @@ from golden_vector.screening.layer2 import compute_layer2_metrics
 from golden_vector.screening.manual_data import (
     LoadedManualScreeningData,
     determine_manual_confidence,
-    ensure_manual_screening_templates,
     load_manual_screening_data,
     missing_required_manual_fields,
 )
@@ -91,22 +90,9 @@ def execute_tool_b_pipeline(
             if ticker.active and ticker.tool_b_enabled
         }
     )
-    missing_manual_files = [
-        file_name
-        for file_name in (
-            "company_inputs.csv",
-            "source_verification.csv",
-            "reporting_calendar.csv",
-        )
-        if not (paths.manual_screening_dir / file_name).exists()
-    ]
-    template_sync = ensure_manual_screening_templates(paths, tool_b_tickers)
-    loaded_manual_data = load_manual_screening_data(paths)
-    manual_data = LoadedManualScreeningData(
-        company_inputs=loaded_manual_data.company_inputs,
-        source_verification=loaded_manual_data.source_verification,
-        reporting_calendar=loaded_manual_data.reporting_calendar,
-        missing_files=missing_manual_files,
+    manual_data = load_manual_screening_data(
+        paths,
+        tickers=tool_b_tickers,
     )
     snapshots = _prepare_market_snapshots(
         normalized_market_snapshots,
@@ -259,21 +245,21 @@ def execute_tool_b_pipeline(
         "tool_b_output_row_count": len(tool_b_outputs.index),
         "tool_b_output_overall_status": overall_status,
         "tool_b_enabled_ticker_count": len(tool_b_tickers),
-        "manual_missing_file_count": len(missing_manual_files),
-        "manual_template_file_count": len(template_sync.created_files),
-        "manual_template_update_count": len(template_sync.updated_files),
+        "manual_store_path": str(manual_data.store_path),
+        "manual_store_created": manual_data.store_created,
+        "manual_seeded_ticker_count": len(manual_data.seeded_tickers),
+        "manual_csv_import_count": len(manual_data.imported_csv_files),
+        "manual_stock_note_count": len(manual_data.stock_notes.index),
         "missing_market_snapshot_row_count": int(merged["snapshot_date"].isna().sum()),
         "ranked_row_count": int(tool_b_outputs["tool_b_rank"].notna().sum()) if not tool_b_outputs.empty else 0,
         "incomplete_row_count": int((tool_b_outputs["screening_verdict"] == "INCOMPLETE").sum()) if not tool_b_outputs.empty else 0,
         "strong_candidate_row_count": int((tool_b_outputs["screening_verdict"] == "STRONG_CANDIDATE").sum()) if not tool_b_outputs.empty else 0,
         "watchlist_row_count": int((tool_b_outputs["screening_verdict"] == "WATCHLIST").sum()) if not tool_b_outputs.empty else 0,
     }
-    if missing_manual_files:
-        summary["manual_missing_files"] = missing_manual_files
-    if template_sync.created_files:
-        summary["manual_template_files_created"] = template_sync.created_files
-    if template_sync.updated_files:
-        summary["manual_template_files_updated"] = template_sync.updated_files
+    if manual_data.imported_csv_files:
+        summary["manual_csv_imported_files"] = manual_data.imported_csv_files
+    if manual_data.seeded_tickers:
+        summary["manual_seeded_tickers"] = manual_data.seeded_tickers
     if not tool_b_outputs.empty:
         summary["latest_output_as_of_date"] = str(tool_b_outputs["as_of_date"].max())
 

@@ -139,8 +139,8 @@ def standardize_market_snapshot(
         raise ValueError(f"No recent history returned for market snapshot: {ticker}")
 
     last_row = frame.iloc[-1]
-    snapshot_date = pd.to_datetime(last_row["Date"]).date()
-    share_price_local = float(last_row.get("Close"))
+    snapshot_date = _extract_snapshot_date(ticker, last_row)
+    share_price_local = _extract_share_price_local(ticker, last_row, fast_info)
     market_cap = _as_float(fast_info.get("marketCap") or fast_info.get("market_cap"))
     shares = _as_float(
         fast_info.get("shares")
@@ -181,9 +181,42 @@ def empty_market_snapshot_frame() -> pd.DataFrame:
 
 
 def _as_float(value: object) -> float | None:
-    if value is None:
+    if value is None or pd.isna(value):
         return None
     try:
-        return float(value)
+        numeric = float(value)
     except (TypeError, ValueError):
         return None
+    if pd.isna(numeric):
+        return None
+    return numeric
+
+
+def _extract_snapshot_date(ticker: str, row: pd.Series) -> object:
+    if "Date" not in row.index:
+        raise ValueError(f"Market snapshot history is missing Date for {ticker}")
+    snapshot_date = pd.to_datetime(row.get("Date"), errors="coerce")
+    if pd.isna(snapshot_date):
+        raise ValueError(f"Market snapshot history has an invalid Date for {ticker}")
+    return snapshot_date.date()
+
+
+def _extract_share_price_local(
+    ticker: str,
+    row: pd.Series,
+    fast_info: dict[str, object],
+) -> float:
+    candidates = [
+        row.get("Close"),
+        row.get("Adj Close"),
+        fast_info.get("lastPrice"),
+        fast_info.get("last_price"),
+        fast_info.get("currentPrice"),
+        fast_info.get("current_price"),
+        fast_info.get("regularMarketPrice"),
+    ]
+    for candidate in candidates:
+        numeric = _as_float(candidate)
+        if numeric is not None and numeric > 0:
+            return numeric
+    raise ValueError(f"Market snapshot has no valid positive share price for {ticker}")

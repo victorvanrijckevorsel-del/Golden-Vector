@@ -106,6 +106,46 @@ def test_standardize_market_snapshot_leaves_non_usd_conversion_for_later():
     assert snapshot["market_cap_usd"] is None
 
 
+def test_standardize_market_snapshot_falls_back_to_fast_info_price_when_close_is_missing():
+    frame = pd.DataFrame({"Date": ["2026-02-01"], "Close": [None], "Adj Close": [None]})
+
+    snapshot = standardize_market_snapshot(
+        ticker="NEM",
+        currency="USD",
+        frame=frame,
+        fast_info={"currentPrice": 61.5, "sharesOutstanding": 800_000_000.0},
+        source_run_id="run-1",
+    )
+
+    assert snapshot["share_price_local"] == 61.5
+
+
+def test_standardize_market_snapshot_rejects_invalid_share_price_cleanly():
+    frame = pd.DataFrame({"Date": ["2026-02-01"], "Close": [None]})
+
+    with pytest.raises(ValueError, match="no valid positive share price"):
+        standardize_market_snapshot(
+            ticker="NEM",
+            currency="USD",
+            frame=frame,
+            fast_info={},
+            source_run_id="run-1",
+        )
+
+
+def test_standardize_market_snapshot_rejects_missing_date_cleanly():
+    frame = pd.DataFrame({"Close": [60.0]})
+
+    with pytest.raises(ValueError, match="missing Date"):
+        standardize_market_snapshot(
+            ticker="NEM",
+            currency="USD",
+            frame=frame,
+            fast_info={},
+            source_run_id="run-1",
+        )
+
+
 def test_standardize_market_snapshot_rejects_empty_recent_history():
     with pytest.raises(ValueError, match="No recent history returned for market snapshot"):
         standardize_market_snapshot(

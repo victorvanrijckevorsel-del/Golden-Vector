@@ -123,6 +123,48 @@ def test_tool_a_pipeline_marks_rows_ineligible_when_too_few_eligible_horizons(tm
     assert row["coverage_summary"] == "FAIL"
 
 
+def test_tool_a_pipeline_keeps_scores_when_non_fail_core_horizon_is_not_officially_eligible(tmp_path):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(ProjectPaths.discover()).app
+    run_context = RunContext.start(
+        paths=paths,
+        command="tool-a",
+        parameters={},
+        config_hash="test-hash",
+    )
+    horizon_metrics = pd.DataFrame(
+        [
+            _metric_row(ticker="NEM", horizon_id="5D", gold_return=0.01, gold_delta=1.0),
+            _metric_row(ticker="NEM", horizon_id="10D", gold_return=0.02, gold_delta=1.1),
+            _metric_row(ticker="NEM", horizon_id="15D", gold_return=0.03, gold_delta=1.2),
+            _metric_row(ticker="NEM", horizon_id="1M", gold_return=0.04, gold_delta=1.3),
+            _metric_row(ticker="NEM", horizon_id="3M", gold_return=0.05, gold_delta=1.4),
+            _metric_row(
+                ticker="NEM",
+                horizon_id="6M",
+                gold_return=0.0,
+                gold_delta=0.0,
+                official_scoring_eligible=False,
+                coverage_flag="PASS",
+            ),
+        ]
+    )
+
+    result = execute_tool_a_profile_pipeline(
+        paths=paths,
+        app_config=app_config,
+        run_context=run_context,
+        horizon_metrics=horizon_metrics,
+    )
+
+    row = result.tool_a_outputs.iloc[0]
+    assert result.overall_status == "PASS"
+    assert row["coverage_summary"] == "PASS"
+    assert bool(row["score_eligible"]) is True
+    assert row["score_eligibility_reason"] == "OK"
+    assert pd.notna(row["tool_a_score"])
+
+
 def test_tool_a_pipeline_fails_cleanly_on_empty_horizon_metrics(tmp_path):
     paths = build_test_paths(tmp_path)
     app_config = load_app_config(ProjectPaths.discover()).app

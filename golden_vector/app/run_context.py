@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -14,6 +15,27 @@ from golden_vector.app.paths import ProjectPaths
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def to_jsonable(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            str(key): to_jsonable(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [to_jsonable(item) for item in value]
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    if value.__class__.__name__ in {"NAType", "NaTType"}:
+        return None
+    return value
 
 
 @dataclass
@@ -60,7 +82,10 @@ class RunContext:
 
     def write_json(self, file_name: str, payload: dict[str, Any]) -> Path:
         target = self.run_dir / file_name
-        target.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        target.write_text(
+            json.dumps(to_jsonable(payload), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
         self.record_artifact(target)
         return target
 
@@ -99,6 +124,6 @@ class RunContext:
             "notes": notes,
         }
         self.metadata_path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True),
+            json.dumps(to_jsonable(payload), indent=2, sort_keys=True),
             encoding="utf-8",
         )

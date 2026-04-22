@@ -1,8 +1,8 @@
 ticker,production_oz,aisc_usd_per_oz,cash_cost_usd_per_oz,royalty_rate,sustaining_capex_musd,da_musd,interest_expense_musd,tax_rate,reserve_life_years,net_debt_musd,ebitda_ltm_musd
-NEM,,,,,,,,,,,
-GOLD,,,,,,,,,,,
-AEM,,,,,,,,,,,
-KGC,,,,,,,,,,,
+NEM,5900000,1566,1180,3,1400,2500,200,28,22,500,11850
+GOLD,3075000,1855,1140,4,1000,1800,150,30,18,-2000,8280
+AEM,3400000,1475,940,2,600,1400,50,28,14,-500,6700
+KGC,2050000,1622,1100,4,350,600,50,25,10,-485,3200
 BTG,,,,,,,,,,,
 FNV,,,,,,,,,,,
 DPM.TO,,,,,,,,,,,

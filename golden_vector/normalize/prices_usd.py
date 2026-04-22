@@ -21,6 +21,7 @@ USD_EQUITY_COLUMNS = [
     "fx_rate_to_usd",
     "fx_source_date",
     "fx_source_symbol",
+    "fx_staleness_days",
     "open_usd",
     "high_usd",
     "low_usd",
@@ -38,6 +39,8 @@ USD_EQUITY_COLUMNS = [
 def normalize_equity_histories_to_usd(
     equity_histories: dict[str, pd.DataFrame],
     fx_histories: dict[str, pd.DataFrame],
+    *,
+    max_fx_staleness_days: int = 5,
 ) -> dict[str, pd.DataFrame]:
     normalized: dict[str, pd.DataFrame] = {}
     for ticker, frame in equity_histories.items():
@@ -45,12 +48,14 @@ def normalize_equity_histories_to_usd(
             normalized[ticker] = normalize_equity_history_to_usd(
                 frame=frame,
                 fx_history=pd.DataFrame(),
+                max_fx_staleness_days=max_fx_staleness_days,
             )
             continue
 
         normalized[ticker] = normalize_equity_history_to_usd(
             frame=frame,
             fx_history=fx_histories.get(_currency_from_equity_frame(frame), pd.DataFrame()),
+            max_fx_staleness_days=max_fx_staleness_days,
         )
     return normalized
 
@@ -58,6 +63,8 @@ def normalize_equity_histories_to_usd(
 def normalize_equity_history_to_usd(
     frame: pd.DataFrame,
     fx_history: pd.DataFrame,
+    *,
+    max_fx_staleness_days: int = 5,
 ) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(columns=USD_EQUITY_COLUMNS)
@@ -105,7 +112,14 @@ def normalize_equity_history_to_usd(
         normalized["return_basis_local"],
         normalized["fx_rate_to_usd"],
     )
-    normalized["normalization_status"] = normalized.apply(_equity_status, axis=1)
+    normalized["fx_staleness_days"] = _compute_fx_staleness_days(
+        normalized["date"],
+        normalized["fx_source_date"],
+    )
+    normalized["normalization_status"] = _equity_statuses(
+        normalized,
+        max_fx_staleness_days=max_fx_staleness_days,
+    )
 
     normalized["date"] = normalized["date"].dt.date
     normalized["fx_source_date"] = pd.to_datetime(normalized["fx_source_date"]).dt.date
@@ -131,16 +145,41 @@ def _currency_from_equity_frame(frame: pd.DataFrame) -> str:
     return currencies[0]
 
 
-def _equity_status(row: pd.Series) -> str:
-    if pd.isna(row.get("fx_rate_to_usd")):
-        return "MISSING_FX"
-    if _missing_or_non_positive(row.get("return_basis_local")):
-        return "MISSING_RETURN_BASIS"
-    return "OK"
+def _equity_statuses(
+    frame: pd.DataFrame,
+    *,
+    max_fx_staleness_days: int,
+) -> pd.Series:
+    statuses = pd.Series("OK", index=frame.index, dtype="object")
+    missing_fx_mask = frame["fx_rate_to_usd"].isna()
+    missing_return_basis_mask = frame["return_basis_local"].apply(_missing_or_non_positive)
+    stale_fx_mask = (
+        frame["fx_staleness_days"].notna()
+        & (pd.to_numeric(frame["fx_staleness_days"], errors="coerce") > float(max_fx_staleness_days))
+        & (~missing_fx_mask)
+    )
+
+    statuses.loc[missing_fx_mask] = "MISSING_FX"
+    statuses.loc[~missing_fx_mask & missing_return_basis_mask] = "MISSING_RETURN_BASIS"
+    statuses.loc[
+        ~missing_fx_mask
+        & ~missing_return_basis_mask
+        & stale_fx_mask
+    ] = "STALE_FX"
+    return statuses
 
 
 def _multiply_if_present(left: pd.Series, right: pd.Series) -> pd.Series:
     return pd.to_numeric(left, errors="coerce") * pd.to_numeric(right, errors="coerce")
+
+
+def _compute_fx_staleness_days(
+    observation_dates: pd.Series,
+    fx_source_dates: pd.Series,
+) -> pd.Series:
+    observation_ts = pd.to_datetime(observation_dates, errors="coerce")
+    fx_source_ts = pd.to_datetime(fx_source_dates, errors="coerce")
+    return (observation_ts - fx_source_ts).dt.days.astype("Int64")
 
 
 def _missing_or_non_positive(value: object) -> bool:

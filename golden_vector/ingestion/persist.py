@@ -59,6 +59,12 @@ def persist_foundation_outputs(
             paths.raw_market_snapshots_dir / f"market_snapshot_{run_context.run_id}.parquet",
         )
     )
+    written_paths.append(
+        _write_parquet(
+            market_snapshots,
+            paths.latest_raw_market_snapshots_path,
+        )
+    )
 
     fetch_status_frame = pd.DataFrame([record.model_dump() for record in fetch_statuses])
     written_paths.append(
@@ -67,12 +73,24 @@ def persist_foundation_outputs(
             paths.raw_status_dir / f"fetch_status_{run_context.run_id}.parquet",
         )
     )
+    written_paths.append(
+        _write_parquet(
+            fetch_status_frame,
+            paths.latest_fetch_status_path,
+        )
+    )
 
     qa_results_frame = pd.DataFrame([result.model_dump() for result in qa_results])
     written_paths.append(
         _write_parquet(
             qa_results_frame,
             paths.raw_status_dir / f"qa_results_{run_context.run_id}.parquet",
+        )
+    )
+    written_paths.append(
+        _write_parquet(
+            qa_results_frame,
+            paths.latest_raw_qa_results_path,
         )
     )
 
@@ -111,6 +129,18 @@ def persist_normalization_outputs(
             / f"market_snapshot_{run_context.run_id}.parquet",
         )
     )
+    written_paths.append(
+        _write_parquet(
+            normalized_market_snapshots,
+            run_context.run_dir / "snapshots" / "market_snapshots_usd.parquet",
+        )
+    )
+    written_paths.append(
+        _write_parquet(
+            normalized_market_snapshots,
+            paths.latest_normalized_market_snapshots_path,
+        )
+    )
 
     qa_results_frame = pd.DataFrame([result.model_dump() for result in qa_results])
     written_paths.append(
@@ -118,6 +148,12 @@ def persist_normalization_outputs(
             qa_results_frame,
             paths.intermediate_status_dir
             / f"normalization_qa_results_{run_context.run_id}.parquet",
+        )
+    )
+    written_paths.append(
+        _write_parquet(
+            qa_results_frame,
+            paths.latest_normalization_qa_results_path,
         )
     )
 
@@ -182,6 +218,14 @@ def persist_tool_a_outputs(
             latest_snapshot,
             paths.output_tool_a_dir / f"tool_a_latest_{run_context.run_id}.csv",
         ),
+        _write_parquet(
+            latest_snapshot,
+            paths.latest_tool_a_snapshot_parquet_path,
+        ),
+        _write_csv(
+            latest_snapshot,
+            paths.latest_tool_a_snapshot_csv_path,
+        ),
     ]
 
     for path in written_paths:
@@ -215,6 +259,14 @@ def persist_tool_b_outputs(
         _write_csv(
             latest_snapshot,
             paths.output_tool_b_dir / f"tool_b_latest_{run_context.run_id}.csv",
+        ),
+        _write_parquet(
+            latest_snapshot,
+            paths.latest_tool_b_snapshot_parquet_path,
+        ),
+        _write_csv(
+            latest_snapshot,
+            paths.latest_tool_b_snapshot_csv_path,
         ),
     ]
 

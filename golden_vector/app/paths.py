@@ -79,6 +79,9 @@ class ProjectPaths:
     def config_path(self, file_name: str) -> Path:
         return self.config_dir / file_name
 
+    def resolve_repo_relative(self, value: str) -> Path:
+        return self.repo_root / Path(value)
+
     @property
     def raw_equities_dir(self) -> Path:
         return self.raw_dir / "equities"
@@ -100,8 +103,24 @@ class ProjectPaths:
         return self.raw_dir / "status"
 
     @property
+    def latest_raw_market_snapshots_path(self) -> Path:
+        return self.raw_market_snapshots_dir / "market_snapshot_latest.parquet"
+
+    @property
+    def latest_fetch_status_path(self) -> Path:
+        return self.raw_status_dir / "fetch_status_latest.parquet"
+
+    @property
+    def latest_raw_qa_results_path(self) -> Path:
+        return self.raw_status_dir / "qa_results_latest.parquet"
+
+    @property
     def manual_screening_dir(self) -> Path:
         return self.manual_dir / "screening"
+
+    @property
+    def manual_screening_store_path(self) -> Path:
+        return self.manual_screening_dir / "manual_screening.sqlite3"
 
     @property
     def intermediate_usd_equities_dir(self) -> Path:
@@ -128,12 +147,40 @@ class ProjectPaths:
         return self.intermediate_dir / "status"
 
     @property
+    def latest_normalized_market_snapshots_path(self) -> Path:
+        return self.intermediate_market_snapshots_dir / "market_snapshot_latest.parquet"
+
+    @property
+    def latest_normalization_qa_results_path(self) -> Path:
+        return self.intermediate_status_dir / "normalization_qa_results_latest.parquet"
+
+    @property
+    def latest_foundation_manifest_path(self) -> Path:
+        return self.intermediate_status_dir / "latest_foundation_manifest.json"
+
+    @property
     def output_tool_a_dir(self) -> Path:
         return self.output_dir / "tool_a"
 
     @property
+    def latest_tool_a_snapshot_parquet_path(self) -> Path:
+        return self.output_tool_a_dir / "tool_a_latest.parquet"
+
+    @property
+    def latest_tool_a_snapshot_csv_path(self) -> Path:
+        return self.output_tool_a_dir / "tool_a_latest.csv"
+
+    @property
     def output_tool_b_dir(self) -> Path:
         return self.output_dir / "tool_b"
+
+    @property
+    def latest_tool_b_snapshot_parquet_path(self) -> Path:
+        return self.output_tool_b_dir / "tool_b_latest.parquet"
+
+    @property
+    def latest_tool_b_snapshot_csv_path(self) -> Path:
+        return self.output_tool_b_dir / "tool_b_latest.csv"
 
     @property
     def output_combined_dir(self) -> Path:

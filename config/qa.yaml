@@ -3,7 +3,9 @@ near_zero_gold_return_threshold: 0.005
 minimum_equity_history_days: 252
 minimum_gold_history_days: 252
 minimum_fx_history_days: 252
+max_fx_staleness_days: 5
 block_on_missing_currency_map: true
 block_on_missing_fx_history: true
 block_on_missing_gold_history: true
+block_on_stale_fx: false
 warn_on_duplicate_rows: true
