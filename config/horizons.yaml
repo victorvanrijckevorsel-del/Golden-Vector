@@ -1,0 +1,20 @@
+version: 1
+core_horizons:
+  - 5D
+  - 10D
+  - 15D
+  - 1M
+  - 3M
+  - 6M
+  - 12M
+  - 18M
+  - 24M
+  - 30M
+  - 3Y
+custom_validation:
+  allowed_units:
+    - D
+    - M
+    - Y
+  min_value: 1
+  max_value: 120

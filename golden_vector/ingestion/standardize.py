@@ -1,0 +1,189 @@
+"""Standardize Yahoo Finance payloads into canonical raw tables."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+import pandas as pd
+
+from golden_vector.contracts.data_models import MarketSnapshot
+
+
+def fetched_at_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def standardize_equity_history(
+    ticker: str,
+    exchange: str | None,
+    currency: str,
+    source_symbol: str,
+    frame: pd.DataFrame,
+    fetched_at: datetime,
+) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(
+            columns=[
+                "ticker",
+                "date",
+                "open_local",
+                "high_local",
+                "low_local",
+                "close_local",
+                "adj_close_local",
+                "volume",
+                "currency",
+                "exchange",
+                "source",
+                "source_symbol",
+                "fetched_at_utc",
+            ]
+        )
+
+    standardized = pd.DataFrame(
+        {
+            "ticker": ticker,
+            "date": pd.to_datetime(frame["Date"]).dt.date,
+            "open_local": frame.get("Open"),
+            "high_local": frame.get("High"),
+            "low_local": frame.get("Low"),
+            "close_local": frame.get("Close"),
+            "adj_close_local": frame.get("Adj Close"),
+            "volume": frame.get("Volume"),
+            "currency": currency,
+            "exchange": exchange,
+            "source": "yfinance",
+            "source_symbol": source_symbol,
+            "fetched_at_utc": fetched_at,
+        }
+    )
+    return standardized
+
+
+def standardize_fx_history(
+    base_currency: str,
+    source_symbol: str,
+    frame: pd.DataFrame,
+    fetched_at: datetime,
+) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(
+            columns=[
+                "base_currency",
+                "quote_currency",
+                "date",
+                "fx_pair",
+                "fx_rate_to_usd",
+                "source",
+                "source_symbol",
+                "fetched_at_utc",
+            ]
+        )
+
+    standardized = pd.DataFrame(
+        {
+            "base_currency": base_currency,
+            "quote_currency": "USD",
+            "date": pd.to_datetime(frame["Date"]).dt.date,
+            "fx_pair": f"{base_currency}USD",
+            "fx_rate_to_usd": frame.get("Close"),
+            "source": "yfinance",
+            "source_symbol": source_symbol,
+            "fetched_at_utc": fetched_at,
+        }
+    )
+    return standardized
+
+
+def standardize_gold_history(
+    gold_symbol: str,
+    source_symbol: str,
+    frame: pd.DataFrame,
+    fetched_at: datetime,
+) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(
+            columns=[
+                "date",
+                "gold_symbol",
+                "close_usd",
+                "adj_close_usd",
+                "source",
+                "source_symbol",
+                "fetched_at_utc",
+            ]
+        )
+
+    standardized = pd.DataFrame(
+        {
+            "date": pd.to_datetime(frame["Date"]).dt.date,
+            "gold_symbol": gold_symbol,
+            "close_usd": frame.get("Close"),
+            "adj_close_usd": frame.get("Adj Close"),
+            "source": "yfinance",
+            "source_symbol": source_symbol,
+            "fetched_at_utc": fetched_at,
+        }
+    )
+    return standardized
+
+
+def standardize_market_snapshot(
+    ticker: str,
+    currency: str,
+    frame: pd.DataFrame,
+    fast_info: dict[str, object],
+    source_run_id: str,
+) -> dict[str, object]:
+    if frame.empty:
+        raise ValueError(f"No recent history returned for market snapshot: {ticker}")
+
+    last_row = frame.iloc[-1]
+    snapshot_date = pd.to_datetime(last_row["Date"]).date()
+    share_price_local = float(last_row.get("Close"))
+    market_cap = _as_float(fast_info.get("marketCap") or fast_info.get("market_cap"))
+    shares = _as_float(
+        fast_info.get("shares")
+        or fast_info.get("sharesOutstanding")
+        or fast_info.get("shares_outstanding")
+    )
+
+    snapshot = MarketSnapshot(
+        ticker=ticker,
+        snapshot_date=snapshot_date,
+        share_price_local=share_price_local,
+        currency=currency,
+        fx_rate_to_usd=1.0 if currency == "USD" else None,
+        share_price_usd=share_price_local if currency == "USD" else None,
+        market_cap_usd=market_cap if currency == "USD" else None,
+        shares_outstanding=shares,
+        source="yfinance",
+        source_run_id=source_run_id,
+    )
+    return snapshot.model_dump()
+
+
+def empty_market_snapshot_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "ticker",
+            "snapshot_date",
+            "share_price_local",
+            "currency",
+            "fx_rate_to_usd",
+            "share_price_usd",
+            "market_cap_usd",
+            "shares_outstanding",
+            "source",
+            "source_run_id",
+        ]
+    )
+
+
+def _as_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

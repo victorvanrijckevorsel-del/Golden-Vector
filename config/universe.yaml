@@ -1,0 +1,66 @@
+version: 1
+tickers:
+  - ticker: NEM
+    company: Newmont Corporation
+    exchange: NYSE
+    currency: USD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: GOLD
+    company: Barrick Gold Corporation
+    exchange: NYSE
+    currency: USD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: AEM
+    company: Agnico Eagle Mines Limited
+    exchange: NYSE
+    currency: USD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: KGC
+    company: Kinross Gold Corporation
+    exchange: NYSE
+    currency: USD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: BTG
+    company: B2Gold Corp.
+    exchange: NYSE AMERICAN
+    currency: USD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: FNV
+    company: Franco-Nevada Corporation
+    exchange: NYSE
+    currency: USD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: DPM.TO
+    company: Dundee Precious Metals Inc.
+    exchange: TSX
+    currency: CAD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: FRES.L
+    company: Fresnillo plc
+    exchange: LSE
+    currency: GBP
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true

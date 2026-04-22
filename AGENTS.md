@@ -1,51 +1,53 @@
-# Claude working rules for this repo
+# Codex working rules for this repo
 
 ## About the user
 Emanuel is a beginner founder. Explain decisions in plain English, avoid jargon. He learns fast but prefers understanding WHY before jumping into implementation. He values low-interruption execution — do the work, show results, don't over-ask. He expects structured output (tables, summaries, test results). Git user is Victor Van Rijckevorsel.
 
 ## Execution mode
-Use low-interruption execution mode.
+Use low-interruption execution mode. Work continuously — do NOT ask for permission on every file change. Just do the work and show results.
 
-## Pre-approved actions
+## Pre-approved actions — do ALL of these without asking
 All of the following are approved without prompting. Never ask for confirmation on these:
 
 ### File operations
-- Read/search files via any method (Read tool, Grep, Glob, `cat`, `head`, `tail`)
-- `ls`, `mkdir`, `rm` for temp files (`/tmp/*`), `echo`, `wc`
+- Create, read, edit, and delete any source code file (`.py`, `.yaml`, `.yml`, `.json`, `.toml`, `.cfg`, `.txt`, `.md`)
+- Create new directories anywhere in the repo
+- Read/inspect data files (CSV, Parquet, Excel)
+- `ls`, `mkdir`, `rm` for temp files
 
 ### Dev workflow
 - Run Python scripts (`python main.py`, `python -m pytest`)
 - Run type checks (`mypy`, `pyright`)
 - Run linting (`ruff`, `flake8`)
 - Activate/use virtual environment
-- Read/inspect data files (CSV, Parquet, Excel)
+- Install packages listed in `requirements.txt`
 
 ### Git (on feature branch only)
 - `git status`, `git diff`, `git log`, `git branch`, `git show`, `git checkout -b`
 - `git add`, `git commit`, `git push`
 
 ### General rule
-- Any read-only or non-destructive bash command is pre-approved. Do not prompt for it.
+- Any read-only or non-destructive bash command is pre-approved
+- Creating or editing source code files is pre-approved — do not ask for each file
+- If a change is obviously correct, safe, and improves the code — proceed directly
 
 Batch related safe commands into one block per step.
 
-## Ask before risky actions
+## Ask before risky actions ONLY
+Only ask for confirmation on these specific actions:
 - Deleting data files or outputs
 - `git reset --hard`, force-push, rebase
 - Changes outside this repo
 - Secrets/API key config changes
-- Installing new dependencies (`pip install` beyond what's in requirements.txt)
+- Installing new dependencies NOT in requirements.txt
 - Any action that calls external paid APIs (e.g., fetching live market data)
 
-When asking for approval, always include a short plain-English explanation of:
-1. What the command does
-2. Why it's needed
-3. Any potential risks or downsides
+Everything else: just do it.
 
 ## Workflow
 1. Brief plan
-2. Run grouped safe commands
-3. Brief result + next grouped step
+2. Execute — create files, write code, run tests. Do not pause between files to ask.
+3. Brief result + next step
 
 ## Git merge workflow (follow every time, automatically)
 When a milestone is ready to ship:
@@ -56,35 +58,22 @@ When a milestone is ready to ship:
 5. Switch back to `dev-vic` (recreate from `main`) to continue working
 Do this automatically at each milestone — no need to ask.
 
-## Safe changes — proceed without asking
-- If a change is obviously correct, safe, and improves the code — proceed directly without asking.
-- Examples: fixing typos, improving test assertions, correcting config inconsistencies.
-- This applies to any low-risk improvement where you are confident the user would approve.
-
 ## Fix bugs immediately
-When a bug or code smell is identified, fix it now unless there's a concrete reason to defer (e.g., depends on unbuilt code). "It works for now" is NOT a valid reason to defer.
+When a bug or code smell is identified, fix it now unless there's a concrete reason to defer. "It works for now" is NOT a valid reason to defer.
 
-## Search and display rules
-- Show ALL matching results — never limit or hide with "+X more"
-- Use scrolling or pagination for long lists, not truncation
-- Never silently hide results
+## Codex role
+You are an implementation agent. You build features, write code, and review code. You work alongside Claude Code.
 
-## Codex collaboration workflow
-Claude Code and Codex are both implementation agents:
-
-### Roles
-- **Claude Code** = implementation agent (builds on `dev-vic`)
-- **Codex** = implementation agent (builds features, writes code, also reviews)
-
-### How they work together
+### How you work together
 - Both agents can build features and write code
 - Either agent can review the other's work (reviews go in `reviews/codex/`)
 - When reviewing: read the code, write findings, then fix everything
 - Coordinate via milestone handoffs in `reviews/codex/milestones/`
 
-### Parallel review rules
-- When both agents review the same code, merge findings into a comparison table, then fix
-- Only exception to "don't change code while reviewing": code literally crashes the app
+## Key documentation — read these first
+1. `CLAUDE.md` — shared behavioral rules
+2. `claude-python-rebuild-spec-gold-v1.md` — full implementation spec for Golden Vector
+3. `codex-full-briefing.md` — complete context for both tools, architecture decisions, integration plan
 
 ## Golden Vector hard rules (from the spec)
 1. Do not implement analytics on mixed currencies without explicit normalization
@@ -98,9 +87,4 @@ Claude Code and Codex are both implementation agents:
 - Direct feature commits to `main` (always work on `dev-vic`, merge via the workflow above)
 - Skip data quality checks to rush analytics
 - Mix currencies without explicit conversion
-
-## Session start behavior
-At the start of each new Claude session, confirm:
-- Current branch
-- `git status`
-- That these CLAUDE.md rules will be followed
+- Ask for permission on routine file creation/editing — just do the work

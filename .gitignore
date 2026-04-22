@@ -6,4 +6,13 @@ __pycache__/
 dist/
 build/
 .vscode/
+.pytest_cache/
 *.csv
+*.log
+*.parquet
+data/raw/
+data/intermediate/
+data/output/
+data/runs/
+!data/manual/
+!data/manual/**/*.csv

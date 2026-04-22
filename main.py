@@ -1,9 +1,7 @@
-"""Golden Vector — gold stock buy/sell signal tool."""
+"""Golden Vector CLI entry point."""
 
-
-def main():
-    print("Golden Vector")
+from golden_vector.cli import main
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

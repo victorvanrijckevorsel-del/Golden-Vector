@@ -1,0 +1,19 @@
+version: 1
+minimum_core_horizons_for_scoring: 5
+allow_warn_coverage_for_scoring: false
+delta_buckets:
+  low_max: 0.75
+  moderate_max: 1.5
+stability_thresholds:
+  weak_max: 0.4
+  strong_min: 0.7
+gamma_thresholds:
+  negative_max: -0.25
+  positive_min: 0.25
+weights:
+  core_delta: 0.5
+  stability: 0.3
+  gamma_proxy: 0.2
+combined_verdict_thresholds:
+  high_conviction_min_tool_a_score: 75.0
+  dual_pass_min_tool_a_score: 60.0

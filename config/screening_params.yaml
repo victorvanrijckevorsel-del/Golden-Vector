@@ -1,0 +1,49 @@
+version: 1
+gold_price_scenarios:
+  - 3000
+  - 3500
+  - 4000
+  - 4500
+  - 5000
+layer1_thresholds:
+  aisc_max: 1850
+  margin_min: 0.5
+  fcf_yield_min: 0.15
+  reserve_life_min: 6
+  leverage_max: 2.5
+verdict_thresholds:
+  strong_candidate_forward_pe_max: 8
+  watchlist_forward_pe_max: 10
+jurisdiction_discounts:
+  tier_1: 0.0
+  tier_2: 0.15
+  tier_3: 0.3
+peer_benchmarks:
+  large:
+    pe_2026: 16
+    pe_2011_peak: 28.5
+    evebitda_2026: 8
+    evebitda_2011: 14
+    fcf_yield_2026: 0.05
+    fcf_yield_2011: 0.02
+  mid:
+    pe_2026: 13
+    pe_2011_peak: 23
+    evebitda_2026: 6.5
+    evebitda_2011: 12
+    fcf_yield_2026: 0.075
+    fcf_yield_2011: 0.035
+  small:
+    pe_2026: 11.5
+    pe_2011_peak: 20
+    evebitda_2026: 5.5
+    evebitda_2011: 10
+    fcf_yield_2026: 0.1
+    fcf_yield_2011: 0.045
+  micro:
+    pe_2026: 10
+    pe_2011_peak: 18
+    evebitda_2026: 4.5
+    evebitda_2011: 9
+    fcf_yield_2026: 0.12
+    fcf_yield_2011: 0.05

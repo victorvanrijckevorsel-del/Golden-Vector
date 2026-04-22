@@ -1,0 +1,9 @@
+version: 1
+near_zero_gold_return_threshold: 0.005
+minimum_equity_history_days: 252
+minimum_gold_history_days: 252
+minimum_fx_history_days: 252
+block_on_missing_currency_map: true
+block_on_missing_fx_history: true
+block_on_missing_gold_history: true
+warn_on_duplicate_rows: true
