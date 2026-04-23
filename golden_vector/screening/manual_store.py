@@ -134,6 +134,10 @@ def load_store_tables(paths: ProjectPaths) -> tuple[pd.DataFrame, pd.DataFrame, 
         )
 
     with _connect(store_path) as connection:
+        # Apply any pending schema migrations (e.g. timestamp columns added in
+        # later versions) before reading. _create_schema is idempotent.
+        _create_schema(connection)
+        connection.commit()
         company_inputs = pd.read_sql_query(
             """
             SELECT ticker, production_oz, aisc_usd_per_oz, cash_cost_usd_per_oz,
@@ -255,6 +259,12 @@ def upsert_reporting_calendar(
         connection.commit()
 
 
+MAX_NOTE_TEXT_LENGTH = 5_000
+MAX_NOTE_TAG_LENGTH = 100
+MAX_SOURCE_URL_LENGTH = 2_048
+MAX_VERIFICATION_NOTES_LENGTH = 2_000
+
+
 def upsert_source_verification(
     paths: ProjectPaths,
     *,
@@ -282,9 +292,21 @@ def upsert_source_verification(
     if "source_date" in values:
         normalized_values["source_date"] = _normalize_date_value(values["source_date"])
     if "source_url" in values:
-        normalized_values["source_url"] = _normalize_text_value(values["source_url"])
+        url_value = _normalize_text_value(values["source_url"])
+        if url_value is not None and len(url_value) > MAX_SOURCE_URL_LENGTH:
+            raise ValueError(
+                f"source_url is too long ({len(url_value)} chars); "
+                f"limit is {MAX_SOURCE_URL_LENGTH}."
+            )
+        normalized_values["source_url"] = url_value
     if "notes" in values:
-        normalized_values["notes"] = _normalize_text_value(values["notes"])
+        notes_value = _normalize_text_value(values["notes"])
+        if notes_value is not None and len(notes_value) > MAX_VERIFICATION_NOTES_LENGTH:
+            raise ValueError(
+                f"verification notes are too long ({len(notes_value)} chars); "
+                f"limit is {MAX_VERIFICATION_NOTES_LENGTH}."
+            )
+        normalized_values["notes"] = notes_value
 
     with _connect(paths.manual_screening_store_path) as connection:
         _create_schema(connection)
@@ -355,10 +377,21 @@ def add_stock_note(
     normalized_note_text = str(note_text).strip()
     if not normalized_note_text:
         raise ValueError("note_text is required.")
+    if len(normalized_note_text) > MAX_NOTE_TEXT_LENGTH:
+        raise ValueError(
+            f"note_text is too long ({len(normalized_note_text)} chars); "
+            f"limit is {MAX_NOTE_TEXT_LENGTH}."
+        )
 
     normalized_status = str(note_status).strip().upper()
     if normalized_status not in {"OPEN", "DONE", "WATCH"}:
         raise ValueError("note_status must be OPEN, DONE, or WATCH.")
+    normalized_tag = _normalize_text_value(note_tag)
+    if normalized_tag is not None and len(normalized_tag) > MAX_NOTE_TAG_LENGTH:
+        raise ValueError(
+            f"note_tag is too long ({len(normalized_tag)} chars); "
+            f"limit is {MAX_NOTE_TAG_LENGTH}."
+        )
 
     now_utc = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     with _connect(paths.manual_screening_store_path) as connection:
@@ -379,7 +412,7 @@ def add_stock_note(
             (
                 normalized_ticker,
                 normalized_note_text,
-                _normalize_text_value(note_tag),
+                normalized_tag,
                 normalized_status,
                 now_utc,
                 now_utc,
@@ -846,7 +879,14 @@ def _normalize_date_value(value: object) -> str | None:
     normalized = _normalize_text_value(value)
     if normalized is None:
         return None
-    return str(pd.to_datetime(normalized, errors="raise").date())
+    try:
+        return str(pd.to_datetime(normalized, errors="raise").date())
+    except Exception as exc:
+        # Wrap pandas' raw error text (e.g. "month must be in 1..12, not 13") in a
+        # user-facing message that names the format we expect.
+        raise ValueError(
+            f"Date must be a real YYYY-MM-DD value (got {normalized!r})."
+        ) from exc
 
 
 def _normalize_text_value(value: object) -> str | None:

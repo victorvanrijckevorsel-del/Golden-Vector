@@ -122,6 +122,20 @@ class DeltaBucketThresholds(StrictConfigModel):
     moderate_max: float = 1.5
 
 
+class StructuralDeltaBands(StrictConfigModel):
+    low_max: float = 0.75
+    moderate_max: float = 1.5
+    high_min: float = 2.0
+
+    @model_validator(mode="after")
+    def ordered_thresholds(self) -> "StructuralDeltaBands":
+        if not (self.low_max < self.moderate_max < self.high_min):
+            raise ValueError(
+                "structural delta bands must satisfy low_max < moderate_max < high_min"
+            )
+        return self
+
+
 class StabilityThresholds(StrictConfigModel):
     weak_max: float = 0.4
     strong_min: float = 0.7
@@ -144,17 +158,123 @@ class GammaThresholds(StrictConfigModel):
         return self
 
 
+class AsymmetryThresholds(StrictConfigModel):
+    weak_max: float = 0.9
+    strong_min: float = 1.1
+
+    @model_validator(mode="after")
+    def ordered_thresholds(self) -> "AsymmetryThresholds":
+        if self.strong_min <= self.weak_max:
+            raise ValueError(
+                "asymmetry thresholds must satisfy weak_max < strong_min"
+            )
+        return self
+
+
+class ConfidenceThresholds(StrictConfigModel):
+    low_max: float = 0.5
+    high_min: float = 0.8
+    minimum_rankable: float = 0.45
+    fit_warn_r_squared: float = 0.15
+    fit_good_r_squared: float = 0.3
+    minimum_observations_6m: int = 20
+    minimum_observations_12m: int = 40
+    minimum_observations_3y: int = 120
+    stability_floor: float = 0.25
+
+    @model_validator(mode="after")
+    def ordered_thresholds(self) -> "ConfidenceThresholds":
+        if not (0.0 <= self.low_max < self.high_min <= 1.0):
+            raise ValueError(
+                "confidence thresholds must satisfy 0 <= low_max < high_min <= 1"
+            )
+        if not (0.0 <= self.minimum_rankable <= 1.0):
+            raise ValueError("minimum_rankable must be between 0 and 1")
+        if not (0.0 <= self.fit_warn_r_squared < self.fit_good_r_squared <= 1.0):
+            raise ValueError(
+                "fit R-squared thresholds must satisfy "
+                "0 <= fit_warn_r_squared < fit_good_r_squared <= 1"
+            )
+        if min(
+            self.minimum_observations_6m,
+            self.minimum_observations_12m,
+            self.minimum_observations_3y,
+        ) <= 0:
+            raise ValueError("minimum observations must all be positive")
+        if self.stability_floor <= 0:
+            raise ValueError("stability_floor must be positive")
+        return self
+
+    def minimum_observations_for_window(self, window_id: str) -> int:
+        normalized = str(window_id).strip().upper()
+        mapping = {
+            "6M": self.minimum_observations_6m,
+            "12M": self.minimum_observations_12m,
+            "3Y": self.minimum_observations_3y,
+        }
+        if normalized not in mapping:
+            raise ValueError(f"Unsupported structural window: {window_id}")
+        return mapping[normalized]
+
+    def minimum_regime_observations_for_window(self, window_id: str) -> int:
+        minimum_observations = self.minimum_observations_for_window(window_id)
+        return max(8, minimum_observations // 3)
+
+
+class VolatilityDiagnosticBands(StrictConfigModel):
+    low_residual_volatility_max: float = 0.35
+    high_residual_volatility_min: float = 0.6
+    high_downside_volatility_min: float = 0.5
+    high_total_volatility_min: float = 0.75
+
+    @model_validator(mode="after")
+    def ordered_thresholds(self) -> "VolatilityDiagnosticBands":
+        if self.high_residual_volatility_min <= self.low_residual_volatility_max:
+            raise ValueError(
+                "volatility bands must satisfy "
+                "low_residual_volatility_max < high_residual_volatility_min"
+            )
+        if min(
+            self.high_downside_volatility_min,
+            self.high_total_volatility_min,
+        ) <= 0:
+            raise ValueError("volatility thresholds must be positive")
+        return self
+
+
 class ScoreWeights(StrictConfigModel):
-    core_delta: float = 0.5
-    stability: float = 0.3
-    gamma_proxy: float = 0.2
+    structural_delta: float = 0.4
+    structural_gamma: float = 0.25
+    asymmetry: float = 0.15
+    confidence: float = 0.2
 
     @model_validator(mode="after")
     def weights_sum_to_one(self) -> "ScoreWeights":
-        total = self.core_delta + self.stability + self.gamma_proxy
+        total = (
+            self.structural_delta
+            + self.structural_gamma
+            + self.asymmetry
+            + self.confidence
+        )
         if abs(total - 1.0) > 1e-9:
             raise ValueError("score weights must sum to 1.0")
         return self
+
+
+class StructuralWindowWeights(StrictConfigModel):
+    windows: dict[str, float] = Field(
+        default_factory=lambda: {"6M": 1.0, "12M": 1.0, "3Y": 1.0}
+    )
+
+    @field_validator("windows")
+    @classmethod
+    def valid_window_weights(cls, value: dict[str, float]) -> dict[str, float]:
+        normalized = {str(key).strip().upper(): float(weight) for key, weight in value.items()}
+        if set(normalized) != {"6M", "12M", "3Y"}:
+            raise ValueError("structural window weights must contain exactly: 6M, 12M, 3Y")
+        if any(weight <= 0 for weight in normalized.values()):
+            raise ValueError("structural window weights must all be positive")
+        return normalized
 
 
 class CombinedVerdictThresholds(StrictConfigModel):
@@ -172,16 +292,84 @@ class CombinedVerdictThresholds(StrictConfigModel):
 
 
 class ScoringConfig(StrictConfigModel):
-    version: int = 1
-    minimum_core_horizons_for_scoring: int = 5
-    allow_warn_coverage_for_scoring: bool = False
-    delta_buckets: DeltaBucketThresholds = Field(default_factory=DeltaBucketThresholds)
-    stability_thresholds: StabilityThresholds = Field(default_factory=StabilityThresholds)
+    version: int = 2
+    structural_windows: list[str] = Field(
+        default_factory=lambda: ["6M", "12M", "3Y"],
+        min_length=3,
+        max_length=3,
+    )
+    delta_bands: StructuralDeltaBands = Field(default_factory=StructuralDeltaBands)
     gamma_thresholds: GammaThresholds = Field(default_factory=GammaThresholds)
+    asymmetry_thresholds: AsymmetryThresholds = Field(
+        default_factory=AsymmetryThresholds
+    )
+    confidence_thresholds: ConfidenceThresholds = Field(
+        default_factory=ConfidenceThresholds
+    )
+    volatility_bands: VolatilityDiagnosticBands = Field(
+        default_factory=VolatilityDiagnosticBands
+    )
+    structural_window_weights: StructuralWindowWeights = Field(
+        default_factory=StructuralWindowWeights
+    )
+    structural_anchor_window: str = "12M"
+    minimum_rankable_structural_delta: float = 1.0
+    blocked_normalization_statuses: list[str] = Field(
+        default_factory=lambda: ["MISSING_RETURN_BASIS", "MISSING_FX", "STALE_FX"]
+    )
     weights: ScoreWeights = Field(default_factory=ScoreWeights)
     combined_verdict_thresholds: CombinedVerdictThresholds = Field(
         default_factory=CombinedVerdictThresholds
     )
+
+    @field_validator("structural_windows")
+    @classmethod
+    def valid_structural_windows(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip().upper() for value in values]
+        if normalized != ["6M", "12M", "3Y"]:
+            raise ValueError(
+                "structural_windows must be exactly: 6M, 12M, 3Y"
+            )
+        return normalized
+
+    @field_validator("structural_anchor_window")
+    @classmethod
+    def valid_anchor_window(cls, value: str) -> str:
+        normalized = str(value).strip().upper()
+        if normalized not in {"6M", "12M", "3Y"}:
+            raise ValueError("structural_anchor_window must be one of: 6M, 12M, 3Y")
+        return normalized
+
+    @field_validator("blocked_normalization_statuses")
+    @classmethod
+    def valid_blocked_statuses(cls, values: list[str]) -> list[str]:
+        normalized = [str(value).strip().upper() for value in values if str(value).strip()]
+        allowed = {"MISSING_RETURN_BASIS", "MISSING_FX", "STALE_FX"}
+        invalid = sorted(set(normalized).difference(allowed))
+        if invalid:
+            raise ValueError(
+                "blocked_normalization_statuses contains unsupported values: "
+                + ", ".join(invalid)
+            )
+        return normalized
+
+    @field_validator("minimum_rankable_structural_delta")
+    @classmethod
+    def positive_rankable_delta(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("minimum_rankable_structural_delta must be positive")
+        return float(value)
+
+    def structural_weight_map(self) -> dict[str, float]:
+        return dict(self.structural_window_weights.windows)
+
+    def anchor_window_preference(self) -> list[str]:
+        canonical_order = ["12M", "3Y", "6M"]
+        anchor = self.structural_anchor_window
+        return [anchor] + [window for window in canonical_order if window != anchor]
+
+    def blocked_normalization_status_set(self) -> set[str]:
+        return {status.upper() for status in self.blocked_normalization_statuses}
 
 
 class Layer1Thresholds(StrictConfigModel):
@@ -214,6 +402,7 @@ class JurisdictionDiscounts(StrictConfigModel):
 
 class ScreeningParamsConfig(StrictConfigModel):
     version: int = 1
+    default_gold_price_assumption: float | None = None
     gold_price_scenarios: list[float] = Field(min_length=1)
     layer1_thresholds: Layer1Thresholds = Field(default_factory=Layer1Thresholds)
     verdict_thresholds: VerdictThresholds = Field(default_factory=VerdictThresholds)
@@ -228,6 +417,28 @@ class ScreeningParamsConfig(StrictConfigModel):
         if len(set(values)) != len(values):
             raise ValueError("gold_price_scenarios must be unique")
         return values
+
+    @field_validator("default_gold_price_assumption")
+    @classmethod
+    def valid_default_gold_price(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        if value <= 0:
+            raise ValueError("default_gold_price_assumption must be positive")
+        return float(value)
+
+    def resolve_gold_price(self, override: float | None = None) -> float:
+        """Pick the gold price for a Tool B run.
+
+        Order of preference: explicit CLI override → config default → first
+        configured scenario. The last fallback ensures Tool B can always run
+        even if the operator hasn't set a default.
+        """
+        if override is not None:
+            return float(override)
+        if self.default_gold_price_assumption is not None:
+            return float(self.default_gold_price_assumption)
+        return float(self.gold_price_scenarios[0])
 
     @field_validator("peer_benchmarks")
     @classmethod

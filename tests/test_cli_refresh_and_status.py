@@ -1,0 +1,292 @@
+"""Tests for the new operational `refresh` and `status` CLI commands.
+
+These cover the daily-use ergonomics layer: collapsing the three-command
+update-data → tool-a → tool-b sequence into one, and surfacing pipeline state
+without requiring the user to inspect three different files.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import date
+
+import pandas as pd
+
+from golden_vector.app.config import load_app_config
+from golden_vector.app.paths import ProjectPaths
+from golden_vector.app.run_context import RunContext
+from golden_vector.cli import run_refresh, run_status, run_tool_b
+from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
+from golden_vector.screening.manual_data import bootstrap_manual_screening_data
+from tests.helpers import build_test_paths
+
+
+class _LoadedConfigStub:
+    def __init__(self, app: object, combined_hash: str) -> None:
+        self.app = app
+        self.combined_hash = combined_hash
+
+
+def test_tool_b_falls_back_to_config_default_gold_price_when_cli_omits_it(tmp_path, monkeypatch):
+    """The headline ergonomic fix: `python main.py tool-b` (no --gold-price) should
+    pick up the config's `default_gold_price_assumption` instead of erroring out.
+    """
+    paths = build_test_paths(tmp_path)
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_pipeline(*, paths, app_config, run_context, normalized_market_snapshots,
+                     gold_price_assumption, snapshot_refresh_run_id, snapshot_as_of_date):
+        captured["gold_price"] = gold_price_assumption
+        return type(
+            "ToolBResultStub",
+            (),
+            {
+                "tool_b_outputs": pd.DataFrame(),
+                "manual_data": type("MD", (), {
+                    "store_path": paths.manual_screening_store_path,
+                    "store_created": False,
+                    "seeded_tickers": [],
+                    "imported_csv_files": [],
+                    "stock_notes": pd.DataFrame(),
+                })(),
+                "overall_status": "WARN",
+                "summary": {},
+            },
+        )()
+
+    monkeypatch.setattr("golden_vector.cli.execute_tool_b_pipeline", fake_pipeline)
+
+    def fake_snapshot(**_):
+        return type("Snap", (), {
+            "refresh_run_id": "test-refresh",
+            "snapshot_as_of_date": "2026-04-22",
+            "foundation_status": "PASS",
+            "manifest_path": paths.latest_foundation_manifest_path,
+            "raw_qa_summary": {"overall_status": "PASS"},
+            "normalization_qa_summary": {"overall_status": "PASS"},
+            "summary": {},
+            "normalized_market_snapshots": pd.DataFrame(),
+        })()
+
+    monkeypatch.setattr("golden_vector.cli.load_latest_foundation_snapshot", fake_snapshot)
+
+    exit_code = run_tool_b(paths, gold_price=None)
+
+    assert exit_code == 0
+    # Default in shipped config is 4000.
+    assert captured["gold_price"] == real_loaded.screening_params.resolve_gold_price(None)
+    assert captured["gold_price"] == 4000.0
+
+
+def test_status_command_runs_cleanly_with_no_artifacts(tmp_path, monkeypatch, capsys):
+    """`status` must not crash when the foundation manifest, Tool A latest, Tool B
+    latest, and manual store are all missing. It should print actionable next steps.
+    """
+    paths = build_test_paths(tmp_path)
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+
+    exit_code = run_status(paths)
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Foundation snapshot:  NOT FOUND" in captured
+    assert "Tool A latest output: NOT FOUND" in captured
+    assert "Tool B latest output: NOT FOUND" in captured
+    assert "No manual-data store yet" in captured
+
+
+def test_status_command_lists_blank_tickers_when_some_have_no_manual_data(tmp_path, monkeypatch, capsys):
+    """When some active Tool B tickers have no manual data, the status command must
+    name them so the user knows what to fill in. This is the most common operational
+    gap in the live tool.
+    """
+    paths = build_test_paths(tmp_path)
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+
+    # Initialize the store but populate no fields.
+    tickers = sorted(
+        t.ticker for t in real_loaded.universe.tickers if t.active and t.tool_b_enabled
+    )
+    bootstrap_manual_screening_data(paths, tickers=tickers)
+
+    exit_code = run_status(paths)
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Manual data coverage" in captured
+    # All tickers should be reported as blank.
+    assert f"0/{len(tickers)} tickers fully populated" in captured
+    assert "Blank:" in captured
+    for ticker in tickers:
+        assert ticker in captured
+
+
+def test_status_command_surfaces_refresh_id_mismatch(tmp_path, monkeypatch, capsys):
+    """If the foundation manifest's refresh id doesn't match Tool A latest's
+    snapshot_refresh_run_id, the status command must say so explicitly.
+    """
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+
+    # Foundation manifest → refresh-A.
+    paths.latest_foundation_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_foundation_manifest_path.write_text(
+        json.dumps({
+            "refresh_run_id": "refresh-A",
+            "snapshot_as_of_date": "2026-04-22",
+            "foundation_status": "PASS",
+        }),
+        encoding="utf-8",
+    )
+
+    # Tool A latest → refresh-B (mismatch).
+    run_context = RunContext.start(
+        paths=paths, command="tool-a", parameters={}, config_hash="h",
+    )
+    persist_tool_a_outputs(
+        paths=paths,
+        run_context=run_context,
+        tool_a_outputs=pd.DataFrame(
+            [{"ticker": "NEM", "as_of_date": date(2026, 4, 22),
+              "snapshot_refresh_run_id": "refresh-B", "tool_a_rank": 1, "score_eligible": True}]
+        ),
+    )
+
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+
+    exit_code = run_status(paths)
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Refresh alignment:    MISMATCH" in captured
+    assert "refresh-A" in captured
+    assert "refresh-B" in captured
+
+
+def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeypatch, capsys):
+    """The refresh command must call run_foundation, run_tool_a, run_tool_b in order
+    and then print the status summary. If a step fails, it must stop early.
+    """
+    paths = build_test_paths(tmp_path)
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+
+    call_order: list[str] = []
+
+    def fake_foundation(_paths, *, command_name="update-data"):
+        call_order.append("update-data")
+        return 0
+
+    def fake_tool_a(_paths):
+        call_order.append("tool-a")
+        return 0
+
+    def fake_tool_b(_paths, *, gold_price):
+        call_order.append(f"tool-b@{gold_price}")
+        return 0
+
+    monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
+    monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
+    monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
+
+    exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
+
+    assert exit_code == 0
+    assert call_order == ["update-data", "tool-a", "tool-b@None"]  # default resolved inside tool-b
+    out = capsys.readouterr().out
+    assert "Step 1/3: update-data" in out
+    assert "Step 2/3: tool-a" in out
+    assert "Step 3/3: tool-b" in out
+    assert "Refresh complete" in out
+
+
+def test_refresh_command_stops_after_update_data_failure(tmp_path, monkeypatch, capsys):
+    paths = build_test_paths(tmp_path)
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+
+    call_order: list[str] = []
+
+    def fake_foundation(_paths, *, command_name="update-data"):
+        call_order.append("update-data")
+        return 1  # fail
+
+    def fake_tool_a(_paths):
+        call_order.append("tool-a")
+        return 0
+
+    def fake_tool_b(_paths, *, gold_price):
+        call_order.append("tool-b")
+        return 0
+
+    monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
+    monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
+    monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
+
+    exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
+
+    assert exit_code == 1
+    assert call_order == ["update-data"]  # tool-a and tool-b never called
+    out = capsys.readouterr().out
+    assert "update-data failed" in out
+
+
+def test_refresh_command_skips_tool_b_when_flag_passed(tmp_path, monkeypatch, capsys):
+    paths = build_test_paths(tmp_path)
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+
+    call_order: list[str] = []
+
+    def fake_foundation(_paths, *, command_name="update-data"):
+        call_order.append("update-data")
+        return 0
+
+    def fake_tool_a(_paths):
+        call_order.append("tool-a")
+        return 0
+
+    def fake_tool_b(_paths, *, gold_price):
+        call_order.append("tool-b")
+        return 0
+
+    monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
+    monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
+    monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
+
+    exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=True)
+
+    assert exit_code == 0
+    assert call_order == ["update-data", "tool-a"]
+    out = capsys.readouterr().out
+    assert "tool-b SKIPPED" in out

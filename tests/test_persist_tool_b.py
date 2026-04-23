@@ -37,3 +37,45 @@ def test_persist_tool_b_outputs_writes_latest_snapshot_sorted_by_tool_b_rank(tmp
 
     assert list(latest_csv["ticker"]) == ["GOLD", "NEM"]
     assert list(stable_latest["ticker"]) == ["GOLD", "NEM"]
+
+
+def test_persist_tool_b_outputs_can_preserve_previous_stable_latest_alias_on_empty_run(tmp_path):
+    paths = build_test_paths(tmp_path)
+    initial_context = RunContext.start(
+        paths=paths,
+        command="tool-b",
+        parameters={"gold_price": 4000},
+        config_hash="hash",
+    )
+    persist_tool_b_outputs(
+        paths=paths,
+        run_context=initial_context,
+        tool_b_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 2, 1),
+                    "gold_price_assumption": 4000.0,
+                    "tool_b_rank": 1,
+                }
+            ]
+        ),
+    )
+
+    empty_context = RunContext.start(
+        paths=paths,
+        command="tool-b",
+        parameters={"gold_price": 4000},
+        config_hash="hash",
+    )
+    persist_tool_b_outputs(
+        paths=paths,
+        run_context=empty_context,
+        tool_b_outputs=pd.DataFrame(
+            columns=["ticker", "as_of_date", "gold_price_assumption", "tool_b_rank"]
+        ),
+        publish_latest_aliases=False,
+    )
+
+    stable_latest = pd.read_parquet(paths.latest_tool_b_snapshot_parquet_path)
+    assert list(stable_latest["ticker"]) == ["NEM"]

@@ -61,7 +61,7 @@ flowchart TD
 | Command | What it does | Main path |
 |---|---|---|
 | `python main.py update-data` | Refreshes Yahoo-backed market data and publishes the latest validated local snapshot | [foundation.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/ingestion/foundation.py), [latest_data.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/app/latest_data.py) |
-| `python main.py tool-a` | Uses the latest validated local snapshot, then runs horizons + Tool A scoring | [features/pipeline.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/features/pipeline.py), [model/pipeline.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/model/pipeline.py) |
+| `python main.py tool-a` | Uses the latest validated local snapshot, builds the official weekly structural Tool A sample, then scores and explains the latest names | [features/pipeline.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/features/pipeline.py), [model/pipeline.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/model/pipeline.py) |
 | `python main.py tool-b --gold-price 4000` | Uses the latest validated local snapshot plus the local Tool B manual-data store, then runs screening | [screening/pipeline.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/screening/pipeline.py) |
 | `python main.py manual-data ...` | Creates, imports, exports, shows, and updates slow-moving Tool B inputs directly in the local store | [manual_store.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/screening/manual_store.py), [manual_data.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/screening/manual_data.py) |
 | `python main.py manual-note ...` | Adds and lists per-stock follow-up notes | [manual_store.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/screening/manual_store.py) |
@@ -73,10 +73,10 @@ flowchart TD
 | Layer | Status | Short explanation |
 |---|---|---|
 | Backbone | Built | Fetches and validates raw market data, then normalizes it to USD |
-| Tool A | Built | Computes gold-link behavior across horizons, then scores and ranks names |
+| Tool A | Built | Computes structural delta, gamma, asymmetry, confidence, and volatility diagnostics from weekly USD-normalized returns, then scores and explains names |
 | Tool B | Built | Uses the local manual-data store plus market snapshots to screen and rank names |
 | Combined backend | De-scoped | Old backend preserved as legacy code, but no longer part of the active product |
-| Tests | Strong | 151 passing tests covering core business rules, orchestration, and the new workspace layer |
+| Tests | Strong | 170 passing tests covering core business rules, orchestration, the structural Tool A pipeline, the SQLite manual store, the workspace UI, and provenance/alias safety |
 | Serve / dashboard | Started | Thin local workspace UI is built; richer compare/view layers still come later |
 
 ## What Happens To Data
@@ -85,7 +85,7 @@ flowchart TD
 |---|---|---|
 | Raw fetch | raw parquet + fetch status + raw QA | `data/raw/`, `data/runs/` |
 | Normalization | USD-normalized parquet + normalization QA | `data/intermediate/`, `data/runs/` |
-| Tool A | full-history + latest snapshot parquet/csv | `data/output/tool_a/` |
+| Tool A | full-history + latest snapshot parquet/csv plus structural window metrics | `data/output/tool_a/` |
 | Tool B | full-history + latest snapshot parquet/csv | `data/output/tool_b/` |
 | Workspace | local browser view over latest Tool A / Tool B snapshots plus Tool B manual store | `golden_vector/serve/workspace.py` |
 | Future Combined view | later side-by-side output only | not active yet |
@@ -111,8 +111,8 @@ You can see these rules enforced mainly in:
 1. Explicit refresh plus local-first usage
    Keep `update-data` as the heavy refresh step and keep Tool A / Tool B local by default.
 
-2. Tool A explanation layer
-   Add short human-readable reasons for each Tool A rank.
+2. Tool A threshold tuning
+   Tune the new structural-first bands and interaction explanations against live names.
 
 3. Tool B hardening
    Add more warnings around real market-data weirdness, especially snapshot consistency and sanity checks.
