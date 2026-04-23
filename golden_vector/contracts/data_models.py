@@ -123,23 +123,85 @@ class HorizonMetric(StrictDataModel):
     official_scoring_eligible: bool
 
 
+class ToolAStructuralWindowMetric(StrictDataModel):
+    ticker: str
+    as_of_date: date
+    window_id: str
+    week_count: int
+    window_status: str
+    window_reason: str
+    structural_delta: float | None = None
+    intercept_alpha: float | None = None
+    r_squared: float | None = None
+    up_week_count: int = 0
+    down_week_count: int = 0
+    up_beta: float | None = None
+    down_beta: float | None = None
+    gamma_value: float | None = None
+    asymmetry_ratio: float | None = None
+    normalization_issue_summary: str | None = None
+    source_run_id: str | None = None
+
+
 class ToolAOutput(StrictDataModel):
     ticker: str
     as_of_date: date
-    core_delta: float | None = None
-    delta_bucket: str | None = None
-    gamma_proxy: float | None = None
-    stability_score: float | None = None
-    regime_tag: str | None = None
+    anchor_window_id: str | None = None
+    volatility_anchor_window_id: str | None = None
+    structural_delta_6m: float | None = None
+    structural_delta_12m: float | None = None
+    structural_delta_3y: float | None = None
+    structural_delta_core: float | None = None
+    gamma_6m: float | None = None
+    gamma_12m: float | None = None
+    gamma_3y: float | None = None
+    structural_gamma_core: float | None = None
+    up_beta_6m: float | None = None
+    down_beta_6m: float | None = None
+    up_beta_12m: float | None = None
+    down_beta_12m: float | None = None
+    up_beta_3y: float | None = None
+    down_beta_3y: float | None = None
+    up_beta_core: float | None = None
+    down_beta_core: float | None = None
+    asymmetry_ratio_6m: float | None = None
+    asymmetry_ratio_12m: float | None = None
+    asymmetry_ratio_3y: float | None = None
+    asymmetry_ratio_core: float | None = None
+    r_squared_6m: float | None = None
+    r_squared_12m: float | None = None
+    r_squared_3y: float | None = None
+    weeks_6m: int = 0
+    weeks_12m: int = 0
+    weeks_3y: int = 0
+    window_status_6m: str | None = None
+    window_status_12m: str | None = None
+    window_status_3y: str | None = None
+    delta_stability_score: float | None = None
+    confidence_score: float | None = None
+    confidence_label: str | None = None
+    total_volatility_52w: float | None = None
+    residual_volatility_52w: float | None = None
+    downside_volatility_52w: float | None = None
+    volatility_context: str | None = None
+    profile_label: str | None = None
     tool_a_score: float | None = None
     tool_a_rank: int | None = None
     score_eligible: bool
     score_eligibility_reason: str
-    coverage_summary: str
-    eligible_core_horizon_count: int
-    pass_core_horizon_count: int
-    fail_core_horizon_count: int
-    total_core_horizon_count: int
+    eligible_structural_window_count: int
+    positive_delta_window_count: int
+    normalization_issue_summary: str | None = None
+    snapshot_refresh_run_id: str
+    fx_policy_max_staleness_days: int
+    fx_policy_block_on_stale_fx: bool
+    delta_explanation: str
+    gamma_explanation: str
+    asymmetry_explanation: str
+    volatility_explanation: str
+    confidence_explanation: str
+    interaction_explanation: str
+    tool_a_summary_explanation: str
     source_run_id: str
 
 
@@ -204,6 +266,12 @@ class ToolBOutput(StrictDataModel):
     missing_manual_fields: str | None = None
     next_financial_report_date: date | None = None
     next_production_report_date: date | None = None
+    snapshot_refresh_run_id: str | None = None
+    snapshot_as_of_date: date | None = None
+    snapshot_normalization_status: str | None = None
+    fx_staleness_days: int | None = None
+    fx_policy_max_staleness_days: int
+    fx_policy_block_on_stale_fx: bool
     source_run_id: str
 
 

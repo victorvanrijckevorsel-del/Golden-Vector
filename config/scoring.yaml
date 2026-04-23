@@ -1,19 +1,49 @@
-version: 1
-minimum_core_horizons_for_scoring: 5
-allow_warn_coverage_for_scoring: false
-delta_buckets:
+version: 2
+structural_windows:
+  - 6M
+  - 12M
+  - 3Y
+delta_bands:
   low_max: 0.75
   moderate_max: 1.5
-stability_thresholds:
-  weak_max: 0.4
-  strong_min: 0.7
+  high_min: 2.0
 gamma_thresholds:
-  negative_max: -0.25
-  positive_min: 0.25
+  negative_max: -0.15
+  positive_min: 0.15
+asymmetry_thresholds:
+  weak_max: 0.9
+  strong_min: 1.1
+confidence_thresholds:
+  low_max: 0.45
+  high_min: 0.8
+  minimum_rankable: 0.55
+  fit_warn_r_squared: 0.15
+  fit_good_r_squared: 0.3
+  minimum_observations_6m: 20
+  minimum_observations_12m: 40
+  minimum_observations_3y: 120
+  stability_floor: 0.25
+volatility_bands:
+  low_residual_volatility_max: 0.35
+  high_residual_volatility_min: 0.6
+  high_downside_volatility_min: 0.5
+  high_total_volatility_min: 0.75
+structural_window_weights:
+  windows:
+    6M: 1.0
+    12M: 1.0
+    3Y: 1.0
+structural_anchor_window: 12M
+minimum_rankable_structural_delta: 1.0
+blocked_normalization_statuses:
+  - MISSING_RETURN_BASIS
+  - MISSING_FX
+  - STALE_FX
 weights:
-  core_delta: 0.5
-  stability: 0.3
-  gamma_proxy: 0.2
+  structural_delta: 0.4
+  structural_gamma: 0.25
+  asymmetry: 0.15
+  confidence: 0.2
 combined_verdict_thresholds:
   high_conviction_min_tool_a_score: 75.0
   dual_pass_min_tool_a_score: 60.0

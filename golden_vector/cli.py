@@ -61,7 +61,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers.add_parser(
         "tool-a",
-        help="Run Tool A through the shared backbone, horizon returns, and metric/ranking outputs.",
+        help="Run structural Tool A from the latest validated local USD-normalized snapshot.",
+    )
+
+    refresh_parser = subparsers.add_parser(
+        "refresh",
+        help=(
+            "One-command operational refresh: runs update-data, then tool-a, then tool-b "
+            "in sequence, then prints a one-screen status summary."
+        ),
+    )
+    refresh_parser.add_argument(
+        "--gold-price",
+        type=float,
+        default=None,
+        help=(
+            "Override the gold price assumption for the Tool B step. Defaults to "
+            "screening_params.default_gold_price_assumption."
+        ),
+    )
+    refresh_parser.add_argument(
+        "--skip-tool-b",
+        action="store_true",
+        help=(
+            "Skip the Tool B step. Useful if the manual-data store hasn't been populated yet."
+        ),
+    )
+
+    status_parser = subparsers.add_parser(
+        "status",
+        help=(
+            "Print a one-screen operational summary: snapshot date, latest Tool A and "
+            "Tool B run state, manual-data coverage per ticker, refresh-id alignment."
+        ),
     )
 
     tool_b_parser = subparsers.add_parser(
@@ -71,8 +103,12 @@ def build_parser() -> argparse.ArgumentParser:
     tool_b_parser.add_argument(
         "--gold-price",
         type=float,
-        required=True,
-        help="Gold price assumption in USD per oz.",
+        default=None,
+        help=(
+            "Gold price assumption in USD per oz. "
+            "Defaults to screening_params.default_gold_price_assumption (or the first "
+            "configured scenario if no default is set)."
+        ),
     )
 
     manual_data_parser = subparsers.add_parser(
@@ -204,7 +240,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     compare_parser = subparsers.add_parser(
         "compare-horizons",
-        help="Compare configured and custom horizons for one Tool A ticker.",
+        help="Compare configured and custom horizons for one Tool A ticker as exploratory analysis only.",
     )
     compare_parser.add_argument("--ticker", required=True, help="Ticker to inspect.")
     compare_parser.add_argument(
@@ -249,6 +285,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "tool-b":
         return run_tool_b(paths, gold_price=args.gold_price)
+
+    if args.command == "refresh":
+        return run_refresh(
+            paths,
+            gold_price_override=args.gold_price,
+            skip_tool_b=args.skip_tool_b,
+        )
+
+    if args.command == "status":
+        return run_status(paths)
 
     if args.command == "manual-data":
         return run_manual_data(paths, args)
@@ -416,7 +462,8 @@ def run_tool_a(paths: ProjectPaths) -> int:
             "active_ticker_count": len(active_tickers),
             "tool_a_enabled_ticker_count": len(tool_a_enabled),
             "tool_b_enabled_ticker_count": len(tool_b_enabled),
-            "core_horizon_count": len(loaded_config.app.horizons.core_horizons),
+            "exploratory_horizon_count": len(loaded_config.app.horizons.core_horizons),
+            "structural_window_count": len(loaded_config.app.scoring.structural_windows),
             "combined_config_hash": loaded_config.combined_hash,
         }
         run_context.write_json("config_summary.json", config_summary)
@@ -438,49 +485,19 @@ def run_tool_a(paths: ProjectPaths) -> int:
             include_market_snapshots=False,
         )
 
-        horizon_result = execute_horizon_pipeline(
+        tool_a_result = execute_tool_a_profile_pipeline(
             paths=paths,
             app_config=loaded_config.app,
             run_context=run_context,
             gold_history=foundation_snapshot.gold_history,
             normalized_equity_histories=foundation_snapshot.normalized_equity_histories,
-        )
-        run_context.write_json("horizon_qa_summary.json", horizon_result.qa_report.summary())
-        if horizon_result.overall_status == "FAIL":
-            run_context.write_json(
-                "qa_summary.json",
-                {
-                    "overall_status": "FAIL",
-                    "raw": foundation_snapshot.raw_qa_summary,
-                    "normalization": foundation_snapshot.normalization_qa_summary,
-                    "horizon": horizon_result.qa_report.summary(),
-                },
-            )
-            run_context.finalize(
-                status="FAIL",
-                summary={
-                    **config_summary,
-                    **foundation_snapshot.summary,
-                    "snapshot_refresh_run_id": foundation_snapshot.refresh_run_id,
-                    "snapshot_as_of_date": foundation_snapshot.snapshot_as_of_date,
-                    **horizon_result.summary,
-                },
-                notes=["Tool A stopped because horizon QA failed."],
-            )
-            LOGGER.error("Tool A stopped because horizon QA failed.")
-            return 1
-        tool_a_result = execute_tool_a_profile_pipeline(
-            paths=paths,
-            app_config=loaded_config.app,
-            run_context=run_context,
-            horizon_metrics=horizon_result.horizon_metrics,
+            snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
         )
         run_context.write_json("tool_a_output_summary.json", tool_a_result.summary)
 
         overall_status = _combine_statuses(
             foundation_snapshot.raw_qa_summary.get("overall_status"),
             foundation_snapshot.normalization_qa_summary.get("overall_status"),
-            horizon_result.overall_status,
             tool_a_result.overall_status,
         )
         run_context.write_json(
@@ -489,7 +506,6 @@ def run_tool_a(paths: ProjectPaths) -> int:
                 "overall_status": overall_status,
                 "raw": foundation_snapshot.raw_qa_summary,
                 "normalization": foundation_snapshot.normalization_qa_summary,
-                "horizon": horizon_result.qa_report.summary(),
                 "tool_a_output": tool_a_result.summary,
             },
         )
@@ -499,7 +515,8 @@ def run_tool_a(paths: ProjectPaths) -> int:
             f"Snapshot as-of date: {foundation_snapshot.snapshot_as_of_date}.",
             f"Raw QA status: {foundation_snapshot.raw_qa_summary.get('overall_status')}.",
             f"Normalization QA status: {foundation_snapshot.normalization_qa_summary.get('overall_status')}.",
-            f"Horizon QA status: {horizon_result.qa_report.overall_status}.",
+            "Official Tool A scoring now uses the structural weekly model.",
+            "Custom horizon analytics remain exploratory only.",
             f"Tool A output status: {tool_a_result.overall_status}.",
         ]
         run_context.finalize(
@@ -509,7 +526,6 @@ def run_tool_a(paths: ProjectPaths) -> int:
                 **foundation_snapshot.summary,
                 "snapshot_refresh_run_id": foundation_snapshot.refresh_run_id,
                 "snapshot_as_of_date": foundation_snapshot.snapshot_as_of_date,
-                **horizon_result.summary,
                 **tool_a_result.summary,
             },
             notes=notes,
@@ -539,14 +555,19 @@ def run_tool_a(paths: ProjectPaths) -> int:
         return 1
 
 
-def run_tool_b(paths: ProjectPaths, *, gold_price: float) -> int:
+def run_tool_b(paths: ProjectPaths, *, gold_price: float | None) -> int:
     run_context: RunContext | None = None
 
     try:
-        if gold_price <= 0:
-            raise ValueError("gold price must be positive")
-
         loaded_config = load_app_config(paths)
+        # Resolve gold price: CLI override → config default → first scenario.
+        # This lets `tool-b` (and the new `refresh` command) work without
+        # requiring the user to remember the magic number every run.
+        resolved_gold_price = loaded_config.app.screening_params.resolve_gold_price(gold_price)
+        if resolved_gold_price <= 0:
+            raise ValueError("gold price must be positive")
+        gold_price = resolved_gold_price
+
         run_context = RunContext.start(
             paths=paths,
             command="tool-b",
@@ -609,6 +630,8 @@ def run_tool_b(paths: ProjectPaths, *, gold_price: float) -> int:
             run_context=run_context,
             normalized_market_snapshots=foundation_snapshot.normalized_market_snapshots,
             gold_price_assumption=gold_price,
+            snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
+            snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
         )
         run_context.write_json("tool_b_output_summary.json", tool_b_result.summary)
 
@@ -1077,13 +1100,15 @@ def run_workspace(
         LOGGER.error("Workspace cannot start because no active Tool B tickers are configured.")
         return 1
 
-    bootstrap_manual_screening_data(
-        paths,
-        tickers=tool_b_tickers,
-        import_csv_if_empty=False,
-    )
+    if not manual_store_exists(paths):
+        message = _missing_manual_store_note()
+        LOGGER.error("%s", message)
+        print(message)
+        return 1
+
     return run_workspace_server(
         paths=paths,
+        app_config=loaded_config.app,
         tool_b_tickers=tool_b_tickers,
         host=host,
         port=port,
@@ -1312,3 +1337,231 @@ def _combine_statuses(*statuses: str | None) -> str:
     if any(status == "WARN" for status in active_statuses):
         return "WARN"
     return "PASS"
+
+
+# -------------------------- operational helpers (refresh + status) --------------------------
+
+
+def run_refresh(
+    paths: ProjectPaths,
+    *,
+    gold_price_override: float | None,
+    skip_tool_b: bool,
+) -> int:
+    """One-command operational pipeline: update-data → tool-a → tool-b → status.
+
+    Stops early and prints the partial status if any step fails. The whole point of
+    this command is that the user runs ONE thing instead of remembering three commands
+    plus a magic gold-price number.
+    """
+
+    print("== Step 1/3: update-data ==")
+    update_exit = run_foundation(paths, command_name="update-data")
+    if update_exit != 0:
+        print()
+        print("update-data failed (exit code {}). Skipping the rest of the refresh.".format(update_exit))
+        run_status(paths)
+        return update_exit
+
+    print()
+    print("== Step 2/3: tool-a ==")
+    tool_a_exit = run_tool_a(paths)
+    if tool_a_exit != 0:
+        print()
+        print("tool-a failed (exit code {}). Skipping Tool B.".format(tool_a_exit))
+        run_status(paths)
+        return tool_a_exit
+
+    if skip_tool_b:
+        print()
+        print("== Step 3/3: tool-b SKIPPED (--skip-tool-b) ==")
+    else:
+        print()
+        print("== Step 3/3: tool-b ==")
+        tool_b_exit = run_tool_b(paths, gold_price=gold_price_override)
+        if tool_b_exit != 0:
+            print()
+            print("tool-b failed (exit code {}).".format(tool_b_exit))
+            run_status(paths)
+            return tool_b_exit
+
+    print()
+    print("== Refresh complete. Operational status: ==")
+    return run_status(paths)
+
+
+def run_status(paths: ProjectPaths) -> int:
+    """Print a one-screen operational summary.
+
+    Surfaces the things a user actually needs to know after a refresh:
+    - is the foundation snapshot fresh and what date does it cover
+    - did tool-a publish a current ranking
+    - did tool-b score every active Tool B ticker, and if not which ones are blocked
+    - are the three artifact families aligned to the same refresh run id
+    - which active tickers are missing manual data (the most common operational gap)
+    """
+
+    print(_render_status_summary(paths))
+    return 0
+
+
+def _render_status_summary(paths: ProjectPaths) -> str:
+    from datetime import datetime, timezone
+
+    from golden_vector.screening.manual_store import load_store_tables
+
+    lines: list[str] = []
+    lines.append("Golden Vector - operational status")
+    lines.append("=" * 60)
+
+    # Foundation manifest
+    manifest_path = paths.latest_foundation_manifest_path
+    if not manifest_path.exists():
+        lines.append("Foundation snapshot:  NOT FOUND. Run `python main.py update-data` first.")
+        manifest_run_id: str | None = None
+    else:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest_run_id = str(manifest.get("refresh_run_id") or "")
+            snapshot_date = manifest.get("snapshot_as_of_date", "?")
+            foundation_status = manifest.get("foundation_status", "?")
+            mtime = datetime.fromtimestamp(manifest_path.stat().st_mtime, tz=timezone.utc)
+            age_hours = (datetime.now(tz=timezone.utc) - mtime).total_seconds() / 3600.0
+            freshness = "fresh" if age_hours < 24 else "STALE (> 24h)"
+            lines.append(
+                f"Foundation snapshot:  {foundation_status}  "
+                f"as-of {snapshot_date}  ({age_hours:.1f}h old, {freshness})"
+            )
+            lines.append(f"  refresh_run_id:     {manifest_run_id}")
+        except Exception as exc:
+            lines.append(f"Foundation snapshot:  ERROR reading manifest ({exc}).")
+            manifest_run_id = None
+
+    # Tool A latest
+    tool_a_path = paths.latest_tool_a_snapshot_parquet_path
+    tool_a_run_ids: set[str] = set()
+    if not tool_a_path.exists():
+        lines.append("Tool A latest output: NOT FOUND. Run `python main.py tool-a`.")
+    else:
+        try:
+            df = pd.read_parquet(tool_a_path)
+            ranked = int(df["tool_a_rank"].notna().sum()) if "tool_a_rank" in df.columns else 0
+            withheld = int((~df["score_eligible"].fillna(False)).sum()) if "score_eligible" in df.columns else 0
+            if "snapshot_refresh_run_id" in df.columns:
+                tool_a_run_ids = {
+                    str(value)
+                    for value in df["snapshot_refresh_run_id"].dropna().unique()
+                    if str(value) and str(value).lower() != "nan"
+                }
+            lines.append(
+                f"Tool A latest output: {len(df.index)} rows, {ranked} ranked, "
+                f"{withheld} score-withheld."
+            )
+        except Exception as exc:
+            lines.append(f"Tool A latest output: ERROR reading parquet ({exc}).")
+
+    # Tool B latest
+    tool_b_path = paths.latest_tool_b_snapshot_parquet_path
+    tool_b_run_ids: set[str] = set()
+    if not tool_b_path.exists():
+        lines.append("Tool B latest output: NOT FOUND. Run `python main.py tool-b`.")
+    else:
+        try:
+            df = pd.read_parquet(tool_b_path)
+            scored = int(df["tool_b_rank"].notna().sum()) if "tool_b_rank" in df.columns else 0
+            incomplete_tickers = []
+            if "screening_verdict" in df.columns and "ticker" in df.columns:
+                incomplete_tickers = sorted(
+                    df.loc[df["screening_verdict"].astype(str).str.upper() == "INCOMPLETE", "ticker"]
+                    .astype(str)
+                    .tolist()
+                )
+            if "snapshot_refresh_run_id" in df.columns:
+                tool_b_run_ids = {
+                    str(value)
+                    for value in df["snapshot_refresh_run_id"].dropna().unique()
+                    if str(value) and str(value).lower() != "nan"
+                }
+            gold_price = "?"
+            if "gold_price_assumption" in df.columns and len(df.index):
+                gold_price = f"${df['gold_price_assumption'].iloc[0]:.0f}/oz"
+            lines.append(
+                f"Tool B latest output: {len(df.index)} rows, {scored} scored, "
+                f"{len(incomplete_tickers)} INCOMPLETE.  Gold-price assumption: {gold_price}"
+            )
+            if incomplete_tickers:
+                lines.append(
+                    f"  Incomplete tickers: {', '.join(incomplete_tickers)} "
+                    "(missing manual data - see manual-data summary below)."
+                )
+        except Exception as exc:
+            lines.append(f"Tool B latest output: ERROR reading parquet ({exc}).")
+
+    # Refresh-id alignment
+    alignment_msg = "Refresh alignment:    OK"
+    if manifest_run_id:
+        if tool_a_run_ids and manifest_run_id not in tool_a_run_ids:
+            alignment_msg = (
+                f"Refresh alignment:    MISMATCH  "
+                f"(manifest={manifest_run_id}, Tool A={sorted(tool_a_run_ids)[0]})"
+            )
+        elif tool_b_run_ids and manifest_run_id not in tool_b_run_ids:
+            alignment_msg = (
+                f"Refresh alignment:    MISMATCH  "
+                f"(manifest={manifest_run_id}, Tool B={sorted(tool_b_run_ids)[0]})"
+            )
+    lines.append(alignment_msg)
+
+    # Manual data coverage
+    lines.append("")
+    lines.append("Manual data coverage (Tool B):")
+    if not manual_store_exists(paths):
+        lines.append("  No manual-data store yet. Run `python main.py manual-data init` first.")
+    else:
+        try:
+            loaded = load_app_config(paths)
+            tool_b_tickers = sorted(
+                ticker.ticker
+                for ticker in loaded.app.universe.tickers
+                if ticker.active and ticker.tool_b_enabled
+            )
+            company_inputs, _, _, _ = load_store_tables(paths)
+            numeric_cols = [
+                "production_oz", "aisc_usd_per_oz", "cash_cost_usd_per_oz", "royalty_rate",
+                "sustaining_capex_musd", "da_musd", "interest_expense_musd", "tax_rate",
+                "reserve_life_years", "net_debt_musd", "ebitda_ltm_musd",
+            ]
+            full_count = 0
+            blank_tickers: list[str] = []
+            partial: list[tuple[str, int]] = []
+            for ticker in tool_b_tickers:
+                row = company_inputs.loc[company_inputs["ticker"].astype(str) == ticker]
+                if row.empty:
+                    blank_tickers.append(ticker)
+                    continue
+                row = row.iloc[0]
+                present = sum(1 for col in numeric_cols if col in row.index and pd.notna(row[col]))
+                if present == len(numeric_cols):
+                    full_count += 1
+                elif present == 0:
+                    blank_tickers.append(ticker)
+                else:
+                    partial.append((ticker, present))
+            lines.append(
+                f"  {full_count}/{len(tool_b_tickers)} tickers fully populated; "
+                f"{len(partial)} partial; {len(blank_tickers)} blank."
+            )
+            if blank_tickers:
+                lines.append(
+                    f"  Blank: {', '.join(blank_tickers)}  "
+                    "-> open the workspace and edit each, or use `python main.py manual-data set-company`."
+                )
+            if partial:
+                partial_list = ", ".join(f"{t} ({n}/11)" for t, n in partial)
+                lines.append(f"  Partial: {partial_list}")
+        except Exception as exc:
+            lines.append(f"  ERROR reading manual data store ({exc}).")
+
+    lines.append("")
+    lines.append("Next:  `python main.py workspace`  to inspect outputs in the browser.")
+    return "\n".join(lines)

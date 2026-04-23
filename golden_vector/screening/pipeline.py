@@ -63,6 +63,12 @@ TOOL_B_OUTPUT_COLUMNS = [
     "missing_manual_fields",
     "next_financial_report_date",
     "next_production_report_date",
+    "snapshot_refresh_run_id",
+    "snapshot_as_of_date",
+    "snapshot_normalization_status",
+    "fx_staleness_days",
+    "fx_policy_max_staleness_days",
+    "fx_policy_block_on_stale_fx",
     "source_run_id",
 ]
 
@@ -82,6 +88,8 @@ def execute_tool_b_pipeline(
     run_context: RunContext,
     normalized_market_snapshots: pd.DataFrame,
     gold_price_assumption: float,
+    snapshot_refresh_run_id: str | None = None,
+    snapshot_as_of_date: object = None,
 ) -> ToolBExecutionResult:
     tool_b_tickers = sorted(
         {
@@ -100,7 +108,7 @@ def execute_tool_b_pipeline(
     )
     snapshot_anchor_date = _determine_snapshot_anchor_date(
         snapshots=snapshots,
-        run_context=run_context,
+        snapshot_as_of_date=snapshot_as_of_date,
     )
     company_inputs = manual_data.company_inputs.copy()
     reporting_calendar = manual_data.reporting_calendar.copy()
@@ -210,6 +218,14 @@ def execute_tool_b_pipeline(
                 "missing_manual_fields": None if not missing_fields else ";".join(missing_fields),
                 "next_financial_report_date": row.get("next_financial_report_date"),
                 "next_production_report_date": row.get("next_production_report_date"),
+                "snapshot_refresh_run_id": snapshot_refresh_run_id,
+                "snapshot_as_of_date": snapshot_anchor_date,
+                "snapshot_normalization_status": _coerce_status(
+                    row.get("snapshot_normalization_status")
+                ),
+                "fx_staleness_days": _coerce_optional_int(row.get("fx_staleness_days")),
+                "fx_policy_max_staleness_days": int(app_config.qa.max_fx_staleness_days),
+                "fx_policy_block_on_stale_fx": bool(app_config.qa.block_on_stale_fx),
                 "source_run_id": run_context.run_id,
             }
         )
@@ -226,6 +242,7 @@ def execute_tool_b_pipeline(
         paths=paths,
         run_context=run_context,
         tool_b_outputs=tool_b_outputs,
+        publish_latest_aliases=not tool_b_outputs.empty,
     )
 
     verdict_counts = (
@@ -276,18 +293,19 @@ def _prepare_market_snapshots(
     *,
     allowed_tickers: set[str],
 ) -> pd.DataFrame:
+    snapshot_columns = [
+        "ticker",
+        "snapshot_date",
+        "share_price_usd",
+        "market_cap_usd",
+        "market_cap_musd",
+        "shares_outstanding",
+        "snapshot_normalization_status",
+        "fx_staleness_days",
+    ]
     working = normalized_market_snapshots.copy()
     if working.empty:
-        return pd.DataFrame(
-            columns=[
-                "ticker",
-                "snapshot_date",
-                "share_price_usd",
-                "market_cap_usd",
-                "market_cap_musd",
-                "shares_outstanding",
-            ]
-        )
+        return pd.DataFrame(columns=snapshot_columns)
 
     allowed_tickers = set(allowed_tickers)
     if allowed_tickers:
@@ -295,32 +313,29 @@ def _prepare_market_snapshots(
         working = working[working["ticker"].isin(allowed_tickers)].copy()
 
     if working.empty:
-        return pd.DataFrame(
-            columns=[
-                "ticker",
-                "snapshot_date",
-                "share_price_usd",
-                "market_cap_usd",
-                "market_cap_musd",
-                "shares_outstanding",
-            ]
-        )
+        return pd.DataFrame(columns=snapshot_columns)
 
     working["market_cap_musd"] = pd.to_numeric(
         working["market_cap_usd"],
         errors="coerce",
     ) / 1_000_000.0
+    working["snapshot_normalization_status"] = (
+        working.get("normalization_status", pd.Series(index=working.index, dtype=object))
+        .astype(object)
+    )
+    if "fx_staleness_days" not in working.columns:
+        working["fx_staleness_days"] = pd.NA
     working = working.sort_values(["ticker", "snapshot_date"]).drop_duplicates(
         subset=["ticker"],
         keep="last",
     )
-    return working.reset_index(drop=True)
+    return working.reset_index(drop=True)[snapshot_columns]
 
 
 def _determine_snapshot_anchor_date(
     *,
     snapshots: pd.DataFrame,
-    run_context: RunContext,
+    snapshot_as_of_date: object = None,
 ) -> object:
     if not snapshots.empty and "snapshot_date" in snapshots.columns:
         snapshot_dates = pd.to_datetime(
@@ -329,4 +344,24 @@ def _determine_snapshot_anchor_date(
         ).dropna()
         if not snapshot_dates.empty:
             return snapshot_dates.max().date()
-    return pd.to_datetime(run_context.started_at_utc, utc=True).date()
+    if snapshot_as_of_date is not None:
+        coerced = pd.to_datetime(snapshot_as_of_date, errors="coerce")
+        if pd.notna(coerced):
+            return coerced.date()
+    return None
+
+
+def _coerce_status(value: object) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    return text.upper() if text else None
+
+
+def _coerce_optional_int(value: object) -> int | None:
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

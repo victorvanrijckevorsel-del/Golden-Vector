@@ -191,10 +191,39 @@ def persist_horizon_outputs(
     return written_paths
 
 
+def persist_tool_a_structural_metrics(
+    paths: ProjectPaths,
+    run_context: RunContext,
+    structural_window_metrics: pd.DataFrame,
+    *,
+    publish_latest_aliases: bool = True,
+) -> list[Path]:
+    written_paths = [
+        _write_parquet(
+            structural_window_metrics,
+            paths.intermediate_tool_a_structural_dir
+            / f"tool_a_structural_{run_context.run_id}.parquet",
+        )
+    ]
+    if publish_latest_aliases:
+        written_paths.append(
+            _write_parquet(
+                structural_window_metrics,
+                paths.latest_tool_a_structural_metrics_path,
+            )
+        )
+
+    for path in written_paths:
+        run_context.record_artifact(path)
+    return written_paths
+
+
 def persist_tool_a_outputs(
     paths: ProjectPaths,
     run_context: RunContext,
     tool_a_outputs: pd.DataFrame,
+    *,
+    publish_latest_aliases: bool = True,
 ) -> list[Path]:
     latest_snapshot = _latest_snapshot(tool_a_outputs)
     written_paths = [
@@ -218,15 +247,20 @@ def persist_tool_a_outputs(
             latest_snapshot,
             paths.output_tool_a_dir / f"tool_a_latest_{run_context.run_id}.csv",
         ),
-        _write_parquet(
-            latest_snapshot,
-            paths.latest_tool_a_snapshot_parquet_path,
-        ),
-        _write_csv(
-            latest_snapshot,
-            paths.latest_tool_a_snapshot_csv_path,
-        ),
     ]
+    if publish_latest_aliases:
+        written_paths.extend(
+            [
+                _write_parquet(
+                    latest_snapshot,
+                    paths.latest_tool_a_snapshot_parquet_path,
+                ),
+                _write_csv(
+                    latest_snapshot,
+                    paths.latest_tool_a_snapshot_csv_path,
+                ),
+            ]
+        )
 
     for path in written_paths:
         run_context.record_artifact(path)
@@ -237,6 +271,8 @@ def persist_tool_b_outputs(
     paths: ProjectPaths,
     run_context: RunContext,
     tool_b_outputs: pd.DataFrame,
+    *,
+    publish_latest_aliases: bool = True,
 ) -> list[Path]:
     latest_snapshot = _latest_snapshot(tool_b_outputs)
     written_paths = [
@@ -260,15 +296,20 @@ def persist_tool_b_outputs(
             latest_snapshot,
             paths.output_tool_b_dir / f"tool_b_latest_{run_context.run_id}.csv",
         ),
-        _write_parquet(
-            latest_snapshot,
-            paths.latest_tool_b_snapshot_parquet_path,
-        ),
-        _write_csv(
-            latest_snapshot,
-            paths.latest_tool_b_snapshot_csv_path,
-        ),
     ]
+    if publish_latest_aliases:
+        written_paths.extend(
+            [
+                _write_parquet(
+                    latest_snapshot,
+                    paths.latest_tool_b_snapshot_parquet_path,
+                ),
+                _write_csv(
+                    latest_snapshot,
+                    paths.latest_tool_b_snapshot_csv_path,
+                ),
+            ]
+        )
 
     for path in written_paths:
         run_context.record_artifact(path)

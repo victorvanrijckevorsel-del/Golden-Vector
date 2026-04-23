@@ -62,6 +62,7 @@ class ProjectPaths:
             self.intermediate_usd_equities_dir,
             self.intermediate_market_snapshots_dir,
             self.intermediate_horizon_metrics_dir,
+            self.intermediate_tool_a_structural_dir,
             self.intermediate_tool_a_profiles_dir,
             self.intermediate_tool_b_dir,
             self.intermediate_status_dir,
@@ -135,6 +136,10 @@ class ProjectPaths:
         return self.intermediate_dir / "horizon_metrics"
 
     @property
+    def intermediate_tool_a_structural_dir(self) -> Path:
+        return self.intermediate_dir / "tool_a_structural"
+
+    @property
     def intermediate_tool_a_profiles_dir(self) -> Path:
         return self.intermediate_dir / "tool_a_profiles"
 
@@ -169,6 +174,12 @@ class ProjectPaths:
     @property
     def latest_tool_a_snapshot_csv_path(self) -> Path:
         return self.output_tool_a_dir / "tool_a_latest.csv"
+
+    @property
+    def latest_tool_a_structural_metrics_path(self) -> Path:
+        return (
+            self.intermediate_tool_a_structural_dir / "tool_a_structural_latest.parquet"
+        )
 
     @property
     def output_tool_b_dir(self) -> Path:

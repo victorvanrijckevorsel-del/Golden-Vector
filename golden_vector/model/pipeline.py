@@ -1,4 +1,4 @@
-"""Tool A profile and ranking pipeline."""
+"""Structural Tool A profile and ranking pipeline."""
 
 from __future__ import annotations
 
@@ -9,38 +9,101 @@ import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
-from golden_vector.contracts.config_models import AppConfig
-from golden_vector.features.delta import (
-    assign_delta_bucket,
-    compute_delta_component_score,
+from golden_vector.contracts.config_models import AppConfig, ScoringConfig
+from golden_vector.ingestion.persist import (
+    persist_tool_a_outputs,
+    persist_tool_a_structural_metrics,
 )
-from golden_vector.features.gamma import compute_gamma_component_score
-from golden_vector.ingestion.persist import persist_tool_a_outputs
+from golden_vector.model.explanations import (
+    build_asymmetry_explanation,
+    build_confidence_explanation,
+    build_delta_explanation,
+    build_gamma_explanation,
+    build_interaction_explanation,
+    build_summary_explanation,
+    build_volatility_explanation,
+)
 from golden_vector.model.labels import (
-    determine_coverage_summary,
-    determine_regime_tag,
+    determine_confidence_label,
+    determine_profile_label,
     determine_score_eligibility,
+    determine_volatility_context,
 )
-from golden_vector.model.scoring import compute_tool_a_score, rank_tool_a_outputs
+from golden_vector.model.scoring import (
+    compute_asymmetry_component_score,
+    compute_delta_component_score,
+    compute_gamma_component_score,
+    compute_tool_a_score,
+    rank_tool_a_outputs,
+)
+from golden_vector.model.structural import (
+    STRUCTURAL_WINDOW_COLUMNS,
+    build_structural_ticker_data,
+    choose_structural_anchor_window,
+    compute_volatility_diagnostics,
+    weighted_median,
+)
 
 
 TOOL_A_OUTPUT_COLUMNS = [
     "ticker",
     "as_of_date",
-    "core_delta",
-    "delta_bucket",
-    "gamma_proxy",
-    "stability_score",
-    "regime_tag",
+    "anchor_window_id",
+    "volatility_anchor_window_id",
+    "structural_delta_6m",
+    "structural_delta_12m",
+    "structural_delta_3y",
+    "structural_delta_core",
+    "gamma_6m",
+    "gamma_12m",
+    "gamma_3y",
+    "structural_gamma_core",
+    "up_beta_6m",
+    "down_beta_6m",
+    "up_beta_12m",
+    "down_beta_12m",
+    "up_beta_3y",
+    "down_beta_3y",
+    "up_beta_core",
+    "down_beta_core",
+    "asymmetry_ratio_6m",
+    "asymmetry_ratio_12m",
+    "asymmetry_ratio_3y",
+    "asymmetry_ratio_core",
+    "r_squared_6m",
+    "r_squared_12m",
+    "r_squared_3y",
+    "weeks_6m",
+    "weeks_12m",
+    "weeks_3y",
+    "window_status_6m",
+    "window_status_12m",
+    "window_status_3y",
+    "delta_stability_score",
+    "confidence_score",
+    "confidence_label",
+    "total_volatility_52w",
+    "residual_volatility_52w",
+    "downside_volatility_52w",
+    "volatility_context",
+    "profile_label",
     "tool_a_score",
     "tool_a_rank",
     "score_eligible",
     "score_eligibility_reason",
-    "coverage_summary",
-    "eligible_core_horizon_count",
-    "pass_core_horizon_count",
-    "fail_core_horizon_count",
-    "total_core_horizon_count",
+    "eligible_structural_window_count",
+    "positive_delta_window_count",
+    "normalization_issue_summary",
+    "snapshot_refresh_run_id",
+    "fx_policy_max_staleness_days",
+    "fx_policy_block_on_stale_fx",
+    "delta_explanation",
+    "gamma_explanation",
+    "asymmetry_explanation",
+    "volatility_explanation",
+    "confidence_explanation",
+    "interaction_explanation",
+    "tool_a_summary_explanation",
     "source_run_id",
 ]
 
@@ -48,6 +111,7 @@ TOOL_A_OUTPUT_COLUMNS = [
 @dataclass(frozen=True)
 class ToolAProfileExecutionResult:
     tool_a_outputs: pd.DataFrame
+    structural_window_metrics: pd.DataFrame
     overall_status: str
     summary: dict[str, object]
 
@@ -57,17 +121,59 @@ def execute_tool_a_profile_pipeline(
     paths: ProjectPaths,
     app_config: AppConfig,
     run_context: RunContext,
-    horizon_metrics: pd.DataFrame,
+    gold_history: pd.DataFrame,
+    normalized_equity_histories: dict[str, pd.DataFrame],
+    snapshot_refresh_run_id: str,
 ) -> ToolAProfileExecutionResult:
-    if horizon_metrics.empty:
+    tool_a_tickers = [
+        ticker.ticker
+        for ticker in app_config.universe.tickers
+        if ticker.active and ticker.tool_a_enabled
+    ]
+
+    window_metric_frames: list[pd.DataFrame] = []
+    weekly_series_frames: list[pd.DataFrame] = []
+    for ticker in tool_a_tickers:
+        ticker_data = build_structural_ticker_data(
+            usd_equity_history=normalized_equity_histories.get(ticker, pd.DataFrame()),
+            gold_history=gold_history,
+            scoring_config=app_config.scoring,
+        )
+        if not ticker_data.structural_window_metrics.empty:
+            window_metric_frames.append(ticker_data.structural_window_metrics)
+        if not ticker_data.weekly_series.empty:
+            weekly_series_frames.append(ticker_data.weekly_series)
+
+    structural_window_metrics = (
+        pd.concat(window_metric_frames, ignore_index=True)
+        if window_metric_frames
+        else pd.DataFrame(columns=STRUCTURAL_WINDOW_COLUMNS)
+    )
+    if not structural_window_metrics.empty:
+        structural_window_metrics["source_run_id"] = run_context.run_id
+    weekly_series = (
+        pd.concat(weekly_series_frames, ignore_index=True)
+        if weekly_series_frames
+        else pd.DataFrame()
+    )
+    persist_tool_a_structural_metrics(
+        paths=paths,
+        run_context=run_context,
+        structural_window_metrics=structural_window_metrics,
+        publish_latest_aliases=not structural_window_metrics.empty,
+    )
+
+    if structural_window_metrics.empty:
         tool_a_outputs = pd.DataFrame(columns=TOOL_A_OUTPUT_COLUMNS)
         persist_tool_a_outputs(
             paths=paths,
             run_context=run_context,
             tool_a_outputs=tool_a_outputs,
+            publish_latest_aliases=False,
         )
         return ToolAProfileExecutionResult(
             tool_a_outputs=tool_a_outputs,
+            structural_window_metrics=structural_window_metrics,
             overall_status="FAIL",
             summary={
                 "tool_a_output_row_count": 0,
@@ -77,10 +183,17 @@ def execute_tool_a_profile_pipeline(
             },
         )
 
+    volatility_diagnostics = compute_volatility_diagnostics(
+        weekly_series=weekly_series,
+        structural_window_metrics=structural_window_metrics,
+        scoring_config=app_config.scoring,
+    )
     tool_a_outputs = _build_tool_a_outputs(
-        horizon_metrics=horizon_metrics,
+        structural_window_metrics=structural_window_metrics,
+        volatility_diagnostics=volatility_diagnostics,
         app_config=app_config,
         run_context=run_context,
+        snapshot_refresh_run_id=snapshot_refresh_run_id,
     )
     if not tool_a_outputs.empty:
         tool_a_outputs = rank_tool_a_outputs(tool_a_outputs)
@@ -94,6 +207,7 @@ def execute_tool_a_profile_pipeline(
         paths=paths,
         run_context=run_context,
         tool_a_outputs=tool_a_outputs,
+        publish_latest_aliases=not tool_a_outputs.empty,
     )
 
     score_eligible_count = (
@@ -113,10 +227,12 @@ def execute_tool_a_profile_pipeline(
         overall_status = "WARN"
 
     summary = {
+        "structural_window_metric_row_count": len(structural_window_metrics.index),
         "tool_a_output_row_count": len(tool_a_outputs.index),
         "score_eligible_row_count": score_eligible_count,
         "ranked_row_count": ranked_count,
         "tool_a_output_overall_status": overall_status,
+        "official_structural_windows": app_config.scoring.structural_windows,
     }
     if not tool_a_outputs.empty:
         latest_as_of_date = tool_a_outputs["as_of_date"].max()
@@ -126,6 +242,7 @@ def execute_tool_a_profile_pipeline(
 
     return ToolAProfileExecutionResult(
         tool_a_outputs=tool_a_outputs,
+        structural_window_metrics=structural_window_metrics,
         overall_status=overall_status,
         summary=summary,
     )
@@ -133,297 +250,407 @@ def execute_tool_a_profile_pipeline(
 
 def _build_tool_a_outputs(
     *,
-    horizon_metrics: pd.DataFrame,
+    structural_window_metrics: pd.DataFrame,
+    volatility_diagnostics: pd.DataFrame,
     app_config: AppConfig,
     run_context: RunContext,
+    snapshot_refresh_run_id: str,
 ) -> pd.DataFrame:
-    core_rows = horizon_metrics[horizon_metrics["horizon_mode"] == "core"].copy()
-    if core_rows.empty:
-        return pd.DataFrame(columns=TOOL_A_OUTPUT_COLUMNS)
+    metrics = structural_window_metrics.copy()
+    metrics["as_of_date"] = pd.to_datetime(metrics["as_of_date"]).dt.date
+    vol = volatility_diagnostics.copy()
+    if not vol.empty:
+        vol["as_of_date"] = pd.to_datetime(vol["as_of_date"]).dt.date
 
-    group_keys = ["ticker", "as_of_date"]
-    grouped_core = core_rows.groupby(group_keys, dropna=False)
-    profiles = grouped_core.agg(
-        total_core_horizon_count=("horizon_id", "size"),
-        pass_core_horizon_count=("coverage_flag", lambda values: int(values.eq("PASS").sum())),
-        fail_core_horizon_count=("coverage_flag", lambda values: int(values.eq("FAIL").sum())),
-    ).reset_index()
+    weight_map = app_config.scoring.structural_weight_map()
+    grouped = metrics.groupby(["ticker", "as_of_date"], dropna=False)
+    volatility_index = (
+        vol.set_index(["ticker", "as_of_date"])
+        if not vol.empty
+        else None
+    )
+    rows: list[dict[str, object]] = []
 
-    eligible_mask = (
-        core_rows["coverage_flag"].eq("PASS")
-        & core_rows["official_scoring_eligible"].fillna(False).astype(bool)
-    )
-    eligible_rows = core_rows.loc[
-        eligible_mask,
-        ["ticker", "as_of_date", "gold_delta", "gold_return"],
-    ].copy()
-    eligible_rows["gold_delta"] = pd.to_numeric(
-        eligible_rows["gold_delta"],
-        errors="coerce",
-    )
-    eligible_rows["gold_return"] = pd.to_numeric(
-        eligible_rows["gold_return"],
-        errors="coerce",
-    )
-
-    if not eligible_rows.empty:
-        eligible_counts = (
-            eligible_rows.groupby(group_keys, dropna=False)
-            .size()
-            .rename("eligible_core_horizon_count")
-            .reset_index()
+    for (ticker, as_of_date), frame in grouped:
+        window_map = {str(row.window_id).upper(): row for row in frame.itertuples(index=False)}
+        eligible_frame = frame.loc[frame["window_status"].astype(str).eq("ELIGIBLE")].copy()
+        delta_values = _window_value_map(
+            eligible_frame=eligible_frame,
+            window_map=window_map,
+            column_name="structural_delta",
+            weight_map=weight_map,
         )
-        profiles = profiles.merge(
-            eligible_counts,
-            how="left",
-            on=group_keys,
+        gamma_values = _window_value_map(
+            eligible_frame=eligible_frame,
+            window_map=window_map,
+            column_name="gamma_value",
+            weight_map=weight_map,
+        )
+        asymmetry_values = _window_value_map(
+            eligible_frame=eligible_frame,
+            window_map=window_map,
+            column_name="asymmetry_ratio",
+            weight_map=weight_map,
+        )
+        up_beta_values = _window_value_map(
+            eligible_frame=eligible_frame,
+            window_map=window_map,
+            column_name="up_beta",
+            weight_map=weight_map,
+        )
+        down_beta_values = _window_value_map(
+            eligible_frame=eligible_frame,
+            window_map=window_map,
+            column_name="down_beta",
+            weight_map=weight_map,
         )
 
-        valid_delta_rows = eligible_rows.dropna(subset=["gold_delta"]).copy()
-        if not valid_delta_rows.empty:
-            core_delta = (
-                valid_delta_rows.groupby(group_keys, dropna=False)["gold_delta"]
-                .median()
-                .rename("core_delta")
-                .reset_index()
-            )
-            profiles = profiles.merge(
-                core_delta,
-                how="left",
-                on=group_keys,
-            )
+        structural_delta_core = weighted_median(delta_values, weights=weight_map)
+        structural_gamma_core = weighted_median(gamma_values, weights=weight_map)
+        asymmetry_ratio_core = weighted_median(asymmetry_values, weights=weight_map)
+        up_beta_core = weighted_median(up_beta_values, weights=weight_map)
+        down_beta_core = weighted_median(down_beta_values, weights=weight_map)
 
-            delta_value_counts = (
-                valid_delta_rows.groupby(group_keys, dropna=False)["gold_delta"]
-                .count()
-                .rename("delta_value_count")
-                .reset_index()
-            )
-            profiles = profiles.merge(
-                delta_value_counts,
-                how="left",
-                on=group_keys,
-            )
-
-            stability_rows = valid_delta_rows.merge(
-                core_delta,
-                how="left",
-                on=group_keys,
-            )
-            stability_rows["absolute_delta_deviation"] = (
-                stability_rows["gold_delta"] - stability_rows["core_delta"]
-            ).abs()
-            delta_mad = (
-                stability_rows.groupby(group_keys, dropna=False)["absolute_delta_deviation"]
-                .median()
-                .rename("delta_mad")
-                .reset_index()
-            )
-            profiles = profiles.merge(
-                delta_mad,
-                how="left",
-                on=group_keys,
-            )
-
-        gamma_rows = eligible_rows.dropna(subset=["gold_delta", "gold_return"]).copy()
-        if not gamma_rows.empty:
-            gamma_rows["gold_abs_return"] = gamma_rows["gold_return"].abs()
-            gamma_rows["gold_abs_return_sq"] = gamma_rows["gold_abs_return"] ** 2
-            gamma_rows["gold_delta_sq"] = gamma_rows["gold_delta"] ** 2
-            gamma_rows["gold_cross_term"] = (
-                gamma_rows["gold_abs_return"] * gamma_rows["gold_delta"]
-            )
-
-            gamma_stats = gamma_rows.groupby(group_keys, dropna=False).agg(
-                gamma_pair_count=("gold_delta", "size"),
-                gold_abs_return_unique=("gold_abs_return", "nunique"),
-                gold_delta_unique=("gold_delta", "nunique"),
-                gold_abs_return_sum=("gold_abs_return", "sum"),
-                gold_delta_sum=("gold_delta", "sum"),
-                gold_abs_return_sq_sum=("gold_abs_return_sq", "sum"),
-                gold_delta_sq_sum=("gold_delta_sq", "sum"),
-                gold_cross_term_sum=("gold_cross_term", "sum"),
-            ).reset_index()
-            profiles = profiles.merge(
-                gamma_stats,
-                how="left",
-                on=group_keys,
-            )
-
-    for column_name in (
-        "eligible_core_horizon_count",
-        "delta_value_count",
-        "delta_mad",
-        "core_delta",
-        "gamma_pair_count",
-        "gold_abs_return_unique",
-        "gold_delta_unique",
-        "gold_abs_return_sum",
-        "gold_delta_sum",
-        "gold_abs_return_sq_sum",
-        "gold_delta_sq_sum",
-        "gold_cross_term_sum",
-    ):
-        if column_name not in profiles.columns:
-            profiles[column_name] = pd.NA
-
-    profiles["eligible_core_horizon_count"] = profiles["eligible_core_horizon_count"].fillna(0).astype(int)
-    profiles["delta_value_count"] = profiles["delta_value_count"].fillna(0).astype(int)
-    profiles["delta_mad"] = pd.to_numeric(profiles["delta_mad"], errors="coerce")
-    profiles["core_delta"] = pd.to_numeric(profiles["core_delta"], errors="coerce")
-    profiles["stability_score"] = pd.Series(
-        [pd.NA] * len(profiles.index),
-        dtype="Float64",
-    )
-
-    stability_mask = (
-        profiles["delta_value_count"].ge(2)
-        & profiles["core_delta"].notna()
-        & profiles["delta_mad"].notna()
-    )
-    if stability_mask.any():
-        scale = np.maximum(
-            profiles.loc[stability_mask, "core_delta"].abs().to_numpy(dtype=float),
-            0.25,
-        )
-        mad = profiles.loc[stability_mask, "delta_mad"].to_numpy(dtype=float)
-        stability_values = 1.0 / (1.0 + (mad / scale))
-        profiles.loc[stability_mask, "stability_score"] = stability_values
-
-    profiles["gamma_proxy"] = pd.Series(
-        [pd.NA] * len(profiles.index),
-        dtype="Float64",
-    )
-    gamma_pair_count = pd.to_numeric(profiles["gamma_pair_count"], errors="coerce").fillna(0)
-    gold_abs_return_unique = pd.to_numeric(profiles["gold_abs_return_unique"], errors="coerce").fillna(0)
-    gold_delta_unique = pd.to_numeric(profiles["gold_delta_unique"], errors="coerce").fillna(0)
-    enough_pairs = gamma_pair_count.ge(2)
-    constant_gamma_mask = enough_pairs & (
-        gold_abs_return_unique.lt(2) | gold_delta_unique.lt(2)
-    )
-    if constant_gamma_mask.any():
-        profiles.loc[constant_gamma_mask, "gamma_proxy"] = 0.0
-
-    gamma_calc_mask = enough_pairs & ~constant_gamma_mask
-    if gamma_calc_mask.any():
-        n = gamma_pair_count.loc[gamma_calc_mask].to_numpy(dtype=float)
-        sum_x = profiles.loc[gamma_calc_mask, "gold_abs_return_sum"].to_numpy(dtype=float)
-        sum_y = profiles.loc[gamma_calc_mask, "gold_delta_sum"].to_numpy(dtype=float)
-        sum_x2 = profiles.loc[gamma_calc_mask, "gold_abs_return_sq_sum"].to_numpy(dtype=float)
-        sum_y2 = profiles.loc[gamma_calc_mask, "gold_delta_sq_sum"].to_numpy(dtype=float)
-        sum_xy = profiles.loc[gamma_calc_mask, "gold_cross_term_sum"].to_numpy(dtype=float)
-
-        numerator = (n * sum_xy) - (sum_x * sum_y)
-        denominator = np.sqrt(
-            np.maximum((n * sum_x2) - (sum_x**2), 0.0)
-            * np.maximum((n * sum_y2) - (sum_y**2), 0.0)
-        )
-        gamma_values = np.zeros(len(n), dtype=float)
-        valid_denominator = denominator > 0
-        if valid_denominator.any():
-            gamma_values[valid_denominator] = np.clip(
-                numerator[valid_denominator] / denominator[valid_denominator],
-                -1.0,
-                1.0,
-            )
-        profiles.loc[gamma_calc_mask, "gamma_proxy"] = gamma_values
-
-    coverage_summaries = []
-    score_eligibilities = []
-    score_reasons = []
-    delta_buckets = []
-    delta_component_scores = []
-    gamma_component_scores = []
-    tool_a_scores = []
-    regime_tags = []
-
-    for profile in profiles.itertuples(index=False):
-        core_delta = _optional_float(profile.core_delta)
-        stability_score = _optional_float(profile.stability_score)
-        gamma_proxy = _optional_float(profile.gamma_proxy)
-
-        coverage_summary = determine_coverage_summary(
-            total_core_count=int(profile.total_core_horizon_count),
-            eligible_core_count=int(profile.eligible_core_horizon_count),
-            fail_core_count=int(profile.fail_core_horizon_count),
-            minimum_core_horizons_for_scoring=app_config.scoring.minimum_core_horizons_for_scoring,
-        )
-        score_eligible, score_reason = determine_score_eligibility(
-            core_delta=core_delta,
-            eligible_core_count=int(profile.eligible_core_horizon_count),
-            coverage_summary=coverage_summary,
+        delta_stability_score = _compute_delta_stability_score(
+            delta_values=delta_values,
+            structural_delta_core=structural_delta_core,
             scoring_config=app_config.scoring,
         )
-        delta_bucket = assign_delta_bucket(
-            core_delta,
-            app_config.scoring.delta_buckets,
+        normalization_issue_summary = _first_non_empty(
+            frame["normalization_issue_summary"].tolist()
         )
+        eligible_structural_window_count = int(len(eligible_frame.index))
+        positive_delta_window_count = int(
+            pd.to_numeric(eligible_frame["structural_delta"], errors="coerce").gt(0).sum()
+        )
+        confidence_score = _compute_confidence_score(
+            delta_values=delta_values,
+            eligible_window_metrics=eligible_frame,
+            delta_stability_score=delta_stability_score,
+            scoring_config=app_config.scoring,
+        )
+        score_eligible, score_reason = determine_score_eligibility(
+            structural_delta_core=structural_delta_core,
+            eligible_structural_window_count=eligible_structural_window_count,
+            confidence_score=confidence_score,
+            normalization_issue_summary=normalization_issue_summary,
+            scoring_config=app_config.scoring,
+        )
+        confidence_label = determine_confidence_label(
+            confidence_score=confidence_score,
+            scoring_config=app_config.scoring,
+            score_eligible=score_eligible,
+            score_eligibility_reason=score_reason,
+        )
+
+        anchor_window_id = choose_structural_anchor_window(
+            window_metrics=frame,
+            scoring_config=app_config.scoring,
+            require_eligible=True,
+        ) or choose_structural_anchor_window(
+            window_metrics=frame,
+            scoring_config=app_config.scoring,
+            require_eligible=False,
+        )
+        anchor_row = window_map.get(anchor_window_id) if anchor_window_id else None
+        anchor_delta = _optional_float(getattr(anchor_row, "structural_delta", None))
+        anchor_up_beta = _optional_float(getattr(anchor_row, "up_beta", None))
+        anchor_down_beta = _optional_float(getattr(anchor_row, "down_beta", None))
+        anchor_asymmetry_ratio = _optional_float(
+            getattr(anchor_row, "asymmetry_ratio", None)
+        )
+
+        volatility_row = (
+            volatility_index.loc[(ticker, as_of_date)].to_dict()
+            if volatility_index is not None and (ticker, as_of_date) in volatility_index.index
+            else {}
+        )
+        total_volatility_52w = _optional_float(volatility_row.get("total_volatility_52w"))
+        residual_volatility_52w = _optional_float(
+            volatility_row.get("residual_volatility_52w")
+        )
+        downside_volatility_52w = _optional_float(
+            volatility_row.get("downside_volatility_52w")
+        )
+        volatility_anchor_window_id = volatility_row.get("volatility_anchor_window_id")
+        volatility_context = determine_volatility_context(
+            total_volatility_52w=total_volatility_52w,
+            residual_volatility_52w=residual_volatility_52w,
+            downside_volatility_52w=downside_volatility_52w,
+            scoring_config=app_config.scoring,
+        )
+
         delta_component_score = compute_delta_component_score(
-            core_delta,
-            app_config.scoring.delta_buckets,
+            structural_delta_core,
+            bands=app_config.scoring.delta_bands,
         )
-        gamma_component_score = compute_gamma_component_score(gamma_proxy)
+        gamma_component_score = compute_gamma_component_score(
+            structural_gamma_core,
+            thresholds=app_config.scoring.gamma_thresholds,
+        )
+        asymmetry_component_score = compute_asymmetry_component_score(
+            asymmetry_ratio=asymmetry_ratio_core,
+            up_beta=up_beta_core,
+            down_beta=down_beta_core,
+            thresholds=app_config.scoring.asymmetry_thresholds,
+        )
         tool_a_score = compute_tool_a_score(
             delta_component_score=delta_component_score,
-            stability_score=stability_score,
             gamma_component_score=gamma_component_score,
+            asymmetry_component_score=asymmetry_component_score,
+            confidence_score=confidence_score,
             score_eligible=score_eligible,
             weights=app_config.scoring.weights,
         )
-        regime_tag = determine_regime_tag(
-            core_delta=core_delta,
-            delta_bucket=delta_bucket,
-            stability_score=stability_score,
-            gamma_proxy=gamma_proxy,
+        profile_label = determine_profile_label(
+            score_eligible=score_eligible,
+            score_eligibility_reason=score_reason,
+            structural_delta_core=structural_delta_core,
+            structural_gamma_core=structural_gamma_core,
+            asymmetry_ratio_core=asymmetry_ratio_core,
+            up_beta_core=up_beta_core,
+            down_beta_core=down_beta_core,
+            confidence_label=confidence_label,
+            residual_volatility_52w=residual_volatility_52w,
+            volatility_context=volatility_context,
             scoring_config=app_config.scoring,
         )
 
-        coverage_summaries.append(coverage_summary)
-        score_eligibilities.append(score_eligible)
-        score_reasons.append(score_reason)
-        delta_buckets.append(delta_bucket)
-        delta_component_scores.append(delta_component_score)
-        gamma_component_scores.append(gamma_component_score)
-        tool_a_scores.append(tool_a_score)
-        regime_tags.append(regime_tag)
+        delta_explanation = build_delta_explanation(
+            anchor_delta=anchor_delta,
+            anchor_window_id=anchor_window_id,
+            structural_delta_core=structural_delta_core,
+            score_eligible=score_eligible,
+            score_eligibility_reason=score_reason,
+            scoring_config=app_config.scoring,
+        )
+        gamma_explanation = build_gamma_explanation(
+            gamma_core=structural_gamma_core,
+            up_beta_anchor=anchor_up_beta,
+            down_beta_anchor=anchor_down_beta,
+            anchor_window_id=anchor_window_id,
+            score_eligible=score_eligible,
+            score_eligibility_reason=score_reason,
+            scoring_config=app_config.scoring,
+        )
+        asymmetry_explanation = build_asymmetry_explanation(
+            asymmetry_ratio_anchor=anchor_asymmetry_ratio,
+            up_beta_anchor=anchor_up_beta,
+            down_beta_anchor=anchor_down_beta,
+            score_eligibility_reason=score_reason,
+            scoring_config=app_config.scoring,
+        )
+        volatility_explanation = build_volatility_explanation(
+            volatility_context=volatility_context,
+            residual_volatility_52w=residual_volatility_52w,
+            downside_volatility_52w=downside_volatility_52w,
+        )
+        confidence_explanation = build_confidence_explanation(
+            confidence_label=confidence_label,
+            confidence_score=confidence_score,
+            score_eligibility_reason=score_reason,
+        )
+        interaction_explanation = build_interaction_explanation(
+            score_eligible=score_eligible,
+            score_eligibility_reason=score_reason,
+            profile_label=profile_label,
+            structural_delta_core=structural_delta_core,
+            structural_gamma_core=structural_gamma_core,
+            asymmetry_ratio_core=asymmetry_ratio_core,
+            volatility_context=volatility_context,
+            confidence_label=confidence_label,
+            scoring_config=app_config.scoring,
+        )
+        summary_explanation = build_summary_explanation(
+            profile_label=profile_label,
+            confidence_label=confidence_label,
+            score_eligibility_reason=score_reason,
+            interaction_explanation=interaction_explanation,
+        )
 
-    profiles["coverage_summary"] = coverage_summaries
-    profiles["score_eligible"] = score_eligibilities
-    profiles["score_eligibility_reason"] = score_reasons
-    profiles["delta_bucket"] = delta_buckets
-    profiles["delta_component_score"] = delta_component_scores
-    profiles["gamma_component_score"] = gamma_component_scores
-    profiles["tool_a_score"] = tool_a_scores
-    profiles["regime_tag"] = regime_tags
-    profiles["tool_a_rank"] = pd.Series(
-        [pd.NA] * len(profiles.index),
-        dtype="Int64",
-    )
-    profiles["source_run_id"] = run_context.run_id
+        rows.append(
+            {
+                "ticker": ticker,
+                "as_of_date": as_of_date,
+                "anchor_window_id": anchor_window_id,
+                "volatility_anchor_window_id": volatility_anchor_window_id,
+                "structural_delta_6m": _optional_float(
+                    getattr(window_map.get("6M"), "structural_delta", None)
+                ),
+                "structural_delta_12m": _optional_float(
+                    getattr(window_map.get("12M"), "structural_delta", None)
+                ),
+                "structural_delta_3y": _optional_float(
+                    getattr(window_map.get("3Y"), "structural_delta", None)
+                ),
+                "structural_delta_core": structural_delta_core,
+                "gamma_6m": _optional_float(getattr(window_map.get("6M"), "gamma_value", None)),
+                "gamma_12m": _optional_float(getattr(window_map.get("12M"), "gamma_value", None)),
+                "gamma_3y": _optional_float(getattr(window_map.get("3Y"), "gamma_value", None)),
+                "structural_gamma_core": structural_gamma_core,
+                "up_beta_6m": _optional_float(getattr(window_map.get("6M"), "up_beta", None)),
+                "down_beta_6m": _optional_float(getattr(window_map.get("6M"), "down_beta", None)),
+                "up_beta_12m": _optional_float(getattr(window_map.get("12M"), "up_beta", None)),
+                "down_beta_12m": _optional_float(getattr(window_map.get("12M"), "down_beta", None)),
+                "up_beta_3y": _optional_float(getattr(window_map.get("3Y"), "up_beta", None)),
+                "down_beta_3y": _optional_float(getattr(window_map.get("3Y"), "down_beta", None)),
+                "up_beta_core": up_beta_core,
+                "down_beta_core": down_beta_core,
+                "asymmetry_ratio_6m": _optional_float(
+                    getattr(window_map.get("6M"), "asymmetry_ratio", None)
+                ),
+                "asymmetry_ratio_12m": _optional_float(
+                    getattr(window_map.get("12M"), "asymmetry_ratio", None)
+                ),
+                "asymmetry_ratio_3y": _optional_float(
+                    getattr(window_map.get("3Y"), "asymmetry_ratio", None)
+                ),
+                "asymmetry_ratio_core": asymmetry_ratio_core,
+                "r_squared_6m": _optional_float(getattr(window_map.get("6M"), "r_squared", None)),
+                "r_squared_12m": _optional_float(getattr(window_map.get("12M"), "r_squared", None)),
+                "r_squared_3y": _optional_float(getattr(window_map.get("3Y"), "r_squared", None)),
+                "weeks_6m": int(getattr(window_map.get("6M"), "week_count", 0) or 0),
+                "weeks_12m": int(getattr(window_map.get("12M"), "week_count", 0) or 0),
+                "weeks_3y": int(getattr(window_map.get("3Y"), "week_count", 0) or 0),
+                "window_status_6m": getattr(window_map.get("6M"), "window_status", None),
+                "window_status_12m": getattr(window_map.get("12M"), "window_status", None),
+                "window_status_3y": getattr(window_map.get("3Y"), "window_status", None),
+                "delta_stability_score": delta_stability_score,
+                "confidence_score": confidence_score,
+                "confidence_label": confidence_label,
+                "total_volatility_52w": total_volatility_52w,
+                "residual_volatility_52w": residual_volatility_52w,
+                "downside_volatility_52w": downside_volatility_52w,
+                "volatility_context": volatility_context,
+                "profile_label": profile_label,
+                "tool_a_score": tool_a_score,
+                "tool_a_rank": pd.NA,
+                "score_eligible": score_eligible,
+                "score_eligibility_reason": score_reason,
+                "eligible_structural_window_count": eligible_structural_window_count,
+                "positive_delta_window_count": positive_delta_window_count,
+                "normalization_issue_summary": normalization_issue_summary,
+                "snapshot_refresh_run_id": snapshot_refresh_run_id,
+                "fx_policy_max_staleness_days": int(app_config.qa.max_fx_staleness_days),
+                "fx_policy_block_on_stale_fx": bool(app_config.qa.block_on_stale_fx),
+                "delta_explanation": delta_explanation,
+                "gamma_explanation": gamma_explanation,
+                "asymmetry_explanation": asymmetry_explanation,
+                "volatility_explanation": volatility_explanation,
+                "confidence_explanation": confidence_explanation,
+                "interaction_explanation": interaction_explanation,
+                "tool_a_summary_explanation": summary_explanation,
+                "source_run_id": run_context.run_id,
+            }
+        )
 
-    output_columns = [
-        "ticker",
-        "as_of_date",
-        "core_delta",
-        "delta_bucket",
-        "gamma_proxy",
-        "stability_score",
-        "regime_tag",
-        "tool_a_score",
-        "tool_a_rank",
-        "score_eligible",
-        "score_eligibility_reason",
-        "coverage_summary",
-        "eligible_core_horizon_count",
-        "pass_core_horizon_count",
-        "fail_core_horizon_count",
-        "total_core_horizon_count",
-        "source_run_id",
+    return pd.DataFrame(rows, columns=TOOL_A_OUTPUT_COLUMNS)
+
+
+def _window_value_map(
+    *,
+    eligible_frame: pd.DataFrame,
+    window_map: dict[str, object],
+    column_name: str,
+    weight_map: dict[str, float],
+) -> dict[str, float | None]:
+    eligible_window_ids = {
+        str(value).upper() for value in eligible_frame["window_id"].astype(str).tolist()
+    }
+    values: dict[str, float | None] = {}
+    for window_id in weight_map:
+        if window_id not in eligible_window_ids:
+            values[window_id] = None
+            continue
+        values[window_id] = _optional_float(getattr(window_map.get(window_id), column_name, None))
+    return values
+
+
+def _compute_delta_stability_score(
+    *,
+    delta_values: dict[str, float | None],
+    structural_delta_core: float | None,
+    scoring_config: ScoringConfig,
+) -> float | None:
+    usable = [
+        float(value)
+        for value in delta_values.values()
+        if value is not None and pd.notna(value)
     ]
-    return profiles[output_columns].copy()
+    if len(usable) < 2 or structural_delta_core is None:
+        return None
+    array = np.asarray(usable, dtype=float)
+    mad = float(np.median(np.abs(array - float(structural_delta_core))))
+    scale = max(
+        abs(float(structural_delta_core)),
+        scoring_config.confidence_thresholds.stability_floor,
+    )
+    return round(float(1.0 / (1.0 + (mad / scale))), 4)
+
+
+def _compute_confidence_score(
+    *,
+    delta_values: dict[str, float | None],
+    eligible_window_metrics: pd.DataFrame,
+    delta_stability_score: float | None,
+    scoring_config: ScoringConfig,
+) -> float | None:
+    if eligible_window_metrics.empty:
+        return None
+
+    total_windows = max(len(scoring_config.structural_windows), 1)
+    coverage_score = len(eligible_window_metrics.index) / total_windows
+
+    fit_values = pd.to_numeric(eligible_window_metrics["r_squared"], errors="coerce").dropna()
+    mean_fit = float(fit_values.mean()) if not fit_values.empty else 0.0
+    minimum_fit = float(fit_values.min()) if not fit_values.empty else 0.0
+    fit_score = _clamp((0.6 * mean_fit) + (0.4 * minimum_fit))
+
+    usable_deltas = [
+        float(value)
+        for value in delta_values.values()
+        if value is not None and pd.notna(value)
+    ]
+    if len(usable_deltas) >= 2:
+        signs = {1 if value > 0 else -1 if value < 0 else 0 for value in usable_deltas}
+        sign_score = 1.0 if len(signs) == 1 else 0.35
+    else:
+        sign_score = 0.25
+
+    stability_score = 0.0 if delta_stability_score is None else float(delta_stability_score)
+    regime_ready_count = int(
+        (
+            eligible_window_metrics["up_beta"].notna()
+            & eligible_window_metrics["down_beta"].notna()
+        ).sum()
+    )
+    regime_score = regime_ready_count / total_windows
+
+    confidence = (
+        (0.25 * coverage_score)
+        + (0.30 * fit_score)
+        + (0.20 * sign_score)
+        + (0.15 * stability_score)
+        + (0.10 * regime_score)
+    )
+    return round(float(_clamp(confidence)), 4)
 
 
 def _optional_float(value: object) -> float | None:
     if value is None or pd.isna(value):
         return None
     return float(value)
+
+
+def _first_non_empty(values: list[object]) -> str | None:
+    for value in values:
+        if value is None or pd.isna(value):
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _clamp(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))

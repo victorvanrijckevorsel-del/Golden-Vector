@@ -102,6 +102,8 @@ def test_tool_b_pipeline_builds_complete_row_when_manual_inputs_are_present(tmp_
         run_context=run_context,
         normalized_market_snapshots=_market_snapshots(),
         gold_price_assumption=4000,
+        snapshot_refresh_run_id="refresh-run-42",
+        snapshot_as_of_date="2026-02-01",
     )
 
     assert result.overall_status == "WARN"
@@ -118,6 +120,11 @@ def test_tool_b_pipeline_builds_complete_row_when_manual_inputs_are_present(tmp_
     assert (output.loc[list(uncovered_tickers), "screening_verdict"] == "INCOMPLETE").all()
     assert result.summary["incomplete_row_count"] == len(uncovered_tickers)
     assert result.summary["manual_store_created"] is False
+    # Provenance regression: every published Tool B row should carry the foundation
+    # refresh run id and the snapshot as-of date, plus FX policy context.
+    assert (result.tool_b_outputs["snapshot_refresh_run_id"] == "refresh-run-42").all()
+    assert (result.tool_b_outputs["fx_policy_max_staleness_days"] == app_config.qa.max_fx_staleness_days).all()
+    assert (result.tool_b_outputs["fx_policy_block_on_stale_fx"] == app_config.qa.block_on_stale_fx).all()
 
 
 def test_tool_b_pipeline_marks_missing_manual_data_as_incomplete(tmp_path):
