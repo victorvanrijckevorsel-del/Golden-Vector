@@ -88,6 +88,12 @@ Tool B notes:
 - `workspace` is now the easiest day-to-day way to review and edit Tool B manual inputs locally
 - the workspace company form treats blank numeric fields as "leave alone" (no-op). To clear a field, use `python main.py manual-data set-company --ticker <T> --clear-fields <field>`.
 
+Workspace notes (current behaviour):
+- three top-level views: Combined (`/`), Tool A (`/tool-a`), Tool B (`/tool-b`), each with click-to-sort, per-column filter dropdowns, and a live global search (all client-side, powered by vendored DataTables)
+- the Tool B view has a "Screening Parameters" panel that lets you override gold price, Forward P/E target, FCF yield target, AISC target, margin target, reserve-life target, leverage target, and the three jurisdiction-tier discounts live via URL params — the table recomputes in memory without touching the persisted parquet
+- Tool B shows four target-price scenarios side by side (Peer P/E, Peak P/E, Peer FCF, Peak FCF) matching the friend's Excel `Top performers` columns; there is no single "best target" headline anymore
+- jurisdiction tiers per ticker are synced from the friend's workbook via `python -m scripts.sync_universe_tiers_from_excel`; manual mining inputs for all active tickers were backfilled from `Gold_Mining_Screening_v10226_EVEB.xlsx` via `python -m scripts.backfill_manual_data_from_excel`
+
 ## Usage
 
 ### Daily flow (the short version)
