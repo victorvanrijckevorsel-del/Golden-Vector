@@ -115,9 +115,15 @@ def parse_query_overrides(query: Mapping[str, list[str]]) -> ScreeningOverrides:
             # Discount >= 100% collapses target P/E multiples to zero
             # (peer_pe * (1 - 1.0) = 0), which produces meaningless
             # zero/negative target prices across the board. Reject.
+            #
+            # Error message is explicit about the interpretation because
+            # `1.0` (typed as a fraction) and `100` (typed as percent)
+            # both land at `value = 1.0` after _percent_to_fraction. The
+            # user needs to see what their input was coerced to.
             if value >= 1.0:
                 raise ScreeningOverrideError(
-                    f"{param_name} must be less than 100 (got {numeric})"
+                    f"{param_name} must be below 100% "
+                    f"(got {numeric}, interpreted as {value * 100:.0f}%)"
                 )
             jurisdiction[target_field] = value
 

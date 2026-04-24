@@ -106,15 +106,29 @@ def test_parse_query_overrides_rejects_discount_above_100():
 
 def test_parse_query_overrides_rejects_discount_equal_to_100():
     """A 100% discount collapses every P/E target to zero, which
-    produces meaningless target prices. Reject at the boundary."""
-    with pytest.raises(ScreeningOverrideError):
+    produces meaningless target prices. Reject at the boundary.
+
+    Error message must say so in plain English because typing `100`
+    and typing `1.0` both land at the same rejection path — the user
+    needs to see the interpretation.
+    """
+    with pytest.raises(ScreeningOverrideError) as exc:
         parse_query_overrides({"tier2_discount": ["100"]})
+    msg = str(exc.value)
+    assert "100%" in msg
+    assert "interpreted" in msg.lower()
 
 
 def test_parse_query_overrides_rejects_fractional_discount_equal_to_one():
-    """Same rejection when user types 1.0 directly (already-fractional)."""
-    with pytest.raises(ScreeningOverrideError):
+    """Same rejection when user types 1.0 directly (already-fractional).
+
+    And the interpretation in the message should make clear why: `1.0`
+    got treated as 100% because that's how the fraction convention works.
+    """
+    with pytest.raises(ScreeningOverrideError) as exc:
         parse_query_overrides({"tier2_discount": ["1.0"]})
+    msg = str(exc.value)
+    assert "100%" in msg
 
 
 def test_parse_query_overrides_accepts_discount_just_under_100():
