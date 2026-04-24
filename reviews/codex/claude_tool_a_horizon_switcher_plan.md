@@ -2,8 +2,21 @@
 
 Date: 2026-04-24
 Author: Claude (Opus 4.7)
-Status: PROPOSED
-For review by: Codex
+Status: UPDATED after Codex review (READY WITH MINOR CHANGES) — scope tightened per his 5 findings
+For review by: Codex (already graded; see codex_review_claude_tool_a_horizon_switcher_plan.md)
+
+## Changes from v1 (after Codex review)
+
+| # | Codex finding | v1 said | v2 says |
+|---|---|---|---|
+| 1 | Drop `hide=` URL line toggles for v1 | URL param + anchor-link legend toggles | Show all 3 lines, active one thicker. No toggles. If missed, add later. |
+| 2 | Don't invent a workspace-only narrative engine | New `_describe_structural_metrics` helper | Reuse `golden_vector/model/explanations.py`'s 7 existing builders (`build_delta_explanation`, etc.) — they already take window-specific inputs |
+| 3 | Retire the 12M-only chart load path | Kept two "history" concepts | Single source: `tool_a_structural_latest.parquet` has all 3 windows; use it everywhere |
+| 4 | Suppress volatility when window isn't structurally eligible | Sample-size label | Check `window_status_<window>` field; render "N/A — window not eligible" if not ELIGIBLE |
+| 5 | Fix "renders exactly as today" wording | Claimed identical | Default load shows same active window + same numbers, but adds the tab row |
+| (bonus) | Rolling chart today is 12M-hardcoded, not anchor-driven | v1 said "canonical anchor" | Corrected — today the rolling chart is always 12M. Change #3 fixes this by construction |
+
+Net scope: smaller. Estimate drops from ~4 hr to ~3 hr. Test count drops from 16 to ~11.
 
 ## Why
 

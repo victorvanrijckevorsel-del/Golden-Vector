@@ -59,7 +59,14 @@ def test_workspace_detail_page_renders_explanations_and_exploratory_ladder(tmp_p
     assert response["status"].startswith("200")
     assert "Structural Tool A" in response["body"]
     assert "Exploratory Horizon Ladder" in response["body"]
-    assert "High structural delta means this stock has tended to move more than gold" in response["body"]
+    # Regression guard: the workspace now regenerates narrative cards live from
+    # numeric inputs + band thresholds (single source of truth = model/explanations.py).
+    # With structural_delta_12m=1.9 and high_min=2.0, the builder picks the "moderately
+    # high" band. The pre-baked `delta_explanation` field on the row is NOT read.
+    assert (
+        "Moderately high structural delta means this stock has shown strong gold sensitivity"
+        in response["body"]
+    )
     assert "Single-Period Ratio" in response["body"]
 
 
@@ -832,8 +839,8 @@ def test_workspace_detail_chart_sits_above_volatility_in_both_alignment_branches
     # Aligned case.
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert body.find("12M Rolling Structural Delta") < body.find("Volatility Diagnostics")
-    assert body.find("12M Rolling Structural Delta") < body.find("Exploratory Horizon Ladder")
+    assert body.find("Rolling Structural Delta") < body.find("Volatility Diagnostics")
+    assert body.find("Rolling Structural Delta") < body.find("Exploratory Horizon Ladder")
 
     # Non-aligned case (foundation manifest's refresh != Tool A row's refresh).
     _write_latest_outputs(
@@ -846,7 +853,7 @@ def test_workspace_detail_chart_sits_above_volatility_in_both_alignment_branches
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
     # Chart must come before the volatility panel even when foundation is misaligned.
-    assert body.find("12M Rolling Structural Delta") < body.find("Volatility Diagnostics")
+    assert body.find("Rolling Structural Delta") < body.find("Volatility Diagnostics")
 
 
 def test_workspace_detail_surfaces_corrupt_structural_metrics_at_page_level(tmp_path):
@@ -1439,7 +1446,7 @@ def test_workspace_detail_warns_when_structural_history_file_is_missing(tmp_path
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert "12M Rolling Structural Delta &mdash; Not Available Yet" in body
+    assert "Rolling Structural Delta &mdash; Not Available Yet" in body
     assert "Structural history file has not been generated yet" in body
 
 
@@ -1459,7 +1466,7 @@ def test_workspace_detail_suppresses_chart_when_structural_source_run_id_mismatc
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert "12M Rolling Structural Delta &mdash; Out of Sync" in body
+    assert "Rolling Structural Delta &mdash; Out of Sync" in body
     assert "Structural history file is out of sync with the published Tool A row" in body
 
 
@@ -1477,11 +1484,11 @@ def test_workspace_detail_renders_beta_history_chart_when_aligned(tmp_path):
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert ">12M Rolling Structural Delta</h3>" in body
+    assert ">Rolling Structural Delta</h3>" in body
     assert "Out of Sync" not in body
     # Beta line as polyline + chart frame must be present.
     assert "<polyline points=" in body
-    assert "12m rolling structural delta" in body.lower()
+    assert "rolling structural delta by window" in body.lower()
 
 
 def test_workspace_detail_chart_shows_withheld_watermark_when_score_is_withheld(tmp_path):
@@ -1525,7 +1532,7 @@ def test_workspace_detail_chart_shows_withheld_watermark_when_score_is_withheld(
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert ">12M Rolling Structural Delta</h3>" in body
+    assert ">Rolling Structural Delta</h3>" in body
     assert "historical series shown for context only" in body
 
 
@@ -1572,7 +1579,7 @@ def test_workspace_detail_chart_renders_beta_line_when_foundation_misaligned_but
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert ">12M Rolling Structural Delta</h3>" in body
+    assert ">Rolling Structural Delta</h3>" in body
     assert "<polyline points=" in body
     # No more gold-overlay-related copy in any direction.
     assert "Gold-price overlay" not in body
@@ -1600,7 +1607,7 @@ def test_workspace_detail_chart_distinguishes_corrupt_parquet_from_missing(tmp_p
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert "12M Rolling Structural Delta &mdash; Not Available Yet" in body
+    assert "Rolling Structural Delta &mdash; Not Available Yet" in body
     assert "Could not read the structural history file" in body
     # The user should NOT see the "missing" wording for a corrupt file.
     assert "Structural history file has not been generated yet" not in body
