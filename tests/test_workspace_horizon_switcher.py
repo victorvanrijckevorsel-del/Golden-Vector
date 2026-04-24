@@ -353,23 +353,70 @@ def test_volatility_panel_renders_numbers_for_canonical_eligible_window(tmp_path
 
 # ---------------------------------------------------------------- T11 ----
 
-def test_rolling_chart_draws_one_polyline_per_window_when_all_three_have_history(tmp_path):
+def test_rolling_chart_default_draws_only_active_window_line(tmp_path):
+    """Post-legend-toggle default: only the active window's line is drawn.
+    The other two windows appear in the legend as opt-in toggle links so the
+    user can add or remove them one at a time.
+    """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
     app_config = _repo_app_config()
     bootstrap_manual_screening_data(paths, tickers=["NEM"])
     _write_latest_foundation_snapshot(paths)
     _write_latest_outputs(paths)
-    # Write a multi-window structural history file so the 3-line chart has data.
     _write_multi_window_structural_history(paths, ticker="NEM", source_run_id="tool-a-run")
 
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    # One polyline per window → expect at least 3.
-    assert body.count("<polyline points=") >= 3
-    # Legend should show all three windows; active window labeled.
-    assert "(active)" in body
+    # Exactly one line (the active 12M one) drawn.
+    assert body.count("<polyline points=") == 1
+    # Two hidden toggle <a> legend links present for the other two windows.
+    assert body.count('class="chart-legend-item chart-legend-link"') == 2
+    # Active window labeled.
+    assert "12M (active)" in body
+
+
+def test_rolling_chart_honors_show_param_to_add_lines(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_multi_window_structural_history(paths, ticker="NEM", source_run_id="tool-a-run")
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    # Explicitly show all three windows.
+    response = _call_wsgi_app(
+        app, method="GET", path="/ticker/NEM?show=6m,3y"
+    )
+    body = response["body"]
+    assert body.count("<polyline points=") == 3
+
+
+def test_rolling_chart_legend_link_drops_window_from_show_when_visible(tmp_path):
+    """When a window is currently visible, its legend link should navigate to
+    a URL that removes it from `show=` (toggle off).
+    """
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_multi_window_structural_history(paths, ticker="NEM", source_run_id="tool-a-run")
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    # With 6M shown, the 6M legend link should drop it (→ only window=12m).
+    response = _call_wsgi_app(
+        app, method="GET", path="/ticker/NEM?show=6m"
+    )
+    body = response["body"]
+    # The 6M legend link should point to a URL WITHOUT 6m in show=.
+    assert 'href="/ticker/NEM?window=12m"' in body
+    # The 3Y legend link should ADD 3y while keeping 6m (toggle on, preserving context).
+    assert 'href="/ticker/NEM?window=12m&amp;show=6m,3y"' in body or "show=6m,3y" in body
 
 
 # ---------------------------------------------------------------- T12 ----

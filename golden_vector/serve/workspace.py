@@ -287,6 +287,9 @@ def create_workspace_app(
                     active_window = _resolve_active_window(
                         query.get("window", [""])[0], canonical_anchor,
                     )
+                    visible_windows = _resolve_visible_windows(
+                        query.get("show", [""])[0], active_window,
+                    )
                     return _html_response(
                         start_response,
                         _render_ticker_page(
@@ -296,6 +299,7 @@ def create_workspace_app(
                             flash=flash,
                             active_window=active_window,
                             canonical_anchor=canonical_anchor,
+                            visible_windows=visible_windows,
                             app_config=app_config,
                         ),
                     )
@@ -1439,6 +1443,7 @@ def _render_ticker_page(
     error: str | None = None,
     active_window: str = "12M",
     canonical_anchor: str = "12M",
+    visible_windows: list[str] | None = None,
     app_config: AppConfig | None = None,
 ) -> str:
     company_row = _frame_index_by_ticker(state.company_inputs).get(ticker, {})
@@ -1447,6 +1452,8 @@ def _render_ticker_page(
     tool_b_row = _frame_index_by_ticker(state.latest_tool_b).get(ticker, {})
     verification_rows = _ticker_rows(state.source_verification, ticker)
     note_rows = _ticker_rows(state.stock_notes, ticker)
+    if visible_windows is None:
+        visible_windows = [active_window]
 
     body = [f"<p><a href=\"/\">Back to workspace</a></p>", f"<h1>{escape(ticker)}</h1>"]
     body.append(_render_window_switcher(ticker=ticker, active=active_window, canonical=canonical_anchor))
@@ -1463,6 +1470,7 @@ def _render_ticker_page(
             tool_a_detail=tool_a_detail,
             alignment=alignment,
             active_window=active_window,
+            visible_windows=visible_windows,
             app_config=app_config,
         )
     )
@@ -1495,7 +1503,7 @@ def _render_window_switcher(*, ticker: str, active: str, canonical: str) -> str:
         cls = "window-tab active" if is_active else "window-tab"
         href = base if window == canonical else f"{base}?window={window.lower()}"
         canonical_marker = (
-            "<span class=\"window-canonical\">anchor</span>" if is_canonical else ""
+            " <span class=\"window-canonical\">anchor</span>" if is_canonical else ""
         )
         tabs.append(
             f"<a class=\"{cls}\" href=\"{href}\">{escape(window)}{canonical_marker}</a>"
@@ -1664,6 +1672,7 @@ def _render_latest_panels(
     tool_a_detail: ToolADetailState,
     alignment: str,
     active_window: str = "12M",
+    visible_windows: list[str] | None = None,
     app_config: AppConfig | None = None,
 ) -> str:
     return (
@@ -1673,6 +1682,7 @@ def _render_latest_panels(
             tool_a_detail=tool_a_detail,
             alignment=alignment,
             active_window=active_window,
+            visible_windows=visible_windows,
             app_config=app_config,
         )
         + "<div class=\"two-up\">"
@@ -1688,6 +1698,7 @@ def _render_tool_a_panel(
     tool_a_detail: ToolADetailState,
     alignment: str,
     active_window: str = "12M",
+    visible_windows: list[str] | None = None,
     app_config: AppConfig | None = None,
 ) -> str:
     if not tool_a_row:
@@ -1751,6 +1762,7 @@ def _render_tool_a_panel(
             tool_a_detail=tool_a_detail,
             alignment=alignment,
             active_window=active_window,
+            visible_windows=visible_windows,
             scoring_config=scoring_config,
         ),
         "</section>",
@@ -2012,8 +2024,11 @@ def _render_visual_panels(
     tool_a_detail: ToolADetailState,
     alignment: str,
     active_window: str = "12M",
+    visible_windows: list[str] | None = None,
     scoring_config: Any = None,
 ) -> str:
+    if visible_windows is None:
+        visible_windows = [active_window]
     # Alignment check fires first so every documented non-aligned state — including
     # FOUNDATION_MISSING, where load_latest_foundation_snapshot raises and sets
     # tool_a_detail.foundation_error — gets the per-panel suppressed-card treatment
@@ -2049,6 +2064,7 @@ def _render_visual_panels(
             tool_a_row=tool_a_row,
             structural_history_load=tool_a_detail.structural_history_load,
             active_window=active_window,
+            visible_windows=visible_windows,
         )
         # Mirror the aligned branch's ordering (Fix #10 follow-up): chart sits
         # between the scatter row and the volatility row in BOTH branches so the
@@ -2086,6 +2102,7 @@ def _render_visual_panels(
         tool_a_row=tool_a_row,
         structural_history_load=tool_a_detail.structural_history_load,
         active_window=active_window,
+        visible_windows=visible_windows,
     )
     # Chart placement (post-deep-review): the rolling-delta chart is the most
     # paper-aligned visual on the detail page, so it sits immediately under the
@@ -2810,6 +2827,26 @@ def _resolve_active_window(raw_param: str, canonical_anchor: str) -> str:
     return canonical_anchor if canonical_anchor in _STRUCTURAL_WINDOWS else "12M"
 
 
+def _resolve_visible_windows(raw_param: str, active_window: str) -> list[str]:
+    """Map a URL `show=` value to an ordered list of windows to draw.
+
+    The active window is always included — the switcher tab is the "primary"
+    line the user picked, so hiding it would make the chart meaningless.
+    Additional windows can be layered in via `?show=6m` or `?show=6m,3y`.
+    Tokens are case-insensitive; invalid tokens are silently dropped.
+
+    Return order mirrors `_STRUCTURAL_WINDOWS` so the legend is always
+    displayed 6M / 12M / 3Y regardless of what the user clicked first.
+    """
+    tokens = {
+        token.strip().upper()
+        for token in str(raw_param or "").split(",")
+        if token.strip()
+    }
+    tokens.add(active_window.upper())
+    return [window for window in _STRUCTURAL_WINDOWS if window.upper() in tokens]
+
+
 def _render_top_nav(active: str) -> str:
     items = []
     for nav_id, href, label in _NAV_LINKS:
@@ -2968,6 +3005,13 @@ def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
     }}
     .chart-legend-item {{
       margin-right: 14px;
+    }}
+    .chart-legend-link {{
+      text-decoration: none;
+      cursor: pointer;
+    }}
+    .chart-legend-link:hover {{
+      text-decoration: underline;
     }}
     .scorecard-group {{
       margin-bottom: 18px;
@@ -3750,16 +3794,23 @@ def _build_beta_history_svg(
     *,
     series_by_window: dict[str, tuple[list[pd.Timestamp], list[float]]],
     active_window: str,
+    visible_windows: list[str] | None = None,
     current_delta_core: float | None,
+    ticker: str = "",
 ) -> str:
-    """SVG line chart of structural_delta over time, one line per window.
+    """SVG line chart of structural_delta over time, one line per visible window.
 
     ``series_by_window`` maps ``window_id`` → (dates, deltas). The active window
-    is drawn thicker and fully opaque; inactive windows are thinner and muted so
-    the user can still see the context. All lines share one y-axis (structural
-    delta units), so a "stock drifts upward" signal is visible regardless of
-    which window is active.
+    is always drawn (thicker and fully opaque). Any other window whose id is in
+    ``visible_windows`` is layered in thinner and muted. Hidden windows appear
+    in the legend as muted toggle links so the user can click to reveal them.
+
+    All lines share one y-axis (structural delta units), so a "stock drifts
+    upward" signal is visible regardless of which window is active.
     """
+    if visible_windows is None:
+        visible_windows = [active_window]
+    visible_upper = {w.upper() for w in visible_windows}
 
     width = 720
     height = 240
@@ -3770,10 +3821,14 @@ def _build_beta_history_svg(
     inner_w = width - padding_left - padding_right
     inner_h = height - padding_top - padding_bottom
 
-    # Collect every delta/date across windows so axis bounds are consistent.
+    # Collect every delta/date across VISIBLE windows so axis bounds rescale
+    # when the user toggles a window off. A hidden 3Y line shouldn't stretch
+    # the y-axis of a 6M-only view.
     all_deltas: list[float] = []
     all_dates: list[pd.Timestamp] = []
-    for dates, deltas in series_by_window.values():
+    for window_id, (dates, deltas) in series_by_window.items():
+        if window_id.upper() not in visible_upper:
+            continue
         if dates and deltas and len(dates) == len(deltas):
             all_deltas.extend(deltas)
             all_dates.extend(dates)
@@ -3822,12 +3877,15 @@ def _build_beta_history_svg(
         )
 
     # SVG later elements paint above earlier ones, so render inactive windows
-    # first and the active window last so it always sits on top.
+    # first and the active window last so it always sits on top. Only visible
+    # windows draw lines; hidden windows still appear in the legend as toggle
+    # links so the user can opt them back in.
     active_upper = (active_window or "").strip().upper()
     ordered_windows = [w for w in _STRUCTURAL_WINDOWS if w in series_by_window]
-    draw_order = [w for w in ordered_windows if w.upper() != active_upper] + [
-        w for w in ordered_windows if w.upper() == active_upper
-    ]
+    draw_order = [
+        w for w in ordered_windows
+        if w.upper() != active_upper and w.upper() in visible_upper
+    ] + [w for w in ordered_windows if w.upper() == active_upper]
     lines_html = ""
     for window_id in draw_order:
         dates, deltas = series_by_window[window_id]
@@ -3843,14 +3901,50 @@ def _build_beta_history_svg(
             f"stroke-width=\"{width_px}\" opacity=\"{opacity}\" />"
         )
 
+    # Build clickable toggle links: clicking a visible non-active window
+    # removes it from `show=`; clicking a hidden window adds it. The active
+    # window has no href — it's always drawn, so there's nothing to toggle.
+    ticker_base = f"/ticker/{escape(ticker)}" if ticker else ""
+    window_param = f"window={active_window.lower()}"
     legend_parts: list[str] = []
     for window_id in ordered_windows:
-        is_active = window_id.upper() == active_upper
-        color = _WINDOW_COLORS.get(window_id.upper(), "#555555")
+        upper = window_id.upper()
+        is_active = upper == active_upper
+        is_visible = upper in visible_upper
+        color = _WINDOW_COLORS.get(upper, "#555555")
         font_weight = "600" if is_active else "400"
+        marker = "&#9632;" if is_visible else "&#9633;"  # filled vs hollow square
+        if is_active:
+            label = f"{escape(window_id)} (active)"
+            legend_parts.append(
+                f"<span class=\"chart-legend-item\" "
+                f"style=\"color:{color};font-weight:{font_weight}\">"
+                f"{marker} {label}</span>"
+            )
+            continue
+        # Toggle target: visible windows that are NOT the active one come out of
+        # `show=` on click; hidden windows go in.
+        new_show = {
+            w.upper() for w in visible_windows
+            if w.upper() != active_upper and w.upper() != upper
+        } if is_visible else (
+            {w.upper() for w in visible_windows if w.upper() != active_upper} | {upper}
+        )
+        show_param = ",".join(
+            w.lower() for w in _STRUCTURAL_WINDOWS if w.upper() in new_show
+        )
+        action = "hide" if is_visible else "show"
+        query = f"?{window_param}"
+        if show_param:
+            query += f"&show={show_param}"
+        href = f"{ticker_base}{query}" if ticker_base else query
+        title_text = f"Click to {action} the {window_id} line"
         legend_parts.append(
-            f"<span class=\"chart-legend-item\" style=\"color:{color};font-weight:{font_weight}\">"
-            f"&#9632; {escape(window_id)}{' (active)' if is_active else ''}</span>"
+            f"<a class=\"chart-legend-item chart-legend-link\" href=\"{href}\" "
+            f"title=\"{title_text}\" "
+            f"style=\"color:{color};font-weight:{font_weight};"
+            f"opacity:{'1.0' if is_visible else '0.55'}\">"
+            f"{marker} {escape(window_id)}</a>"
         )
     legend_html = (
         "<p class=\"chart-legend\">" + " ".join(legend_parts) + "</p>" if legend_parts else ""
@@ -3889,6 +3983,7 @@ def _render_beta_history_panel(
     tool_a_row: dict[str, Any],
     structural_history_load: "StructuralHistoryLoad",
     active_window: str = "12M",
+    visible_windows: list[str] | None = None,
 ) -> str:
     """Render the rolling structural-delta panel with one line per window.
 
@@ -3969,16 +4064,26 @@ def _render_beta_history_panel(
             "historical series shown for context only.</em></p>"
         )
 
+    # Default: only the active window's line is drawn. The user opts-in to
+    # additional windows by clicking their legend items (which toggle via the
+    # `?show=` URL param).
+    if visible_windows is None:
+        visible_windows = [active_window]
+    visible_upper = {w.upper() for w in visible_windows}
+
     svg = _build_beta_history_svg(
         series_by_window=series_by_window,
         active_window=active_window,
+        visible_windows=visible_windows,
         current_delta_core=current_delta_core,
+        ticker=ticker,
     )
     return (
         "<section class=\"panel nested-panel\">"
         f"<h3>{escape(title)}</h3>"
         f"<p class=\"hint\">How {escape(ticker)}'s weekly structural beta to gold has moved over time, "
-        f"with the {escape(active_window)} window highlighted. Drawn from <code>tool_a_structural_latest.parquet</code>.</p>"
+        f"with the {escape(active_window)} window highlighted. Click a window below to add or remove its line. "
+        "Drawn from <code>tool_a_structural_latest.parquet</code>.</p>"
         f"{watermark}{svg}"
         "</section>"
     )
