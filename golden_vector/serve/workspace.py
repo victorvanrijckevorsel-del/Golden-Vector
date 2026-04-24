@@ -693,6 +693,7 @@ def _render_overview_page(
                 "profile_label": str(tool_a_row.get("profile_label") or "").strip().upper(),
                 "verdict": str(tool_b_row.get("screening_verdict") or "").strip().upper(),
                 "confidence_label": str(tool_a_row.get("confidence_label") or "").strip().upper(),
+                "volatility_context": str(tool_a_row.get("volatility_context") or "").strip().upper(),
                 "tool_a_rank": _optional_float(tool_a_row.get("tool_a_rank")),
                 "tool_b_rank": _optional_float(tool_b_row.get("tool_b_rank")),
                 "tool_a_score": _optional_float(tool_a_row.get("tool_a_score")),
@@ -810,14 +811,21 @@ def _render_overview_page(
         if show_lens_column
         else ""
     )
-    # Filter bar options come from the full row set so the dropdown reflects
-    # what actually exists in the page (even if the user has narrowed via
-    # server-side filters, DataTables still only filters within filtered_rows).
-    combined_filter_options = {
-        "profile": profile_values,
-        "confidence": confidence_values,
-        "verdict": verdict_values,
-    }
+    # Filter-bar options must come from `filtered_rows` (post server-side
+    # filters), not `derived_rows`, so the DataTables dropdown never
+    # offers a value that doesn't exist in the currently rendered table.
+    # The existing `*_values` sets above are intentionally built from
+    # `derived_rows` — they feed the SERVER-side filter form where the
+    # user needs to see all possible values to pick one.
+    combined_filter_options = _collect_filter_options(
+        filtered_rows,
+        [
+            ("profile", "profile_label"),
+            ("confidence", "confidence_label"),
+            ("volatility", "volatility_context"),
+            ("verdict", "verdict"),
+        ],
+    )
     body.append("<h2>Universe Overview</h2>")
     body.append(_render_filter_bar(
         target_table_id="combined-table",
@@ -825,6 +833,7 @@ def _render_overview_page(
         column_labels={
             "profile": "Profile",
             "confidence": "Confidence",
+            "volatility": "Volatility",
             "verdict": "Tool B Verdict",
         },
     ))
@@ -2830,12 +2839,10 @@ def _render_filter_bar(
     """
     labels = column_labels or {}
     dropdowns: list[str] = []
+    # Columns with no values (no data in the rendered rows) still render
+    # a dropdown with only the "All" option so the bar's layout stays
+    # consistent as data shifts.
     for column_name, values in options.items():
-        if not values:
-            # Nothing to filter on for this column (no data or all empty).
-            # Still emit the select so the bar layout stays consistent;
-            # it just offers only "All".
-            pass
         label_text = labels.get(column_name) or column_name.replace("_", " ").title()
         option_tags = "<option value=\"\">All</option>" + "".join(
             f"<option value=\"{escape(value)}\">{escape(value)}</option>"

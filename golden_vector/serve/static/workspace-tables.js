@@ -57,10 +57,14 @@ document.addEventListener('DOMContentLoaded', () => {
       language: { search: '' },
     });
 
-    const targetSelector = '#' + table.id;
-    const bar = document.querySelector(
-      '.table-filters[data-filter-target="' + targetSelector + '"]'
-    );
+    // Find the filter bar by matching data-filter-target to this table's
+    // id. Iterating and comparing as strings (rather than building a CSS
+    // selector with the id interpolated) avoids any selector-escaping
+    // trouble if a future table gets a funky id.
+    const targetId = '#' + table.id;
+    const bar = Array.from(
+      document.querySelectorAll('.table-filters[data-filter-target]')
+    ).find((el) => el.dataset.filterTarget === targetId);
     if (!bar) return;
 
     // Live global search across all visible cells.
