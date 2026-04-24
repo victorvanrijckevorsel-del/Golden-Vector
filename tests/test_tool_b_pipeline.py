@@ -14,6 +14,19 @@ from golden_vector.screening.pipeline import execute_tool_b_pipeline
 from tests.helpers import build_test_paths
 
 
+def _activate_for_test(app_config, *fixture_tickers: str):
+    """Force fixture tickers to be active in the loaded app_config so Tool B
+    pipeline doesn't drop them when the live universe.yaml has them inactive.
+    """
+    targets = {t.upper() for t in fixture_tickers}
+    new_tickers = [
+        ticker.model_copy(update={"active": True}) if ticker.ticker in targets else ticker
+        for ticker in app_config.universe.tickers
+    ]
+    new_universe = app_config.universe.model_copy(update={"tickers": new_tickers})
+    return app_config.model_copy(update={"universe": new_universe})
+
+
 def _populate_manual_store(paths: ProjectPaths, ticker_payloads: dict[str, dict[str, object]]) -> None:
     bootstrap_manual_screening_data(paths, tickers=list(ticker_payloads))
     for ticker, payload in ticker_payloads.items():
@@ -51,7 +64,7 @@ def _market_snapshots() -> pd.DataFrame:
 
 def test_tool_b_pipeline_builds_complete_row_when_manual_inputs_are_present(tmp_path):
     paths = build_test_paths(tmp_path)
-    app_config = load_app_config(ProjectPaths.discover()).app
+    app_config = _activate_for_test(load_app_config(ProjectPaths.discover()).app, "GOLD")
     expected_tickers = {
         ticker.ticker
         for ticker in app_config.universe.tickers
@@ -249,7 +262,7 @@ def test_tool_b_pipeline_uses_explicitly_imported_legacy_csvs(tmp_path):
 
 def test_tool_b_pipeline_emits_incomplete_row_when_snapshot_is_missing(tmp_path):
     paths = build_test_paths(tmp_path)
-    app_config = load_app_config(ProjectPaths.discover()).app
+    app_config = _activate_for_test(load_app_config(ProjectPaths.discover()).app, "GOLD")
     expected_tickers = {
         ticker.ticker
         for ticker in app_config.universe.tickers

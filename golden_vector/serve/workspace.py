@@ -181,7 +181,7 @@ def create_workspace_app(
         path = str(environ.get("PATH_INFO", "/")) or "/"
 
         try:
-            if method == "GET" and path == "/":
+            if method == "GET" and path in ("/", "/combined"):
                 state = _load_workspace_state(paths, normalized_tickers)
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 flash = _flash_message(query.get("saved", [""])[0])
@@ -201,6 +201,32 @@ def create_workspace_app(
                         filters=overview_filters,
                         lens_id=lens_id,
                         scoring_config=app_config.scoring,
+                    ),
+                )
+
+            if method == "GET" and path == "/tool-a":
+                state = _load_workspace_state(paths, normalized_tickers)
+                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+                flash = _flash_message(query.get("saved", [""])[0])
+                return _html_response(
+                    start_response,
+                    _render_tool_a_overview_page(
+                        state,
+                        flash=flash,
+                        search=query.get("search", [""])[0],
+                    ),
+                )
+
+            if method == "GET" and path == "/tool-b":
+                state = _load_workspace_state(paths, normalized_tickers)
+                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+                flash = _flash_message(query.get("saved", [""])[0])
+                return _html_response(
+                    start_response,
+                    _render_tool_b_overview_page(
+                        state,
+                        flash=flash,
+                        search=query.get("search", [""])[0],
                     ),
                 )
 
@@ -761,7 +787,7 @@ def _render_overview_page(
         "<p class=\"hint\">Use <code>python main.py update-data</code> to refresh market data. "
         "Use the stock links above to edit Tool B inputs and inspect the structural Tool A explanation cards.</p>"
     )
-    return _page_shell("Golden Vector Workspace", "".join(body))
+    return _page_shell("Golden Vector Workspace", "".join(body), active_nav="combined")
 
 
 def _render_overview_filters_form(
@@ -849,6 +875,192 @@ def _overview_sort_key(sort_key: str) -> Callable[[dict[str, Any]], Any]:
     return lambda r: (0, r["ticker"])
 
 
+def _render_tool_a_overview_page(
+    state: WorkspaceState,
+    *,
+    flash: str | None,
+    search: str = "",
+) -> str:
+    """Tool A focused overview: ranked by gold-sensitivity score.
+
+    Shows only Tool A-relevant columns (delta, gamma, asymmetry, confidence,
+    volatility, score, rank, profile). No Tool B noise.
+    """
+    note_counts = (
+        state.stock_notes.groupby("ticker").size().to_dict()
+        if not state.stock_notes.empty and "ticker" in state.stock_notes.columns
+        else {}
+    )
+    tool_a_index = _frame_index_by_ticker(state.latest_tool_a)
+    search_term = str(search or "").strip().upper()
+
+    derived: list[dict[str, Any]] = []
+    for ticker in state.tool_b_tickers:
+        if search_term and search_term not in ticker:
+            continue
+        tool_a_row = tool_a_index.get(ticker, {})
+        derived.append({
+            "ticker": ticker,
+            "tool_a_row": tool_a_row,
+            "tool_a_rank": _optional_float(tool_a_row.get("tool_a_rank")),
+            "note_count": int(note_counts.get(ticker, 0)),
+        })
+    derived.sort(key=lambda r: (0 if r["tool_a_rank"] is not None else 1,
+                                 r["tool_a_rank"] if r["tool_a_rank"] is not None else 0.0,
+                                 r["ticker"]))
+
+    rows_html: list[str] = []
+    for row in derived:
+        ta = row["tool_a_row"]
+        rows_html.append(
+            "<tr>"
+            f"<td><a href=\"/ticker/{escape(row['ticker'])}\">{escape(row['ticker'])}</a></td>"
+            f"<td>{_fmt_text(ta.get('profile_label'))}</td>"
+            f"<td>{_fmt_number(ta.get('structural_delta_core'), decimals=2)}</td>"
+            f"<td>{_fmt_number(ta.get('structural_gamma_core'), decimals=2)}</td>"
+            f"<td>{_fmt_number(ta.get('asymmetry_ratio_core'), decimals=2)}</td>"
+            f"<td>{_fmt_text(ta.get('confidence_label'))}</td>"
+            f"<td>{_fmt_text(ta.get('volatility_context'))}</td>"
+            f"<td>{_fmt_number(ta.get('tool_a_score'), decimals=1)}</td>"
+            f"<td>{_fmt_number(row['tool_a_rank'], decimals=0)}</td>"
+            f"<td>{row['note_count']}</td>"
+            "</tr>"
+        )
+    if not rows_html:
+        rows_html.append(
+            "<tr><td colspan=\"10\" class=\"hint\">No tickers match.</td></tr>"
+        )
+
+    body = ["<h1>Tool A — Gold Sensitivity Ranking</h1>"]
+    body.append(
+        "<p>Ranks the universe by structural sensitivity to the gold price. "
+        "Lower rank is better. Negative gamma is favorable (up-gold sensitivity exceeds down-gold sensitivity). "
+        "Click a ticker for the full structural breakdown and beta-history chart.</p>"
+    )
+    if flash:
+        body.append(f"<div class=\"flash\">{escape(flash)}</div>")
+    body.append(_render_provenance_warnings(state))
+    body.append(_render_refresh_summary(state.foundation_manifest))
+    body.append(
+        "<section class=\"panel\">"
+        "<form method=\"get\" action=\"/tool-a\" class=\"overview-filters-form\">"
+        f"<label><span>Search ticker</span><input name=\"search\" type=\"text\" value=\"{escape(search)}\" placeholder=\"NEM\"></label>"
+        "<div class=\"overview-filters-actions\">"
+        f"<span class=\"hint\">{len(derived)} tickers shown.</span>"
+        "<button type=\"submit\">Apply</button>"
+        "<a class=\"hint\" href=\"/tool-a\">Reset</a>"
+        "</div>"
+        "</form>"
+        "</section>"
+    )
+    body.append(
+        "<table>"
+        "<thead><tr>"
+        "<th>Ticker</th><th>Profile</th>"
+        "<th>Δ Core</th><th>Gamma</th><th>Asymmetry</th>"
+        "<th>Confidence</th><th>Volatility</th>"
+        "<th>Tool A Score</th><th>Rank</th><th>Notes</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows_html)}</tbody>"
+        "</table>"
+    )
+    return _page_shell("Tool A — Gold Vector Workspace", "".join(body), active_nav="tool_a")
+
+
+def _render_tool_b_overview_page(
+    state: WorkspaceState,
+    *,
+    flash: str | None,
+    search: str = "",
+) -> str:
+    """Tool B focused overview: ranked by valuation-screening score.
+
+    Shows verdict, target price, upside, FCF yield, leverage, etc. Tickers
+    marked INCOMPLETE land at the bottom (missing manual data).
+    """
+    note_counts = (
+        state.stock_notes.groupby("ticker").size().to_dict()
+        if not state.stock_notes.empty and "ticker" in state.stock_notes.columns
+        else {}
+    )
+    tool_b_index = _frame_index_by_ticker(state.latest_tool_b)
+    search_term = str(search or "").strip().upper()
+
+    derived: list[dict[str, Any]] = []
+    for ticker in state.tool_b_tickers:
+        if search_term and search_term not in ticker:
+            continue
+        tool_b_row = tool_b_index.get(ticker, {})
+        derived.append({
+            "ticker": ticker,
+            "tool_b_row": tool_b_row,
+            "tool_b_rank": _optional_float(tool_b_row.get("tool_b_rank")),
+            "note_count": int(note_counts.get(ticker, 0)),
+        })
+    derived.sort(key=lambda r: (0 if r["tool_b_rank"] is not None else 1,
+                                 r["tool_b_rank"] if r["tool_b_rank"] is not None else 0.0,
+                                 r["ticker"]))
+
+    rows_html: list[str] = []
+    for row in derived:
+        tb = row["tool_b_row"]
+        rows_html.append(
+            "<tr>"
+            f"<td><a href=\"/ticker/{escape(row['ticker'])}\">{escape(row['ticker'])}</a></td>"
+            f"<td>{_fmt_text(tb.get('screening_verdict'))}</td>"
+            f"<td>{_fmt_number(tb.get('tool_b_score'), decimals=1)}</td>"
+            f"<td>{_fmt_number(row['tool_b_rank'], decimals=0)}</td>"
+            f"<td>{_fmt_number(tb.get('best_target_price_usd'), decimals=2)}</td>"
+            f"<td>{_fmt_percent(tb.get('best_upside_pct'))}</td>"
+            f"<td>{_fmt_number(tb.get('forward_pe'), decimals=1)}</td>"
+            f"<td>{_fmt_percent(tb.get('fcf_yield'))}</td>"
+            f"<td>{_fmt_number(tb.get('leverage'), decimals=2)}</td>"
+            f"<td>{_fmt_text(tb.get('layer1_status'))}</td>"
+            f"<td>{row['note_count']}</td>"
+            "</tr>"
+        )
+    if not rows_html:
+        rows_html.append(
+            "<tr><td colspan=\"11\" class=\"hint\">No tickers match.</td></tr>"
+        )
+
+    body = ["<h1>Tool B — Valuation Screening</h1>"]
+    body.append(
+        "<p>Ranks the universe by valuation upside at the configured gold-price assumption. "
+        "Lower rank is better. INCOMPLETE rows are missing manual mining inputs (production, AISC, "
+        "FCF, etc.). Click a ticker to fill in the manual data form.</p>"
+    )
+    if flash:
+        body.append(f"<div class=\"flash\">{escape(flash)}</div>")
+    body.append(_render_provenance_warnings(state))
+    body.append(_render_refresh_summary(state.foundation_manifest))
+    body.append(
+        "<section class=\"panel\">"
+        "<form method=\"get\" action=\"/tool-b\" class=\"overview-filters-form\">"
+        f"<label><span>Search ticker</span><input name=\"search\" type=\"text\" value=\"{escape(search)}\" placeholder=\"NEM\"></label>"
+        "<div class=\"overview-filters-actions\">"
+        f"<span class=\"hint\">{len(derived)} tickers shown.</span>"
+        "<button type=\"submit\">Apply</button>"
+        "<a class=\"hint\" href=\"/tool-b\">Reset</a>"
+        "</div>"
+        "</form>"
+        "</section>"
+    )
+    body.append(
+        "<table>"
+        "<thead><tr>"
+        "<th>Ticker</th><th>Verdict</th>"
+        "<th>Tool B Score</th><th>Rank</th>"
+        "<th>Best Target ($)</th><th>Upside %</th>"
+        "<th>Fwd P/E</th><th>FCF Yield</th><th>Leverage</th>"
+        "<th>Layer 1</th><th>Notes</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows_html)}</tbody>"
+        "</table>"
+    )
+    return _page_shell("Tool B — Gold Vector Workspace", "".join(body), active_nav="tool_b")
+
+
 def _render_ticker_page(
     state: WorkspaceState,
     *,
@@ -889,7 +1101,7 @@ def _render_ticker_page(
     body.append(_render_reporting_form(ticker=ticker, reporting_row=reporting_row))
     body.append(_render_verification_section(ticker=ticker, verification_rows=verification_rows))
     body.append(_render_note_section(ticker=ticker, note_rows=note_rows))
-    return _page_shell(f"Golden Vector Workspace - {ticker}", "".join(body))
+    return _page_shell(f"Golden Vector Workspace - {ticker}", "".join(body), active_nav="combined")
 
 
 def _render_provenance_warnings(state: WorkspaceState) -> str:
@@ -1772,7 +1984,23 @@ def _metric_card(title: str, value: str) -> str:
     )
 
 
-def _page_shell(title: str, body: str) -> str:
+_NAV_LINKS: tuple[tuple[str, str, str], ...] = (
+    ("combined", "/", "Combined"),
+    ("tool_a", "/tool-a", "Tool A"),
+    ("tool_b", "/tool-b", "Tool B"),
+)
+
+
+def _render_top_nav(active: str) -> str:
+    items = []
+    for nav_id, href, label in _NAV_LINKS:
+        cls = "nav-tab active" if nav_id == active else "nav-tab"
+        items.append(f"<a class=\"{cls}\" href=\"{escape(href)}\">{escape(label)}</a>")
+    return f"<nav class=\"top-nav\">{''.join(items)}</nav>"
+
+
+def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
+    nav_html = _render_top_nav(active_nav) if active_nav else ""
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -2004,9 +2232,37 @@ def _page_shell(title: str, body: str) -> str:
       height: auto;
       display: block;
     }}
+    .top-nav {{
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 18px 20px 0;
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .nav-tab {{
+      padding: 10px 18px;
+      border: 1px solid var(--line);
+      border-bottom: none;
+      border-radius: 8px 8px 0 0;
+      background: var(--panel);
+      color: var(--ink);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }}
+    .nav-tab.active {{
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }}
+    .nav-tab:hover:not(.active) {{
+      background: var(--accent-soft);
+    }}
   </style>
 </head>
 <body>
+  {nav_html}
   <main>{body}</main>
 </body>
 </html>"""
@@ -2044,6 +2300,7 @@ def _render_error_page(message: str, *, detail: str | None = None) -> str:
     return _page_shell(
         "Golden Vector Workspace Error",
         f"<h1>Workspace Error</h1><div class=\"panel\"><p>{escape(message)}</p>{detail_html}<p><a href=\"/\">Back to workspace</a></p></div>",
+        active_nav="combined",
     )
 
 

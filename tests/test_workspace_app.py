@@ -1929,3 +1929,72 @@ def test_workspace_verification_post_rejects_unknown_field_name(tmp_path):
     )
     assert response["status"].startswith("400")
     assert "Unsupported verification field_name" in response["body"]
+
+
+def test_workspace_tool_a_view_renders_only_tool_a_columns(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM", "GOLD"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM", "GOLD"])
+    response = _call_wsgi_app(app, method="GET", path="/tool-a")
+
+    assert response["status"].startswith("200")
+    assert "Tool A — Gold Sensitivity Ranking" in response["body"]
+    # Tool A columns must be present
+    assert "Δ Core" in response["body"]
+    assert "Gamma" in response["body"]
+    assert "Asymmetry" in response["body"]
+    # Tool B-specific columns must NOT bleed in
+    assert "Tool B Score" not in response["body"]
+    assert "Verdict" not in response["body"]
+    # Nav must mark this tab active
+    assert 'class="nav-tab active" href="/tool-a"' in response["body"]
+
+
+def test_workspace_tool_b_view_renders_only_tool_b_columns(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM", "GOLD"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM", "GOLD"])
+    response = _call_wsgi_app(app, method="GET", path="/tool-b")
+
+    assert response["status"].startswith("200")
+    assert "Tool B — Valuation Screening" in response["body"]
+    # Tool B columns must be present
+    assert "Verdict" in response["body"]
+    assert "Best Target" in response["body"]
+    assert "Upside %" in response["body"]
+    # Tool A-specific structural columns must NOT bleed in
+    assert "Δ Core" not in response["body"]
+    assert "Asymmetry" not in response["body"]
+    # Nav must mark this tab active
+    assert 'class="nav-tab active" href="/tool-b"' in response["body"]
+
+
+def test_workspace_combined_alias_routes_match_root(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    root_response = _call_wsgi_app(app, method="GET", path="/")
+    combined_response = _call_wsgi_app(app, method="GET", path="/combined")
+
+    assert root_response["status"].startswith("200")
+    assert combined_response["status"].startswith("200")
+    # Both should show the same overview heading and the combined nav active state.
+    assert "Universe Overview" in root_response["body"]
+    assert "Universe Overview" in combined_response["body"]
+    assert 'class="nav-tab active" href="/"' in root_response["body"]
+    assert 'class="nav-tab active" href="/"' in combined_response["body"]
