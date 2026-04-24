@@ -11,8 +11,8 @@ workbook). We deliberately accept that ownership rather than maintaining
 a separate Tool B tier table.
 
 Usage:
-    python -m scripts.sync_universe_tiers_from_excel --dry-run
-    python -m scripts.sync_universe_tiers_from_excel --apply
+    python -m scripts.sync_universe_tiers_from_excel            # dry-run (default)
+    python -m scripts.sync_universe_tiers_from_excel --apply    # write changes
 """
 
 from __future__ import annotations
@@ -114,10 +114,16 @@ def apply_changes(yaml_path: Path, friend_tiers: dict[str, int]) -> int:
        — this script only replaces existing keys; it will NOT insert a
        missing key.
 
-    If a future edit moves `jurisdiction_tier` before `- ticker:` in the
-    same block, or removes the key entirely from some rows, this rewriter
-    will silently skip those rows. Re-run `--dry-run` after any manual
-    reshuffle of `universe.yaml` to confirm the diff still makes sense.
+    Failure modes if those assumptions are violated:
+    - Missing `jurisdiction_tier` in a block: the state machine never
+      finds a line to update, so that ticker's tier is silently unchanged.
+    - `jurisdiction_tier:` line appears BEFORE its own `- ticker:` line
+      (e.g. stray key at the top of the file, or reordered block): the
+      state machine still holds the PREVIOUS ticker as `current_ticker`
+      and **misassociates** the orphan value, updating the wrong row.
+
+    Re-run the script without flags (dry-run) after any manual reshuffle
+    of `universe.yaml` to confirm the diff still makes sense.
 
     Returns the number of lines updated.
     """
