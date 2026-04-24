@@ -257,8 +257,10 @@ class ToolBOutput(StrictDataModel):
     target_price_peak_pe: float | None = None
     target_price_peer_fcf: float | None = None
     target_price_peak_fcf: float | None = None
-    target_price_peer_evebitda: float | None = None
-    target_price_peak_evebitda: float | None = None
+    upside_peer_pe_pct: float | None = None
+    upside_peak_pe_pct: float | None = None
+    upside_peer_fcf_pct: float | None = None
+    upside_peak_fcf_pct: float | None = None
     best_target_price_usd: float | None = None
     best_upside_pct: float | None = None
     tool_b_score: float | None = None

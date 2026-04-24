@@ -1105,9 +1105,13 @@ def _render_tool_b_overview_page(
             overrides=overrides,
             search=search,
         ))
+    # Filter form carries hidden override fields so submitting it doesn't
+    # silently clear the active scenario. The "Reset" link still drops
+    # everything by linking to bare /tool-b.
     body.append(
         "<section class=\"panel\">"
         "<form method=\"get\" action=\"/tool-b\" class=\"overview-filters-form\">"
+        f"{_render_overrides_as_hidden_inputs(overrides)}"
         f"<label><span>Search ticker</span><input name=\"search\" type=\"text\" value=\"{escape(search)}\" placeholder=\"NEM\"></label>"
         "<div class=\"overview-filters-actions\">"
         f"<span class=\"hint\">{len(derived)} tickers shown.</span>"
@@ -1198,10 +1202,7 @@ def _render_screening_params_form(
     sp = app_config.screening_params
     current_gold = sp.resolve_gold_price(None)
 
-    def _value(override: float | None, fallback: float) -> float:
-        return override if override is not None else fallback
-
-    gold_price_value = _value(overrides.gold_price, current_gold)
+    gold_price_value = overrides.gold_price if overrides.gold_price is not None else current_gold
     pe_target = overrides.verdict.get("strong_candidate_forward_pe_max",
                                        sp.verdict_thresholds.strong_candidate_forward_pe_max)
     fcf_yield_target = overrides.layer1.get("fcf_yield_min", sp.layer1_thresholds.fcf_yield_min)
@@ -1273,8 +1274,50 @@ def _fmt_form_number(value: float) -> str:
     """Format a number for HTML input value attributes without trailing .0."""
     if value is None:
         return ""
-    text = f"{value:g}"
-    return text
+    return f"{value:g}"
+
+
+# Mapping from override field -> (URL-param name, percent-style?). Mirrors
+# `_FIELD_SPECS` in screening_overrides.py so any param the parser accepts
+# is also reflected back into hidden inputs.
+_OVERRIDE_PARAM_NAMES: tuple[tuple[str, str, str, bool], ...] = (
+    # (overrides-attr, dict-key, url-param, is_percent)
+    ("layer1", "aisc_max", "aisc_target", False),
+    ("layer1", "margin_min", "margin_target", True),
+    ("layer1", "fcf_yield_min", "fcf_yield_target", True),
+    ("layer1", "reserve_life_min", "reserve_life_target", False),
+    ("layer1", "leverage_max", "leverage_target", False),
+    ("verdict", "strong_candidate_forward_pe_max", "pe_target", False),
+    ("jurisdiction", "tier_1", "tier1_discount", True),
+    ("jurisdiction", "tier_2", "tier2_discount", True),
+    ("jurisdiction", "tier_3", "tier3_discount", True),
+)
+
+
+def _render_overrides_as_hidden_inputs(overrides: ScreeningOverrides) -> str:
+    """Hidden form fields for every active override.
+
+    Used by the search/filter form so submitting it doesn't silently
+    clear the screening scenario. Percent-style fields are emitted in
+    typed-percent form (15 not 0.15) to match how the form input renders
+    them — the override parser accepts either, but keeping the form
+    round-trip consistent makes the URL state visible to the user.
+    """
+    parts: list[str] = []
+    if overrides.gold_price is not None:
+        parts.append(
+            f"<input type=\"hidden\" name=\"gold_price\" value=\"{_fmt_form_number(overrides.gold_price)}\">"
+        )
+    for attr_name, dict_key, param_name, is_percent in _OVERRIDE_PARAM_NAMES:
+        bucket = getattr(overrides, attr_name)
+        if dict_key not in bucket:
+            continue
+        value = bucket[dict_key]
+        display = f"{value * 100:g}" if is_percent else _fmt_form_number(value)
+        parts.append(
+            f"<input type=\"hidden\" name=\"{escape(param_name)}\" value=\"{escape(display)}\">"
+        )
+    return "".join(parts)
 
 
 def _render_ticker_page(
