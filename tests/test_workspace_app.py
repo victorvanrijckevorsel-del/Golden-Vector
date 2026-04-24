@@ -1970,8 +1970,13 @@ def test_workspace_tool_b_view_renders_only_tool_b_columns(tmp_path):
     assert "Tool B — Valuation Screening" in response["body"]
     # Tool B columns must be present
     assert "Verdict" in response["body"]
-    assert "Best Target" in response["body"]
-    assert "Upside %" in response["body"]
+    # Four scenario target columns (matches Excel Top performers AA/AC/AI/AK).
+    assert "Peer P/E Target" in response["body"]
+    assert "Peak P/E Target" in response["body"]
+    assert "Peer FCF Target" in response["body"]
+    assert "Peak FCF Target" in response["body"]
+    # The misleading single "Best Target" headline is gone.
+    assert "Best Target" not in response["body"]
     # Tool A-specific structural columns must NOT bleed in
     assert "Δ Core" not in response["body"]
     assert "Asymmetry" not in response["body"]

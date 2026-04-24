@@ -50,12 +50,21 @@ TOOL_B_OUTPUT_COLUMNS = [
     "leverage",
     "adjusted_peer_pe",
     "adjusted_peak_pe",
+    # The four scenario target prices mirror Excel `Top performers`
+    # columns AA / AC / AI / AK. The analyst reads all four and decides
+    # which scenario to weight. We no longer emit EV/EBITDA-derived
+    # targets (Excel never exposed them).
     "target_price_peer_pe",
     "target_price_peak_pe",
     "target_price_peer_fcf",
     "target_price_peak_fcf",
-    "target_price_peer_evebitda",
-    "target_price_peak_evebitda",
+    "upside_peer_pe_pct",
+    "upside_peak_pe_pct",
+    "upside_peer_fcf_pct",
+    "upside_peak_fcf_pct",
+    # best_target_price_usd and best_upside_pct are retained as derived
+    # "max of the four scenarios" helpers that feed compute_tool_b_score.
+    # They are intentionally NOT the headline in the workspace Tool B view.
     "best_target_price_usd",
     "best_upside_pct",
     "tool_b_score",
@@ -209,8 +218,10 @@ def execute_tool_b_pipeline(
                 "target_price_peak_pe": targets["target_price_peak_pe"],
                 "target_price_peer_fcf": targets["target_price_peer_fcf"],
                 "target_price_peak_fcf": targets["target_price_peak_fcf"],
-                "target_price_peer_evebitda": targets["target_price_peer_evebitda"],
-                "target_price_peak_evebitda": targets["target_price_peak_evebitda"],
+                "upside_peer_pe_pct": targets["upside_peer_pe_pct"],
+                "upside_peak_pe_pct": targets["upside_peak_pe_pct"],
+                "upside_peer_fcf_pct": targets["upside_peer_fcf_pct"],
+                "upside_peak_fcf_pct": targets["upside_peak_fcf_pct"],
                 "best_target_price_usd": targets["best_target_price_usd"],
                 "best_upside_pct": targets["best_upside_pct"],
                 "tool_b_score": tool_b_score,

@@ -1010,8 +1010,15 @@ def _render_tool_b_overview_page(
             f"<td>{_fmt_text(tb.get('screening_verdict'))}</td>"
             f"<td>{_fmt_number(tb.get('tool_b_score'), decimals=1)}</td>"
             f"<td>{_fmt_number(row['tool_b_rank'], decimals=0)}</td>"
-            f"<td>{_fmt_number(tb.get('best_target_price_usd'), decimals=2)}</td>"
-            f"<td>{_fmt_percent(tb.get('best_upside_pct'))}</td>"
+            # Four canonical target-price scenarios (matches Excel Top performers).
+            f"<td>{_fmt_number(tb.get('target_price_peer_pe'), decimals=2)}</td>"
+            f"<td>{_fmt_percent(tb.get('upside_peer_pe_pct'))}</td>"
+            f"<td>{_fmt_number(tb.get('target_price_peak_pe'), decimals=2)}</td>"
+            f"<td>{_fmt_percent(tb.get('upside_peak_pe_pct'))}</td>"
+            f"<td>{_fmt_number(tb.get('target_price_peer_fcf'), decimals=2)}</td>"
+            f"<td>{_fmt_percent(tb.get('upside_peer_fcf_pct'))}</td>"
+            f"<td>{_fmt_number(tb.get('target_price_peak_fcf'), decimals=2)}</td>"
+            f"<td>{_fmt_percent(tb.get('upside_peak_fcf_pct'))}</td>"
             f"<td>{_fmt_number(tb.get('forward_pe'), decimals=1)}</td>"
             f"<td>{_fmt_percent(tb.get('fcf_yield'))}</td>"
             f"<td>{_fmt_number(tb.get('leverage'), decimals=2)}</td>"
@@ -1021,14 +1028,16 @@ def _render_tool_b_overview_page(
         )
     if not rows_html:
         rows_html.append(
-            "<tr><td colspan=\"11\" class=\"hint\">No tickers match.</td></tr>"
+            "<tr><td colspan=\"17\" class=\"hint\">No tickers match.</td></tr>"
         )
 
     body = ["<h1>Tool B — Valuation Screening</h1>"]
     body.append(
         "<p>Ranks the universe by valuation upside at the configured gold-price assumption. "
         "Lower rank is better. INCOMPLETE rows are missing manual mining inputs (production, AISC, "
-        "FCF, etc.). Click a ticker to fill in the manual data form.</p>"
+        "FCF, etc.). Four target-price scenarios are shown side by side — read across and decide "
+        "which scenario fits your view: Peer P/E is the most conservative, Peak FCF the most bullish. "
+        "Click a ticker to fill in the manual data form.</p>"
     )
     if flash:
         body.append(f"<div class=\"flash\">{escape(flash)}</div>")
@@ -1050,8 +1059,11 @@ def _render_tool_b_overview_page(
         "<table>"
         "<thead><tr>"
         "<th>Ticker</th><th>Verdict</th>"
-        "<th>Tool B Score</th><th>Rank</th>"
-        "<th>Best Target ($)</th><th>Upside %</th>"
+        "<th>Score</th><th>Rank</th>"
+        "<th>Peer P/E Target</th><th>Peer P/E Up %</th>"
+        "<th>Peak P/E Target</th><th>Peak P/E Up %</th>"
+        "<th>Peer FCF Target</th><th>Peer FCF Up %</th>"
+        "<th>Peak FCF Target</th><th>Peak FCF Up %</th>"
         "<th>Fwd P/E</th><th>FCF Yield</th><th>Leverage</th>"
         "<th>Layer 1</th><th>Notes</th>"
         "</tr></thead>"
