@@ -1984,6 +1984,95 @@ def test_workspace_tool_b_view_renders_only_tool_b_columns(tmp_path):
     assert 'class="nav-tab active" href="/tool-b"' in response["body"]
 
 
+def test_workspace_tool_b_view_renders_screening_parameters_form(tmp_path):
+    """The /tool-b view now carries a Screening Parameters panel with 10
+    yellow-cell-equivalent inputs so the user can tune scenarios without
+    touching YAML or CLI."""
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/tool-b")
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "Screening Parameters" in body
+    # All ten inputs must be present in the form.
+    for param in [
+        "gold_price", "pe_target", "fcf_yield_target", "aisc_target",
+        "margin_target", "reserve_life_target", "leverage_target",
+        "tier1_discount", "tier2_discount", "tier3_discount",
+    ]:
+        assert f'name="{param}"' in body
+
+
+def test_workspace_tool_b_view_rejects_invalid_override_with_400(tmp_path):
+    """Passing an invalid override (negative / non-numeric) must 400
+    cleanly with a user-readable error banner rather than crashing."""
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(
+        app, method="GET", path="/tool-b?gold_price=-5",
+    )
+
+    assert response["status"].startswith("400")
+    assert "Invalid override" in response["body"]
+    assert "gold_price" in response["body"]
+
+
+def test_workspace_tool_b_view_no_overrides_uses_persisted_parquet(tmp_path):
+    """Bare /tool-b (no URL params) must not trigger an in-memory recompute;
+    it should render the persisted parquet verbatim, so verdicts/ranks
+    come from the last tool-b CLI run."""
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/tool-b")
+
+    assert response["status"].startswith("200")
+    # Baseline page must NOT show the "Scenario active" banner.
+    assert "Scenario active" not in response["body"]
+
+
+def test_workspace_tool_b_view_with_override_shows_scenario_banner(tmp_path):
+    """When any override is active, the page must show the banner
+    explaining that the table was recomputed and YAML/parquet are
+    untouched."""
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    # Gold price override will trigger a live recompute path. The test
+    # fixture's foundation snapshot may or may not have enough data for
+    # the recompute; either way the banner must be present and the page
+    # must not 500.
+    response = _call_wsgi_app(
+        app, method="GET", path="/tool-b?gold_price=4500",
+    )
+
+    assert response["status"].startswith("200")
+    assert "Scenario active" in response["body"]
+
+
 def test_workspace_combined_alias_routes_match_root(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()

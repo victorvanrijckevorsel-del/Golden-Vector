@@ -14,6 +14,13 @@ from wsgiref.simple_server import make_server
 import pandas as pd
 
 from golden_vector.app.latest_data import load_latest_foundation_snapshot
+from golden_vector.screening.pipeline import compute_tool_b_in_memory
+from golden_vector.serve.screening_overrides import (
+    ScreeningOverrideError,
+    ScreeningOverrides,
+    apply_overrides,
+    parse_query_overrides,
+)
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.features.horizons import build_core_horizons
@@ -221,12 +228,31 @@ def create_workspace_app(
                 state = _load_workspace_state(paths, normalized_tickers)
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 flash = _flash_message(query.get("saved", [""])[0])
+                try:
+                    overrides = parse_query_overrides(query)
+                except ScreeningOverrideError as exc:
+                    return _html_response(
+                        start_response,
+                        _render_tool_b_overview_page(
+                            state,
+                            flash=None,
+                            search=query.get("search", [""])[0],
+                            app_config=app_config,
+                            paths=paths,
+                            overrides=ScreeningOverrides(),
+                            override_error=str(exc),
+                        ),
+                        status="400 Bad Request",
+                    )
                 return _html_response(
                     start_response,
                     _render_tool_b_overview_page(
                         state,
                         flash=flash,
                         search=query.get("search", [""])[0],
+                        app_config=app_config,
+                        paths=paths,
+                        overrides=overrides,
                     ),
                 )
 
@@ -972,18 +998,37 @@ def _render_tool_b_overview_page(
     *,
     flash: str | None,
     search: str = "",
+    app_config: AppConfig | None = None,
+    paths: ProjectPaths | None = None,
+    overrides: ScreeningOverrides | None = None,
+    override_error: str | None = None,
 ) -> str:
     """Tool B focused overview: ranked by valuation-screening score.
 
     Shows verdict, target price, upside, FCF yield, leverage, etc. Tickers
     marked INCOMPLETE land at the bottom (missing manual data).
+
+    When `overrides.has_any()`, the table is recomputed in memory from
+    the current snapshot + manual store with the overlaid screening
+    parameters (gold price, thresholds, tier discounts). The persisted
+    parquet is left untouched — overrides are scenario tools.
     """
+    overrides = overrides or ScreeningOverrides()
     note_counts = (
         state.stock_notes.groupby("ticker").size().to_dict()
         if not state.stock_notes.empty and "ticker" in state.stock_notes.columns
         else {}
     )
-    tool_b_index = _frame_index_by_ticker(state.latest_tool_b)
+
+    # Either use the latest persisted parquet, or recompute in memory if
+    # the user passed any URL-param overrides.
+    tool_b_frame, override_runtime_error = _resolve_tool_b_frame(
+        state=state,
+        overrides=overrides,
+        app_config=app_config,
+        paths=paths,
+    )
+    tool_b_index = _frame_index_by_ticker(tool_b_frame)
     search_term = str(search or "").strip().upper()
 
     derived: list[dict[str, Any]] = []
@@ -1041,8 +1086,25 @@ def _render_tool_b_overview_page(
     )
     if flash:
         body.append(f"<div class=\"flash\">{escape(flash)}</div>")
+    if override_error:
+        body.append(
+            f"<div class=\"flash flash-error\">Invalid override: {escape(override_error)}</div>"
+        )
+    if override_runtime_error:
+        body.append(
+            "<div class=\"flash flash-error\">"
+            f"Could not recompute with overrides: {escape(override_runtime_error)}. "
+            "Showing the last persisted Tool B snapshot."
+            "</div>"
+        )
     body.append(_render_provenance_warnings(state))
     body.append(_render_refresh_summary(state.foundation_manifest))
+    if app_config is not None:
+        body.append(_render_screening_params_form(
+            app_config=app_config,
+            overrides=overrides,
+            search=search,
+        ))
     body.append(
         "<section class=\"panel\">"
         "<form method=\"get\" action=\"/tool-b\" class=\"overview-filters-form\">"
@@ -1071,6 +1133,148 @@ def _render_tool_b_overview_page(
         "</table>"
     )
     return _page_shell("Tool B — Gold Vector Workspace", "".join(body), active_nav="tool_b")
+
+
+def _resolve_tool_b_frame(
+    *,
+    state: WorkspaceState,
+    overrides: ScreeningOverrides,
+    app_config: AppConfig | None,
+    paths: ProjectPaths | None,
+) -> tuple[pd.DataFrame, str | None]:
+    """Return (frame, runtime_error_message).
+
+    If no overrides are active, use `state.latest_tool_b` (the persisted
+    parquet). Otherwise, recompute in memory with the overlaid config.
+    On unexpected recompute failure, fall back to the persisted parquet
+    and surface the error message so the user sees what went wrong.
+    """
+    if not overrides.has_any() or app_config is None or paths is None:
+        return state.latest_tool_b, None
+
+    try:
+        overridden_config = apply_overrides(app_config, overrides)
+        foundation_snapshot = load_latest_foundation_snapshot(
+            paths=paths,
+            app_config=overridden_config,
+            include_gold_history=False,
+            include_equity_histories=False,
+            include_market_snapshots=True,
+        )
+        manual_data = load_manual_screening_data(
+            paths,
+            tickers=state.tool_b_tickers,
+        )
+        gold_price = overridden_config.screening_params.resolve_gold_price(overrides.gold_price)
+        recomputed = compute_tool_b_in_memory(
+            app_config=overridden_config,
+            manual_data=manual_data,
+            normalized_market_snapshots=foundation_snapshot.normalized_market_snapshots,
+            gold_price_assumption=gold_price,
+            snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
+            snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
+            source_run_id="workspace-in-memory",
+        )
+        if not recomputed.empty and "ticker" in recomputed.columns:
+            recomputed["ticker"] = recomputed["ticker"].astype(str).str.upper()
+        return recomputed, None
+    except Exception as exc:  # broad catch: fall back to persisted parquet
+        return state.latest_tool_b, str(exc)
+
+
+def _render_screening_params_form(
+    *,
+    app_config: AppConfig,
+    overrides: ScreeningOverrides,
+    search: str,
+) -> str:
+    """Render the "Screening Parameters" form panel for the Tool B view.
+
+    Mirrors the yellow-highlighted cells of the friend's Excel
+    `Summary & Parameters` sheet: gold price, six Layer 1 thresholds and
+    the three jurisdiction tier discounts. Values pre-fill from either
+    the active overrides (if any) or the YAML defaults.
+    """
+    sp = app_config.screening_params
+    current_gold = sp.resolve_gold_price(None)
+
+    def _value(override: float | None, fallback: float) -> float:
+        return override if override is not None else fallback
+
+    gold_price_value = _value(overrides.gold_price, current_gold)
+    pe_target = overrides.verdict.get("strong_candidate_forward_pe_max",
+                                       sp.verdict_thresholds.strong_candidate_forward_pe_max)
+    fcf_yield_target = overrides.layer1.get("fcf_yield_min", sp.layer1_thresholds.fcf_yield_min)
+    aisc_target = overrides.layer1.get("aisc_max", sp.layer1_thresholds.aisc_max)
+    margin_target = overrides.layer1.get("margin_min", sp.layer1_thresholds.margin_min)
+    reserve_life_target = overrides.layer1.get("reserve_life_min", sp.layer1_thresholds.reserve_life_min)
+    leverage_target = overrides.layer1.get("leverage_max", sp.layer1_thresholds.leverage_max)
+    tier1 = overrides.jurisdiction.get("tier_1", sp.jurisdiction_discounts.tier_1)
+    tier2 = overrides.jurisdiction.get("tier_2", sp.jurisdiction_discounts.tier_2)
+    tier3 = overrides.jurisdiction.get("tier_3", sp.jurisdiction_discounts.tier_3)
+
+    active_banner = ""
+    if overrides.has_any():
+        active_banner = (
+            "<p class=\"hint\"><strong>Scenario active:</strong> recomputing live from manual "
+            "data + latest snapshot. YAML defaults and persisted parquet are unchanged. "
+            "<a href=\"/tool-b\">Clear overrides</a>.</p>"
+        )
+
+    # Percent-valued fields display the typed percent (15 for 15%) rather
+    # than the fraction (0.15). The override parser accepts either.
+    def _as_percent_display(fraction: float) -> str:
+        return f"{fraction * 100:g}"
+
+    # Carry the search term through the form so the user doesn't lose it.
+    search_hidden = (
+        f"<input type=\"hidden\" name=\"search\" value=\"{escape(search)}\">"
+        if search else ""
+    )
+
+    return (
+        "<section class=\"panel screening-params\">"
+        "<h2>Screening Parameters</h2>"
+        f"{active_banner}"
+        "<form method=\"get\" action=\"/tool-b\" class=\"screening-params-form\">"
+        f"{search_hidden}"
+        "<div class=\"screening-params-grid\">"
+        f"<label><span>Gold Price ($/oz)</span>"
+        f"<input name=\"gold_price\" type=\"number\" step=\"1\" min=\"1\" value=\"{_fmt_form_number(gold_price_value)}\"></label>"
+        f"<label><span>Fwd P/E Target (&lt;)</span>"
+        f"<input name=\"pe_target\" type=\"number\" step=\"0.1\" min=\"0.1\" value=\"{_fmt_form_number(pe_target)}\"></label>"
+        f"<label><span>FCF Yield Target (% ≥)</span>"
+        f"<input name=\"fcf_yield_target\" type=\"number\" step=\"0.5\" min=\"0\" value=\"{_as_percent_display(fcf_yield_target)}\"></label>"
+        f"<label><span>AISC Target ($/oz ≤)</span>"
+        f"<input name=\"aisc_target\" type=\"number\" step=\"10\" min=\"1\" value=\"{_fmt_form_number(aisc_target)}\"></label>"
+        f"<label><span>Margin Target (% ≥)</span>"
+        f"<input name=\"margin_target\" type=\"number\" step=\"1\" min=\"0\" value=\"{_as_percent_display(margin_target)}\"></label>"
+        f"<label><span>Reserve Life (yrs ≥)</span>"
+        f"<input name=\"reserve_life_target\" type=\"number\" step=\"0.5\" min=\"0\" value=\"{_fmt_form_number(reserve_life_target)}\"></label>"
+        f"<label><span>Net Debt/EBITDA (≤)</span>"
+        f"<input name=\"leverage_target\" type=\"number\" step=\"0.1\" min=\"0\" value=\"{_fmt_form_number(leverage_target)}\"></label>"
+        f"<label><span>Tier 1 Discount (%)</span>"
+        f"<input name=\"tier1_discount\" type=\"number\" step=\"1\" min=\"0\" max=\"100\" value=\"{_as_percent_display(tier1)}\"></label>"
+        f"<label><span>Tier 2 Discount (%)</span>"
+        f"<input name=\"tier2_discount\" type=\"number\" step=\"1\" min=\"0\" max=\"100\" value=\"{_as_percent_display(tier2)}\"></label>"
+        f"<label><span>Tier 3 Discount (%)</span>"
+        f"<input name=\"tier3_discount\" type=\"number\" step=\"1\" min=\"0\" max=\"100\" value=\"{_as_percent_display(tier3)}\"></label>"
+        "</div>"
+        "<div class=\"screening-params-actions\">"
+        "<button type=\"submit\">Apply scenario</button>"
+        "<a class=\"hint\" href=\"/tool-b\">Reset all</a>"
+        "</div>"
+        "</form>"
+        "</section>"
+    )
+
+
+def _fmt_form_number(value: float) -> str:
+    """Format a number for HTML input value attributes without trailing .0."""
+    if value is None:
+        return ""
+    text = f"{value:g}"
+    return text
 
 
 def _render_ticker_page(
@@ -2184,6 +2388,29 @@ def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
       gap: 12px;
       align-items: center;
       justify-content: flex-end;
+    }}
+    .screening-params-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 10px;
+    }}
+    .screening-params-form label {{
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.88rem;
+    }}
+    .screening-params-actions {{
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: flex-end;
+    }}
+    .flash-error {{
+      background: #fbe5e9;
+      border-color: #c48191;
     }}
     .verification-form {{
       display: grid;
