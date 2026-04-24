@@ -7,7 +7,7 @@ tickers:
     company: Allied Gold Corporation
     exchange: TSX
     currency: CAD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -23,7 +23,7 @@ tickers:
     company: Agnico Eagle Mines
     exchange: US
     currency: USD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -39,7 +39,7 @@ tickers:
     company: Alkane Resources
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -91,7 +91,7 @@ tickers:
     company: Bellevue Gold
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -99,7 +99,7 @@ tickers:
     company: B2Gold Corp
     exchange: US
     currency: USD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -107,7 +107,7 @@ tickers:
     company: Coeur Mining Inc
     exchange: US
     currency: USD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -115,7 +115,7 @@ tickers:
     company: Centerra Gold Inc
     exchange: US
     currency: USD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -123,7 +123,7 @@ tickers:
     company: Caledonia Mining
     exchange: US
     currency: USD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -131,7 +131,7 @@ tickers:
     company: Capricorn Metals Ltd
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -139,7 +139,7 @@ tickers:
     company: Catalyst Metals
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -155,7 +155,7 @@ tickers:
     company: DRDGOLD Limited
     exchange: US
     currency: USD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -163,7 +163,7 @@ tickers:
     company: Endeavour Mining plc
     exchange: LSE
     currency: GBP
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -195,7 +195,7 @@ tickers:
     company: Evolution Mining Limited
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -203,7 +203,7 @@ tickers:
     company: Fortuna Mining
     exchange: US
     currency: USD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -211,7 +211,7 @@ tickers:
     company: Galiano Gold Inc
     exchange: US
     currency: USD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -227,7 +227,7 @@ tickers:
     company: Greatland Resources
     exchange: LSE
     currency: GBP
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -243,7 +243,7 @@ tickers:
     company: Harmony Gold Mining Company
     exchange: US
     currency: USD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -251,7 +251,7 @@ tickers:
     company: Hochschild Mining plc
     exchange: LSE
     currency: GBP
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -291,7 +291,7 @@ tickers:
     company: K92 Mining Inc
     exchange: TSX
     currency: CAD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -307,7 +307,7 @@ tickers:
     company: Metals Exploration
     exchange: LSE
     currency: GBP
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -331,7 +331,7 @@ tickers:
     company: New Gold Inc
     exchange: US
     currency: USD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     # Yahoo Finance returns "no data" for NGD as of 2026-04-23.
     # Disabled so the pipeline doesn't block; investigate later.
     active: false
@@ -341,7 +341,7 @@ tickers:
     company: Northern Star Resources Ltd
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -349,7 +349,7 @@ tickers:
     company: Ora Banda Mining
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -365,7 +365,7 @@ tickers:
     company: Orezone Gold
     exchange: TSX
     currency: CAD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -389,7 +389,7 @@ tickers:
     company: Pantoro Gold
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -397,7 +397,7 @@ tickers:
     company: Perseus Mining Ltd
     exchange: US
     currency: USD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -405,7 +405,7 @@ tickers:
     company: Ramelius Resources Ltd
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -413,7 +413,7 @@ tickers:
     company: Regis Resources Limited
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -421,7 +421,7 @@ tickers:
     company: Resolute Mining Limited
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -429,7 +429,7 @@ tickers:
     company: St Barbara
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -453,7 +453,7 @@ tickers:
     company: Thor Explorations
     exchange: LSE
     currency: GBP
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -469,7 +469,7 @@ tickers:
     company: Vault Minerals
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -477,7 +477,7 @@ tickers:
     company: West African Resources Ltd
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -485,7 +485,7 @@ tickers:
     company: Wesdome Gold Mines Ltd.
     exchange: TSX
     currency: CAD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -493,7 +493,7 @@ tickers:
     company: Westgold Resources Limited
     exchange: ASX
     currency: AUD
-    jurisdiction_tier: 2
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
