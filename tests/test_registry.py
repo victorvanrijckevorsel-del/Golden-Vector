@@ -10,7 +10,12 @@ def test_registry_builds_fx_targets_for_non_usd_currencies():
     registry = build_foundation_registry(loaded.app.universe)
 
     fx_symbols = {target.yahoo_symbol for target in registry.fx_targets}
-    assert fx_symbols == {"CADUSD=X", "GBPUSD=X"}
+    expected_currencies = {
+        ticker.currency for ticker in loaded.app.universe.tickers
+        if ticker.active and ticker.currency != "USD"
+    }
+    expected_symbols = {f"{cur}USD=X" for cur in expected_currencies}
+    assert fx_symbols == expected_symbols
     assert registry.gold_target.yahoo_symbol == "GC=F"
 
 
@@ -32,7 +37,11 @@ def test_registry_reports_missing_fx_mappings_without_crashing(monkeypatch):
     registry = build_foundation_registry(loaded.app.universe)
 
     assert missing_fx_currencies(loaded.app.universe) == ["CAD"]
-    assert {target.base_currency for target in registry.fx_targets} == {"GBP"}
+    expected_remaining = {
+        ticker.currency for ticker in loaded.app.universe.tickers
+        if ticker.active and ticker.currency != "USD" and ticker.currency != "CAD"
+    }
+    assert {target.base_currency for target in registry.fx_targets} == expected_remaining
 
 
 def test_registry_excludes_active_tickers_disabled_for_both_tools():

@@ -64,40 +64,49 @@ def compute_target_prices(
         target_yield=benchmark.fcf_yield_2011,
     )
 
-    target_price_peer_evebitda = _target_price_from_evebitda(
-        ebitda_musd=forward_ebitda_musd,
-        target_multiple=benchmark.evebitda_2026 * (1.0 - tier_discount),
-        net_debt_musd=net_debt_musd,
-        shares_outstanding=shares_outstanding,
-    )
-    target_price_peak_evebitda = _target_price_from_evebitda(
-        ebitda_musd=forward_ebitda_musd,
-        target_multiple=benchmark.evebitda_2011 * (1.0 - tier_discount),
-        net_debt_musd=net_debt_musd,
-        shares_outstanding=shares_outstanding,
-    )
-
+    # The four canonical scenarios. These are what the Excel
+    # `Top performers` sheet exposes (columns AA / AC / AI / AK).
     targets = {
         "target_price_peer_pe": target_price_peer_pe,
         "target_price_peak_pe": target_price_peak_pe,
         "target_price_peer_fcf": target_price_peer_fcf,
         "target_price_peak_fcf": target_price_peak_fcf,
-        "target_price_peer_evebitda": target_price_peer_evebitda,
-        "target_price_peak_evebitda": target_price_peak_evebitda,
     }
+
+    # Per-scenario upside %. Each = (target - share_price) / share_price
+    # so the workspace can surface the four scenarios independently instead
+    # of only the aggressive max(...).
+    upside_pct = {
+        "upside_peer_pe_pct": _upside_pct(target_price_peer_pe, share_price_usd),
+        "upside_peak_pe_pct": _upside_pct(target_price_peak_pe, share_price_usd),
+        "upside_peer_fcf_pct": _upside_pct(target_price_peer_fcf, share_price_usd),
+        "upside_peak_fcf_pct": _upside_pct(target_price_peak_fcf, share_price_usd),
+    }
+
+    # best_target_price_usd / best_upside_pct are derived "max of the four
+    # canonical scenarios" helpers used by compute_tool_b_score. They are
+    # NOT surfaced as headline columns in the workspace Tool B view — the
+    # four scenarios are shown side by side instead.
+    #
+    # Semantic note: this pool used to include two EV/EBITDA-derived
+    # target prices (6 total). Dropping those as part of the parity work
+    # narrowed the pool to the 4 canonical scenarios the friend's Excel
+    # actually exposes. tool_b_score's formula is unchanged syntactically,
+    # but its `best_upside_pct` input is now max-of-4 rather than
+    # max-of-6. This means tool_b_score is slightly lower for tickers
+    # whose maximum scenario was previously a 2011-peak EV/EBITDA target.
+    # Accepting this change as faithful to the friend's model (EV/EBITDA
+    # targets were a Python-only invention).
     valid_targets = [value for value in targets.values() if value is not None]
     best_target_price_usd = max(valid_targets) if valid_targets else None
-    best_upside_pct = (
-        ((best_target_price_usd - share_price_usd) / share_price_usd)
-        if best_target_price_usd is not None and share_price_usd is not None
-        else None
-    )
+    best_upside_pct = _upside_pct(best_target_price_usd, share_price_usd)
 
     return {
         "size_category": size_category,
         "adjusted_peer_pe": adjusted_peer_pe,
         "adjusted_peak_pe": adjusted_peak_pe,
         **targets,
+        **upside_pct,
         "best_target_price_usd": best_target_price_usd,
         "best_upside_pct": best_upside_pct,
     }
@@ -112,11 +121,19 @@ def _empty_targets(*, size_category: str | None) -> dict[str, object]:
         "target_price_peak_pe": None,
         "target_price_peer_fcf": None,
         "target_price_peak_fcf": None,
-        "target_price_peer_evebitda": None,
-        "target_price_peak_evebitda": None,
+        "upside_peer_pe_pct": None,
+        "upside_peak_pe_pct": None,
+        "upside_peer_fcf_pct": None,
+        "upside_peak_fcf_pct": None,
         "best_target_price_usd": None,
         "best_upside_pct": None,
     }
+
+
+def _upside_pct(target_price: float | None, share_price: float | None) -> float | None:
+    if target_price is None or share_price is None or share_price <= 0:
+        return None
+    return (target_price - share_price) / share_price
 
 
 def _tier_discount(app_config: AppConfig, jurisdiction_tier: int) -> float:
@@ -137,28 +154,6 @@ def _target_price_from_yield(
     if share_price_usd is None or actual_yield is None or actual_yield <= 0 or target_yield <= 0:
         return None
     return share_price_usd * (actual_yield / target_yield)
-
-
-def _target_price_from_evebitda(
-    *,
-    ebitda_musd: float | None,
-    target_multiple: float,
-    net_debt_musd: float | None,
-    shares_outstanding: float | None,
-) -> float | None:
-    if (
-        ebitda_musd is None
-        or ebitda_musd <= 0
-        or net_debt_musd is None
-        or shares_outstanding is None
-        or shares_outstanding <= 0
-        or target_multiple <= 0
-    ):
-        return None
-    equity_value_usd = ((ebitda_musd * target_multiple) - net_debt_musd) * 1_000_000.0
-    if equity_value_usd <= 0:
-        return None
-    return equity_value_usd / shares_outstanding
 
 
 def _numeric(value: object) -> float | None:

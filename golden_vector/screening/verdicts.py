@@ -28,6 +28,19 @@ def compute_tool_b_score(
     screening_verdict: str,
     best_upside_pct: float | None,
 ) -> float | None:
+    """Combine the screening verdict with the best-scenario upside into a 0-100 score.
+
+    Weights: 70% verdict base + 30% normalized upside.
+
+    `best_upside_pct` is the max of the four canonical target-price
+    scenarios (Peer P/E, Peak P/E, Peer FCF, Peak FCF). This pool was
+    historically six (adding two EV/EBITDA-derived targets), but those
+    were dropped to match the friend's Excel which only exposes four.
+    The score formula here is unchanged, but its input is narrower, so
+    tickers whose old max-upside came from an EV/EBITDA scenario will
+    now score slightly lower. This is intended — the EV/EBITDA targets
+    were Python-only additions that inflated the headline.
+    """
     if screening_verdict == "INCOMPLETE":
         return None
 

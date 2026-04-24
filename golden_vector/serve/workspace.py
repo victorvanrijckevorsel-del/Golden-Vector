@@ -14,6 +14,13 @@ from wsgiref.simple_server import make_server
 import pandas as pd
 
 from golden_vector.app.latest_data import load_latest_foundation_snapshot
+from golden_vector.screening.pipeline import compute_tool_b_in_memory
+from golden_vector.serve.screening_overrides import (
+    ScreeningOverrideError,
+    ScreeningOverrides,
+    apply_overrides,
+    parse_query_overrides,
+)
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.features.horizons import build_core_horizons
@@ -181,7 +188,7 @@ def create_workspace_app(
         path = str(environ.get("PATH_INFO", "/")) or "/"
 
         try:
-            if method == "GET" and path == "/":
+            if method == "GET" and path in ("/", "/combined"):
                 state = _load_workspace_state(paths, normalized_tickers)
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 flash = _flash_message(query.get("saved", [""])[0])
@@ -201,6 +208,51 @@ def create_workspace_app(
                         filters=overview_filters,
                         lens_id=lens_id,
                         scoring_config=app_config.scoring,
+                    ),
+                )
+
+            if method == "GET" and path == "/tool-a":
+                state = _load_workspace_state(paths, normalized_tickers)
+                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+                flash = _flash_message(query.get("saved", [""])[0])
+                return _html_response(
+                    start_response,
+                    _render_tool_a_overview_page(
+                        state,
+                        flash=flash,
+                        search=query.get("search", [""])[0],
+                    ),
+                )
+
+            if method == "GET" and path == "/tool-b":
+                state = _load_workspace_state(paths, normalized_tickers)
+                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+                flash = _flash_message(query.get("saved", [""])[0])
+                try:
+                    overrides = parse_query_overrides(query)
+                except ScreeningOverrideError as exc:
+                    return _html_response(
+                        start_response,
+                        _render_tool_b_overview_page(
+                            state,
+                            flash=None,
+                            search=query.get("search", [""])[0],
+                            app_config=app_config,
+                            paths=paths,
+                            overrides=ScreeningOverrides(),
+                            override_error=str(exc),
+                        ),
+                        status="400 Bad Request",
+                    )
+                return _html_response(
+                    start_response,
+                    _render_tool_b_overview_page(
+                        state,
+                        flash=flash,
+                        search=query.get("search", [""])[0],
+                        app_config=app_config,
+                        paths=paths,
+                        overrides=overrides,
                     ),
                 )
 
@@ -761,7 +813,7 @@ def _render_overview_page(
         "<p class=\"hint\">Use <code>python main.py update-data</code> to refresh market data. "
         "Use the stock links above to edit Tool B inputs and inspect the structural Tool A explanation cards.</p>"
     )
-    return _page_shell("Golden Vector Workspace", "".join(body))
+    return _page_shell("Golden Vector Workspace", "".join(body), active_nav="combined")
 
 
 def _render_overview_filters_form(
@@ -849,6 +901,425 @@ def _overview_sort_key(sort_key: str) -> Callable[[dict[str, Any]], Any]:
     return lambda r: (0, r["ticker"])
 
 
+def _render_tool_a_overview_page(
+    state: WorkspaceState,
+    *,
+    flash: str | None,
+    search: str = "",
+) -> str:
+    """Tool A focused overview: ranked by gold-sensitivity score.
+
+    Shows only Tool A-relevant columns (delta, gamma, asymmetry, confidence,
+    volatility, score, rank, profile). No Tool B noise.
+    """
+    note_counts = (
+        state.stock_notes.groupby("ticker").size().to_dict()
+        if not state.stock_notes.empty and "ticker" in state.stock_notes.columns
+        else {}
+    )
+    tool_a_index = _frame_index_by_ticker(state.latest_tool_a)
+    search_term = str(search or "").strip().upper()
+
+    derived: list[dict[str, Any]] = []
+    for ticker in state.tool_b_tickers:
+        if search_term and search_term not in ticker:
+            continue
+        tool_a_row = tool_a_index.get(ticker, {})
+        derived.append({
+            "ticker": ticker,
+            "tool_a_row": tool_a_row,
+            "tool_a_rank": _optional_float(tool_a_row.get("tool_a_rank")),
+            "note_count": int(note_counts.get(ticker, 0)),
+        })
+    derived.sort(key=lambda r: (0 if r["tool_a_rank"] is not None else 1,
+                                 r["tool_a_rank"] if r["tool_a_rank"] is not None else 0.0,
+                                 r["ticker"]))
+
+    rows_html: list[str] = []
+    for row in derived:
+        ta = row["tool_a_row"]
+        rows_html.append(
+            "<tr>"
+            f"<td><a href=\"/ticker/{escape(row['ticker'])}\">{escape(row['ticker'])}</a></td>"
+            f"<td>{_fmt_text(ta.get('profile_label'))}</td>"
+            f"<td>{_fmt_number(ta.get('structural_delta_core'), decimals=2)}</td>"
+            f"<td>{_fmt_number(ta.get('structural_gamma_core'), decimals=2)}</td>"
+            f"<td>{_fmt_number(ta.get('asymmetry_ratio_core'), decimals=2)}</td>"
+            f"<td>{_fmt_text(ta.get('confidence_label'))}</td>"
+            f"<td>{_fmt_text(ta.get('volatility_context'))}</td>"
+            f"<td>{_fmt_number(ta.get('tool_a_score'), decimals=1)}</td>"
+            f"<td>{_fmt_number(row['tool_a_rank'], decimals=0)}</td>"
+            f"<td>{row['note_count']}</td>"
+            "</tr>"
+        )
+    if not rows_html:
+        rows_html.append(
+            "<tr><td colspan=\"10\" class=\"hint\">No tickers match.</td></tr>"
+        )
+
+    body = ["<h1>Tool A — Gold Sensitivity Ranking</h1>"]
+    body.append(
+        "<p>Ranks the universe by structural sensitivity to the gold price. "
+        "Lower rank is better. Negative gamma is favorable (up-gold sensitivity exceeds down-gold sensitivity). "
+        "Click a ticker for the full structural breakdown and beta-history chart.</p>"
+    )
+    if flash:
+        body.append(f"<div class=\"flash\">{escape(flash)}</div>")
+    body.append(_render_provenance_warnings(state))
+    body.append(_render_refresh_summary(state.foundation_manifest))
+    body.append(
+        "<section class=\"panel\">"
+        "<form method=\"get\" action=\"/tool-a\" class=\"overview-filters-form\">"
+        f"<label><span>Search ticker</span><input name=\"search\" type=\"text\" value=\"{escape(search)}\" placeholder=\"NEM\"></label>"
+        "<div class=\"overview-filters-actions\">"
+        f"<span class=\"hint\">{len(derived)} tickers shown.</span>"
+        "<button type=\"submit\">Apply</button>"
+        "<a class=\"hint\" href=\"/tool-a\">Reset</a>"
+        "</div>"
+        "</form>"
+        "</section>"
+    )
+    body.append(
+        "<table>"
+        "<thead><tr>"
+        "<th>Ticker</th><th>Profile</th>"
+        "<th>Δ Core</th><th>Gamma</th><th>Asymmetry</th>"
+        "<th>Confidence</th><th>Volatility</th>"
+        "<th>Tool A Score</th><th>Rank</th><th>Notes</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows_html)}</tbody>"
+        "</table>"
+    )
+    return _page_shell("Tool A — Gold Vector Workspace", "".join(body), active_nav="tool_a")
+
+
+def _render_tool_b_overview_page(
+    state: WorkspaceState,
+    *,
+    flash: str | None,
+    search: str = "",
+    app_config: AppConfig | None = None,
+    paths: ProjectPaths | None = None,
+    overrides: ScreeningOverrides | None = None,
+    override_error: str | None = None,
+) -> str:
+    """Tool B focused overview: ranked by valuation-screening score.
+
+    Shows verdict, target price, upside, FCF yield, leverage, etc. Tickers
+    marked INCOMPLETE land at the bottom (missing manual data).
+
+    When `overrides.has_any()`, the table is recomputed in memory from
+    the current snapshot + manual store with the overlaid screening
+    parameters (gold price, thresholds, tier discounts). The persisted
+    parquet is left untouched — overrides are scenario tools.
+    """
+    overrides = overrides or ScreeningOverrides()
+    note_counts = (
+        state.stock_notes.groupby("ticker").size().to_dict()
+        if not state.stock_notes.empty and "ticker" in state.stock_notes.columns
+        else {}
+    )
+
+    # Either use the latest persisted parquet, or recompute in memory if
+    # the user passed any URL-param overrides.
+    tool_b_frame, override_runtime_error = _resolve_tool_b_frame(
+        state=state,
+        overrides=overrides,
+        app_config=app_config,
+        paths=paths,
+    )
+    tool_b_index = _frame_index_by_ticker(tool_b_frame)
+    search_term = str(search or "").strip().upper()
+
+    derived: list[dict[str, Any]] = []
+    for ticker in state.tool_b_tickers:
+        if search_term and search_term not in ticker:
+            continue
+        tool_b_row = tool_b_index.get(ticker, {})
+        derived.append({
+            "ticker": ticker,
+            "tool_b_row": tool_b_row,
+            "tool_b_rank": _optional_float(tool_b_row.get("tool_b_rank")),
+            "note_count": int(note_counts.get(ticker, 0)),
+        })
+    derived.sort(key=lambda r: (0 if r["tool_b_rank"] is not None else 1,
+                                 r["tool_b_rank"] if r["tool_b_rank"] is not None else 0.0,
+                                 r["ticker"]))
+
+    rows_html: list[str] = []
+    for row in derived:
+        tb = row["tool_b_row"]
+        rows_html.append(
+            "<tr>"
+            f"<td><a href=\"/ticker/{escape(row['ticker'])}\">{escape(row['ticker'])}</a></td>"
+            f"<td>{_fmt_text(tb.get('screening_verdict'))}</td>"
+            f"<td>{_fmt_number(tb.get('tool_b_score'), decimals=1)}</td>"
+            f"<td>{_fmt_number(row['tool_b_rank'], decimals=0)}</td>"
+            # Four canonical target-price scenarios (matches Excel Top performers).
+            f"<td>{_fmt_number(tb.get('target_price_peer_pe'), decimals=2)}</td>"
+            f"<td>{_fmt_percent(tb.get('upside_peer_pe_pct'))}</td>"
+            f"<td>{_fmt_number(tb.get('target_price_peak_pe'), decimals=2)}</td>"
+            f"<td>{_fmt_percent(tb.get('upside_peak_pe_pct'))}</td>"
+            f"<td>{_fmt_number(tb.get('target_price_peer_fcf'), decimals=2)}</td>"
+            f"<td>{_fmt_percent(tb.get('upside_peer_fcf_pct'))}</td>"
+            f"<td>{_fmt_number(tb.get('target_price_peak_fcf'), decimals=2)}</td>"
+            f"<td>{_fmt_percent(tb.get('upside_peak_fcf_pct'))}</td>"
+            f"<td>{_fmt_number(tb.get('forward_pe'), decimals=1)}</td>"
+            f"<td>{_fmt_percent(tb.get('fcf_yield'))}</td>"
+            f"<td>{_fmt_number(tb.get('leverage'), decimals=2)}</td>"
+            f"<td>{_fmt_text(tb.get('layer1_status'))}</td>"
+            f"<td>{row['note_count']}</td>"
+            "</tr>"
+        )
+    if not rows_html:
+        rows_html.append(
+            "<tr><td colspan=\"17\" class=\"hint\">No tickers match.</td></tr>"
+        )
+
+    body = ["<h1>Tool B — Valuation Screening</h1>"]
+    body.append(
+        "<p>Ranks the universe by valuation upside at the configured gold-price assumption. "
+        "Lower rank is better. INCOMPLETE rows are missing manual mining inputs (production, AISC, "
+        "FCF, etc.). Four target-price scenarios are shown side by side — read across and decide "
+        "which scenario fits your view: Peer P/E is the most conservative, Peak FCF the most bullish. "
+        "Click a ticker to fill in the manual data form.</p>"
+    )
+    if flash:
+        body.append(f"<div class=\"flash\">{escape(flash)}</div>")
+    if override_error:
+        body.append(
+            f"<div class=\"flash flash-error\">Invalid override: {escape(override_error)}</div>"
+        )
+    if override_runtime_error:
+        body.append(
+            "<div class=\"flash flash-error\">"
+            f"Could not recompute with overrides: {escape(override_runtime_error)}. "
+            "Showing the last persisted Tool B snapshot."
+            "</div>"
+        )
+    body.append(_render_provenance_warnings(state))
+    body.append(_render_refresh_summary(state.foundation_manifest))
+    if app_config is not None:
+        body.append(_render_screening_params_form(
+            app_config=app_config,
+            overrides=overrides,
+            search=search,
+        ))
+    # Filter form carries hidden override fields so submitting it doesn't
+    # silently clear the active scenario. The "Reset" link still drops
+    # everything by linking to bare /tool-b.
+    body.append(
+        "<section class=\"panel\">"
+        "<form method=\"get\" action=\"/tool-b\" class=\"overview-filters-form\">"
+        f"{_render_overrides_as_hidden_inputs(overrides)}"
+        f"<label><span>Search ticker</span><input name=\"search\" type=\"text\" value=\"{escape(search)}\" placeholder=\"NEM\"></label>"
+        "<div class=\"overview-filters-actions\">"
+        f"<span class=\"hint\">{len(derived)} tickers shown.</span>"
+        "<button type=\"submit\">Apply</button>"
+        "<a class=\"hint\" href=\"/tool-b\">Reset</a>"
+        "</div>"
+        "</form>"
+        "</section>"
+    )
+    body.append(
+        "<table>"
+        "<thead><tr>"
+        "<th>Ticker</th><th>Verdict</th>"
+        "<th>Score</th><th>Rank</th>"
+        "<th>Peer P/E Target</th><th>Peer P/E Up %</th>"
+        "<th>Peak P/E Target</th><th>Peak P/E Up %</th>"
+        "<th>Peer FCF Target</th><th>Peer FCF Up %</th>"
+        "<th>Peak FCF Target</th><th>Peak FCF Up %</th>"
+        "<th>Fwd P/E</th><th>FCF Yield</th><th>Leverage</th>"
+        "<th>Layer 1</th><th>Notes</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows_html)}</tbody>"
+        "</table>"
+    )
+    return _page_shell("Tool B — Gold Vector Workspace", "".join(body), active_nav="tool_b")
+
+
+def _resolve_tool_b_frame(
+    *,
+    state: WorkspaceState,
+    overrides: ScreeningOverrides,
+    app_config: AppConfig | None,
+    paths: ProjectPaths | None,
+) -> tuple[pd.DataFrame, str | None]:
+    """Return (frame, runtime_error_message).
+
+    If no overrides are active, use `state.latest_tool_b` (the persisted
+    parquet). Otherwise, recompute in memory with the overlaid config.
+    On unexpected recompute failure, fall back to the persisted parquet
+    and surface the error message so the user sees what went wrong.
+    """
+    if not overrides.has_any() or app_config is None or paths is None:
+        return state.latest_tool_b, None
+
+    try:
+        overridden_config = apply_overrides(app_config, overrides)
+        foundation_snapshot = load_latest_foundation_snapshot(
+            paths=paths,
+            app_config=overridden_config,
+            include_gold_history=False,
+            include_equity_histories=False,
+            include_market_snapshots=True,
+        )
+        manual_data = load_manual_screening_data(
+            paths,
+            tickers=state.tool_b_tickers,
+        )
+        gold_price = overridden_config.screening_params.resolve_gold_price(overrides.gold_price)
+        recomputed = compute_tool_b_in_memory(
+            app_config=overridden_config,
+            manual_data=manual_data,
+            normalized_market_snapshots=foundation_snapshot.normalized_market_snapshots,
+            gold_price_assumption=gold_price,
+            snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
+            snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
+            source_run_id="workspace-in-memory",
+        )
+        if not recomputed.empty and "ticker" in recomputed.columns:
+            recomputed["ticker"] = recomputed["ticker"].astype(str).str.upper()
+        return recomputed, None
+    except Exception as exc:  # broad catch: fall back to persisted parquet
+        return state.latest_tool_b, str(exc)
+
+
+def _render_screening_params_form(
+    *,
+    app_config: AppConfig,
+    overrides: ScreeningOverrides,
+    search: str,
+) -> str:
+    """Render the "Screening Parameters" form panel for the Tool B view.
+
+    Mirrors the yellow-highlighted cells of the friend's Excel
+    `Summary & Parameters` sheet: gold price, six Layer 1 thresholds and
+    the three jurisdiction tier discounts. Values pre-fill from either
+    the active overrides (if any) or the YAML defaults.
+    """
+    sp = app_config.screening_params
+    current_gold = sp.resolve_gold_price(None)
+
+    gold_price_value = overrides.gold_price if overrides.gold_price is not None else current_gold
+    pe_target = overrides.verdict.get("strong_candidate_forward_pe_max",
+                                       sp.verdict_thresholds.strong_candidate_forward_pe_max)
+    fcf_yield_target = overrides.layer1.get("fcf_yield_min", sp.layer1_thresholds.fcf_yield_min)
+    aisc_target = overrides.layer1.get("aisc_max", sp.layer1_thresholds.aisc_max)
+    margin_target = overrides.layer1.get("margin_min", sp.layer1_thresholds.margin_min)
+    reserve_life_target = overrides.layer1.get("reserve_life_min", sp.layer1_thresholds.reserve_life_min)
+    leverage_target = overrides.layer1.get("leverage_max", sp.layer1_thresholds.leverage_max)
+    tier1 = overrides.jurisdiction.get("tier_1", sp.jurisdiction_discounts.tier_1)
+    tier2 = overrides.jurisdiction.get("tier_2", sp.jurisdiction_discounts.tier_2)
+    tier3 = overrides.jurisdiction.get("tier_3", sp.jurisdiction_discounts.tier_3)
+
+    active_banner = ""
+    if overrides.has_any():
+        active_banner = (
+            "<p class=\"hint\"><strong>Scenario active:</strong> recomputing live from manual "
+            "data + latest snapshot. YAML defaults and persisted parquet are unchanged. "
+            "<a href=\"/tool-b\">Clear overrides</a>.</p>"
+        )
+
+    # Percent-valued fields display the typed percent (15 for 15%) rather
+    # than the fraction (0.15). The override parser accepts either.
+    def _as_percent_display(fraction: float) -> str:
+        return f"{fraction * 100:g}"
+
+    # Carry the search term through the form so the user doesn't lose it.
+    search_hidden = (
+        f"<input type=\"hidden\" name=\"search\" value=\"{escape(search)}\">"
+        if search else ""
+    )
+
+    return (
+        "<section class=\"panel screening-params\">"
+        "<h2>Screening Parameters</h2>"
+        f"{active_banner}"
+        "<form method=\"get\" action=\"/tool-b\" class=\"screening-params-form\">"
+        f"{search_hidden}"
+        "<div class=\"screening-params-grid\">"
+        f"<label><span>Gold Price ($/oz)</span>"
+        f"<input name=\"gold_price\" type=\"number\" step=\"1\" min=\"1\" value=\"{_fmt_form_number(gold_price_value)}\"></label>"
+        f"<label><span>Fwd P/E Target (&lt;)</span>"
+        f"<input name=\"pe_target\" type=\"number\" step=\"0.1\" min=\"0.1\" value=\"{_fmt_form_number(pe_target)}\"></label>"
+        f"<label><span>FCF Yield Target (% ≥)</span>"
+        f"<input name=\"fcf_yield_target\" type=\"number\" step=\"0.5\" min=\"0\" value=\"{_as_percent_display(fcf_yield_target)}\"></label>"
+        f"<label><span>AISC Target ($/oz ≤)</span>"
+        f"<input name=\"aisc_target\" type=\"number\" step=\"10\" min=\"1\" value=\"{_fmt_form_number(aisc_target)}\"></label>"
+        f"<label><span>Margin Target (% ≥)</span>"
+        f"<input name=\"margin_target\" type=\"number\" step=\"1\" min=\"0\" value=\"{_as_percent_display(margin_target)}\"></label>"
+        f"<label><span>Reserve Life (yrs ≥)</span>"
+        f"<input name=\"reserve_life_target\" type=\"number\" step=\"0.5\" min=\"0\" value=\"{_fmt_form_number(reserve_life_target)}\"></label>"
+        f"<label><span>Net Debt/EBITDA (≤)</span>"
+        f"<input name=\"leverage_target\" type=\"number\" step=\"0.1\" min=\"0\" value=\"{_fmt_form_number(leverage_target)}\"></label>"
+        f"<label><span>Tier 1 Discount (%)</span>"
+        f"<input name=\"tier1_discount\" type=\"number\" step=\"1\" min=\"0\" max=\"100\" value=\"{_as_percent_display(tier1)}\"></label>"
+        f"<label><span>Tier 2 Discount (%)</span>"
+        f"<input name=\"tier2_discount\" type=\"number\" step=\"1\" min=\"0\" max=\"100\" value=\"{_as_percent_display(tier2)}\"></label>"
+        f"<label><span>Tier 3 Discount (%)</span>"
+        f"<input name=\"tier3_discount\" type=\"number\" step=\"1\" min=\"0\" max=\"100\" value=\"{_as_percent_display(tier3)}\"></label>"
+        "</div>"
+        "<div class=\"screening-params-actions\">"
+        "<button type=\"submit\">Apply scenario</button>"
+        "<a class=\"hint\" href=\"/tool-b\">Reset all</a>"
+        "</div>"
+        "</form>"
+        "</section>"
+    )
+
+
+def _fmt_form_number(value: float) -> str:
+    """Format a number for HTML input value attributes without trailing .0."""
+    if value is None:
+        return ""
+    return f"{value:g}"
+
+
+# Mapping from override field -> (URL-param name, percent-style?). Mirrors
+# `_FIELD_SPECS` in screening_overrides.py so any param the parser accepts
+# is also reflected back into hidden inputs.
+_OVERRIDE_PARAM_NAMES: tuple[tuple[str, str, str, bool], ...] = (
+    # (overrides-attr, dict-key, url-param, is_percent)
+    ("layer1", "aisc_max", "aisc_target", False),
+    ("layer1", "margin_min", "margin_target", True),
+    ("layer1", "fcf_yield_min", "fcf_yield_target", True),
+    ("layer1", "reserve_life_min", "reserve_life_target", False),
+    ("layer1", "leverage_max", "leverage_target", False),
+    ("verdict", "strong_candidate_forward_pe_max", "pe_target", False),
+    ("jurisdiction", "tier_1", "tier1_discount", True),
+    ("jurisdiction", "tier_2", "tier2_discount", True),
+    ("jurisdiction", "tier_3", "tier3_discount", True),
+)
+
+
+def _render_overrides_as_hidden_inputs(overrides: ScreeningOverrides) -> str:
+    """Hidden form fields for every active override.
+
+    Used by the search/filter form so submitting it doesn't silently
+    clear the screening scenario. Percent-style fields are emitted in
+    typed-percent form (15 not 0.15) to match how the form input renders
+    them — the override parser accepts either, but keeping the form
+    round-trip consistent makes the URL state visible to the user.
+    """
+    parts: list[str] = []
+    if overrides.gold_price is not None:
+        parts.append(
+            f"<input type=\"hidden\" name=\"gold_price\" value=\"{_fmt_form_number(overrides.gold_price)}\">"
+        )
+    for attr_name, dict_key, param_name, is_percent in _OVERRIDE_PARAM_NAMES:
+        bucket = getattr(overrides, attr_name)
+        if dict_key not in bucket:
+            continue
+        value = bucket[dict_key]
+        display = f"{value * 100:g}" if is_percent else _fmt_form_number(value)
+        parts.append(
+            f"<input type=\"hidden\" name=\"{escape(param_name)}\" value=\"{escape(display)}\">"
+        )
+    return "".join(parts)
+
+
 def _render_ticker_page(
     state: WorkspaceState,
     *,
@@ -889,7 +1360,7 @@ def _render_ticker_page(
     body.append(_render_reporting_form(ticker=ticker, reporting_row=reporting_row))
     body.append(_render_verification_section(ticker=ticker, verification_rows=verification_rows))
     body.append(_render_note_section(ticker=ticker, note_rows=note_rows))
-    return _page_shell(f"Golden Vector Workspace - {ticker}", "".join(body))
+    return _page_shell(f"Golden Vector Workspace - {ticker}", "".join(body), active_nav="combined")
 
 
 def _render_provenance_warnings(state: WorkspaceState) -> str:
@@ -1772,7 +2243,23 @@ def _metric_card(title: str, value: str) -> str:
     )
 
 
-def _page_shell(title: str, body: str) -> str:
+_NAV_LINKS: tuple[tuple[str, str, str], ...] = (
+    ("combined", "/", "Combined"),
+    ("tool_a", "/tool-a", "Tool A"),
+    ("tool_b", "/tool-b", "Tool B"),
+)
+
+
+def _render_top_nav(active: str) -> str:
+    items = []
+    for nav_id, href, label in _NAV_LINKS:
+        cls = "nav-tab active" if nav_id == active else "nav-tab"
+        items.append(f"<a class=\"{cls}\" href=\"{escape(href)}\">{escape(label)}</a>")
+    return f"<nav class=\"top-nav\">{''.join(items)}</nav>"
+
+
+def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
+    nav_html = _render_top_nav(active_nav) if active_nav else ""
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1945,6 +2432,29 @@ def _page_shell(title: str, body: str) -> str:
       align-items: center;
       justify-content: flex-end;
     }}
+    .screening-params-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 10px;
+    }}
+    .screening-params-form label {{
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.88rem;
+    }}
+    .screening-params-actions {{
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: flex-end;
+    }}
+    .flash-error {{
+      background: #fbe5e9;
+      border-color: #c48191;
+    }}
     .verification-form {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -2004,9 +2514,37 @@ def _page_shell(title: str, body: str) -> str:
       height: auto;
       display: block;
     }}
+    .top-nav {{
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 18px 20px 0;
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .nav-tab {{
+      padding: 10px 18px;
+      border: 1px solid var(--line);
+      border-bottom: none;
+      border-radius: 8px 8px 0 0;
+      background: var(--panel);
+      color: var(--ink);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }}
+    .nav-tab.active {{
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }}
+    .nav-tab:hover:not(.active) {{
+      background: var(--accent-soft);
+    }}
   </style>
 </head>
 <body>
+  {nav_html}
   <main>{body}</main>
 </body>
 </html>"""
@@ -2044,6 +2582,7 @@ def _render_error_page(message: str, *, detail: str | None = None) -> str:
     return _page_shell(
         "Golden Vector Workspace Error",
         f"<h1>Workspace Error</h1><div class=\"panel\"><p>{escape(message)}</p>{detail_html}<p><a href=\"/\">Back to workspace</a></p></div>",
+        active_nav="combined",
     )
 
 

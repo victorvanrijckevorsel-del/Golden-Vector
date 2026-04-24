@@ -10,6 +10,23 @@ from golden_vector.model.pipeline import execute_tool_a_profile_pipeline
 from tests.helpers import build_test_paths
 
 
+def _activate_for_test(app_config, *fixture_tickers: str):
+    """Force a set of fixture tickers to be active in the loaded app_config.
+
+    Pipeline functions filter histories to active tickers only; if a fixture
+    ticker is inactive in the live universe.yaml the test row vanishes from
+    the output and the assertion KeyErrors. This helper decouples tests from
+    the live active/inactive state so universe edits don't break fixtures.
+    """
+    targets = {t.upper() for t in fixture_tickers}
+    new_tickers = [
+        ticker.model_copy(update={"active": True}) if ticker.ticker in targets else ticker
+        for ticker in app_config.universe.tickers
+    ]
+    new_universe = app_config.universe.model_copy(update={"tickers": new_tickers})
+    return app_config.model_copy(update={"universe": new_universe})
+
+
 def _gold_history(weeks: int = 180) -> pd.DataFrame:
     dates = pd.date_range("2022-01-07", periods=weeks, freq="W-FRI")
     gold_log_returns = np.array(
@@ -60,7 +77,7 @@ def _equity_history(
 def test_tool_a_pipeline_ranks_structural_names_and_skips_inverse(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
-    app_config = load_app_config(ProjectPaths.discover()).app
+    app_config = _activate_for_test(load_app_config(ProjectPaths.discover()).app, "GOLD")
     run_context = RunContext.start(
         paths=paths,
         command="tool-a",
@@ -151,7 +168,7 @@ def test_tool_a_pipeline_marks_short_history_as_ineligible(tmp_path):
 def test_tool_a_pipeline_withholds_rows_when_normalization_is_blocked(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
-    app_config = load_app_config(ProjectPaths.discover()).app
+    app_config = _activate_for_test(load_app_config(ProjectPaths.discover()).app, "FRES.L")
     run_context = RunContext.start(
         paths=paths,
         command="tool-a",

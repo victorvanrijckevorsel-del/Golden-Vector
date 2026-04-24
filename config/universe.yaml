@@ -1,43 +1,512 @@
 version: 1
+# Sourced from Gold_RawData_Foundation_v9.xlsx -> Company_Master (61 tickers).
+# jurisdiction_tier defaults to 2 (15% discount) for every ticker. Edit per name
+# as you build conviction (1 = no discount, 3 = 30% discount).
 tickers:
-  - ticker: NEM
-    company: Newmont Corporation
-    exchange: NYSE
-    currency: USD
-    jurisdiction_tier: 1
+  - ticker: AAUC.TO
+    company: Allied Gold Corporation
+    exchange: TSX
+    currency: CAD
+    jurisdiction_tier: 3
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
-  - ticker: GOLD
-    company: Barrick Gold Corporation
-    exchange: NYSE
-    currency: USD
-    jurisdiction_tier: 1
+  - ticker: AAZ.L
+    company: Anglo Asian Mining
+    exchange: LSE
+    currency: GBP
+    jurisdiction_tier: 2
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
   - ticker: AEM
-    company: Agnico Eagle Mines Limited
-    exchange: NYSE
+    company: Agnico Eagle Mines
+    exchange: US
     currency: USD
     jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: AGI
+    company: Alamos Gold Inc.
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: ALK.AX
+    company: Alkane Resources
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: ALTN.L
+    company: AltynGold
+    exchange: LSE
+    currency: GBP
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: ARIS.TO
+    company: Aris Mining Corporation
+    exchange: TSX
+    currency: CAD
+    jurisdiction_tier: 2
+    # Friend's spreadsheet still labels this "ARMN" (the legacy NYSE short
+    # ticker). Yahoo Finance only serves the canonical TSX symbol ARIS.TO,
+    # so that's what we use here. Import scripts map ARMN -> ARIS.TO when
+    # ingesting the friend's Excel.
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: ASE.V
+    company: Asante Gold
+    exchange: TSXV
+    currency: CAD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: AU
+    company: AngloGold Ashanti
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: B
+    company: Barrick Mining Corporation
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: BGL.AX
+    company: Bellevue Gold
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: BTG
+    company: B2Gold Corp
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: CDE
+    company: Coeur Mining Inc
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: CG
+    company: Centerra Gold Inc
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: CMCL
+    company: Caledonia Mining
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: CMM.AX
+    company: Capricorn Metals Ltd
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: CYL.AX
+    company: Catalyst Metals
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: DPM.TO
+    company: DPM Metals Inc.
+    exchange: TSX
+    currency: CAD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: DRD
+    company: DRDGOLD Limited
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: EDV.L
+    company: Endeavour Mining plc
+    exchange: LSE
+    currency: GBP
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: ELD.TO
+    company: Eldorado Gold Corporation
+    exchange: TSX
+    currency: CAD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: EMR.AX
+    company: Emerald Resources
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: EQX
+    company: Equinox Gold Corp
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: EVN.AX
+    company: Evolution Mining Limited
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: FSM
+    company: Fortuna Mining
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: GAU
+    company: Galiano Gold Inc
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: GFI
+    company: Gold Fields
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: GGP.L
+    company: Greatland Resources
+    exchange: LSE
+    currency: GBP
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: GMIN.TO
+    company: G Mining Ventures Corp
+    exchange: TSX
+    currency: CAD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: HMY
+    company: Harmony Gold Mining Company
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: HOC.L
+    company: Hochschild Mining plc
+    exchange: LSE
+    currency: GBP
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: IAG
+    company: IAMGOLD Corporation
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: JAG.TO
+    company: Jaguar Mining Inc.
+    exchange: TSX
+    currency: CAD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: KCN.AX
+    company: Kingsgate Consolidated
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 2
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
   - ticker: KGC
     company: Kinross Gold Corporation
-    exchange: NYSE
+    exchange: US
     currency: USD
     jurisdiction_tier: 2
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
-  - ticker: BTG
-    company: B2Gold Corp.
-    exchange: NYSE AMERICAN
+  - ticker: KNT.TO
+    company: K92 Mining Inc
+    exchange: TSX
+    currency: CAD
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: LUG.TO
+    company: Lundin Gold Inc.
+    exchange: TSX
+    currency: CAD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: MTL.L
+    company: Metals Exploration
+    exchange: LSE
+    currency: GBP
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: MUX
+    company: McEwen Mining Inc
+    exchange: US
     currency: USD
     jurisdiction_tier: 2
     active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: NEM
+    company: Newmont Corporation
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: NGD
+    company: New Gold Inc
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 1
+    # Yahoo Finance returns "no data" for NGD as of 2026-04-23.
+    # Disabled so the pipeline doesn't block; investigate later.
+    active: false
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: NST.AX
+    company: Northern Star Resources Ltd
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: OBM.AX
+    company: Ora Banda Mining
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: OGC.TO
+    company: OceanaGold Corporation
+    exchange: TSX
+    currency: CAD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: ORE.TO
+    company: Orezone Gold
+    exchange: TSX
+    currency: CAD
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: ORLA
+    company: Orla Mining Ltd
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: PAF.L
+    company: Pan African Resources
+    exchange: LSE
+    currency: GBP
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: PNR.AX
+    company: Pantoro Gold
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: PRU
+    company: Perseus Mining Ltd
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: RMS.AX
+    company: Ramelius Resources Ltd
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: RRL.AX
+    company: Regis Resources Limited
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: RSG.AX
+    company: Resolute Mining Limited
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: SBM.AX
+    company: St Barbara
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: SRB.L
+    company: Serabi Gold
+    exchange: LSE
+    currency: GBP
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: SSRM
+    company: SSR Mining Inc
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: THX.L
+    company: Thor Explorations
+    exchange: LSE
+    currency: GBP
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: TXG
+    company: Torex Gold Resources
+    exchange: US
+    currency: USD
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: VAU.AX
+    company: Vault Minerals
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: WAF.AX
+    company: West African Resources Ltd
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 3
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: WDO.TO
+    company: Wesdome Gold Mines Ltd.
+    exchange: TSX
+    currency: CAD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: WGX.AX
+    company: Westgold Resources Limited
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  # The three below are not in Company_Master but were in the prior starter
+  # universe and are referenced by tests. Kept (inactive) so the test suite
+  # has stable fixtures and so existing manual-data work for them is preserved.
+  # Re-activate by hand if you want them in the live refresh + workspace.
+  - ticker: GOLD
+    company: Barrick Gold (legacy ticker, re-tickered to B in 2025)
+    exchange: NYSE
+    currency: USD
+    jurisdiction_tier: 1
+    active: false
     tool_a_enabled: true
     tool_b_enabled: true
   - ticker: FNV
@@ -45,15 +514,7 @@ tickers:
     exchange: NYSE
     currency: USD
     jurisdiction_tier: 1
-    active: true
-    tool_a_enabled: true
-    tool_b_enabled: true
-  - ticker: DPM.TO
-    company: Dundee Precious Metals Inc.
-    exchange: TSX
-    currency: CAD
-    jurisdiction_tier: 2
-    active: true
+    active: false
     tool_a_enabled: true
     tool_b_enabled: true
   - ticker: FRES.L
@@ -61,6 +522,6 @@ tickers:
     exchange: LSE
     currency: GBP
     jurisdiction_tier: 2
-    active: true
+    active: false
     tool_a_enabled: true
     tool_b_enabled: true

@@ -50,12 +50,21 @@ TOOL_B_OUTPUT_COLUMNS = [
     "leverage",
     "adjusted_peer_pe",
     "adjusted_peak_pe",
+    # The four scenario target prices mirror Excel `Top performers`
+    # columns AA / AC / AI / AK. The analyst reads all four and decides
+    # which scenario to weight. We no longer emit EV/EBITDA-derived
+    # targets (Excel never exposed them).
     "target_price_peer_pe",
     "target_price_peak_pe",
     "target_price_peer_fcf",
     "target_price_peak_fcf",
-    "target_price_peer_evebitda",
-    "target_price_peak_evebitda",
+    "upside_peer_pe_pct",
+    "upside_peak_pe_pct",
+    "upside_peer_fcf_pct",
+    "upside_peak_fcf_pct",
+    # best_target_price_usd and best_upside_pct are retained as derived
+    # "max of the four scenarios" helpers that feed compute_tool_b_score.
+    # They are intentionally NOT the headline in the workspace Tool B view.
     "best_target_price_usd",
     "best_upside_pct",
     "tool_b_score",
@@ -91,17 +100,140 @@ def execute_tool_b_pipeline(
     snapshot_refresh_run_id: str | None = None,
     snapshot_as_of_date: object = None,
 ) -> ToolBExecutionResult:
-    tool_b_tickers = sorted(
+    tool_b_tickers = _active_tool_b_tickers(app_config)
+    manual_data = load_manual_screening_data(
+        paths,
+        tickers=tool_b_tickers,
+    )
+    merged, snapshot_anchor_date = _merge_inputs_for_tool_b(
+        app_config=app_config,
+        manual_data=manual_data,
+        normalized_market_snapshots=normalized_market_snapshots,
+        snapshot_as_of_date=snapshot_as_of_date,
+        tool_b_tickers=tool_b_tickers,
+    )
+
+    rows = _build_tool_b_rows(
+        merged=merged,
+        manual_data=manual_data,
+        app_config=app_config,
+        gold_price_assumption=gold_price_assumption,
+        snapshot_anchor_date=snapshot_anchor_date,
+        snapshot_refresh_run_id=snapshot_refresh_run_id,
+        source_run_id=run_context.run_id,
+    )
+
+    tool_b_outputs = _frame_from_rows(rows)
+    persist_tool_b_outputs(
+        paths=paths,
+        run_context=run_context,
+        tool_b_outputs=tool_b_outputs,
+        publish_latest_aliases=not tool_b_outputs.empty,
+    )
+
+    verdict_counts = (
+        tool_b_outputs["screening_verdict"].value_counts().to_dict()
+        if not tool_b_outputs.empty
+        else {}
+    )
+    overall_status = "PASS"
+    if tool_b_outputs.empty:
+        overall_status = "FAIL"
+    elif verdict_counts.get("INCOMPLETE", 0) == len(tool_b_outputs.index):
+        overall_status = "WARN"
+    elif verdict_counts.get("INCOMPLETE", 0) > 0:
+        overall_status = "WARN"
+
+    summary = {
+        "tool_b_output_row_count": len(tool_b_outputs.index),
+        "tool_b_output_overall_status": overall_status,
+        "tool_b_enabled_ticker_count": len(tool_b_tickers),
+        "manual_store_path": str(manual_data.store_path),
+        "manual_store_created": manual_data.store_created,
+        "manual_seeded_ticker_count": len(manual_data.seeded_tickers),
+        "manual_csv_import_count": len(manual_data.imported_csv_files),
+        "manual_stock_note_count": len(manual_data.stock_notes.index),
+        "missing_market_snapshot_row_count": int(merged["snapshot_date"].isna().sum()),
+        "ranked_row_count": int(tool_b_outputs["tool_b_rank"].notna().sum()) if not tool_b_outputs.empty else 0,
+        "incomplete_row_count": int((tool_b_outputs["screening_verdict"] == "INCOMPLETE").sum()) if not tool_b_outputs.empty else 0,
+        "strong_candidate_row_count": int((tool_b_outputs["screening_verdict"] == "STRONG_CANDIDATE").sum()) if not tool_b_outputs.empty else 0,
+        "watchlist_row_count": int((tool_b_outputs["screening_verdict"] == "WATCHLIST").sum()) if not tool_b_outputs.empty else 0,
+    }
+    if manual_data.imported_csv_files:
+        summary["manual_csv_imported_files"] = manual_data.imported_csv_files
+    if manual_data.seeded_tickers:
+        summary["manual_seeded_tickers"] = manual_data.seeded_tickers
+    if not tool_b_outputs.empty:
+        summary["latest_output_as_of_date"] = str(tool_b_outputs["as_of_date"].max())
+
+    return ToolBExecutionResult(
+        tool_b_outputs=tool_b_outputs,
+        manual_data=manual_data,
+        overall_status=overall_status,
+        summary=summary,
+    )
+
+
+def compute_tool_b_in_memory(
+    *,
+    app_config: AppConfig,
+    manual_data: LoadedManualScreeningData,
+    normalized_market_snapshots: pd.DataFrame,
+    gold_price_assumption: float,
+    snapshot_refresh_run_id: str | None = None,
+    snapshot_as_of_date: object = None,
+    source_run_id: str = "in-memory",
+) -> pd.DataFrame:
+    """Run the Tool B math without any persistence.
+
+    This is the shared math seam used by both `execute_tool_b_pipeline`
+    (which additionally writes parquet / CSV / manifest and emits a
+    ToolBExecutionResult) and the workspace's live-override view (which
+    needs a fresh DataFrame per page hit without side effects).
+
+    All inputs are already-loaded objects so the caller controls what's
+    injected (e.g., the workspace re-uses its cached manual_data +
+    snapshots and only varies gold_price_assumption / config overrides).
+    """
+    tool_b_tickers = _active_tool_b_tickers(app_config)
+    merged, snapshot_anchor_date = _merge_inputs_for_tool_b(
+        app_config=app_config,
+        manual_data=manual_data,
+        normalized_market_snapshots=normalized_market_snapshots,
+        snapshot_as_of_date=snapshot_as_of_date,
+        tool_b_tickers=tool_b_tickers,
+    )
+    rows = _build_tool_b_rows(
+        merged=merged,
+        manual_data=manual_data,
+        app_config=app_config,
+        gold_price_assumption=gold_price_assumption,
+        snapshot_anchor_date=snapshot_anchor_date,
+        snapshot_refresh_run_id=snapshot_refresh_run_id,
+        source_run_id=source_run_id,
+    )
+    return _frame_from_rows(rows)
+
+
+def _active_tool_b_tickers(app_config: AppConfig) -> list[str]:
+    return sorted(
         {
             ticker.ticker
             for ticker in app_config.universe.tickers
             if ticker.active and ticker.tool_b_enabled
         }
     )
-    manual_data = load_manual_screening_data(
-        paths,
-        tickers=tool_b_tickers,
-    )
+
+
+def _merge_inputs_for_tool_b(
+    *,
+    app_config: AppConfig,
+    manual_data: LoadedManualScreeningData,
+    normalized_market_snapshots: pd.DataFrame,
+    snapshot_as_of_date: object,
+    tool_b_tickers: list[str],
+) -> tuple[pd.DataFrame, object]:
+    """Produce the merged per-ticker frame used by the row builder."""
     snapshots = _prepare_market_snapshots(
         normalized_market_snapshots,
         allowed_tickers=set(tool_b_tickers),
@@ -112,25 +244,13 @@ def execute_tool_b_pipeline(
     )
     company_inputs = manual_data.company_inputs.copy()
     reporting_calendar = manual_data.reporting_calendar.copy()
-    base_frame = pd.DataFrame({"ticker": tool_b_tickers})
-
     company_inputs["ticker"] = company_inputs["ticker"].astype(str)
     reporting_calendar["ticker"] = reporting_calendar["ticker"].astype(str)
-    merged = base_frame.merge(
-        snapshots,
-        how="left",
-        on="ticker",
-    )
-    merged = merged.merge(
-        company_inputs,
-        how="left",
-        on="ticker",
-    )
-    merged = merged.merge(
-        reporting_calendar,
-        how="left",
-        on="ticker",
-    )
+
+    base_frame = pd.DataFrame({"ticker": tool_b_tickers})
+    merged = base_frame.merge(snapshots, how="left", on="ticker")
+    merged = merged.merge(company_inputs, how="left", on="ticker")
+    merged = merged.merge(reporting_calendar, how="left", on="ticker")
 
     universe_map = {
         ticker.ticker: ticker
@@ -146,7 +266,19 @@ def execute_tool_b_pipeline(
         merged["snapshot_date"].notna(),
         snapshot_anchor_date,
     )
+    return merged, snapshot_anchor_date
 
+
+def _build_tool_b_rows(
+    *,
+    merged: pd.DataFrame,
+    manual_data: LoadedManualScreeningData,
+    app_config: AppConfig,
+    gold_price_assumption: float,
+    snapshot_anchor_date: object,
+    snapshot_refresh_run_id: str | None,
+    source_run_id: str,
+) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for _, row in merged.iterrows():
         ticker = str(row["ticker"])
@@ -209,8 +341,10 @@ def execute_tool_b_pipeline(
                 "target_price_peak_pe": targets["target_price_peak_pe"],
                 "target_price_peer_fcf": targets["target_price_peer_fcf"],
                 "target_price_peak_fcf": targets["target_price_peak_fcf"],
-                "target_price_peer_evebitda": targets["target_price_peer_evebitda"],
-                "target_price_peak_evebitda": targets["target_price_peak_evebitda"],
+                "upside_peer_pe_pct": targets["upside_peer_pe_pct"],
+                "upside_peak_pe_pct": targets["upside_peak_pe_pct"],
+                "upside_peer_fcf_pct": targets["upside_peer_fcf_pct"],
+                "upside_peak_fcf_pct": targets["upside_peak_fcf_pct"],
                 "best_target_price_usd": targets["best_target_price_usd"],
                 "best_upside_pct": targets["best_upside_pct"],
                 "tool_b_score": tool_b_score,
@@ -226,10 +360,13 @@ def execute_tool_b_pipeline(
                 "fx_staleness_days": _coerce_optional_int(row.get("fx_staleness_days")),
                 "fx_policy_max_staleness_days": int(app_config.qa.max_fx_staleness_days),
                 "fx_policy_block_on_stale_fx": bool(app_config.qa.block_on_stale_fx),
-                "source_run_id": run_context.run_id,
+                "source_run_id": source_run_id,
             }
         )
+    return rows
 
+
+def _frame_from_rows(rows: list[dict[str, object]]) -> pd.DataFrame:
     tool_b_outputs = pd.DataFrame(rows, columns=TOOL_B_OUTPUT_COLUMNS)
     if not tool_b_outputs.empty:
         tool_b_outputs = rank_tool_b_outputs(tool_b_outputs)
@@ -238,54 +375,7 @@ def execute_tool_b_pipeline(
             ascending=[True, True, True, True],
             na_position="last",
         ).reset_index(drop=True)
-    persist_tool_b_outputs(
-        paths=paths,
-        run_context=run_context,
-        tool_b_outputs=tool_b_outputs,
-        publish_latest_aliases=not tool_b_outputs.empty,
-    )
-
-    verdict_counts = (
-        tool_b_outputs["screening_verdict"].value_counts().to_dict()
-        if not tool_b_outputs.empty
-        else {}
-    )
-    overall_status = "PASS"
-    if tool_b_outputs.empty:
-        overall_status = "FAIL"
-    elif verdict_counts.get("INCOMPLETE", 0) == len(tool_b_outputs.index):
-        overall_status = "WARN"
-    elif verdict_counts.get("INCOMPLETE", 0) > 0:
-        overall_status = "WARN"
-
-    summary = {
-        "tool_b_output_row_count": len(tool_b_outputs.index),
-        "tool_b_output_overall_status": overall_status,
-        "tool_b_enabled_ticker_count": len(tool_b_tickers),
-        "manual_store_path": str(manual_data.store_path),
-        "manual_store_created": manual_data.store_created,
-        "manual_seeded_ticker_count": len(manual_data.seeded_tickers),
-        "manual_csv_import_count": len(manual_data.imported_csv_files),
-        "manual_stock_note_count": len(manual_data.stock_notes.index),
-        "missing_market_snapshot_row_count": int(merged["snapshot_date"].isna().sum()),
-        "ranked_row_count": int(tool_b_outputs["tool_b_rank"].notna().sum()) if not tool_b_outputs.empty else 0,
-        "incomplete_row_count": int((tool_b_outputs["screening_verdict"] == "INCOMPLETE").sum()) if not tool_b_outputs.empty else 0,
-        "strong_candidate_row_count": int((tool_b_outputs["screening_verdict"] == "STRONG_CANDIDATE").sum()) if not tool_b_outputs.empty else 0,
-        "watchlist_row_count": int((tool_b_outputs["screening_verdict"] == "WATCHLIST").sum()) if not tool_b_outputs.empty else 0,
-    }
-    if manual_data.imported_csv_files:
-        summary["manual_csv_imported_files"] = manual_data.imported_csv_files
-    if manual_data.seeded_tickers:
-        summary["manual_seeded_tickers"] = manual_data.seeded_tickers
-    if not tool_b_outputs.empty:
-        summary["latest_output_as_of_date"] = str(tool_b_outputs["as_of_date"].max())
-
-    return ToolBExecutionResult(
-        tool_b_outputs=tool_b_outputs,
-        manual_data=manual_data,
-        overall_status=overall_status,
-        summary=summary,
-    )
+    return tool_b_outputs
 
 
 def _prepare_market_snapshots(
