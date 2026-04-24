@@ -51,15 +51,16 @@ tickers:
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
-  - ticker: ARMN
-    company: Aris Mining
-    exchange: US
-    currency: USD
+  - ticker: ARIS.TO
+    company: Aris Mining Corporation
+    exchange: TSX
+    currency: CAD
     jurisdiction_tier: 2
-    # Yahoo Finance returns "no data" for ARMN as of 2026-04-23 (likely
-    # re-tickered or delisted on Yahoo's feed). Disabled so the pipeline
-    # doesn't block; investigate the correct symbol later.
-    active: false
+    # Friend's spreadsheet still labels this "ARMN" (the legacy NYSE short
+    # ticker). Yahoo Finance only serves the canonical TSX symbol ARIS.TO,
+    # so that's what we use here. Import scripts map ARMN -> ARIS.TO when
+    # ingesting the friend's Excel.
+    active: true
     tool_a_enabled: true
     tool_b_enabled: true
   - ticker: ASE.V
