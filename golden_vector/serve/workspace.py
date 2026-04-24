@@ -13,6 +13,13 @@ from wsgiref.simple_server import make_server
 
 import pandas as pd
 
+_STATIC_ROOT = (Path(__file__).parent / "static").resolve()
+_STATIC_ALLOWED_EXTENSIONS: dict[str, str] = {
+    ".js": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+}
+
+
 from golden_vector.app.latest_data import load_latest_foundation_snapshot
 from golden_vector.screening.pipeline import compute_tool_b_in_memory
 from golden_vector.serve.screening_overrides import (
@@ -188,6 +195,9 @@ def create_workspace_app(
         path = str(environ.get("PATH_INFO", "/")) or "/"
 
         try:
+            if method == "GET" and path.startswith("/static/"):
+                return _serve_static_file(path, start_response)
+
             if method == "GET" and path in ("/", "/combined"):
                 state = _load_workspace_state(paths, normalized_tickers)
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
@@ -744,22 +754,25 @@ def _render_overview_page(
             if show_lens_column
             else ""
         )
+        lens_cell_dt = (
+            _fmt_numeric_td(row['lens_score'], decimals=2) if show_lens_column else ""
+        )
         rows_html.append(
             "<tr>"
             f"<td><a href=\"/ticker/{escape(row['ticker'])}\">{escape(row['ticker'])}</a></td>"
-            f"<td>{_fmt_number(company_row.get('production_oz'), decimals=0)}</td>"
-            f"<td>{_fmt_number(company_row.get('aisc_usd_per_oz'), decimals=0)}</td>"
-            f"<td>{_fmt_number(tool_a_row.get('structural_delta_core'), decimals=2)}</td>"
-            f"<td>{_fmt_number(tool_a_row.get('structural_gamma_core'), decimals=2)}</td>"
-            f"<td>{_fmt_number(tool_a_row.get('asymmetry_ratio_core'), decimals=2)}</td>"
+            f"{_fmt_numeric_td(company_row.get('production_oz'), decimals=0)}"
+            f"{_fmt_numeric_td(company_row.get('aisc_usd_per_oz'), decimals=0)}"
+            f"{_fmt_numeric_td(tool_a_row.get('structural_delta_core'), decimals=2)}"
+            f"{_fmt_numeric_td(tool_a_row.get('structural_gamma_core'), decimals=2)}"
+            f"{_fmt_numeric_td(tool_a_row.get('asymmetry_ratio_core'), decimals=2)}"
             f"<td>{_fmt_text(tool_a_row.get('confidence_label'))}</td>"
             f"<td>{_fmt_text(tool_a_row.get('volatility_context'))}</td>"
-            f"<td>{_fmt_number(tool_a_row.get('tool_a_score'), decimals=1)}</td>"
-            f"{lens_cell}"
+            f"{_fmt_numeric_td(tool_a_row.get('tool_a_score'), decimals=1)}"
+            f"{lens_cell_dt}"
             f"<td>{_fmt_text(tool_a_row.get('profile_label'))}</td>"
-            f"<td>{_fmt_number(tool_b_row.get('tool_b_score'), decimals=1)}</td>"
+            f"{_fmt_numeric_td(tool_b_row.get('tool_b_score'), decimals=1)}"
             f"<td>{_fmt_text(tool_b_row.get('screening_verdict'))}</td>"
-            f"<td>{row['note_count']}</td>"
+            f"{_fmt_numeric_td(row['note_count'], decimals=0)}"
             "</tr>"
         )
 
@@ -793,18 +806,45 @@ def _render_overview_page(
         )
     )
     lens_score_header_cell = (
-        f"<th>Lens Score ({escape(lens.title)})</th>" if show_lens_column else ""
+        f"<th data-col-name=\"lens_score\" data-sort-numeric>Lens Score ({escape(lens.title)})</th>"
+        if show_lens_column
+        else ""
     )
+    # Filter bar options come from the full row set so the dropdown reflects
+    # what actually exists in the page (even if the user has narrowed via
+    # server-side filters, DataTables still only filters within filtered_rows).
+    combined_filter_options = {
+        "profile": profile_values,
+        "confidence": confidence_values,
+        "verdict": verdict_values,
+    }
+    body.append("<h2>Universe Overview</h2>")
+    body.append(_render_filter_bar(
+        target_table_id="combined-table",
+        options=combined_filter_options,
+        column_labels={
+            "profile": "Profile",
+            "confidence": "Confidence",
+            "verdict": "Tool B Verdict",
+        },
+    ))
     body.append(
-        "<h2>Universe Overview</h2>"
-        "<table>"
+        "<table id=\"combined-table\" class=\"js-datatable\">"
         "<thead><tr>"
-        "<th>Ticker</th><th>Production</th><th>AISC</th>"
-        "<th>Structural Delta</th><th>Gamma</th><th>Asymmetry</th><th>Confidence</th>"
-        "<th>Volatility</th><th>Tool A Score</th>"
+        "<th data-col-name=\"ticker\">Ticker</th>"
+        "<th data-col-name=\"production\" data-sort-numeric>Production</th>"
+        "<th data-col-name=\"aisc\" data-sort-numeric>AISC</th>"
+        "<th data-col-name=\"delta\" data-sort-numeric>Structural Delta</th>"
+        "<th data-col-name=\"gamma\" data-sort-numeric>Gamma</th>"
+        "<th data-col-name=\"asymmetry\" data-sort-numeric>Asymmetry</th>"
+        "<th data-col-name=\"confidence\">Confidence</th>"
+        "<th data-col-name=\"volatility\">Volatility</th>"
+        "<th data-col-name=\"tool_a_score\" data-sort-numeric>Tool A Score</th>"
         f"{lens_score_header_cell}"
-        "<th>Profile</th>"
-        "<th>Tool B Score</th><th>Tool B Verdict</th><th>Notes</th>"
+        "<th data-col-name=\"profile\">Profile</th>"
+        "<th data-col-name=\"tool_b_score\" data-sort-numeric>Tool B Score</th>"
+        "<th data-col-name=\"verdict\">Tool B Verdict</th>"
+        "<th data-col-name=\"notes\" data-sort-numeric>Notes</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows_html)}{no_match_row}</tbody>"
         "</table>"
@@ -849,7 +889,8 @@ def _render_overview_filters_form(
     sort_disabled_attr = " disabled" if lens.id != DEFAULT_LENS_ID else ""
     sort_disabled_note = (
         "<p class=\"hint\">Sort dropdown is ignored while a non-default lens is active; "
-        "the table is automatically sorted by the lens's score.</p>"
+        "the initial table order follows the lens's score. Clicking a column header "
+        "reorders this view only (not persisted across reloads).</p>"
         if lens.id != DEFAULT_LENS_ID
         else ""
     )
@@ -942,20 +983,29 @@ def _render_tool_a_overview_page(
             "<tr>"
             f"<td><a href=\"/ticker/{escape(row['ticker'])}\">{escape(row['ticker'])}</a></td>"
             f"<td>{_fmt_text(ta.get('profile_label'))}</td>"
-            f"<td>{_fmt_number(ta.get('structural_delta_core'), decimals=2)}</td>"
-            f"<td>{_fmt_number(ta.get('structural_gamma_core'), decimals=2)}</td>"
-            f"<td>{_fmt_number(ta.get('asymmetry_ratio_core'), decimals=2)}</td>"
+            f"{_fmt_numeric_td(ta.get('structural_delta_core'), decimals=2)}"
+            f"{_fmt_numeric_td(ta.get('structural_gamma_core'), decimals=2)}"
+            f"{_fmt_numeric_td(ta.get('asymmetry_ratio_core'), decimals=2)}"
             f"<td>{_fmt_text(ta.get('confidence_label'))}</td>"
             f"<td>{_fmt_text(ta.get('volatility_context'))}</td>"
-            f"<td>{_fmt_number(ta.get('tool_a_score'), decimals=1)}</td>"
-            f"<td>{_fmt_number(row['tool_a_rank'], decimals=0)}</td>"
-            f"<td>{row['note_count']}</td>"
+            f"{_fmt_numeric_td(ta.get('tool_a_score'), decimals=1)}"
+            f"{_fmt_numeric_td(row['tool_a_rank'], decimals=0)}"
+            f"{_fmt_numeric_td(row['note_count'], decimals=0)}"
             "</tr>"
         )
     if not rows_html:
         rows_html.append(
             "<tr><td colspan=\"10\" class=\"hint\">No tickers match.</td></tr>"
         )
+
+    filter_options = _collect_filter_options(
+        [r["tool_a_row"] for r in derived],
+        [
+            ("profile", "profile_label"),
+            ("confidence", "confidence_label"),
+            ("volatility", "volatility_context"),
+        ],
+    )
 
     body = ["<h1>Tool A — Gold Sensitivity Ranking</h1>"]
     body.append(
@@ -979,13 +1029,24 @@ def _render_tool_a_overview_page(
         "</form>"
         "</section>"
     )
+    body.append(_render_filter_bar(
+        target_table_id="tool-a-table",
+        options=filter_options,
+        column_labels={"profile": "Profile", "confidence": "Confidence", "volatility": "Volatility"},
+    ))
     body.append(
-        "<table>"
+        "<table id=\"tool-a-table\" class=\"js-datatable\">"
         "<thead><tr>"
-        "<th>Ticker</th><th>Profile</th>"
-        "<th>Δ Core</th><th>Gamma</th><th>Asymmetry</th>"
-        "<th>Confidence</th><th>Volatility</th>"
-        "<th>Tool A Score</th><th>Rank</th><th>Notes</th>"
+        "<th data-col-name=\"ticker\">Ticker</th>"
+        "<th data-col-name=\"profile\">Profile</th>"
+        "<th data-col-name=\"delta\" data-sort-numeric>Δ Core</th>"
+        "<th data-col-name=\"gamma\" data-sort-numeric>Gamma</th>"
+        "<th data-col-name=\"asymmetry\" data-sort-numeric>Asymmetry</th>"
+        "<th data-col-name=\"confidence\">Confidence</th>"
+        "<th data-col-name=\"volatility\">Volatility</th>"
+        "<th data-col-name=\"score\" data-sort-numeric>Tool A Score</th>"
+        "<th data-col-name=\"rank\" data-sort-numeric>Rank</th>"
+        "<th data-col-name=\"notes\" data-sort-numeric>Notes</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
         "</table>"
@@ -1053,28 +1114,37 @@ def _render_tool_b_overview_page(
             "<tr>"
             f"<td><a href=\"/ticker/{escape(row['ticker'])}\">{escape(row['ticker'])}</a></td>"
             f"<td>{_fmt_text(tb.get('screening_verdict'))}</td>"
-            f"<td>{_fmt_number(tb.get('tool_b_score'), decimals=1)}</td>"
-            f"<td>{_fmt_number(row['tool_b_rank'], decimals=0)}</td>"
+            f"{_fmt_numeric_td(tb.get('tool_b_score'), decimals=1)}"
+            f"{_fmt_numeric_td(row['tool_b_rank'], decimals=0)}"
             # Four canonical target-price scenarios (matches Excel Top performers).
-            f"<td>{_fmt_number(tb.get('target_price_peer_pe'), decimals=2)}</td>"
-            f"<td>{_fmt_percent(tb.get('upside_peer_pe_pct'))}</td>"
-            f"<td>{_fmt_number(tb.get('target_price_peak_pe'), decimals=2)}</td>"
-            f"<td>{_fmt_percent(tb.get('upside_peak_pe_pct'))}</td>"
-            f"<td>{_fmt_number(tb.get('target_price_peer_fcf'), decimals=2)}</td>"
-            f"<td>{_fmt_percent(tb.get('upside_peer_fcf_pct'))}</td>"
-            f"<td>{_fmt_number(tb.get('target_price_peak_fcf'), decimals=2)}</td>"
-            f"<td>{_fmt_percent(tb.get('upside_peak_fcf_pct'))}</td>"
-            f"<td>{_fmt_number(tb.get('forward_pe'), decimals=1)}</td>"
-            f"<td>{_fmt_percent(tb.get('fcf_yield'))}</td>"
-            f"<td>{_fmt_number(tb.get('leverage'), decimals=2)}</td>"
+            f"{_fmt_numeric_td(tb.get('target_price_peer_pe'), decimals=2)}"
+            f"{_fmt_numeric_td(tb.get('upside_peer_pe_pct'), decimals=1, as_percent=True)}"
+            f"{_fmt_numeric_td(tb.get('target_price_peak_pe'), decimals=2)}"
+            f"{_fmt_numeric_td(tb.get('upside_peak_pe_pct'), decimals=1, as_percent=True)}"
+            f"{_fmt_numeric_td(tb.get('target_price_peer_fcf'), decimals=2)}"
+            f"{_fmt_numeric_td(tb.get('upside_peer_fcf_pct'), decimals=1, as_percent=True)}"
+            f"{_fmt_numeric_td(tb.get('target_price_peak_fcf'), decimals=2)}"
+            f"{_fmt_numeric_td(tb.get('upside_peak_fcf_pct'), decimals=1, as_percent=True)}"
+            f"{_fmt_numeric_td(tb.get('forward_pe'), decimals=1)}"
+            f"{_fmt_numeric_td(tb.get('fcf_yield'), decimals=1, as_percent=True)}"
+            f"{_fmt_numeric_td(tb.get('leverage'), decimals=2)}"
             f"<td>{_fmt_text(tb.get('layer1_status'))}</td>"
-            f"<td>{row['note_count']}</td>"
+            f"{_fmt_numeric_td(row['note_count'], decimals=0)}"
             "</tr>"
         )
     if not rows_html:
         rows_html.append(
             "<tr><td colspan=\"17\" class=\"hint\">No tickers match.</td></tr>"
         )
+
+    # Filter-bar options derived from the rendered rows.
+    filter_options = _collect_filter_options(
+        [r["tool_b_row"] for r in derived],
+        [
+            ("verdict", "screening_verdict"),
+            ("layer1", "layer1_status"),
+        ],
+    )
 
     body = ["<h1>Tool B — Valuation Screening</h1>"]
     body.append(
@@ -1121,17 +1191,31 @@ def _render_tool_b_overview_page(
         "</form>"
         "</section>"
     )
+    body.append(_render_filter_bar(
+        target_table_id="tool-b-table",
+        options=filter_options,
+        column_labels={"verdict": "Verdict", "layer1": "Layer 1"},
+    ))
     body.append(
-        "<table>"
+        "<table id=\"tool-b-table\" class=\"js-datatable\">"
         "<thead><tr>"
-        "<th>Ticker</th><th>Verdict</th>"
-        "<th>Score</th><th>Rank</th>"
-        "<th>Peer P/E Target</th><th>Peer P/E Up %</th>"
-        "<th>Peak P/E Target</th><th>Peak P/E Up %</th>"
-        "<th>Peer FCF Target</th><th>Peer FCF Up %</th>"
-        "<th>Peak FCF Target</th><th>Peak FCF Up %</th>"
-        "<th>Fwd P/E</th><th>FCF Yield</th><th>Leverage</th>"
-        "<th>Layer 1</th><th>Notes</th>"
+        "<th data-col-name=\"ticker\">Ticker</th>"
+        "<th data-col-name=\"verdict\">Verdict</th>"
+        "<th data-col-name=\"score\" data-sort-numeric>Score</th>"
+        "<th data-col-name=\"rank\" data-sort-numeric>Rank</th>"
+        "<th data-col-name=\"peer_pe_target\" data-sort-numeric>Peer P/E Target</th>"
+        "<th data-col-name=\"peer_pe_up\" data-sort-numeric>Peer P/E Up %</th>"
+        "<th data-col-name=\"peak_pe_target\" data-sort-numeric>Peak P/E Target</th>"
+        "<th data-col-name=\"peak_pe_up\" data-sort-numeric>Peak P/E Up %</th>"
+        "<th data-col-name=\"peer_fcf_target\" data-sort-numeric>Peer FCF Target</th>"
+        "<th data-col-name=\"peer_fcf_up\" data-sort-numeric>Peer FCF Up %</th>"
+        "<th data-col-name=\"peak_fcf_target\" data-sort-numeric>Peak FCF Target</th>"
+        "<th data-col-name=\"peak_fcf_up\" data-sort-numeric>Peak FCF Up %</th>"
+        "<th data-col-name=\"fwd_pe\" data-sort-numeric>Fwd P/E</th>"
+        "<th data-col-name=\"fcf_yield\" data-sort-numeric>FCF Yield</th>"
+        "<th data-col-name=\"leverage\" data-sort-numeric>Leverage</th>"
+        "<th data-col-name=\"layer1\">Layer 1</th>"
+        "<th data-col-name=\"notes\" data-sort-numeric>Notes</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
         "</table>"
@@ -2266,6 +2350,10 @@ def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{escape(title)}</title>
+  <link rel="stylesheet" href="/static/vendor/datatables/datatables-2.1.8.min.css">
+  <script src="/static/vendor/datatables/jquery-3.7.1.min.js" defer></script>
+  <script src="/static/vendor/datatables/datatables-2.1.8.min.js" defer></script>
+  <script src="/static/workspace-tables.js" defer></script>
   <style>
     :root {{
       --bg: #f5f1e7;
@@ -2455,6 +2543,35 @@ def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
       background: #fbe5e9;
       border-color: #c48191;
     }}
+    .table-filters {{
+      padding: 12px 16px;
+    }}
+    .table-filters-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: end;
+    }}
+    .table-filters label {{
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.88rem;
+    }}
+    .table-filters .filter-global input {{
+      min-width: 260px;
+    }}
+    /* Override DataTables defaults to match our palette + hide built-ins */
+    .dt-search, .dt-paging, .dt-length, .dt-info {{
+      display: none !important;
+    }}
+    table.js-datatable thead th {{
+      cursor: pointer;
+    }}
+    table.js-datatable thead th.dt-orderable-asc,
+    table.js-datatable thead th.dt-orderable-desc {{
+      color: var(--ink);
+    }}
     .verification-form {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -2626,6 +2743,123 @@ def _fmt_percent(value: Any, *, decimals: int = 1) -> str:
     return escape(f"{numeric * 100:,.{decimals}f}%")
 
 
+# Sentinel sort key for missing numeric cells. Within JS's safe-integer
+# range (MAX_SAFE_INTEGER ≈ 9.007e15) and well above any realistic Tool B
+# target price or Tool A score, so it reliably sorts last ascending /
+# first descending without colliding with a real value. Per Codex's
+# v3 review.
+_MISSING_SORT_SENTINEL = "9000000000000000"
+
+
+def _fmt_numeric_td(value: Any, *, decimals: int, as_percent: bool = False) -> str:
+    """Render a numeric <td> with a DataTables-compatible sort key.
+
+    Returns HTML like `<td data-order="1.074">107.4%</td>`. The
+    `data-order` attribute is the raw number (unformatted) so
+    DataTables' numeric sort works correctly; the cell text is the
+    human-facing formatted display. For missing/None values, the
+    display is "-" and the sort key is the `_MISSING_SORT_SENTINEL`.
+
+    Use this instead of wrapping `_fmt_number(...)` / `_fmt_percent(...)`
+    inline in table rows whenever the column should be sortable
+    numerically.
+    """
+    if value is None:
+        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">-</td>"
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        # Non-numeric fallback: still wrap so the column stays sortable
+        # by text; sentinel keeps the sort predictable.
+        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">{_fmt_text(value)}</td>"
+    if pd.isna(numeric):
+        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">-</td>"
+    display = (
+        f"{numeric * 100:,.{decimals}f}%" if as_percent else f"{numeric:,.{decimals}f}"
+    )
+    return f"<td data-order=\"{numeric}\">{escape(display)}</td>"
+
+
+def _collect_filter_options(
+    rows: list[dict[str, Any]],
+    columns: list[tuple[str, str]],
+) -> dict[str, list[str]]:
+    """Derive dropdown options for categorical columns from rendered rows.
+
+    `columns` is a list of (column_name, row_key) pairs. For each pair,
+    the helper walks `rows`, collects non-empty string values found at
+    `row[row_key]`, and returns them sorted under `column_name`. Pattern
+    matches the existing overview form's `profile_values / verdict_values /
+    confidence_values` derivation so the dropdown only ever lists values
+    that actually appear in the rendered table.
+    """
+    out: dict[str, list[str]] = {}
+    for column_name, row_key in columns:
+        seen: set[str] = set()
+        for row in rows:
+            value = row.get(row_key)
+            if value is None:
+                continue
+            try:
+                if pd.isna(value):
+                    continue
+            except TypeError:
+                pass
+            text = str(value).strip()
+            if text:
+                seen.add(text)
+        out[column_name] = sorted(seen)
+    return out
+
+
+def _render_filter_bar(
+    *,
+    target_table_id: str,
+    options: dict[str, list[str]],
+    column_labels: dict[str, str] | None = None,
+    global_search_hint: str = "Filter rows (this page only)",
+) -> str:
+    """Render the `<section class="table-filters">` bar above a table.
+
+    `options` maps column_name → sorted list of values to offer in the
+    dropdown. `column_labels` optionally overrides the user-facing label
+    for each column; otherwise the raw column name is titlecased.
+
+    The filter bar is generic — `workspace-tables.js` finds it via the
+    `data-filter-target` attribute and wires DataTables to its controls.
+    """
+    labels = column_labels or {}
+    dropdowns: list[str] = []
+    for column_name, values in options.items():
+        if not values:
+            # Nothing to filter on for this column (no data or all empty).
+            # Still emit the select so the bar layout stays consistent;
+            # it just offers only "All".
+            pass
+        label_text = labels.get(column_name) or column_name.replace("_", " ").title()
+        option_tags = "<option value=\"\">All</option>" + "".join(
+            f"<option value=\"{escape(value)}\">{escape(value)}</option>"
+            for value in values
+        )
+        dropdowns.append(
+            "<label class=\"filter-column\">"
+            f"<span>{escape(label_text)}</span>"
+            f"<select data-filter-column=\"{escape(column_name)}\">{option_tags}</select>"
+            "</label>"
+        )
+    return (
+        f"<section class=\"panel table-filters\" data-filter-target=\"#{escape(target_table_id)}\">"
+        "<div class=\"table-filters-row\">"
+        "<label class=\"filter-global\">"
+        f"<span>{escape(global_search_hint)}</span>"
+        "<input type=\"text\" data-global-search placeholder=\"Type to filter any column\">"
+        "</label>"
+        f"{''.join(dropdowns)}"
+        "</div>"
+        "</section>"
+    )
+
+
 def _fmt_value(value: Any, column_name: str) -> str:
     if column_name in RATE_FIELDS.union({"best_upside_pct"}).union(TOOL_A_PERCENT_FIELDS):
         return _fmt_percent(value)
@@ -2719,6 +2953,69 @@ def _redirect_response(start_response: Callable[..., Any], location: str) -> Ite
         "303 See Other",
         [("Location", location), ("Content-Length", "0")],
     )
+    return [b""]
+
+
+def _serve_static_file(
+    path: str, start_response: Callable[..., Any]
+) -> Iterable[bytes]:
+    """Serve a vendored or repo-owned static file under /static/*.
+
+    Rules:
+    - Strip the "/static/" prefix, plus any leading slashes/backslashes
+      (defence against `/static//../` and `/static/\\foo` on Windows).
+    - Resolve the path and require it to live under `_STATIC_ROOT`.
+      `Path.resolve()` canonicalizes both POSIX `..` and Windows `..\\`,
+      so the ancestor check blocks traversal on either OS.
+    - Reject relative segments that look like drive letters (e.g. `C:`)
+      which some platforms would otherwise treat as absolute paths.
+    - Only serve files whose extension is in the allow-list. Everything
+      else returns 404 — no directory listings, no other file types.
+    - Any OSError/ValueError turns into a clean 404 rather than a 500.
+    """
+    prefix = "/static/"
+    if not path.startswith(prefix):
+        return _static_not_found(start_response)
+    relative = path[len(prefix):].lstrip("/\\")
+    # Reject drive-letter-looking segments like "c:" or "C:foo" that
+    # Path treats as absolute on Windows.
+    if len(relative) >= 2 and relative[1] == ":":
+        return _static_not_found(start_response)
+
+    try:
+        candidate = (_STATIC_ROOT / relative).resolve()
+    except (OSError, ValueError):
+        return _static_not_found(start_response)
+
+    # Ancestor check: candidate must live under _STATIC_ROOT.
+    try:
+        candidate.relative_to(_STATIC_ROOT)
+    except ValueError:
+        return _static_not_found(start_response)
+
+    content_type = _STATIC_ALLOWED_EXTENSIONS.get(candidate.suffix.lower())
+    if content_type is None:
+        return _static_not_found(start_response)
+
+    try:
+        payload = candidate.read_bytes()
+    except (OSError, ValueError):
+        return _static_not_found(start_response)
+
+    start_response(
+        "200 OK",
+        [
+            ("Content-Type", content_type),
+            ("Content-Length", str(len(payload))),
+            # Version-pinned filenames → safe to cache for a long time.
+            ("Cache-Control", "public, max-age=31536000, immutable"),
+        ],
+    )
+    return [payload]
+
+
+def _static_not_found(start_response: Callable[..., Any]) -> Iterable[bytes]:
+    start_response("404 Not Found", [("Content-Length", "0")])
     return [b""]
 
 
