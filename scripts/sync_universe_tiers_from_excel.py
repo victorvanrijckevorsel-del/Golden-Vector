@@ -105,6 +105,20 @@ def apply_changes(yaml_path: Path, friend_tiers: dict[str, int]) -> int:
     We do a line-based rewrite rather than load/dump-yaml because the file
     has comments and a particular layout we want to preserve.
 
+    **Layout assumptions** — this rewriter is tailored to the current
+    `config/universe.yaml` shape and is NOT a general-purpose YAML updater:
+    1. Each ticker block opens with a `  - ticker: X` line.
+    2. The `jurisdiction_tier: N` line appears somewhere **after** the
+       `- ticker:` line (within the same block).
+    3. Every ticker block has a `jurisdiction_tier` key already present
+       — this script only replaces existing keys; it will NOT insert a
+       missing key.
+
+    If a future edit moves `jurisdiction_tier` before `- ticker:` in the
+    same block, or removes the key entirely from some rows, this rewriter
+    will silently skip those rows. Re-run `--dry-run` after any manual
+    reshuffle of `universe.yaml` to confirm the diff still makes sense.
+
     Returns the number of lines updated.
     """
     text = yaml_path.read_text(encoding="utf-8")

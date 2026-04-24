@@ -320,3 +320,95 @@ def test_tool_b_pipeline_emits_incomplete_row_when_snapshot_is_missing(tmp_path)
     assert missing_row["screening_verdict"] == "INCOMPLETE"
     assert missing_row["layer1_status"] == "INCOMPLETE"
     assert result.summary["missing_market_snapshot_row_count"] == len(expected_tickers) - 1
+
+
+def test_compute_tool_b_in_memory_matches_execute_tool_b_pipeline(tmp_path):
+    """Equivalence lock: the in-memory helper must produce an identical
+    DataFrame to the persistent pipeline when given the same inputs.
+
+    This is the seam the workspace relies on for live URL-param
+    overrides. If it drifts, the "scenario active" table would no
+    longer reflect the same math as a real `python main.py tool-b` run.
+    """
+    from golden_vector.screening.manual_data import load_manual_screening_data
+    from golden_vector.screening.pipeline import compute_tool_b_in_memory
+
+    paths = build_test_paths(tmp_path)
+    app_config = _activate_for_test(load_app_config(ProjectPaths.discover()).app, "GOLD")
+    run_context = RunContext.start(
+        paths=paths,
+        command="tool-b",
+        parameters={"gold_price": 4000},
+        config_hash="hash",
+    )
+    _populate_manual_store(
+        paths,
+        {
+            "NEM": {
+                "production_oz": 6_000_000,
+                "aisc_usd_per_oz": 1300,
+                "cash_cost_usd_per_oz": 900,
+                "royalty_rate": 0.03,
+                "sustaining_capex_musd": 900,
+                "da_musd": 500,
+                "interest_expense_musd": 100,
+                "tax_rate": 0.30,
+                "reserve_life_years": 12,
+                "net_debt_musd": 2000,
+                "ebitda_ltm_musd": 5000,
+            },
+            "GOLD": {
+                "production_oz": 4_000_000,
+                "aisc_usd_per_oz": 1500,
+                "cash_cost_usd_per_oz": 1000,
+                "royalty_rate": 0.02,
+                "sustaining_capex_musd": 650,
+                "da_musd": 350,
+                "interest_expense_musd": 80,
+                "tax_rate": 0.28,
+                "reserve_life_years": 10,
+                "net_debt_musd": 1500,
+                "ebitda_ltm_musd": 4200,
+            },
+        },
+    )
+
+    snapshots = _market_snapshots()
+
+    # Persistent path — writes parquet but returns the DataFrame.
+    persistent = execute_tool_b_pipeline(
+        paths=paths,
+        app_config=app_config,
+        run_context=run_context,
+        normalized_market_snapshots=snapshots,
+        gold_price_assumption=4000,
+        snapshot_refresh_run_id="refresh-run-42",
+        snapshot_as_of_date="2026-02-01",
+    ).tool_b_outputs
+
+    # In-memory path — no persistence. Must receive identical inputs
+    # and use the same source_run_id so the compared DataFrames match
+    # on every cell.
+    manual_data = load_manual_screening_data(
+        paths,
+        tickers=sorted(
+            t.ticker for t in app_config.universe.tickers
+            if t.active and t.tool_b_enabled
+        ),
+    )
+    in_memory = compute_tool_b_in_memory(
+        app_config=app_config,
+        manual_data=manual_data,
+        normalized_market_snapshots=snapshots,
+        gold_price_assumption=4000,
+        snapshot_refresh_run_id="refresh-run-42",
+        snapshot_as_of_date="2026-02-01",
+        source_run_id=run_context.run_id,
+    )
+
+    # Sort both the same way so index alignment doesn't confuse equality.
+    sort_keys = ["as_of_date", "gold_price_assumption", "tool_b_rank", "ticker"]
+    persistent_sorted = persistent.sort_values(sort_keys, na_position="last").reset_index(drop=True)
+    in_memory_sorted = in_memory.sort_values(sort_keys, na_position="last").reset_index(drop=True)
+
+    pd.testing.assert_frame_equal(persistent_sorted, in_memory_sorted, check_like=True)

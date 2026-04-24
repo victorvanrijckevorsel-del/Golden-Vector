@@ -2049,6 +2049,45 @@ def test_workspace_tool_b_view_no_overrides_uses_persisted_parquet(tmp_path):
     assert "Scenario active" not in response["body"]
 
 
+def test_workspace_tool_b_view_filter_form_carries_active_overrides_as_hidden_inputs(tmp_path):
+    """When an override is active and the user submits the plain search
+    form, the resulting URL must preserve the override. The HTML contract
+    is: the filter form contains hidden inputs mirroring every active
+    override. This test locks that contract.
+
+    Regression guard for the self-review bug where typing in the search
+    box used to silently clear the active scenario.
+    """
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(
+        app, method="GET", path="/tool-b?gold_price=4500&aisc_target=1600",
+    )
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+
+    import re
+    # Isolate the filter (overview-filters-form) form from the page.
+    filter_form_match = re.search(
+        r'<form[^>]*overview-filters-form[^>]*>(.+?)</form>',
+        body,
+        flags=re.DOTALL,
+    )
+    assert filter_form_match, "filter form should be present on the Tool B view"
+    filter_form = filter_form_match.group(1)
+
+    # Active overrides must appear as hidden inputs inside the filter form.
+    assert '<input type="hidden" name="gold_price" value="4500"' in filter_form
+    assert '<input type="hidden" name="aisc_target" value="1600"' in filter_form
+
+
 def test_workspace_tool_b_view_with_override_shows_scenario_banner(tmp_path):
     """When any override is active, the page must show the banner
     explaining that the table was recomputed and YAML/parquet are

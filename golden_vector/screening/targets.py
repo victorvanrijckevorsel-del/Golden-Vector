@@ -83,10 +83,20 @@ def compute_target_prices(
         "upside_peak_fcf_pct": _upside_pct(target_price_peak_fcf, share_price_usd),
     }
 
-    # best_target_price_usd / best_upside_pct stay as derived "max of the
-    # four" helpers so compute_tool_b_score's formula doesn't change this
-    # milestone (per plan + Codex review). They are NOT surfaced as
-    # headline columns in the workspace anymore.
+    # best_target_price_usd / best_upside_pct are derived "max of the four
+    # canonical scenarios" helpers used by compute_tool_b_score. They are
+    # NOT surfaced as headline columns in the workspace Tool B view — the
+    # four scenarios are shown side by side instead.
+    #
+    # Semantic note: this pool used to include two EV/EBITDA-derived
+    # target prices (6 total). Dropping those as part of the parity work
+    # narrowed the pool to the 4 canonical scenarios the friend's Excel
+    # actually exposes. tool_b_score's formula is unchanged syntactically,
+    # but its `best_upside_pct` input is now max-of-4 rather than
+    # max-of-6. This means tool_b_score is slightly lower for tickers
+    # whose maximum scenario was previously a 2011-peak EV/EBITDA target.
+    # Accepting this change as faithful to the friend's model (EV/EBITDA
+    # targets were a Python-only invention).
     valid_targets = [value for value in targets.values() if value is not None]
     best_target_price_usd = max(valid_targets) if valid_targets else None
     best_upside_pct = _upside_pct(best_target_price_usd, share_price_usd)

@@ -112,11 +112,12 @@ def parse_query_overrides(query: Mapping[str, list[str]]) -> ScreeningOverrides:
                 raise ScreeningOverrideError(f"{param_name} must be positive")
             verdict[target_field] = value
         elif target_field in {"tier_1", "tier_2", "tier_3"}:
-            if value > 1.0:
-                # Discount >100% is nonsense; guard even though the
-                # percent-coercion above usually prevents this.
+            # Discount >= 100% collapses target P/E multiples to zero
+            # (peer_pe * (1 - 1.0) = 0), which produces meaningless
+            # zero/negative target prices across the board. Reject.
+            if value >= 1.0:
                 raise ScreeningOverrideError(
-                    f"{param_name} must be between 0 and 100"
+                    f"{param_name} must be less than 100 (got {numeric})"
                 )
             jurisdiction[target_field] = value
 

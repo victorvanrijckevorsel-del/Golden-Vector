@@ -1,6 +1,7 @@
 from datetime import date
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
@@ -69,6 +70,51 @@ def test_compute_target_prices_applies_jurisdiction_discount_and_emits_four_scen
         result["target_price_peer_fcf"],
         result["target_price_peak_fcf"],
     )
+
+
+def test_best_upside_pct_is_max_of_four_canonical_scenarios():
+    """Locks the max-of-4 semantics of best_upside_pct.
+
+    The pool used to be 6 (adding EV/EBITDA-derived targets) but those
+    were dropped for Excel parity. compute_tool_b_score still consumes
+    best_upside_pct as its upside input, so this test prevents a silent
+    regression that re-introduces more scenarios into the max.
+    """
+    app_config = load_app_config(ProjectPaths.discover()).app
+    row = pd.Series(
+        {
+            "ticker": "TEST",
+            "snapshot_date": date(2026, 2, 1),
+            "market_cap_musd": 5_000.0,
+            "share_price_usd": 20.0,
+            "forward_eps": 2.0,
+            "fcf_yield": 0.15,
+            "forward_ebitda_musd": 800.0,
+            "net_debt_musd": 200.0,
+            "shares_outstanding": 100_000_000.0,
+            "jurisdiction_tier": 2,
+        }
+    )
+
+    result = compute_target_prices(row, app_config=app_config)
+
+    four_upsides = [
+        result["upside_peer_pe_pct"],
+        result["upside_peak_pe_pct"],
+        result["upside_peer_fcf_pct"],
+        result["upside_peak_fcf_pct"],
+    ]
+    assert all(v is not None for v in four_upsides)
+    assert result["best_upside_pct"] == pytest.approx(max(four_upsides))
+
+    # And the matching best target price equals max of the four target prices.
+    four_targets = [
+        result["target_price_peer_pe"],
+        result["target_price_peak_pe"],
+        result["target_price_peer_fcf"],
+        result["target_price_peak_fcf"],
+    ]
+    assert result["best_target_price_usd"] == pytest.approx(max(four_targets))
 
 
 def test_compute_target_prices_handles_net_cash_and_missing_inputs_cleanly():

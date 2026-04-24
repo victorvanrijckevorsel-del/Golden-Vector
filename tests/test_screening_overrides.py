@@ -104,6 +104,25 @@ def test_parse_query_overrides_rejects_discount_above_100():
         parse_query_overrides({"tier2_discount": ["150"]})
 
 
+def test_parse_query_overrides_rejects_discount_equal_to_100():
+    """A 100% discount collapses every P/E target to zero, which
+    produces meaningless target prices. Reject at the boundary."""
+    with pytest.raises(ScreeningOverrideError):
+        parse_query_overrides({"tier2_discount": ["100"]})
+
+
+def test_parse_query_overrides_rejects_fractional_discount_equal_to_one():
+    """Same rejection when user types 1.0 directly (already-fractional)."""
+    with pytest.raises(ScreeningOverrideError):
+        parse_query_overrides({"tier2_discount": ["1.0"]})
+
+
+def test_parse_query_overrides_accepts_discount_just_under_100():
+    """Boundary case: 99% is allowed (extreme but mathematically valid)."""
+    overrides = parse_query_overrides({"tier2_discount": ["99"]})
+    assert overrides.jurisdiction["tier_2"] == pytest.approx(0.99)
+
+
 # ---------------------------------------------------------------------------
 # apply_overrides
 # ---------------------------------------------------------------------------
