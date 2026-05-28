@@ -1,15 +1,14 @@
 import hashlib
 import json
-import shutil
 import sqlite3
 import subprocess
+from contextlib import closing
 from pathlib import Path
 
 import pytest
 
 import golden_vector.app.replay_manifest as replay_manifest
 from golden_vector.app.config import expected_config_paths
-from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.replay_manifest import write_initial_replay_manifest
 from golden_vector.app.run_context import RunContext
 from tests.helpers import build_test_paths
@@ -127,30 +126,33 @@ def test_manifest_config_list_matches_load_app_config(tmp_path):
 def _prepare_paths(tmp_path: Path, *, manual_db: bool = True):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
-    shutil.copytree(
-        ProjectPaths.discover().config_dir,
-        paths.config_dir,
-        dirs_exist_ok=True,
-    )
     if manual_db:
         _create_manual_db(paths.manual_screening_store_path)
     return paths
 
 
 def _start_context(paths, *, command: str = "tool-a"):
-    return RunContext.start(
+    run_id = f"20260528T000000Z-{command}-fixture"
+    run_dir = paths.ensure_run_dir(run_id)
+    return RunContext(
         paths=paths,
         command=command,
         parameters={"fixture": True},
         config_hash="test-config-hash",
+        run_id=run_id,
+        run_dir=run_dir,
+        started_at_utc="2026-05-28T00:00:00Z",
+        metadata_path=run_dir / "metadata.json",
+        log_path=run_dir / "run.log",
     )
 
 
 def _create_manual_db(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         connection.execute("CREATE TABLE manual_inputs (ticker TEXT PRIMARY KEY)")
         connection.execute("INSERT INTO manual_inputs VALUES ('NEM')")
+        connection.commit()
 
 
 def _initialize_git_repo(repo_root: Path) -> None:

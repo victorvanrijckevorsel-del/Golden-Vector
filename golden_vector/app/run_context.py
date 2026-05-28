@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.app.replay_manifest import write_initial_replay_manifest
 
 
 def utc_now_iso() -> str:
@@ -77,6 +78,8 @@ class RunContext:
             metadata_path=run_dir / "metadata.json",
             log_path=run_dir / "run.log",
         )
+        context._write_metadata(status="RUNNING", summary={}, notes=["Run created."])
+        write_initial_replay_manifest(context)
         context._write_metadata(status="RUNNING", summary={}, notes=["Run created."])
         return context
 
