@@ -24,13 +24,13 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from golden_vector.serve.workspace import (
+from golden_vector.serve.detail_panels import (
     _canonical_anchor_window,
     _resolve_active_window,
     _render_window_switcher,
     _render_structural_window_table,
-    create_workspace_app,
 )
+from golden_vector.serve.workspace import create_workspace_app
 from tests.helpers import build_test_paths
 from tests.test_workspace_app import (
     _call_wsgi_app,
@@ -152,7 +152,7 @@ def test_scatter_panel_hint_adapts_to_active_window():
     function layer because the WSGI fixture does not ship a weekly-return
     sample for the scatter SVG path.
     """
-    from golden_vector.serve.workspace import _render_scatter_panel
+    from golden_vector.serve.detail_panels import _render_scatter_panel
     # Empty-state path: references the active window.
     html_empty = _render_scatter_panel(
         ticker="NEM",
@@ -180,7 +180,7 @@ def test_scatter_panel_hint_adapts_to_active_window():
 
 
 def test_up_down_beta_panel_hint_adapts_to_active_window():
-    from golden_vector.serve.workspace import _render_up_down_beta_panel
+    from golden_vector.serve.detail_panels import _render_up_down_beta_panel
     html = _render_up_down_beta_panel(
         {"anchor_window_id": "12M"},
         anchor_metric={"up_beta": 2.0, "down_beta": 1.5},
