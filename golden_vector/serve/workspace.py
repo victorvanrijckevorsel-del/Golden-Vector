@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from html import escape
 from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
@@ -21,13 +20,10 @@ from golden_vector.screening.manual_data import (
 )
 from golden_vector.serve.workspace_state import (
     OverviewFilters,
-    ToolADetailState,
-    WorkspaceState,
     _load_tool_a_detail,
     _load_workspace_state,
     _parse_ticker_route,
 )
-from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.http_helpers import (
     _flash_message,
     _html_response,
@@ -38,19 +34,11 @@ from golden_vector.serve.http_helpers import (
 )
 from golden_vector.serve.detail_panels import (
     _canonical_anchor_window,
-    _detail_alignment,
-    _render_latest_panels,
-    _render_window_switcher,
     _resolve_active_window,
     _resolve_visible_windows,
 )
-from golden_vector.serve.detail_forms import (
-    COMPANY_FORM_FIELDS,
-    _render_company_form,
-    _render_note_section,
-    _render_reporting_form,
-    _render_verification_section,
-)
+from golden_vector.serve.detail_forms import COMPANY_FORM_FIELDS
+from golden_vector.serve.detail_page import DETAIL_DEFAULT_LENS_ID, render_detail_page
 from golden_vector.serve.lenses import DEFAULT_LENS_ID
 from golden_vector.serve.overview_combined import _render_overview_page
 from golden_vector.serve.overview_tool_a import _render_tool_a_overview_page
@@ -59,7 +47,6 @@ from golden_vector.serve.format_helpers import (
     _coerce_form_numeric,
     _coerce_form_text,
     _frame_index_by_ticker,
-    _ticker_rows,
 )
 from golden_vector.screening.manual_store import (
     add_stock_note,
@@ -191,9 +178,12 @@ def create_workspace_app(
                     visible_windows = _resolve_visible_windows(
                         query.get("show", [""])[0], active_window,
                     )
+                    detail_lens = str(query.get("lens", [""])[0] or "").strip().lower()
+                    if detail_lens != DETAIL_DEFAULT_LENS_ID:
+                        detail_lens = DETAIL_DEFAULT_LENS_ID
                     return _html_response(
                         start_response,
-                        _render_ticker_page(
+                        render_detail_page(
                             state,
                             ticker=ticker,
                             tool_a_detail=tool_a_detail,
@@ -201,6 +191,7 @@ def create_workspace_app(
                             active_window=active_window,
                             canonical_anchor=canonical_anchor,
                             visible_windows=visible_windows,
+                            lens=detail_lens,
                             app_config=app_config,
                         ),
                     )
@@ -234,7 +225,7 @@ def create_workspace_app(
                             tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker)
                             return _html_response(
                                 start_response,
-                                _render_ticker_page(
+                                render_detail_page(
                                     state,
                                     ticker=ticker,
                                     tool_a_detail=tool_a_detail,
@@ -271,7 +262,7 @@ def create_workspace_app(
                             tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker)
                             return _html_response(
                                 start_response,
-                                _render_ticker_page(
+                                render_detail_page(
                                     state,
                                     ticker=ticker,
                                     tool_a_detail=tool_a_detail,
@@ -322,7 +313,7 @@ def create_workspace_app(
                             tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker)
                             return _html_response(
                                 start_response,
-                                _render_ticker_page(
+                                render_detail_page(
                                     state,
                                     ticker=ticker,
                                     tool_a_detail=tool_a_detail,
@@ -354,7 +345,7 @@ def create_workspace_app(
                             tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker)
                             return _html_response(
                                 start_response,
-                                _render_ticker_page(
+                                render_detail_page(
                                     state,
                                     ticker=ticker,
                                     tool_a_detail=tool_a_detail,
@@ -413,82 +404,3 @@ def run_workspace_server(
         except KeyboardInterrupt:
             print("Golden Vector workspace stopped.")
     return 0
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def _render_ticker_page(
-    state: WorkspaceState,
-    *,
-    ticker: str,
-    tool_a_detail: ToolADetailState,
-    flash: str | None,
-    error: str | None = None,
-    active_window: str = "12M",
-    canonical_anchor: str = "12M",
-    visible_windows: list[str] | None = None,
-    app_config: AppConfig | None = None,
-) -> str:
-    company_row = _frame_index_by_ticker(state.company_inputs).get(ticker, {})
-    reporting_row = _frame_index_by_ticker(state.reporting_calendar).get(ticker, {})
-    tool_a_row = _frame_index_by_ticker(state.latest_tool_a).get(ticker, {})
-    tool_b_row = _frame_index_by_ticker(state.latest_tool_b).get(ticker, {})
-    verification_rows = _ticker_rows(state.source_verification, ticker)
-    note_rows = _ticker_rows(state.stock_notes, ticker)
-    if visible_windows is None:
-        visible_windows = [active_window]
-
-    body = [f"<p><a href=\"/\">Back to workspace</a></p>", f"<h1>{escape(ticker)}</h1>"]
-    body.append(_render_window_switcher(ticker=ticker, active=active_window, canonical=canonical_anchor))
-    if flash:
-        body.append(f"<div class=\"flash\">{escape(flash)}</div>")
-    if error:
-        body.append(f"<div class=\"flash\">{escape(error)}</div>")
-    alignment = _detail_alignment(tool_a_row, state.foundation_manifest)
-    body.append(
-        _render_latest_panels(
-            ticker=ticker,
-            tool_a_row=tool_a_row,
-            tool_b_row=tool_b_row,
-            tool_a_detail=tool_a_detail,
-            alignment=alignment,
-            active_window=active_window,
-            visible_windows=visible_windows,
-            app_config=app_config,
-        )
-    )
-    body.append(
-        _render_company_form(
-            ticker=ticker,
-            company_row=company_row,
-            verification_rows=verification_rows,
-        )
-    )
-    body.append(_render_reporting_form(ticker=ticker, reporting_row=reporting_row))
-    body.append(_render_verification_section(ticker=ticker, verification_rows=verification_rows))
-    body.append(_render_note_section(ticker=ticker, note_rows=note_rows))
-    return _page_shell(f"Golden Vector Workspace - {ticker}", "".join(body), active_nav="combined")
