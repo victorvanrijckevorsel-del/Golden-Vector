@@ -21,12 +21,12 @@ import pandas as pd
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
-from golden_vector.serve.workspace import (
+from golden_vector.serve.format_helpers import _fmt_numeric_td
+from golden_vector.serve.overview_combined import (
     _collect_filter_options,
-    _fmt_numeric_td,
     _render_filter_bar,
-    create_workspace_app,
 )
+from golden_vector.serve.workspace import create_workspace_app
 from tests.helpers import build_test_paths
 
 
