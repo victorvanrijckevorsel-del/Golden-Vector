@@ -181,6 +181,7 @@ def verify_manifest(run_dir_or_id: Path | str) -> VerifyResult:
         manifest_path=manifest_path,
         verdict=VERDICT_SNAPSHOT_INTEGRITY_FAILED if failed else VERDICT_OK,
         asset_statuses=asset_statuses,
+        drift_findings=_current_checkout_drift_findings(manifest),
     )
 
 
@@ -316,6 +317,67 @@ def _resolve_run_dir(run_dir_or_id: Path | str) -> Path:
     ):
         return candidate
     return ProjectPaths.discover().runs_dir / run_dir_or_id
+
+
+def _current_checkout_drift_findings(manifest: dict[str, Any]) -> list[str]:
+    repo_root = ProjectPaths.discover().repo_root
+    findings: list[str] = []
+
+    for name, original_path, expected_sha256 in _manifest_original_assets(manifest):
+        current_path = Path(original_path)
+        if not current_path.is_absolute():
+            current_path = repo_root / current_path
+        if not current_path.exists():
+            findings.append(f"[WARN] {name} is missing from the current checkout")
+            continue
+
+        actual_sha256 = _sha256_file(current_path)
+        if actual_sha256 == expected_sha256:
+            findings.append(f"[OK] {name} matches the run snapshot")
+        else:
+            findings.append(f"[WARN] {name} differs from the run snapshot")
+
+    return findings
+
+
+def _manifest_original_assets(
+    manifest: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    assets: list[tuple[str, str, str]] = []
+    for config in manifest.get("configs", []):
+        assets.append(
+            (
+                str(config.get("name", "config")),
+                str(config.get("original_path", "")),
+                str(config.get("sha256", "")),
+            )
+        )
+
+    manual_data = manifest.get("manual_data")
+    if manual_data:
+        assets.append(
+            (
+                MANUAL_DB_SNAPSHOT_FILE,
+                str(manual_data.get("original_path", "")),
+                str(manual_data.get("sha256", "")),
+            )
+        )
+
+    foundation_data = manifest.get("foundation_run_consumed")
+    if foundation_data:
+        assets.append(
+            (
+                FOUNDATION_MANIFEST_SNAPSHOT_FILE,
+                str(foundation_data.get("manifest_original_path", "")),
+                str(foundation_data.get("manifest_sha256", "")),
+            )
+        )
+
+    return [
+        (name, original_path, expected_sha256)
+        for name, original_path, expected_sha256 in assets
+        if original_path and expected_sha256
+    ]
 
 
 def _copy_file_atomic(source_path: Path, target_path: Path) -> None:

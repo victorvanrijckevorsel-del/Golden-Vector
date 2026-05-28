@@ -1,5 +1,6 @@
 import hashlib
 import json
+import shutil
 import sqlite3
 import subprocess
 from contextlib import closing
@@ -14,6 +15,7 @@ from golden_vector.app.replay_manifest import (
     write_initial_replay_manifest,
 )
 from golden_vector.app.run_context import RunContext
+from golden_vector.cli import run_verify_replay
 from tests.helpers import build_test_paths
 
 
@@ -166,6 +168,86 @@ def test_phase2_failure_records_status_not_raise(tmp_path):
     )
     assert manifest["foundation_run_consumed"] is None
     assert manifest["foundation_load_status"].startswith("error:")
+
+
+def test_verify_replay_cli_passes_for_pristine_manifest(tmp_path, capsys):
+    paths = _prepare_paths(tmp_path)
+    context = RunContext.start(
+        paths=paths,
+        command="tool-a",
+        parameters={"fixture": True},
+        config_hash="test-config-hash",
+    )
+
+    exit_code = run_verify_replay(paths, run_id_or_path=context.run_id)
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Snapshot integrity:" in output
+    assert "Verdict: OK." in output
+
+
+def test_verify_replay_cli_detects_corrupted_snapshot(tmp_path, capsys):
+    paths = _prepare_paths(tmp_path)
+    context = RunContext.start(
+        paths=paths,
+        command="tool-a",
+        parameters={"fixture": True},
+        config_hash="test-config-hash",
+    )
+    manifest = json.loads(
+        (context.run_dir / "replay_manifest.json").read_text(encoding="utf-8")
+    )
+    corrupted_snapshot = context.run_dir / manifest["configs"][0]["snapshot_path"]
+    corrupted_snapshot.write_text("corrupted", encoding="utf-8")
+
+    exit_code = run_verify_replay(paths, run_id_or_path=context.run_id)
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "[FAIL]" in output
+    assert "SNAPSHOT INTEGRITY FAILED" in output
+
+
+def test_verify_replay_cli_accepts_moved_folder(tmp_path, capsys):
+    paths = _prepare_paths(tmp_path)
+    context = RunContext.start(
+        paths=paths,
+        command="tool-a",
+        parameters={"fixture": True},
+        config_hash="test-config-hash",
+    )
+    moved_run_dir = tmp_path / "moved-run"
+    shutil.copytree(context.run_dir, moved_run_dir)
+
+    exit_code = run_verify_replay(paths, run_id_or_path=str(moved_run_dir))
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert f"Replay manifest: {moved_run_dir / 'replay_manifest.json'}" in output
+    assert "Verdict: OK." in output
+
+
+def test_verify_replay_cli_reports_predates_for_old_run(tmp_path, capsys):
+    paths = _prepare_paths(tmp_path)
+    old_run_dir = paths.ensure_run_dir("old-run")
+
+    exit_code = run_verify_replay(paths, run_id_or_path=old_run_dir.name)
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "run predates replay manifests" in output
+    assert "PREDATES REPLAY MANIFEST" in output
+
+
+def test_verify_replay_cli_rejects_missing_run_dir(tmp_path, capsys):
+    paths = _prepare_paths(tmp_path)
+
+    exit_code = run_verify_replay(paths, run_id_or_path="missing-run")
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "Run directory not found:" in output
 
 
 def _prepare_paths(tmp_path: Path, *, manual_db: bool = True):

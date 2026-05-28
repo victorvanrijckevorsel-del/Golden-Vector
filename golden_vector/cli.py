@@ -18,7 +18,12 @@ from golden_vector.app.latest_data import (
 )
 from golden_vector.app.logging import configure_logging
 from golden_vector.app.paths import ProjectPaths
-from golden_vector.app.replay_manifest import update_manifest_with_foundation
+from golden_vector.app.replay_manifest import (
+    VERDICT_PREDATES_REPLAY_MANIFEST,
+    VerifyResult,
+    update_manifest_with_foundation,
+    verify_manifest,
+)
 from golden_vector.app.run_context import RunContext, to_jsonable
 from golden_vector.features.horizons import parse_requested_horizons
 from golden_vector.features.pipeline import execute_horizon_pipeline
@@ -270,6 +275,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Port to bind the local workspace server to.",
     )
 
+    verify_parser = subparsers.add_parser(
+        "verify-replay",
+        help="Verify replay manifest snapshots for one retained run.",
+    )
+    verify_parser.add_argument(
+        "run_id_or_path",
+        help="Run id under data/runs, or a direct path to a run directory.",
+    )
+
     return parser
 
 
@@ -313,6 +327,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "workspace":
         return run_workspace(paths, host=args.host, port=args.port)
+
+    if args.command == "verify-replay":
+        return run_verify_replay(paths, run_id_or_path=args.run_id_or_path)
 
     parser.error(f"Unsupported command: {args.command}")
     return 2
@@ -1116,6 +1133,89 @@ def run_workspace(
         host=host,
         port=port,
     )
+
+
+def run_verify_replay(paths: ProjectPaths, *, run_id_or_path: str) -> int:
+    run_dir = _resolve_verify_replay_run_dir(paths, run_id_or_path)
+    if not run_dir.exists():
+        print(f"Run directory not found: {run_dir}")
+        return 1
+    result = verify_manifest(run_dir)
+    print(_format_verify_replay_result(result))
+    return 0 if result.ok else 1
+
+
+def _resolve_verify_replay_run_dir(paths: ProjectPaths, run_id_or_path: str) -> Path:
+    candidate = Path(run_id_or_path)
+    if candidate.is_absolute() or candidate.exists() or any(
+        separator in run_id_or_path for separator in ("/", "\\")
+    ):
+        return candidate
+    return paths.runs_dir / run_id_or_path
+
+
+def _format_verify_replay_result(result: VerifyResult) -> str:
+    lines = [
+        f"Replay manifest: {result.manifest_path}",
+    ]
+    if result.verdict == VERDICT_PREDATES_REPLAY_MANIFEST:
+        lines.extend(
+            [
+                "",
+                "Snapshot integrity:",
+                "  [INFO] run predates replay manifests",
+                "",
+                "Code state at run time:",
+                "  unavailable - no replay manifest exists for this run",
+                "",
+                "Drift since run:",
+                "  unavailable - no replay manifest exists for this run",
+                "",
+                "Verdict: PREDATES REPLAY MANIFEST. This older run has no replay manifest to verify.",
+            ]
+        )
+        return "\n".join(lines)
+
+    lines.append(f"Run directory: {result.run_dir}")
+    if result.asset_statuses:
+        lines.extend(["", "Snapshot integrity:"])
+        for asset in result.asset_statuses:
+            marker = "[OK]" if asset.status == "ok" else "[FAIL]"
+            lines.append(f"  {marker} {asset.name} - {asset.message}")
+    else:
+        lines.extend(["", "Snapshot integrity:", "  [INFO] no snapshot assets recorded"])
+
+    lines.extend(["", "Code state at run time:"])
+    lines.extend(_format_recorded_git_state(result.run_dir))
+
+    lines.extend(["", "Drift since run:"])
+    if result.drift_findings:
+        lines.extend(f"  {finding}" for finding in result.drift_findings)
+    else:
+        lines.append("  unavailable - no current-checkout drift findings")
+
+    verdict = result.verdict.replace("_", " ")
+    lines.extend(["", f"Verdict: {verdict}."])
+    return "\n".join(lines)
+
+
+def _format_recorded_git_state(run_dir: Path) -> list[str]:
+    manifest_path = run_dir / "replay_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return ["  unavailable - replay manifest could not be read"]
+
+    git_state = manifest.get("git", {})
+    if git_state.get("unavailable_reason"):
+        return [f"  Git unavailable at run time: {git_state['unavailable_reason']}"]
+
+    dirty = git_state.get("dirty")
+    dirty_label = "dirty" if dirty else "clean"
+    return [
+        f"  Git commit recorded: {git_state.get('commit') or 'unknown'}",
+        f"  Working tree at run: {dirty_label}",
+    ]
 
 
 def run_compare_horizons(
