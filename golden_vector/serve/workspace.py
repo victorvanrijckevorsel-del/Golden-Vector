@@ -40,6 +40,7 @@ from golden_vector.screening.manual_data import (
     REQUIRED_MANUAL_FIELDS,
     load_manual_screening_data,
 )
+from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.lenses import (
     DEFAULT_LENS_ID,
     LENS_DEFINITIONS,
@@ -2725,11 +2726,6 @@ def _render_note_section(*, ticker: str, note_rows: list[dict[str, Any]]) -> str
 
 
 
-_NAV_LINKS: tuple[tuple[str, str, str], ...] = (
-    ("combined", "/", "Combined"),
-    ("tool_a", "/tool-a", "Tool A"),
-    ("tool_b", "/tool-b", "Tool B"),
-)
 
 # Canonical structural windows available on the detail page. Order here
 # is the display order for the switcher tabs.
@@ -2789,33 +2785,8 @@ def _resolve_visible_windows(raw_param: str, active_window: str) -> list[str]:
     return [window for window in _STRUCTURAL_WINDOWS if window.upper() in tokens]
 
 
-def _render_top_nav(active: str) -> str:
-    items = []
-    for nav_id, href, label in _NAV_LINKS:
-        cls = "nav-tab active" if nav_id == active else "nav-tab"
-        items.append(f"<a class=\"{cls}\" href=\"{escape(href)}\">{escape(label)}</a>")
-    return f"<nav class=\"top-nav\">{''.join(items)}</nav>"
 
 
-def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
-    nav_html = _render_top_nav(active_nav) if active_nav else ""
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{escape(title)}</title>
-  <link rel="stylesheet" href="/static/vendor/datatables/datatables-2.1.8.min.css">
-  <script src="/static/vendor/datatables/jquery-3.7.1.min.js" defer></script>
-  <script src="/static/vendor/datatables/datatables-2.1.8.min.js" defer></script>
-  <script src="/static/workspace-tables.js" defer></script>
-  <link rel="stylesheet" href="/static/workspace.css">
-</head>
-<body>
-  {nav_html}
-  <main>{body}</main>
-</body>
-</html>"""
 
 
 
