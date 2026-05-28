@@ -13,6 +13,14 @@ import yaml
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
 
+EXPECTED_CONFIG_FILES: tuple[tuple[str, str], ...] = (
+    ("universe", "universe.yaml"),
+    ("horizons", "horizons.yaml"),
+    ("qa", "qa.yaml"),
+    ("scoring", "scoring.yaml"),
+    ("screening_params", "screening_params.yaml"),
+)
+
 
 @dataclass(frozen=True)
 class LoadedConfig:
@@ -23,19 +31,18 @@ class LoadedConfig:
     combined_hash: str
 
 
+def expected_config_paths(paths: ProjectPaths) -> dict[str, Path]:
+    return {
+        config_name: paths.config_path(file_name)
+        for config_name, file_name in EXPECTED_CONFIG_FILES
+    }
+
+
 def load_app_config(paths: ProjectPaths) -> LoadedConfig:
     raw_configs: dict[str, Any] = {}
     file_hashes: dict[str, str] = {}
 
-    expected_files = {
-        "universe": paths.config_path("universe.yaml"),
-        "horizons": paths.config_path("horizons.yaml"),
-        "qa": paths.config_path("qa.yaml"),
-        "scoring": paths.config_path("scoring.yaml"),
-        "screening_params": paths.config_path("screening_params.yaml"),
-    }
-
-    for config_name, config_path in expected_files.items():
+    for config_name, config_path in expected_config_paths(paths).items():
         raw_bytes = _read_required_bytes(config_path)
         raw_configs[config_name] = yaml.safe_load(raw_bytes.decode("utf-8")) or {}
         file_hashes[config_name] = hashlib.sha256(raw_bytes).hexdigest()
