@@ -110,7 +110,7 @@ def _build_beta_history_svg(
 ) -> str:
     """SVG line chart of structural_delta over time, one line per visible window.
 
-    ``series_by_window`` maps ``window_id`` -> (dates, deltas). The active window
+    ``series_by_window`` maps ``window_id`` → (dates, deltas). The active window
     is always drawn (thicker and fully opaque). Any other window whose id is in
     ``visible_windows`` is layered in thinner and muted. Hidden windows appear
     in the legend as muted toggle links so the user can click to reveal them.
@@ -156,7 +156,7 @@ def _build_beta_history_svg(
         offset_days = (date_value - min_date).days
         return padding_left + (offset_days / date_span_days) * inner_w
 
-    # Y scale: deltas -> y position (anchor at 0 on the visible band)
+    # Y scale: deltas → y position (anchor at 0 on the visible band)
     delta_lo = min(all_deltas + [0.0])
     delta_hi = max(all_deltas + [0.0])
     if current_delta_core is not None:
@@ -213,7 +213,7 @@ def _build_beta_history_svg(
 
     # Build clickable toggle links: clicking a visible non-active window
     # removes it from `show=`; clicking a hidden window adds it. The active
-    # window has no href - it's always drawn, so there's nothing to toggle.
+    # window has no href — it's always drawn, so there's nothing to toggle.
     ticker_base = f"/ticker/{escape(ticker)}" if ticker else ""
     window_param = f"window={active_window.lower()}"
     legend_parts: list[str] = []

@@ -112,6 +112,19 @@ def test_static_route_serves_vendored_datatables_css_with_correct_mime(tmp_path)
     assert len(response["body_bytes"]) > 1_000
 
 
+def test_static_route_serves_workspace_css_with_revalidation(tmp_path):
+    _, app = _workspace_fixture(tmp_path)
+    response = _call_wsgi_raw(
+        app, method="GET", path="/static/workspace.css",
+    )
+    assert response["status"].startswith("200")
+    assert "text/css" in response["headers"].get("Content-Type", "")
+    assert response["headers"].get("Cache-Control") == "no-cache"
+    body = response["body_text"]
+    assert ":root" in body
+    assert ".top-nav" in body
+
+
 def test_static_route_serves_workspace_tables_js_with_correct_mime(tmp_path):
     """workspace-tables.js is the centerpiece of the simple architecture —
     separate test to prove the custom file is reachable, not just vendored."""
@@ -445,6 +458,7 @@ def test_page_shell_includes_datatables_and_workspace_tables_scripts(tmp_path):
     assert '/static/vendor/datatables/datatables-2.1.8.min.js' in body
     assert '/static/workspace-tables.js' in body
     assert '/static/vendor/datatables/datatables-2.1.8.min.css' in body
+    assert '/static/workspace.css' in body
 
 
 def test_workspace_tables_js_has_datatable_guard():

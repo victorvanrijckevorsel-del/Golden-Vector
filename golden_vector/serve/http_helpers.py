@@ -20,6 +20,9 @@ _STATIC_ALLOWED_EXTENSIONS: dict[str, str] = {
 }
 
 
+_IMMUTABLE_STATIC_PREFIXES: tuple[str, ...] = ("vendor/",)
+
+
 def _flash_message(saved_token: str) -> str | None:
     messages = {
         "company": "Company inputs saved.",
@@ -124,11 +127,18 @@ def _serve_static_file(
         [
             ("Content-Type", content_type),
             ("Content-Length", str(len(payload))),
-            # Version-pinned filenames → safe to cache for a long time.
-            ("Cache-Control", "public, max-age=31536000, immutable"),
+            # Vendored filenames are version-pinned; repo-owned assets revalidate.
+            ("Cache-Control", _static_cache_control(relative)),
         ],
     )
     return [payload]
+
+
+def _static_cache_control(relative_path: str) -> str:
+    normalized = relative_path.replace("\\", "/").lstrip("/")
+    if normalized.startswith(_IMMUTABLE_STATIC_PREFIXES):
+        return "public, max-age=31536000, immutable"
+    return "no-cache"
 
 
 def _static_not_found(start_response: Callable[..., Any]) -> Iterable[bytes]:
