@@ -366,10 +366,32 @@ def _concat_frames(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 
 def _latest_snapshot(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return the most recent row per ticker.
+
+    Previously this took the global max `as_of_date` and filtered to it.
+    That silently dropped active tickers whose last complete weekly bar
+    lagged the rest of the universe (e.g. a Tool A structural run where
+    one ticker's latest weekly bar is a week behind because of a
+    normalization gap). Emanuel would see "60 active tickers" everywhere
+    except Tool A latest, which would show 59.
+
+    Per-ticker latest preserves the full universe; downstream consumers
+    can derive "this row is at the global max date vs a week behind" by
+    comparing each row's `as_of_date` to the max. Tool B and Combined
+    are unaffected because all their rows share one `as_of_date`.
+    """
     if frame.empty or "as_of_date" not in frame.columns:
         return frame.copy()
-    latest_as_of_date = frame["as_of_date"].max()
-    latest = frame[frame["as_of_date"] == latest_as_of_date].copy()
+    if "ticker" in frame.columns:
+        # Per-ticker latest: sort by (ticker, as_of_date), keep last
+        # row per ticker.
+        sorted_frame = frame.sort_values(["ticker", "as_of_date"])
+        latest = sorted_frame.drop_duplicates(subset=["ticker"], keep="last").copy()
+    else:
+        # No ticker column to group by — fall back to the original
+        # global-max behavior.
+        latest_as_of_date = frame["as_of_date"].max()
+        latest = frame[frame["as_of_date"] == latest_as_of_date].copy()
     sort_columns = [
         column
         for column in ("combined_rank", "tool_a_rank", "tool_b_rank", "ticker")

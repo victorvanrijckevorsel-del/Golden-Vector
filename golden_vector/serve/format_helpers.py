@@ -1,0 +1,260 @@
+"""Formatting and small row helpers for the local workspace UI."""
+
+from __future__ import annotations
+
+from html import escape
+from typing import Any
+
+import pandas as pd
+
+
+RATE_FIELDS = {"royalty_rate", "tax_rate"}
+
+
+TOOL_A_PERCENT_FIELDS = {
+    "total_volatility_52w",
+    "residual_volatility_52w",
+    "downside_volatility_52w",
+}
+
+
+TOOL_A_NUMERIC_FIELDS = {
+    "structural_delta_core",
+    "structural_delta_6m",
+    "structural_delta_12m",
+    "structural_delta_3y",
+    "structural_gamma_core",
+    "gamma_6m",
+    "gamma_12m",
+    "gamma_3y",
+    "up_beta_6m",
+    "down_beta_6m",
+    "up_beta_12m",
+    "down_beta_12m",
+    "up_beta_3y",
+    "down_beta_3y",
+    "asymmetry_ratio_6m",
+    "asymmetry_ratio_12m",
+    "asymmetry_ratio_3y",
+    "asymmetry_ratio_core",
+    "confidence_score",
+    "tool_a_score",
+}
+
+
+def _fmt_form_number(value: float) -> str:
+    """Format a number for HTML input value attributes without trailing .0."""
+    if value is None:
+        return ""
+    return f"{value:g}"
+
+
+def _column_unique(frame: pd.DataFrame, column_name: str) -> set[str]:
+    if frame.empty or column_name not in frame.columns:
+        return set()
+    series = frame[column_name].dropna().astype(str)
+    return {value for value in series.unique() if value and value.lower() != "nan"}
+
+
+def _is_na(value: object) -> bool:
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _fmt_note_tag(value: Any) -> str:
+    text = _fmt_text(value)
+    if text == "-":
+        return text
+    return f"<span class=\"badge note-tag\">{text}</span>"
+
+
+def _render_small_table(title: str, row: dict[str, Any], columns: list[str]) -> str:
+    if not row:
+        return (
+            "<section class=\"panel\">"
+            f"<h2>{escape(title)}</h2>"
+            "<p>No latest output is available yet.</p>"
+            "</section>"
+        )
+    rows_html = "".join(
+        "<tr>"
+        f"<th>{escape(_humanize_column_name(column_name))}</th>"
+        f"<td>{_fmt_value(row.get(column_name), column_name)}</td>"
+        "</tr>"
+        for column_name in columns
+        if column_name in row
+    )
+    return (
+        "<section class=\"panel\">"
+        f"<h2>{escape(title)}</h2>"
+        f"<table><tbody>{rows_html}</tbody></table>"
+        "</section>"
+    )
+
+
+def _metric_card(title: str, value: str) -> str:
+    return (
+        "<article class=\"panel metric-card\">"
+        f"<h3>{escape(title)}</h3><p>{value}</p>"
+        "</article>"
+    )
+
+
+def _frame_index_by_ticker(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    if frame.empty or "ticker" not in frame.columns:
+        return {}
+    indexed: dict[str, dict[str, Any]] = {}
+    for record in frame.to_dict(orient="records"):
+        ticker = str(record.get("ticker") or "").upper()
+        if ticker:
+            indexed[ticker] = record
+    return indexed
+
+
+def _ticker_rows(frame: pd.DataFrame, ticker: str) -> list[dict[str, Any]]:
+    if frame.empty or "ticker" not in frame.columns:
+        return []
+    return frame[frame["ticker"].astype(str).str.upper() == ticker].to_dict(orient="records")
+
+
+def _humanize_column_name(value: str) -> str:
+    return value.replace("_", " ").strip().title()
+
+
+def _fmt_text(value: Any) -> str:
+    if value is None:
+        return "-"
+    try:
+        if pd.isna(value):
+            return "-"
+    except TypeError:
+        pass
+    text = str(value).strip()
+    return escape(text) if text else "-"
+
+
+def _fmt_number(value: Any, *, decimals: int) -> str:
+    if value is None:
+        return "-"
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return _fmt_text(value)
+    if pd.isna(numeric):
+        return "-"
+    return escape(f"{numeric:,.{decimals}f}")
+
+
+def _fmt_percent(value: Any, *, decimals: int = 1) -> str:
+    if value is None:
+        return "-"
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return _fmt_text(value)
+    if pd.isna(numeric):
+        return "-"
+    return escape(f"{numeric * 100:,.{decimals}f}%")
+
+
+# Sentinel sort key for missing numeric cells. Within JS's safe-integer
+# range (MAX_SAFE_INTEGER ≈ 9.007e15) and well above any realistic Tool B
+# target price or Tool A score, so it reliably sorts last ascending /
+# first descending without colliding with a real value. Per Codex's
+# v3 review.
+_MISSING_SORT_SENTINEL = "9000000000000000"
+
+
+def _fmt_numeric_td(value: Any, *, decimals: int, as_percent: bool = False) -> str:
+    """Render a numeric <td> with a DataTables-compatible sort key.
+
+    Returns HTML like `<td data-order="1.074">107.4%</td>`. The
+    `data-order` attribute is the raw number (unformatted) so
+    DataTables' numeric sort works correctly; the cell text is the
+    human-facing formatted display. For missing/None values, the
+    display is "-" and the sort key is the `_MISSING_SORT_SENTINEL`.
+
+    Use this instead of wrapping `_fmt_number(...)` / `_fmt_percent(...)`
+    inline in table rows whenever the column should be sortable
+    numerically.
+    """
+    if value is None:
+        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">-</td>"
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        # Non-numeric fallback: still wrap so the column stays sortable
+        # by text; sentinel keeps the sort predictable.
+        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">{_fmt_text(value)}</td>"
+    if pd.isna(numeric):
+        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">-</td>"
+    display = (
+        f"{numeric * 100:,.{decimals}f}%" if as_percent else f"{numeric:,.{decimals}f}"
+    )
+    return f"<td data-order=\"{numeric}\">{escape(display)}</td>"
+
+
+def _fmt_value(value: Any, column_name: str) -> str:
+    if column_name in RATE_FIELDS.union({"best_upside_pct"}).union(TOOL_A_PERCENT_FIELDS):
+        return _fmt_percent(value)
+    if column_name.endswith("_rank"):
+        return _fmt_number(value, decimals=0)
+    if column_name in TOOL_A_NUMERIC_FIELDS:
+        return _fmt_number(value, decimals=2)
+    if isinstance(value, (int, float)):
+        return _fmt_number(value, decimals=2)
+    return _fmt_text(value)
+
+
+def _format_form_value(field_name: str, value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except TypeError:
+        pass
+    if field_name in RATE_FIELDS:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+        return f"{numeric * 100:g}"
+    return str(value)
+
+
+def _coerce_form_numeric(value: str) -> float | None:
+    text = str(value).strip()
+    if not text:
+        return None
+    percent_suffix = text.endswith("%")
+    if percent_suffix:
+        text = text[:-1].strip()
+    try:
+        numeric = float(text)
+    except ValueError as exc:
+        raise ValueError("Numeric fields must be numeric.") from exc
+    if percent_suffix:
+        return numeric / 100.0
+    return numeric
+
+
+def _coerce_form_text(value: str) -> str | None:
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(numeric):
+        return None
+    return numeric

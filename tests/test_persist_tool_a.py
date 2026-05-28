@@ -85,6 +85,47 @@ def test_persist_tool_a_outputs_can_preserve_previous_stable_latest_alias_on_emp
     assert list(stable_latest["ticker"]) == ["NEM"]
 
 
+def test_persist_tool_a_outputs_latest_is_per_ticker_not_global_max_date(tmp_path):
+    """Regression guard for the VAU.AX-style trust bug: if one ticker's
+    latest structural row is a week behind the rest of the universe
+    (because its last complete weekly bar lagged), the "latest" snapshot
+    must still include that ticker's most recent row, not drop it.
+
+    Per-ticker latest → Emanuel never sees a silent missing ticker
+    between the active universe and the Tool A latest view.
+    """
+    paths = build_test_paths(tmp_path)
+    run_context = RunContext.start(
+        paths=paths, command="tool-a", parameters={}, config_hash="hash",
+    )
+    tool_a_outputs = pd.DataFrame(
+        [
+            # Two tickers at the global max date.
+            {"ticker": "NEM", "as_of_date": date(2026, 4, 24), "tool_a_rank": 1},
+            {"ticker": "AEM", "as_of_date": date(2026, 4, 24), "tool_a_rank": 2},
+            # VAU.AX-style lagged ticker: its last row is a week earlier.
+            {"ticker": "VAU.AX", "as_of_date": date(2026, 4, 17), "tool_a_rank": 3},
+            # VAU.AX history also has older rows that must NOT appear in latest.
+            {"ticker": "VAU.AX", "as_of_date": date(2026, 4, 10), "tool_a_rank": 3},
+        ]
+    )
+
+    persist_tool_a_outputs(
+        paths=paths,
+        run_context=run_context,
+        tool_a_outputs=tool_a_outputs,
+    )
+
+    stable_latest = pd.read_parquet(paths.latest_tool_a_snapshot_parquet_path)
+
+    # All three active tickers must be present, including the lagged one.
+    assert set(stable_latest["ticker"]) == {"NEM", "AEM", "VAU.AX"}
+    # VAU.AX should be represented by its MOST RECENT row, not an older one.
+    vau_rows = stable_latest[stable_latest["ticker"] == "VAU.AX"]
+    assert len(vau_rows) == 1
+    assert vau_rows.iloc[0]["as_of_date"] == date(2026, 4, 17)
+
+
 def test_persist_tool_a_structural_metrics_carries_source_run_id(tmp_path):
     """Phase 1A / v3 §1: every structural-window-metric row must carry the producing
     Tool A run id so the workspace can detect when the structural-history file is out

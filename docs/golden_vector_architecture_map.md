@@ -76,8 +76,8 @@ flowchart TD
 | Tool A | Built | Computes structural delta, gamma, asymmetry, confidence, and volatility diagnostics from weekly USD-normalized returns, then scores and explains names |
 | Tool B | Built | Uses the local manual-data store plus market snapshots to screen and rank names |
 | Combined backend | De-scoped | Old backend preserved as legacy code, but no longer part of the active product |
-| Tests | Strong | 170 passing tests covering core business rules, orchestration, the structural Tool A pipeline, the SQLite manual store, the workspace UI, and provenance/alias safety |
-| Serve / dashboard | Started | Thin local workspace UI is built; richer compare/view layers still come later |
+| Tests | Strong | 282+ passing tests covering core business rules, orchestration, the structural Tool A pipeline, the SQLite manual store, the workspace UI (three views + DataTables sort/filter + Screening Parameters overrides), Tool B scenario math, and provenance/alias safety |
+| Serve / dashboard | Built | Local browser workspace at `/`, `/tool-a`, `/tool-b` with click-sort, per-column filter dropdowns, live search, per-ticker detail pages, and live scenario overrides (gold-price, thresholds, tier discounts) for Tool B |
 
 ## What Happens To Data
 
