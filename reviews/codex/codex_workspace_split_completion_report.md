@@ -7,8 +7,8 @@ Date: 2026-05-28
 Status: CHECKPOINT D complete.
 
 - Commits in this split: 13 total (12 planned steps plus one step-7 review-fix commit).
-- Final `golden_vector/serve/workspace.py` size: 406 lines.
-- Final full test run: 304 passed.
+- Final `golden_vector/serve/workspace.py` size: 397 lines after post-review whitespace cleanup.
+- Final full test run: 306 passed after post-review regression tests.
 - Final router shape: only `create_workspace_app` and `run_workspace_server` remain as top-level functions.
 
 ## 1. Final Layout Readback
@@ -18,16 +18,16 @@ The target sibling-file layout from the plan is met. Differences from the target
 | File | Lines | Description |
 | --- | ---: | --- |
 | `golden_vector/serve/__init__.py` | 1 | Package marker. |
-| `golden_vector/serve/workspace.py` | 406 | WSGI router, request dispatch, form POST handling, server entry. |
-| `golden_vector/serve/workspace_state.py` | 367 | Workspace dataclasses, route parsing, parquet/json loaders, structural history loading. |
+| `golden_vector/serve/workspace.py` | 397 | WSGI router, request dispatch, form POST handling, server entry. |
+| `golden_vector/serve/workspace_state.py` | 366 | Workspace dataclasses, route parsing, parquet/json loaders, structural history loading. |
 | `golden_vector/serve/overview_combined.py` | 467 | Combined overview page, overview filters, provenance and refresh notices. |
-| `golden_vector/serve/overview_tool_a.py` | 132 | Tool A overview page. |
-| `golden_vector/serve/overview_tool_b.py` | 376 | Tool B overview page, screening params form, override hidden inputs. |
+| `golden_vector/serve/overview_tool_a.py` | 133 | Tool A overview page. |
+| `golden_vector/serve/overview_tool_b.py` | 373 | Tool B overview page, screening params form, override hidden inputs. |
 | `golden_vector/serve/detail_page.py` | 78 | Ticker detail page renderer, renamed `render_detail_page`, lens-aware signature. |
-| `golden_vector/serve/detail_panels.py` | 1100 | Detail analytical panels, window resolver/switcher helpers, chart panels. |
-| `golden_vector/serve/detail_forms.py` | 331 | Company, reporting, verification, and note forms. |
+| `golden_vector/serve/detail_panels.py` | 1099 | Detail analytical panels, window resolver/switcher helpers, chart panels. |
+| `golden_vector/serve/detail_forms.py` | 330 | Company, reporting, verification, and note forms. |
 | `golden_vector/serve/charts.py` | 286 | SVG chart builders for scatter, dual bar, and beta history. |
-| `golden_vector/serve/format_helpers.py` | 261 | Formatting, coercion, small table/card atoms, ticker row helpers. |
+| `golden_vector/serve/format_helpers.py` | 260 | Formatting, coercion, small table/card atoms, ticker row helpers. |
 | `golden_vector/serve/http_helpers.py` | 146 | HTML/redirect responses, form-body parsing, static file serving, error page. |
 | `golden_vector/serve/page_shell.py` | 41 | Top navigation and page shell. |
 | `golden_vector/serve/lenses.py` | 233 | Existing overview lens definitions, unchanged by this split. |
@@ -40,7 +40,7 @@ The target sibling-file layout from the plan is met. Differences from the target
 
 Layout differences from the plan:
 
-- `workspace.py` landed at 406 lines, below both the hard `<600` acceptance gate and the target "under ~500" guidance.
+- `workspace.py` landed at 397 lines after post-review whitespace cleanup, below both the hard `<600` acceptance gate and the target "under ~500" guidance.
 - `_render_provenance_warnings` and `_render_refresh_summary` landed in `overview_combined.py` instead of `detail_panels.py`; see deviations.
 - Static vendor files are listed here for completeness even though the plan only called them out as unchanged existing assets.
 
@@ -82,8 +82,8 @@ Layout differences from the plan:
 
 | Criterion | Status | Evidence |
 | --- | --- | --- |
-| `wc -l golden_vector/serve/workspace.py` < 600 | MET | 406 lines. |
-| Existing tests pass | MET | Final run: 304 passed. Existing test expectations were preserved; imports were updated where private helpers moved. |
+| `wc -l golden_vector/serve/workspace.py` < 600 | MET | 397 lines. |
+| Existing tests pass | MET | Final run: 306 passed. Existing test expectations were preserved; imports were updated where private helpers moved. |
 | Manual smoke for `/`, `/tool-a`, `/tool-b`, `/ticker/AEM` | MET | Step 8 HTML diff was zero; final browser render pass loaded all four routes with CSS present. |
 | `/ticker/AEM?lens=tool-a` equals `/ticker/AEM` | MET | Step 11 smoke diff: zero lines. |
 | `/ticker/AEM?lens=banana` falls back to tool-a with 200 | MET | Step 11 smoke diff against `/ticker/AEM`: zero lines; status 200. Fallback is in `workspace.py:181-183`. |
@@ -93,10 +93,11 @@ Layout differences from the plan:
 ## 6. Test Deltas
 
 - Baseline pass count: 303.
-- Final pass count: 304.
+- Final pass count: 306.
 - New test files added: none.
 - Tests modified:
-  - `tests/test_workspace_datatables.py`: updated private-helper imports after moves; added `test_static_route_serves_workspace_css_with_revalidation` for repo-owned CSS cache behavior.
+  - `tests/test_workspace_datatables.py`: updated private-helper imports after moves; added `test_static_route_serves_workspace_css_with_revalidation` for repo-owned CSS cache behavior and `test_static_route_uses_resolved_path_for_cache_policy` for normalized static paths.
+  - `tests/test_workspace_app.py`: added `test_workspace_detail_lens_param_defaults_to_tool_a` for detail lens fallback behavior.
   - `tests/test_workspace_horizon_switcher.py`: updated private-helper imports from `workspace.py` to `detail_panels.py`.
 
 ## 7. Open Questions For Reviewer

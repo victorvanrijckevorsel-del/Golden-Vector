@@ -43,7 +43,6 @@ REPORTING_FORM_FIELDS: list[ReportingFieldSpec] = [
 ]
 
 
-
 def _render_company_form(
     *,
     ticker: str,

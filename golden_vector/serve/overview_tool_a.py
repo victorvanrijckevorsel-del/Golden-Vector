@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import escape
+from typing import Any
 
 from golden_vector.serve.format_helpers import (
     _fmt_numeric_td,

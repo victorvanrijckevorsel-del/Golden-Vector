@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import escape
+from typing import Any
 
 import pandas as pd
 
@@ -327,10 +328,6 @@ def _render_screening_params_form(
         "</form>"
         "</section>"
     )
-
-
-
-
 
 
 # Mapping from override field -> (URL-param name, percent-style?). Mirrors

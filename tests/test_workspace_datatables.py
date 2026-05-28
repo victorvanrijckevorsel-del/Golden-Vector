@@ -125,6 +125,17 @@ def test_static_route_serves_workspace_css_with_revalidation(tmp_path):
     assert ".top-nav" in body
 
 
+def test_static_route_uses_resolved_path_for_cache_policy(tmp_path):
+    _, app = _workspace_fixture(tmp_path)
+    response = _call_wsgi_raw(
+        app, method="GET", path="/static/vendor/../workspace.css",
+    )
+    assert response["status"].startswith("200")
+    assert "text/css" in response["headers"].get("Content-Type", "")
+    assert response["headers"].get("Cache-Control") == "no-cache"
+    assert ":root" in response["body_text"]
+
+
 def test_static_route_serves_workspace_tables_js_with_correct_mime(tmp_path):
     """workspace-tables.js is the centerpiece of the simple architecture —
     separate test to prove the custom file is reachable, not just vendored."""

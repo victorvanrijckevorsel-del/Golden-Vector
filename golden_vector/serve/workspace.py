@@ -6,8 +6,6 @@ from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
 
-
-
 from golden_vector.serve.screening_overrides import (
     ScreeningOverrideError,
     ScreeningOverrides,
@@ -54,13 +52,6 @@ from golden_vector.screening.manual_store import (
     upsert_reporting_calendar,
     upsert_source_verification,
 )
-
-
-
-
-
-
-
 
 
 def create_workspace_app(

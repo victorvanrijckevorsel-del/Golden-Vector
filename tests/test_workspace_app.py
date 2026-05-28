@@ -70,6 +70,26 @@ def test_workspace_detail_page_renders_explanations_and_exploratory_ladder(tmp_p
     assert "Single-Period Ratio" in response["body"]
 
 
+def test_workspace_detail_lens_param_defaults_to_tool_a(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    default_response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
+    explicit_response = _call_wsgi_app(app, method="GET", path="/ticker/NEM?lens=tool-a")
+    unknown_response = _call_wsgi_app(app, method="GET", path="/ticker/NEM?lens=banana")
+
+    assert default_response["status"].startswith("200")
+    assert explicit_response["status"].startswith("200")
+    assert unknown_response["status"].startswith("200")
+    assert explicit_response["body"] == default_response["body"]
+    assert unknown_response["body"] == default_response["body"]
+
+
 def test_workspace_detail_page_surfaces_withheld_tool_a_notice(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()

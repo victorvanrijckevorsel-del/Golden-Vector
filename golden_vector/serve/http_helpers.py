@@ -109,7 +109,7 @@ def _serve_static_file(
 
     # Ancestor check: candidate must live under _STATIC_ROOT.
     try:
-        candidate.relative_to(_STATIC_ROOT)
+        resolved_relative = candidate.relative_to(_STATIC_ROOT).as_posix()
     except ValueError:
         return _static_not_found(start_response)
 
@@ -128,7 +128,7 @@ def _serve_static_file(
             ("Content-Type", content_type),
             ("Content-Length", str(len(payload))),
             # Vendored filenames are version-pinned; repo-owned assets revalidate.
-            ("Cache-Control", _static_cache_control(relative)),
+            ("Cache-Control", _static_cache_control(resolved_relative)),
         ],
     )
     return [payload]

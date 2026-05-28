@@ -16,7 +16,6 @@ from golden_vector.serve.charts import (
 )
 from golden_vector.serve.format_helpers import (
     _fmt_number,
-    _fmt_numeric_td,
     _fmt_percent,
     _fmt_text,
     _is_na,

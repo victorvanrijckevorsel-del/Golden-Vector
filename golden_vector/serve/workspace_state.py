@@ -275,7 +275,6 @@ def _load_json_file(path: Path) -> dict[str, Any] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-
 def _load_structural_delta_history(
     paths: ProjectPaths,
     *,
