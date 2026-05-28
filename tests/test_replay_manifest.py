@@ -9,7 +9,10 @@ import pytest
 
 import golden_vector.app.replay_manifest as replay_manifest
 from golden_vector.app.config import expected_config_paths
-from golden_vector.app.replay_manifest import write_initial_replay_manifest
+from golden_vector.app.replay_manifest import (
+    update_manifest_with_foundation,
+    write_initial_replay_manifest,
+)
 from golden_vector.app.run_context import RunContext
 from tests.helpers import build_test_paths
 
@@ -123,6 +126,48 @@ def test_manifest_config_list_matches_load_app_config(tmp_path):
     assert manifest_config_names == expected_names
 
 
+def test_phase2_updates_foundation_block(tmp_path):
+    paths = _prepare_paths(tmp_path)
+    context = _start_context(paths)
+    write_initial_replay_manifest(context)
+    foundation_manifest_path = _write_foundation_manifest(paths)
+
+    update_manifest_with_foundation(
+        context.run_dir,
+        foundation_run_id="foundation-run",
+        foundation_manifest_path=foundation_manifest_path,
+    )
+
+    manifest = json.loads(
+        (context.run_dir / "replay_manifest.json").read_text(encoding="utf-8")
+    )
+    foundation_block = manifest["foundation_run_consumed"]
+    snapshot_path = context.run_dir / foundation_block["snapshot_path"]
+    assert manifest["foundation_load_status"] == "captured"
+    assert foundation_block["run_id"] == "foundation-run"
+    assert snapshot_path.exists()
+    assert foundation_block["manifest_sha256"] == _sha256(snapshot_path)
+    assert foundation_block["manifest_sha256"] == _sha256(foundation_manifest_path)
+
+
+def test_phase2_failure_records_status_not_raise(tmp_path):
+    paths = _prepare_paths(tmp_path)
+    context = _start_context(paths)
+    write_initial_replay_manifest(context)
+
+    update_manifest_with_foundation(
+        context.run_dir,
+        foundation_run_id="foundation-run",
+        foundation_manifest_path=paths.latest_foundation_manifest_path,
+    )
+
+    manifest = json.loads(
+        (context.run_dir / "replay_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["foundation_run_consumed"] is None
+    assert manifest["foundation_load_status"].startswith("error:")
+
+
 def _prepare_paths(tmp_path: Path, *, manual_db: bool = True):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -163,6 +208,15 @@ def _initialize_git_repo(repo_root: Path) -> None:
     _run_git(repo_root, "config", "user.name", "Golden Vector Tests")
     _run_git(repo_root, "add", ".gitignore", "config", "data/manual", "tracked.txt")
     _run_git(repo_root, "commit", "-m", "initial")
+
+
+def _write_foundation_manifest(paths) -> Path:
+    paths.latest_foundation_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_foundation_manifest_path.write_text(
+        json.dumps({"refresh_run_id": "foundation-run"}, sort_keys=True),
+        encoding="utf-8",
+    )
+    return paths.latest_foundation_manifest_path
 
 
 def _run_git(repo_root: Path, *args: str) -> None:

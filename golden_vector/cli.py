@@ -18,6 +18,7 @@ from golden_vector.app.latest_data import (
 )
 from golden_vector.app.logging import configure_logging
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.app.replay_manifest import update_manifest_with_foundation
 from golden_vector.app.run_context import RunContext, to_jsonable
 from golden_vector.features.horizons import parse_requested_horizons
 from golden_vector.features.pipeline import execute_horizon_pipeline
@@ -484,6 +485,7 @@ def run_tool_a(paths: ProjectPaths) -> int:
             include_equity_histories=True,
             include_market_snapshots=False,
         )
+        _capture_foundation_for_replay_manifest(run_context, foundation_snapshot)
 
         tool_a_result = execute_tool_a_profile_pipeline(
             paths=paths,
@@ -623,6 +625,7 @@ def run_tool_b(paths: ProjectPaths, *, gold_price: float | None) -> int:
             include_equity_histories=False,
             include_market_snapshots=True,
         )
+        _capture_foundation_for_replay_manifest(run_context, foundation_snapshot)
 
         tool_b_result = execute_tool_b_pipeline(
             paths=paths,
@@ -1171,6 +1174,7 @@ def run_compare_horizons(
             include_market_snapshots=False,
             requested_tickers=[normalized_ticker],
         )
+        _capture_foundation_for_replay_manifest(run_context, foundation_snapshot)
 
         comparison = compute_horizon_returns_for_ticker(
             usd_equity_history=foundation_snapshot.normalized_equity_histories.get(
@@ -1306,6 +1310,17 @@ def _load_latest_foundation_snapshot(
         },
     )
     return snapshot
+
+
+def _capture_foundation_for_replay_manifest(
+    run_context: RunContext,
+    foundation_snapshot: LatestFoundationSnapshot,
+) -> None:
+    update_manifest_with_foundation(
+        run_dir=run_context.run_dir,
+        foundation_run_id=foundation_snapshot.refresh_run_id,
+        foundation_manifest_path=foundation_snapshot.manifest_path,
+    )
 
 
 def _artifact_name(paths: ProjectPaths, path: Path) -> str:
