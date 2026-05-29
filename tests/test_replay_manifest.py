@@ -11,6 +11,7 @@ import pytest
 import golden_vector.app.replay_manifest as replay_manifest
 from golden_vector.app.config import expected_config_paths
 from golden_vector.app.replay_manifest import (
+    update_manifest_with_options,
     update_manifest_with_foundation,
     write_initial_replay_manifest,
 )
@@ -31,6 +32,8 @@ def test_phase1_creates_manifest_and_snapshots(tmp_path):
     assert manifest["command"] == "tool-a"
     assert manifest["foundation_run_consumed"] is None
     assert manifest["foundation_load_status"] == "not-applicable"
+    assert manifest["options_manifest_captured"] is None
+    assert manifest["options_manifest_status"] == "not-applicable"
     assert set(manifest["git"]) == {"commit", "dirty", "unavailable_reason"}
 
     config_names = {entry["name"] for entry in manifest["configs"]}
@@ -170,6 +173,48 @@ def test_phase2_failure_records_status_not_raise(tmp_path):
     assert manifest["foundation_load_status"].startswith("error:")
 
 
+def test_phase2_updates_options_manifest_block(tmp_path):
+    paths = _prepare_paths(tmp_path)
+    context = _start_context(paths)
+    write_initial_replay_manifest(context)
+    options_manifest_path = _write_options_manifest(paths)
+
+    update_manifest_with_options(
+        context.run_dir,
+        options_manifest_path=options_manifest_path,
+    )
+
+    manifest = json.loads(
+        (context.run_dir / "replay_manifest.json").read_text(encoding="utf-8")
+    )
+    options_block = manifest["options_manifest_captured"]
+    snapshot_path = context.run_dir / options_block["snapshot_path"]
+    assert manifest["options_manifest_status"] == "captured"
+    assert snapshot_path.exists()
+    assert options_block["manifest_original_path"] == (
+        "data/intermediate/status/latest_options_manifest.json"
+    )
+    assert options_block["latest_options_manifest_sha256"] == _sha256(snapshot_path)
+    assert options_block["latest_options_manifest_sha256"] == _sha256(options_manifest_path)
+
+
+def test_phase2_missing_options_manifest_records_status_not_raise(tmp_path):
+    paths = _prepare_paths(tmp_path)
+    context = _start_context(paths)
+    write_initial_replay_manifest(context)
+
+    update_manifest_with_options(
+        context.run_dir,
+        options_manifest_path=paths.latest_options_manifest_path,
+    )
+
+    manifest = json.loads(
+        (context.run_dir / "replay_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["options_manifest_captured"] is None
+    assert manifest["options_manifest_status"].startswith("error:")
+
+
 def test_verify_replay_cli_passes_for_pristine_manifest(tmp_path, capsys):
     paths = _prepare_paths(tmp_path)
     context = RunContext.start(
@@ -302,6 +347,28 @@ def test_fixture_tool_a_run_with_foundation_replay_manifest_verifies(tmp_path, c
     assert "Verdict: OK." in output
 
 
+def test_verify_replay_checks_options_manifest_snapshot(tmp_path, capsys):
+    paths = _prepare_paths(tmp_path)
+    context = RunContext.start(
+        paths=paths,
+        command="update-data",
+        parameters={"fixture": True},
+        config_hash="test-config-hash",
+    )
+    options_manifest_path = _write_options_manifest(paths)
+    update_manifest_with_options(
+        context.run_dir,
+        options_manifest_path=options_manifest_path,
+    )
+
+    exit_code = run_verify_replay(paths, run_id_or_path=context.run_id)
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "[OK] options_manifest.json - sha256 matches recorded" in output
+    assert "Verdict: OK." in output
+
+
 def _prepare_paths(tmp_path: Path, *, manual_db: bool = True):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -351,6 +418,15 @@ def _write_foundation_manifest(paths) -> Path:
         encoding="utf-8",
     )
     return paths.latest_foundation_manifest_path
+
+
+def _write_options_manifest(paths) -> Path:
+    paths.latest_options_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_options_manifest_path.write_text(
+        json.dumps({"refresh_run_id": "options-run", "snapshots": []}),
+        encoding="utf-8",
+    )
+    return paths.latest_options_manifest_path
 
 
 def _run_git(repo_root: Path, *args: str) -> None:

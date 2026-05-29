@@ -25,6 +25,7 @@ REPLAY_SNAPSHOT_DIR = "replay_snapshots"
 CONFIG_SNAPSHOT_DIR = "configs"
 MANUAL_DB_SNAPSHOT_FILE = "manual_screening.sqlite3"
 FOUNDATION_MANIFEST_SNAPSHOT_FILE = "foundation_manifest.json"
+OPTIONS_MANIFEST_SNAPSHOT_FILE = "options_manifest.json"
 
 VERDICT_OK = "OK"
 VERDICT_PREDATES_REPLAY_MANIFEST = "PREDATES_REPLAY_MANIFEST"
@@ -82,6 +83,8 @@ def write_initial_replay_manifest(run_context: RunContext) -> Path:
         "manual_data": manual_data,
         "foundation_run_consumed": None,
         "foundation_load_status": "not-applicable",
+        "options_manifest_captured": None,
+        "options_manifest_status": "not-applicable",
     }
 
     manifest_path = run_context.run_dir / REPLAY_MANIFEST_FILE
@@ -118,6 +121,42 @@ def update_manifest_with_foundation(
     except Exception as exc:  # noqa: BLE001 - phase 2 must record and proceed.
         manifest["foundation_run_consumed"] = None
         manifest["foundation_load_status"] = f"error: {exc}"
+
+    try:
+        _write_json_atomic(manifest_path, manifest)
+    except Exception:
+        return
+
+
+def update_manifest_with_options(
+    run_dir: Path,
+    *,
+    options_manifest_path: Path,
+) -> None:
+    """Patch a replay manifest with the latest options manifest it produced."""
+
+    manifest_path = run_dir / REPLAY_MANIFEST_FILE
+    try:
+        manifest = _read_manifest_path(manifest_path)
+    except Exception:
+        return
+
+    snapshot_path = run_dir / REPLAY_SNAPSHOT_DIR / OPTIONS_MANIFEST_SNAPSHOT_FILE
+    try:
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        _copy_file_atomic(options_manifest_path, snapshot_path)
+        manifest["options_manifest_captured"] = {
+            "manifest_original_path": _best_effort_run_repo_relative(
+                run_dir,
+                options_manifest_path,
+            ),
+            "snapshot_path": _run_relative(run_dir, snapshot_path),
+            "latest_options_manifest_sha256": _sha256_file(snapshot_path),
+        }
+        manifest["options_manifest_status"] = "captured"
+    except Exception as exc:  # noqa: BLE001 - options capture should record and proceed.
+        manifest["options_manifest_captured"] = None
+        manifest["options_manifest_status"] = f"error: {exc}"
 
     try:
         _write_json_atomic(manifest_path, manifest)
@@ -172,6 +211,17 @@ def verify_manifest(run_dir_or_id: Path | str) -> VerifyResult:
                 name=FOUNDATION_MANIFEST_SNAPSHOT_FILE,
                 snapshot_path=Path(str(foundation_data.get("snapshot_path", ""))),
                 expected_sha256=str(foundation_data.get("manifest_sha256", "")),
+            )
+        )
+
+    options_data = manifest.get("options_manifest_captured")
+    if options_data:
+        asset_statuses.append(
+            _verify_snapshot_asset(
+                run_dir,
+                name=OPTIONS_MANIFEST_SNAPSHOT_FILE,
+                snapshot_path=Path(str(options_data.get("snapshot_path", ""))),
+                expected_sha256=str(options_data.get("latest_options_manifest_sha256", "")),
             )
         )
 
@@ -437,3 +487,10 @@ def _best_effort_repo_relative(path: Path) -> str:
         return path.relative_to(ProjectPaths.discover().repo_root).as_posix()
     except ValueError:
         return str(path)
+
+
+def _best_effort_run_repo_relative(run_dir: Path, path: Path) -> str:
+    try:
+        return path.relative_to(run_dir.parents[2]).as_posix()
+    except (IndexError, ValueError):
+        return _best_effort_repo_relative(path)
