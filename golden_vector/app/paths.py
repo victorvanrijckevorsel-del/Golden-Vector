@@ -65,10 +65,14 @@ class ProjectPaths:
             self.intermediate_tool_a_structural_dir,
             self.intermediate_tool_a_profiles_dir,
             self.intermediate_tool_b_dir,
+            self.options_features_dir,
+            self.benchmarks_dir,
             self.intermediate_status_dir,
             self.output_tool_a_dir,
             self.output_tool_b_dir,
             self.output_combined_dir,
+            self.output_hedge_readiness_dir,
+            self.manual_holdings_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
@@ -124,6 +128,14 @@ class ProjectPaths:
         return self.manual_screening_dir / "manual_screening.sqlite3"
 
     @property
+    def manual_holdings_dir(self) -> Path:
+        return self.manual_dir / "holdings"
+
+    @property
+    def holdings_path(self) -> Path:
+        return self.manual_holdings_dir / "holdings.yaml"
+
+    @property
     def intermediate_usd_equities_dir(self) -> Path:
         return self.intermediate_dir / "usd_equities"
 
@@ -148,6 +160,14 @@ class ProjectPaths:
         return self.intermediate_dir / "tool_b"
 
     @property
+    def options_features_dir(self) -> Path:
+        return self.intermediate_dir / "options_features"
+
+    @property
+    def benchmarks_dir(self) -> Path:
+        return self.intermediate_dir / "benchmarks"
+
+    @property
     def intermediate_status_dir(self) -> Path:
         return self.intermediate_dir / "status"
 
@@ -162,6 +182,10 @@ class ProjectPaths:
     @property
     def latest_foundation_manifest_path(self) -> Path:
         return self.intermediate_status_dir / "latest_foundation_manifest.json"
+
+    @property
+    def latest_options_manifest_path(self) -> Path:
+        return self.intermediate_status_dir / "latest_options_manifest.json"
 
     @property
     def output_tool_a_dir(self) -> Path:
@@ -196,3 +220,7 @@ class ProjectPaths:
     @property
     def output_combined_dir(self) -> Path:
         return self.output_dir / "combined"
+
+    @property
+    def output_hedge_readiness_dir(self) -> Path:
+        return self.output_dir / "hedge_readiness"
