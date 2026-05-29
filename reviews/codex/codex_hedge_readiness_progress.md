@@ -9,3 +9,5 @@ Step 2 (options snapshot persistence): committed in this step. Tests: 329 passed
 Step 3 (replay options manifest capture): committed in this step. Tests: 332 passed in 128.02s. Fixture smoke: n/a. Notes: Extended replay manifests to snapshot and verify the latest options manifest pointer.
 
 Step 4 (options/rate/benchmark fetchers): committed in this step. Tests: 339 passed in 178.50s. Fixture smoke: yes. Notes: Added fixture-backed Yahoo options, risk-free rate, and hedge benchmark fetchers with no CLI wiring.
+
+Step 5 (Black-Scholes math): committed in this step. Tests: 353 passed in 162.60s. Fixture smoke: n/a. Notes: Added normal CDF, signed delta, and listed-strike target-delta selection; reference call delta smoke returned 0.636831.
