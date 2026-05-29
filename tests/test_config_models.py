@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from golden_vector.contracts.config_models import (
     AsymmetryThresholds,
+    BenchmarksConfig,
     CombinedVerdictThresholds,
     ConfidenceThresholds,
     GammaThresholds,
@@ -134,6 +135,50 @@ def test_universe_config_rejects_unknown_currency():
                         "ticker": "NEM",
                         "currency": "UDS",
                     }
+                ],
+            }
+        )
+
+
+def test_benchmarks_config_accepts_gdx_and_gdxj():
+    config = BenchmarksConfig.model_validate(
+        {
+            "version": 1,
+            "benchmarks": [
+                {"ticker": "gdx", "yahoo_symbol": "gdx", "label": "GDX"},
+                {"ticker": "gdxj", "yahoo_symbol": "gdxj", "label": "GDXJ"},
+            ],
+        }
+    )
+
+    assert [benchmark.ticker for benchmark in config.benchmarks] == ["GDX", "GDXJ"]
+    assert [benchmark.yahoo_symbol for benchmark in config.benchmarks] == ["GDX", "GDXJ"]
+
+
+def test_benchmarks_config_rejects_unknown_fields():
+    with pytest.raises(ValidationError):
+        BenchmarksConfig.model_validate(
+            {
+                "version": 1,
+                "benchmarks": [
+                    {
+                        "ticker": "GDX",
+                        "yahoo_symbol": "GDX",
+                        "is_benchmark": True,
+                    }
+                ],
+            }
+        )
+
+
+def test_benchmarks_config_rejects_duplicate_tickers():
+    with pytest.raises(ValidationError):
+        BenchmarksConfig.model_validate(
+            {
+                "version": 1,
+                "benchmarks": [
+                    {"ticker": "GDX", "yahoo_symbol": "GDX"},
+                    {"ticker": "gdx", "yahoo_symbol": "GDX"},
                 ],
             }
         )

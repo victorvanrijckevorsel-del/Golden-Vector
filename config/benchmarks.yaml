@@ -1,0 +1,10 @@
+version: 1
+benchmarks:
+  - ticker: GDX
+    yahoo_symbol: GDX
+    label: VanEck Gold Miners ETF
+    active: true
+  - ticker: GDXJ
+    yahoo_symbol: GDXJ
+    label: VanEck Junior Gold Miners ETF
+    active: true

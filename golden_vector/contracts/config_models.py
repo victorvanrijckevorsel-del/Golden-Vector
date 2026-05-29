@@ -62,6 +62,32 @@ class UniverseConfig(StrictConfigModel):
         return self
 
 
+class BenchmarkTicker(StrictConfigModel):
+    ticker: str
+    yahoo_symbol: str
+    label: str | None = None
+    active: bool = True
+
+    @field_validator("ticker", "yahoo_symbol")
+    @classmethod
+    def uppercase_codes(cls, value: str) -> str:
+        return value.upper()
+
+
+class BenchmarksConfig(StrictConfigModel):
+    version: int = 1
+    benchmarks: list[BenchmarkTicker] = Field(default_factory=list, min_length=1)
+
+    @model_validator(mode="after")
+    def unique_tickers(self) -> "BenchmarksConfig":
+        seen: set[str] = set()
+        for benchmark in self.benchmarks:
+            if benchmark.ticker in seen:
+                raise ValueError(f"Duplicate benchmark ticker: {benchmark.ticker}")
+            seen.add(benchmark.ticker)
+        return self
+
+
 class CustomHorizonValidation(StrictConfigModel):
     allowed_units: list[Literal["D", "M", "Y"]] = Field(default_factory=lambda: ["D", "M", "Y"])
     min_value: int = 1
@@ -452,6 +478,7 @@ class ScreeningParamsConfig(StrictConfigModel):
 
 class AppConfig(StrictConfigModel):
     universe: UniverseConfig
+    benchmarks: BenchmarksConfig
     horizons: HorizonsConfig
     qa: QaConfig
     scoring: ScoringConfig

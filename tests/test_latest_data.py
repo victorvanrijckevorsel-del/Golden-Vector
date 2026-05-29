@@ -9,6 +9,7 @@ from golden_vector.app.latest_data import (
 from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.config_models import (
     AppConfig,
+    BenchmarksConfig,
     HorizonsConfig,
     QaConfig,
     ScoringConfig,
@@ -46,6 +47,12 @@ def _app_config() -> AppConfig:
                     tool_b_enabled=True,
                     jurisdiction_tier=1,
                 )
+            ]
+        ),
+        benchmarks=BenchmarksConfig(
+            benchmarks=[
+                {"ticker": "GDX", "yahoo_symbol": "GDX"},
+                {"ticker": "GDXJ", "yahoo_symbol": "GDXJ"},
             ]
         ),
         horizons=HorizonsConfig(
