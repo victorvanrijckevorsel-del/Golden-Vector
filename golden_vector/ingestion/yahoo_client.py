@@ -44,3 +44,11 @@ class YahooClient:
             return dict(ticker.fast_info)
         except Exception:
             return {}
+
+    def fetch_options_expirations(self, symbol: str) -> list[str]:
+        ticker = self._yf.Ticker(symbol)
+        return list(ticker.options or [])
+
+    def fetch_option_chain(self, symbol: str, expiration: str) -> object:
+        ticker = self._yf.Ticker(symbol)
+        return ticker.option_chain(expiration)
