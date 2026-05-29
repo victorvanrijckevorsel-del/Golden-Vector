@@ -320,7 +320,10 @@ def _resolve_run_dir(run_dir_or_id: Path | str) -> Path:
 
 
 def _current_checkout_drift_findings(manifest: dict[str, Any]) -> list[str]:
-    repo_root = ProjectPaths.discover().repo_root
+    try:
+        repo_root = ProjectPaths.discover().repo_root
+    except Exception:
+        return ["unavailable - no current checkout context"]
     findings: list[str] = []
 
     for name, original_path, expected_sha256 in _manifest_original_assets(manifest):

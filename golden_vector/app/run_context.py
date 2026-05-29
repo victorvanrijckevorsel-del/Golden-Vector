@@ -78,9 +78,10 @@ class RunContext:
             metadata_path=run_dir / "metadata.json",
             log_path=run_dir / "run.log",
         )
-        context._write_metadata(status="RUNNING", summary={}, notes=["Run created."])
-        write_initial_replay_manifest(context)
-        context._write_metadata(status="RUNNING", summary={}, notes=["Run created."])
+        try:
+            write_initial_replay_manifest(context)
+        finally:
+            context._write_metadata(status="RUNNING", summary={}, notes=["Run created."])
         return context
 
     def write_json(self, file_name: str, payload: dict[str, Any]) -> Path:

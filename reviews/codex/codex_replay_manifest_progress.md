@@ -11,3 +11,5 @@ Step 2 (wire RunContext.start): ready for commit in this change. Tests: 314 pass
 Step 3 (foundation phase-2 capture): ready for commit in this change. Tests: 316 passed. Fixture smoke: n/a. Notes: Tool A, Tool B, and compare-horizons now patch replay manifests after loading the latest foundation snapshot; phase-2 copy failures record an error status instead of raising.
 
 Step 4 (verify-replay CLI): ready for commit in this change. Tests: 321 passed. Fixture smoke: yes (`test_verify_replay_cli_passes_for_pristine_manifest`). Notes: Added human-readable verification output for pristine, corrupted, moved, historical pre-manifest, and missing-run cases.
+
+Review fixes after Step 4: ready for commit in this change. Tests: 322 passed. Fixture smoke: n/a. Notes: Removed duplicate metadata write shape, made drift checks graceful without checkout context, and documented ASCII status markers as intentional for Windows-safe output.

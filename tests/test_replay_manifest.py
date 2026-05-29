@@ -250,6 +250,35 @@ def test_verify_replay_cli_rejects_missing_run_dir(tmp_path, capsys):
     assert "Run directory not found:" in output
 
 
+def test_verify_replay_cli_handles_missing_checkout_context(
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    paths = _prepare_paths(tmp_path)
+    context = RunContext.start(
+        paths=paths,
+        command="tool-a",
+        parameters={"fixture": True},
+        config_hash="test-config-hash",
+    )
+
+    def unavailable_checkout(cls):
+        raise RuntimeError("no checkout")
+
+    monkeypatch.setattr(
+        replay_manifest.ProjectPaths,
+        "discover",
+        classmethod(unavailable_checkout),
+    )
+
+    exit_code = run_verify_replay(paths, run_id_or_path=context.run_id)
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "unavailable - no current checkout context" in output
+
+
 def _prepare_paths(tmp_path: Path, *, manual_db: bool = True):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()

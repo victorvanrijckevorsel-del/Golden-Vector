@@ -1180,6 +1180,7 @@ def _format_verify_replay_result(result: VerifyResult) -> str:
     if result.asset_statuses:
         lines.extend(["", "Snapshot integrity:"])
         for asset in result.asset_statuses:
+            # ASCII markers stay readable in older Windows terminals.
             marker = "[OK]" if asset.status == "ok" else "[FAIL]"
             lines.append(f"  {marker} {asset.name} - {asset.message}")
     else:
