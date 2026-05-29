@@ -1,10 +1,13 @@
 # Snapshot Retention Audit
 
 Date: 2026-05-28
+Updated: 2026-05-29 after the replay manifest milestone
 
 ## Summary
 
-Golden Vector already retains the main analytical snapshots needed to inspect historical Tool A, Tool B, combined, and foundation outputs. The remaining gap is not missing parquet snapshots; it is replay metadata. A future backtest can read historical outputs and the foundation snapshot used by current runs, but cannot always reconstruct the exact code/config/manual-data state that produced every historical run from the run folder alone.
+Golden Vector already retains the main analytical snapshots needed to inspect historical Tool A, Tool B, combined, and foundation outputs. The original remaining gap was not missing parquet snapshots; it was replay metadata. That gap is now closed for new runs from the replay-manifest milestone forward: every new run writes `replay_manifest.json` and `replay_snapshots/` in its run folder. Historical runs created before this milestone are not backfilled, because using today's code/config/manual data would create false provenance.
+
+Use `python main.py verify-replay <run-id-or-path>` to verify a retained run. For old run folders with no replay manifest, the command returns success with a clear "run predates replay manifests" message.
 
 ## What Is Retained
 
@@ -50,19 +53,27 @@ Filesystem spot check on 2026-05-28:
 
 ## What Is Not Fully Retained
 
-The latest foundation manifest is a moving pointer at `data/intermediate/status/latest_foundation_manifest.json`. It records the current latest foundation snapshot and points to run-local parquet files, but the manifest itself is not copied into every run folder as an immutable `foundation_manifest.json`.
+For historical runs before the replay-manifest milestone, the latest foundation manifest is a moving pointer at `data/intermediate/status/latest_foundation_manifest.json`. It records the current latest foundation snapshot and points to run-local parquet files, but the manifest itself was not copied into every run folder as an immutable `foundation_manifest.json`.
 
-Each run has `metadata.json`, `config_summary.json`, status summaries, and an artifact list. These are useful audit breadcrumbs, but they are summaries. They do not contain the full loaded application config, full scoring config, full universe config, exact code revision, or manual-data database snapshot.
+Historical pre-manifest runs have `metadata.json`, `config_summary.json`, status summaries, and an artifact list. These are useful audit breadcrumbs, but they are summaries. They do not contain the full loaded application config, full scoring config, full universe config, exact code revision, or manual-data database snapshot.
 
 `RunContext.record_artifact()` records artifact paths in metadata. It does not copy mutable artifacts into the run folder. This is fine for historical parquet files that already include the run ID in their filename, but weaker for mutable pointers such as `*_latest.parquet`, `latest_foundation_manifest.json`, and any local manual-data store state used by Tool B.
 
-Tool A and Tool B runs record the `snapshot_refresh_run_id` they consumed through `foundation_snapshot_summary.json` and the run notes. That ties outputs back to a foundation run, but deterministic replay still depends on the referenced foundation run folder, the summarized config hash, the current codebase, and the current manual-data history unless those were separately preserved.
+Historical Tool A and Tool B runs record the `snapshot_refresh_run_id` they consumed through `foundation_snapshot_summary.json` and the run notes. That ties outputs back to a foundation run, but deterministic replay still depends on the referenced foundation run folder, the summarized config hash, the current codebase, and the current manual-data history unless those were separately preserved.
+
+New runs from the replay-manifest milestone forward preserve those replay inputs directly:
+
+- `replay_manifest.json` records manifest version, run id, command, start time, Git state, config snapshots, manual-data snapshot, and consumed foundation run when applicable.
+- `replay_snapshots/configs/*.yaml` stores immutable copies of the expected application config files.
+- `replay_snapshots/manual_screening.sqlite3` stores the manual Tool B SQLite state when the store exists at run start.
+- `replay_snapshots/foundation_manifest.json` stores the immutable foundation manifest consumed by Tool A, Tool B, and compare-horizons runs.
+- `verify-replay` checks snapshot integrity and reports drift against the current checkout when that context is available.
 
 ## Backtesting Readiness
 
 Historical analysis is ready for "what did the outputs say at run time?" questions. The retained Tool A/B output parquet files and run-local foundation snapshots are enough to inspect past scores, structural metrics, latest market snapshots, and normalized historical price inputs for retained runs.
 
-Deterministic replay is only partially ready. To exactly reproduce a historical run later, the project would also need immutable per-run replay metadata:
+Deterministic replay is still only partially ready for historical pre-manifest runs. To exactly reproduce one of those older runs later, the project would also need immutable per-run replay metadata:
 
 - full loaded config or a content-addressed copy keyed by `combined_config_hash`
 - exact Git commit or code version
@@ -70,7 +81,15 @@ Deterministic replay is only partially ready. To exactly reproduce a historical 
 - manual-data store snapshot or immutable manual-data version reference for Tool B
 - external data-source/version notes where relevant
 
-## Recommended Future Fix
+For new replay-manifest runs, the missing replay metadata is retained. A future predictive-model or backtest runner can treat the replay manifest as the run-level provenance envelope, while still adding model-specific provenance such as model artifact hashes, feature snapshot hashes, hyperparameters, training window, and random seed.
 
-Do not add another snapshot layer. Instead, add a small immutable `replay_manifest.json` to each new run folder. It should copy the full loaded config or reference a content-addressed config copy, record the Git commit when available, copy the foundation manifest used by Tool A/Tool B/combined runs, and record the manual-data store version or snapshot path for Tool B. That keeps the current parquet retention model canonical while making future backtests reproducible.
+## Replay Manifest Status
+
+The recommended future fix from the original audit has been implemented for new runs. Do not backfill old run folders; `verify-replay` deliberately reports those as "run predates replay manifests" instead of manufacturing provenance from today's files.
+
+Remaining future work is not another retention layer. It is stricter replay use:
+
+- keep `verify-replay` as the human integrity check for retained runs
+- add model-specific provenance only when predictive models are introduced
+- avoid backfilled or placeholder manifests for older runs
 
