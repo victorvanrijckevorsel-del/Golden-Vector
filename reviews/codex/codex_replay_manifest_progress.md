@@ -13,3 +13,5 @@ Step 3 (foundation phase-2 capture): ready for commit in this change. Tests: 316
 Step 4 (verify-replay CLI): ready for commit in this change. Tests: 321 passed. Fixture smoke: yes (`test_verify_replay_cli_passes_for_pristine_manifest`). Notes: Added human-readable verification output for pristine, corrupted, moved, historical pre-manifest, and missing-run cases.
 
 Review fixes after Step 4: ready for commit in this change. Tests: 322 passed. Fixture smoke: n/a. Notes: Removed duplicate metadata write shape, made drift checks graceful without checkout context, and documented ASCII status markers as intentional for Windows-safe output.
+
+Step 5 (fixture integration smoke): ready for commit in this change. Tests: 323 passed. Fixture smoke: yes (`test_fixture_tool_a_run_with_foundation_replay_manifest_verifies`). Notes: Synthesized Tool A replay chain writes phase 1, patches foundation phase 2, and verifies cleanly without external market-data calls.

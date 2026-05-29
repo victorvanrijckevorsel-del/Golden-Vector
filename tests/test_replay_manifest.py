@@ -279,6 +279,29 @@ def test_verify_replay_cli_handles_missing_checkout_context(
     assert "unavailable - no current checkout context" in output
 
 
+def test_fixture_tool_a_run_with_foundation_replay_manifest_verifies(tmp_path, capsys):
+    paths = _prepare_paths(tmp_path)
+    context = RunContext.start(
+        paths=paths,
+        command="tool-a",
+        parameters={"fixture": True},
+        config_hash="test-config-hash",
+    )
+    foundation_manifest_path = _write_foundation_manifest(paths)
+    update_manifest_with_foundation(
+        context.run_dir,
+        foundation_run_id="foundation-run",
+        foundation_manifest_path=foundation_manifest_path,
+    )
+
+    exit_code = run_verify_replay(paths, run_id_or_path=context.run_id)
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "[OK] foundation_manifest.json - sha256 matches recorded" in output
+    assert "Verdict: OK." in output
+
+
 def _prepare_paths(tmp_path: Path, *, manual_db: bool = True):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
