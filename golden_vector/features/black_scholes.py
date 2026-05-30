@@ -90,6 +90,7 @@ def _contract_result(row: pd.Series) -> dict[str, object]:
         "implied_volatility": _value(row, "implied_volatility"),
         "delta": _value(row, "delta"),
         "delta_gap": _value(row, "delta_gap"),
+        "days_to_expiry": _value(row, "days_to_expiry"),
     }
 
 

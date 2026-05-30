@@ -15,3 +15,5 @@ Step 5 (Black-Scholes math): committed in this step. Tests: 353 passed in 162.60
 Step 6 (options features): committed in this step. Tests: 358 passed in 125.63s. Fixture smoke: yes. Notes: Added pure derived options features with listed-strike deltas, liquidity-gated implied move, realized vol, and optionability tier.
 
 Step 7 (holdings loader): committed in this step. Tests: 367 passed in 222.42s. Fixture smoke: n/a. Notes: Added read-only holdings.yaml loader with strict exposure validation and no missing-file auto-create.
+
+Step 8 (hedge math modules): committed in this step. Tests: 371 passed in 246.47s. Fixture smoke: yes. Notes: Added candidate put grid, liquidity-gated implied move, and premium-vs-downside cards; kept listed-strike delta gaps visible.
