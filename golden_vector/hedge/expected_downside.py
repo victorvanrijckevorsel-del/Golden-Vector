@@ -90,7 +90,7 @@ def _scenario(
             tag="downside_unavailable",
         )
 
-    modeled_stock_down_pct = abs(float(down_beta)) * gold_down_pct
+    modeled_stock_down_pct = max(float(down_beta), 0.0) * gold_down_pct
     modeled_downside = exposure * modeled_stock_down_pct
     hedge_ratio = (
         full_premium / modeled_downside

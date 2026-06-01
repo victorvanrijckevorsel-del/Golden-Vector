@@ -104,6 +104,40 @@ def test_compute_premium_vs_downside_tags_scenarios():
     assert card.scenarios[1].tag == "protection_cheap"
 
 
+def test_compute_premium_vs_downside_does_not_abs_negative_down_beta():
+    candidate = CandidatePut(
+        ticker="AEM",
+        horizon_days=60,
+        expiration="2026-07-31",
+        days_to_expiry=63,
+        strike=45.0,
+        bid=1.9,
+        ask=2.1,
+        mid=2.0,
+        open_interest=100,
+        volume=12,
+        implied_volatility=0.4,
+        delta=-0.26,
+        delta_gap=0.01,
+        premium_pct_spot=0.04,
+        underlying_price=50.0,
+    )
+
+    card = compute_premium_vs_downside(
+        ticker="AEM",
+        down_beta=-1.5,
+        confidence_score=0.8,
+        holding=Holding(ticker="AEM", dollar_exposure=10000.0),
+        candidate_put=candidate,
+        gold_scenarios=(0.10,),
+    )
+
+    assert card.scenarios[0].modeled_stock_down_pct == 0.0
+    assert card.scenarios[0].modeled_downside_usd == 0.0
+    assert card.scenarios[0].hedge_ratio is None
+    assert card.scenarios[0].tag == "premium_unavailable"
+
+
 def _candidate_chain() -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for expiration, put_prices in (

@@ -55,6 +55,22 @@ def test_compute_options_features_handles_empty_chain():
     assert features["optionability_tier"] == "none"
 
 
+def test_compute_options_features_handles_invalid_underlying_price():
+    chain = pd.DataFrame([_contract("P", 50.0, 1.0, 1.2, 0.40, 20, 5)])
+
+    features = compute_options_features(
+        chain=chain,
+        underlying_price=0.0,
+        risk_free_rate=0.04,
+        price_history=pd.DataFrame(),
+        as_of_date=date(2026, 5, 29),
+    )
+
+    assert features["options_available"] is False
+    assert features["n_contracts"] == 0
+    assert features["optionability_tier"] == "none"
+
+
 def test_compute_options_features_liquidity_gates_implied_move():
     chain = pd.DataFrame(
         [
