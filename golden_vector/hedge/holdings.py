@@ -40,7 +40,16 @@ def load_holdings(paths: ProjectPaths) -> list[Holding]:
     if not isinstance(raw_holdings, list):
         raise ValueError("holdings.yaml field 'holdings' must be a list.")
 
-    return [_parse_holding(item, index=index) for index, item in enumerate(raw_holdings, start=1)]
+    holdings = [
+        _parse_holding(item, index=index)
+        for index, item in enumerate(raw_holdings, start=1)
+    ]
+    seen: set[str] = set()
+    for holding in holdings:
+        if holding.ticker in seen:
+            raise ValueError(f"holdings.yaml contains duplicate ticker: {holding.ticker}")
+        seen.add(holding.ticker)
+    return holdings
 
 
 def _parse_holding(item: object, *, index: int) -> Holding:

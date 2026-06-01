@@ -67,13 +67,13 @@ holdings:
     dollar_exposure: 50000
 ```
 
-Each holding must set exactly one of `shares` or `dollar_exposure`. The loader does not auto-create this file, and it fails loudly on malformed entries so exposure is not silently misread.
+Each holding must set exactly one of `shares` or `dollar_exposure`, and each ticker can appear only once. The loader does not auto-create this file, and it fails loudly on malformed entries so exposure is not silently misread.
 
 ## Report Sections
 
 The markdown report includes:
 
-- snapshot summary: optionable, thin, and non-optionable counts
+- snapshot summary: optionable, thin, non-optionable counts, and Tool A/Tool B snapshot alignment
 - held-position sections when `holdings.yaml` exists
 - candidate put tables for configured horizons
 - premium-vs-modeled-downside cards using Tool A down beta
@@ -98,3 +98,11 @@ python main.py update-data --no-options
 ```
 
 That keeps Tool A and Tool B refreshes moving while preserving the last successful hedge-readiness options snapshot for reporting.
+
+If the report shows `Analytical context alignment | WARN |` or `UNKNOWN`, the options snapshot is newer than the latest Tool A or Tool B output, or the older output does not carry a refresh id. Run the normal analytical steps again before using the report for decisions:
+
+```powershell
+python main.py tool-a
+python main.py tool-b
+python main.py hedge-readiness
+```

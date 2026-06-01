@@ -107,10 +107,12 @@ def write_latest_options_manifest(
         "summary": summary or {},
     }
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(
+    temporary_path = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
+    temporary_path.write_text(
         json.dumps(to_jsonable(payload), indent=2, sort_keys=True),
         encoding="utf-8",
     )
+    temporary_path.replace(manifest_path)
     run_context.record_artifact(manifest_path)
     return manifest_path
 

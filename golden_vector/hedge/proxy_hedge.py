@@ -26,17 +26,19 @@ def map_proxy_hedges(
     non_optionable_tickers: list[str],
     optionable_tickers: list[str],
     tool_a_frame: pd.DataFrame,
+    tool_b_frame: pd.DataFrame | None = None,
     benchmark_tickers: tuple[str, ...] = ("GDX", "GDXJ"),
     top_n: int = 3,
     max_beta_diff: float = 0.35,
 ) -> dict[str, list[ProxyMatch]]:
     """Map non-optionable tickers to optionable down-beta-similar proxies."""
 
-    indexed = _indexed_by_ticker(tool_a_frame)
+    tool_a_indexed = _indexed_by_ticker(tool_a_frame)
+    tool_b_indexed = _indexed_by_ticker(tool_b_frame) if tool_b_frame is not None else {}
     optionable = [ticker.upper() for ticker in optionable_tickers]
     result: dict[str, list[ProxyMatch]] = {}
     for target in [ticker.upper() for ticker in non_optionable_tickers]:
-        target_row = indexed.get(target)
+        target_row = tool_a_indexed.get(target)
         target_beta = _row_float(target_row, "down_beta_core")
         matches = [
             match
@@ -47,7 +49,8 @@ def map_proxy_hedges(
                     target=target,
                     proxy=proxy,
                     target_beta=target_beta,
-                    proxy_row=indexed.get(proxy),
+                    proxy_tool_a_row=tool_a_indexed.get(proxy),
+                    proxy_tool_b_row=tool_b_indexed.get(proxy),
                     max_beta_diff=max_beta_diff,
                 )
             ]
@@ -79,10 +82,11 @@ def _optionable_match(
     target: str,
     proxy: str,
     target_beta: float | None,
-    proxy_row: pd.Series | None,
+    proxy_tool_a_row: pd.Series | None,
+    proxy_tool_b_row: pd.Series | None,
     max_beta_diff: float,
 ) -> ProxyMatch | None:
-    proxy_beta = _row_float(proxy_row, "down_beta_core")
+    proxy_beta = _row_float(proxy_tool_a_row, "down_beta_core")
     if target_beta is None or proxy_beta is None:
         return None
     beta_diff = abs(target_beta - proxy_beta)
@@ -97,8 +101,8 @@ def _optionable_match(
         target_down_beta=target_beta,
         proxy_down_beta=proxy_beta,
         down_beta_diff=beta_diff,
-        tool_a_confidence=_row_float(proxy_row, "confidence_score"),
-        tool_b_verdict=_row_string(proxy_row, "screening_verdict"),
+        tool_a_confidence=_row_float(proxy_tool_a_row, "confidence_score"),
+        tool_b_verdict=_row_string(proxy_tool_b_row, "screening_verdict"),
         basis_risk_label=basis_label,
         reason="Closest optionable miner by Tool A down-beta.",
     )

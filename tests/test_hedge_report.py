@@ -22,7 +22,7 @@ def test_run_hedge_readiness_writes_markdown_report(tmp_path, capsys):
         parameters={"options": True},
         config_hash="test-config",
     )
-    _write_tool_outputs(paths)
+    _write_tool_outputs(paths, refresh_run_id=update_context.run_id)
     _write_holdings(paths)
     _write_options_inputs(paths, update_context, app_config)
 
@@ -41,6 +41,52 @@ def test_run_hedge_readiness_writes_markdown_report(tmp_path, capsys):
     assert "Premium vs modeled downside:" in markdown
     assert "## Proxy-Hedge Map" in markdown
     assert "AAUC.TO" in markdown
+    assert "Tool B WATCH" in markdown
+    assert "| Analytical context alignment | OK |" in markdown
+
+
+def test_run_hedge_readiness_warns_when_tool_context_is_stale(tmp_path, capsys):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    update_context = RunContext.start(
+        paths=paths,
+        command="update-data",
+        parameters={"options": True},
+        config_hash="test-config",
+    )
+    _write_tool_outputs(paths, refresh_run_id="older-refresh")
+    _write_options_inputs(paths, update_context, app_config)
+
+    exit_code = run_hedge_readiness(paths)
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Context alignment: WARN" in output
+    markdown = (paths.output_hedge_readiness_dir / "latest.md").read_text(encoding="utf-8")
+    assert "| Analytical context alignment | WARN |" in markdown
+    assert "Tool A snapshot refresh does not match options source run" in markdown
+
+
+def test_run_hedge_readiness_warns_when_tool_context_has_no_refresh_id(tmp_path, capsys):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    update_context = RunContext.start(
+        paths=paths,
+        command="update-data",
+        parameters={"options": True},
+        config_hash="test-config",
+    )
+    _write_tool_outputs(paths, refresh_run_id=None)
+    _write_options_inputs(paths, update_context, app_config)
+
+    exit_code = run_hedge_readiness(paths)
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Context alignment: UNKNOWN" in output
+    markdown = (paths.output_hedge_readiness_dir / "latest.md").read_text(encoding="utf-8")
+    assert "| Analytical context alignment | UNKNOWN |" in markdown
+    assert "Tool A snapshot refresh run id is missing" in markdown
 
 
 def test_run_hedge_readiness_reports_missing_options_manifest(tmp_path, capsys):
@@ -118,21 +164,32 @@ def _write_options_inputs(paths, context: RunContext, app_config) -> None:
     pd.DataFrame([aauc_features]).to_parquet(paths.options_features_dir / "AAUC.TO.parquet", index=False)
 
 
-def _write_tool_outputs(paths) -> None:
+def _write_tool_outputs(paths, *, refresh_run_id: str | None = "refresh-run") -> None:
     paths.output_tool_a_dir.mkdir(parents=True, exist_ok=True)
     paths.output_tool_b_dir.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(
-        [
-            {"ticker": "AEM", "down_beta_core": 1.4, "confidence_score": 0.8},
-            {"ticker": "AAUC.TO", "down_beta_core": 1.2, "confidence_score": 0.6},
-        ]
-    ).to_parquet(paths.latest_tool_a_snapshot_parquet_path, index=False)
-    pd.DataFrame(
-        [
-            {"ticker": "AEM", "share_price_usd": 50.0, "screening_verdict": "WATCH"},
-            {"ticker": "AAUC.TO", "share_price_usd": 20.0, "screening_verdict": "INCOMPLETE"},
-        ]
-    ).to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)
+    tool_a_rows = [
+        {"ticker": "AEM", "down_beta_core": 1.4, "confidence_score": 0.8},
+        {"ticker": "AAUC.TO", "down_beta_core": 1.2, "confidence_score": 0.6},
+    ]
+    tool_b_rows = [
+        {"ticker": "AEM", "share_price_usd": 50.0, "screening_verdict": "WATCH"},
+        {
+            "ticker": "AAUC.TO",
+            "share_price_usd": 20.0,
+            "screening_verdict": "INCOMPLETE",
+        },
+    ]
+    if refresh_run_id is not None:
+        for row in [*tool_a_rows, *tool_b_rows]:
+            row["snapshot_refresh_run_id"] = refresh_run_id
+    pd.DataFrame(tool_a_rows).to_parquet(
+        paths.latest_tool_a_snapshot_parquet_path,
+        index=False,
+    )
+    pd.DataFrame(tool_b_rows).to_parquet(
+        paths.latest_tool_b_snapshot_parquet_path,
+        index=False,
+    )
 
 
 def _write_holdings(paths) -> None:

@@ -42,6 +42,14 @@ holdings:
         ("holdings:\n  - ticker: AEM\n    shares: 0\n", "positive"),
         ("holdings:\n  - ticker: AEM\n    shares: 1\n    dollar_exposure: 2\n", "exactly one"),
         ("holdings:\n  - shares: 1\n", "ticker"),
+        (
+            "holdings:\n"
+            "  - ticker: AEM\n"
+            "    shares: 1\n"
+            "  - ticker: aem\n"
+            "    dollar_exposure: 2\n",
+            "duplicate ticker",
+        ),
     ],
 )
 def test_load_holdings_rejects_malformed_entries(tmp_path, body, match):

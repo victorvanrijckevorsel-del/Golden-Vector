@@ -8,14 +8,15 @@ def test_map_proxy_hedges_orders_optionable_matches_by_down_beta_diff():
     tool_a = pd.DataFrame(
         [
             {"ticker": "TARGET", "down_beta_core": 1.40},
-            {
-                "ticker": "AEM",
-                "down_beta_core": 1.35,
-                "confidence_score": 0.80,
-                "screening_verdict": "WATCH",
-            },
+            {"ticker": "AEM", "down_beta_core": 1.35, "confidence_score": 0.80},
             {"ticker": "NEM", "down_beta_core": 1.75, "confidence_score": 0.70},
             {"ticker": "GFI", "down_beta_core": 0.80, "confidence_score": 0.60},
+        ]
+    )
+    tool_b = pd.DataFrame(
+        [
+            {"ticker": "AEM", "screening_verdict": "WATCH"},
+            {"ticker": "NEM", "screening_verdict": "PASS"},
         ]
     )
 
@@ -23,6 +24,7 @@ def test_map_proxy_hedges_orders_optionable_matches_by_down_beta_diff():
         non_optionable_tickers=["target"],
         optionable_tickers=["GFI", "NEM", "AEM"],
         tool_a_frame=tool_a,
+        tool_b_frame=tool_b,
         top_n=2,
         max_beta_diff=0.20,
     )

@@ -568,14 +568,22 @@ def run_hedge_readiness(paths: ProjectPaths) -> int:
             run_context=run_context,
             app_config=loaded_config.app,
         )
+        context_alignment_status = str(
+            report.summary.get("context_alignment_status") or "OK"
+        )
+        final_status = "PASS" if context_alignment_status == "OK" else "WARN"
+        notes = [
+            "Hedge-readiness report rendered.",
+            f"Report path: {report.report_path.relative_to(paths.repo_root).as_posix()}.",
+        ]
+        context_alignment_message = report.summary.get("context_alignment_message")
+        if context_alignment_message:
+            notes.append(f"Context alignment: {context_alignment_message}")
         run_context.write_json("hedge_readiness_summary.json", report.summary)
         run_context.finalize(
-            status="PASS",
+            status=final_status,
             summary=report.summary,
-            notes=[
-                "Hedge-readiness report rendered.",
-                f"Report path: {report.report_path.relative_to(paths.repo_root).as_posix()}.",
-            ],
+            notes=notes,
         )
         print(
             "Hedge readiness report written: "
@@ -588,6 +596,11 @@ def run_hedge_readiness(paths: ProjectPaths) -> int:
             f"{report.summary['none_count']} no listed options, "
             f"{report.summary['holdings_count']} holdings."
         )
+        if final_status == "WARN":
+            print(
+                f"Context alignment: {context_alignment_status} - "
+                f"{context_alignment_message}"
+            )
         return 0
     except Exception as exc:
         if run_context is None:

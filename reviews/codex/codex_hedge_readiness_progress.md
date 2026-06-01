@@ -33,3 +33,5 @@ Step 12 (hedge-readiness report CLI): committed in this step. Tests: 388 passed 
 Step 13 (hedge-readiness docs): committed in this step. Tests: 388 passed in 115.08s. Fixture smoke: n/a. Notes: Documented update-data options refresh, --no-options recovery, holdings.yaml, report output, and architecture map entries.
 
 Final self-review cleanup: committed in this step. Tests: 388 passed in 102.30s. Fixture smoke: yes. Live smoke: `python main.py update-data` completed with foundation WARN/options PASS; `python main.py hedge-readiness` wrote the report. Notes: Centralized options artifact filename sanitization, removed duplicated safe-name helpers, removed an unused CLI import, and rechecked whitespace/compile/import issues.
+
+Post-ship self-review cleanup: committed in this step. Tests: 391 passed in 84.11s. Fixture smoke: yes. Live smoke: `python main.py hedge-readiness` completed with context-alignment WARN against current local data. Notes: Surfaced stale Tool A/Tool B context in the report and run metadata, wired proxy Tool B verdicts from the correct frame, rejected duplicate holdings, and made latest options manifest writes atomic.

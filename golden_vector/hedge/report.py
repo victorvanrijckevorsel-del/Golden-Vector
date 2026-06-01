@@ -87,6 +87,11 @@ def render_hedge_readiness_report(
     as_of_date = str(manifest.get("as_of_date", "unknown"))
     refresh_run_id = str(manifest.get("refresh_run_id", "unknown"))
     optionability_counts = _value_counts(features, "optionability_tier")
+    alignment = _context_alignment(
+        options_refresh_run_id=refresh_run_id,
+        tool_a=tool_a,
+        tool_b=tool_b,
+    )
     optionable_tickers = _optionable_tickers(features)
     held_tickers = [holding.ticker for holding in holdings]
     non_optionable_held = [
@@ -98,6 +103,7 @@ def render_hedge_readiness_report(
         non_optionable_tickers=non_optionable_held,
         optionable_tickers=sorted(optionable_tickers),
         tool_a_frame=tool_a,
+        tool_b_frame=tool_b,
         benchmark_tickers=tuple(app_config.hedge_readiness.benchmark_tickers),
         top_n=app_config.hedge_readiness.proxy_top_n,
         max_beta_diff=app_config.hedge_readiness.proxy_max_beta_diff,
@@ -120,10 +126,16 @@ def render_hedge_readiness_report(
         f"| Thin options | {optionability_counts.get('thin', 0)} |",
         f"| No listed options | {optionability_counts.get('none', 0)} |",
         f"| Holdings loaded | {len(holdings)} |",
+        f"| Tool A snapshot refresh | {_fmt_run_ids(alignment['tool_a_refresh_run_ids'])} |",
+        f"| Tool B snapshot refresh | {_fmt_run_ids(alignment['tool_b_refresh_run_ids'])} |",
+        f"| Analytical context alignment | {alignment['status']} |",
         "",
     ]
+    if alignment["message"]:
+        lines.extend([f"Alignment note: {alignment['message']}", ""])
     lines.extend(_render_holdings_section(
         app_config=app_config,
+        holdings_file_exists=paths.holdings_path.exists(),
         holdings=holdings,
         features=features,
         chains=chains,
@@ -144,6 +156,10 @@ def render_hedge_readiness_report(
         "thin_count": optionability_counts.get("thin", 0),
         "none_count": optionability_counts.get("none", 0),
         "proxy_target_count": len(proxy_map),
+        "context_alignment_status": alignment["status"],
+        "context_alignment_message": alignment["message"],
+        "tool_a_snapshot_refresh_run_ids": alignment["tool_a_refresh_run_ids"],
+        "tool_b_snapshot_refresh_run_ids": alignment["tool_b_refresh_run_ids"],
     }
     return "\n".join(lines).rstrip() + "\n", summary
 
@@ -151,6 +167,7 @@ def render_hedge_readiness_report(
 def _render_holdings_section(
     *,
     app_config: AppConfig,
+    holdings_file_exists: bool,
     holdings: list[Holding],
     features: pd.DataFrame,
     chains: dict[str, pd.DataFrame],
@@ -160,9 +177,16 @@ def _render_holdings_section(
 ) -> list[str]:
     lines = ["## Held Positions", ""]
     if not holdings:
+        message = (
+            "No holdings are configured in `data/manual/holdings/holdings.yaml`; "
+            "showing universe-level hedge readiness only."
+            if holdings_file_exists
+            else "No `data/manual/holdings/holdings.yaml` file was found; "
+            "showing universe-level hedge readiness only."
+        )
         return [
             *lines,
-            "No `data/manual/holdings/holdings.yaml` file was found; showing universe-level hedge readiness only.",
+            message,
             "",
         ]
 
@@ -332,6 +356,9 @@ def _render_proxy_section(
     )
     for target, matches in sorted(proxy_map.items()):
         for match in matches:
+            context = match.reason
+            if match.tool_b_verdict:
+                context = f"Tool B {match.tool_b_verdict}; {context}"
             lines.append(
                 "| "
                 f"{target} | "
@@ -339,7 +366,7 @@ def _render_proxy_section(
                 f"{match.proxy_type} | "
                 f"{_fmt_number(match.down_beta_diff)} | "
                 f"{match.basis_risk_label} | "
-                f"{match.reason} |"
+                f"{context} |"
             )
     lines.append("")
     return lines
@@ -487,6 +514,62 @@ def _value_counts(frame: pd.DataFrame, column: str) -> dict[str, int]:
     return {str(key): int(value) for key, value in counts.items()}
 
 
+def _context_alignment(
+    *,
+    options_refresh_run_id: str,
+    tool_a: pd.DataFrame,
+    tool_b: pd.DataFrame,
+) -> dict[str, Any]:
+    tool_a_refresh_ids = _unique_strings(tool_a, "snapshot_refresh_run_id")
+    tool_b_refresh_ids = _unique_strings(tool_b, "snapshot_refresh_run_id")
+    if not options_refresh_run_id or options_refresh_run_id == "unknown":
+        return {
+            "status": "UNKNOWN",
+            "message": "Options refresh run id is missing.",
+            "tool_a_refresh_run_ids": tool_a_refresh_ids,
+            "tool_b_refresh_run_ids": tool_b_refresh_ids,
+        }
+
+    missing: list[str] = []
+    if not tool_a_refresh_ids:
+        missing.append("Tool A snapshot refresh run id is missing")
+    if not tool_b.empty and not tool_b_refresh_ids:
+        missing.append("Tool B snapshot refresh run id is missing")
+    if missing:
+        return {
+            "status": "UNKNOWN",
+            "message": "; ".join(missing) + ".",
+            "tool_a_refresh_run_ids": tool_a_refresh_ids,
+            "tool_b_refresh_run_ids": tool_b_refresh_ids,
+        }
+
+    mismatches: list[str] = []
+    if tool_a_refresh_ids and options_refresh_run_id not in tool_a_refresh_ids:
+        mismatches.append("Tool A snapshot refresh does not match options source run")
+    if tool_b_refresh_ids and options_refresh_run_id not in tool_b_refresh_ids:
+        mismatches.append("Tool B snapshot refresh does not match options source run")
+    if mismatches:
+        return {
+            "status": "WARN",
+            "message": "; ".join(mismatches) + ".",
+            "tool_a_refresh_run_ids": tool_a_refresh_ids,
+            "tool_b_refresh_run_ids": tool_b_refresh_ids,
+        }
+    return {
+        "status": "OK",
+        "message": None,
+        "tool_a_refresh_run_ids": tool_a_refresh_ids,
+        "tool_b_refresh_run_ids": tool_b_refresh_ids,
+    }
+
+
+def _unique_strings(frame: pd.DataFrame, column: str) -> list[str]:
+    if frame.empty or column not in frame.columns:
+        return []
+    values = frame[column].dropna().astype(str).str.strip()
+    return sorted(value for value in values.unique().tolist() if value)
+
+
 def _row_float(row: pd.Series | None, column: str) -> float | None:
     if row is None or column not in row.index:
         return None
@@ -528,3 +611,11 @@ def _fmt_money(value: object) -> str:
     if numeric is None:
         return "n/a"
     return f"${numeric:,.0f}"
+
+
+def _fmt_run_ids(values: object) -> str:
+    if not isinstance(values, list) or not values:
+        return "n/a"
+    if len(values) == 1:
+        return str(values[0])
+    return ", ".join(str(value) for value in values)
