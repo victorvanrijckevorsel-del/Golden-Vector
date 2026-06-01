@@ -16,6 +16,7 @@ from golden_vector.contracts.config_models import AppConfig
 EXPECTED_CONFIG_FILES: tuple[tuple[str, str], ...] = (
     ("universe", "universe.yaml"),
     ("benchmarks", "benchmarks.yaml"),
+    ("hedge_readiness", "hedge_readiness.yaml"),
     ("horizons", "horizons.yaml"),
     ("qa", "qa.yaml"),
     ("scoring", "scoring.yaml"),

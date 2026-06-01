@@ -88,6 +88,93 @@ class BenchmarksConfig(StrictConfigModel):
         return self
 
 
+class HedgeReadinessConfig(StrictConfigModel):
+    version: int = 1
+    target_delta: float = -0.25
+    target_horizons_days: list[int] = Field(default_factory=lambda: [30, 60, 90], min_length=1)
+    optionability_open_interest_threshold: int = 1000
+    implied_move_max_spread_pct: float = 0.35
+    implied_move_min_open_interest: int = 1
+    implied_move_min_volume: int = 0
+    delta_gap_warning_threshold: float = 0.10
+    hedge_ratio_cheap_max: float = 0.40
+    hedge_ratio_expensive_min: float = 0.80
+    proxy_max_beta_diff: float = 0.35
+    proxy_top_n: int = 3
+    benchmark_tickers: list[str] = Field(default_factory=lambda: ["GDX", "GDXJ"], min_length=1)
+    gold_down_scenarios: list[float] = Field(default_factory=lambda: [0.05, 0.10, 0.20], min_length=1)
+
+    @field_validator("target_delta")
+    @classmethod
+    def valid_put_target_delta(cls, value: float) -> float:
+        if not -1.0 < value < 0.0:
+            raise ValueError("target_delta must be a negative put delta between -1 and 0")
+        return float(value)
+
+    @field_validator(
+        "optionability_open_interest_threshold",
+        "implied_move_min_open_interest",
+        "implied_move_min_volume",
+    )
+    @classmethod
+    def non_negative_ints(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("integer thresholds must be non-negative")
+        return value
+
+    @field_validator("proxy_top_n")
+    @classmethod
+    def positive_proxy_top_n(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("proxy_top_n must be positive")
+        return value
+
+    @field_validator("target_horizons_days")
+    @classmethod
+    def valid_target_horizons(cls, values: list[int]) -> list[int]:
+        if any(value <= 0 for value in values):
+            raise ValueError("target_horizons_days must be positive")
+        if len(set(values)) != len(values):
+            raise ValueError("target_horizons_days must be unique")
+        return values
+
+    @field_validator(
+        "implied_move_max_spread_pct",
+        "delta_gap_warning_threshold",
+        "proxy_max_beta_diff",
+    )
+    @classmethod
+    def positive_float_thresholds(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("float thresholds must be positive")
+        return float(value)
+
+    @field_validator("benchmark_tickers")
+    @classmethod
+    def uppercase_benchmark_tickers(cls, values: list[str]) -> list[str]:
+        normalized = [value.upper() for value in values]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("benchmark_tickers must be unique")
+        return normalized
+
+    @field_validator("gold_down_scenarios")
+    @classmethod
+    def valid_gold_down_scenarios(cls, values: list[float]) -> list[float]:
+        if any(value <= 0 or value >= 1 for value in values):
+            raise ValueError("gold_down_scenarios must be fractions between 0 and 1")
+        if len(set(values)) != len(values):
+            raise ValueError("gold_down_scenarios must be unique")
+        return values
+
+    @model_validator(mode="after")
+    def ordered_hedge_ratio_bands(self) -> "HedgeReadinessConfig":
+        if self.hedge_ratio_cheap_max <= 0:
+            raise ValueError("hedge_ratio_cheap_max must be positive")
+        if self.hedge_ratio_expensive_min <= self.hedge_ratio_cheap_max:
+            raise ValueError("hedge_ratio_expensive_min must exceed hedge_ratio_cheap_max")
+        return self
+
+
 class CustomHorizonValidation(StrictConfigModel):
     allowed_units: list[Literal["D", "M", "Y"]] = Field(default_factory=lambda: ["D", "M", "Y"])
     min_value: int = 1
@@ -479,6 +566,7 @@ class ScreeningParamsConfig(StrictConfigModel):
 class AppConfig(StrictConfigModel):
     universe: UniverseConfig
     benchmarks: BenchmarksConfig
+    hedge_readiness: HedgeReadinessConfig = Field(default_factory=HedgeReadinessConfig)
     horizons: HorizonsConfig
     qa: QaConfig
     scoring: ScoringConfig

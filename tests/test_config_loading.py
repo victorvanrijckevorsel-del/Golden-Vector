@@ -8,6 +8,8 @@ def test_load_app_config_reads_repo_yaml():
     assert len(loaded.app.universe.tickers) >= 5
     assert [benchmark.ticker for benchmark in loaded.app.benchmarks.benchmarks] == ["GDX", "GDXJ"]
     assert "benchmarks" in loaded.file_hashes
+    assert loaded.app.hedge_readiness.target_delta == -0.25
+    assert "hedge_readiness" in loaded.file_hashes
     assert loaded.app.horizons.core_horizons[0] == "5D"
     assert loaded.app.qa.near_zero_gold_return_threshold == 0.005
     assert 4000 in loaded.app.screening_params.gold_price_scenarios

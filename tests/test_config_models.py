@@ -7,6 +7,7 @@ from golden_vector.contracts.config_models import (
     CombinedVerdictThresholds,
     ConfidenceThresholds,
     GammaThresholds,
+    HedgeReadinessConfig,
     HorizonsConfig,
     QaConfig,
     ScoreWeights,
@@ -182,6 +183,65 @@ def test_benchmarks_config_rejects_duplicate_tickers():
                 ],
             }
         )
+
+
+def test_hedge_readiness_config_accepts_defaults():
+    config = HedgeReadinessConfig.model_validate(
+        {
+            "version": 1,
+            "target_delta": -0.25,
+            "target_horizons_days": [30, 60, 90],
+            "optionability_open_interest_threshold": 1000,
+            "implied_move_max_spread_pct": 0.35,
+            "implied_move_min_open_interest": 1,
+            "implied_move_min_volume": 0,
+            "delta_gap_warning_threshold": 0.10,
+            "hedge_ratio_cheap_max": 0.40,
+            "hedge_ratio_expensive_min": 0.80,
+            "proxy_max_beta_diff": 0.35,
+            "proxy_top_n": 3,
+            "benchmark_tickers": ["gdx", "gdxj"],
+            "gold_down_scenarios": [0.05, 0.10, 0.20],
+        }
+    )
+
+    assert config.target_delta == -0.25
+    assert config.target_horizons_days == [30, 60, 90]
+    assert config.benchmark_tickers == ["GDX", "GDXJ"]
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"target_delta": 0.25},
+        {"target_horizons_days": [30, 30]},
+        {"hedge_ratio_cheap_max": 1.0, "hedge_ratio_expensive_min": 0.8},
+        {"gold_down_scenarios": [0.10, 1.20]},
+        {"benchmark_tickers": ["GDX", "gdx"]},
+        {"proxy_top_n": 0},
+    ],
+)
+def test_hedge_readiness_config_rejects_invalid_thresholds(override):
+    payload = {
+        "version": 1,
+        "target_delta": -0.25,
+        "target_horizons_days": [30, 60, 90],
+        "optionability_open_interest_threshold": 1000,
+        "implied_move_max_spread_pct": 0.35,
+        "implied_move_min_open_interest": 1,
+        "implied_move_min_volume": 0,
+        "delta_gap_warning_threshold": 0.10,
+        "hedge_ratio_cheap_max": 0.40,
+        "hedge_ratio_expensive_min": 0.80,
+        "proxy_max_beta_diff": 0.35,
+        "proxy_top_n": 3,
+        "benchmark_tickers": ["GDX", "GDXJ"],
+        "gold_down_scenarios": [0.05, 0.10, 0.20],
+    }
+    payload.update(override)
+
+    with pytest.raises(ValidationError):
+        HedgeReadinessConfig.model_validate(payload)
 
 
 def test_score_weights_must_sum_to_one():

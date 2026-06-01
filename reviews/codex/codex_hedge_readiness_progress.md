@@ -19,3 +19,5 @@ Step 7 (holdings loader): committed in this step. Tests: 367 passed in 222.42s. 
 Step 8 (hedge math modules): committed in this step. Tests: 371 passed in 246.47s. Fixture smoke: yes. Notes: Added candidate put grid, liquidity-gated implied move, and premium-vs-downside cards; kept listed-strike delta gaps visible.
 
 Step 9 (proxy hedge mapping): committed in this step. Tests: 373 passed in 280.84s. Fixture smoke: yes. Notes: Added down-beta similarity proxy mapping with explicit optionable-miner and sector-ETF basis-risk labels.
+
+Step 10 (hedge-readiness config): committed in this step. Tests: 382 passed in 119.30s. Fixture smoke: n/a. Notes: Added strict hedge-readiness config thresholds and central config loading for report/candidate parameters.
