@@ -19,6 +19,7 @@ from golden_vector.hedge.candidate_puts import CandidatePut, build_candidate_put
 from golden_vector.hedge.expected_downside import compute_premium_vs_downside
 from golden_vector.hedge.holdings import Holding, load_holdings
 from golden_vector.hedge.proxy_hedge import ProxyMatch, map_proxy_hedges
+from golden_vector.ingestion.persist_options import safe_options_file_name
 
 
 @dataclass(frozen=True)
@@ -400,7 +401,7 @@ def _load_features(
     refresh_run_id = str(manifest.get("refresh_run_id", ""))
     for item in manifest.get("snapshots", []):
         ticker = str(item.get("ticker", ""))
-        feature_path = paths.options_features_dir / f"{_safe_name(ticker)}.parquet"
+        feature_path = paths.options_features_dir / f"{safe_options_file_name(ticker)}.parquet"
         frame = _read_optional_parquet(feature_path)
         if frame.empty:
             continue
@@ -527,21 +528,3 @@ def _fmt_money(value: object) -> str:
     if numeric is None:
         return "n/a"
     return f"${numeric:,.0f}"
-
-
-def _safe_name(value: str) -> str:
-    sanitized = value
-    for old, new in (
-        ("\\", "_"),
-        ("/", "_"),
-        (":", "_"),
-        ("*", "_"),
-        ("?", "_"),
-        ('"', "_"),
-        ("<", "_"),
-        (">", "_"),
-        ("|", "_"),
-        ("=", "-"),
-    ):
-        sanitized = sanitized.replace(old, new)
-    return sanitized

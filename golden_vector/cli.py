@@ -27,7 +27,6 @@ from golden_vector.app.replay_manifest import (
 )
 from golden_vector.app.run_context import RunContext, to_jsonable
 from golden_vector.features.horizons import parse_requested_horizons
-from golden_vector.features.pipeline import execute_horizon_pipeline
 from golden_vector.features.returns import RETURN_COLUMNS, compute_horizon_returns_for_ticker
 from golden_vector.ingestion.foundation import execute_foundation_pipeline
 from golden_vector.ingestion.options_phase import (

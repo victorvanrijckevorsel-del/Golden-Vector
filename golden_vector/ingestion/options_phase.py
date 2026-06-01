@@ -33,6 +33,7 @@ from golden_vector.ingestion.fetch_risk_free_rate import fetch_risk_free_rate
 from golden_vector.ingestion.persist_options import (
     OptionsSnapshotRecord,
     persist_options_snapshot,
+    safe_options_file_name,
     write_latest_options_manifest,
 )
 from golden_vector.ingestion.yahoo_client import YahooClient
@@ -233,7 +234,7 @@ def _append_feature_rows(
         ticker = str(row.get("ticker") or "").strip()
         if not ticker:
             continue
-        path = paths.options_features_dir / f"{_safe_name(ticker)}.parquet"
+        path = paths.options_features_dir / f"{safe_options_file_name(ticker)}.parquet"
         frame = pd.DataFrame([row])
         if path.exists():
             existing = pd.read_parquet(path)
@@ -272,8 +273,8 @@ def _fetch_and_persist_benchmarks(
     paths.benchmarks_dir.mkdir(parents=True, exist_ok=True)
     written_paths: list[Path] = []
     for ticker, frame in sorted(histories.items()):
-        run_path = snapshot_dir / f"{_safe_name(ticker)}.parquet"
-        latest_path = paths.benchmarks_dir / f"{_safe_name(ticker)}.parquet"
+        run_path = snapshot_dir / f"{safe_options_file_name(ticker)}.parquet"
+        latest_path = paths.benchmarks_dir / f"{safe_options_file_name(ticker)}.parquet"
         frame.to_parquet(run_path, index=False)
         frame.to_parquet(latest_path, index=False)
         run_context.record_artifact(run_path)
@@ -312,21 +313,3 @@ def _phase_status(
     if error_count or risk_free_message or any(item.status == "FAIL" for item in benchmark_statuses):
         return "WARN"
     return "PASS"
-
-
-def _safe_name(value: str) -> str:
-    sanitized = value
-    for old, new in (
-        ("\\", "_"),
-        ("/", "_"),
-        (":", "_"),
-        ("*", "_"),
-        ("?", "_"),
-        ('"', "_"),
-        ("<", "_"),
-        (">", "_"),
-        ("|", "_"),
-        ("=", "-"),
-    ):
-        sanitized = sanitized.replace(old, new)
-    return sanitized

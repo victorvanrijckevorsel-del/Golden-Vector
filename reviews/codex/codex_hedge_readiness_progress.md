@@ -31,3 +31,5 @@ Step 11 fix (whitespace audit): committed in this step. Tests: 386 passed in 98.
 Step 12 (hedge-readiness report CLI): committed in this step. Tests: 388 passed in 116.33s. Fixture smoke: yes. Notes: Added manifest-backed markdown report generation, hedge-readiness CLI, latest.md output, holdings mode, candidate tables, premium-vs-downside cards, IV ranking, and proxy map.
 
 Step 13 (hedge-readiness docs): committed in this step. Tests: 388 passed in 115.08s. Fixture smoke: n/a. Notes: Documented update-data options refresh, --no-options recovery, holdings.yaml, report output, and architecture map entries.
+
+Final self-review cleanup: committed in this step. Tests: 388 passed in 102.30s. Fixture smoke: yes. Live smoke: `python main.py update-data` completed with foundation WARN/options PASS; `python main.py hedge-readiness` wrote the report. Notes: Centralized options artifact filename sanitization, removed duplicated safe-name helpers, removed an unused CLI import, and rechecked whitespace/compile/import issues.

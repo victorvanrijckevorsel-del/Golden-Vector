@@ -61,7 +61,7 @@ def persist_options_snapshot(
         options_available=options_available,
         message=message,
     )
-    snapshot_path = _options_snapshot_dir(run_context) / f"{_safe_name(ticker)}.parquet"
+    snapshot_path = _options_snapshot_dir(run_context) / f"{safe_options_file_name(ticker)}.parquet"
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
     snapshot.to_parquet(snapshot_path, index=False)
     run_context.record_artifact(snapshot_path)
@@ -163,7 +163,9 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _safe_name(value: str) -> str:
+def safe_options_file_name(value: str) -> str:
+    """Return the stable filesystem name for one options ticker artifact."""
+
     sanitized = value
     for old, new in (
         ("\\", "_"),
