@@ -24,4 +24,6 @@ Step 10 (hedge-readiness config): committed in this step. Tests: 382 passed in 1
 
 Self-review cleanup after step 10: committed in this step. Tests: 382 passed in 119.30s. Fixture smoke: yes. Notes: Consolidated option-chain normalization and quote gating, fixed negative down-beta downside math, and added edge-case tests.
 
-Step 11 (options ingestion phase; swapped ahead of report): committed in this step. Tests: 386 passed in 131.40s. Fixture smoke: yes. Notes: Wired update-data --options/--no-options, persisted options/benchmark snapshots, wrote options features, and captured latest options manifest for replay.
+Step 11 (options ingestion phase; swapped ahead of report): committed in this step. Tests: 386 passed in 98.79s. Fixture smoke: yes. Notes: Wired update-data --options/--no-options, persisted options/benchmark snapshots, wrote options features, and captured latest options manifest for replay.
+
+Step 11 fix (whitespace audit): committed in this step. Tests: 386 passed in 98.79s. Fixture smoke: n/a. Notes: Removed trailing blank line caught by git diff --check before starting report work.

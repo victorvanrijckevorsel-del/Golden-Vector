@@ -17,4 +17,3 @@ def test_update_data_no_options_flag_disables_options_phase():
 
     assert args.command == "update-data"
     assert args.options is False
-
