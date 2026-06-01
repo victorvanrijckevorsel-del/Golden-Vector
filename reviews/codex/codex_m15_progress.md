@@ -6,4 +6,6 @@ Step 1 (Black-Scholes put price): committed 3ba8a52. Tests: 400 passed in 298.26
 
 Step 2 (hedge-readiness scenario config): committed a2b1931. Tests: 406 passed in 241.52s. Notes: Added scenario quantity, scenario ladder, speculation ticker cap, and optionability-tier minimum config with schema validation.
 
-Step 3 (scenario math): committed in this step. Tests: 414 passed in 153.33s. Notes: Added put P&L scenario rows, breakeven handling, low-down-beta skips, and stock-price clamp coverage.
+Step 3 (scenario math): committed 9ee0ddc. Tests: 414 passed in 153.33s. Notes: Added put P&L scenario rows, breakeven handling, low-down-beta skips, and stock-price clamp coverage.
+
+Step 4 (comparison table): committed in this step. Tests: 421 passed in 146.97s. Notes: Added cross-ticker comparison rows, sortable columns, missing-value handling, and skipped-bundle filtering.
