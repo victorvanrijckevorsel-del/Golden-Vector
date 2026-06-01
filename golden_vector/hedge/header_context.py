@@ -68,6 +68,8 @@ def _read_latest_options_manifest(paths: ProjectPaths) -> tuple[dict[str, Any], 
         payload = json.loads(paths.latest_options_manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return {}, [f"latest options manifest unreadable: {exc}"]
+    if not isinstance(payload, dict):
+        return {}, ["latest options manifest unreadable: expected a JSON object"]
     return payload, []
 
 
@@ -105,7 +107,9 @@ def _read_history(path: Path, notes: list[str], label: str) -> pd.DataFrame:
         return pd.DataFrame()
     try:
         return pd.read_parquet(path)
-    except (OSError, ValueError) as exc:
+    except Exception as exc:
+        # Header context is diagnostic only; bad context files should degrade the
+        # report, not block the hedge-readiness command.
         notes.append(f"{label} unreadable at {path}: {exc}")
         return pd.DataFrame()
 
@@ -156,7 +160,7 @@ def _implied_vs_modeled_rows(
             continue
         implied_move = _as_float(feature.get("implied_move_60d"))
         down_beta = _as_float(tool_a_by_ticker.get(ticker, {}).get("down_beta_core"))
-        modeled_downside = abs(down_beta * -0.10) if down_beta is not None and down_beta > 0 else None
+        modeled_downside = max(down_beta, 0.0) * 0.10 if down_beta is not None else None
         rows.append(
             ImpliedVsModeledRow(
                 ticker=ticker,

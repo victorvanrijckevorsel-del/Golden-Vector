@@ -172,6 +172,27 @@ def test_build_speculation_section_annotates_missing_inputs(tmp_path):
     )
 
 
+def test_build_speculation_section_annotates_missing_risk_free_rate(tmp_path):
+    paths = build_test_paths(tmp_path)
+    config = HedgeReadinessConfig()
+
+    blocks = build_speculation_section(
+        paths=paths,
+        options_features=_features([("AEM", "directly_hedgeable", 0.20, 50.0)]),
+        tool_a_frame=_tool_a([("AEM", 1.40, "HIGH")]),
+        tool_b_frame=pd.DataFrame(),
+        raw_options_by_ticker={"AEM": _candidate_chain()},
+        risk_free_rate=None,
+        config=config,
+    )
+
+    assert blocks[0].candidates == []
+    assert (
+        "Risk-free rate is unavailable; delta-based candidate selection is skipped."
+        in blocks[0].annotations
+    )
+
+
 def test_build_speculation_section_bubbles_low_down_beta_annotation(tmp_path):
     paths = build_test_paths(tmp_path)
     config = HedgeReadinessConfig()

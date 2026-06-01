@@ -142,6 +142,8 @@ def _ticker_block(
         annotations.append("Current stock price is unavailable.")
     if chain.empty:
         annotations.append("No raw options chain is available.")
+    if risk_free_rate is None:
+        annotations.append("Risk-free rate is unavailable; delta-based candidate selection is skipped.")
     if not candidates:
         annotations.append("No usable listed put candidate found for the configured horizons.")
 

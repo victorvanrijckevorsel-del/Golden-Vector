@@ -12,4 +12,6 @@ Step 4 (comparison table): committed eb50582. Tests: 421 passed in 146.97s. Note
 
 Step 5 (header context): committed 6954ba1. Tests: 426 passed in 151.47s. Notes: Added manifest-based gold/GDX context, implied-vs-modeled heuristic labels, and graceful missing-data notes.
 
-Step 6 (speculation section): committed in this step. Tests: 434 passed in 148.84s. Notes: Added holdings-independent universe blocks, optionability filtering, cheap-IV sorting, quantity/max-ticker overrides, and per-block annotations. Static check note: `python -m ruff check ...` could not run because ruff is not installed in this environment.
+Step 6 (speculation section): committed b8020e6. Tests: 434 passed in 148.84s. Notes: Added holdings-independent universe blocks, optionability filtering, cheap-IV sorting, quantity/max-ticker overrides, and per-block annotations. Static check note: `python -m ruff check ...` could not run because ruff is not installed in this environment.
+
+Checkpoint A self-review fixes: committed in this step. Tests: 438 passed in 150.85s. Notes: Treated negative Tool A down-beta as zero modeled downside instead of unavailable data, made header context degrade on malformed manifests and corrupt history files, and added a risk-free-rate annotation for speculation candidate selection.

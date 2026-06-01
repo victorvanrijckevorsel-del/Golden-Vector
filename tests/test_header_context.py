@@ -52,6 +52,39 @@ def test_build_header_context_handles_missing_manifest_and_histories(tmp_path):
     assert any("benchmark_snapshot_paths has no GDX" in note for note in context.data_notes)
 
 
+def test_build_header_context_handles_malformed_manifest(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.latest_options_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_options_manifest_path.write_text("[]", encoding="utf-8")
+
+    context = build_header_context(
+        paths=paths,
+        options_features=pd.DataFrame(),
+        tool_a_frame=pd.DataFrame(),
+    )
+
+    assert "latest options manifest unreadable: expected a JSON object" in context.data_notes
+    assert context.gold.price is None
+    assert context.gdx.price is None
+
+
+def test_build_header_context_handles_corrupt_history_file(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_manifest_and_histories(paths)
+    gdx_path = paths.runs_dir / "refresh-run" / "snapshots" / "benchmarks" / "GDX.parquet"
+    gdx_path.write_text("not a parquet file", encoding="utf-8")
+
+    context = build_header_context(
+        paths=paths,
+        options_features=pd.DataFrame(),
+        tool_a_frame=pd.DataFrame(),
+    )
+
+    assert context.gold.price == 122.0
+    assert context.gdx.price is None
+    assert any("GDX history unreadable" in note for note in context.data_notes)
+
+
 def test_build_header_context_handles_missing_implied_move_for_some_tickers(tmp_path):
     paths = build_test_paths(tmp_path)
     _write_manifest_and_histories(paths)
@@ -82,6 +115,31 @@ def test_build_header_context_handles_missing_implied_move_for_some_tickers(tmp_
     assert [row.ticker for row in context.implied_vs_modeled_rows] == ["AEM", "NEM"]
     assert context.implied_vs_modeled_rows[0].verdict == "data unavailable (heuristic)"
     assert context.implied_vs_modeled_rows[1].verdict == "market > model (heuristic)"
+
+
+def test_build_header_context_treats_negative_down_beta_as_zero_modeled_downside(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_manifest_and_histories(paths)
+    features = pd.DataFrame(
+        [
+            {
+                "ticker": "AEM",
+                "optionability_tier": "directly_hedgeable",
+                "implied_move_60d": 0.10,
+            }
+        ]
+    )
+    tool_a = pd.DataFrame([{"ticker": "AEM", "down_beta_core": -1.00}])
+
+    context = build_header_context(
+        paths=paths,
+        options_features=features,
+        tool_a_frame=tool_a,
+    )
+
+    row = context.implied_vs_modeled_rows[0]
+    assert row.modeled_downside_at_minus10 == 0.0
+    assert row.verdict == "market > model (heuristic)"
 
 
 def test_build_header_context_accepts_feature_frames_by_ticker(tmp_path):
