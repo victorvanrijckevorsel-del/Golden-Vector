@@ -5,6 +5,7 @@ import pytest
 
 from golden_vector.features.black_scholes import (
     black_scholes_delta,
+    black_scholes_put_price,
     normal_cdf,
     strike_for_target_delta,
 )
@@ -40,6 +41,83 @@ def test_black_scholes_put_delta_matches_reference_value():
     )
 
     assert delta == pytest.approx(-0.363169, abs=1e-6)
+
+
+def test_black_scholes_put_price_matches_reference_value():
+    price = black_scholes_put_price(
+        spot=100.0,
+        strike=100.0,
+        time_to_expiry_years=1.0,
+        risk_free_rate=0.05,
+        implied_volatility=0.20,
+    )
+
+    assert price == pytest.approx(5.573526, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    "spot,strike,time_to_expiry_years,risk_free_rate,implied_volatility",
+    [
+        (100.0, 100.0, 1.0, 0.05, 0.20),
+        (75.0, 80.0, 0.5, 0.03, 0.35),
+    ],
+)
+def test_black_scholes_put_price_satisfies_put_call_parity(
+    spot,
+    strike,
+    time_to_expiry_years,
+    risk_free_rate,
+    implied_volatility,
+):
+    put_price = black_scholes_put_price(
+        spot=spot,
+        strike=strike,
+        time_to_expiry_years=time_to_expiry_years,
+        risk_free_rate=risk_free_rate,
+        implied_volatility=implied_volatility,
+    )
+    call_price = _black_scholes_call_price(
+        spot=spot,
+        strike=strike,
+        time_to_expiry_years=time_to_expiry_years,
+        risk_free_rate=risk_free_rate,
+        implied_volatility=implied_volatility,
+    )
+
+    assert put_price is not None
+    discounted_strike = strike * math.exp(-risk_free_rate * time_to_expiry_years)
+    assert call_price + discounted_strike == pytest.approx(put_price + spot, abs=1e-6)
+
+
+def test_black_scholes_put_price_uses_spot_zero_limit_value():
+    price = black_scholes_put_price(
+        spot=0.0,
+        strike=40.0,
+        time_to_expiry_years=0.5,
+        risk_free_rate=0.04,
+        implied_volatility=None,
+    )
+
+    assert price == pytest.approx(40.0 * math.exp(-0.04 * 0.5))
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"spot": -1.0, "strike": 100.0, "time_to_expiry_years": 1.0, "implied_volatility": 0.2},
+        {"spot": 100.0, "strike": 0.0, "time_to_expiry_years": 1.0, "implied_volatility": 0.2},
+        {"spot": 100.0, "strike": 100.0, "time_to_expiry_years": 0.0, "implied_volatility": 0.2},
+        {"spot": 100.0, "strike": 100.0, "time_to_expiry_years": 1.0, "implied_volatility": 0.0},
+        {"spot": 100.0, "strike": 100.0, "time_to_expiry_years": 1.0, "implied_volatility": None},
+    ],
+)
+def test_black_scholes_put_price_returns_none_for_degenerate_inputs(kwargs):
+    price = black_scholes_put_price(
+        risk_free_rate=0.04,
+        **kwargs,
+    )
+
+    assert price is None
 
 
 @pytest.mark.parametrize(
@@ -148,3 +226,23 @@ def test_strike_for_target_delta_rejects_unknown_option_type():
             target_delta=-0.25,
             chain_slice=pd.DataFrame([{"delta": -0.25}]),
         )
+
+
+def _black_scholes_call_price(
+    *,
+    spot: float,
+    strike: float,
+    time_to_expiry_years: float,
+    risk_free_rate: float,
+    implied_volatility: float,
+) -> float:
+    sqrt_time = math.sqrt(time_to_expiry_years)
+    sigma_sqrt_time = implied_volatility * sqrt_time
+    d1 = (
+        math.log(spot / strike)
+        + (risk_free_rate + 0.5 * implied_volatility * implied_volatility)
+        * time_to_expiry_years
+    ) / sigma_sqrt_time
+    d2 = d1 - sigma_sqrt_time
+    discounted_strike = strike * math.exp(-risk_free_rate * time_to_expiry_years)
+    return spot * normal_cdf(d1) - discounted_strike * normal_cdf(d2)

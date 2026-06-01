@@ -48,6 +48,35 @@ def black_scholes_delta(
     return call_delta - 1.0
 
 
+def black_scholes_put_price(
+    *,
+    spot: float,
+    strike: float,
+    time_to_expiry_years: float,
+    risk_free_rate: float,
+    implied_volatility: float | None,
+) -> float | None:
+    """Return the European Black-Scholes put price."""
+
+    if strike <= 0 or time_to_expiry_years <= 0 or spot < 0:
+        return None
+    if spot == 0:
+        return strike * math.exp(-risk_free_rate * time_to_expiry_years)
+    if implied_volatility is None or implied_volatility <= 0:
+        return None
+
+    sqrt_time = math.sqrt(time_to_expiry_years)
+    sigma_sqrt_time = implied_volatility * sqrt_time
+    d1 = (
+        math.log(spot / strike)
+        + (risk_free_rate + 0.5 * implied_volatility * implied_volatility)
+        * time_to_expiry_years
+    ) / sigma_sqrt_time
+    d2 = d1 - sigma_sqrt_time
+    discounted_strike = strike * math.exp(-risk_free_rate * time_to_expiry_years)
+    return discounted_strike * normal_cdf(-d2) - spot * normal_cdf(-d1)
+
+
 def strike_for_target_delta(
     *,
     option_type: Literal["P", "C"],
