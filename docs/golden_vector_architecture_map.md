@@ -51,6 +51,7 @@ flowchart TD
 | `golden_vector/features/` | Horizon parsing and return engine | [features](C:/Users/Emanuel/code/Golden-Vector/golden_vector/features) |
 | `golden_vector/model/` | Tool A metrics, labels, scoring, ranking | [model](C:/Users/Emanuel/code/Golden-Vector/golden_vector/model) |
 | `golden_vector/screening/` | Tool B manual-data store, valuation, ranking | [screening](C:/Users/Emanuel/code/Golden-Vector/golden_vector/screening) |
+| `golden_vector/hedge/` | Hedge Readiness candidate puts, premium-vs-downside cards, proxy mapping, and markdown report | [hedge](C:/Users/Emanuel/code/Golden-Vector/golden_vector/hedge) |
 | `golden_vector/combined/` | Legacy archived backend code, not active runtime | [combined](C:/Users/Emanuel/code/Golden-Vector/golden_vector/combined) |
 | `golden_vector/serve/` | Thin local presentation layer for the workspace UI | [serve](C:/Users/Emanuel/code/Golden-Vector/golden_vector/serve) |
 | `data/manual/` | Local Tool B manual-data store plus optional CSV import/export support | [data/manual](C:/Users/Emanuel/code/Golden-Vector/data/manual) |
@@ -60,9 +61,10 @@ flowchart TD
 
 | Command | What it does | Main path |
 |---|---|---|
-| `python main.py update-data` | Refreshes Yahoo-backed market data and publishes the latest validated local snapshot | [foundation.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/ingestion/foundation.py), [latest_data.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/app/latest_data.py) |
+| `python main.py update-data` | Refreshes Yahoo-backed market data, publishes the latest validated local snapshot, and refreshes Hedge Readiness options unless `--no-options` is passed | [foundation.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/ingestion/foundation.py), [options_phase.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/ingestion/options_phase.py), [latest_data.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/app/latest_data.py) |
 | `python main.py tool-a` | Uses the latest validated local snapshot, builds the official weekly structural Tool A sample, then scores and explains the latest names | [features/pipeline.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/features/pipeline.py), [model/pipeline.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/model/pipeline.py) |
 | `python main.py tool-b --gold-price 4000` | Uses the latest validated local snapshot plus the local Tool B manual-data store, then runs screening | [screening/pipeline.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/screening/pipeline.py) |
+| `python main.py hedge-readiness` | Writes the local Hedge Readiness markdown report from the latest options snapshot, Tool A, optional Tool B context, and optional holdings | [report.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/hedge/report.py) |
 | `python main.py manual-data ...` | Creates, imports, exports, shows, and updates slow-moving Tool B inputs directly in the local store | [manual_store.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/screening/manual_store.py), [manual_data.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/screening/manual_data.py) |
 | `python main.py manual-note ...` | Adds and lists per-stock follow-up notes | [manual_store.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/screening/manual_store.py) |
 | `python main.py workspace` | Starts the local browser workspace for Tool B inputs, notes, and latest Tool A / Tool B snapshots | [workspace.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/serve/workspace.py) |
@@ -75,6 +77,7 @@ flowchart TD
 | Backbone | Built | Fetches and validates raw market data, then normalizes it to USD |
 | Tool A | Built | Computes structural delta, gamma, asymmetry, confidence, and volatility diagnostics from weekly USD-normalized returns, then scores and explains names |
 | Tool B | Built | Uses the local manual-data store plus market snapshots to screen and rank names |
+| Hedge Readiness | Built | Captures latest option chains, computes hedge features, and writes a local markdown report for direct hedges and proxy paths |
 | Combined backend | De-scoped | Old backend preserved as legacy code, but no longer part of the active product |
 | Tests | Strong | 282+ passing tests covering core business rules, orchestration, the structural Tool A pipeline, the SQLite manual store, the workspace UI (three views + DataTables sort/filter + Screening Parameters overrides), Tool B scenario math, and provenance/alias safety |
 | Serve / dashboard | Built | Local browser workspace at `/`, `/tool-a`, `/tool-b` with click-sort, per-column filter dropdowns, live search, per-ticker detail pages, and live scenario overrides (gold-price, thresholds, tier discounts) for Tool B |
@@ -87,6 +90,7 @@ flowchart TD
 | Normalization | USD-normalized parquet + normalization QA | `data/intermediate/`, `data/runs/` |
 | Tool A | full-history + latest snapshot parquet/csv plus structural window metrics | `data/output/tool_a/` |
 | Tool B | full-history + latest snapshot parquet/csv | `data/output/tool_b/` |
+| Hedge Readiness | run-local options snapshots, derived options features, and markdown reports | `data/runs/<run_id>/snapshots/options/`, `data/intermediate/options_features/`, `data/output/hedge_readiness/` |
 | Workspace | local browser view over latest Tool A / Tool B snapshots plus Tool B manual store | `golden_vector/serve/workspace.py` |
 | Future Combined view | later side-by-side output only | not active yet |
 

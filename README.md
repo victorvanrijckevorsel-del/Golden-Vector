@@ -60,9 +60,11 @@ The repo now includes:
 
 Runtime model:
 - `update-data` is the explicit refresh step for Yahoo-backed market data
+- `update-data` refreshes Hedge Readiness option-chain snapshots by default; use `--no-options` to skip that phase when only the foundation refresh is needed
 - `foundation` remains as a legacy alias for the same refresh step
 - `tool-a` uses the latest validated local market-data snapshot by default
 - `tool-b` uses the latest validated local market-data snapshot plus local manual inputs by default
+- `hedge-readiness` writes a local markdown report under `data/output/hedge_readiness/` from the latest options snapshot
 - `compare-horizons` uses the latest validated local market-data snapshot by default
 - `workspace` requires the local Tool B store (run `manual-data init` first) and then serves a thin local UI for manual inputs, notes, and latest outputs. It will not silently create or seed the store on start.
 - Combined is no longer part of the active backend and will return later only as a side-by-side compare view
@@ -102,6 +104,7 @@ Workspace notes (current behaviour):
 python main.py refresh        # update-data -> tool-a -> tool-b in one command
 python main.py status         # one-screen operational summary
 python main.py workspace      # browse + edit in the browser
+python main.py hedge-readiness # write the latest hedge-readiness markdown report
 ```
 
 `refresh` chains the three pipeline steps and prints `status` at the end.
@@ -109,6 +112,7 @@ If any step fails, it stops early and prints the partial status.
 Useful flags:
 - `--gold-price 4500` to override the config default for this run only
 - `--skip-tool-b` to refresh foundation + Tool A only (handy when manual data is incomplete)
+- `python main.py update-data --no-options` to skip the Hedge Readiness options phase for one refresh
 
 `tool-b` now reads the gold-price assumption from
 `config/screening_params.yaml` (`default_gold_price_assumption: 4000`) when
