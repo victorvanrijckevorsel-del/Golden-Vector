@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from datetime import date
 from pathlib import Path
 from typing import Sequence
 
@@ -29,6 +30,10 @@ from golden_vector.features.horizons import parse_requested_horizons
 from golden_vector.features.pipeline import execute_horizon_pipeline
 from golden_vector.features.returns import RETURN_COLUMNS, compute_horizon_returns_for_ticker
 from golden_vector.ingestion.foundation import execute_foundation_pipeline
+from golden_vector.ingestion.options_phase import (
+    run_options_ingestion_phase,
+    skipped_options_phase_summary,
+)
 from golden_vector.model.pipeline import execute_tool_a_profile_pipeline
 from golden_vector.screening.manual_data import (
     bootstrap_manual_screening_data,
@@ -61,9 +66,23 @@ def build_parser() -> argparse.ArgumentParser:
         "foundation",
         help="Legacy alias for update-data; refresh raw ingestion, QA, and USD normalization.",
     )
-    subparsers.add_parser(
+    update_data_parser = subparsers.add_parser(
         "update-data",
         help="Refresh market data, run QA, and publish the latest validated local artifacts.",
+    )
+    update_data_options = update_data_parser.add_mutually_exclusive_group()
+    update_data_options.add_argument(
+        "--options",
+        dest="options",
+        action="store_true",
+        default=True,
+        help="Fetch and persist hedge-readiness options data after the foundation refresh.",
+    )
+    update_data_options.add_argument(
+        "--no-options",
+        dest="options",
+        action="store_false",
+        help="Skip the hedge-readiness options phase for this update-data run.",
     )
     subparsers.add_parser(
         "tool-a",
@@ -293,7 +312,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     paths = ProjectPaths.discover()
 
     if args.command in {"foundation", "update-data"}:
-        return run_foundation(paths, command_name=args.command)
+        return run_foundation(
+            paths,
+            command_name=args.command,
+            include_options=getattr(args, "options", True),
+        )
 
     if args.command == "tool-a":
         return run_tool_a(paths)
@@ -335,7 +358,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 2
 
 
-def run_foundation(paths: ProjectPaths, *, command_name: str = "foundation") -> int:
+def run_foundation(
+    paths: ProjectPaths,
+    *,
+    command_name: str = "foundation",
+    include_options: bool = True,
+) -> int:
     run_context: RunContext | None = None
 
     try:
@@ -343,7 +371,7 @@ def run_foundation(paths: ProjectPaths, *, command_name: str = "foundation") -> 
         run_context = RunContext.start(
             paths=paths,
             command=command_name,
-            parameters={},
+            parameters={"options": include_options},
             config_hash=loaded_config.combined_hash,
         )
         configure_logging(run_context.log_path)
@@ -372,6 +400,7 @@ def run_foundation(paths: ProjectPaths, *, command_name: str = "foundation") -> 
             "core_horizon_count": len(loaded_config.app.horizons.core_horizons),
             "gold_price_scenarios": loaded_config.app.screening_params.gold_price_scenarios,
             "combined_config_hash": loaded_config.combined_hash,
+            "options_phase_requested": include_options,
         }
         run_context.write_json("config_summary.json", config_summary)
 
@@ -419,19 +448,54 @@ def run_foundation(paths: ProjectPaths, *, command_name: str = "foundation") -> 
             notes.append(f"Snapshot manifest: {manifest_path.relative_to(paths.repo_root).as_posix()}.")
         else:
             notes.append("Latest validated local market-data snapshot was left unchanged.")
+
+        if include_options and result.overall_status != "FAIL":
+            snapshot_date = _foundation_result_as_of_date(result)
+            options_result = run_options_ingestion_phase(
+                paths=paths,
+                run_context=run_context,
+                app_config=loaded_config.app,
+                normalized_equity_histories=result.normalized_equity_histories,
+                as_of_date=snapshot_date,
+            )
+            options_summary = options_result.summary
+            notes.append(
+                "Options phase completed with "
+                f"{options_summary['options_phase_status']} status "
+                f"({options_summary['options_success_count']} optionable, "
+                f"{options_summary['options_empty_count']} empty, "
+                f"{options_summary['options_error_count']} errors)."
+            )
+        elif include_options:
+            options_summary = skipped_options_phase_summary(
+                reason="Foundation status was FAIL.",
+            )
+            run_context.write_json("options_phase_summary.json", options_summary)
+            notes.append("Options phase skipped because foundation failed.")
+        else:
+            options_summary = skipped_options_phase_summary(
+                reason="Operator passed --no-options.",
+            )
+            run_context.write_json("options_phase_summary.json", options_summary)
+            notes.append("Options phase skipped by --no-options.")
+
+        final_status = _combine_foundation_and_options_status(
+            foundation_status=result.overall_status,
+            options_status=str(options_summary.get("options_phase_status", "SKIPPED")),
+        )
         run_context.finalize(
-            status=result.overall_status,
-            summary={**config_summary, **result.summary},
+            status=final_status,
+            summary={**config_summary, **result.summary, **options_summary},
             notes=notes,
         )
 
-        if result.overall_status == "FAIL":
+        if final_status == "FAIL":
             LOGGER.error("Foundation run completed with blocking QA failures.")
             return 1
 
         LOGGER.info(
             "Foundation run completed with status %s.",
-            result.overall_status,
+            final_status,
         )
         return 0
     except Exception as exc:
@@ -439,7 +503,7 @@ def run_foundation(paths: ProjectPaths, *, command_name: str = "foundation") -> 
             run_context = RunContext.start(
                 paths=paths,
                 command=command_name,
-                parameters={},
+                parameters={"options": include_options},
                 config_hash="UNAVAILABLE",
             )
             configure_logging(run_context.log_path)
@@ -450,6 +514,34 @@ def run_foundation(paths: ProjectPaths, *, command_name: str = "foundation") -> 
             notes=[f"{command_name} run failed before completion."],
         )
         return 1
+
+
+def _foundation_result_as_of_date(result: object) -> date:
+    market_snapshots = getattr(result, "normalized_market_snapshots", pd.DataFrame())
+    if isinstance(market_snapshots, pd.DataFrame) and not market_snapshots.empty:
+        if "snapshot_date" in market_snapshots.columns:
+            values = market_snapshots["snapshot_date"].dropna()
+            if not values.empty:
+                return pd.to_datetime(values.max()).date()
+    gold_history = getattr(result, "gold_history", pd.DataFrame())
+    if isinstance(gold_history, pd.DataFrame) and not gold_history.empty:
+        if "date" in gold_history.columns:
+            values = gold_history["date"].dropna()
+            if not values.empty:
+                return pd.to_datetime(values.max()).date()
+    return pd.Timestamp.utcnow().date()
+
+
+def _combine_foundation_and_options_status(
+    *,
+    foundation_status: str,
+    options_status: str,
+) -> str:
+    if foundation_status == "FAIL":
+        return "FAIL"
+    if options_status == "WARN" and foundation_status == "PASS":
+        return "WARN"
+    return foundation_status
 
 
 def run_tool_a(paths: ProjectPaths) -> int:

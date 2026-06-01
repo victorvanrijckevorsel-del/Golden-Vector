@@ -23,3 +23,5 @@ Step 9 (proxy hedge mapping): committed in this step. Tests: 373 passed in 280.8
 Step 10 (hedge-readiness config): committed in this step. Tests: 382 passed in 119.30s. Fixture smoke: n/a. Notes: Added strict hedge-readiness config thresholds and central config loading for report/candidate parameters.
 
 Self-review cleanup after step 10: committed in this step. Tests: 382 passed in 119.30s. Fixture smoke: yes. Notes: Consolidated option-chain normalization and quote gating, fixed negative down-beta downside math, and added edge-case tests.
+
+Step 11 (options ingestion phase; swapped ahead of report): committed in this step. Tests: 386 passed in 131.40s. Fixture smoke: yes. Notes: Wired update-data --options/--no-options, persisted options/benchmark snapshots, wrote options features, and captured latest options manifest for replay.
