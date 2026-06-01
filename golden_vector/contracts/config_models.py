@@ -103,6 +103,13 @@ class HedgeReadinessConfig(StrictConfigModel):
     proxy_top_n: int = 3
     benchmark_tickers: list[str] = Field(default_factory=lambda: ["GDX", "GDXJ"], min_length=1)
     gold_down_scenarios: list[float] = Field(default_factory=lambda: [0.05, 0.10, 0.20], min_length=1)
+    default_scenario_quantity: int = 5
+    default_scenarios: list[float] = Field(
+        default_factory=lambda: [0.0, -0.05, -0.10, -0.15, -0.20],
+        min_length=1,
+    )
+    optionability_tier_min: Literal["directly_hedgeable", "thin"] = "directly_hedgeable"
+    max_tickers_speculation_section: int = 15
 
     @field_validator("target_delta")
     @classmethod
@@ -127,6 +134,13 @@ class HedgeReadinessConfig(StrictConfigModel):
     def positive_proxy_top_n(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("proxy_top_n must be positive")
+        return value
+
+    @field_validator("default_scenario_quantity", "max_tickers_speculation_section")
+    @classmethod
+    def positive_scenario_ints(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("scenario integer settings must be positive")
         return value
 
     @field_validator("target_horizons_days")
@@ -165,6 +179,16 @@ class HedgeReadinessConfig(StrictConfigModel):
         if len(set(values)) != len(values):
             raise ValueError("gold_down_scenarios must be unique")
         return values
+
+    @field_validator("default_scenarios")
+    @classmethod
+    def valid_default_scenarios(cls, values: list[float]) -> list[float]:
+        normalized = [float(value) for value in values]
+        if any(value <= -1 or value > 0 for value in normalized):
+            raise ValueError("default_scenarios must be fractions greater than -1 and at most 0")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("default_scenarios must be unique")
+        return normalized
 
     @model_validator(mode="after")
     def ordered_hedge_ratio_bands(self) -> "HedgeReadinessConfig":

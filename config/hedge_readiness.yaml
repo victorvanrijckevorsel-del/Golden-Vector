@@ -20,3 +20,12 @@ gold_down_scenarios:
   - 0.05
   - 0.10
   - 0.20
+default_scenario_quantity: 5
+default_scenarios:
+  - 0.0
+  - -0.05
+  - -0.10
+  - -0.15
+  - -0.20
+optionability_tier_min: directly_hedgeable
+max_tickers_speculation_section: 15

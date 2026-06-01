@@ -202,12 +202,20 @@ def test_hedge_readiness_config_accepts_defaults():
             "proxy_top_n": 3,
             "benchmark_tickers": ["gdx", "gdxj"],
             "gold_down_scenarios": [0.05, 0.10, 0.20],
+            "default_scenario_quantity": 5,
+            "default_scenarios": [0.0, -0.05, -0.10, -0.15, -0.20],
+            "optionability_tier_min": "directly_hedgeable",
+            "max_tickers_speculation_section": 15,
         }
     )
 
     assert config.target_delta == -0.25
     assert config.target_horizons_days == [30, 60, 90]
     assert config.benchmark_tickers == ["GDX", "GDXJ"]
+    assert config.default_scenario_quantity == 5
+    assert config.default_scenarios == [0.0, -0.05, -0.10, -0.15, -0.20]
+    assert config.optionability_tier_min == "directly_hedgeable"
+    assert config.max_tickers_speculation_section == 15
 
 
 @pytest.mark.parametrize(
@@ -219,6 +227,12 @@ def test_hedge_readiness_config_accepts_defaults():
         {"gold_down_scenarios": [0.10, 1.20]},
         {"benchmark_tickers": ["GDX", "gdx"]},
         {"proxy_top_n": 0},
+        {"default_scenario_quantity": 0},
+        {"default_scenarios": [0.0, -0.05, -0.05]},
+        {"default_scenarios": [0.05, -0.05]},
+        {"default_scenarios": [-1.0, -0.05]},
+        {"optionability_tier_min": "none"},
+        {"max_tickers_speculation_section": 0},
     ],
 )
 def test_hedge_readiness_config_rejects_invalid_thresholds(override):
@@ -237,6 +251,10 @@ def test_hedge_readiness_config_rejects_invalid_thresholds(override):
         "proxy_top_n": 3,
         "benchmark_tickers": ["GDX", "GDXJ"],
         "gold_down_scenarios": [0.05, 0.10, 0.20],
+        "default_scenario_quantity": 5,
+        "default_scenarios": [0.0, -0.05, -0.10, -0.15, -0.20],
+        "optionability_tier_min": "directly_hedgeable",
+        "max_tickers_speculation_section": 15,
     }
     payload.update(override)
 
