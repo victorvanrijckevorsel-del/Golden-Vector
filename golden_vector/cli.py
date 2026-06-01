@@ -34,6 +34,7 @@ from golden_vector.ingestion.options_phase import (
     run_options_ingestion_phase,
     skipped_options_phase_summary,
 )
+from golden_vector.hedge.report import write_hedge_readiness_report
 from golden_vector.model.pipeline import execute_tool_a_profile_pipeline
 from golden_vector.screening.manual_data import (
     bootstrap_manual_screening_data,
@@ -134,6 +135,11 @@ def build_parser() -> argparse.ArgumentParser:
             "Defaults to screening_params.default_gold_price_assumption (or the first "
             "configured scenario if no default is set)."
         ),
+    )
+
+    subparsers.add_parser(
+        "hedge-readiness",
+        help="Render the local hedge-readiness markdown report from latest options data.",
     )
 
     manual_data_parser = subparsers.add_parser(
@@ -323,6 +329,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "tool-b":
         return run_tool_b(paths, gold_price=args.gold_price)
+
+    if args.command == "hedge-readiness":
+        return run_hedge_readiness(paths)
 
     if args.command == "refresh":
         return run_refresh(
@@ -542,6 +551,62 @@ def _combine_foundation_and_options_status(
     if options_status == "WARN" and foundation_status == "PASS":
         return "WARN"
     return foundation_status
+
+
+def run_hedge_readiness(paths: ProjectPaths) -> int:
+    run_context: RunContext | None = None
+    try:
+        loaded_config = load_app_config(paths)
+        run_context = RunContext.start(
+            paths=paths,
+            command="hedge-readiness",
+            parameters={},
+            config_hash=loaded_config.combined_hash,
+        )
+        configure_logging(run_context.log_path)
+        report = write_hedge_readiness_report(
+            paths=paths,
+            run_context=run_context,
+            app_config=loaded_config.app,
+        )
+        run_context.write_json("hedge_readiness_summary.json", report.summary)
+        run_context.finalize(
+            status="PASS",
+            summary=report.summary,
+            notes=[
+                "Hedge-readiness report rendered.",
+                f"Report path: {report.report_path.relative_to(paths.repo_root).as_posix()}.",
+            ],
+        )
+        print(
+            "Hedge readiness report written: "
+            f"{report.report_path.relative_to(paths.repo_root).as_posix()}"
+        )
+        print(
+            "Summary: "
+            f"{report.summary['directly_hedgeable_count']} directly hedgeable, "
+            f"{report.summary['thin_count']} thin, "
+            f"{report.summary['none_count']} no listed options, "
+            f"{report.summary['holdings_count']} holdings."
+        )
+        return 0
+    except Exception as exc:
+        if run_context is None:
+            run_context = RunContext.start(
+                paths=paths,
+                command="hedge-readiness",
+                parameters={},
+                config_hash="UNAVAILABLE",
+            )
+            configure_logging(run_context.log_path)
+        LOGGER.exception("Hedge-readiness report failed.")
+        run_context.finalize(
+            status="FAIL",
+            summary={"error": str(exc)},
+            notes=["Hedge-readiness report failed before completion."],
+        )
+        print(f"Hedge readiness report failed: {exc}")
+        return 1
 
 
 def run_tool_a(paths: ProjectPaths) -> int:

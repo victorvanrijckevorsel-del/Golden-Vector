@@ -27,3 +27,5 @@ Self-review cleanup after step 10: committed in this step. Tests: 382 passed in 
 Step 11 (options ingestion phase; swapped ahead of report): committed in this step. Tests: 386 passed in 98.79s. Fixture smoke: yes. Notes: Wired update-data --options/--no-options, persisted options/benchmark snapshots, wrote options features, and captured latest options manifest for replay.
 
 Step 11 fix (whitespace audit): committed in this step. Tests: 386 passed in 98.79s. Fixture smoke: n/a. Notes: Removed trailing blank line caught by git diff --check before starting report work.
+
+Step 12 (hedge-readiness report CLI): committed in this step. Tests: 388 passed in 116.33s. Fixture smoke: yes. Notes: Added manifest-backed markdown report generation, hedge-readiness CLI, latest.md output, holdings mode, candidate tables, premium-vs-downside cards, IV ranking, and proxy map.
