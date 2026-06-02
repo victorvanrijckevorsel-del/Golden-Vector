@@ -39,3 +39,8 @@
   behavior. Focused hedge/options tests: 75 passed. Full `python -m pytest -q`: 519 passed. Real
   `python main.py hedge-readiness --ranking-max-tickers 5 --speculation-max-tickers 3 --quantity 5` rendered
   successfully with expected context WARN. `python -m py_compile` and `git diff --check` passed.
+- 2026-06-02 - Step 9: ran the required manual smoke reports with all 5 CLI flags. Empty holdings rendered gracefully
+  with ranking, speculation, comparison, and sources. Mixed 2-position holdings rendered the full report including
+  portfolio totals, held positions, proxy hedges, and sources. Updated `docs/hedge_readiness.md` with dual-use framing,
+  ranking and portfolio walkthroughs, strategy-generic math, risk-free-rate fallback behavior, and CLI flag reference.
+  Wrote `reviews/codex/codex_m15_v6_completion_report.md` for Checkpoint C.

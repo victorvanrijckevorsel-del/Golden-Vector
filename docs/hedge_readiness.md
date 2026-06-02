@@ -1,8 +1,17 @@
 # Hedge Readiness
 
-Hedge Readiness is the local CLI report for the downside-product line. It answers a practical question: which current or watched gold-stock names can be hedged directly with listed puts, which names have thin or no options, and what proxy path exists when direct options are unavailable.
+Hedge Readiness is the local CLI report for the downside-product line. It is built for two
+related workflows:
 
-This is not a trade ticket and it does not recommend one contract. It shows a shortlist, quote context, premium-vs-modeled-downside math, and basis-risk labels so the user can decide what deserves follow-up.
+- **Portfolio protection:** if the holdings file has positions, the report shows modeled
+  downside, candidate listed puts, hedge-cost estimates, and proxy hedges where direct options
+  are not usable.
+- **Speculative put discovery:** even with no holdings, the report still ranks the universe and
+  shows candidate puts so the user can ask, "If I buy X puts and gold drops, what could this be
+  worth?"
+
+The report is not a trade ticket and it does not recommend one contract. It shows data, model
+assumptions, and skipped-input reasons so the user can decide what deserves follow-up.
 
 ## Workflow
 
@@ -27,6 +36,31 @@ data/output/hedge_readiness/latest.md
 
 `latest.md` is a copy of the newest report for quick inspection. The run-specific file is the audit trail.
 
+## CLI Reference
+
+```powershell
+python main.py hedge-readiness `
+  --ranking-sort-by down_beta_core `
+  --comparison-sort-by pnl_per_dollar_premium_minus10 `
+  --ranking-max-tickers 5 `
+  --speculation-max-tickers 3 `
+  --quantity 10
+```
+
+| Flag | Purpose |
+|---|---|
+| `--ranking-sort-by` | Sort field for the Sensitivity Ranking. Current supported value: `down_beta_core`. |
+| `--comparison-sort-by` | Sort field for the Cross-ticker Comparison View. |
+| `--ranking-max-tickers` | Maximum rows to show in the Sensitivity Ranking. |
+| `--speculation-max-tickers` | Maximum ticker blocks to show in Speculation Candidates. |
+| `--quantity` | Number of option contracts used in scenario net P&L. |
+
+If a flag is omitted, the report uses `config/hedge_readiness.yaml`.
+
+Useful comparison sort choices include `pnl_per_dollar_premium_minus10`, `breakeven_gold_pct`,
+and P&L columns. Quote and P&L-per-share columns remain per-share option values; net P&L applies
+quantity times the standard 100-share multiplier.
+
 ## Options Phase
 
 `update-data` runs the hedge-readiness options phase by default. That phase:
@@ -44,11 +78,13 @@ If the normal market-data refresh is needed but options should be skipped, use:
 python main.py update-data --no-options
 ```
 
-The run metadata records that the options phase was intentionally skipped. The hedge-readiness report will continue to use the last successful `latest_options_manifest.json` until options are refreshed again.
+The run metadata records that the options phase was intentionally skipped. The hedge-readiness
+report continues to use the last successful `latest_options_manifest.json` until options are
+refreshed again.
 
 ## Holdings File
 
-The report can run without a holdings file. In that case it says so clearly and shows cross-sectional hedge readiness only.
+The report can run without a holdings file. In that case it shows cross-sectional hedge readiness only and skips portfolio-only sections.
 
 To enable position-aware exposure and premium-vs-downside cards, create:
 
@@ -67,21 +103,91 @@ holdings:
     dollar_exposure: 50000
 ```
 
-Each holding must set exactly one of `shares` or `dollar_exposure`, and each ticker can appear only once. The loader does not auto-create this file, and it fails loudly on malformed entries so exposure is not silently misread.
+Each holding must set exactly one of `shares` or `dollar_exposure`, and each ticker can appear
+only once. The loader does not auto-create this file, and it fails loudly on malformed entries so
+exposure is not silently misread.
 
 ## Report Sections
 
-The markdown report includes:
+The report renders these sections in order:
 
-- snapshot summary: optionable, thin, non-optionable counts, and Tool A/Tool B snapshot alignment
-- held-position sections when `holdings.yaml` exists
-- candidate put tables for configured horizons
-- premium-vs-modeled-downside cards using Tool A down beta
-- cross-sectional 60-day ATM IV ranking
-- proxy-hedge map for held non-optionable names
-- source counts and manifest paths
+1. **Header:** benchmark moves and implied-vs-modeled-downside heuristic verdicts.
+2. **Snapshot Summary:** run id, dates, optionability counts, holdings count, CLI/config
+   parameters, context alignment, and risk-free-rate status.
+3. **Sensitivity Ranking:** universe-wide Tool A down-beta ranking with 60-day listed-put P&L at a gold -10% scenario.
+4. **Portfolio Totals:** only when holdings exist; aggregate portfolio value, modeled downside, and hedge-cost estimates.
+5. **Held Positions:** only when holdings exist; per-position candidate puts and scenario tables.
+6. **Speculation Candidates:** universe-level candidate put blocks, independent of holdings.
+7. **Cross-ticker Comparison View:** flat sortable candidate table across tickers and horizons.
+8. **Proxy Hedges:** only when held tickers are not directly hedgeable.
+9. **Sources / Run Summary:** manifest paths, source row counts, and run parameters.
 
-Candidate puts use listed strikes only. The `delta_gap` column shows how close the selected listed contract is to the configured target delta.
+## Sensitivity Ranking Walkthrough
+
+Sensitivity Ranking is the fastest way to see which names have the largest modeled downside
+response to a gold drop. It sorts by Tool A `down_beta_core`, then attaches:
+
+- `up_beta_core` for context
+- confidence label and score
+- cross-sectional IV percentile when options features exist
+- 60-day listed-put P&L/share at the configured gold scenario
+- notes explaining missing options, missing candidates, score ineligibility, or missing beta
+
+This section is deliberately close to the future Tool C user experience: a universe-wide downside
+ranking with visible sample/data caveats, not a hidden composite score.
+
+## Portfolio Totals Walkthrough
+
+Portfolio Totals appears only when the holdings file has at least one position.
+
+For share-based holdings, current notional is:
+
+```text
+shares * current_stock_price
+```
+
+For dollar-exposure holdings, current notional is the supplied `dollar_exposure`. That lets the
+report model portfolio downside even when no share count is known.
+
+Hedge-cost estimates are stricter. They need:
+
+- a resolved current stock price
+- a usable 60-day candidate put
+- a candidate mid price
+- enough down-beta signal to model downside
+
+If those inputs are missing, the report still counts notional where possible and adds a skipped reason instead of inventing a hedge cost.
+
+## Scenario Math
+
+The scenario engine is strategy-generic. The code supports:
+
+- long put
+- short put
+- long call
+- short call
+
+M1.5 surfaces **long put** scenarios in the CLI report. The generic strategy layer exists so
+future put/call workflows can reuse the same tested P&L rules instead of reimplementing option
+math in each report section.
+
+The stock move model is linear:
+
+```text
+modeled_stock_down_pct = max(0, down_beta_core * abs(gold_move_pct))
+modeled_stock_price = max(0, current_stock_price * (1 - modeled_stock_down_pct))
+```
+
+At-expiry values use intrinsic option value. Current quote-style values use Black-Scholes with the listed implied volatility.
+
+## Risk-free-rate Fallback
+
+The options phase tries to fetch the risk-free rate from the 13-week T-bill source. If that fetch fails, the report does not collapse.
+
+- Delta selection uses a `0%` fallback so candidate selection and optionability can still run.
+- Black-Scholes mark-to-market values also use `0%`, but sections that show those current values disclose the fallback.
+- Sensitivity Ranking expiry P&L does **not** show a rate fallback note because expiry intrinsic
+  value does not depend on the risk-free rate.
 
 ## Recovery Notes
 
@@ -99,7 +205,9 @@ python main.py update-data --no-options
 
 That keeps Tool A and Tool B refreshes moving while preserving the last successful hedge-readiness options snapshot for reporting.
 
-If the report shows `Analytical context alignment | WARN |` or `UNKNOWN`, the options snapshot is newer than the latest Tool A or Tool B output, or the older output does not carry a refresh id. Run the normal analytical steps again before using the report for decisions:
+If the report shows `Analytical context alignment | WARN |` or `UNKNOWN`, the options snapshot is
+newer than the latest Tool A or Tool B output, or the older output does not carry a refresh id.
+Run the normal analytical steps again before using the report for decisions:
 
 ```powershell
 python main.py tool-a
