@@ -36,6 +36,39 @@ data/output/hedge_readiness/latest.md
 
 `latest.md` is a copy of the newest report for quick inspection. The run-specific file is the audit trail.
 
+## Workspace Option Trading Tab
+
+The local workspace exposes the same structured options data at:
+
+```text
+/option-trading
+```
+
+This is the primary UI for the put/call workflow. The old `/hedge-readiness` page redirects to
+the tab; the raw markdown report is still downloadable from `/hedge-readiness/latest.md`.
+
+The tab lists optionable gold stocks, sorted by Tool A downside sensitivity. Each row separates:
+
+- **Downside puts:** modeled with `down_beta_core` and gold scenarios at 0%, -5%, -10%, -15%, and -20%.
+- **Upside calls:** modeled with `up_beta_core` and gold scenarios at 0%, +5%, +10%, +15%, and +20%.
+
+Calls are shown as leveraged bullish-gold speculation, not as hedges and not as the ranking basis.
+Clicking a ticker opens:
+
+```text
+/ticker/<TICKER>?lens=option-trading
+```
+
+The ticker detail panel shows candidate puts, candidate calls, scenario tables, and a GET-only
+sizing calculator. The calculator does not save trades or mutate local data. It has two modes:
+
+- **Contracts:** directly set the number of standard 100-share option contracts.
+- **Budget:** treat the dollar amount as premium spend, then buy `floor(budget / (mid * 100))`
+  contracts and show leftover cash.
+
+Invalid side, horizon, quantity, or budget inputs fall back to safe defaults and render a note on
+the page instead of raising an error.
+
 ## CLI Reference
 
 ```powershell
