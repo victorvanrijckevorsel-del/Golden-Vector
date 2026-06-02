@@ -50,6 +50,23 @@ def test_build_candidate_grid_matches_put_wrapper_for_puts():
     assert generic == wrapped
 
 
+def test_build_candidate_grid_returns_listed_calls_by_horizon():
+    candidates = build_candidate_grid(
+        option_type="C",
+        ticker="AEM",
+        chain=_candidate_chain(),
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        target_horizons_days=(30, 60, 90),
+        as_of_date=date(2026, 5, 29),
+    )
+
+    assert [candidate.horizon_days for candidate in candidates] == [30, 60, 90]
+    assert all(candidate.option_type == "C" for candidate in candidates)
+    assert all(candidate.delta is not None and candidate.delta > 0 for candidate in candidates)
+    assert candidates[0].strike == 55.0
+
+
 def test_build_candidate_put_grid_uses_zero_rate_delta_fallback():
     candidates = build_candidate_put_grid(
         ticker="AEM",

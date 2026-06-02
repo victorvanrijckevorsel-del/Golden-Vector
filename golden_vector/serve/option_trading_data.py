@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 
@@ -20,7 +20,7 @@ from golden_vector.hedge._helpers import (
     row_string,
     rows_by_ticker_series,
 )
-from golden_vector.hedge.candidate_puts import CandidatePut, build_candidate_put_grid
+from golden_vector.hedge.candidate_puts import OptionCandidate, build_candidate_grid
 from golden_vector.hedge.option_trading import (
     OptionTradingDetailData,
     OptionTradingOverviewData,
@@ -40,7 +40,8 @@ class OptionTradingCacheKey:
 @dataclass(frozen=True)
 class OptionTradingData:
     overview: OptionTradingOverviewData
-    candidate_grids: dict[str, list[CandidatePut]]
+    candidate_grids: dict[str, list[OptionCandidate]]
+    call_candidate_grids: dict[str, list[OptionCandidate]]
     options_features: pd.DataFrame
     tool_a: pd.DataFrame
     tool_b: pd.DataFrame
@@ -72,6 +73,7 @@ def build_option_trading_detail_data(
         ticker=normalized,
         tool_a=data.tool_a,
         candidate_grids=data.candidate_grids,
+        call_candidate_grids=data.call_candidate_grids,
         overview_row=overview_row,
         risk_free_rate=data.risk_free_rate,
         risk_free_rate_is_fallback=data.risk_free_rate_is_fallback,
@@ -87,6 +89,8 @@ def build_option_trading_detail_data(
         row=detail.row,
         put_candidates=detail.put_candidates,
         put_bundles=detail.put_bundles,
+        call_candidates=detail.call_candidates,
+        call_bundles=detail.call_bundles,
         reason=data.overview.reason,
         risk_free_rate_is_fallback=detail.risk_free_rate_is_fallback,
     )
@@ -126,11 +130,24 @@ def load_option_trading_data(
         chains=chains,
         risk_free_rate=effective_risk_free_rate,
         manifest=manifest,
+        option_type="P",
+        target_delta=app_config.hedge_readiness.target_delta,
+    )
+    call_candidate_grids = _candidate_grids(
+        app_config=app_config,
+        features=features,
+        tool_b=tool_b,
+        chains=chains,
+        risk_free_rate=effective_risk_free_rate,
+        manifest=manifest,
+        option_type="C",
+        target_delta=abs(app_config.hedge_readiness.target_delta),
     )
     overview = build_option_trading_overview(
         tool_a=tool_a,
         options_features=features,
         candidate_grids=candidate_grids,
+        call_candidate_grids=call_candidate_grids,
         risk_free_rate=effective_risk_free_rate,
         target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
         down_beta_min_for_scenario=app_config.hedge_readiness.down_beta_min_for_scenario,
@@ -139,6 +156,7 @@ def load_option_trading_data(
     data = OptionTradingData(
         overview=overview,
         candidate_grids=candidate_grids,
+        call_candidate_grids=call_candidate_grids,
         options_features=features,
         tool_a=tool_a,
         tool_b=tool_b,
@@ -160,6 +178,7 @@ def _empty_data(
     return OptionTradingData(
         overview=OptionTradingOverviewData(rows=(), reason=reason),
         candidate_grids={},
+        call_candidate_grids={},
         options_features=pd.DataFrame(),
         tool_a=tool_a,
         tool_b=tool_b,
@@ -247,6 +266,9 @@ def _load_features(
             if not matching.empty:
                 rows.append(matching.iloc[-1])
             continue
+        # Legacy feature snapshots without run_id cannot be provenance-checked.
+        # Use only the latest row so old local data still renders, but prefer
+        # modern run_id-bearing snapshots for stale-data protection.
         rows.append(frame.iloc[-1])
     if not rows:
         return pd.DataFrame()
@@ -264,11 +286,13 @@ def _candidate_grids(
     chains: dict[str, pd.DataFrame],
     risk_free_rate: float,
     manifest: dict[str, Any],
-) -> dict[str, list[CandidatePut]]:
+    option_type: Literal["P", "C"],
+    target_delta: float,
+) -> dict[str, list[OptionCandidate]]:
     feature_by_ticker = rows_by_ticker_series(features, strip=True)
     tool_b_by_ticker = rows_by_ticker_series(tool_b, strip=True)
     as_of_date = _manifest_as_of_date(manifest)
-    grids: dict[str, list[CandidatePut]] = {}
+    grids: dict[str, list[OptionCandidate]] = {}
     for ticker, feature in feature_by_ticker.items():
         if not is_optionable_tier(optionability_tier(row_string(feature, "optionability_tier"))):
             continue
@@ -281,13 +305,14 @@ def _candidate_grids(
         if price is None or price <= 0:
             grids[ticker] = []
             continue
-        grids[ticker] = build_candidate_put_grid(
+        grids[ticker] = build_candidate_grid(
+            option_type=option_type,
             ticker=ticker,
             chain=chain,
             underlying_price=price,
             risk_free_rate=risk_free_rate,
             target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
-            target_delta=app_config.hedge_readiness.target_delta,
+            target_delta=target_delta,
             max_spread_pct=app_config.hedge_readiness.candidate_max_spread_pct,
             min_open_interest=app_config.hedge_readiness.candidate_min_open_interest,
             min_volume=app_config.hedge_readiness.candidate_min_volume,

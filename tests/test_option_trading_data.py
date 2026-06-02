@@ -47,6 +47,10 @@ def test_build_option_trading_overview_filters_and_sorts_optionable_rows():
         tool_a=tool_a,
         options_features=features,
         candidate_grids={"AEM": [_candidate("AEM")], "NEM": [_candidate("NEM")]},
+        call_candidate_grids={
+            "AEM": [_candidate("AEM", option_type="C")],
+            "NEM": [_candidate("NEM", option_type="C")],
+        },
         risk_free_rate=0.04,
     )
 
@@ -54,6 +58,7 @@ def test_build_option_trading_overview_filters_and_sorts_optionable_rows():
     assert overview.rows[0].put_status == "available"
     assert overview.rows[0].call_status == "available"
     assert overview.rows[0].pnl_put_at_minus10_60d is not None
+    assert overview.rows[0].pnl_call_at_plus10_60d is not None
     assert {row.ticker for row in overview.rows} == {"AEM", "NEM"}
 
 
@@ -69,7 +74,7 @@ def test_build_option_trading_overview_tracks_side_specific_status():
 
     row = overview.rows[0]
     assert row.put_status == "thin"
-    assert row.call_status == "available"
+    assert row.call_status == "thin"
     assert row.pnl_put_at_minus10_60d is None
 
 
@@ -159,6 +164,25 @@ def test_load_option_trading_data_flags_missing_risk_free_rate_fallback(tmp_path
     assert data.risk_free_rate == 0.0
     assert data.risk_free_rate_is_fallback is True
     assert data.overview.risk_free_rate_is_fallback is True
+
+
+def test_load_option_trading_data_builds_call_context_from_up_beta(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+
+    data = load_option_trading_data(paths, app_config=app_config)
+    detail = build_option_trading_detail_data(data, ticker="AEM", app_config=app_config)
+
+    assert data.call_candidate_grids["AEM"]
+    assert all(candidate.option_type == "C" for candidate in data.call_candidate_grids["AEM"])
+    assert data.overview.rows[0].call_status == "available"
+    assert data.overview.rows[0].pnl_call_at_plus10_60d is not None
+    assert detail.call_candidates
+    assert detail.call_bundles
+    assert detail.call_bundles[0].gold_beta_used == 1.1
 
 
 def test_load_option_trading_data_ignores_stale_feature_rows(tmp_path):
@@ -266,25 +290,28 @@ def _feature(
     return row
 
 
-def _candidate(ticker: str):
+def _candidate(ticker: str, *, option_type: str = "P"):
     from golden_vector.hedge.candidate_puts import CandidatePut
 
+    strike = 45.0 if option_type == "P" else 55.0
+    delta = -0.25 if option_type == "P" else 0.25
     return CandidatePut(
         ticker=ticker,
         horizon_days=60,
         expiration="2026-07-31",
         days_to_expiry=60,
-        strike=45.0,
+        strike=strike,
         bid=1.15,
         ask=1.25,
         mid=1.20,
         open_interest=500,
         volume=50,
         implied_volatility=0.40,
-        delta=-0.25,
+        delta=delta,
         delta_gap=0.01,
         premium_pct_spot=1.20 / 50.0,
         underlying_price=50.0,
+        option_type=option_type,
     )
 
 
@@ -303,6 +330,22 @@ def _chain(ticker: str) -> pd.DataFrame:
                 "strike": strike,
                 "bid": 1.15,
                 "ask": 1.25,
+                "lastPrice": 1.20,
+                "volume": 20,
+                "openInterest": 500,
+                "impliedVolatility": 0.40,
+                "days_to_expiry": days,
+                "underlying_price": 50.0,
+            }
+        )
+        rows.append(
+            {
+                "ticker": ticker,
+                "expiration": expiration,
+                "option_type": "C",
+                "strike": 55.0,
+                "bid": 1.10,
+                "ask": 1.30,
                 "lastPrice": 1.20,
                 "volume": 20,
                 "openInterest": 500,

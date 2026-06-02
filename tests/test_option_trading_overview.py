@@ -22,7 +22,7 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
                     put_status="available",
                     call_status="available",
                     pnl_put_at_minus10_60d=1.25,
-                    pnl_call_at_plus10_60d=None,
+                    pnl_call_at_plus10_60d=2.50,
                     notes=("candidate ok",),
                 ),
             )
@@ -35,6 +35,8 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
     assert "data-filter-column=\"put_status\"" in html
     assert "data-filter-column=\"call_status\"" in html
     assert "Put P&amp;L/share @ Gold -10% (60d)" in html
+    assert "Call P&amp;L/share @ Gold +10% (60d, context)" in html
+    assert "2.50" in html
     assert "candidate ok" in html
     assert "markdown-report" not in html
 

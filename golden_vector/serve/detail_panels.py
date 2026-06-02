@@ -9,6 +9,7 @@ from urllib.parse import quote
 import pandas as pd
 
 from golden_vector.contracts.config_models import AppConfig
+from golden_vector.hedge.candidate_puts import OptionCandidate
 from golden_vector.hedge.option_trading import OptionTradingDetailData
 from golden_vector.hedge.scenarios import CandidateScenarioBundle
 from golden_vector.model.structural import build_trailing_window_rows
@@ -204,15 +205,60 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
             "<table><tbody>",
             "<tr><th>Down Beta</th>"
             f"<td>{_fmt_number(row.down_beta_core, decimals=2)}</td></tr>",
+            "<tr><th>Up Beta</th>"
+            f"<td>{_fmt_number(row.up_beta_core, decimals=2)}</td></tr>",
             f"<tr><th>Put Status</th><td>{_fmt_text(row.put_status)}</td></tr>",
+            f"<tr><th>Call Status</th><td>{_fmt_text(row.call_status)}</td></tr>",
             f"<tr><th>Optionability</th><td>{_fmt_text(row.optionability_tier)}</td></tr>",
             "<tr><th>Put P&amp;L/share @ Gold -10% (60d)</th>"
             f"<td>{_fmt_number(row.pnl_put_at_minus10_60d, decimals=2)}</td></tr>",
+            "<tr><th>Call P&amp;L/share @ Gold +10% (60d)</th>"
+            f"<td>{_fmt_number(row.pnl_call_at_plus10_60d, decimals=2)}</td></tr>",
             "</tbody></table>",
+            "<div class=\"segmented-control\">"
+            "<a href=\"#option-trading-puts\">Downside puts</a>"
+            "<a href=\"#option-trading-calls\">Upside calls</a>"
+            "</div>",
         ]
     )
-    body.append(_render_option_candidate_table(detail))
-    body.append(_render_option_scenario_tables(detail.put_bundles))
+    body.append(
+        _render_option_candidate_table(
+            title="Downside Put Candidates",
+            section_id="option-trading-puts",
+            candidates=detail.put_candidates,
+            empty_message="No usable listed put candidate was found for this ticker.",
+        )
+    )
+    body.append(
+        _render_option_scenario_tables(
+            title="Downside Put Scenarios",
+            option_label="put",
+            bundles=detail.put_bundles,
+            hint=(
+                "P&L/share uses listed per-share option quotes. Net P&L uses one "
+                "standard 100-share contract until the sizing calculator lands."
+            ),
+        )
+    )
+    body.append(
+        _render_option_candidate_table(
+            title="Upside Call Candidates",
+            section_id="option-trading-calls",
+            candidates=detail.call_candidates,
+            empty_message="No usable listed call candidate was found for this ticker.",
+        )
+    )
+    body.append(
+        _render_option_scenario_tables(
+            title="Upside Call Scenarios",
+            option_label="call",
+            bundles=detail.call_bundles,
+            hint=(
+                "Leveraged bullish speculation, not a hedge. Calls lose to time "
+                "decay if gold stalls."
+            ),
+        )
+    )
     if row.notes:
         notes = "".join(f"<li>{escape(note)}</li>" for note in row.notes)
         body.append(f"<ul class=\"hint\">{notes}</ul>")
@@ -220,16 +266,22 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
     return "".join(body)
 
 
-def _render_option_candidate_table(detail: OptionTradingDetailData) -> str:
-    if not detail.put_candidates:
+def _render_option_candidate_table(
+    *,
+    title: str,
+    section_id: str,
+    candidates: tuple[OptionCandidate, ...],
+    empty_message: str,
+) -> str:
+    if not candidates:
         return (
-            "<section class=\"nested-panel\">"
-            "<h3>Downside Put Candidates</h3>"
-            "<p>No usable listed put candidate was found for this ticker.</p>"
+            f"<section id=\"{escape(section_id)}\" class=\"nested-panel\">"
+            f"<h3>{escape(title)}</h3>"
+            f"<p>{escape(empty_message)}</p>"
             "</section>"
         )
     rows = []
-    for candidate in detail.put_candidates:
+    for candidate in candidates:
         rows.append(
             "<tr>"
             f"<td>{_fmt_number(candidate.horizon_days, decimals=0)}d</td>"
@@ -244,8 +296,8 @@ def _render_option_candidate_table(detail: OptionTradingDetailData) -> str:
             "</tr>"
         )
     return (
-        "<section class=\"nested-panel\">"
-        "<h3>Downside Put Candidates</h3>"
+        f"<section id=\"{escape(section_id)}\" class=\"nested-panel\">"
+        f"<h3>{escape(title)}</h3>"
         "<table>"
         "<thead><tr><th>Horizon</th><th>Strike</th><th>Expiry</th><th>Mid</th>"
         "<th>Bid / Ask</th><th>Open Interest</th><th>Volume</th><th>IV</th><th>Delta</th></tr></thead>"
@@ -256,24 +308,27 @@ def _render_option_candidate_table(detail: OptionTradingDetailData) -> str:
 
 
 def _render_option_scenario_tables(
+    *,
+    title: str,
+    option_label: str,
     bundles: tuple[CandidateScenarioBundle, ...],
+    hint: str,
 ) -> str:
     if not bundles:
         return (
             "<section class=\"nested-panel\">"
-            "<h3>Downside Put Scenarios</h3>"
-            "<p>No put scenarios are available for this ticker.</p>"
+            f"<h3>{escape(title)}</h3>"
+            f"<p>No {escape(option_label)} scenarios are available for this ticker.</p>"
             "</section>"
         )
     sections: list[str] = [
         "<section class=\"nested-panel\">",
-        "<h3>Downside Put Scenarios</h3>",
-        "<p class=\"hint\">P&amp;L/share uses listed per-share option quotes. Net P&amp;L "
-        "uses one standard 100-share contract until the sizing calculator lands.</p>",
+        f"<h3>{escape(title)}</h3>",
+        f"<p class=\"hint\">{escape(hint)}</p>",
     ]
     for bundle in bundles:
         sections.append(
-            f"<h4>{escape(bundle.horizon)} put, strike {_fmt_number(bundle.candidate.strike, decimals=2)}</h4>"
+            f"<h4>{escape(bundle.horizon)} {escape(option_label)}, strike {_fmt_number(bundle.candidate.strike, decimals=2)}</h4>"
         )
         if bundle.skipped_reason:
             sections.append(f"<p>{escape(bundle.skipped_reason)}</p>")

@@ -17,8 +17,9 @@ def _render_option_trading_overview_page(
     body = [
         "<h1>Option Trading</h1>",
         "<p>Optionable gold stocks ranked by gold-downside sensitivity. "
-        "The put scenario column is computed server-side from the same candidate grid "
-        "used by the ticker detail page.</p>",
+        "The put and call scenario columns are computed server-side from the same "
+        "candidate grids used by the ticker detail page. Calls are bullish-gold "
+        "speculation context, not the ranking basis.</p>",
         "<p class=\"hint\"><a class=\"raw-report-download\" href=\"/hedge-readiness/latest.md\">"
         "Download latest raw hedge-readiness markdown report</a></p>",
     ]
@@ -75,6 +76,7 @@ def _render_option_trading_overview_page(
         "<th data-col-name=\"put_status\">Put Status</th>"
         "<th data-col-name=\"call_status\">Call Status</th>"
         "<th data-col-name=\"put_pnl\" data-sort-numeric>Put P&amp;L/share @ Gold -10% (60d)</th>"
+        "<th data-col-name=\"call_pnl\" data-sort-numeric>Call P&amp;L/share @ Gold +10% (60d, context)</th>"
         "<th data-col-name=\"notes\">Notes</th>"
         "</tr></thead>"
         f"<tbody>{rows_html}</tbody>"
@@ -100,6 +102,7 @@ def _render_row(row: OptionTradingRow) -> str:
         f"<td>{_status_label(row.put_status)}</td>"
         f"<td>{_status_label(row.call_status)}</td>"
         f"{_fmt_numeric_td(row.pnl_put_at_minus10_60d, decimals=2)}"
+        f"{_fmt_numeric_td(row.pnl_call_at_plus10_60d, decimals=2)}"
         f"<td>{escape('; '.join(row.notes)) if row.notes else '-'}</td>"
         "</tr>"
     )

@@ -70,8 +70,13 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
     assert 'id="option-trading"' in body
     assert "Downside Put Candidates" in body
     assert "Downside Put Scenarios" in body
+    assert "Upside Call Candidates" in body
+    assert "Upside Call Scenarios" in body
+    assert "Leveraged bullish speculation" in body
     assert "Put P&amp;L/share @ Gold -10% (60d)" in body
+    assert "Call P&amp;L/share @ Gold +10% (60d)" in body
     assert "60d put, strike" in body
+    assert "60d call, strike" in body
 
 
 def test_workspace_option_trading_detail_discloses_risk_free_rate_fallback(tmp_path):
