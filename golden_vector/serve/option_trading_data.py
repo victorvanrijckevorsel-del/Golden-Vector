@@ -204,7 +204,7 @@ def _load_features(
             matching = frame[frame["run_id"].astype(str) == refresh_run_id]
             if not matching.empty:
                 rows.append(matching.iloc[-1])
-                continue
+            continue
         rows.append(frame.iloc[-1])
     if not rows:
         return pd.DataFrame()

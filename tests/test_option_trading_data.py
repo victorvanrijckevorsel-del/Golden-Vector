@@ -110,6 +110,24 @@ def test_load_option_trading_data_handles_missing_manifest(tmp_path):
     assert data.cache_key is None
 
 
+def test_load_option_trading_data_ignores_stale_feature_rows(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+    feature_path = paths.options_features_dir / f"{safe_options_file_name('AEM')}.parquet"
+    stale = pd.read_parquet(feature_path)
+    stale["run_id"] = "older-options-run"
+    stale.to_parquet(feature_path, index=False)
+
+    data = load_option_trading_data(paths, app_config=app_config)
+
+    assert data.options_features.empty
+    assert data.overview.rows == ()
+    assert "No options feature snapshot" in (data.overview.reason or "")
+
+
 def _write_option_inputs(paths, *, refresh_run_id: str, tool_refresh_run_id: str) -> None:
     paths.ensure_runtime_dirs()
     snapshot_path = paths.runs_dir / refresh_run_id / "snapshots" / "options" / "AEM.parquet"
