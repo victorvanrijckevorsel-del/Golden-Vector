@@ -62,11 +62,16 @@ def build_option_trading_detail_data(
     ticker: str,
     app_config: AppConfig,
 ) -> OptionTradingDetailData:
+    normalized = ticker.strip().upper()
+    overview_row = next(
+        (row for row in data.overview.rows if row.ticker == normalized),
+        None,
+    )
     detail = build_option_trading_detail(
-        ticker=ticker,
+        ticker=normalized,
         tool_a=data.tool_a,
-        options_features=data.options_features,
         candidate_grids=data.candidate_grids,
+        overview_row=overview_row,
         risk_free_rate=data.risk_free_rate,
         target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
         down_beta_min_for_scenario=(

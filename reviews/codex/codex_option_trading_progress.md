@@ -19,3 +19,4 @@
 - Step 4: redirected `/hedge-readiness` to `/option-trading` and kept the legacy markdown available only as a raw `latest.md` download.
 - Self-review gate 2: reviewed the Batch 2 diff, reran the full suite (`532 passed`), and browser-verified the tab, ticker detail panel, and redirect with no warnings or errors. No code fixes required.
 - Post-checkpoint review: fixed the detail-page window switcher so the Option Trading lens and `#option-trading` anchor survive 6M/12M/3Y window clicks; added a regression test.
+- Claude review M1: changed the detail data path to reuse the already-cached overview row instead of rebuilding the full overview for one ticker; added a regression test pinning overview/detail row identity and P&L consistency.

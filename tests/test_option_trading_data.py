@@ -9,6 +9,7 @@ from golden_vector.app.config import load_app_config
 from golden_vector.hedge.option_trading import build_option_trading_overview
 from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.serve.option_trading_data import (
+    build_option_trading_detail_data,
     clear_option_trading_cache,
     load_option_trading_data,
 )
@@ -94,6 +95,21 @@ def test_load_option_trading_data_uses_composite_cache_key(tmp_path):
     assert changed is not first
     assert changed.cache_key is not None
     assert changed.cache_key.tool_a_refresh_run_ids == ("tool-run-b",)
+
+
+def test_build_option_trading_detail_data_reuses_cached_overview_row(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+
+    data = load_option_trading_data(paths, app_config=app_config)
+    detail = build_option_trading_detail_data(data, ticker="AEM", app_config=app_config)
+
+    assert data.overview.rows
+    assert detail.row is data.overview.rows[0]
+    assert detail.row.pnl_put_at_minus10_60d == data.overview.rows[0].pnl_put_at_minus10_60d
 
 
 def test_load_option_trading_data_handles_missing_manifest(tmp_path):

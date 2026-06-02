@@ -113,8 +113,8 @@ def build_option_trading_detail(
     *,
     ticker: str,
     tool_a: pd.DataFrame,
-    options_features: pd.DataFrame,
     candidate_grids: dict[str, list[CandidatePut]],
+    overview_row: OptionTradingRow | None,
     risk_free_rate: float,
     target_horizons_days: tuple[int, ...] = (30, 60, 90),
     down_beta_min_for_scenario: float = 0.10,
@@ -122,15 +122,6 @@ def build_option_trading_detail(
     """Build put-side detail data for a single ticker."""
 
     normalized = ticker.strip().upper()
-    overview = build_option_trading_overview(
-        tool_a=tool_a,
-        options_features=options_features,
-        candidate_grids=candidate_grids,
-        risk_free_rate=risk_free_rate,
-        target_horizons_days=target_horizons_days,
-        down_beta_min_for_scenario=down_beta_min_for_scenario,
-    )
-    row = next((item for item in overview.rows if item.ticker == normalized), None)
     candidates = tuple(candidate_grids.get(normalized, []))
     tool_a_row = rows_by_ticker_series(tool_a, strip=True).get(normalized)
     down_beta = row_float(tool_a_row, "down_beta_core")
@@ -150,10 +141,14 @@ def build_option_trading_detail(
     )
     return OptionTradingDetailData(
         ticker=normalized,
-        row=row,
+        row=overview_row,
         put_candidates=candidates,
         put_bundles=bundles,
-        reason=None if row is not None else "Ticker is not optionable in the latest snapshot.",
+        reason=(
+            None
+            if overview_row is not None
+            else "Ticker is not optionable in the latest snapshot."
+        ),
     )
 
 
