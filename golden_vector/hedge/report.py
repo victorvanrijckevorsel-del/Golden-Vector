@@ -41,6 +41,11 @@ def write_hedge_readiness_report(
     paths: ProjectPaths,
     run_context: RunContext,
     app_config: AppConfig,
+    comparison_sort_by: str | None = None,
+    ranking_sort_by: str | None = None,
+    ranking_max_tickers: int | None = None,
+    speculation_max_tickers: int | None = None,
+    quantity: int | None = None,
 ) -> HedgeReportResult:
     """Render and persist the latest hedge-readiness markdown report."""
 
@@ -58,6 +63,11 @@ def write_hedge_readiness_report(
         manifest=payload,
         data=data,
         holdings=holdings,
+        comparison_sort_by=comparison_sort_by,
+        ranking_sort_by=ranking_sort_by,
+        ranking_max_tickers=ranking_max_tickers,
+        speculation_max_tickers=speculation_max_tickers,
+        quantity=quantity,
     )
     output_dir = paths.output_hedge_readiness_dir
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -82,6 +92,11 @@ def render_hedge_readiness_report(
     manifest: dict[str, Any],
     data: dict[str, Any],
     holdings: list[Holding],
+    comparison_sort_by: str | None = None,
+    ranking_sort_by: str | None = None,
+    ranking_max_tickers: int | None = None,
+    speculation_max_tickers: int | None = None,
+    quantity: int | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Assemble the full hedge-readiness report as markdown."""
 
@@ -175,6 +190,11 @@ def render_hedge_readiness_report(
         "context_alignment_message": alignment["message"],
         "tool_a_snapshot_refresh_run_ids": alignment["tool_a_refresh_run_ids"],
         "tool_b_snapshot_refresh_run_ids": alignment["tool_b_refresh_run_ids"],
+        "comparison_sort_by": comparison_sort_by,
+        "ranking_sort_by": ranking_sort_by,
+        "ranking_max_tickers": ranking_max_tickers,
+        "speculation_max_tickers": speculation_max_tickers,
+        "quantity": quantity,
     }
     return "\n".join(lines).rstrip() + "\n", summary
 

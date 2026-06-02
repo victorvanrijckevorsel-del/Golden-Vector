@@ -1,10 +1,12 @@
 from datetime import date
+from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.run_context import RunContext
-from golden_vector.cli import run_hedge_readiness
+from golden_vector.cli import build_parser, run_hedge_readiness
 from golden_vector.features.options import compute_options_features
 from golden_vector.hedge.report import _render_cross_sectional_section
 from golden_vector.ingestion.persist_options import (
@@ -12,6 +14,87 @@ from golden_vector.ingestion.persist_options import (
     write_latest_options_manifest,
 )
 from tests.helpers import build_test_paths
+
+
+def test_hedge_readiness_parser_accepts_all_cli_flags():
+    args = build_parser().parse_args(
+        [
+            "hedge-readiness",
+            "--comparison-sort-by",
+            "breakeven_gold_pct",
+            "--ranking-sort-by",
+            "down_beta_core",
+            "--ranking-max-tickers",
+            "5",
+            "--speculation-max-tickers",
+            "3",
+            "--quantity",
+            "10",
+        ]
+    )
+
+    assert args.command == "hedge-readiness"
+    assert args.comparison_sort_by == "breakeven_gold_pct"
+    assert args.ranking_sort_by == "down_beta_core"
+    assert args.ranking_max_tickers == 5
+    assert args.speculation_max_tickers == 3
+    assert args.quantity == 10
+
+
+def test_hedge_readiness_parser_rejects_invalid_sort_choice():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            ["hedge-readiness", "--comparison-sort-by", "not_a_column"]
+        )
+
+
+def test_run_hedge_readiness_plumbs_cli_options(tmp_path, monkeypatch):
+    import golden_vector.cli as cli_module
+
+    paths = build_test_paths(tmp_path)
+    captured = {}
+
+    def fake_write_hedge_readiness_report(**kwargs):
+        captured.update(kwargs)
+        output_path = paths.output_hedge_readiness_dir / "fake.md"
+        latest_path = paths.output_hedge_readiness_dir / "latest.md"
+        paths.output_hedge_readiness_dir.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("# fake\n", encoding="utf-8")
+        latest_path.write_text("# fake\n", encoding="utf-8")
+        return SimpleNamespace(
+            report_path=output_path,
+            latest_path=latest_path,
+            markdown="# fake\n",
+            summary={
+                "context_alignment_status": "OK",
+                "directly_hedgeable_count": 1,
+                "thin_count": 2,
+                "none_count": 3,
+                "holdings_count": 4,
+            },
+        )
+
+    monkeypatch.setattr(
+        cli_module,
+        "write_hedge_readiness_report",
+        fake_write_hedge_readiness_report,
+    )
+
+    exit_code = run_hedge_readiness(
+        paths,
+        comparison_sort_by="pnl_per_contract_minus20",
+        ranking_sort_by="down_beta_core",
+        ranking_max_tickers=5,
+        speculation_max_tickers=3,
+        quantity=10,
+    )
+
+    assert exit_code == 0
+    assert captured["comparison_sort_by"] == "pnl_per_contract_minus20"
+    assert captured["ranking_sort_by"] == "down_beta_core"
+    assert captured["ranking_max_tickers"] == 5
+    assert captured["speculation_max_tickers"] == 3
+    assert captured["quantity"] == 10
 
 
 def test_run_hedge_readiness_writes_markdown_report(tmp_path, capsys):

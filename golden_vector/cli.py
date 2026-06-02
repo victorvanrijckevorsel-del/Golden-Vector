@@ -28,6 +28,7 @@ from golden_vector.app.replay_manifest import (
 from golden_vector.app.run_context import RunContext, to_jsonable
 from golden_vector.features.horizons import parse_requested_horizons
 from golden_vector.features.returns import RETURN_COLUMNS, compute_horizon_returns_for_ticker
+from golden_vector.hedge.comparison import COMPARISON_SORT_COLUMNS
 from golden_vector.ingestion.foundation import execute_foundation_pipeline
 from golden_vector.ingestion.options_phase import (
     run_options_ingestion_phase,
@@ -53,6 +54,13 @@ from golden_vector.screening.pipeline import execute_tool_b_pipeline
 from golden_vector.serve.workspace import run_workspace_server
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -136,9 +144,39 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    subparsers.add_parser(
+    hedge_readiness_parser = subparsers.add_parser(
         "hedge-readiness",
         help="Render the local hedge-readiness markdown report from latest options data.",
+    )
+    hedge_readiness_parser.add_argument(
+        "--comparison-sort-by",
+        choices=COMPARISON_SORT_COLUMNS,
+        default=None,
+        help="Sort column for the cross-ticker comparison view.",
+    )
+    hedge_readiness_parser.add_argument(
+        "--ranking-sort-by",
+        choices=["down_beta_core"],
+        default=None,
+        help="Sort column for the sensitivity ranking.",
+    )
+    hedge_readiness_parser.add_argument(
+        "--ranking-max-tickers",
+        type=_positive_int,
+        default=None,
+        help="Maximum rows to show in the sensitivity ranking.",
+    )
+    hedge_readiness_parser.add_argument(
+        "--speculation-max-tickers",
+        type=_positive_int,
+        default=None,
+        help="Maximum tickers to show in the speculation candidates section.",
+    )
+    hedge_readiness_parser.add_argument(
+        "--quantity",
+        type=_positive_int,
+        default=None,
+        help="Put-contract quantity for scenario P&L.",
     )
 
     manual_data_parser = subparsers.add_parser(
@@ -330,7 +368,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_tool_b(paths, gold_price=args.gold_price)
 
     if args.command == "hedge-readiness":
-        return run_hedge_readiness(paths)
+        return run_hedge_readiness(
+            paths,
+            comparison_sort_by=args.comparison_sort_by,
+            ranking_sort_by=args.ranking_sort_by,
+            ranking_max_tickers=args.ranking_max_tickers,
+            speculation_max_tickers=args.speculation_max_tickers,
+            quantity=args.quantity,
+        )
 
     if args.command == "refresh":
         return run_refresh(
@@ -552,14 +597,29 @@ def _combine_foundation_and_options_status(
     return foundation_status
 
 
-def run_hedge_readiness(paths: ProjectPaths) -> int:
+def run_hedge_readiness(
+    paths: ProjectPaths,
+    *,
+    comparison_sort_by: str | None = None,
+    ranking_sort_by: str | None = None,
+    ranking_max_tickers: int | None = None,
+    speculation_max_tickers: int | None = None,
+    quantity: int | None = None,
+) -> int:
     run_context: RunContext | None = None
+    parameters = {
+        "comparison_sort_by": comparison_sort_by,
+        "ranking_sort_by": ranking_sort_by,
+        "ranking_max_tickers": ranking_max_tickers,
+        "speculation_max_tickers": speculation_max_tickers,
+        "quantity": quantity,
+    }
     try:
         loaded_config = load_app_config(paths)
         run_context = RunContext.start(
             paths=paths,
             command="hedge-readiness",
-            parameters={},
+            parameters=parameters,
             config_hash=loaded_config.combined_hash,
         )
         configure_logging(run_context.log_path)
@@ -567,6 +627,11 @@ def run_hedge_readiness(paths: ProjectPaths) -> int:
             paths=paths,
             run_context=run_context,
             app_config=loaded_config.app,
+            comparison_sort_by=comparison_sort_by,
+            ranking_sort_by=ranking_sort_by,
+            ranking_max_tickers=ranking_max_tickers,
+            speculation_max_tickers=speculation_max_tickers,
+            quantity=quantity,
         )
         context_alignment_status = str(
             report.summary.get("context_alignment_status") or "OK"
@@ -607,7 +672,7 @@ def run_hedge_readiness(paths: ProjectPaths) -> int:
             run_context = RunContext.start(
                 paths=paths,
                 command="hedge-readiness",
-                parameters={},
+                parameters=parameters,
                 config_hash="UNAVAILABLE",
             )
             configure_logging(run_context.log_path)
