@@ -39,6 +39,12 @@ from golden_vector.serve.workspace_state import (
     _structural_history_matches_tool_a,
 )
 
+OPTION_REPRICE_ASSUMPTION = (
+    "Value Now and P&L Now are instant Black-Scholes model values using "
+    "unchanged days-to-expiry and constant implied volatility; they are not "
+    "live market quotes."
+)
+
 
 def _render_window_switcher(
     *,
@@ -174,12 +180,26 @@ def _render_latest_panels(
     )
 
 
+def _render_option_trading_link_panel(ticker: str) -> str:
+    href = f"/ticker/{quote(str(ticker), safe='')}?lens=option-trading#option-trading"
+    return (
+        "<section id=\"option-trading\" class=\"panel\">"
+        "<h2>Option Trading</h2>"
+        "<p class=\"hint\">The full Option Trading lens loads Hedge Readiness "
+        "optionable put candidates plus call context only when opened.</p>"
+        f"<p><a href=\"{escape(href, quote=True)}\">Open Option Trading for "
+        f"{escape(str(ticker))}</a></p>"
+        "</section>"
+    )
+
+
 def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
     body = [
         "<section id=\"option-trading\" class=\"panel\">",
         "<h2>Option Trading</h2>",
-        "<p class=\"hint\">Put and call candidates are modeled server-side from "
-        "the same cached candidate grids used by the Option Trading tab.</p>",
+        "<p class=\"hint\">This lens uses the Hedge Readiness optionable subset: "
+        "downside put candidates are the ranking basis, and upside calls are "
+        "shown as context where listed calls pass the same liquidity checks.</p>",
     ]
     if detail is None:
         body.append(
@@ -237,7 +257,8 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
             hint=(
                 "P&L/share uses listed per-share option quotes. Net P&L uses one "
                 "standard 100-share contract in these base tables. Use the "
-                "calculator below to resize a selected scenario."
+                "calculator below to resize a selected scenario. "
+                f"{OPTION_REPRICE_ASSUMPTION}"
             ),
         )
     )
@@ -256,7 +277,7 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
             bundles=detail.call_bundles,
             hint=(
                 "Leveraged bullish speculation, not a hedge. Calls lose to time "
-                "decay if gold stalls."
+                f"decay if gold stalls. {OPTION_REPRICE_ASSUMPTION}"
             ),
         )
     )
@@ -402,7 +423,8 @@ def _render_option_sizing_calculator(detail: OptionTradingDetailData) -> str:
         "<section class=\"nested-panel option-sizing-calculator\">"
         "<h3>Sizing Calculator</h3>"
         "<p class=\"hint\">GET-only calculator. Values are recomputed server-side "
-        "from cached per-contract scenarios and are not saved.</p>"
+        "from cached per-contract scenarios and are not saved. "
+        f"{OPTION_REPRICE_ASSUMPTION}</p>"
         f"<form method=\"get\" action=\"/ticker/{quote(detail.ticker, safe='')}#option-trading\" class=\"option-sizing-form\">"
         "<input type=\"hidden\" name=\"lens\" value=\"option-trading\">"
         "<label>Side "

@@ -38,7 +38,11 @@ from golden_vector.serve.detail_panels import (
     _resolve_visible_windows,
 )
 from golden_vector.serve.detail_forms import COMPANY_FORM_FIELDS
-from golden_vector.serve.detail_page import render_detail_page, resolve_detail_lens
+from golden_vector.serve.detail_page import (
+    DETAIL_OPTION_TRADING_LENS_ID,
+    render_detail_page,
+    resolve_detail_lens,
+)
 from golden_vector.serve.lenses import DEFAULT_LENS_ID
 from golden_vector.serve.option_trading_data import (
     build_option_trading_detail_data,
@@ -202,19 +206,21 @@ def create_workspace_app(
                         query.get("show", [""])[0], active_window,
                     )
                     detail_lens = resolve_detail_lens(query.get("lens", [""])[0])
-                    option_trading_data = load_option_trading_data(
-                        paths,
-                        app_config=app_config,
-                    )
-                    option_trading_detail = build_option_trading_detail_data(
-                        option_trading_data,
-                        ticker=ticker,
-                        app_config=app_config,
-                        sizing_request=parse_option_sizing_request(
-                            query,
+                    option_trading_detail = None
+                    if detail_lens == DETAIL_OPTION_TRADING_LENS_ID:
+                        option_trading_data = load_option_trading_data(
+                            paths,
                             app_config=app_config,
-                        ),
-                    )
+                        )
+                        option_trading_detail = build_option_trading_detail_data(
+                            option_trading_data,
+                            ticker=ticker,
+                            app_config=app_config,
+                            sizing_request=parse_option_sizing_request(
+                                query,
+                                app_config=app_config,
+                            ),
+                        )
                     return _html_response(
                         start_response,
                         render_detail_page(

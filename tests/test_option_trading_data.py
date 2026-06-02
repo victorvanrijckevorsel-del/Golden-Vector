@@ -12,6 +12,7 @@ from golden_vector.serve.option_trading_data import (
     build_option_trading_detail_data,
     clear_option_trading_cache,
     load_option_trading_data,
+    parse_option_sizing_request,
 )
 from tests.helpers import build_test_paths
 
@@ -201,6 +202,25 @@ def test_load_option_trading_data_ignores_stale_feature_rows(tmp_path):
     assert data.options_features.empty
     assert data.overview.rows == ()
     assert "No options feature snapshot" in (data.overview.reason or "")
+
+
+def test_parse_option_sizing_request_budget_mode_ignores_unused_quantity(tmp_path):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+
+    request = parse_option_sizing_request(
+        {
+            "size_mode": ["budget"],
+            "budget": ["500"],
+            "quantity": ["0"],
+        },
+        app_config=app_config,
+    )
+
+    assert request.size_mode == "budget"
+    assert request.budget == 500.0
+    assert request.quantity == app_config.hedge_readiness.default_scenario_quantity
+    assert "Invalid quantity" not in " ".join(request.notes)
 
 
 def _write_option_inputs(

@@ -16,10 +16,10 @@ def _render_option_trading_overview_page(
 ) -> str:
     body = [
         "<h1>Option Trading</h1>",
-        "<p>Optionable gold stocks ranked by gold-downside sensitivity. "
-        "The put and call scenario columns are computed server-side from the same "
-        "candidate grids used by the ticker detail page. Calls are bullish-gold "
-        "speculation context, not the ranking basis.</p>",
+        "<p>Hedge Readiness optionable gold stocks ranked by gold-downside "
+        "sensitivity. Put columns are the downside ranking basis. Call columns "
+        "are bullish-gold context where listed calls pass the same liquidity "
+        "checks, not the ranking basis.</p>",
         "<p class=\"hint\"><a class=\"raw-report-download\" href=\"/hedge-readiness/latest.md\">"
         "Download latest raw hedge-readiness markdown report</a></p>",
     ]

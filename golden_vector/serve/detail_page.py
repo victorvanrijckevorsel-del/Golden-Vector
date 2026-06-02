@@ -15,6 +15,7 @@ from golden_vector.serve.detail_forms import (
 from golden_vector.serve.detail_panels import (
     _detail_alignment,
     _render_latest_panels,
+    _render_option_trading_link_panel,
     _render_option_trading_panel,
     _render_window_switcher,
 )
@@ -86,7 +87,11 @@ def render_detail_page(
             app_config=app_config,
         )
     )
-    body.append(_render_option_trading_panel(option_trading_detail))
+    body.append(
+        _render_option_trading_panel(option_trading_detail)
+        if option_lens_active
+        else _render_option_trading_link_panel(ticker)
+    )
     body.append(
         _render_company_form(
             ticker=ticker,

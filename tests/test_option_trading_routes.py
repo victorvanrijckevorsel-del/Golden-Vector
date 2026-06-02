@@ -81,6 +81,40 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
     assert "60d call, strike" in body
 
 
+def test_workspace_default_detail_uses_lightweight_option_trading_link(
+    tmp_path,
+    monkeypatch,
+):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+    )
+
+    def fail_option_load(*args, **kwargs):
+        raise AssertionError("default ticker detail should not load option data")
+
+    monkeypatch.setattr(
+        "golden_vector.serve.workspace.load_option_trading_data",
+        fail_option_load,
+    )
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(app, method="GET", path="/ticker/AEM")
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert 'class="nav-tab active" href="/"' in body
+    assert "Open Option Trading for AEM" in body
+    assert "/ticker/AEM?lens=option-trading#option-trading" in body
+    assert "Downside Put Candidates" not in body
+    assert "Sizing Calculator" not in body
+
+
 def test_workspace_option_trading_calculator_contracts_mode(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)

@@ -136,17 +136,17 @@ def parse_option_sizing_request(
     if mode_raw and mode_raw not in {"contracts", "budget"}:
         notes.append("Invalid sizing mode; defaulted to contracts.")
 
-    quantity = _parse_int(_query_value(query, "quantity"))
-    if quantity is None or quantity <= 0:
-        if _query_value(query, "quantity"):
-            notes.append(f"Invalid quantity; defaulted to {default_quantity}.")
-        quantity = default_quantity
-
+    quantity_raw = _query_value(query, "quantity")
+    quantity = _parse_int(quantity_raw)
     budget = _parse_float(_query_value(query, "budget"))
     if size_mode == "budget" and (budget is None or budget <= 0):
         notes.append("Invalid budget; defaulted to contract quantity mode.")
         size_mode = "contracts"
         budget = None
+    if quantity is None or quantity <= 0:
+        if size_mode == "contracts" and quantity_raw:
+            notes.append(f"Invalid quantity; defaulted to {default_quantity}.")
+        quantity = default_quantity
 
     return OptionSizingRequest(
         side=side,
