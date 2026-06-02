@@ -79,6 +79,125 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
     assert "60d call, strike" in body
 
 
+def test_workspace_option_trading_calculator_contracts_mode(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path=(
+            "/ticker/AEM?lens=option-trading&side=call&horizon=60"
+            "&size_mode=contracts&quantity=3"
+        ),
+    )
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "Sizing Calculator" in body
+    assert "Selected: 60d call" in body
+    assert "Contracts: 3." in body
+    assert "Premium spend: 360.00." in body
+
+
+def test_workspace_option_trading_calculator_budget_mode(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path=(
+            "/ticker/AEM?lens=option-trading&side=put&horizon=60"
+            "&size_mode=budget&budget=500"
+        ),
+    )
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "Selected: 60d put" in body
+    assert "Contracts: 4." in body
+    assert "Premium spend: 480.00." in body
+    assert "Leftover cash: 20.00." in body
+
+
+def test_workspace_option_trading_calculator_invalid_inputs_fall_back(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path=(
+            "/ticker/AEM?lens=option-trading&side=banana&horizon=999"
+            "&size_mode=budget&budget=-10&quantity=0"
+        ),
+    )
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "Invalid side; defaulted to put." in body
+    assert "Invalid horizon; defaulted to 60d." in body
+    assert "Invalid budget; defaulted to contract quantity mode." in body
+    assert "Invalid quantity; defaulted to 5." in body
+    assert "Contracts: 5." in body
+
+
+def test_workspace_option_trading_calculator_get_writes_no_files(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+    )
+    before = _file_snapshot(paths.repo_root)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path=(
+            "/ticker/AEM?lens=option-trading&side=call&horizon=60"
+            "&size_mode=contracts&quantity=2"
+        ),
+    )
+    after = _file_snapshot(paths.repo_root)
+
+    assert response["status"].startswith("200")
+    assert before == after
+
+
 def test_workspace_option_trading_detail_discloses_risk_free_rate_fallback(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
@@ -220,4 +339,12 @@ def _call_wsgi_app(app, *, method: str, path: str, body: str = "") -> dict[str, 
         "status": captured["status"],
         "headers": dict(captured["headers"]),
         "body": body_bytes.decode("utf-8"),
+    }
+
+
+def _file_snapshot(root) -> dict[str, int]:
+    return {
+        path.relative_to(root).as_posix(): path.stat().st_mtime_ns
+        for path in root.rglob("*")
+        if path.is_file()
     }

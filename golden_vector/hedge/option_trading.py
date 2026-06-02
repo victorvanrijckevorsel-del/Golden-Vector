@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import pandas as pd
@@ -23,10 +23,32 @@ from golden_vector.hedge.scenarios import (
 )
 
 SideStatus = Literal["available", "thin", "none"]
+OptionSide = Literal["put", "call"]
+SizingMode = Literal["contracts", "budget"]
 
 PREFERRED_OPTION_HORIZON_DAYS = 60
 PUT_CONTEXT_GOLD_MOVE = -0.10
 CALL_CONTEXT_GOLD_MOVE = 0.10
+
+
+@dataclass(frozen=True)
+class OptionSizingRequest:
+    side: OptionSide = "put"
+    horizon_days: int = PREFERRED_OPTION_HORIZON_DAYS
+    size_mode: SizingMode = "contracts"
+    quantity: int = 5
+    budget: float | None = None
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class OptionSizingResult:
+    request: OptionSizingRequest
+    contracts: int
+    premium_spend: float | None
+    leftover_cash: float | None
+    bundle: CandidateScenarioBundle | None
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -60,6 +82,7 @@ class OptionTradingDetailData:
     put_bundles: tuple[CandidateScenarioBundle, ...]
     call_candidates: tuple[OptionCandidate, ...] = ()
     call_bundles: tuple[CandidateScenarioBundle, ...] = ()
+    sizing: OptionSizingResult | None = None
     reason: str | None = None
     risk_free_rate_is_fallback: bool = False
 
@@ -137,6 +160,7 @@ def build_option_trading_detail(
     overview_row: OptionTradingRow | None,
     risk_free_rate: float,
     call_candidate_grids: dict[str, list[OptionCandidate]] | None = None,
+    sizing_request: OptionSizingRequest | None = None,
     target_horizons_days: tuple[int, ...] = (30, 60, 90),
     down_beta_min_for_scenario: float = 0.10,
     risk_free_rate_is_fallback: bool = False,
@@ -177,6 +201,11 @@ def build_option_trading_detail(
         )
         for candidate in call_candidates
     )
+    sizing = build_option_sizing_result(
+        request=sizing_request or OptionSizingRequest(),
+        put_bundles=put_bundles,
+        call_bundles=call_bundles,
+    )
     return OptionTradingDetailData(
         ticker=normalized,
         row=overview_row,
@@ -184,6 +213,7 @@ def build_option_trading_detail(
         put_bundles=put_bundles,
         call_candidates=call_candidates,
         call_bundles=call_bundles,
+        sizing=sizing,
         reason=(
             None
             if overview_row is not None
@@ -191,6 +221,92 @@ def build_option_trading_detail(
         ),
         risk_free_rate_is_fallback=risk_free_rate_is_fallback,
     )
+
+
+def build_option_sizing_result(
+    *,
+    request: OptionSizingRequest,
+    put_bundles: tuple[CandidateScenarioBundle, ...],
+    call_bundles: tuple[CandidateScenarioBundle, ...],
+) -> OptionSizingResult:
+    """Apply contracts/budget sizing to one cached per-contract scenario bundle."""
+
+    bundles = put_bundles if request.side == "put" else call_bundles
+    bundle = _bundle_for_horizon(bundles, request.horizon_days)
+    notes = list(request.notes)
+    if bundle is None:
+        notes.append(f"No {request.horizon_days}d {request.side} candidate is available.")
+        return OptionSizingResult(
+            request=request,
+            contracts=0,
+            premium_spend=None,
+            leftover_cash=request.budget if request.size_mode == "budget" else None,
+            bundle=None,
+            notes=tuple(notes),
+        )
+
+    contracts = request.quantity
+    leftover_cash = None
+    premium_spend = _premium_spend(bundle.candidate, contracts)
+    if request.size_mode == "budget":
+        budget = float(request.budget or 0.0)
+        cost_per_contract = _premium_spend(bundle.candidate, 1)
+        if cost_per_contract is None or cost_per_contract <= 0:
+            contracts = 0
+            premium_spend = None
+            leftover_cash = budget
+            notes.append("Candidate mid premium is unavailable, so budget sizing cannot buy contracts.")
+        else:
+            contracts = int(budget // cost_per_contract)
+            premium_spend = contracts * cost_per_contract
+            leftover_cash = budget - premium_spend
+            if contracts < 1:
+                notes.append("Budget is below the cost of one standard 100-share option contract.")
+
+    return OptionSizingResult(
+        request=request,
+        contracts=contracts,
+        premium_spend=premium_spend,
+        leftover_cash=leftover_cash,
+        bundle=_rescale_bundle(bundle, contracts),
+        notes=tuple(notes),
+    )
+
+
+def _bundle_for_horizon(
+    bundles: tuple[CandidateScenarioBundle, ...],
+    horizon_days: int,
+) -> CandidateScenarioBundle | None:
+    horizon = f"{horizon_days}d"
+    for bundle in bundles:
+        if bundle.horizon == horizon:
+            return bundle
+    return None
+
+
+def _premium_spend(candidate: OptionCandidate, contracts: int) -> float | None:
+    if candidate.mid is None or candidate.mid < 0:
+        return None
+    return candidate.mid * contracts * 100.0
+
+
+def _rescale_bundle(
+    bundle: CandidateScenarioBundle,
+    contracts: int,
+) -> CandidateScenarioBundle:
+    scaled_rows = [
+        replace(
+            row,
+            net_pnl_at_expiry=(
+                row.pnl_per_contract_at_expiry * contracts * 100.0
+            ),
+            net_pnl_if_closed_today=(
+                row.pnl_per_contract_if_closed_today * contracts * 100.0
+            ),
+        )
+        for row in bundle.rows
+    ]
+    return replace(bundle, rows=scaled_rows)
 
 
 def _build_row(

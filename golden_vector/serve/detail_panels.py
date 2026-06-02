@@ -259,6 +259,7 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
             ),
         )
     )
+    body.append(_render_option_sizing_calculator(detail))
     if row.notes:
         notes = "".join(f"<li>{escape(note)}</li>" for note in row.notes)
         body.append(f"<ul class=\"hint\">{notes}</ul>")
@@ -362,6 +363,114 @@ def _render_option_scenario_tables(
         )
     sections.append("</section>")
     return "".join(sections)
+
+
+def _render_option_sizing_calculator(detail: OptionTradingDetailData) -> str:
+    sizing = detail.sizing
+    if sizing is None:
+        return ""
+    request = sizing.request
+    budget_value = "" if request.budget is None else f"{request.budget:.2f}"
+    side_options = "".join(
+        f"<option value=\"{side}\"{' selected' if request.side == side else ''}>{label}</option>"
+        for side, label in (("put", "Downside puts"), ("call", "Upside calls"))
+    )
+    horizons = sorted(
+        {
+            candidate.horizon_days
+            for candidate in (*detail.put_candidates, *detail.call_candidates)
+        }
+        or {request.horizon_days}
+    )
+    horizon_options = "".join(
+        f"<option value=\"{horizon}\"{' selected' if request.horizon_days == horizon else ''}>{horizon}d</option>"
+        for horizon in horizons
+    )
+    mode_contracts_checked = " checked" if request.size_mode == "contracts" else ""
+    mode_budget_checked = " checked" if request.size_mode == "budget" else ""
+    notes = list(sizing.notes)
+    result = _render_option_sizing_result(sizing)
+    notes_html = (
+        "<ul class=\"hint\">"
+        + "".join(f"<li>{escape(note)}</li>" for note in notes)
+        + "</ul>"
+        if notes
+        else ""
+    )
+    return (
+        "<section class=\"nested-panel option-sizing-calculator\">"
+        "<h3>Sizing Calculator</h3>"
+        "<p class=\"hint\">GET-only calculator. Values are recomputed server-side "
+        "from cached per-contract scenarios and are not saved.</p>"
+        f"<form method=\"get\" action=\"/ticker/{quote(detail.ticker, safe='')}#option-trading\" class=\"option-sizing-form\">"
+        "<input type=\"hidden\" name=\"lens\" value=\"option-trading\">"
+        "<label>Side "
+        f"<select name=\"side\">{side_options}</select>"
+        "</label>"
+        "<label>Horizon "
+        f"<select name=\"horizon\">{horizon_options}</select>"
+        "</label>"
+        "<label><input type=\"radio\" name=\"size_mode\" value=\"contracts\""
+        f"{mode_contracts_checked}> Contracts</label>"
+        "<label>Qty "
+        f"<input type=\"number\" name=\"quantity\" min=\"1\" step=\"1\" value=\"{request.quantity}\">"
+        "</label>"
+        "<label><input type=\"radio\" name=\"size_mode\" value=\"budget\""
+        f"{mode_budget_checked}> Budget</label>"
+        "<label>$ "
+        f"<input type=\"number\" name=\"budget\" min=\"0\" step=\"0.01\" value=\"{escape(budget_value)}\">"
+        "</label>"
+        "<button type=\"submit\">Recompute</button>"
+        "</form>"
+        f"{notes_html}{result}"
+        "</section>"
+    )
+
+
+def _render_option_sizing_result(sizing: Any) -> str:
+    request = sizing.request
+    label = "put" if request.side == "put" else "call"
+    if sizing.bundle is None:
+        return (
+            "<p>"
+            f"Selected: {escape(str(request.horizon_days))}d {escape(label)}. "
+            "No scenario table is available for this selection."
+            "</p>"
+        )
+    bundle = sizing.bundle
+    rows = []
+    for row in bundle.rows:
+        rows.append(
+            "<tr>"
+            f"<td>{_fmt_percent(row.gold_pct_change, decimals=1)}</td>"
+            f"<td>{_fmt_number(row.implied_stock_price, decimals=2)}</td>"
+            f"<td>{_fmt_number(row.pnl_per_contract_if_closed_today, decimals=2)}</td>"
+            f"<td>{_fmt_number(row.pnl_per_contract_at_expiry, decimals=2)}</td>"
+            f"<td>{_fmt_number(row.net_pnl_if_closed_today, decimals=0)}</td>"
+            f"<td>{_fmt_number(row.net_pnl_at_expiry, decimals=0)}</td>"
+            "</tr>"
+        )
+    leftover = (
+        f" Leftover cash: {_fmt_number(sizing.leftover_cash, decimals=2)}."
+        if sizing.leftover_cash is not None
+        else ""
+    )
+    spend = (
+        f" Premium spend: {_fmt_number(sizing.premium_spend, decimals=2)}."
+        if sizing.premium_spend is not None
+        else ""
+    )
+    return (
+        "<div class=\"option-sizing-result\">"
+        f"<p>Selected: {escape(bundle.horizon)} {escape(label)}. "
+        f"Contracts: {sizing.contracts}.{spend}{leftover}</p>"
+        "<table>"
+        "<thead><tr><th>Gold Move</th><th>Modeled Stock</th><th>P&amp;L/share Now</th>"
+        "<th>P&amp;L/share Expiry</th><th>Net P&amp;L Now</th><th>Net P&amp;L Expiry</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+        "</div>"
+    )
 
 
 def _render_tool_a_panel(

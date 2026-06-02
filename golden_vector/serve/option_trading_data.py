@@ -24,6 +24,7 @@ from golden_vector.hedge.candidate_puts import OptionCandidate, build_candidate_
 from golden_vector.hedge.option_trading import (
     OptionTradingDetailData,
     OptionTradingOverviewData,
+    OptionSizingRequest,
     build_option_trading_detail,
     build_option_trading_overview,
 )
@@ -63,6 +64,7 @@ def build_option_trading_detail_data(
     *,
     ticker: str,
     app_config: AppConfig,
+    sizing_request: OptionSizingRequest | None = None,
 ) -> OptionTradingDetailData:
     normalized = ticker.strip().upper()
     overview_row = next(
@@ -74,6 +76,7 @@ def build_option_trading_detail_data(
         tool_a=data.tool_a,
         candidate_grids=data.candidate_grids,
         call_candidate_grids=data.call_candidate_grids,
+        sizing_request=sizing_request,
         overview_row=overview_row,
         risk_free_rate=data.risk_free_rate,
         risk_free_rate_is_fallback=data.risk_free_rate_is_fallback,
@@ -91,9 +94,81 @@ def build_option_trading_detail_data(
         put_bundles=detail.put_bundles,
         call_candidates=detail.call_candidates,
         call_bundles=detail.call_bundles,
+        sizing=detail.sizing,
         reason=data.overview.reason,
         risk_free_rate_is_fallback=detail.risk_free_rate_is_fallback,
     )
+
+
+def parse_option_sizing_request(
+    query: dict[str, list[str]],
+    *,
+    app_config: AppConfig,
+) -> OptionSizingRequest:
+    """Parse the GET-only ticker sizing calculator query."""
+
+    notes: list[str] = []
+    side_raw = _query_value(query, "side").lower()
+    side = side_raw if side_raw in {"put", "call"} else "put"
+    if side_raw and side_raw not in {"put", "call"}:
+        notes.append("Invalid side; defaulted to put.")
+
+    target_horizons = tuple(app_config.hedge_readiness.target_horizons_days)
+    default_horizon = 60 if 60 in target_horizons else target_horizons[0]
+    horizon_raw = _query_value(query, "horizon")
+    horizon = _parse_int(horizon_raw)
+    if horizon not in target_horizons:
+        if horizon_raw:
+            notes.append(f"Invalid horizon; defaulted to {default_horizon}d.")
+        horizon = default_horizon
+
+    default_quantity = app_config.hedge_readiness.default_scenario_quantity
+    mode_raw = _query_value(query, "size_mode").lower()
+    size_mode = mode_raw if mode_raw in {"contracts", "budget"} else "contracts"
+    if mode_raw and mode_raw not in {"contracts", "budget"}:
+        notes.append("Invalid sizing mode; defaulted to contracts.")
+
+    quantity = _parse_int(_query_value(query, "quantity"))
+    if quantity is None or quantity <= 0:
+        if _query_value(query, "quantity"):
+            notes.append(f"Invalid quantity; defaulted to {default_quantity}.")
+        quantity = default_quantity
+
+    budget = _parse_float(_query_value(query, "budget"))
+    if size_mode == "budget" and (budget is None or budget <= 0):
+        notes.append("Invalid budget; defaulted to contract quantity mode.")
+        size_mode = "contracts"
+        budget = None
+
+    return OptionSizingRequest(
+        side=side,  # type: ignore[arg-type]
+        horizon_days=horizon,
+        size_mode=size_mode,  # type: ignore[arg-type]
+        quantity=quantity,
+        budget=budget,
+        notes=tuple(notes),
+    )
+
+
+def _query_value(query: dict[str, list[str]], key: str) -> str:
+    return str(query.get(key, [""])[0]).strip()
+
+
+def _parse_int(raw: str) -> int | None:
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_float(raw: str) -> float | None:
+    cleaned = str(raw or "").replace("$", "").replace(",", "").strip()
+    if not cleaned:
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
 
 
 def load_option_trading_data(

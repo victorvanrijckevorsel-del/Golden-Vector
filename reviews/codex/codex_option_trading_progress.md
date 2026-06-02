@@ -24,3 +24,4 @@
 - Step 5: generalized `CandidatePut` to the backwards-compatible `OptionCandidate` model, added `build_candidate_grid`, renamed scenario beta inputs to `gold_beta`, kept old put wrappers/aliases working, and verified with the full suite (`540 passed`).
 - Step 6: added call candidate grids, overview call context P&L, and ticker-detail Upside Call sections scaled with `up_beta_core` and labelled as bullish speculation; full suite stayed green (`542 passed`).
 - Checkpoint C self-review: reviewed the Batch 3 diff as one change, confirmed put wrappers/CLI compatibility, call scenarios use `up_beta_core`, no frontend financial math or markdown regex path was introduced, and no additional fixes were needed.
+- Step 7: added the GET-only sizing calculator with contracts and budget modes, server-side scenario rescaling, validation fallback notes, and a no-file-mutation route test; full suite stayed green (`546 passed`).

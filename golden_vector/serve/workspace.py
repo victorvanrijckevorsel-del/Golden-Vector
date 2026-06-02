@@ -43,6 +43,7 @@ from golden_vector.serve.lenses import DEFAULT_LENS_ID
 from golden_vector.serve.option_trading_data import (
     build_option_trading_detail_data,
     load_option_trading_data,
+    parse_option_sizing_request,
 )
 from golden_vector.serve.overview_option_trading import _render_option_trading_overview_page
 from golden_vector.serve.overview_combined import _render_overview_page
@@ -209,6 +210,10 @@ def create_workspace_app(
                         option_trading_data,
                         ticker=ticker,
                         app_config=app_config,
+                        sizing_request=parse_option_sizing_request(
+                            query,
+                            app_config=app_config,
+                        ),
                     )
                     return _html_response(
                         start_response,
