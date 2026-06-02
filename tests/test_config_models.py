@@ -217,7 +217,6 @@ def test_hedge_readiness_config_accepts_defaults():
             "speculation_max_tickers_default": 15,
             "ranking_max_tickers_default": 60,
             "down_beta_min_for_scenario": 0.10,
-            "max_tickers_speculation_section": 15,
         }
     )
 
@@ -239,7 +238,6 @@ def test_hedge_readiness_config_accepts_defaults():
     assert config.speculation_max_tickers_default == 15
     assert config.ranking_max_tickers_default == 60
     assert config.down_beta_min_for_scenario == 0.10
-    assert config.max_tickers_speculation_section == 15
 
 
 @pytest.mark.parametrize(
@@ -274,7 +272,6 @@ def test_hedge_readiness_config_accepts_defaults():
         {"speculation_max_tickers_default": 0},
         {"ranking_max_tickers_default": 0},
         {"down_beta_min_for_scenario": 0},
-        {"max_tickers_speculation_section": 0},
     ],
 )
 def test_hedge_readiness_config_rejects_invalid_thresholds(override):
@@ -308,7 +305,6 @@ def test_hedge_readiness_config_rejects_invalid_thresholds(override):
         "speculation_max_tickers_default": 15,
         "ranking_max_tickers_default": 60,
         "down_beta_min_for_scenario": 0.10,
-        "max_tickers_speculation_section": 15,
     }
     payload.update(override)
 

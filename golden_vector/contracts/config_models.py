@@ -121,7 +121,6 @@ class HedgeReadinessConfig(StrictConfigModel):
     speculation_max_tickers_default: int = 15
     ranking_max_tickers_default: int = 60
     down_beta_min_for_scenario: float = 0.10
-    max_tickers_speculation_section: int = 15
 
     @field_validator("target_delta")
     @classmethod
@@ -154,7 +153,6 @@ class HedgeReadinessConfig(StrictConfigModel):
         "default_scenario_quantity",
         "speculation_max_tickers_default",
         "ranking_max_tickers_default",
-        "max_tickers_speculation_section",
     )
     @classmethod
     def positive_scenario_ints(cls, value: int) -> int:

@@ -36,7 +36,7 @@ def test_build_speculation_section_filters_sorts_and_caps_by_config(tmp_path):
     paths = build_test_paths(tmp_path)
     config = HedgeReadinessConfig(
         optionability_tier_min="thin",
-        max_tickers_speculation_section=2,
+        speculation_max_tickers_default=2,
     )
 
     blocks = build_speculation_section(
@@ -93,7 +93,7 @@ def test_build_speculation_section_default_filter_excludes_thin_tickers(tmp_path
 
 def test_build_speculation_section_honors_quantity_and_max_ticker_overrides(tmp_path):
     paths = build_test_paths(tmp_path)
-    config = HedgeReadinessConfig(max_tickers_speculation_section=10)
+    config = HedgeReadinessConfig(speculation_max_tickers_default=10)
 
     blocks = build_speculation_section(
         paths=paths,

@@ -12,6 +12,7 @@ from golden_vector.contracts.config_models import HedgeReadinessConfig
 from golden_vector.hedge._helpers import (
     as_float as _as_float,
     rows_by_ticker_dict as _rows_by_ticker,
+    unique_preserving_order,
 )
 from golden_vector.hedge.candidate_puts import CandidatePut, build_candidate_put_grid
 from golden_vector.hedge.scenarios import CandidateScenarioBundle, compute_scenario_bundle
@@ -50,7 +51,7 @@ def build_speculation_section(
         optionability_tier_min=config.optionability_tier_min,
         max_tickers=max_tickers
         if max_tickers is not None
-        else config.max_tickers_speculation_section,
+        else config.speculation_max_tickers_default,
     )
     if not selected:
         return []
@@ -167,7 +168,7 @@ def _ticker_block(
         confidence_label=confidence_label,
         candidates=candidates,
         scenario_bundles=scenario_bundles,
-        annotations=_unique_annotations(annotations),
+        annotations=unique_preserving_order(annotations),
     )
 
 
@@ -273,14 +274,3 @@ def _confidence_label(tool_a_row: dict[str, Any] | None) -> str:
         return label
     confidence_score = _as_float(tool_a_row.get("confidence_score"))
     return f"score {confidence_score:.2f}" if confidence_score is not None else "n/a"
-
-
-def _unique_annotations(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for value in values:
-        if value not in seen:
-            seen.add(value)
-            result.append(value)
-    return result
-

@@ -7,7 +7,11 @@ from typing import Any
 
 import pandas as pd
 
-from golden_vector.hedge._helpers import as_float, rows_by_ticker_dict
+from golden_vector.hedge._helpers import (
+    as_float,
+    rows_by_ticker_dict,
+    unique_preserving_order,
+)
 from golden_vector.hedge.candidate_puts import CandidatePut
 from golden_vector.hedge.scenarios import compute_scenario_bundle
 
@@ -50,7 +54,7 @@ def build_sensitivity_ranking(
         raise ValueError("Sensitivity ranking supports only sort_by='down_beta_core'.")
 
     feature_by_ticker = _features_by_ticker(options_features)
-    rows = [
+    built_rows = [
         _build_row(
             ticker=ticker,
             tool_a_row=tool_a_row,
@@ -61,7 +65,7 @@ def build_sensitivity_ranking(
         )
         for ticker, tool_a_row in rows_by_ticker_dict(tool_a_frame).items()
     ]
-    rankable = [row for row in rows if row.rank is not None]
+    rankable = [row for row, is_rankable in built_rows if is_rankable]
     rankable.sort(key=lambda row: (-(row.down_beta_core or 0.0), row.ticker))
     reranked = [
         SensitivityRow(
@@ -79,7 +83,7 @@ def build_sensitivity_ranking(
         for index, row in enumerate(rankable, start=1)
     ]
     unranked = sorted(
-        (row for row in rows if row.rank is None),
+        (row for row, is_rankable in built_rows if not is_rankable),
         key=lambda row: row.ticker,
     )
     ordered = [*reranked, *unranked]
@@ -88,7 +92,7 @@ def build_sensitivity_ranking(
     return SensitivityRankingData(
         rows=ordered,
         sort_by=sort_by,
-        total_count=len(rows),
+        total_count=len(built_rows),
         score_eligible_count=len(rankable),
     )
 
@@ -101,7 +105,7 @@ def _build_row(
     candidates: list[CandidatePut],
     risk_free_rate: float | None,
     down_beta_min_for_scenario: float,
-) -> SensitivityRow:
+) -> tuple[SensitivityRow, bool]:
     down_beta = as_float(tool_a_row.get("down_beta_core"))
     score_eligible = _as_bool(tool_a_row.get("score_eligible"), default=True)
     notes: list[str] = []
@@ -118,9 +122,11 @@ def _build_row(
 
     candidate_60d = _candidate_for_horizon(candidates, horizon_days=60)
     pnl_at_minus10 = None
+    used_rate_fallback = False
     if candidate_60d is None:
         notes.append("no 60d candidate")
     elif down_beta is not None:
+        used_rate_fallback = risk_free_rate is None
         bundle = compute_scenario_bundle(
             candidate=candidate_60d,
             current_stock_price=candidate_60d.underlying_price,
@@ -135,22 +141,26 @@ def _build_row(
             notes.append(bundle.skipped_reason)
         elif bundle.rows:
             pnl_at_minus10 = bundle.rows[0].pnl_per_contract_at_expiry
-        if risk_free_rate is None:
-            notes.append("risk-free rate unavailable; used 0%")
+    if used_rate_fallback:
+        notes.append("risk-free rate unavailable; used 0%")
 
-    return SensitivityRow(
-        rank=0 if score_eligible and down_beta is not None else None,
-        ticker=ticker,
-        down_beta_core=down_beta,
-        up_beta_core=as_float(tool_a_row.get("up_beta_core")),
-        confidence_label=str(tool_a_row.get("confidence_label") or "n/a"),
-        confidence_score=as_float(tool_a_row.get("confidence_score")),
-        iv_percentile_cross_sectional=as_float(
-            (feature or {}).get("iv_percentile_cross_sectional")
+    is_rankable = score_eligible and down_beta is not None
+    return (
+        SensitivityRow(
+            rank=None,
+            ticker=ticker,
+            down_beta_core=down_beta,
+            up_beta_core=as_float(tool_a_row.get("up_beta_core")),
+            confidence_label=str(tool_a_row.get("confidence_label") or "n/a"),
+            confidence_score=as_float(tool_a_row.get("confidence_score")),
+            iv_percentile_cross_sectional=as_float(
+                (feature or {}).get("iv_percentile_cross_sectional")
+            ),
+            pnl_at_minus10_60d=pnl_at_minus10,
+            optionability_tier=optionability_tier,
+            notes=unique_preserving_order(notes),
         ),
-        pnl_at_minus10_60d=pnl_at_minus10,
-        optionability_tier=optionability_tier,
-        notes=_unique_notes(notes),
+        is_rankable,
     )
 
 
@@ -188,13 +198,3 @@ def _as_bool(value: object, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
-
-
-def _unique_notes(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for value in values:
-        if value not in seen:
-            seen.add(value)
-            result.append(value)
-    return result

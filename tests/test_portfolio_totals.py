@@ -13,7 +13,6 @@ def test_compute_portfolio_totals_returns_none_for_empty_holdings():
         tool_a_frame=pd.DataFrame(),
         tool_b_frame=pd.DataFrame(),
         candidate_grids={},
-        risk_free_rate=0.04,
         config=_config(),
     ) is None
 
@@ -24,7 +23,6 @@ def test_compute_portfolio_totals_handles_share_mode_holding():
         tool_a_frame=_tool_a([("AEM", 1.40)]),
         tool_b_frame=_tool_b([("AEM", 50.0)]),
         candidate_grids={"AEM": [_candidate("AEM", mid=1.20, underlying_price=50.0)]},
-        risk_free_rate=0.04,
         config=_config(),
     )
 
@@ -37,8 +35,8 @@ def test_compute_portfolio_totals_handles_share_mode_holding():
     assert downside.portfolio_value_at_scenario == pytest.approx(8_600.0)
     assert downside.portfolio_loss_dollars == pytest.approx(1_400.0)
     assert downside.portfolio_loss_pct == pytest.approx(0.14)
-    assert downside.hedge_cost_by_protection[0.5] == pytest.approx(120.0)
-    assert downside.hedge_cost_by_protection[1.0] == pytest.approx(240.0)
+    assert totals.hedge_cost_by_protection[0.5] == pytest.approx(120.0)
+    assert totals.hedge_cost_by_protection[1.0] == pytest.approx(240.0)
 
 
 def test_compute_portfolio_totals_handles_dollar_exposure_mode_holding():
@@ -47,7 +45,6 @@ def test_compute_portfolio_totals_handles_dollar_exposure_mode_holding():
         tool_a_frame=_tool_a([("NEM", 1.00)]),
         tool_b_frame=_tool_b([("NEM", 50.0)]),
         candidate_grids={"NEM": [_candidate("NEM", mid=2.00, underlying_price=50.0)]},
-        risk_free_rate=0.04,
         config=_config(),
     )
 
@@ -56,8 +53,10 @@ def test_compute_portfolio_totals_handles_dollar_exposure_mode_holding():
     assert totals.current_total_value == pytest.approx(50_000.0)
     assert downside.portfolio_value_at_scenario == pytest.approx(45_000.0)
     assert downside.portfolio_loss_dollars == pytest.approx(5_000.0)
-    assert downside.hedge_cost_by_protection[0.5] == pytest.approx(1_000.0)
-    assert totals.holdings_skipped == []
+    assert totals.hedge_cost_by_protection[0.5] == pytest.approx(1_000.0)
+    assert totals.holdings_excluded_from_totals == []
+    assert totals.downside_model_skipped == []
+    assert totals.hedge_cost_skipped == []
 
 
 def test_compute_portfolio_totals_handles_mixed_holdings():
@@ -72,14 +71,13 @@ def test_compute_portfolio_totals_handles_mixed_holdings():
             "AEM": [_candidate("AEM", mid=1.00, underlying_price=50.0)],
             "NEM": [_candidate("NEM", mid=2.00, underlying_price=100.0)],
         },
-        risk_free_rate=0.04,
         config=_config(),
     )
 
     assert totals is not None
     assert totals.current_total_value == pytest.approx(25_000.0)
     assert totals.scenario_rows[1].portfolio_loss_dollars == pytest.approx(3_500.0)
-    assert totals.scenario_rows[1].hedge_cost_by_protection[1.0] == pytest.approx(500.0)
+    assert totals.hedge_cost_by_protection[1.0] == pytest.approx(500.0)
 
 
 def test_compute_portfolio_totals_counts_dollar_notional_without_price_but_skips_hedge_cost():
@@ -88,7 +86,6 @@ def test_compute_portfolio_totals_counts_dollar_notional_without_price_but_skips
         tool_a_frame=_tool_a([("AEM", 1.00)]),
         tool_b_frame=pd.DataFrame(),
         candidate_grids={"AEM": [_candidate("AEM", mid=2.00, underlying_price=0.0)]},
-        risk_free_rate=0.04,
         config=_config(),
     )
 
@@ -96,8 +93,10 @@ def test_compute_portfolio_totals_counts_dollar_notional_without_price_but_skips
     assert totals.current_total_value == pytest.approx(50_000.0)
     downside = totals.scenario_rows[1]
     assert downside.portfolio_loss_dollars == pytest.approx(5_000.0)
-    assert downside.hedge_cost_by_protection[1.0] == 0.0
-    assert totals.holdings_skipped == [("AEM", "no hedge-cost inputs")]
+    assert totals.hedge_cost_by_protection[1.0] == 0.0
+    assert totals.holdings_excluded_from_totals == []
+    assert totals.downside_model_skipped == []
+    assert totals.hedge_cost_skipped == [("AEM", "no hedge-cost inputs")]
 
 
 def test_compute_portfolio_totals_skips_share_holding_without_price():
@@ -106,16 +105,15 @@ def test_compute_portfolio_totals_skips_share_holding_without_price():
         tool_a_frame=_tool_a([("AEM", 1.00)]),
         tool_b_frame=pd.DataFrame(),
         candidate_grids={},
-        risk_free_rate=0.04,
         config=_config(),
     )
 
     assert totals is not None
     assert totals.current_total_value == 0.0
     assert totals.holdings_resolved_count == 0
-    assert totals.holdings_skipped == [
-        ("AEM", "missing share price; no 60d candidate")
-    ]
+    assert totals.holdings_excluded_from_totals == [("AEM", "missing share price")]
+    assert totals.downside_model_skipped == []
+    assert totals.hedge_cost_skipped == []
 
 
 def test_compute_portfolio_totals_notes_missing_candidate_and_skips_hedge_cost():
@@ -124,14 +122,15 @@ def test_compute_portfolio_totals_notes_missing_candidate_and_skips_hedge_cost()
         tool_a_frame=_tool_a([("AEM", 1.00)]),
         tool_b_frame=_tool_b([("AEM", 50.0)]),
         candidate_grids={},
-        risk_free_rate=0.04,
         config=_config(),
     )
 
     assert totals is not None
     assert totals.scenario_rows[1].portfolio_loss_dollars == pytest.approx(1_000.0)
-    assert totals.scenario_rows[1].hedge_cost_by_protection[1.0] == 0.0
-    assert totals.holdings_skipped == [("AEM", "no 60d candidate")]
+    assert totals.hedge_cost_by_protection[1.0] == 0.0
+    assert totals.holdings_excluded_from_totals == []
+    assert totals.downside_model_skipped == []
+    assert totals.hedge_cost_skipped == [("AEM", "no 60d candidate")]
 
 
 def test_compute_portfolio_totals_low_beta_holding_counts_notional_but_not_scenario_loss():
@@ -140,16 +139,17 @@ def test_compute_portfolio_totals_low_beta_holding_counts_notional_but_not_scena
         tool_a_frame=_tool_a([("AEM", 0.05)]),
         tool_b_frame=_tool_b([("AEM", 50.0)]),
         candidate_grids={"AEM": [_candidate("AEM", mid=1.00, underlying_price=50.0)]},
-        risk_free_rate=0.04,
         config=_config(down_beta_min_for_scenario=0.10),
     )
 
     assert totals is not None
     assert totals.current_total_value == pytest.approx(10_000.0)
     assert totals.scenario_rows[1].portfolio_loss_dollars == 0.0
-    assert totals.holdings_skipped == [
+    assert totals.holdings_excluded_from_totals == []
+    assert totals.downside_model_skipped == [
         ("AEM", "down-beta unavailable or too small")
     ]
+    assert totals.hedge_cost_skipped == []
 
 
 def test_compute_portfolio_totals_ceil_rounds_contracts_needed():
@@ -158,12 +158,11 @@ def test_compute_portfolio_totals_ceil_rounds_contracts_needed():
         tool_a_frame=_tool_a([("AEM", 1.00)]),
         tool_b_frame=_tool_b([("AEM", 50.0)]),
         candidate_grids={"AEM": [_candidate("AEM", mid=1.00, underlying_price=50.0)]},
-        risk_free_rate=0.04,
         config=_config(protection_levels=[1.0]),
     )
 
     assert totals is not None
-    assert totals.scenario_rows[0].hedge_cost_by_protection[1.0] == pytest.approx(200.0)
+    assert totals.hedge_cost_by_protection[1.0] == pytest.approx(200.0)
 
 
 def _config(

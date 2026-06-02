@@ -42,4 +42,3 @@ optionability_tier_min: directly_hedgeable
 speculation_max_tickers_default: 15
 ranking_max_tickers_default: 60
 down_beta_min_for_scenario: 0.10
-max_tickers_speculation_section: 15

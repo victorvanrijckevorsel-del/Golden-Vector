@@ -8,7 +8,11 @@ from dataclasses import dataclass
 import pandas as pd
 
 from golden_vector.contracts.config_models import HedgeReadinessConfig
-from golden_vector.hedge._helpers import row_float, rows_by_ticker_series
+from golden_vector.hedge._helpers import (
+    row_float,
+    rows_by_ticker_series,
+    unique_preserving_order,
+)
 from golden_vector.hedge.candidate_puts import CandidatePut
 from golden_vector.hedge.holdings import Holding
 
@@ -25,7 +29,11 @@ class HoldingResolved:
     current_notional: float | None
     down_beta_core: float | None
     candidate_60d: CandidatePut | None
-    skipped_reason: str | None
+    totals_exclusion_reason: str | None
+    downside_modelable: bool
+    downside_skip_reason: str | None
+    hedge_cost_modelable: bool
+    hedge_cost_skip_reason: str | None
 
 
 @dataclass(frozen=True)
@@ -34,15 +42,17 @@ class PortfolioScenarioRow:
     portfolio_value_at_scenario: float
     portfolio_loss_dollars: float
     portfolio_loss_pct: float
-    hedge_cost_by_protection: dict[float, float]
 
 
 @dataclass(frozen=True)
 class PortfolioTotalsData:
     holdings_count: int
     holdings_resolved_count: int
-    holdings_skipped: list[tuple[str, str]]
+    holdings_excluded_from_totals: list[tuple[str, str]]
+    downside_model_skipped: list[tuple[str, str]]
+    hedge_cost_skipped: list[tuple[str, str]]
     current_total_value: float
+    hedge_cost_by_protection: dict[float, float]
     scenario_rows: list[PortfolioScenarioRow]
     interpretive_notes: list[str]
 
@@ -53,12 +63,10 @@ def compute_portfolio_totals(
     tool_a_frame: pd.DataFrame,
     tool_b_frame: pd.DataFrame,
     candidate_grids: dict[str, list[CandidatePut]],
-    risk_free_rate: float | None,
     config: HedgeReadinessConfig,
 ) -> PortfolioTotalsData | None:
     """Aggregate modeled portfolio downside and put hedge costs."""
 
-    _ = risk_free_rate
     if not holdings:
         return None
 
@@ -78,19 +86,36 @@ def compute_portfolio_totals(
         holding.current_notional or 0.0
         for holding in resolved
     )
+    protection_levels = tuple(config.protection_levels)
+    hedge_cost_by_protection = {
+        level: _hedge_cost_at_level(
+            resolved=resolved,
+            protection_level=level,
+        )
+        for level in protection_levels
+    }
     scenario_rows = [
         _scenario_row(
             resolved=resolved,
             current_total=current_total,
             gold_pct_change=gold_pct_change,
-            protection_levels=tuple(config.protection_levels),
         )
         for gold_pct_change in config.default_scenarios
     ]
-    skipped = [
-        (holding.ticker, holding.skipped_reason)
+    excluded_from_totals = [
+        (holding.ticker, holding.totals_exclusion_reason)
         for holding in resolved
-        if holding.skipped_reason is not None
+        if holding.totals_exclusion_reason is not None
+    ]
+    downside_skipped = [
+        (holding.ticker, holding.downside_skip_reason)
+        for holding in resolved
+        if holding.current_notional is not None and holding.downside_skip_reason is not None
+    ]
+    hedge_cost_skipped = [
+        (holding.ticker, holding.hedge_cost_skip_reason)
+        for holding in resolved
+        if holding.current_notional is not None and holding.hedge_cost_skip_reason is not None
     ]
     return PortfolioTotalsData(
         holdings_count=len(holdings),
@@ -99,13 +124,16 @@ def compute_portfolio_totals(
             for holding in resolved
             if holding.current_notional is not None
         ),
-        holdings_skipped=skipped,
+        holdings_excluded_from_totals=excluded_from_totals,
+        downside_model_skipped=downside_skipped,
+        hedge_cost_skipped=hedge_cost_skipped,
         current_total_value=current_total,
+        hedge_cost_by_protection=hedge_cost_by_protection,
         scenario_rows=scenario_rows,
         interpretive_notes=_interpretive_notes(
             current_total=current_total,
-            scenario_rows=scenario_rows,
-            protection_levels=tuple(config.protection_levels),
+            hedge_cost_by_protection=hedge_cost_by_protection,
+            protection_levels=protection_levels,
         ),
     )
 
@@ -129,13 +157,19 @@ def _resolve_holding(
         current_stock_price=current_price,
     )
     down_beta = row_float(tool_a_row, "down_beta_core")
-    skip_reasons = _skip_reasons(
+    totals_exclusion_reason = _totals_exclusion_reason(
         mode=mode,
-        current_stock_price=current_price,
+        current_notional=current_notional,
+    )
+    downside_skip_reason = _downside_skip_reason(
         current_notional=current_notional,
         down_beta_core=down_beta,
-        candidate_60d=candidate_60d,
         config=config,
+    )
+    hedge_cost_skip_reason = _hedge_cost_skip_reason(
+        current_notional=current_notional,
+        current_stock_price=current_price,
+        candidate_60d=candidate_60d,
     )
     return HoldingResolved(
         ticker=holding.ticker,
@@ -146,7 +180,15 @@ def _resolve_holding(
         current_notional=current_notional,
         down_beta_core=down_beta,
         candidate_60d=candidate_60d,
-        skipped_reason="; ".join(skip_reasons) if skip_reasons else None,
+        totals_exclusion_reason=totals_exclusion_reason,
+        downside_modelable=(
+            current_notional is not None and downside_skip_reason is None
+        ),
+        downside_skip_reason=downside_skip_reason,
+        hedge_cost_modelable=(
+            current_notional is not None and hedge_cost_skip_reason is None
+        ),
+        hedge_cost_skip_reason=hedge_cost_skip_reason,
     )
 
 
@@ -155,7 +197,6 @@ def _scenario_row(
     resolved: list[HoldingResolved],
     current_total: float,
     gold_pct_change: float,
-    protection_levels: tuple[float, ...],
 ) -> PortfolioScenarioRow:
     scenario_value = sum(
         _holding_value_at_scenario(
@@ -170,13 +211,6 @@ def _scenario_row(
         portfolio_value_at_scenario=scenario_value,
         portfolio_loss_dollars=loss,
         portfolio_loss_pct=(loss / current_total) if current_total > 0 else 0.0,
-        hedge_cost_by_protection={
-            level: _hedge_cost_at_level(
-                resolved=resolved,
-                protection_level=level,
-            )
-            for level in protection_levels
-        },
     )
 
 
@@ -187,14 +221,9 @@ def _holding_value_at_scenario(
 ) -> float:
     if holding.current_notional is None:
         return 0.0
-    if (
-        holding.down_beta_core is None
-        or (
-            holding.skipped_reason is not None
-            and "down-beta unavailable or too small" in holding.skipped_reason
-        )
-    ):
+    if not holding.downside_modelable:
         return holding.current_notional
+    assert holding.down_beta_core is not None
     factor = max(0.0, 1.0 + holding.down_beta_core * gold_pct_change)
     return holding.current_notional * factor
 
@@ -222,38 +251,62 @@ def _hedge_cost_at_level(
 
 def _hedge_cost_eligible(holding: HoldingResolved) -> bool:
     return (
-        holding.current_notional is not None
+        holding.hedge_cost_modelable
+        and holding.current_notional is not None
         and holding.current_stock_price is not None
         and holding.candidate_60d is not None
         and holding.candidate_60d.mid is not None
-        and holding.candidate_60d.mid >= 0
     )
 
 
-def _skip_reasons(
+def _totals_exclusion_reason(
     *,
     mode: str,
-    current_stock_price: float | None,
+    current_notional: float | None,
+) -> str | None:
+    if current_notional is not None:
+        return None
+    if mode == "shares":
+        return "missing share price"
+    return "missing notional"
+
+
+def _downside_skip_reason(
+    *,
     current_notional: float | None,
     down_beta_core: float | None,
-    candidate_60d: CandidatePut | None,
     config: HedgeReadinessConfig,
-) -> list[str]:
-    reasons: list[str] = []
+) -> str | None:
     if current_notional is None:
-        reasons.append("missing share price")
+        return "not included in portfolio totals"
     if (
         down_beta_core is None
         or down_beta_core <= config.down_beta_min_for_scenario
     ):
-        reasons.append("down-beta unavailable or too small")
+        return "down-beta unavailable or too small"
+    return None
+
+
+def _hedge_cost_skip_reason(
+    *,
+    current_notional: float | None,
+    current_stock_price: float | None,
+    candidate_60d: CandidatePut | None,
+) -> str | None:
+    reasons: list[str] = []
+    if current_notional is None:
+        return "not included in portfolio totals"
+    if current_stock_price is None:
+        reasons.append("no hedge-cost inputs")
     if candidate_60d is None:
         reasons.append("no 60d candidate")
-    if mode == "dollar_exposure" and current_stock_price is None:
+    if (
+        candidate_60d is not None
+        and (candidate_60d.mid is None or candidate_60d.mid < 0)
+    ):
         reasons.append("no hedge-cost inputs")
-    if candidate_60d is not None and candidate_60d.mid is None:
-        reasons.append("no hedge-cost inputs")
-    return _unique_reasons(reasons)
+    unique_reasons = unique_preserving_order(reasons)
+    return "; ".join(unique_reasons) if unique_reasons else None
 
 
 def _current_notional(
@@ -295,27 +348,15 @@ def _candidate_for_horizon(
 def _interpretive_notes(
     *,
     current_total: float,
-    scenario_rows: list[PortfolioScenarioRow],
+    hedge_cost_by_protection: dict[float, float],
     protection_levels: tuple[float, ...],
 ) -> list[str]:
     if current_total <= 0:
         return ["No portfolio notional could be resolved."]
     notes: list[str] = []
-    first_row = scenario_rows[0] if scenario_rows else None
-    if first_row is not None:
-        for level in protection_levels:
-            cost = first_row.hedge_cost_by_protection.get(level, 0.0)
-            notes.append(
-                f"Hedging {level:.0%} costs {cost / current_total:.1%} of portfolio."
-            )
+    for level in protection_levels:
+        cost = hedge_cost_by_protection.get(level, 0.0)
+        notes.append(
+            f"Hedging {level:.0%} costs {cost / current_total:.1%} of portfolio."
+        )
     return notes
-
-
-def _unique_reasons(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for value in values:
-        if value not in seen:
-            seen.add(value)
-            result.append(value)
-    return result

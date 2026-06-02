@@ -68,6 +68,16 @@ def rows_by_ticker_series(
     return result
 
 
+def unique_preserving_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
 def _row_value(row: pd.Series | dict[str, Any] | None, column: str) -> object:
     if row is None:
         return None

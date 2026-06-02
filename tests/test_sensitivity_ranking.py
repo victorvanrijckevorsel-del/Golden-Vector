@@ -127,6 +127,19 @@ def test_build_sensitivity_ranking_annotates_risk_free_fallback():
     assert "risk-free rate unavailable; used 0%" in ranking.rows[0].notes
 
 
+def test_build_sensitivity_ranking_skips_risk_free_note_when_pricing_is_not_run():
+    ranking = build_sensitivity_ranking(
+        tool_a_frame=_tool_a([("AEM", 1.40, 1.10, "HIGH", 0.80, True)]),
+        options_features=_features([("AEM", "directly_hedgeable", 35.0)]),
+        candidate_grids={},
+        risk_free_rate=None,
+        down_beta_min_for_scenario=0.10,
+    )
+
+    assert "no 60d candidate" in ranking.rows[0].notes
+    assert "risk-free rate unavailable; used 0%" not in ranking.rows[0].notes
+
+
 def test_build_sensitivity_ranking_rejects_unknown_sort_column():
     with pytest.raises(ValueError, match="down_beta_core"):
         build_sensitivity_ranking(
