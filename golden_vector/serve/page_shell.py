@@ -9,6 +9,7 @@ _NAV_LINKS: tuple[tuple[str, str, str], ...] = (
     ("combined", "/", "Combined"),
     ("tool_a", "/tool-a", "Tool A"),
     ("tool_b", "/tool-b", "Tool B"),
+    ("option_trading", "/option-trading", "Option Trading"),
 )
 
 

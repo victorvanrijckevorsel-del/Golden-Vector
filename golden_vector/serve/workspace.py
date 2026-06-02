@@ -39,6 +39,8 @@ from golden_vector.serve.detail_panels import (
 from golden_vector.serve.detail_forms import COMPANY_FORM_FIELDS
 from golden_vector.serve.detail_page import DETAIL_DEFAULT_LENS_ID, render_detail_page
 from golden_vector.serve.lenses import DEFAULT_LENS_ID
+from golden_vector.serve.option_trading_data import load_option_trading_data
+from golden_vector.serve.overview_option_trading import _render_option_trading_overview_page
 from golden_vector.serve.overview_combined import _render_overview_page
 from golden_vector.serve.overview_tool_a import _render_tool_a_overview_page
 from golden_vector.serve.overview_tool_b import _render_tool_b_overview_page
@@ -147,6 +149,16 @@ def create_workspace_app(
                         paths=paths,
                         overrides=overrides,
                     ),
+                )
+
+            if method == "GET" and path == "/option-trading":
+                option_trading_data = load_option_trading_data(
+                    paths,
+                    app_config=app_config,
+                )
+                return _html_response(
+                    start_response,
+                    _render_option_trading_overview_page(option_trading_data.overview),
                 )
 
             if path.startswith("/ticker/"):

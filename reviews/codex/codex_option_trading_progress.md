@@ -9,5 +9,5 @@
 ## Batch 1
 
 - Step 1: implemented `hedge.option_trading` structured overview rows plus `serve.option_trading_data` provenance-keyed cache. Focused tests added in `tests/test_option_trading_data.py`.
-- Step 2: pending.
+- Step 2: implemented `/option-trading` route, nav tab, and native DataTable overview from structured rows. Focused route/render tests added.
 - Self-review gate 1: pending.
