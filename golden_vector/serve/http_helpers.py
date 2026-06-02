@@ -81,6 +81,30 @@ def _no_content_response(start_response: Callable[..., Any]) -> Iterable[bytes]:
     return [b""]
 
 
+def _download_file_response(
+    start_response: Callable[..., Any],
+    path: Path,
+    *,
+    content_type: str,
+    download_name: str,
+) -> Iterable[bytes]:
+    try:
+        payload = path.read_bytes()
+    except (OSError, ValueError):
+        start_response("404 Not Found", [("Content-Length", "0")])
+        return [b""]
+    start_response(
+        "200 OK",
+        [
+            ("Content-Type", content_type),
+            ("Content-Length", str(len(payload))),
+            ("Content-Disposition", f'attachment; filename="{download_name}"'),
+            ("Cache-Control", "no-cache"),
+        ],
+    )
+    return [payload]
+
+
 def _serve_static_file(
     path: str, start_response: Callable[..., Any]
 ) -> Iterable[bytes]:

@@ -19,6 +19,8 @@ def _render_option_trading_overview_page(
         "<p>Optionable gold stocks ranked by gold-downside sensitivity. "
         "The put scenario column is computed server-side from the same candidate grid "
         "used by the ticker detail page.</p>",
+        "<p class=\"hint\"><a class=\"raw-report-download\" href=\"/hedge-readiness/latest.md\">"
+        "Download latest raw hedge-readiness markdown report</a></p>",
     ]
     if not overview.rows:
         reason = overview.reason or "No optionable tickers are available."

@@ -23,6 +23,7 @@ from golden_vector.serve.workspace_state import (
     _parse_ticker_route,
 )
 from golden_vector.serve.http_helpers import (
+    _download_file_response,
     _flash_message,
     _html_response,
     _no_content_response,
@@ -85,6 +86,17 @@ def create_workspace_app(
 
             if method == "GET" and path == "/favicon.ico":
                 return _no_content_response(start_response)
+
+            if method == "GET" and path == "/hedge-readiness":
+                return _redirect_response(start_response, "/option-trading")
+
+            if method == "GET" and path == "/hedge-readiness/latest.md":
+                return _download_file_response(
+                    start_response,
+                    paths.output_hedge_readiness_dir / "latest.md",
+                    content_type="text/markdown; charset=utf-8",
+                    download_name="golden-vector-hedge-readiness-latest.md",
+                )
 
             if method == "GET" and path in ("/", "/combined"):
                 state = _load_workspace_state(paths, normalized_tickers)

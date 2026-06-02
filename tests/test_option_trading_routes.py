@@ -29,6 +29,7 @@ def test_workspace_option_trading_route_renders_native_tab(tmp_path):
     assert "Option Trading" in response["body"]
     assert "/option-trading" in response["body"]
     assert "/ticker/AEM?lens=option-trading#option-trading" in response["body"]
+    assert "/hedge-readiness/latest.md" in response["body"]
     assert "directly_hedgeable" in response["body"]
     assert "available" in response["body"]
     assert "markdown-report" not in response["body"]
@@ -71,6 +72,42 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
     assert "Downside Put Scenarios" in body
     assert "Put P&amp;L/share @ Gold -10% (60d)" in body
     assert "60d put, strike" in body
+
+
+def test_workspace_hedge_readiness_route_redirects_to_option_trading(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(app, method="GET", path="/hedge-readiness")
+
+    assert response["status"].startswith("303")
+    assert response["headers"]["Location"] == "/option-trading"
+    assert response["body"] == ""
+
+
+def test_workspace_raw_hedge_report_download_serves_latest_markdown(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    paths.output_hedge_readiness_dir.mkdir(parents=True, exist_ok=True)
+    (paths.output_hedge_readiness_dir / "latest.md").write_text(
+        "# Hedge Readiness Report\n\nRaw markdown.\n",
+        encoding="utf-8",
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(app, method="GET", path="/hedge-readiness/latest.md")
+
+    assert response["status"].startswith("200")
+    assert response["headers"]["Content-Type"] == "text/markdown; charset=utf-8"
+    assert "attachment;" in response["headers"]["Content-Disposition"]
+    assert response["body"].startswith("# Hedge Readiness Report")
 
 
 def _call_wsgi_app(app, *, method: str, path: str, body: str = "") -> dict[str, object]:

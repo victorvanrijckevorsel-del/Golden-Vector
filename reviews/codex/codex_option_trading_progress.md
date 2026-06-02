@@ -16,3 +16,4 @@
 ## Batch 2
 
 - Step 3: implemented the `/ticker/<T>?lens=option-trading` detail lens with an anchored Option Trading panel rendered from cached structured put candidate/scenario data.
+- Step 4: redirected `/hedge-readiness` to `/option-trading` and kept the legacy markdown available only as a raw `latest.md` download.
