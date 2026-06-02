@@ -46,6 +46,7 @@ class OptionTradingData:
     tool_b: pd.DataFrame
     raw_options_by_ticker: dict[str, pd.DataFrame]
     risk_free_rate: float
+    risk_free_rate_is_fallback: bool
     cache_key: OptionTradingCacheKey | None
 
 
@@ -73,6 +74,7 @@ def build_option_trading_detail_data(
         candidate_grids=data.candidate_grids,
         overview_row=overview_row,
         risk_free_rate=data.risk_free_rate,
+        risk_free_rate_is_fallback=data.risk_free_rate_is_fallback,
         target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
         down_beta_min_for_scenario=(
             app_config.hedge_readiness.down_beta_min_for_scenario
@@ -86,6 +88,7 @@ def build_option_trading_detail_data(
         put_candidates=detail.put_candidates,
         put_bundles=detail.put_bundles,
         reason=data.overview.reason,
+        risk_free_rate_is_fallback=detail.risk_free_rate_is_fallback,
     )
 
 
@@ -114,6 +117,7 @@ def load_option_trading_data(
     features = _load_features(paths=paths, manifest=manifest)
     chains = _load_chains(paths=paths, manifest=manifest)
     risk_free_rate = as_float(manifest.get("risk_free_rate"))
+    risk_free_rate_is_fallback = risk_free_rate is None
     effective_risk_free_rate = risk_free_rate if risk_free_rate is not None else 0.0
     candidate_grids = _candidate_grids(
         app_config=app_config,
@@ -130,6 +134,7 @@ def load_option_trading_data(
         risk_free_rate=effective_risk_free_rate,
         target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
         down_beta_min_for_scenario=app_config.hedge_readiness.down_beta_min_for_scenario,
+        risk_free_rate_is_fallback=risk_free_rate_is_fallback,
     )
     data = OptionTradingData(
         overview=overview,
@@ -139,6 +144,7 @@ def load_option_trading_data(
         tool_b=tool_b,
         raw_options_by_ticker=chains,
         risk_free_rate=effective_risk_free_rate,
+        risk_free_rate_is_fallback=risk_free_rate_is_fallback,
         cache_key=cache_key,
     )
     _CACHE[cache_key] = data
@@ -159,6 +165,7 @@ def _empty_data(
         tool_b=tool_b,
         raw_options_by_ticker={},
         risk_free_rate=0.0,
+        risk_free_rate_is_fallback=False,
         cache_key=None,
     )
 

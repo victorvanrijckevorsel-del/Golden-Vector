@@ -20,3 +20,4 @@
 - Self-review gate 2: reviewed the Batch 2 diff, reran the full suite (`532 passed`), and browser-verified the tab, ticker detail panel, and redirect with no warnings or errors. No code fixes required.
 - Post-checkpoint review: fixed the detail-page window switcher so the Option Trading lens and `#option-trading` anchor survive 6M/12M/3Y window clicks; added a regression test.
 - Claude review M1: changed the detail data path to reuse the already-cached overview row instead of rebuilding the full overview for one ticker; added a regression test pinning overview/detail row identity and P&L consistency.
+- Claude review M2: threaded a `risk_free_rate_is_fallback` flag through the option-trading data, overview, and detail panel; the UI now discloses the 0% fallback and tests cover malformed manifests plus invalid lens fallback.

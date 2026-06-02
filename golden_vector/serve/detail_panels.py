@@ -194,6 +194,11 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
         return "".join(body)
 
     row = detail.row
+    if detail.risk_free_rate_is_fallback:
+        body.append(
+            "<p class=\"hint\">Risk-free rate was missing from the options manifest; "
+            "scenario values use a 0% rate fallback.</p>"
+        )
     body.extend(
         [
             "<table><tbody>",

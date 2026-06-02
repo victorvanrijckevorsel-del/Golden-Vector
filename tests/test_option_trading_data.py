@@ -126,6 +126,41 @@ def test_load_option_trading_data_handles_missing_manifest(tmp_path):
     assert data.cache_key is None
 
 
+def test_load_option_trading_data_handles_malformed_manifest(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    paths.latest_options_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_options_manifest_path.write_text("{not-json", encoding="utf-8")
+
+    data = load_option_trading_data(paths, app_config=app_config)
+
+    assert data.overview.rows == ()
+    assert data.overview.reason is not None
+    assert "No options snapshot" in data.overview.reason
+    assert data.cache_key is None
+
+
+def test_load_option_trading_data_flags_missing_risk_free_rate_fallback(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        risk_free_rate=None,
+    )
+
+    data = load_option_trading_data(paths, app_config=app_config)
+
+    assert data.risk_free_rate == 0.0
+    assert data.risk_free_rate_is_fallback is True
+    assert data.overview.risk_free_rate_is_fallback is True
+
+
 def test_load_option_trading_data_ignores_stale_feature_rows(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
@@ -144,7 +179,13 @@ def test_load_option_trading_data_ignores_stale_feature_rows(tmp_path):
     assert "No options feature snapshot" in (data.overview.reason or "")
 
 
-def _write_option_inputs(paths, *, refresh_run_id: str, tool_refresh_run_id: str) -> None:
+def _write_option_inputs(
+    paths,
+    *,
+    refresh_run_id: str,
+    tool_refresh_run_id: str,
+    risk_free_rate: float | None = 0.04,
+) -> None:
     paths.ensure_runtime_dirs()
     snapshot_path = paths.runs_dir / refresh_run_id / "snapshots" / "options" / "AEM.parquet"
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
@@ -155,7 +196,7 @@ def _write_option_inputs(paths, *, refresh_run_id: str, tool_refresh_run_id: str
             {
                 "refresh_run_id": refresh_run_id,
                 "as_of_date": "2026-05-29",
-                "risk_free_rate": 0.04,
+                "risk_free_rate": risk_free_rate,
                 "snapshots": [
                     {
                         "ticker": "AEM",

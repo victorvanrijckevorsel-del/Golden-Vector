@@ -47,3 +47,16 @@ def test_option_trading_overview_renders_empty_state():
     assert "No options snapshot exists yet." in html
     assert "python main.py update-data" in html
     assert "option-trading-table" not in html
+
+
+def test_option_trading_overview_discloses_risk_free_rate_fallback():
+    html = _render_option_trading_overview_page(
+        OptionTradingOverviewData(
+            rows=(),
+            reason="No rows.",
+            risk_free_rate_is_fallback=True,
+        )
+    )
+
+    assert "Risk-free rate was missing" in html
+    assert "0% rate fallback" in html

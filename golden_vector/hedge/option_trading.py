@@ -44,6 +44,7 @@ class OptionTradingRow:
 class OptionTradingOverviewData:
     rows: tuple[OptionTradingRow, ...]
     reason: str | None = None
+    risk_free_rate_is_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ class OptionTradingDetailData:
     put_candidates: tuple[CandidatePut, ...]
     put_bundles: tuple[CandidateScenarioBundle, ...]
     reason: str | None = None
+    risk_free_rate_is_fallback: bool = False
 
 
 def build_option_trading_overview(
@@ -65,6 +67,7 @@ def build_option_trading_overview(
     preferred_horizon_days: int = PREFERRED_OPTION_HORIZON_DAYS,
     put_context_gold_move: float = PUT_CONTEXT_GOLD_MOVE,
     down_beta_min_for_scenario: float = 0.10,
+    risk_free_rate_is_fallback: bool = False,
 ) -> OptionTradingOverviewData:
     """Build optionable ticker rows for the workspace overview tab."""
 
@@ -72,6 +75,7 @@ def build_option_trading_overview(
         return OptionTradingOverviewData(
             rows=(),
             reason="No options feature snapshot is available yet.",
+            risk_free_rate_is_fallback=risk_free_rate_is_fallback,
         )
 
     feature_by_ticker = rows_by_ticker_series(options_features, strip=True)
@@ -106,7 +110,11 @@ def build_option_trading_overview(
         )
     )
     reason = None if rows else "No optionable tickers are available in the latest snapshot."
-    return OptionTradingOverviewData(rows=tuple(rows), reason=reason)
+    return OptionTradingOverviewData(
+        rows=tuple(rows),
+        reason=reason,
+        risk_free_rate_is_fallback=risk_free_rate_is_fallback,
+    )
 
 
 def build_option_trading_detail(
@@ -118,6 +126,7 @@ def build_option_trading_detail(
     risk_free_rate: float,
     target_horizons_days: tuple[int, ...] = (30, 60, 90),
     down_beta_min_for_scenario: float = 0.10,
+    risk_free_rate_is_fallback: bool = False,
 ) -> OptionTradingDetailData:
     """Build put-side detail data for a single ticker."""
 
@@ -149,6 +158,7 @@ def build_option_trading_detail(
             if overview_row is not None
             else "Ticker is not optionable in the latest snapshot."
         ),
+        risk_free_rate_is_fallback=risk_free_rate_is_fallback,
     )
 
 

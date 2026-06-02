@@ -22,6 +22,11 @@ def _render_option_trading_overview_page(
         "<p class=\"hint\"><a class=\"raw-report-download\" href=\"/hedge-readiness/latest.md\">"
         "Download latest raw hedge-readiness markdown report</a></p>",
     ]
+    if overview.risk_free_rate_is_fallback:
+        body.append(
+            "<p class=\"hint\">Risk-free rate was missing from the options manifest; "
+            "scenario values use a 0% rate fallback.</p>"
+        )
     if not overview.rows:
         reason = overview.reason or "No optionable tickers are available."
         body.append(

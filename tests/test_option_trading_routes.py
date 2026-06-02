@@ -74,6 +74,55 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
     assert "60d put, strike" in body
 
 
+def test_workspace_option_trading_detail_discloses_risk_free_rate_fallback(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        risk_free_rate=None,
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    overview_response = _call_wsgi_app(app, method="GET", path="/option-trading")
+    detail_response = _call_wsgi_app(
+        app,
+        method="GET",
+        path="/ticker/AEM?lens=option-trading",
+    )
+
+    assert overview_response["status"].startswith("200")
+    assert detail_response["status"].startswith("200")
+    assert "Risk-free rate was missing" in overview_response["body"]
+    assert "Risk-free rate was missing" in detail_response["body"]
+
+
+def test_workspace_detail_invalid_lens_falls_back_to_combined_nav(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(app, method="GET", path="/ticker/AEM?lens=garbage")
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert 'class="nav-tab active" href="/"' in body
+    assert 'class="nav-tab active" href="/option-trading"' not in body
+    assert 'id="option-trading"' in body
+
+
 def test_workspace_option_trading_lens_preserves_lens_in_window_switcher(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
