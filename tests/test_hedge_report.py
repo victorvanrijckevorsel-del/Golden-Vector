@@ -8,7 +8,6 @@ from golden_vector.app.config import load_app_config
 from golden_vector.app.run_context import RunContext
 from golden_vector.cli import build_parser, run_hedge_readiness
 from golden_vector.features.options import compute_options_features
-from golden_vector.hedge.report import _render_cross_sectional_section
 from golden_vector.ingestion.persist_options import (
     persist_options_snapshot,
     write_latest_options_manifest,
@@ -119,11 +118,27 @@ def test_run_hedge_readiness_writes_markdown_report(tmp_path, capsys):
     assert latest_report.exists()
     markdown = latest_report.read_text(encoding="utf-8")
     assert "# Hedge Readiness Report" in markdown
+    _assert_heading_order(
+        markdown,
+        [
+            "# Hedge Readiness Report",
+            "## Snapshot Summary",
+            "## Sensitivity Ranking",
+            "## Portfolio Totals",
+            "## Held Positions",
+            "## Speculation Candidates",
+            "## Cross-ticker Comparison View",
+            "## Proxy Hedges",
+            "## Sources / Run Summary",
+        ],
+    )
     assert "## Held Positions" in markdown
+    assert "## Portfolio Totals" in markdown
+    assert "| Holdings mode | mixed |" in markdown
     assert "### AEM" in markdown
     assert "Candidate puts:" in markdown
     assert "Premium vs modeled downside:" in markdown
-    assert "## Proxy-Hedge Map" in markdown
+    assert "## Proxy Hedges" in markdown
     assert "AAUC.TO" in markdown
     assert "Tool B WATCH" in markdown
     assert "| Analytical context alignment | OK |" in markdown
@@ -183,31 +198,62 @@ def test_run_hedge_readiness_reports_missing_options_manifest(tmp_path, capsys):
     assert "Run `python main.py update-data` first" in output
 
 
-def test_cross_sectional_section_lists_cheapest_iv_first():
-    lines = _render_cross_sectional_section(
-        pd.DataFrame(
-            [
-                {
-                    "ticker": "EXPENSIVE",
-                    "optionability_tier": "directly_hedgeable",
-                    "atm_iv_60d": 0.50,
-                    "iv_percentile_cross_sectional": 90.0,
-                },
-                {
-                    "ticker": "CHEAP",
-                    "optionability_tier": "directly_hedgeable",
-                    "atm_iv_60d": 0.20,
-                    "iv_percentile_cross_sectional": 10.0,
-                },
-            ]
-        )
+def test_run_hedge_readiness_omits_portfolio_sections_without_holdings(tmp_path):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    update_context = RunContext.start(
+        paths=paths,
+        command="update-data",
+        parameters={"options": True},
+        config_hash="test-config",
     )
+    _write_tool_outputs(paths, refresh_run_id=update_context.run_id)
+    _write_options_inputs(paths, update_context, app_config)
 
-    markdown = "\n".join(lines)
-    assert markdown.index("| CHEAP |") < markdown.index("| EXPENSIVE |")
+    exit_code = run_hedge_readiness(paths)
+
+    assert exit_code == 0
+    markdown = (paths.output_hedge_readiness_dir / "latest.md").read_text(encoding="utf-8")
+    assert "## Sensitivity Ranking" in markdown
+    assert "## Speculation Candidates" in markdown
+    assert "## Cross-ticker Comparison View" in markdown
+    assert "## Portfolio Totals" not in markdown
+    assert "## Held Positions" not in markdown
 
 
-def _write_options_inputs(paths, context: RunContext, app_config) -> None:
+def test_run_hedge_readiness_surfaces_zero_rate_fallback(tmp_path):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    update_context = RunContext.start(
+        paths=paths,
+        command="update-data",
+        parameters={"options": True},
+        config_hash="test-config",
+    )
+    _write_tool_outputs(paths, refresh_run_id=update_context.run_id)
+    _write_options_inputs(paths, update_context, app_config, risk_free_rate=None)
+
+    exit_code = run_hedge_readiness(paths)
+
+    assert exit_code == 0
+    markdown = (paths.output_hedge_readiness_dir / "latest.md").read_text(encoding="utf-8")
+    assert "| Risk-free rate | 0.0% fallback |" in markdown
+    assert "scenario Black-Scholes values use a 0% fallback" in markdown
+    assert "Risk-free rate is unavailable; using 0% fallback." in markdown
+
+
+def _assert_heading_order(markdown: str, headings: list[str]) -> None:
+    positions = [markdown.index(heading) for heading in headings]
+    assert positions == sorted(positions)
+
+
+def _write_options_inputs(
+    paths,
+    context: RunContext,
+    app_config,
+    *,
+    risk_free_rate: float | None = 0.04,
+) -> None:
     chain = pd.read_parquet("tests/fixtures/options/aem_chain_20260529.parquet")
     aem_record = persist_options_snapshot(
         paths=paths,
@@ -231,13 +277,13 @@ def _write_options_inputs(paths, context: RunContext, app_config) -> None:
         run_context=context,
         as_of_date=date(2026, 5, 29),
         snapshot_records=[aem_record, aauc_record],
-        risk_free_rate=0.04,
+        risk_free_rate=risk_free_rate,
         summary={"options_phase_status": "PASS"},
     )
     aem_features = compute_options_features(
         chain=pd.read_parquet(aem_record.snapshot_path),
         underlying_price=50.0,
-        risk_free_rate=0.04,
+        risk_free_rate=risk_free_rate,
         price_history=_price_history(),
         as_of_date=date(2026, 5, 29),
         target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
@@ -248,13 +294,14 @@ def _write_options_inputs(paths, context: RunContext, app_config) -> None:
             "ticker": "AEM",
             "run_id": context.run_id,
             "underlying_price": 50.0,
+            "optionability_tier": "directly_hedgeable",
             "iv_percentile_cross_sectional": 100.0,
         }
     )
     aauc_features = compute_options_features(
         chain=pd.read_parquet(aauc_record.snapshot_path),
         underlying_price=20.0,
-        risk_free_rate=0.04,
+        risk_free_rate=risk_free_rate,
         price_history=pd.DataFrame(),
         as_of_date=date(2026, 5, 29),
         target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
@@ -307,7 +354,7 @@ def _write_holdings(paths) -> None:
 version: 1
 holdings:
   - ticker: AEM
-    dollar_exposure: 10000
+    shares: 200
   - ticker: AAUC.TO
     dollar_exposure: 5000
 """.lstrip(),

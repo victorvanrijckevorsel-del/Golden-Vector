@@ -172,7 +172,7 @@ def test_build_speculation_section_annotates_missing_inputs(tmp_path):
     )
 
 
-def test_build_speculation_section_annotates_missing_risk_free_rate(tmp_path):
+def test_build_speculation_section_uses_zero_rate_fallback_when_risk_free_rate_is_missing(tmp_path):
     paths = build_test_paths(tmp_path)
     config = HedgeReadinessConfig()
 
@@ -186,11 +186,8 @@ def test_build_speculation_section_annotates_missing_risk_free_rate(tmp_path):
         config=config,
     )
 
-    assert blocks[0].candidates == []
-    assert (
-        "Risk-free rate is unavailable; delta-based candidate selection is skipped."
-        in blocks[0].annotations
-    )
+    assert blocks[0].candidates
+    assert "Risk-free rate is unavailable; using 0% fallback." in blocks[0].annotations
 
 
 def test_build_speculation_section_bubbles_low_down_beta_annotation(tmp_path):

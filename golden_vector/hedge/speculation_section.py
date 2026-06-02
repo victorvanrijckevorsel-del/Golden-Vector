@@ -142,7 +142,7 @@ def _ticker_block(
     if chain.empty:
         annotations.append("No raw options chain is available.")
     if risk_free_rate is None:
-        annotations.append("Risk-free rate is unavailable; delta-based candidate selection is skipped.")
+        annotations.append("Risk-free rate is unavailable; using 0% fallback.")
     if not candidates:
         annotations.append("No usable listed put candidate found for the configured horizons.")
 
@@ -186,7 +186,7 @@ def _candidate_grid(
         ticker=ticker,
         chain=chain,
         underlying_price=current_stock_price,
-        risk_free_rate=risk_free_rate,
+        risk_free_rate=risk_free_rate if risk_free_rate is not None else 0.0,
         target_horizons_days=tuple(config.target_horizons_days),
         target_delta=config.target_delta,
         max_spread_pct=config.candidate_max_spread_pct,
