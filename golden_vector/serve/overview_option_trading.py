@@ -67,7 +67,7 @@ def _render_option_trading_overview_page(
         "<th data-col-name=\"optionability\">Optionability</th>"
         "<th data-col-name=\"put_status\">Put Status</th>"
         "<th data-col-name=\"call_status\">Call Status</th>"
-        "<th data-col-name=\"put_pnl\" data-sort-numeric>Put P&L/share @ Gold -10% (60d)</th>"
+        "<th data-col-name=\"put_pnl\" data-sort-numeric>Put P&amp;L/share @ Gold -10% (60d)</th>"
         "<th data-col-name=\"notes\">Notes</th>"
         "</tr></thead>"
         f"<tbody>{rows_html}</tbody>"

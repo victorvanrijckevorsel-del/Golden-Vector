@@ -34,7 +34,7 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
     assert "option-trading-table" in html
     assert "data-filter-column=\"put_status\"" in html
     assert "data-filter-column=\"call_status\"" in html
-    assert "Put P&L/share @ Gold -10% (60d)" in html
+    assert "Put P&amp;L/share @ Gold -10% (60d)" in html
     assert "candidate ok" in html
     assert "markdown-report" not in html
 

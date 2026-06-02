@@ -4,7 +4,6 @@ import json
 from datetime import date
 
 import pandas as pd
-import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.hedge.option_trading import build_option_trading_overview

@@ -279,7 +279,10 @@ def _current_stock_price(
 def _chain_underlying_price(chain: pd.DataFrame) -> float | None:
     if chain.empty or "underlying_price" not in chain.columns:
         return None
-    return as_float(chain["underlying_price"].dropna().iloc[0])
+    values = chain["underlying_price"].dropna()
+    if values.empty:
+        return None
+    return as_float(values.iloc[0])
 
 
 def _manifest_as_of_date(manifest: dict[str, Any]) -> date | None:
