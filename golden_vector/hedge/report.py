@@ -17,6 +17,8 @@ from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge._helpers import (
     as_float as _as_float,
+    is_optionable_tier as _is_optionable_tier,
+    optionability_tier as _optionability_tier,
     row_float as _row_float,
     row_string as _row_string,
     rows_by_ticker_series as _index_by_ticker,
@@ -135,6 +137,7 @@ class SourcesData:
     replay_manifest_path: str
     latest_options_manifest_path: str
     raw_option_snapshot_count: int
+    options_feature_row_count: int
     tool_a_row_count: int
     tool_b_row_count: int
 
@@ -418,6 +421,7 @@ def build_hedge_readiness_sections(
                 paths.latest_options_manifest_path.relative_to(paths.repo_root).as_posix()
             ),
             raw_option_snapshot_count=len(manifest.get("snapshots", [])),
+            options_feature_row_count=len(features.index),
             tool_a_row_count=len(tool_a.index),
             tool_b_row_count=len(tool_b.index),
         ),
@@ -550,7 +554,7 @@ def _render_sensitivity_ranking(ranking: SensitivityRankingData) -> list[str]:
     lines.extend(
         [
             "| Rank | Ticker | Down beta | Up beta | Confidence | IV percentile | "
-            "P&L/contract at gold -10% | Optionability | Notes |",
+            "P&L/share at gold -10% | Optionability | Notes |",
             "|---:|---|---:|---:|---|---:|---:|---|---|",
         ]
     )
@@ -717,6 +721,8 @@ def _render_comparison_view(data: ComparisonViewData) -> list[str]:
         "## Cross-ticker Comparison View",
         "",
         f"Sorted by `{data.sort_by}`.",
+        "P&L columns are option quote-style per-share values; net dollar P&L uses "
+        "the selected contract quantity and the standard 100-share multiplier.",
         "",
     ]
     if not data.rows:
@@ -724,7 +730,7 @@ def _render_comparison_view(data: ComparisonViewData) -> list[str]:
     lines.extend(
         [
             "| Ticker | Horizon | Strike | Expiry | Premium | Breakeven gold | "
-            "P&L -5% | P&L -10% | P&L -20% | P&L/$ premium -10% |",
+            "P&L/share -5% | P&L/share -10% | P&L/share -20% | P&L/$ premium -10% |",
             "|---|---:|---:|---|---:|---:|---:|---:|---:|---:|",
         ]
     )
@@ -796,6 +802,7 @@ def _render_sources_section(sources: SourcesData, *, paths: ProjectPaths) -> lis
         f"- Tool A rows: {sources.tool_a_row_count}",
         f"- Tool B rows: {sources.tool_b_row_count}",
         f"- Raw option snapshots: {sources.raw_option_snapshot_count}",
+        f"- Options feature rows: {sources.options_feature_row_count}",
         "",
     ]
 
@@ -864,7 +871,13 @@ def _render_premium_card(card: PremiumVsDownsideCard) -> list[str]:
 
 
 def _render_scenario_bundles(bundles: list[CandidateScenarioBundle]) -> list[str]:
-    lines = ["Scenario P&L:", ""]
+    lines = [
+        "Scenario P&L:",
+        "",
+        "Quoted option values and P&L/share use the listed per-share option quote; "
+        "net P&L applies the selected contract quantity and the standard 100-share multiplier.",
+        "",
+    ]
     if not bundles:
         return [*lines, "No scenario bundles are available.", ""]
     for bundle in bundles:
@@ -881,8 +894,8 @@ def _render_scenario_bundles(bundles: list[CandidateScenarioBundle]) -> list[str
             lines.extend([bundle.breakeven_annotation, ""])
         lines.extend(
             [
-                "| Gold move | Modeled stock | Expiry value | Current value | "
-                "P&L/contract expiry | P&L/contract today | Net P&L expiry |",
+                "| Gold move | Modeled stock | Expiry quote | Current quote | "
+                "P&L/share expiry | P&L/share today | Net P&L expiry |",
                 "|---:|---:|---:|---:|---:|---:|---:|",
             ]
         )
@@ -929,7 +942,9 @@ def _load_chains(
 ) -> dict[str, pd.DataFrame]:
     chains: dict[str, pd.DataFrame] = {}
     for item in manifest.get("snapshots", []):
-        ticker = str(item.get("ticker", ""))
+        ticker = str(item.get("ticker", "")).upper()
+        if not ticker:
+            continue
         snapshot_path = paths.resolve_repo_relative(str(item.get("snapshot_path", "")))
         chains[ticker] = _read_optional_parquet(snapshot_path)
     return chains
@@ -952,7 +967,7 @@ def _load_features(
             matching = frame[frame["run_id"].astype(str) == refresh_run_id]
             if not matching.empty:
                 rows.append(matching.iloc[-1])
-                continue
+            continue
         rows.append(frame.iloc[-1])
     if not rows:
         return pd.DataFrame()
@@ -1028,7 +1043,9 @@ def _build_held_positions(
             HoldingPositionData(
                 ticker=holding.ticker,
                 exposure_usd=exposure,
-                optionability_tier=_row_string(feature, "optionability_tier") or "none",
+                optionability_tier=_optionability_tier(
+                    _row_string(feature, "optionability_tier")
+                ),
                 current_stock_price=price,
                 down_beta_core=down_beta,
                 confidence_score=_row_float(tool_a_row, "confidence_score"),
@@ -1155,8 +1172,7 @@ def _optionable_tickers(features: pd.DataFrame) -> set[str]:
         return set()
     if "optionability_tier" not in features.columns:
         return set()
-    optionability = features.get("optionability_tier", pd.Series(dtype=str)).astype(str)
-    optionable = features[optionability != "none"]
+    optionable = features[features["optionability_tier"].map(_is_optionable_tier)]
     return set(optionable["ticker"].astype(str).str.upper())
 
 
@@ -1271,6 +1287,7 @@ def _summary_from_sections(sections: HedgeReadinessSections) -> dict[str, Any]:
         "ranking_sort_by": sections.sensitivity_ranking.sort_by,
         "ranking_max_tickers": summary.ranking_max_tickers,
         "speculation_max_tickers": sections.speculation_candidates.max_tickers_applied,
+        "options_feature_row_count": sections.sources.options_feature_row_count,
     }
 
 

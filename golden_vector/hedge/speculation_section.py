@@ -11,6 +11,7 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import HedgeReadinessConfig
 from golden_vector.hedge._helpers import (
     as_float as _as_float,
+    optionability_tier as _optionability_tier,
     rows_by_ticker_dict as _rows_by_ticker,
     unique_preserving_order,
 )
@@ -220,7 +221,7 @@ def _feature_rows(
     rows: list[dict[str, Any]] = []
     for row in iterable:
         ticker = str(row.get("ticker") or "").upper()
-        optionability_tier = str(row.get("optionability_tier") or "none")
+        optionability_tier = _optionability_tier(row.get("optionability_tier"))
         if not ticker:
             continue
         rows.append(

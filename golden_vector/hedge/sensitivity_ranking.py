@@ -9,6 +9,7 @@ import pandas as pd
 
 from golden_vector.hedge._helpers import (
     as_float,
+    optionability_tier as normalize_optionability_tier,
     rows_by_ticker_dict,
     unique_preserving_order,
 )
@@ -114,7 +115,9 @@ def _build_row(
     if down_beta is None:
         notes.append("down-beta unavailable")
 
-    optionability_tier = str((feature or {}).get("optionability_tier") or "none")
+    optionability_tier = normalize_optionability_tier(
+        (feature or {}).get("optionability_tier")
+    )
     if feature is None:
         notes.append("no options features")
     if optionability_tier == "none":

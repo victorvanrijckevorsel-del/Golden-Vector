@@ -6,6 +6,8 @@ from typing import Any
 
 import pandas as pd
 
+OPTIONABLE_TIERS = {"directly_hedgeable", "thin"}
+
 
 def as_float(value: object) -> float | None:
     numeric = pd.to_numeric(value, errors="coerce")
@@ -76,6 +78,26 @@ def unique_preserving_order(values: list[str]) -> list[str]:
             seen.add(value)
             result.append(value)
     return result
+
+
+def optionability_tier(value: object) -> str:
+    """Normalize missing/blank optionability values to the non-optionable tier."""
+
+    if value is None:
+        return "none"
+    try:
+        if pd.isna(value):
+            return "none"
+    except (TypeError, ValueError):
+        pass
+    normalized = str(value).strip().lower()
+    if normalized in {"", "none", "nan", "null", "<na>"}:
+        return "none"
+    return normalized
+
+
+def is_optionable_tier(value: object) -> bool:
+    return optionability_tier(value) in OPTIONABLE_TIERS
 
 
 def _row_value(row: pd.Series | dict[str, Any] | None, column: str) -> object:

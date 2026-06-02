@@ -12,6 +12,7 @@ import pandas as pd
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.hedge._helpers import (
     as_float as _as_float,
+    is_optionable_tier as _is_optionable_tier,
     rows_by_ticker_dict as _rows_by_ticker,
 )
 
@@ -160,7 +161,7 @@ def _implied_vs_modeled_rows(
     rows: list[ImpliedVsModeledRow] = []
     for feature in _feature_rows(options_features):
         ticker = str(feature.get("ticker") or "").upper()
-        if not ticker or str(feature.get("optionability_tier") or "none") == "none":
+        if not ticker or not _is_optionable_tier(feature.get("optionability_tier")):
             continue
         implied_move = _as_float(feature.get("implied_move_60d"))
         down_beta = _as_float(tool_a_by_ticker.get(ticker, {}).get("down_beta_core"))
@@ -214,4 +215,3 @@ def _verdict(
     if modeled_downside_at_minus10 < MARKET_GREATER_THAN_MODEL_RATIO * implied_move_60d:
         return "market > model (heuristic)"
     return "model ~= market (heuristic)"
-

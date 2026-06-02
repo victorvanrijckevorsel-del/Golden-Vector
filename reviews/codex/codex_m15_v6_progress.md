@@ -21,3 +21,11 @@
   `python main.py hedge-readiness --ranking-max-tickers 5 --speculation-max-tickers 3 --quantity 5` rendered
   successfully with expected context WARN. Focused hedge tests: 67 passed. Full `python -m pytest -q`: 510 passed.
   `python -m py_compile` and `git diff --check` passed.
+- 2026-06-02 - Holistic first-part plus M1.5 review fix pass: reviewed the options ingestion/features layer together
+  with report building, ranking, speculation, portfolio totals, and scenario rendering. Fixed stale feature-row fallback
+  so reports only load feature rows matching the latest options manifest run id, surfaced current feature-row count in
+  Sources, normalized missing optionability tiers across hedge modules, normalized options-chain manifest keys, and
+  clarified report labels from misleading `P&L/contract` wording to quote-style `P&L/share` plus a visible standard
+  100-share multiplier note. Real `python main.py hedge-readiness --ranking-max-tickers 5 --speculation-max-tickers 3
+  --quantity 5` rendered successfully with expected context WARN. Focused hedge/options tests: 90 passed. Full
+  `python -m pytest -q`: 514 passed. `python -m py_compile` and `git diff --check` passed.

@@ -9,6 +9,8 @@ from golden_vector.app.run_context import RunContext
 from golden_vector.cli import build_parser, run_hedge_readiness
 from golden_vector.features.options import compute_options_features
 from golden_vector.hedge import report as report_module
+from golden_vector.hedge.candidate_puts import CandidatePut
+from golden_vector.hedge.scenarios import CandidateScenarioBundle, ScenarioRow
 from golden_vector.ingestion.persist_options import (
     persist_options_snapshot,
     write_latest_options_manifest,
@@ -143,6 +145,7 @@ def test_run_hedge_readiness_writes_markdown_report(tmp_path, capsys):
     assert "AAUC.TO" in markdown
     assert "Tool B WATCH" in markdown
     assert "| Analytical context alignment | OK |" in markdown
+    assert "- Options feature rows: 2" in markdown
     aem_block = markdown.split("### AEM", 1)[1].split("### AAUC.TO", 1)[0]
     assert aem_block.count("No usable listed put candidate found") == 1
     assert "Candidate puts:" not in aem_block
@@ -277,6 +280,41 @@ def test_run_hedge_readiness_surfaces_resolved_flag_values(tmp_path):
     assert "Showing up to 1 optionable tickers." in markdown
 
 
+def test_run_hedge_readiness_ignores_stale_feature_rows(tmp_path):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    update_context = RunContext.start(
+        paths=paths,
+        command="update-data",
+        parameters={"options": True},
+        config_hash="test-config",
+    )
+    _write_tool_outputs(paths, refresh_run_id=update_context.run_id)
+    _write_options_inputs(paths, update_context, app_config)
+    stale = pd.read_parquet(paths.options_features_dir / "AEM.parquet")
+    stale["run_id"] = "older-run"
+    stale.to_parquet(paths.options_features_dir / "AEM.parquet", index=False)
+
+    exit_code = run_hedge_readiness(paths)
+
+    assert exit_code == 0
+    markdown = (paths.output_hedge_readiness_dir / "latest.md").read_text(encoding="utf-8")
+    assert "| Directly hedgeable | 0 |" in markdown
+    assert "- Raw option snapshots: 2" in markdown
+    assert "- Options feature rows: 1" in markdown
+    sensitivity_block = markdown.split("## Sensitivity Ranking", 1)[1].split(
+        "## Speculation Candidates",
+        1,
+    )[0]
+    assert "AEM" in sensitivity_block
+    assert "no options features; no listed options" in sensitivity_block
+    speculation_block = markdown.split("## Speculation Candidates", 1)[1].split(
+        "## Cross-ticker Comparison View",
+        1,
+    )[0]
+    assert "### AEM" not in speculation_block
+
+
 def test_report_price_resolution_prefers_chain_over_tool_b_when_feature_missing():
     price = report_module._current_stock_price(
         feature={"ticker": "AEM"},
@@ -285,6 +323,51 @@ def test_report_price_resolution_prefers_chain_over_tool_b_when_feature_missing(
     )
 
     assert price == 55.0
+
+
+def test_report_optionable_tickers_treats_missing_tier_as_not_optionable():
+    optionable = report_module._optionable_tickers(
+        pd.DataFrame(
+            [
+                {"ticker": "AEM", "optionability_tier": pd.NA},
+                {"ticker": "NEM", "optionability_tier": "thin"},
+                {"ticker": "KGC", "optionability_tier": "none"},
+            ]
+        )
+    )
+
+    assert optionable == {"NEM"}
+
+
+def test_scenario_rendering_labels_quote_units_and_multiplier():
+    bundle = CandidateScenarioBundle(
+        ticker="AEM",
+        horizon="60d",
+        candidate=_candidate_put(),
+        rows=[
+            ScenarioRow(
+                gold_pct_change=-0.10,
+                implied_stock_price=43.0,
+                stock_clamped_at_zero=False,
+                expiry_value_per_contract=2.0,
+                current_value_per_contract=2.4,
+                pnl_per_contract_at_expiry=0.8,
+                pnl_per_contract_if_closed_today=1.2,
+                net_pnl_at_expiry=400.0,
+                net_pnl_if_closed_today=600.0,
+            )
+        ],
+        breakeven_gold_pct=None,
+        breakeven_annotation=None,
+        down_beta_used=1.4,
+        confidence_label="HIGH",
+    )
+
+    rendered = "\n".join(report_module._render_scenario_bundles([bundle]))
+
+    assert "P&L/share expiry" in rendered
+    assert "standard 100-share multiplier" in rendered
+    assert "P&L/contract" not in rendered
 
 
 def _assert_heading_order(markdown: str, headings: list[str]) -> None:
@@ -409,3 +492,23 @@ holdings:
 
 def _price_history() -> pd.DataFrame:
     return pd.DataFrame({"return_basis_usd": [0.001, -0.002, 0.003, -0.001] * 30})
+
+
+def _candidate_put() -> CandidatePut:
+    return CandidatePut(
+        ticker="AEM",
+        horizon_days=60,
+        expiration="2026-07-31",
+        days_to_expiry=60,
+        strike=45.0,
+        bid=1.15,
+        ask=1.25,
+        mid=1.20,
+        open_interest=500,
+        volume=50,
+        implied_volatility=0.40,
+        delta=-0.25,
+        delta_gap=0.01,
+        premium_pct_spot=1.20 / 50.0,
+        underlying_price=50.0,
+    )

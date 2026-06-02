@@ -88,6 +88,28 @@ def test_build_sensitivity_ranking_notes_missing_options_features():
     assert "no listed options" in row.notes
 
 
+def test_build_sensitivity_ranking_treats_missing_optionability_as_none():
+    ranking = build_sensitivity_ranking(
+        tool_a_frame=_tool_a([("AEM", 1.40, 1.10, "HIGH", 0.80, True)]),
+        options_features=pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "optionability_tier": pd.NA,
+                    "iv_percentile_cross_sectional": 35.0,
+                }
+            ]
+        ),
+        candidate_grids={},
+        risk_free_rate=0.04,
+        down_beta_min_for_scenario=0.10,
+    )
+
+    row = ranking.rows[0]
+    assert row.optionability_tier == "none"
+    assert "no listed options" in row.notes
+
+
 def test_build_sensitivity_ranking_honors_max_tickers_cap():
     ranking = build_sensitivity_ranking(
         tool_a_frame=_tool_a(
