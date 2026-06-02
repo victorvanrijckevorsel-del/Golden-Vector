@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from golden_vector.features.black_scholes import black_scholes_put_price
+from golden_vector.features.options_chain import CALENDAR_DAYS_PER_YEAR
 from golden_vector.hedge.candidate_puts import CandidatePut
 
 DOWN_BETA_MIN_FOR_SCENARIO = 0.10
@@ -87,7 +88,7 @@ def compute_scenario_bundle(
         current_value = black_scholes_put_price(
             spot=implied_stock_price,
             strike=candidate.strike,
-            time_to_expiry_years=candidate.days_to_expiry / 365.0,
+            time_to_expiry_years=candidate.days_to_expiry / CALENDAR_DAYS_PER_YEAR,
             risk_free_rate=risk_free_rate,
             implied_volatility=candidate.implied_volatility,
         )

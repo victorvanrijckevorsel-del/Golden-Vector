@@ -15,6 +15,7 @@ from golden_vector.features.options_chain import (
     compute_straddle_implied_move,
     nearest_expiration,
     normalize_options_chain,
+    option_quote_is_tradable,
 )
 
 DEFAULT_TARGET_HORIZONS_DAYS = (30, 60, 90)
@@ -34,6 +35,11 @@ def compute_options_features(
     implied_move_max_spread_pct: float = 0.35,
     implied_move_min_open_interest: int = 1,
     implied_move_min_volume: int = 0,
+    candidate_max_spread_pct: float = 0.35,
+    candidate_min_open_interest: int = 1,
+    candidate_min_volume: int = 0,
+    candidate_min_implied_volatility: float = 0.01,
+    candidate_max_implied_volatility: float = 3.0,
 ) -> dict[str, Any]:
     """Compute one long-format options feature row for a ticker/as-of date."""
 
@@ -93,16 +99,24 @@ def compute_options_features(
             underlying_price=underlying_price,
             risk_free_rate=risk_free_rate,
         )
-        atm_iv = _atm_iv(expiry_slice, underlying_price)
+        tradable_slice = _tradable_option_slice(
+            with_delta,
+            max_spread_pct=candidate_max_spread_pct,
+            min_open_interest=candidate_min_open_interest,
+            min_volume=candidate_min_volume,
+            min_implied_volatility=candidate_min_implied_volatility,
+            max_implied_volatility=candidate_max_implied_volatility,
+        )
+        atm_iv = _atm_iv(tradable_slice, underlying_price)
         put_result = strike_for_target_delta(
             option_type="P",
             target_delta=float(target_delta),
-            chain_slice=with_delta,
+            chain_slice=tradable_slice,
         )
         call_result = strike_for_target_delta(
             option_type="C",
             target_delta=abs(float(target_delta)),
-            chain_slice=with_delta,
+            chain_slice=tradable_slice,
         )
         implied_move, gates_ok = compute_straddle_implied_move(
             expiry_slice,
@@ -145,6 +159,32 @@ def rank_options_iv_cross_section(
         return pd.Series([math.nan] * len(features.index), index=features.index)
     values = pd.to_numeric(features[iv_column], errors="coerce")
     return values.rank(pct=True, method="average") * 100.0
+
+
+def _tradable_option_slice(
+    frame: pd.DataFrame,
+    *,
+    max_spread_pct: float,
+    min_open_interest: int,
+    min_volume: int,
+    min_implied_volatility: float,
+    max_implied_volatility: float,
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    return frame[
+        frame.apply(
+            lambda row: option_quote_is_tradable(
+                row,
+                max_spread_pct=max_spread_pct,
+                min_open_interest=min_open_interest,
+                min_volume=min_volume,
+                min_implied_volatility=min_implied_volatility,
+                max_implied_volatility=max_implied_volatility,
+            ),
+            axis=1,
+        )
+    ].copy()
 
 
 def _atm_iv(frame: pd.DataFrame, underlying_price: float) -> float | None:

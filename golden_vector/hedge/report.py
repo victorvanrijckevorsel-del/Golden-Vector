@@ -461,6 +461,15 @@ def _candidate_grid(
         risk_free_rate=risk_free_rate,
         target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
         target_delta=app_config.hedge_readiness.target_delta,
+        max_spread_pct=app_config.hedge_readiness.candidate_max_spread_pct,
+        min_open_interest=app_config.hedge_readiness.candidate_min_open_interest,
+        min_volume=app_config.hedge_readiness.candidate_min_volume,
+        min_implied_volatility=(
+            app_config.hedge_readiness.candidate_min_implied_volatility
+        ),
+        max_implied_volatility=(
+            app_config.hedge_readiness.candidate_max_implied_volatility
+        ),
     )
 
 

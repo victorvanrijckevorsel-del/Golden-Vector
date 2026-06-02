@@ -8,6 +8,11 @@ optionability_open_interest_threshold: 1000
 implied_move_max_spread_pct: 0.35
 implied_move_min_open_interest: 1
 implied_move_min_volume: 0
+candidate_max_spread_pct: 0.35
+candidate_min_open_interest: 1
+candidate_min_volume: 0
+candidate_min_implied_volatility: 0.01
+candidate_max_implied_volatility: 3.0
 delta_gap_warning_threshold: 0.10
 hedge_ratio_cheap_max: 0.40
 hedge_ratio_expensive_min: 0.80

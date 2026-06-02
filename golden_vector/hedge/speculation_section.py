@@ -10,7 +10,6 @@ import pandas as pd
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import HedgeReadinessConfig
 from golden_vector.hedge.candidate_puts import CandidatePut, build_candidate_put_grid
-from golden_vector.hedge.comparison import COMPARISON_SORT_COLUMNS
 from golden_vector.hedge.scenarios import CandidateScenarioBundle, compute_scenario_bundle
 
 
@@ -36,17 +35,12 @@ def build_speculation_section(
     raw_options_by_ticker: dict[str, pd.DataFrame],
     risk_free_rate: float | None,
     config: HedgeReadinessConfig,
-    sort_by: str = "pnl_per_contract_minus10",
     quantity: int | None = None,
     max_tickers: int | None = None,
 ) -> list[SpeculationTickerBlock]:
     """Build universe-level put candidate blocks, independent of holdings."""
 
     _ = paths
-    if sort_by not in COMPARISON_SORT_COLUMNS:
-        choices = ", ".join(COMPARISON_SORT_COLUMNS)
-        raise ValueError(f"Unsupported comparison sort column {sort_by!r}; expected one of: {choices}")
-
     selected = _selected_features(
         options_features=options_features,
         optionability_tier_min=config.optionability_tier_min,
@@ -190,6 +184,11 @@ def _candidate_grid(
         risk_free_rate=risk_free_rate,
         target_horizons_days=tuple(config.target_horizons_days),
         target_delta=config.target_delta,
+        max_spread_pct=config.candidate_max_spread_pct,
+        min_open_interest=config.candidate_min_open_interest,
+        min_volume=config.candidate_min_volume,
+        min_implied_volatility=config.candidate_min_implied_volatility,
+        max_implied_volatility=config.candidate_max_implied_volatility,
     )
 
 

@@ -212,22 +212,6 @@ def test_build_speculation_section_bubbles_low_down_beta_annotation(tmp_path):
     assert any("Down-beta is too small" in note for note in blocks[0].annotations)
 
 
-def test_build_speculation_section_rejects_unknown_comparison_sort(tmp_path):
-    paths = build_test_paths(tmp_path)
-
-    with pytest.raises(ValueError, match="Unsupported comparison sort column"):
-        build_speculation_section(
-            paths=paths,
-            options_features=pd.DataFrame(),
-            tool_a_frame=pd.DataFrame(),
-            tool_b_frame=pd.DataFrame(),
-            raw_options_by_ticker={},
-            risk_free_rate=0.04,
-            config=HedgeReadinessConfig(),
-            sort_by="banana",
-        )
-
-
 def _features(rows: list[tuple[str, str, float | None, float | None]]) -> pd.DataFrame:
     return pd.DataFrame(
         [

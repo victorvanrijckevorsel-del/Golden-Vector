@@ -197,13 +197,51 @@ def compute_straddle_implied_move(
     return implied_move, True
 
 
-def quote_passes_liquidity_gates(row: pd.Series, max_spread_pct: float) -> bool:
+def quote_passes_liquidity_gates(
+    row: pd.Series,
+    max_spread_pct: float,
+    *,
+    min_open_interest: int = 0,
+    min_volume: int = 0,
+) -> bool:
     bid = as_float(row.get("bid"))
     ask = as_float(row.get("ask"))
     mid = as_float(row.get("mid"))
     if bid is None or ask is None or mid is None or bid <= 0 or ask <= 0 or mid <= 0:
         return False
-    return ((ask - bid) / mid) <= max_spread_pct
+    open_interest = as_int(row.get("open_interest")) or 0
+    volume = as_int(row.get("volume")) or 0
+    return (
+        ((ask - bid) / mid) <= max_spread_pct
+        and open_interest >= min_open_interest
+        and volume >= min_volume
+    )
+
+
+def option_quote_is_tradable(
+    row: pd.Series,
+    *,
+    max_spread_pct: float,
+    min_open_interest: int,
+    min_volume: int,
+    min_implied_volatility: float,
+    max_implied_volatility: float,
+) -> bool:
+    """Return whether a single option row is usable for action-oriented reports."""
+
+    implied_volatility = as_float(row.get("implied_volatility"))
+    if (
+        implied_volatility is None
+        or implied_volatility < min_implied_volatility
+        or implied_volatility > max_implied_volatility
+    ):
+        return False
+    return quote_passes_liquidity_gates(
+        row,
+        max_spread_pct,
+        min_open_interest=min_open_interest,
+        min_volume=min_volume,
+    )
 
 
 def midpoint(bid: object, ask: object) -> float | None:

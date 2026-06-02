@@ -195,6 +195,11 @@ def test_hedge_readiness_config_accepts_defaults():
             "implied_move_max_spread_pct": 0.35,
             "implied_move_min_open_interest": 1,
             "implied_move_min_volume": 0,
+            "candidate_max_spread_pct": 0.35,
+            "candidate_min_open_interest": 1,
+            "candidate_min_volume": 0,
+            "candidate_min_implied_volatility": 0.01,
+            "candidate_max_implied_volatility": 3.0,
             "delta_gap_warning_threshold": 0.10,
             "hedge_ratio_cheap_max": 0.40,
             "hedge_ratio_expensive_min": 0.80,
@@ -212,6 +217,11 @@ def test_hedge_readiness_config_accepts_defaults():
     assert config.target_delta == -0.25
     assert config.target_horizons_days == [30, 60, 90]
     assert config.benchmark_tickers == ["GDX", "GDXJ"]
+    assert config.candidate_max_spread_pct == 0.35
+    assert config.candidate_min_open_interest == 1
+    assert config.candidate_min_volume == 0
+    assert config.candidate_min_implied_volatility == 0.01
+    assert config.candidate_max_implied_volatility == 3.0
     assert config.default_scenario_quantity == 5
     assert config.default_scenarios == [0.0, -0.05, -0.10, -0.15, -0.20]
     assert config.optionability_tier_min == "directly_hedgeable"
@@ -227,6 +237,12 @@ def test_hedge_readiness_config_accepts_defaults():
         {"gold_down_scenarios": [0.10, 1.20]},
         {"benchmark_tickers": ["GDX", "gdx"]},
         {"proxy_top_n": 0},
+        {"candidate_max_spread_pct": 0},
+        {"candidate_min_open_interest": -1},
+        {"candidate_min_volume": -1},
+        {"candidate_min_implied_volatility": 0.0},
+        {"candidate_max_implied_volatility": 0.0},
+        {"candidate_min_implied_volatility": 0.5, "candidate_max_implied_volatility": 0.5},
         {"default_scenario_quantity": 0},
         {"default_scenarios": [0.0, -0.05, -0.05]},
         {"default_scenarios": [0.05, -0.05]},
@@ -244,6 +260,11 @@ def test_hedge_readiness_config_rejects_invalid_thresholds(override):
         "implied_move_max_spread_pct": 0.35,
         "implied_move_min_open_interest": 1,
         "implied_move_min_volume": 0,
+        "candidate_max_spread_pct": 0.35,
+        "candidate_min_open_interest": 1,
+        "candidate_min_volume": 0,
+        "candidate_min_implied_volatility": 0.01,
+        "candidate_max_implied_volatility": 3.0,
         "delta_gap_warning_threshold": 0.10,
         "hedge_ratio_cheap_max": 0.40,
         "hedge_ratio_expensive_min": 0.80,

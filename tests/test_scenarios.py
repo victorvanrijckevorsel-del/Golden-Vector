@@ -2,6 +2,7 @@ import math
 
 import pytest
 
+from golden_vector.features.options_chain import CALENDAR_DAYS_PER_YEAR
 from golden_vector.hedge.candidate_puts import CandidatePut
 from golden_vector.hedge.scenarios import (
     DOWN_BETA_MIN_FOR_SCENARIO,
@@ -63,7 +64,7 @@ def test_compute_scenario_bundle_populates_spot_zero_limit_when_stock_clamps():
     assert row.stock_clamped_at_zero is True
     assert row.implied_stock_price == 0.0
     assert row.current_value_per_contract == pytest.approx(
-        5.0 * math.exp(-0.04 * (60 / 365.0))
+        5.0 * math.exp(-0.04 * (60 / CALENDAR_DAYS_PER_YEAR))
     )
     assert row.net_pnl_at_expiry == pytest.approx((5.0 - 0.50) * 2 * 100)
 

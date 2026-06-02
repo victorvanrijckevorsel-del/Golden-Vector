@@ -26,7 +26,7 @@ def test_compute_options_features_uses_fixture_chain():
     assert features["n_contracts"] == 8
     assert features["total_open_interest"] == 955
     assert features["total_volume"] == 92
-    assert features["put_iv_25d_30d"] == pytest.approx(0.39)
+    assert features["put_iv_25d_30d"] == pytest.approx(0.42)
     assert features["put_25d_delta_gap_30d"] is not None
     assert features["call_iv_25d_60d"] is not None
     assert features["term_slope_30_90"] is not None
@@ -110,6 +110,30 @@ def test_compute_options_features_skips_delta_fields_without_risk_free_rate():
     assert features["put_iv_25d_30d"] is None
     assert features["call_iv_25d_30d"] is None
     assert features["atm_iv_30d"] is not None
+
+
+def test_compute_options_features_does_not_rank_untradable_candidate_quotes():
+    chain = pd.DataFrame(
+        [
+            _contract("P", 45.0, 1.0, 8.0, 0.40, 100, 10),
+            _contract("P", 47.5, 1.2, 9.0, 0.38, 100, 10),
+            _contract("C", 55.0, 1.0, 8.0, 0.36, 100, 10),
+        ]
+    )
+
+    features = compute_options_features(
+        chain=chain,
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        price_history=_price_history(),
+        as_of_date=date(2026, 5, 29),
+        optionability_open_interest_threshold=100,
+    )
+
+    assert features["atm_iv_30d"] is None
+    assert features["put_iv_25d_30d"] is None
+    assert features["call_iv_25d_30d"] is None
+    assert features["optionability_tier"] == "thin"
 
 
 def test_rank_options_iv_cross_section_returns_percentiles():

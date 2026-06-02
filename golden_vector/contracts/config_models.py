@@ -96,6 +96,11 @@ class HedgeReadinessConfig(StrictConfigModel):
     implied_move_max_spread_pct: float = 0.35
     implied_move_min_open_interest: int = 1
     implied_move_min_volume: int = 0
+    candidate_max_spread_pct: float = 0.35
+    candidate_min_open_interest: int = 1
+    candidate_min_volume: int = 0
+    candidate_min_implied_volatility: float = 0.01
+    candidate_max_implied_volatility: float = 3.0
     delta_gap_warning_threshold: float = 0.10
     hedge_ratio_cheap_max: float = 0.40
     hedge_ratio_expensive_min: float = 0.80
@@ -122,6 +127,8 @@ class HedgeReadinessConfig(StrictConfigModel):
         "optionability_open_interest_threshold",
         "implied_move_min_open_interest",
         "implied_move_min_volume",
+        "candidate_min_open_interest",
+        "candidate_min_volume",
     )
     @classmethod
     def non_negative_ints(cls, value: int) -> int:
@@ -154,6 +161,9 @@ class HedgeReadinessConfig(StrictConfigModel):
 
     @field_validator(
         "implied_move_max_spread_pct",
+        "candidate_max_spread_pct",
+        "candidate_min_implied_volatility",
+        "candidate_max_implied_volatility",
         "delta_gap_warning_threshold",
         "proxy_max_beta_diff",
     )
@@ -162,6 +172,15 @@ class HedgeReadinessConfig(StrictConfigModel):
         if value <= 0:
             raise ValueError("float thresholds must be positive")
         return float(value)
+
+    @model_validator(mode="after")
+    def valid_candidate_iv_range(self) -> "HedgeReadinessConfig":
+        if self.candidate_min_implied_volatility >= self.candidate_max_implied_volatility:
+            raise ValueError(
+                "candidate_min_implied_volatility must be less than "
+                "candidate_max_implied_volatility"
+            )
+        return self
 
     @field_validator("benchmark_tickers")
     @classmethod

@@ -14,6 +14,7 @@ from golden_vector.features.options_chain import (
     as_int,
     nearest_expiration,
     normalize_options_chain,
+    option_quote_is_tradable,
 )
 
 
@@ -44,9 +45,14 @@ def build_candidate_put_grid(
     risk_free_rate: float | None,
     target_horizons_days: tuple[int, ...] = (30, 60, 90),
     target_delta: float = -0.25,
+    max_spread_pct: float = 0.35,
+    min_open_interest: int = 1,
+    min_volume: int = 0,
+    min_implied_volatility: float = 0.01,
+    max_implied_volatility: float = 3.0,
     as_of_date: date | None = None,
 ) -> list[CandidatePut]:
-    """Return the listed put nearest target delta for each target horizon."""
+    """Return tradable listed puts nearest target delta for each target horizon."""
 
     frame = normalize_options_chain(chain, as_of_date=as_of_date)
     if frame.empty:
@@ -67,10 +73,25 @@ def build_candidate_put_grid(
             underlying_price=underlying_price,
             risk_free_rate=risk_free_rate,
         )
+        tradable_slice = expiry_slice[
+            expiry_slice.apply(
+                lambda row: option_quote_is_tradable(
+                    row,
+                    max_spread_pct=max_spread_pct,
+                    min_open_interest=min_open_interest,
+                    min_volume=min_volume,
+                    min_implied_volatility=min_implied_volatility,
+                    max_implied_volatility=max_implied_volatility,
+                ),
+                axis=1,
+            )
+        ].copy()
+        if tradable_slice.empty:
+            continue
         selected = strike_for_target_delta(
             option_type="P",
             target_delta=target_delta,
-            chain_slice=expiry_slice,
+            chain_slice=tradable_slice,
         )
         if selected is None:
             continue

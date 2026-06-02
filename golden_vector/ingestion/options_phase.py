@@ -212,6 +212,17 @@ def _compute_feature_row(
             app_config.hedge_readiness.implied_move_min_open_interest
         ),
         implied_move_min_volume=app_config.hedge_readiness.implied_move_min_volume,
+        candidate_max_spread_pct=app_config.hedge_readiness.candidate_max_spread_pct,
+        candidate_min_open_interest=(
+            app_config.hedge_readiness.candidate_min_open_interest
+        ),
+        candidate_min_volume=app_config.hedge_readiness.candidate_min_volume,
+        candidate_min_implied_volatility=(
+            app_config.hedge_readiness.candidate_min_implied_volatility
+        ),
+        candidate_max_implied_volatility=(
+            app_config.hedge_readiness.candidate_max_implied_volatility
+        ),
     )
     row["ticker"] = ticker
     row["run_id"] = run_id

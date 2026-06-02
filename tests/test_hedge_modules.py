@@ -40,6 +40,40 @@ def test_build_candidate_put_grid_returns_empty_without_delta_inputs():
     assert candidates == []
 
 
+def test_build_candidate_put_grid_filters_untradable_quotes():
+    bad_chain = _candidate_chain().copy()
+    bad_chain.loc[bad_chain["option_type"] == "P", "ask"] = (
+        bad_chain.loc[bad_chain["option_type"] == "P", "bid"] + 10.0
+    )
+
+    candidates = build_candidate_put_grid(
+        ticker="AEM",
+        chain=bad_chain,
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        target_horizons_days=(30, 60, 90),
+        as_of_date=date(2026, 5, 29),
+    )
+
+    assert candidates == []
+
+
+def test_build_candidate_put_grid_filters_placeholder_iv():
+    bad_chain = _candidate_chain().copy()
+    bad_chain.loc[bad_chain["option_type"] == "P", "impliedVolatility"] = 0.00001
+
+    candidates = build_candidate_put_grid(
+        ticker="AEM",
+        chain=bad_chain,
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        target_horizons_days=(30, 60, 90),
+        as_of_date=date(2026, 5, 29),
+    )
+
+    assert candidates == []
+
+
 def test_compute_implied_move_from_straddle_requires_liquid_quotes():
     chain = pd.DataFrame(
         [
