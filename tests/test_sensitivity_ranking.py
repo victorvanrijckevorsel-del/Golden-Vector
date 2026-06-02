@@ -136,7 +136,7 @@ def test_build_sensitivity_ranking_honors_max_tickers_cap():
     assert [row.ticker for row in ranking.rows] == ["KGC"]
 
 
-def test_build_sensitivity_ranking_annotates_risk_free_fallback():
+def test_build_sensitivity_ranking_does_not_note_rate_fallback_for_expiry_pnl():
     ranking = build_sensitivity_ranking(
         tool_a_frame=_tool_a([("AEM", 1.40, 1.10, "HIGH", 0.80, True)]),
         options_features=_features([("AEM", "directly_hedgeable", 35.0)]),
@@ -146,7 +146,7 @@ def test_build_sensitivity_ranking_annotates_risk_free_fallback():
     )
 
     assert ranking.rows[0].pnl_at_minus10_60d == pytest.approx(0.80)
-    assert "risk-free rate unavailable; used 0%" in ranking.rows[0].notes
+    assert "risk-free rate unavailable; used 0%" not in ranking.rows[0].notes
 
 
 def test_build_sensitivity_ranking_skips_risk_free_note_when_pricing_is_not_run():
@@ -172,6 +172,34 @@ def test_build_sensitivity_ranking_rejects_unknown_sort_column():
             down_beta_min_for_scenario=0.10,
             sort_by="down_beta_12m",
         )
+
+
+def test_build_sensitivity_ranking_uses_latest_feature_row_by_date():
+    ranking = build_sensitivity_ranking(
+        tool_a_frame=_tool_a([("AEM", 1.40, 1.10, "HIGH", 0.80, True)]),
+        options_features=pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "as_of_date": "2026-06-01",
+                    "optionability_tier": "directly_hedgeable",
+                    "iv_percentile_cross_sectional": 70.0,
+                },
+                {
+                    "ticker": "AEM",
+                    "as_of_date": "2026-05-01",
+                    "optionability_tier": "none",
+                    "iv_percentile_cross_sectional": 20.0,
+                },
+            ]
+        ),
+        candidate_grids={},
+        risk_free_rate=0.04,
+        down_beta_min_for_scenario=0.10,
+    )
+
+    assert ranking.rows[0].optionability_tier == "directly_hedgeable"
+    assert ranking.rows[0].iv_percentile_cross_sectional == pytest.approx(70.0)
 
 
 def _tool_a(rows):

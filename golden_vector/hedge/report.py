@@ -45,6 +45,7 @@ from golden_vector.hedge.scenarios import (
     compute_scenario_bundle,
 )
 from golden_vector.hedge.sensitivity_ranking import (
+    RANKING_PNL_GOLD_MOVE,
     SensitivityRankingData,
     build_sensitivity_ranking,
 )
@@ -554,7 +555,8 @@ def _render_sensitivity_ranking(ranking: SensitivityRankingData) -> list[str]:
     lines.extend(
         [
             "| Rank | Ticker | Down beta | Up beta | Confidence | IV percentile | "
-            "P&L/share at gold -10% | Optionability | Notes |",
+            f"P&L/share at gold {RANKING_PNL_GOLD_MOVE:.0%} | "
+            "Optionability | Notes |",
             "|---:|---|---:|---:|---|---:|---:|---|---|",
         ]
     )

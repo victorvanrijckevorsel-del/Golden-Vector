@@ -38,6 +38,7 @@ def rows_by_ticker_dict(
 ) -> dict[str, dict[str, Any]]:
     if frame.empty or "ticker" not in frame.columns:
         return {}
+    frame = _sorted_by_as_of_date(frame)
     result: dict[str, dict[str, Any]] = {}
     for _, row in frame.iterrows():
         ticker = _normalized_ticker(
@@ -58,6 +59,7 @@ def rows_by_ticker_series(
 ) -> dict[str, pd.Series]:
     if frame.empty or "ticker" not in frame.columns:
         return {}
+    frame = _sorted_by_as_of_date(frame)
     result: dict[str, pd.Series] = {}
     for _, row in frame.iterrows():
         ticker = _normalized_ticker(
@@ -68,6 +70,20 @@ def rows_by_ticker_series(
         if ticker is not None:
             result[ticker] = row
     return result
+
+
+def latest_row_dict(
+    frame: pd.DataFrame,
+    *,
+    fallback_ticker: str | None = None,
+) -> dict[str, Any]:
+    if frame.empty:
+        return {"ticker": fallback_ticker} if fallback_ticker is not None else {}
+    sorted_frame = _sorted_by_as_of_date(frame)
+    row = sorted_frame.iloc[-1].to_dict()
+    if fallback_ticker is not None:
+        row.setdefault("ticker", fallback_ticker)
+    return row
 
 
 def unique_preserving_order(values: list[str]) -> list[str]:
@@ -106,6 +122,21 @@ def _row_value(row: pd.Series | dict[str, Any] | None, column: str) -> object:
     if isinstance(row, pd.Series):
         return row[column] if column in row.index else None
     return row.get(column)
+
+
+def _sorted_by_as_of_date(frame: pd.DataFrame) -> pd.DataFrame:
+    if "as_of_date" not in frame.columns:
+        return frame
+    sorted_frame = frame.copy()
+    sorted_frame["_as_of_date_sort"] = pd.to_datetime(
+        sorted_frame["as_of_date"],
+        errors="coerce",
+    )
+    return sorted_frame.sort_values(
+        "_as_of_date_sort",
+        kind="stable",
+        na_position="first",
+    ).drop(columns=["_as_of_date_sort"])
 
 
 def _normalized_ticker(

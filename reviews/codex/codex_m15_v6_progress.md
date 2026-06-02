@@ -29,3 +29,13 @@
   100-share multiplier note. Real `python main.py hedge-readiness --ranking-max-tickers 5 --speculation-max-tickers 3
   --quantity 5` rendered successfully with expected context WARN. Focused hedge/options tests: 90 passed. Full
   `python -m pytest -q`: 514 passed. `python -m py_compile` and `git diff --check` passed.
+- 2026-06-02 - Claude M1.5 audit fix pass: read `reviews/codex/claude_audit_fixes_for_codex_m15.md` and fixed the
+  confirmed bugs/hardening items. Missing risk-free-rate inputs now use a 0% fallback for Black-Scholes deltas so
+  candidate selection and optionability do not collapse when the rate fetch fails. Added hedge producer/consumer
+  contract tests, removed the misleading risk-free note from expiry-only sensitivity P&L, guarded sparse-chain
+  straddle implied moves from off-center strikes, tied the sensitivity header to the ranking scenario constant, and
+  hardened latest feature-row selection by `as_of_date`. Left the `score_eligible` ranking product behavior and 300%
+  IV ceiling unchanged pending explicit product direction; existing ranking tests pin the current score-ineligible
+  behavior. Focused hedge/options tests: 75 passed. Full `python -m pytest -q`: 519 passed. Real
+  `python main.py hedge-readiness --ranking-max-tickers 5 --speculation-max-tickers 3 --quantity 5` rendered
+  successfully with expected context WARN. `python -m py_compile` and `git diff --check` passed.

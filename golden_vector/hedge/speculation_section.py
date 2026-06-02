@@ -11,6 +11,7 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import HedgeReadinessConfig
 from golden_vector.hedge._helpers import (
     as_float as _as_float,
+    latest_row_dict as _latest_row_dict,
     optionability_tier as _optionability_tier,
     rows_by_ticker_dict as _rows_by_ticker,
     unique_preserving_order,
@@ -238,11 +239,7 @@ def _feature_rows(
 
 
 def _last_feature_row(ticker: str, frame: pd.DataFrame) -> dict[str, Any]:
-    if frame.empty:
-        return {"ticker": ticker}
-    row = frame.iloc[-1].to_dict()
-    row.setdefault("ticker", ticker)
-    return row
+    return _latest_row_dict(frame, fallback_ticker=ticker)
 
 
 def _current_stock_price(

@@ -96,7 +96,7 @@ def test_compute_options_features_liquidity_gates_implied_move():
     assert features["implied_move_30d"] == pytest.approx((1.1 + 1.5) / 50.0)
 
 
-def test_compute_options_features_skips_delta_fields_without_risk_free_rate():
+def test_compute_options_features_uses_zero_rate_delta_fallback_without_risk_free_rate():
     chain = pd.read_parquet("tests/fixtures/options/aem_chain_20260529.parquet")
 
     features = compute_options_features(
@@ -107,8 +107,10 @@ def test_compute_options_features_skips_delta_fields_without_risk_free_rate():
         as_of_date=date(2026, 5, 29),
     )
 
-    assert features["put_iv_25d_30d"] is None
-    assert features["call_iv_25d_30d"] is None
+    assert features["put_iv_25d_30d"] == pytest.approx(0.42)
+    assert features["put_25d_delta_gap_30d"] is not None
+    assert features["call_iv_25d_30d"] is not None
+    assert features["call_25d_delta_gap_30d"] is not None
     assert features["atm_iv_30d"] is not None
 
 

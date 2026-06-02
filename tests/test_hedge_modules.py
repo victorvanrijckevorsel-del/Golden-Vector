@@ -27,7 +27,7 @@ def test_build_candidate_put_grid_returns_listed_puts_by_horizon():
     assert candidates[0].premium_pct_spot == pytest.approx(candidates[0].mid / 50.0)
 
 
-def test_build_candidate_put_grid_returns_empty_without_delta_inputs():
+def test_build_candidate_put_grid_uses_zero_rate_delta_fallback():
     candidates = build_candidate_put_grid(
         ticker="AEM",
         chain=_candidate_chain(),
@@ -37,7 +37,9 @@ def test_build_candidate_put_grid_returns_empty_without_delta_inputs():
         as_of_date=date(2026, 5, 29),
     )
 
-    assert candidates == []
+    assert [candidate.horizon_days for candidate in candidates] == [30]
+    assert candidates[0].delta is not None
+    assert candidates[0].delta_gap is not None
 
 
 def test_build_candidate_put_grid_filters_untradable_quotes():
@@ -101,6 +103,26 @@ def test_compute_implied_move_from_straddle_requires_liquid_quotes():
         )
         is None
     )
+
+
+def test_compute_implied_move_from_straddle_rejects_off_center_strike():
+    chain = pd.DataFrame(
+        [
+            _option("2026-06-27", "P", 70.0, 19.0, 20.0, 20, 5),
+            _option("2026-06-27", "C", 70.0, 0.2, 0.3, 20, 5),
+        ]
+    )
+
+    implied_move = compute_implied_move_from_straddle(
+        chain=chain,
+        underlying_price=50.0,
+        expiration="2026-06-27",
+        max_spread_pct=0.40,
+        min_open_interest=10,
+        min_volume=5,
+    )
+
+    assert implied_move is None
 
 
 def test_compute_premium_vs_downside_tags_scenarios():

@@ -9,12 +9,15 @@ import pandas as pd
 
 from golden_vector.hedge._helpers import (
     as_float,
+    latest_row_dict,
     optionability_tier as normalize_optionability_tier,
     rows_by_ticker_dict,
     unique_preserving_order,
 )
 from golden_vector.hedge.candidate_puts import CandidatePut
 from golden_vector.hedge.scenarios import compute_scenario_bundle
+
+RANKING_PNL_GOLD_MOVE = -0.10
 
 
 @dataclass(frozen=True)
@@ -125,11 +128,9 @@ def _build_row(
 
     candidate_60d = _candidate_for_horizon(candidates, horizon_days=60)
     pnl_at_minus10 = None
-    used_rate_fallback = False
     if candidate_60d is None:
         notes.append("no 60d candidate")
     elif down_beta is not None:
-        used_rate_fallback = risk_free_rate is None
         bundle = compute_scenario_bundle(
             candidate=candidate_60d,
             current_stock_price=candidate_60d.underlying_price,
@@ -137,15 +138,13 @@ def _build_row(
             confidence_label=str(tool_a_row.get("confidence_label") or "n/a"),
             risk_free_rate=risk_free_rate or 0.0,
             down_beta_min_for_scenario=down_beta_min_for_scenario,
-            gold_scenarios=(-0.10,),
+            gold_scenarios=(RANKING_PNL_GOLD_MOVE,),
             quantity=1,
         )
         if bundle.skipped_reason:
             notes.append(bundle.skipped_reason)
         elif bundle.rows:
             pnl_at_minus10 = bundle.rows[0].pnl_per_contract_at_expiry
-    if used_rate_fallback:
-        notes.append("risk-free rate unavailable; used 0%")
 
     is_rankable = score_eligible and down_beta is not None
     return (
@@ -178,9 +177,7 @@ def _features_by_ticker(
         if frame.empty:
             result[normalized] = {"ticker": normalized}
             continue
-        row = frame.iloc[-1].to_dict()
-        row.setdefault("ticker", normalized)
-        result[normalized] = row
+        result[normalized] = latest_row_dict(frame, fallback_ticker=normalized)
     return result
 
 

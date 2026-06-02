@@ -10,6 +10,7 @@ import pandas as pd
 from golden_vector.features.black_scholes import black_scholes_delta
 
 CALENDAR_DAYS_PER_YEAR = 365.25
+MAX_STRADDLE_STRIKE_DISTANCE_PCT = 0.10
 
 
 def normalize_options_chain(
@@ -97,9 +98,7 @@ def add_black_scholes_delta(
     """Add signed Black-Scholes deltas to a normalized option chain."""
 
     result = frame.copy()
-    if risk_free_rate is None:
-        result["delta"] = None
-        return result
+    rate = 0.0 if risk_free_rate is None else float(risk_free_rate)
 
     deltas: list[float | None] = []
     for row in result.itertuples(index=False):
@@ -117,7 +116,7 @@ def add_black_scholes_delta(
                 spot=float(underlying_price),
                 strike=strike,
                 time_to_expiry_years=days / CALENDAR_DAYS_PER_YEAR,
-                risk_free_rate=float(risk_free_rate),
+                risk_free_rate=rate,
                 implied_volatility=iv,
             )
         )
@@ -128,6 +127,7 @@ def add_black_scholes_delta(
 def nearest_expiration(frame: pd.DataFrame, horizon_days: int) -> date | None:
     """Return the listed expiration nearest a target horizon."""
 
+    # On an exact distance tie, prefer the shorter-dated expiry.
     expirations = (
         frame[["expiration", "days_to_expiry"]]
         .dropna()
@@ -168,9 +168,20 @@ def compute_straddle_implied_move(
     if not common_strikes:
         return None, False
 
-    strike = min(common_strikes, key=lambda value: abs(float(value) - float(underlying_price)))
-    put = candidates[(candidates["option_type"] == "P") & (candidates["strike"] == strike)].iloc[0]
-    call = candidates[(candidates["option_type"] == "C") & (candidates["strike"] == strike)].iloc[0]
+    strike = min(
+        common_strikes,
+        key=lambda value: abs(float(value) - float(underlying_price)),
+    )
+    if abs(float(strike) - float(underlying_price)) / float(underlying_price) > (
+        MAX_STRADDLE_STRIKE_DISTANCE_PCT
+    ):
+        return None, False
+    put = candidates[
+        (candidates["option_type"] == "P") & (candidates["strike"] == strike)
+    ].iloc[0]
+    call = candidates[
+        (candidates["option_type"] == "C") & (candidates["strike"] == strike)
+    ].iloc[0]
     if not (
         quote_passes_liquidity_gates(put, max_spread_pct)
         and quote_passes_liquidity_gates(call, max_spread_pct)
