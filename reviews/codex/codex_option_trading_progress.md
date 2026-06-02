@@ -21,3 +21,4 @@
 - Post-checkpoint review: fixed the detail-page window switcher so the Option Trading lens and `#option-trading` anchor survive 6M/12M/3Y window clicks; added a regression test.
 - Claude review M1: changed the detail data path to reuse the already-cached overview row instead of rebuilding the full overview for one ticker; added a regression test pinning overview/detail row identity and P&L consistency.
 - Claude review M2: threaded a `risk_free_rate_is_fallback` flag through the option-trading data, overview, and detail panel; the UI now discloses the 0% fallback and tests cover malformed manifests plus invalid lens fallback.
+- Step 5: generalized `CandidatePut` to the backwards-compatible `OptionCandidate` model, added `build_candidate_grid`, renamed scenario beta inputs to `gold_beta`, kept old put wrappers/aliases working, and verified with the full suite (`540 passed`).

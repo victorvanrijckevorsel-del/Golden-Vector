@@ -139,10 +139,10 @@ def build_option_trading_detail(
         compute_scenario_bundle(
             candidate=candidate,
             current_stock_price=candidate.underlying_price,
-            down_beta_core=down_beta,
+            gold_beta=down_beta,
             confidence_label=confidence_label,
             risk_free_rate=risk_free_rate,
-            down_beta_min_for_scenario=down_beta_min_for_scenario,
+            gold_beta_min_for_scenario=down_beta_min_for_scenario,
             gold_scenarios=(0.0, -0.05, -0.10, -0.15, -0.20),
             quantity=1,
         )
@@ -285,10 +285,10 @@ def _put_context_pnl(
     bundle = compute_scenario_bundle(
         candidate=candidate,
         current_stock_price=current_stock_price,
-        down_beta_core=down_beta_core,
+        gold_beta=down_beta_core,
         confidence_label=confidence_label,
         risk_free_rate=risk_free_rate,
-        down_beta_min_for_scenario=down_beta_min_for_scenario,
+        gold_beta_min_for_scenario=down_beta_min_for_scenario,
         gold_scenarios=(put_context_gold_move,),
         quantity=1,
     )

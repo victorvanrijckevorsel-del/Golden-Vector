@@ -134,10 +134,10 @@ def _build_row(
         bundle = compute_scenario_bundle(
             candidate=candidate_60d,
             current_stock_price=candidate_60d.underlying_price,
-            down_beta_core=down_beta,
+            gold_beta=down_beta,
             confidence_label=str(tool_a_row.get("confidence_label") or "n/a"),
             risk_free_rate=risk_free_rate or 0.0,
-            down_beta_min_for_scenario=down_beta_min_for_scenario,
+            gold_beta_min_for_scenario=down_beta_min_for_scenario,
             gold_scenarios=(RANKING_PNL_GOLD_MOVE,),
             quantity=1,
         )

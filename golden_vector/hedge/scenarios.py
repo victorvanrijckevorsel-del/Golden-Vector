@@ -10,7 +10,7 @@ from golden_vector.features.black_scholes import (
     black_scholes_put_price,
 )
 from golden_vector.features.options_chain import CALENDAR_DAYS_PER_YEAR
-from golden_vector.hedge.candidate_puts import CandidatePut
+from golden_vector.hedge.candidate_puts import OptionCandidate
 
 DOWN_BETA_MIN_FOR_SCENARIO = 0.10
 OPTION_CONTRACT_MULTIPLIER = 100
@@ -46,42 +46,58 @@ class ScenarioRow:
 class CandidateScenarioBundle:
     ticker: str
     horizon: str
-    candidate: CandidatePut
+    candidate: OptionCandidate
     rows: list[ScenarioRow]
     breakeven_gold_pct: float | None
     breakeven_annotation: str | None
-    down_beta_used: float | None
+    gold_beta_used: float | None
     confidence_label: str
     skipped_reason: str | None = None
+
+    @property
+    def down_beta_used(self) -> float | None:
+        """Backward-compatible alias for put-only callers."""
+
+        return self.gold_beta_used
 
 
 def compute_scenario_bundle(
     *,
-    candidate: CandidatePut,
+    candidate: OptionCandidate,
     current_stock_price: float,
-    down_beta_core: float | None,
     confidence_label: str,
     risk_free_rate: float,
+    gold_beta: float | None = None,
     strategy: OptionStrategy = OptionStrategy.LONG_PUT,
-    down_beta_min_for_scenario: float = DOWN_BETA_MIN_FOR_SCENARIO,
+    gold_beta_min_for_scenario: float = DOWN_BETA_MIN_FOR_SCENARIO,
+    down_beta_core: float | None = None,
+    down_beta_min_for_scenario: float | None = None,
     gold_scenarios: tuple[float, ...] = (0.0, -0.05, -0.10, -0.15, -0.20),
     quantity: int = 5,
 ) -> CandidateScenarioBundle:
     """Compute model-based option P&L scenarios for one listed candidate."""
 
+    effective_gold_beta = gold_beta if gold_beta is not None else down_beta_core
+    effective_min_beta = (
+        gold_beta_min_for_scenario
+        if down_beta_min_for_scenario is None
+        else down_beta_min_for_scenario
+    )
+
     base_kwargs = {
         "ticker": candidate.ticker,
         "horizon": f"{candidate.horizon_days}d",
         "candidate": candidate,
-        "down_beta_used": down_beta_core,
+        "gold_beta_used": effective_gold_beta,
         "confidence_label": confidence_label,
     }
     skipped_reason = _skip_reason(
         current_stock_price=current_stock_price,
-        down_beta_core=down_beta_core,
+        gold_beta=effective_gold_beta,
         premium_mid=candidate.mid,
         quantity=quantity,
-        down_beta_min_for_scenario=down_beta_min_for_scenario,
+        gold_beta_min_for_scenario=effective_min_beta,
+        strategy=strategy,
     )
     if skipped_reason is not None:
         return CandidateScenarioBundle(
@@ -93,21 +109,22 @@ def compute_scenario_bundle(
         )
 
     premium = float(candidate.mid or 0.0)
-    down_beta = float(down_beta_core or 0.0)
+    scenario_beta = float(effective_gold_beta or 0.0)
     breakeven, breakeven_annotation = (
         _breakeven_gold_pct(
+            strategy=strategy,
             strike=candidate.strike,
             premium=premium,
             current_stock_price=current_stock_price,
-            down_beta=down_beta,
+            gold_beta=scenario_beta,
         )
-        if strategy == OptionStrategy.LONG_PUT
+        if strategy in {OptionStrategy.LONG_PUT, OptionStrategy.LONG_CALL}
         else (None, None)
     )
 
     rows: list[ScenarioRow] = []
     for gold_pct_change in gold_scenarios:
-        raw_implied_price = current_stock_price * (1.0 + down_beta * gold_pct_change)
+        raw_implied_price = current_stock_price * (1.0 + scenario_beta * gold_pct_change)
         implied_stock_price = max(0.0, raw_implied_price)
         current_value = _black_scholes_strategy_price(
             strategy=strategy,
@@ -169,10 +186,11 @@ def compute_scenario_bundle(
 def _skip_reason(
     *,
     current_stock_price: float,
-    down_beta_core: float | None,
+    gold_beta: float | None,
     premium_mid: float | None,
     quantity: int,
-    down_beta_min_for_scenario: float,
+    gold_beta_min_for_scenario: float,
+    strategy: OptionStrategy,
 ) -> str | None:
     if current_stock_price <= 0:
         return "Current stock price is unavailable."
@@ -180,12 +198,21 @@ def _skip_reason(
         return "Candidate mid premium is unavailable."
     if quantity <= 0:
         return "Scenario quantity must be positive."
-    if down_beta_core is None or down_beta_core <= down_beta_min_for_scenario:
-        return (
-            "Down-beta is too small to model meaningful gold-down scenarios. "
-            "This ticker's stock does not move with gold in the way a put thesis requires."
-        )
+    if gold_beta is None or gold_beta <= gold_beta_min_for_scenario:
+        return _low_beta_message(strategy)
     return None
+
+
+def _low_beta_message(strategy: OptionStrategy) -> str:
+    if strategy in {OptionStrategy.LONG_CALL, OptionStrategy.SHORT_CALL}:
+        return (
+            "Up-beta is too small to model meaningful gold-up scenarios. "
+            "This ticker's stock does not move with gold in the way a call thesis requires."
+        )
+    return (
+        "Down-beta is too small to model meaningful gold-down scenarios. "
+        "This ticker's stock does not move with gold in the way a put thesis requires."
+    )
 
 
 def compute_strategy_pnl(
@@ -265,12 +292,20 @@ def _mark_to_market_pnl(
 
 def _breakeven_gold_pct(
     *,
+    strategy: OptionStrategy,
     strike: float,
     premium: float,
     current_stock_price: float,
-    down_beta: float,
+    gold_beta: float,
 ) -> tuple[float | None, str | None]:
-    breakeven = ((strike - premium) / current_stock_price - 1.0) / down_beta
-    if breakeven > 0:
-        return None, "Put is already in the money or breakeven requires gold to rise."
-    return breakeven, None
+    if strategy == OptionStrategy.LONG_PUT:
+        breakeven = ((strike - premium) / current_stock_price - 1.0) / gold_beta
+        if breakeven > 0:
+            return None, "Put is already in the money or breakeven requires gold to rise."
+        return breakeven, None
+    if strategy == OptionStrategy.LONG_CALL:
+        breakeven = ((strike + premium) / current_stock_price - 1.0) / gold_beta
+        if breakeven < 0:
+            return None, "Call is already in the money or breakeven requires gold to fall."
+        return breakeven, None
+    return None, None

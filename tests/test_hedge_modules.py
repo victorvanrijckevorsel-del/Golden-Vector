@@ -3,7 +3,12 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from golden_vector.hedge.candidate_puts import CandidatePut, build_candidate_put_grid
+from golden_vector.hedge.candidate_puts import (
+    CandidatePut,
+    OptionCandidate,
+    build_candidate_grid,
+    build_candidate_put_grid,
+)
 from golden_vector.hedge.expected_downside import compute_premium_vs_downside
 from golden_vector.hedge.holdings import Holding
 from golden_vector.hedge.implied_move import compute_implied_move_from_straddle
@@ -25,6 +30,24 @@ def test_build_candidate_put_grid_returns_listed_puts_by_horizon():
     assert all(candidate.delta_gap is not None for candidate in candidates)
     assert candidates[0].expiration == "2026-06-27"
     assert candidates[0].premium_pct_spot == pytest.approx(candidates[0].mid / 50.0)
+    assert all(isinstance(candidate, OptionCandidate) for candidate in candidates)
+    assert all(candidate.option_type == "P" for candidate in candidates)
+
+
+def test_build_candidate_grid_matches_put_wrapper_for_puts():
+    kwargs = {
+        "ticker": "AEM",
+        "chain": _candidate_chain(),
+        "underlying_price": 50.0,
+        "risk_free_rate": 0.04,
+        "target_horizons_days": (30, 60, 90),
+        "as_of_date": date(2026, 5, 29),
+    }
+
+    generic = build_candidate_grid(option_type="P", **kwargs)
+    wrapped = build_candidate_put_grid(**kwargs)
+
+    assert generic == wrapped
 
 
 def test_build_candidate_put_grid_uses_zero_rate_delta_fallback():

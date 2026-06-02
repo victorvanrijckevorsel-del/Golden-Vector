@@ -359,7 +359,7 @@ def test_scenario_rendering_labels_quote_units_and_multiplier():
         ],
         breakeven_gold_pct=None,
         breakeven_annotation=None,
-        down_beta_used=1.4,
+        gold_beta_used=1.4,
         confidence_label="HIGH",
     )
 

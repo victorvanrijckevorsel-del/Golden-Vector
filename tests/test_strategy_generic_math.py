@@ -50,7 +50,7 @@ def test_compute_scenario_bundle_applies_strategy_pnl_signs(
     bundle = compute_scenario_bundle(
         candidate=_candidate(strike=45.0, mid=1.20),
         current_stock_price=50.0,
-        down_beta_core=1.40,
+        gold_beta=1.40,
         confidence_label="high",
         risk_free_rate=0.04,
         strategy=strategy,
@@ -73,18 +73,18 @@ def test_compute_scenario_bundle_uses_configured_down_beta_threshold():
     skipped = compute_scenario_bundle(
         candidate=_candidate(),
         current_stock_price=50.0,
-        down_beta_core=0.20,
+        gold_beta=0.20,
         confidence_label="low",
         risk_free_rate=0.04,
-        down_beta_min_for_scenario=0.30,
+        gold_beta_min_for_scenario=0.30,
     )
     included = compute_scenario_bundle(
         candidate=_candidate(),
         current_stock_price=50.0,
-        down_beta_core=0.20,
+        gold_beta=0.20,
         confidence_label="low",
         risk_free_rate=0.04,
-        down_beta_min_for_scenario=0.10,
+        gold_beta_min_for_scenario=0.10,
     )
 
     assert skipped.rows == []

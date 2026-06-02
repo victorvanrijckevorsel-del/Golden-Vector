@@ -1012,10 +1012,10 @@ def _build_held_positions(
             compute_scenario_bundle(
                 candidate=candidate,
                 current_stock_price=candidate.underlying_price,
-                down_beta_core=down_beta,
+                gold_beta=down_beta,
                 confidence_label=confidence_label,
                 risk_free_rate=risk_free_rate,
-                down_beta_min_for_scenario=config.down_beta_min_for_scenario,
+                gold_beta_min_for_scenario=config.down_beta_min_for_scenario,
                 gold_scenarios=tuple(config.default_scenarios),
                 quantity=quantity,
             )
@@ -1124,10 +1124,10 @@ def _comparison_bundles(
                 compute_scenario_bundle(
                     candidate=candidate,
                     current_stock_price=candidate.underlying_price,
-                    down_beta_core=down_beta,
+                    gold_beta=down_beta,
                     confidence_label=confidence_label,
                     risk_free_rate=risk_free_rate,
-                    down_beta_min_for_scenario=config.down_beta_min_for_scenario,
+                    gold_beta_min_for_scenario=config.down_beta_min_for_scenario,
                     gold_scenarios=tuple(config.default_scenarios),
                     quantity=quantity,
                 )

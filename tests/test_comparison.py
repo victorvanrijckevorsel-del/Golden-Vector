@@ -56,7 +56,7 @@ def test_build_comparison_table_skips_unusable_bundles():
     skipped = compute_scenario_bundle(
         candidate=_candidate("AEM", strike=45.0, mid=1.20),
         current_stock_price=50.0,
-        down_beta_core=None,
+        gold_beta=None,
         confidence_label="low",
         risk_free_rate=0.04,
     )
@@ -102,7 +102,7 @@ def _bundle(
     return compute_scenario_bundle(
         candidate=_candidate(ticker, strike=strike, mid=mid),
         current_stock_price=50.0,
-        down_beta_core=1.40,
+        gold_beta=1.40,
         confidence_label="high",
         risk_free_rate=0.04,
         gold_scenarios=scenarios,

@@ -14,7 +14,7 @@ def test_compute_scenario_bundle_calculates_put_pnl_rows_and_breakeven():
     bundle = compute_scenario_bundle(
         candidate=_candidate(strike=45.0, mid=1.20, implied_volatility=0.40),
         current_stock_price=50.0,
-        down_beta_core=1.40,
+        gold_beta=1.40,
         confidence_label="high",
         risk_free_rate=0.04,
         gold_scenarios=(0.0, -0.10),
@@ -38,7 +38,7 @@ def test_compute_scenario_bundle_skips_low_down_beta_without_fake_breakeven():
     bundle = compute_scenario_bundle(
         candidate=_candidate(),
         current_stock_price=50.0,
-        down_beta_core=DOWN_BETA_MIN_FOR_SCENARIO,
+        gold_beta=DOWN_BETA_MIN_FOR_SCENARIO,
         confidence_label="low",
         risk_free_rate=0.04,
     )
@@ -53,7 +53,7 @@ def test_compute_scenario_bundle_populates_spot_zero_limit_when_stock_clamps():
     bundle = compute_scenario_bundle(
         candidate=_candidate(strike=5.0, mid=0.50, implied_volatility=None),
         current_stock_price=10.0,
-        down_beta_core=8.0,
+        gold_beta=8.0,
         confidence_label="medium",
         risk_free_rate=0.04,
         gold_scenarios=(-0.20,),
@@ -73,7 +73,7 @@ def test_compute_scenario_bundle_marks_positive_breakeven_as_invalid():
     bundle = compute_scenario_bundle(
         candidate=_candidate(strike=60.0, mid=1.00, implied_volatility=0.40),
         current_stock_price=50.0,
-        down_beta_core=1.40,
+        gold_beta=1.40,
         confidence_label="high",
         risk_free_rate=0.04,
     )
@@ -102,7 +102,7 @@ def test_compute_scenario_bundle_skips_unusable_inputs(
     bundle = compute_scenario_bundle(
         candidate=_candidate(mid=mid),
         current_stock_price=price,
-        down_beta_core=down_beta,
+        gold_beta=down_beta,
         confidence_label="n/a",
         risk_free_rate=0.04,
         quantity=quantity,
