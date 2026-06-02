@@ -105,6 +105,9 @@ class HedgeReadinessConfig(StrictConfigModel):
     hedge_ratio_cheap_max: float = 0.40
     hedge_ratio_expensive_min: float = 0.80
     proxy_max_beta_diff: float = 0.35
+    proxy_low_basis_max_beta_diff: float = 0.10
+    proxy_medium_basis_max_beta_diff: float = 0.30
+    proxy_low_basis_min_confidence: float = 0.70
     proxy_top_n: int = 3
     benchmark_tickers: list[str] = Field(default_factory=lambda: ["GDX", "GDXJ"], min_length=1)
     gold_down_scenarios: list[float] = Field(default_factory=lambda: [0.05, 0.10, 0.20], min_length=1)
@@ -166,11 +169,20 @@ class HedgeReadinessConfig(StrictConfigModel):
         "candidate_max_implied_volatility",
         "delta_gap_warning_threshold",
         "proxy_max_beta_diff",
+        "proxy_low_basis_max_beta_diff",
+        "proxy_medium_basis_max_beta_diff",
     )
     @classmethod
     def positive_float_thresholds(cls, value: float) -> float:
         if value <= 0:
             raise ValueError("float thresholds must be positive")
+        return float(value)
+
+    @field_validator("proxy_low_basis_min_confidence")
+    @classmethod
+    def valid_proxy_confidence_threshold(cls, value: float) -> float:
+        if not 0 <= value <= 1:
+            raise ValueError("proxy_low_basis_min_confidence must be between 0 and 1")
         return float(value)
 
     @model_validator(mode="after")
@@ -179,6 +191,18 @@ class HedgeReadinessConfig(StrictConfigModel):
             raise ValueError(
                 "candidate_min_implied_volatility must be less than "
                 "candidate_max_implied_volatility"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def ordered_proxy_basis_bands(self) -> "HedgeReadinessConfig":
+        if not (
+            self.proxy_low_basis_max_beta_diff
+            < self.proxy_medium_basis_max_beta_diff
+            <= self.proxy_max_beta_diff
+        ):
+            raise ValueError(
+                "proxy basis bands must satisfy low < medium <= proxy_max_beta_diff"
             )
         return self
 

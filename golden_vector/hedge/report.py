@@ -107,6 +107,15 @@ def render_hedge_readiness_report(
         benchmark_tickers=tuple(app_config.hedge_readiness.benchmark_tickers),
         top_n=app_config.hedge_readiness.proxy_top_n,
         max_beta_diff=app_config.hedge_readiness.proxy_max_beta_diff,
+        low_basis_max_beta_diff=(
+            app_config.hedge_readiness.proxy_low_basis_max_beta_diff
+        ),
+        medium_basis_max_beta_diff=(
+            app_config.hedge_readiness.proxy_medium_basis_max_beta_diff
+        ),
+        low_basis_min_confidence=(
+            app_config.hedge_readiness.proxy_low_basis_min_confidence
+        ),
     )
 
     lines = [
@@ -315,7 +324,7 @@ def _render_cross_sectional_section(features: pd.DataFrame) -> list[str]:
     )
     ranked = ranked.dropna(subset=["iv_percentile_cross_sectional"]).sort_values(
         "iv_percentile_cross_sectional",
-        ascending=False,
+        ascending=True,
     )
     if ranked.empty:
         return [*lines, "No usable 60d ATM IV values are available.", ""]

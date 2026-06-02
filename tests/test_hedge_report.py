@@ -6,6 +6,7 @@ from golden_vector.app.config import load_app_config
 from golden_vector.app.run_context import RunContext
 from golden_vector.cli import run_hedge_readiness
 from golden_vector.features.options import compute_options_features
+from golden_vector.hedge.report import _render_cross_sectional_section
 from golden_vector.ingestion.persist_options import (
     persist_options_snapshot,
     write_latest_options_manifest,
@@ -97,6 +98,30 @@ def test_run_hedge_readiness_reports_missing_options_manifest(tmp_path, capsys):
     output = capsys.readouterr().out
     assert exit_code == 1
     assert "Run `python main.py update-data` first" in output
+
+
+def test_cross_sectional_section_lists_cheapest_iv_first():
+    lines = _render_cross_sectional_section(
+        pd.DataFrame(
+            [
+                {
+                    "ticker": "EXPENSIVE",
+                    "optionability_tier": "directly_hedgeable",
+                    "atm_iv_60d": 0.50,
+                    "iv_percentile_cross_sectional": 90.0,
+                },
+                {
+                    "ticker": "CHEAP",
+                    "optionability_tier": "directly_hedgeable",
+                    "atm_iv_60d": 0.20,
+                    "iv_percentile_cross_sectional": 10.0,
+                },
+            ]
+        )
+    )
+
+    markdown = "\n".join(lines)
+    assert markdown.index("| CHEAP |") < markdown.index("| EXPENSIVE |")
 
 
 def _write_options_inputs(paths, context: RunContext, app_config) -> None:

@@ -30,6 +30,9 @@ def map_proxy_hedges(
     benchmark_tickers: tuple[str, ...] = ("GDX", "GDXJ"),
     top_n: int = 3,
     max_beta_diff: float = 0.35,
+    low_basis_max_beta_diff: float = 0.10,
+    medium_basis_max_beta_diff: float = 0.30,
+    low_basis_min_confidence: float = 0.70,
 ) -> dict[str, list[ProxyMatch]]:
     """Map non-optionable tickers to optionable down-beta-similar proxies."""
 
@@ -48,10 +51,14 @@ def map_proxy_hedges(
                 _optionable_match(
                     target=target,
                     proxy=proxy,
+                    target_tool_a_row=target_row,
                     target_beta=target_beta,
                     proxy_tool_a_row=tool_a_indexed.get(proxy),
                     proxy_tool_b_row=tool_b_indexed.get(proxy),
                     max_beta_diff=max_beta_diff,
+                    low_basis_max_beta_diff=low_basis_max_beta_diff,
+                    medium_basis_max_beta_diff=medium_basis_max_beta_diff,
+                    low_basis_min_confidence=low_basis_min_confidence,
                 )
             ]
             if match is not None
@@ -81,19 +88,30 @@ def _optionable_match(
     *,
     target: str,
     proxy: str,
+    target_tool_a_row: pd.Series | None,
     target_beta: float | None,
     proxy_tool_a_row: pd.Series | None,
     proxy_tool_b_row: pd.Series | None,
     max_beta_diff: float,
+    low_basis_max_beta_diff: float,
+    medium_basis_max_beta_diff: float,
+    low_basis_min_confidence: float,
 ) -> ProxyMatch | None:
     proxy_beta = _row_float(proxy_tool_a_row, "down_beta_core")
     if target_beta is None or proxy_beta is None:
         return None
     beta_diff = abs(target_beta - proxy_beta)
-    if beta_diff <= max_beta_diff:
-        basis_label = "lower_basis_risk"
-    else:
-        basis_label = "elevated_basis_risk"
+    target_confidence = _row_float(target_tool_a_row, "confidence_score")
+    proxy_confidence = _row_float(proxy_tool_a_row, "confidence_score")
+    basis_label = _basis_risk_label(
+        beta_diff=beta_diff,
+        target_confidence=target_confidence,
+        proxy_confidence=proxy_confidence,
+        max_beta_diff=max_beta_diff,
+        low_basis_max_beta_diff=low_basis_max_beta_diff,
+        medium_basis_max_beta_diff=medium_basis_max_beta_diff,
+        low_basis_min_confidence=low_basis_min_confidence,
+    )
     return ProxyMatch(
         target_ticker=target,
         proxy_ticker=proxy,
@@ -101,11 +119,40 @@ def _optionable_match(
         target_down_beta=target_beta,
         proxy_down_beta=proxy_beta,
         down_beta_diff=beta_diff,
-        tool_a_confidence=_row_float(proxy_tool_a_row, "confidence_score"),
+        tool_a_confidence=proxy_confidence,
         tool_b_verdict=_row_string(proxy_tool_b_row, "screening_verdict"),
         basis_risk_label=basis_label,
         reason="Closest optionable miner by Tool A down-beta.",
     )
+
+
+def _basis_risk_label(
+    *,
+    beta_diff: float,
+    target_confidence: float | None,
+    proxy_confidence: float | None,
+    max_beta_diff: float,
+    low_basis_max_beta_diff: float,
+    medium_basis_max_beta_diff: float,
+    low_basis_min_confidence: float,
+) -> str:
+    medium_limit = min(medium_basis_max_beta_diff, max_beta_diff)
+    if (
+        beta_diff <= low_basis_max_beta_diff
+        and _confidence_meets(target_confidence, low_basis_min_confidence)
+        and _confidence_meets(proxy_confidence, low_basis_min_confidence)
+    ):
+        return "low_basis_risk"
+    if beta_diff <= medium_limit and (
+        _confidence_meets(target_confidence, low_basis_min_confidence)
+        or _confidence_meets(proxy_confidence, low_basis_min_confidence)
+    ):
+        return "medium_basis_risk"
+    return "high_basis_risk"
+
+
+def _confidence_meets(value: float | None, threshold: float) -> bool:
+    return value is not None and value >= threshold
 
 
 def _benchmark_match(

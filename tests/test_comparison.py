@@ -38,6 +38,20 @@ def test_build_comparison_table_sorts_by_return_on_premium():
     assert rows[0].pnl_per_dollar_premium_minus10 == pytest.approx(0.80 / 1.20)
 
 
+def test_build_comparison_table_sorts_breakeven_by_smallest_required_drop_first():
+    rows = build_comparison_table(
+        bundles=[
+            _bundle("AEM", strike=45.0, mid=1.20),
+            _bundle("NEM", strike=50.0, mid=1.00),
+        ],
+        sort_by="breakeven_gold_pct",
+    )
+
+    assert [row.ticker for row in rows] == ["NEM", "AEM"]
+    assert rows[0].breakeven_gold_pct == pytest.approx(-0.0142857143)
+    assert rows[1].breakeven_gold_pct == pytest.approx(-0.0885714286)
+
+
 def test_build_comparison_table_skips_unusable_bundles():
     skipped = compute_scenario_bundle(
         candidate=_candidate("AEM", strike=45.0, mid=1.20),

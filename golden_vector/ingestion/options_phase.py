@@ -95,27 +95,25 @@ def run_options_ingestion_phase(
     }
 
     for ticker in active_tickers:
-        result = fetch_options_chain(
-            ticker=ticker,
-            as_of_date=as_of_date,
-            yahoo_client=client,
-        )
-        status_counts[result.status] = status_counts.get(result.status, 0) + 1
-        if result.status == OPTIONS_STATUS_ERROR:
-            LOGGER.warning("Options fetch failed for %s: %s", ticker, result.message)
+        try:
+            result = fetch_options_chain(
+                ticker=ticker,
+                as_of_date=as_of_date,
+                yahoo_client=client,
+            )
+            if result.status == OPTIONS_STATUS_ERROR:
+                LOGGER.warning("Options fetch failed for %s: %s", ticker, result.message)
 
-        record = persist_options_snapshot(
-            paths=paths,
-            run_context=run_context,
-            ticker=ticker,
-            frame=result.frame,
-            as_of_date=as_of_date,
-            options_available=result.options_available,
-            message=result.message,
-        )
-        snapshot_records.append(record)
-        feature_rows.append(
-            _compute_feature_row(
+            record = persist_options_snapshot(
+                paths=paths,
+                run_context=run_context,
+                ticker=ticker,
+                frame=result.frame,
+                as_of_date=as_of_date,
+                options_available=result.options_available,
+                message=result.message,
+            )
+            feature_row = _compute_feature_row(
                 snapshot_record=record,
                 options_result=result,
                 paths=paths,
@@ -126,7 +124,16 @@ def run_options_ingestion_phase(
                 app_config=app_config,
                 price_history=normalized_equity_histories.get(ticker, pd.DataFrame()),
             )
-        )
+        except Exception as exc:  # noqa: BLE001 - per-ticker best effort by design.
+            status_counts[OPTIONS_STATUS_ERROR] = (
+                status_counts.get(OPTIONS_STATUS_ERROR, 0) + 1
+            )
+            LOGGER.warning("Options pipeline failed for %s: %s", ticker, exc)
+            continue
+
+        status_counts[result.status] = status_counts.get(result.status, 0) + 1
+        snapshot_records.append(record)
+        feature_rows.append(feature_row)
 
     feature_frame = pd.DataFrame(feature_rows)
     if not feature_frame.empty:
@@ -249,6 +256,9 @@ def _append_feature_rows(
         frame = pd.DataFrame([row])
         if path.exists():
             existing = pd.read_parquet(path)
+            run_id = str(row.get("run_id") or "")
+            if run_id and "run_id" in existing.columns:
+                existing = existing[existing["run_id"].astype(str) != run_id]
             frame = pd.concat([existing, frame], ignore_index=True)
         frame.to_parquet(path, index=False)
         run_context.record_artifact(path)

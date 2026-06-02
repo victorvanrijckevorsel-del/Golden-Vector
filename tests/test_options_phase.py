@@ -6,6 +6,7 @@ import pandas as pd
 from golden_vector.app.config import load_app_config
 from golden_vector.app.replay_manifest import read_manifest
 from golden_vector.app.run_context import RunContext
+from golden_vector.ingestion import options_phase as options_phase_module
 from golden_vector.ingestion.options_phase import (
     run_options_ingestion_phase,
     skipped_options_phase_summary,
@@ -50,6 +51,76 @@ def test_run_options_ingestion_phase_writes_manifest_snapshots_and_features(tmp_
     assert aem_features.loc[0, "iv_percentile_cross_sectional"] == 100.0
     manifest = read_manifest(context.run_dir)
     assert manifest["options_manifest_status"] == "captured"
+
+
+def test_run_options_ingestion_phase_continues_after_ticker_pipeline_error(
+    tmp_path,
+    monkeypatch,
+):
+    paths = build_test_paths(tmp_path)
+    loaded = load_app_config(paths)
+    context = RunContext.start(
+        paths=paths,
+        command="update-data",
+        parameters={"options": True},
+        config_hash="test-config",
+    )
+    client = _OptionsPhaseClient(pd.read_parquet("tests/fixtures/options/aem_chain_20260529.parquet"))
+    original_compute = options_phase_module._compute_feature_row
+
+    def fail_aem_feature(**kwargs):
+        if kwargs["ticker"] == "AEM":
+            raise RuntimeError("synthetic feature failure")
+        return original_compute(**kwargs)
+
+    monkeypatch.setattr(options_phase_module, "_compute_feature_row", fail_aem_feature)
+
+    result = run_options_ingestion_phase(
+        paths=paths,
+        run_context=context,
+        app_config=loaded.app,
+        normalized_equity_histories={"AEM": _price_history()},
+        as_of_date=date(2026, 5, 29),
+        yahoo_client=client,
+    )
+
+    assert result.status == "WARN"
+    assert result.summary["options_error_count"] == 1
+    assert result.manifest_path == paths.latest_options_manifest_path
+    assert paths.latest_options_manifest_path.exists()
+    manifest = read_manifest(context.run_dir)
+    assert manifest["options_manifest_status"] == "captured"
+
+
+def test_append_feature_rows_replaces_existing_row_for_same_run(tmp_path):
+    paths = build_test_paths(tmp_path)
+    context = RunContext.start(
+        paths=paths,
+        command="update-data",
+        parameters={"options": True},
+        config_hash="test-config",
+    )
+    row = {
+        "ticker": "AEM",
+        "run_id": context.run_id,
+        "as_of_date": "2026-05-29",
+        "atm_iv_60d": 0.40,
+    }
+
+    options_phase_module._append_feature_rows(
+        paths=paths,
+        run_context=context,
+        feature_rows=[row],
+    )
+    options_phase_module._append_feature_rows(
+        paths=paths,
+        run_context=context,
+        feature_rows=[{**row, "atm_iv_60d": 0.45}],
+    )
+
+    frame = pd.read_parquet(paths.options_features_dir / "AEM.parquet")
+    assert len(frame.index) == 1
+    assert frame.loc[0, "atm_iv_60d"] == 0.45
 
 
 def test_skipped_options_phase_summary_records_operator_choice():

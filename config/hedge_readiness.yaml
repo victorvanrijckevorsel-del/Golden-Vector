@@ -17,6 +17,9 @@ delta_gap_warning_threshold: 0.10
 hedge_ratio_cheap_max: 0.40
 hedge_ratio_expensive_min: 0.80
 proxy_max_beta_diff: 0.35
+proxy_low_basis_max_beta_diff: 0.10
+proxy_medium_basis_max_beta_diff: 0.30
+proxy_low_basis_min_confidence: 0.70
 proxy_top_n: 3
 benchmark_tickers:
   - GDX

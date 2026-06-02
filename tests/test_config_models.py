@@ -204,6 +204,9 @@ def test_hedge_readiness_config_accepts_defaults():
             "hedge_ratio_cheap_max": 0.40,
             "hedge_ratio_expensive_min": 0.80,
             "proxy_max_beta_diff": 0.35,
+            "proxy_low_basis_max_beta_diff": 0.10,
+            "proxy_medium_basis_max_beta_diff": 0.30,
+            "proxy_low_basis_min_confidence": 0.70,
             "proxy_top_n": 3,
             "benchmark_tickers": ["gdx", "gdxj"],
             "gold_down_scenarios": [0.05, 0.10, 0.20],
@@ -222,6 +225,9 @@ def test_hedge_readiness_config_accepts_defaults():
     assert config.candidate_min_volume == 0
     assert config.candidate_min_implied_volatility == 0.01
     assert config.candidate_max_implied_volatility == 3.0
+    assert config.proxy_low_basis_max_beta_diff == 0.10
+    assert config.proxy_medium_basis_max_beta_diff == 0.30
+    assert config.proxy_low_basis_min_confidence == 0.70
     assert config.default_scenario_quantity == 5
     assert config.default_scenarios == [0.0, -0.05, -0.10, -0.15, -0.20]
     assert config.optionability_tier_min == "directly_hedgeable"
@@ -237,6 +243,12 @@ def test_hedge_readiness_config_accepts_defaults():
         {"gold_down_scenarios": [0.10, 1.20]},
         {"benchmark_tickers": ["GDX", "gdx"]},
         {"proxy_top_n": 0},
+        {"proxy_low_basis_max_beta_diff": 0},
+        {"proxy_medium_basis_max_beta_diff": 0},
+        {"proxy_low_basis_min_confidence": -0.01},
+        {"proxy_low_basis_min_confidence": 1.01},
+        {"proxy_low_basis_max_beta_diff": 0.30, "proxy_medium_basis_max_beta_diff": 0.10},
+        {"proxy_medium_basis_max_beta_diff": 0.40},
         {"candidate_max_spread_pct": 0},
         {"candidate_min_open_interest": -1},
         {"candidate_min_volume": -1},
@@ -269,6 +281,9 @@ def test_hedge_readiness_config_rejects_invalid_thresholds(override):
         "hedge_ratio_cheap_max": 0.40,
         "hedge_ratio_expensive_min": 0.80,
         "proxy_max_beta_diff": 0.35,
+        "proxy_low_basis_max_beta_diff": 0.10,
+        "proxy_medium_basis_max_beta_diff": 0.30,
+        "proxy_low_basis_min_confidence": 0.70,
         "proxy_top_n": 3,
         "benchmark_tickers": ["GDX", "GDXJ"],
         "gold_down_scenarios": [0.05, 0.10, 0.20],
