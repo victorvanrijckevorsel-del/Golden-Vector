@@ -37,9 +37,12 @@ from golden_vector.serve.detail_panels import (
     _resolve_visible_windows,
 )
 from golden_vector.serve.detail_forms import COMPANY_FORM_FIELDS
-from golden_vector.serve.detail_page import DETAIL_DEFAULT_LENS_ID, render_detail_page
+from golden_vector.serve.detail_page import render_detail_page, resolve_detail_lens
 from golden_vector.serve.lenses import DEFAULT_LENS_ID
-from golden_vector.serve.option_trading_data import load_option_trading_data
+from golden_vector.serve.option_trading_data import (
+    build_option_trading_detail_data,
+    load_option_trading_data,
+)
 from golden_vector.serve.overview_option_trading import _render_option_trading_overview_page
 from golden_vector.serve.overview_combined import _render_overview_page
 from golden_vector.serve.overview_tool_a import _render_tool_a_overview_page
@@ -185,9 +188,16 @@ def create_workspace_app(
                     visible_windows = _resolve_visible_windows(
                         query.get("show", [""])[0], active_window,
                     )
-                    detail_lens = str(query.get("lens", [""])[0] or "").strip().lower()
-                    if detail_lens != DETAIL_DEFAULT_LENS_ID:
-                        detail_lens = DETAIL_DEFAULT_LENS_ID
+                    detail_lens = resolve_detail_lens(query.get("lens", [""])[0])
+                    option_trading_data = load_option_trading_data(
+                        paths,
+                        app_config=app_config,
+                    )
+                    option_trading_detail = build_option_trading_detail_data(
+                        option_trading_data,
+                        ticker=ticker,
+                        app_config=app_config,
+                    )
                     return _html_response(
                         start_response,
                         render_detail_page(
@@ -200,6 +210,7 @@ def create_workspace_app(
                             visible_windows=visible_windows,
                             lens=detail_lens,
                             app_config=app_config,
+                            option_trading_detail=option_trading_detail,
                         ),
                     )
 

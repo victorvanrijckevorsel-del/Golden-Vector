@@ -22,7 +22,9 @@ from golden_vector.hedge._helpers import (
 )
 from golden_vector.hedge.candidate_puts import CandidatePut, build_candidate_put_grid
 from golden_vector.hedge.option_trading import (
+    OptionTradingDetailData,
     OptionTradingOverviewData,
+    build_option_trading_detail,
     build_option_trading_overview,
 )
 from golden_vector.ingestion.persist_options import safe_options_file_name
@@ -52,6 +54,34 @@ _CACHE: dict[OptionTradingCacheKey, OptionTradingData] = {}
 
 def clear_option_trading_cache() -> None:
     _CACHE.clear()
+
+
+def build_option_trading_detail_data(
+    data: OptionTradingData,
+    *,
+    ticker: str,
+    app_config: AppConfig,
+) -> OptionTradingDetailData:
+    detail = build_option_trading_detail(
+        ticker=ticker,
+        tool_a=data.tool_a,
+        options_features=data.options_features,
+        candidate_grids=data.candidate_grids,
+        risk_free_rate=data.risk_free_rate,
+        target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
+        down_beta_min_for_scenario=(
+            app_config.hedge_readiness.down_beta_min_for_scenario
+        ),
+    )
+    if detail.row is not None or not data.overview.reason:
+        return detail
+    return OptionTradingDetailData(
+        ticker=detail.ticker,
+        row=detail.row,
+        put_candidates=detail.put_candidates,
+        put_bundles=detail.put_bundles,
+        reason=data.overview.reason,
+    )
 
 
 def load_option_trading_data(

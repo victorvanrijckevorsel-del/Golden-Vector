@@ -8,6 +8,8 @@ from typing import Any
 import pandas as pd
 
 from golden_vector.contracts.config_models import AppConfig
+from golden_vector.hedge.option_trading import OptionTradingDetailData
+from golden_vector.hedge.scenarios import CandidateScenarioBundle
 from golden_vector.model.structural import build_trailing_window_rows
 from golden_vector.serve.charts import (
     _build_beta_history_svg,
@@ -153,6 +155,137 @@ def _render_latest_panels(
         f"{_render_small_table('Latest Tool B Snapshot', tool_b_row, ['as_of_date', 'gold_price_assumption', 'tool_b_score', 'tool_b_rank', 'screening_verdict', 'confidence', 'best_upside_pct', 'snapshot_refresh_run_id', 'snapshot_as_of_date', 'snapshot_normalization_status', 'fx_staleness_days'])}"
         "</div>"
     )
+
+
+def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
+    body = [
+        "<section id=\"option-trading\" class=\"panel\">",
+        "<h2>Option Trading</h2>",
+        "<p class=\"hint\">Downside put candidates are modeled server-side from the "
+        "same cached candidate grid used by the Option Trading tab.</p>",
+    ]
+    if detail is None:
+        body.append(
+            "<p>No option-trading data is available yet. Run "
+            "<code>python main.py update-data</code> to refresh options data.</p>"
+        )
+        body.append("</section>")
+        return "".join(body)
+    if detail.row is None:
+        reason = detail.reason or "This ticker is not optionable in the latest snapshot."
+        body.append(f"<p>{escape(reason)}</p>")
+        body.append("</section>")
+        return "".join(body)
+
+    row = detail.row
+    body.extend(
+        [
+            "<table><tbody>",
+            "<tr><th>Down Beta</th>"
+            f"<td>{_fmt_number(row.down_beta_core, decimals=2)}</td></tr>",
+            f"<tr><th>Put Status</th><td>{_fmt_text(row.put_status)}</td></tr>",
+            f"<tr><th>Optionability</th><td>{_fmt_text(row.optionability_tier)}</td></tr>",
+            "<tr><th>Put P&amp;L/share @ Gold -10% (60d)</th>"
+            f"<td>{_fmt_number(row.pnl_put_at_minus10_60d, decimals=2)}</td></tr>",
+            "</tbody></table>",
+        ]
+    )
+    body.append(_render_option_candidate_table(detail))
+    body.append(_render_option_scenario_tables(detail.put_bundles))
+    if row.notes:
+        notes = "".join(f"<li>{escape(note)}</li>" for note in row.notes)
+        body.append(f"<ul class=\"hint\">{notes}</ul>")
+    body.append("</section>")
+    return "".join(body)
+
+
+def _render_option_candidate_table(detail: OptionTradingDetailData) -> str:
+    if not detail.put_candidates:
+        return (
+            "<section class=\"nested-panel\">"
+            "<h3>Downside Put Candidates</h3>"
+            "<p>No usable listed put candidate was found for this ticker.</p>"
+            "</section>"
+        )
+    rows = []
+    for candidate in detail.put_candidates:
+        rows.append(
+            "<tr>"
+            f"<td>{_fmt_number(candidate.horizon_days, decimals=0)}d</td>"
+            f"<td>{_fmt_number(candidate.strike, decimals=2)}</td>"
+            f"<td>{escape(candidate.expiration)}</td>"
+            f"<td>{_fmt_number(candidate.mid, decimals=2)}</td>"
+            f"<td>{_fmt_number(candidate.bid, decimals=2)} / {_fmt_number(candidate.ask, decimals=2)}</td>"
+            f"<td>{_fmt_number(candidate.open_interest, decimals=0)}</td>"
+            f"<td>{_fmt_number(candidate.volume, decimals=0)}</td>"
+            f"<td>{_fmt_percent(candidate.implied_volatility, decimals=1)}</td>"
+            f"<td>{_fmt_number(candidate.delta, decimals=2)}</td>"
+            "</tr>"
+        )
+    return (
+        "<section class=\"nested-panel\">"
+        "<h3>Downside Put Candidates</h3>"
+        "<table>"
+        "<thead><tr><th>Horizon</th><th>Strike</th><th>Expiry</th><th>Mid</th>"
+        "<th>Bid / Ask</th><th>Open Interest</th><th>Volume</th><th>IV</th><th>Delta</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+        "</section>"
+    )
+
+
+def _render_option_scenario_tables(
+    bundles: tuple[CandidateScenarioBundle, ...],
+) -> str:
+    if not bundles:
+        return (
+            "<section class=\"nested-panel\">"
+            "<h3>Downside Put Scenarios</h3>"
+            "<p>No put scenarios are available for this ticker.</p>"
+            "</section>"
+        )
+    sections: list[str] = [
+        "<section class=\"nested-panel\">",
+        "<h3>Downside Put Scenarios</h3>",
+        "<p class=\"hint\">P&amp;L/share uses listed per-share option quotes. Net P&amp;L "
+        "uses one standard 100-share contract until the sizing calculator lands.</p>",
+    ]
+    for bundle in bundles:
+        sections.append(
+            f"<h4>{escape(bundle.horizon)} put, strike {_fmt_number(bundle.candidate.strike, decimals=2)}</h4>"
+        )
+        if bundle.skipped_reason:
+            sections.append(f"<p>{escape(bundle.skipped_reason)}</p>")
+            continue
+        if bundle.breakeven_annotation:
+            sections.append(f"<p class=\"hint\">{escape(bundle.breakeven_annotation)}</p>")
+        elif bundle.breakeven_gold_pct is not None:
+            sections.append(
+                f"<p class=\"hint\">Breakeven gold move: {_fmt_percent(bundle.breakeven_gold_pct, decimals=1)}.</p>"
+            )
+        rows = []
+        for row in bundle.rows:
+            rows.append(
+                "<tr>"
+                f"<td>{_fmt_percent(row.gold_pct_change, decimals=1)}</td>"
+                f"<td>{_fmt_number(row.implied_stock_price, decimals=2)}</td>"
+                f"<td>{_fmt_number(row.current_value_per_contract, decimals=2)}</td>"
+                f"<td>{_fmt_number(row.expiry_value_per_contract, decimals=2)}</td>"
+                f"<td>{_fmt_number(row.pnl_per_contract_if_closed_today, decimals=2)}</td>"
+                f"<td>{_fmt_number(row.pnl_per_contract_at_expiry, decimals=2)}</td>"
+                f"<td>{_fmt_number(row.net_pnl_at_expiry, decimals=0)}</td>"
+                "</tr>"
+            )
+        sections.append(
+            "<table>"
+            "<thead><tr><th>Gold Move</th><th>Modeled Stock</th><th>Value Now</th>"
+            "<th>Value At Expiry</th><th>P&amp;L/share Now</th><th>P&amp;L/share Expiry</th>"
+            "<th>Net Expiry P&amp;L</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody>"
+            "</table>"
+        )
+    sections.append("</section>")
+    return "".join(sections)
 
 
 def _render_tool_a_panel(

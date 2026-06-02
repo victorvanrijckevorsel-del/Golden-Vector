@@ -5,6 +5,7 @@ from __future__ import annotations
 from html import escape
 
 from golden_vector.contracts.config_models import AppConfig
+from golden_vector.hedge.option_trading import OptionTradingDetailData
 from golden_vector.serve.detail_forms import (
     _render_company_form,
     _render_note_section,
@@ -14,6 +15,7 @@ from golden_vector.serve.detail_forms import (
 from golden_vector.serve.detail_panels import (
     _detail_alignment,
     _render_latest_panels,
+    _render_option_trading_panel,
     _render_window_switcher,
 )
 from golden_vector.serve.format_helpers import _frame_index_by_ticker, _ticker_rows
@@ -22,6 +24,15 @@ from golden_vector.serve.workspace_state import ToolADetailState, WorkspaceState
 
 
 DETAIL_DEFAULT_LENS_ID = "tool-a"
+DETAIL_OPTION_TRADING_LENS_ID = "option-trading"
+DETAIL_LENS_IDS = frozenset({DETAIL_DEFAULT_LENS_ID, DETAIL_OPTION_TRADING_LENS_ID})
+
+
+def resolve_detail_lens(raw_lens: str | None) -> str:
+    normalized = str(raw_lens or "").strip().lower()
+    if normalized in DETAIL_LENS_IDS:
+        return normalized
+    return DETAIL_DEFAULT_LENS_ID
 
 
 def render_detail_page(
@@ -36,6 +47,7 @@ def render_detail_page(
     visible_windows: list[str] | None = None,
     lens: str = DETAIL_DEFAULT_LENS_ID,
     app_config: AppConfig | None = None,
+    option_trading_detail: OptionTradingDetailData | None = None,
 ) -> str:
     company_row = _frame_index_by_ticker(state.company_inputs).get(ticker, {})
     reporting_row = _frame_index_by_ticker(state.reporting_calendar).get(ticker, {})
@@ -65,6 +77,7 @@ def render_detail_page(
             app_config=app_config,
         )
     )
+    body.append(_render_option_trading_panel(option_trading_detail))
     body.append(
         _render_company_form(
             ticker=ticker,
@@ -75,4 +88,9 @@ def render_detail_page(
     body.append(_render_reporting_form(ticker=ticker, reporting_row=reporting_row))
     body.append(_render_verification_section(ticker=ticker, verification_rows=verification_rows))
     body.append(_render_note_section(ticker=ticker, note_rows=note_rows))
-    return _page_shell(f"Golden Vector Workspace - {ticker}", "".join(body), active_nav="combined")
+    active_nav = "option_trading" if lens == DETAIL_OPTION_TRADING_LENS_ID else "combined"
+    return _page_shell(
+        f"Golden Vector Workspace - {ticker}",
+        "".join(body),
+        active_nav=active_nav,
+    )

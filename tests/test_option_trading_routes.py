@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 
 from golden_vector.app.config import load_app_config
-from golden_vector.app.paths import ProjectPaths
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.serve.option_trading_data import clear_option_trading_cache
 from golden_vector.serve.workspace import create_workspace_app
@@ -47,6 +46,31 @@ def test_workspace_option_trading_route_handles_missing_snapshot(tmp_path):
 
     assert response["status"].startswith("200")
     assert "No options snapshot exists yet." in response["body"]
+
+
+def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(app, method="GET", path="/ticker/AEM?lens=option-trading")
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert 'class="nav-tab active" href="/option-trading"' in body
+    assert 'id="option-trading"' in body
+    assert "Downside Put Candidates" in body
+    assert "Downside Put Scenarios" in body
+    assert "Put P&amp;L/share @ Gold -10% (60d)" in body
+    assert "60d put, strike" in body
 
 
 def _call_wsgi_app(app, *, method: str, path: str, body: str = "") -> dict[str, object]:
