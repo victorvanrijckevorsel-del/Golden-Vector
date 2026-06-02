@@ -9,6 +9,10 @@ import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import HedgeReadinessConfig
+from golden_vector.hedge._helpers import (
+    as_float as _as_float,
+    rows_by_ticker_dict as _rows_by_ticker,
+)
 from golden_vector.hedge.candidate_puts import CandidatePut, build_candidate_put_grid
 from golden_vector.hedge.scenarios import CandidateScenarioBundle, compute_scenario_bundle
 
@@ -238,16 +242,6 @@ def _last_feature_row(ticker: str, frame: pd.DataFrame) -> dict[str, Any]:
     return row
 
 
-def _rows_by_ticker(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
-    if frame.empty or "ticker" not in frame.columns:
-        return {}
-    return {
-        str(row["ticker"]).upper(): row.to_dict()
-        for _, row in frame.iterrows()
-        if not pd.isna(row.get("ticker"))
-    }
-
-
 def _current_stock_price(
     *,
     feature: dict[str, Any],
@@ -290,9 +284,3 @@ def _unique_annotations(values: list[str]) -> list[str]:
             result.append(value)
     return result
 
-
-def _as_float(value: object) -> float | None:
-    numeric = pd.to_numeric(value, errors="coerce")
-    if pd.isna(numeric):
-        return None
-    return float(numeric)

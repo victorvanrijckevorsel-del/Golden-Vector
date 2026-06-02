@@ -17,6 +17,12 @@ from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge.candidate_puts import CandidatePut, build_candidate_put_grid
 from golden_vector.hedge.expected_downside import compute_premium_vs_downside
+from golden_vector.hedge._helpers import (
+    as_float as _as_float,
+    row_float as _row_float,
+    row_string as _row_string,
+    rows_by_ticker_series as _index_by_ticker,
+)
 from golden_vector.hedge.holdings import Holding, load_holdings
 from golden_vector.hedge.proxy_hedge import ProxyMatch, map_proxy_hedges
 from golden_vector.ingestion.persist_options import safe_options_file_name
@@ -515,16 +521,6 @@ def _read_optional_parquet(path: Path) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
-def _index_by_ticker(frame: pd.DataFrame) -> dict[str, pd.Series]:
-    if frame.empty or "ticker" not in frame.columns:
-        return {}
-    return {
-        str(row["ticker"]).upper(): row
-        for _, row in frame.iterrows()
-        if not pd.isna(row.get("ticker"))
-    }
-
-
 def _value_counts(frame: pd.DataFrame, column: str) -> dict[str, int]:
     if frame.empty or column not in frame.columns:
         return {}
@@ -586,28 +582,6 @@ def _unique_strings(frame: pd.DataFrame, column: str) -> list[str]:
         return []
     values = frame[column].dropna().astype(str).str.strip()
     return sorted(value for value in values.unique().tolist() if value)
-
-
-def _row_float(row: pd.Series | None, column: str) -> float | None:
-    if row is None or column not in row.index:
-        return None
-    value = pd.to_numeric(row[column], errors="coerce")
-    if pd.isna(value):
-        return None
-    return float(value)
-
-
-def _row_string(row: pd.Series | None, column: str) -> str | None:
-    if row is None or column not in row.index or pd.isna(row[column]):
-        return None
-    return str(row[column])
-
-
-def _as_float(value: object) -> float | None:
-    numeric = pd.to_numeric(value, errors="coerce")
-    if pd.isna(numeric):
-        return None
-    return float(numeric)
 
 
 def _fmt_number(value: object, digits: int = 2) -> str:

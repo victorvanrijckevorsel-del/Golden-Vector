@@ -10,6 +10,10 @@ from typing import Any
 import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.hedge._helpers import (
+    as_float as _as_float,
+    rows_by_ticker_dict as _rows_by_ticker,
+)
 
 MODEL_GREATER_THAN_MARKET_RATIO = 1.5
 MARKET_GREATER_THAN_MODEL_RATIO = 0.67
@@ -194,16 +198,6 @@ def _feature_rows(
     return rows
 
 
-def _rows_by_ticker(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
-    if frame.empty or "ticker" not in frame.columns:
-        return {}
-    return {
-        str(row["ticker"]).upper(): row.to_dict()
-        for _, row in frame.iterrows()
-        if not pd.isna(row.get("ticker"))
-    }
-
-
 def _verdict(
     *,
     implied_move_60d: float | None,
@@ -221,9 +215,3 @@ def _verdict(
         return "market > model (heuristic)"
     return "model ~= market (heuristic)"
 
-
-def _as_float(value: object) -> float | None:
-    numeric = pd.to_numeric(value, errors="coerce")
-    if pd.isna(numeric):
-        return None
-    return float(numeric)

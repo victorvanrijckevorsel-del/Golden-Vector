@@ -6,6 +6,12 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from golden_vector.hedge._helpers import (
+    row_float as _row_float,
+    row_string as _row_string,
+    rows_by_ticker_series,
+)
+
 
 @dataclass(frozen=True)
 class ProxyMatch:
@@ -36,8 +42,12 @@ def map_proxy_hedges(
 ) -> dict[str, list[ProxyMatch]]:
     """Map non-optionable tickers to optionable down-beta-similar proxies."""
 
-    tool_a_indexed = _indexed_by_ticker(tool_a_frame)
-    tool_b_indexed = _indexed_by_ticker(tool_b_frame) if tool_b_frame is not None else {}
+    tool_a_indexed = rows_by_ticker_series(tool_a_frame, strip=True, require_string=True)
+    tool_b_indexed = (
+        rows_by_ticker_series(tool_b_frame, strip=True, require_string=True)
+        if tool_b_frame is not None
+        else {}
+    )
     optionable = [ticker.upper() for ticker in optionable_tickers]
     result: dict[str, list[ProxyMatch]] = {}
     for target in [ticker.upper() for ticker in non_optionable_tickers]:
@@ -175,27 +185,3 @@ def _benchmark_match(
     )
 
 
-def _indexed_by_ticker(frame: pd.DataFrame) -> dict[str, pd.Series]:
-    if frame.empty or "ticker" not in frame.columns:
-        return {}
-    result: dict[str, pd.Series] = {}
-    for _, row in frame.iterrows():
-        ticker = row.get("ticker")
-        if isinstance(ticker, str) and ticker.strip():
-            result[ticker.strip().upper()] = row
-    return result
-
-
-def _row_float(row: pd.Series | None, column: str) -> float | None:
-    if row is None or column not in row.index:
-        return None
-    value = pd.to_numeric(row[column], errors="coerce")
-    if pd.isna(value):
-        return None
-    return float(value)
-
-
-def _row_string(row: pd.Series | None, column: str) -> str | None:
-    if row is None or column not in row.index or pd.isna(row[column]):
-        return None
-    return str(row[column])
