@@ -39,6 +39,24 @@ def test_compute_portfolio_totals_handles_share_mode_holding():
     assert totals.hedge_cost_by_protection[1.0] == pytest.approx(240.0)
 
 
+def test_compute_portfolio_totals_prefers_options_feature_price_over_tool_b_price():
+    totals = compute_portfolio_totals(
+        holdings=[Holding(ticker="AEM", shares=200.0)],
+        tool_a_frame=_tool_a([("AEM", 1.00)]),
+        tool_b_frame=_tool_b([("AEM", 50.0)]),
+        options_features=pd.DataFrame(
+            [{"ticker": "AEM", "underlying_price": 55.0}]
+        ),
+        candidate_grids={"AEM": [_candidate("AEM", mid=1.20, underlying_price=55.0)]},
+        config=_config(protection_levels=[1.0]),
+    )
+
+    assert totals is not None
+    assert totals.current_total_value == pytest.approx(11_000.0)
+    assert totals.scenario_rows[1].portfolio_loss_dollars == pytest.approx(1_100.0)
+    assert totals.hedge_cost_by_protection[1.0] == pytest.approx(240.0)
+
+
 def test_compute_portfolio_totals_handles_dollar_exposure_mode_holding():
     totals = compute_portfolio_totals(
         holdings=[Holding(ticker="NEM", dollar_exposure=50_000.0)],
@@ -133,6 +151,31 @@ def test_compute_portfolio_totals_notes_missing_candidate_and_skips_hedge_cost()
     assert totals.hedge_cost_skipped == [("AEM", "no 60d candidate")]
 
 
+def test_compute_portfolio_totals_uses_non_60d_candidate_price_for_notional_only():
+    totals = compute_portfolio_totals(
+        holdings=[Holding(ticker="AEM", shares=200.0)],
+        tool_a_frame=_tool_a([("AEM", 1.00)]),
+        tool_b_frame=pd.DataFrame(),
+        candidate_grids={
+            "AEM": [
+                _candidate(
+                    "AEM",
+                    mid=1.00,
+                    underlying_price=50.0,
+                    horizon_days=30,
+                )
+            ]
+        },
+        config=_config(protection_levels=[1.0]),
+    )
+
+    assert totals is not None
+    assert totals.current_total_value == pytest.approx(10_000.0)
+    assert totals.holdings_resolved_count == 1
+    assert totals.hedge_cost_skipped == [("AEM", "no 60d candidate")]
+    assert totals.hedge_cost_by_protection[1.0] == 0.0
+
+
 def test_compute_portfolio_totals_low_beta_holding_counts_notional_but_not_scenario_loss():
     totals = compute_portfolio_totals(
         holdings=[Holding(ticker="AEM", dollar_exposure=10_000.0)],
@@ -206,10 +249,11 @@ def _candidate(
     *,
     mid: float,
     underlying_price: float,
+    horizon_days: int = 60,
 ) -> CandidatePut:
     return CandidatePut(
         ticker=ticker,
-        horizon_days=60,
+        horizon_days=horizon_days,
         expiration="2026-07-31",
         days_to_expiry=60,
         strike=45.0,

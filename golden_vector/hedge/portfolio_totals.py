@@ -62,6 +62,7 @@ def compute_portfolio_totals(
     holdings: list[Holding],
     tool_a_frame: pd.DataFrame,
     tool_b_frame: pd.DataFrame,
+    options_features: pd.DataFrame | None = None,
     candidate_grids: dict[str, list[CandidatePut]],
     config: HedgeReadinessConfig,
 ) -> PortfolioTotalsData | None:
@@ -72,11 +73,17 @@ def compute_portfolio_totals(
 
     tool_a_by_ticker = rows_by_ticker_series(tool_a_frame)
     tool_b_by_ticker = rows_by_ticker_series(tool_b_frame)
+    feature_by_ticker = (
+        rows_by_ticker_series(options_features)
+        if options_features is not None
+        else {}
+    )
     resolved = [
         _resolve_holding(
             holding=holding,
             tool_a_row=tool_a_by_ticker.get(holding.ticker),
             tool_b_row=tool_b_by_ticker.get(holding.ticker),
+            feature_row=feature_by_ticker.get(holding.ticker),
             candidates=candidate_grids.get(holding.ticker, []),
             config=config,
         )
@@ -143,13 +150,16 @@ def _resolve_holding(
     holding: Holding,
     tool_a_row: pd.Series | None,
     tool_b_row: pd.Series | None,
+    feature_row: pd.Series | None,
     candidates: list[CandidatePut],
     config: HedgeReadinessConfig,
 ) -> HoldingResolved:
     candidate_60d = _candidate_for_horizon(candidates, horizon_days=60)
+    price_candidate = candidate_60d or (candidates[0] if candidates else None)
     current_price = _current_stock_price(
+        feature_row=feature_row,
         tool_b_row=tool_b_row,
-        candidate=candidate_60d,
+        candidate=price_candidate,
     )
     mode = "shares" if holding.shares is not None else "dollar_exposure"
     current_notional = _current_notional(
@@ -323,14 +333,18 @@ def _current_notional(
 
 def _current_stock_price(
     *,
+    feature_row: pd.Series | None,
     tool_b_row: pd.Series | None,
     candidate: CandidatePut | None,
 ) -> float | None:
-    price = row_float(tool_b_row, "share_price_usd")
+    price = row_float(feature_row, "underlying_price")
     if price is not None and price > 0:
         return price
     if candidate is not None and candidate.underlying_price > 0:
         return candidate.underlying_price
+    price = row_float(tool_b_row, "share_price_usd")
+    if price is not None and price > 0:
+        return price
     return None
 
 

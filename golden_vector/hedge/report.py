@@ -77,6 +77,9 @@ class SnapshotSummaryData:
     risk_free_rate_is_fallback: bool
     holdings_count: int
     holdings_mode: str
+    scenario_quantity: int
+    ranking_max_tickers: int
+    speculation_max_tickers: int
     optionability_counts: dict[str, int]
     context_alignment: ContextAlignment
 
@@ -116,6 +119,7 @@ class ComparisonViewData:
 
 @dataclass(frozen=True)
 class ProxyHedgesData:
+    target_tickers: list[str]
     by_target: dict[str, list[ProxyMatch]]
 
 
@@ -125,6 +129,9 @@ class SourcesData:
     options_snapshot_run_id: str
     risk_free_rate: float | None
     risk_free_rate_is_fallback: bool
+    scenario_quantity: int
+    ranking_max_tickers: int
+    speculation_max_tickers: int
     replay_manifest_path: str
     latest_options_manifest_path: str
     raw_option_snapshot_count: int
@@ -313,6 +320,7 @@ def build_hedge_readiness_sections(
             holdings=holdings,
             tool_a_frame=tool_a,
             tool_b_frame=tool_b,
+            options_features=features,
             candidate_grids=candidate_grids,
             config=config,
         )
@@ -372,6 +380,9 @@ def build_hedge_readiness_sections(
             risk_free_rate_is_fallback=risk_free_rate_is_fallback,
             holdings_count=len(holdings),
             holdings_mode=_holdings_mode(holdings),
+            scenario_quantity=resolved_quantity,
+            ranking_max_tickers=resolved_ranking_max,
+            speculation_max_tickers=resolved_speculation_max,
             optionability_counts=optionability_counts,
             context_alignment=alignment,
         ),
@@ -380,12 +391,22 @@ def build_hedge_readiness_sections(
         held_positions=held_positions,
         speculation_candidates=speculation,
         comparison=comparison,
-        proxy_hedges=ProxyHedgesData(proxy_map) if non_optionable_held else None,
+        proxy_hedges=(
+            ProxyHedgesData(
+                target_tickers=sorted(non_optionable_held),
+                by_target=proxy_map,
+            )
+            if non_optionable_held
+            else None
+        ),
         sources=SourcesData(
             run_id=run_context.run_id if run_context is not None else "render-only",
             options_snapshot_run_id=refresh_run_id,
             risk_free_rate=risk_free_rate,
             risk_free_rate_is_fallback=risk_free_rate_is_fallback,
+            scenario_quantity=resolved_quantity,
+            ranking_max_tickers=resolved_ranking_max,
+            speculation_max_tickers=resolved_speculation_max,
             replay_manifest_path=(
                 (run_context.run_dir / "replay_manifest.json")
                 .relative_to(paths.repo_root)
@@ -495,6 +516,9 @@ def _render_snapshot_summary(summary: SnapshotSummaryData) -> list[str]:
         f"| No listed options | {summary.optionability_counts.get('none', 0)} |",
         f"| Holdings loaded | {summary.holdings_count} |",
         f"| Holdings mode | {summary.holdings_mode} |",
+        f"| Scenario quantity | {summary.scenario_quantity} contracts |",
+        f"| Ranking max tickers | {summary.ranking_max_tickers} |",
+        f"| Speculation max tickers | {summary.speculation_max_tickers} |",
         f"| Tool A snapshot refresh | {_fmt_run_ids(alignment.tool_a_refresh_run_ids)} |",
         f"| Tool B snapshot refresh | {_fmt_run_ids(alignment.tool_b_refresh_run_ids)} |",
         f"| Analytical context alignment | {alignment.status} |",
@@ -539,7 +563,7 @@ def _render_sensitivity_ranking(ranking: SensitivityRankingData) -> list[str]:
             f"{_fmt_number(row.up_beta_core)} | "
             f"{row.confidence_label} | "
             f"{_fmt_number(row.iv_percentile_cross_sectional)} | "
-            f"{_fmt_money(row.pnl_at_minus10_60d)} | "
+            f"{_fmt_price(row.pnl_at_minus10_60d)} | "
             f"{row.optionability_tier} | "
             f"{'; '.join(row.notes) if row.notes else ''} |"
         )
@@ -615,7 +639,7 @@ def _render_held_positions(
                 f"### {holding.ticker}",
                 "",
                 f"- Exposure: {_fmt_money(holding.exposure_usd)}",
-                f"- Current stock price: {_fmt_money(holding.current_stock_price)}",
+                f"- Current stock price: {_fmt_price(holding.current_stock_price)}",
                 f"- Optionability: {holding.optionability_tier}",
                 f"- Tool A down beta: {_fmt_number(holding.down_beta_core)}",
                 f"- Tool A confidence: {_fmt_number(holding.confidence_score)}",
@@ -626,7 +650,8 @@ def _render_held_positions(
         if holding.notes:
             lines.extend(f"- {note}" for note in holding.notes)
             lines.append("")
-        lines.extend(_render_candidate_table(holding.candidates))
+        if holding.candidates:
+            lines.extend(_render_candidate_table(holding.candidates))
         if holding.premium_card is not None:
             lines.extend(_render_premium_card(holding.premium_card))
         else:
@@ -638,7 +663,8 @@ def _render_held_positions(
                     "",
                 ]
             )
-        lines.extend(_render_scenario_bundles(holding.scenario_bundles))
+        if holding.scenario_bundles:
+            lines.extend(_render_scenario_bundles(holding.scenario_bundles))
     return lines
 
 
@@ -668,7 +694,7 @@ def _render_speculation_candidates(
             [
                 f"### {block.ticker}",
                 "",
-                f"- Current stock price: {_fmt_money(block.current_stock_price)}",
+                f"- Current stock price: {_fmt_price(block.current_stock_price)}",
                 f"- Optionability: {block.optionability_tier}",
                 f"- IV percentile: {_fmt_number(block.iv_percentile_cross_sectional)}",
                 f"- Tool A down beta: {_fmt_number(block.down_beta_core)}",
@@ -679,8 +705,10 @@ def _render_speculation_candidates(
         if block.annotations:
             lines.extend(f"- {annotation}" for annotation in block.annotations)
             lines.append("")
-        lines.extend(_render_candidate_table(block.candidates))
-        lines.extend(_render_scenario_bundles(block.scenario_bundles))
+        if block.candidates:
+            lines.extend(_render_candidate_table(block.candidates))
+        if block.scenario_bundles:
+            lines.extend(_render_scenario_bundles(block.scenario_bundles))
     return lines
 
 
@@ -707,11 +735,11 @@ def _render_comparison_view(data: ComparisonViewData) -> list[str]:
             f"{row.horizon} | "
             f"{_fmt_number(row.strike)} | "
             f"{row.expiry} | "
-            f"{_fmt_money(row.premium_mid)} | "
+            f"{_fmt_price(row.premium_mid)} | "
             f"{_fmt_pct(row.breakeven_gold_pct)} | "
-            f"{_fmt_money(row.pnl_per_contract_minus5)} | "
-            f"{_fmt_money(row.pnl_per_contract_minus10)} | "
-            f"{_fmt_money(row.pnl_per_contract_minus20)} | "
+            f"{_fmt_price(row.pnl_per_contract_minus5)} | "
+            f"{_fmt_price(row.pnl_per_contract_minus10)} | "
+            f"{_fmt_price(row.pnl_per_contract_minus20)} | "
             f"{_fmt_number(row.pnl_per_dollar_premium_minus10)} |"
         )
     lines.append("")
@@ -721,7 +749,13 @@ def _render_comparison_view(data: ComparisonViewData) -> list[str]:
 def _render_proxy_hedges(data: ProxyHedgesData) -> list[str]:
     lines = ["## Proxy Hedges", ""]
     if not data.by_target:
-        return [*lines, "Held non-optionable tickers were found, but no proxy matches passed the filters.", ""]
+        targets = ", ".join(data.target_tickers)
+        return [
+            *lines,
+            "Held non-optionable tickers were found, but no proxy matches "
+            f"passed the filters: {targets}.",
+            "",
+        ]
     lines.extend(
         [
             "| Target | Proxy | Type | Down-beta diff | Basis risk | Context |",
@@ -756,6 +790,9 @@ def _render_sources_section(sources: SourcesData, *, paths: ProjectPaths) -> lis
         f"- Latest options manifest: `{sources.latest_options_manifest_path}`",
         f"- Replay manifest: `{sources.replay_manifest_path}`",
         f"- Risk-free rate: {_fmt_source_rate(sources)}",
+        f"- Scenario quantity: {sources.scenario_quantity} contracts",
+        f"- Ranking max tickers: {sources.ranking_max_tickers}",
+        f"- Speculation max tickers: {sources.speculation_max_tickers}",
         f"- Tool A rows: {sources.tool_a_row_count}",
         f"- Tool B rows: {sources.tool_b_row_count}",
         f"- Raw option snapshots: {sources.raw_option_snapshot_count}",
@@ -794,7 +831,7 @@ def _render_candidate_table(candidates: list[CandidatePut]) -> list[str]:
             f"{_fmt_number(candidate.strike)} | "
             f"{_fmt_number(candidate.delta)} | "
             f"{_fmt_number(candidate.delta_gap)} | "
-            f"{_fmt_money(candidate.mid)} | "
+            f"{_fmt_price(candidate.mid)} | "
             f"{candidate.open_interest if candidate.open_interest is not None else 'n/a'} | "
             f"{candidate.volume if candidate.volume is not None else 'n/a'} | "
             f"{_fmt_pct(candidate.premium_pct_spot)} |"
@@ -854,11 +891,11 @@ def _render_scenario_bundles(bundles: list[CandidateScenarioBundle]) -> list[str
             lines.append(
                 "| "
                 f"{_fmt_pct(row.gold_pct_change)} | "
-                f"{_fmt_money(row.implied_stock_price)}{clamp_note} | "
-                f"{_fmt_money(row.expiry_value_per_contract)} | "
-                f"{_fmt_money(row.current_value_per_contract)} | "
-                f"{_fmt_money(row.pnl_per_contract_at_expiry)} | "
-                f"{_fmt_money(row.pnl_per_contract_if_closed_today)} | "
+                f"{_fmt_price(row.implied_stock_price)}{clamp_note} | "
+                f"{_fmt_price(row.expiry_value_per_contract)} | "
+                f"{_fmt_price(row.current_value_per_contract)} | "
+                f"{_fmt_price(row.pnl_per_contract_at_expiry)} | "
+                f"{_fmt_price(row.pnl_per_contract_if_closed_today)} | "
                 f"{_fmt_money(row.net_pnl_at_expiry)} |"
             )
         lines.append("")
@@ -948,8 +985,10 @@ def _build_held_positions(
             tool_b_row=tool_b_row,
             chain=pd.DataFrame(),
         )
-        exposure = holding.exposure_usd(share_price=price)
         candidates = candidate_grids.get(holding.ticker, [])
+        if price is None and candidates:
+            price = candidates[0].underlying_price
+        exposure = holding.exposure_usd(share_price=price)
         down_beta = _row_float(tool_a_row, "down_beta_core")
         confidence_label = _confidence_label(tool_a_row)
         scenario_bundles = [
@@ -1085,8 +1124,8 @@ def _current_stock_price(
 ) -> float | None:
     for value in (
         _row_float(feature, "underlying_price"),
-        _row_float(tool_b_row, "share_price_usd"),
         _first_chain_value(chain, "underlying_price"),
+        _row_float(tool_b_row, "share_price_usd"),
     ):
         price = _as_float(value)
         if price is not None and price > 0:
@@ -1112,7 +1151,9 @@ def _preferred_candidate(candidates: list[CandidatePut]) -> CandidatePut:
 
 
 def _optionable_tickers(features: pd.DataFrame) -> set[str]:
-    if features.empty:
+    if features.empty or "ticker" not in features.columns:
+        return set()
+    if "optionability_tier" not in features.columns:
         return set()
     optionability = features.get("optionability_tier", pd.Series(dtype=str)).astype(str)
     optionable = features[optionability != "none"]
@@ -1215,7 +1256,7 @@ def _summary_from_sections(sections: HedgeReadinessSections) -> dict[str, Any]:
         "speculation_candidate_count": len(sections.speculation_candidates.blocks),
         "comparison_row_count": len(sections.comparison.rows),
         "proxy_target_count": (
-            len(sections.proxy_hedges.by_target)
+            len(sections.proxy_hedges.target_tickers)
             if sections.proxy_hedges is not None
             else 0
         ),
@@ -1225,9 +1266,10 @@ def _summary_from_sections(sections: HedgeReadinessSections) -> dict[str, Any]:
         "tool_b_snapshot_refresh_run_ids": summary.context_alignment.tool_b_refresh_run_ids,
         "risk_free_rate": summary.risk_free_rate,
         "risk_free_rate_is_fallback": summary.risk_free_rate_is_fallback,
+        "scenario_quantity": summary.scenario_quantity,
         "comparison_sort_by": sections.comparison.sort_by,
         "ranking_sort_by": sections.sensitivity_ranking.sort_by,
-        "ranking_max_tickers": len(sections.sensitivity_ranking.rows),
+        "ranking_max_tickers": summary.ranking_max_tickers,
         "speculation_max_tickers": sections.speculation_candidates.max_tickers_applied,
     }
 
@@ -1278,6 +1320,13 @@ def _fmt_money(value: object) -> str:
     if numeric is None:
         return "n/a"
     return f"${numeric:,.0f}"
+
+
+def _fmt_price(value: object) -> str:
+    numeric = _as_float(value)
+    if numeric is None:
+        return "n/a"
+    return f"${numeric:,.2f}"
 
 
 def _fmt_run_ids(values: object) -> str:

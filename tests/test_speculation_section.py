@@ -149,6 +149,33 @@ def test_build_speculation_section_uses_tool_b_price_fallback(tmp_path):
     assert blocks[0].candidates
 
 
+def test_build_speculation_section_prefers_chain_price_over_tool_b(tmp_path):
+    paths = build_test_paths(tmp_path)
+    config = HedgeReadinessConfig()
+    chain = _candidate_chain().assign(underlying_price=55.0)
+
+    blocks = build_speculation_section(
+        paths=paths,
+        options_features=pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "optionability_tier": "directly_hedgeable",
+                    "iv_percentile_cross_sectional": 0.20,
+                }
+            ]
+        ),
+        tool_a_frame=_tool_a([("AEM", 1.40, "HIGH")]),
+        tool_b_frame=pd.DataFrame([{"ticker": "AEM", "share_price_usd": 40.0}]),
+        raw_options_by_ticker={"AEM": chain},
+        risk_free_rate=0.04,
+        config=config,
+    )
+
+    assert blocks[0].current_stock_price == 55.0
+    assert all(candidate.underlying_price == 55.0 for candidate in blocks[0].candidates)
+
+
 def test_build_speculation_section_annotates_missing_inputs(tmp_path):
     paths = build_test_paths(tmp_path)
     config = HedgeReadinessConfig()
@@ -198,6 +225,25 @@ def test_build_speculation_section_bubbles_low_down_beta_annotation(tmp_path):
         paths=paths,
         options_features=_features([("AEM", "directly_hedgeable", 0.20, 50.0)]),
         tool_a_frame=_tool_a([("AEM", 0.05, "LOW")]),
+        tool_b_frame=pd.DataFrame(),
+        raw_options_by_ticker={"AEM": _candidate_chain()},
+        risk_free_rate=0.04,
+        config=config,
+    )
+
+    assert blocks[0].scenario_bundles
+    assert blocks[0].scenario_bundles[0].rows == []
+    assert any("Down-beta is too small" in note for note in blocks[0].annotations)
+
+
+def test_build_speculation_section_uses_configured_down_beta_threshold(tmp_path):
+    paths = build_test_paths(tmp_path)
+    config = HedgeReadinessConfig(down_beta_min_for_scenario=0.30)
+
+    blocks = build_speculation_section(
+        paths=paths,
+        options_features=_features([("AEM", "directly_hedgeable", 0.20, 50.0)]),
+        tool_a_frame=_tool_a([("AEM", 0.20, "LOW")]),
         tool_b_frame=pd.DataFrame(),
         raw_options_by_ticker={"AEM": _candidate_chain()},
         risk_free_rate=0.04,

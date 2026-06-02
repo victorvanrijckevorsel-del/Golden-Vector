@@ -8,6 +8,7 @@ from golden_vector.app.config import load_app_config
 from golden_vector.app.run_context import RunContext
 from golden_vector.cli import build_parser, run_hedge_readiness
 from golden_vector.features.options import compute_options_features
+from golden_vector.hedge import report as report_module
 from golden_vector.ingestion.persist_options import (
     persist_options_snapshot,
     write_latest_options_manifest,
@@ -135,13 +136,19 @@ def test_run_hedge_readiness_writes_markdown_report(tmp_path, capsys):
     assert "## Held Positions" in markdown
     assert "## Portfolio Totals" in markdown
     assert "| Holdings mode | mixed |" in markdown
+    assert "| Scenario quantity | 5 contracts |" in markdown
     assert "### AEM" in markdown
-    assert "Candidate puts:" in markdown
     assert "Premium vs modeled downside:" in markdown
     assert "## Proxy Hedges" in markdown
     assert "AAUC.TO" in markdown
     assert "Tool B WATCH" in markdown
     assert "| Analytical context alignment | OK |" in markdown
+    aem_block = markdown.split("### AEM", 1)[1].split("### AAUC.TO", 1)[0]
+    assert aem_block.count("No usable listed put candidate found") == 1
+    assert "Candidate puts:" not in aem_block
+    aauc_block = markdown.split("### AAUC.TO", 1)[1].split("## Speculation Candidates", 1)[0]
+    assert aauc_block.count("No usable listed put candidate found") == 1
+    assert "Candidate puts:" not in aauc_block
 
 
 def test_run_hedge_readiness_warns_when_tool_context_is_stale(tmp_path, capsys):
@@ -240,6 +247,44 @@ def test_run_hedge_readiness_surfaces_zero_rate_fallback(tmp_path):
     assert "| Risk-free rate | 0.0% fallback |" in markdown
     assert "scenario Black-Scholes values use a 0% fallback" in markdown
     assert "Risk-free rate is unavailable; using 0% fallback." in markdown
+
+
+def test_run_hedge_readiness_surfaces_resolved_flag_values(tmp_path):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    update_context = RunContext.start(
+        paths=paths,
+        command="update-data",
+        parameters={"options": True},
+        config_hash="test-config",
+    )
+    _write_tool_outputs(paths, refresh_run_id=update_context.run_id)
+    _write_options_inputs(paths, update_context, app_config)
+
+    exit_code = run_hedge_readiness(
+        paths,
+        ranking_max_tickers=1,
+        speculation_max_tickers=1,
+        quantity=10,
+    )
+
+    assert exit_code == 0
+    markdown = (paths.output_hedge_readiness_dir / "latest.md").read_text(encoding="utf-8")
+    assert "| Scenario quantity | 10 contracts |" in markdown
+    assert "| Ranking max tickers | 1 |" in markdown
+    assert "| Speculation max tickers | 1 |" in markdown
+    assert "Showing 1 of 2 tickers." in markdown
+    assert "Showing up to 1 optionable tickers." in markdown
+
+
+def test_report_price_resolution_prefers_chain_over_tool_b_when_feature_missing():
+    price = report_module._current_stock_price(
+        feature={"ticker": "AEM"},
+        tool_b_row=pd.Series({"share_price_usd": 40.0}),
+        chain=pd.DataFrame([{"underlying_price": 55.0}]),
+    )
+
+    assert price == 55.0
 
 
 def _assert_heading_order(markdown: str, headings: list[str]) -> None:

@@ -13,3 +13,11 @@
 - 2026-06-02 - Step 7: added the 5 `hedge-readiness` CLI flags, positive integer parsing for caps/quantity, run-context parameter capture, and plumbing into `write_hedge_readiness_report`. Added parser rejection and plumbing tests. Focused `tests/test_hedge_report.py -q`: 8 passed.
 - 2026-06-02 - Step 8: rewrote `report.py` around `HedgeReadinessSections`, `build_hedge_readiness_sections`, and `render_markdown`; wired header, snapshot summary, sensitivity ranking, portfolio totals, held positions, speculation candidates, comparison view, proxy hedges, and sources in the v6 order. Risk-free-rate missing now uses a visible 0% fallback for candidate/scenario values. Focused hedge/report tests: 61 passed. Full `python -m pytest -q`: 504 passed.
 - 2026-06-02 - Batch 3 self-review: reviewed `9a4cf56..HEAD`; changes are scoped to CLI/report/speculation tests plus progress log. `comparison.py` and `options_phase.py` are unchanged, sensitivity ranking and report P&L paths use `down_beta_core`, `HedgeReadinessSections` includes header and sources, and the r=0 fallback is surfaced in summary/sources/scenario sections. `python -m py_compile` passed for touched runtime files. Full `python -m pytest -q`: 504 passed. No code fixes needed.
+- 2026-06-02 - Deep review fix pass after Checkpoint B: fixed speculation scenario threshold plumbing,
+  surfaced resolved quantity/ranking/speculation caps in markdown and run summary, counted proxy targets correctly,
+  formatted option prices to cents, removed duplicate missing-candidate/scenario noise, aligned portfolio totals to
+  options/current prices before stale Tool B prices, preferred raw chain price before Tool B when feature price is
+  missing, and allowed non-60d candidate prices to resolve share notional while still skipping hedge cost. Real
+  `python main.py hedge-readiness --ranking-max-tickers 5 --speculation-max-tickers 3 --quantity 5` rendered
+  successfully with expected context WARN. Focused hedge tests: 67 passed. Full `python -m pytest -q`: 510 passed.
+  `python -m py_compile` and `git diff --check` passed.

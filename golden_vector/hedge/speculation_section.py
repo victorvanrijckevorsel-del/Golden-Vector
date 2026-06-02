@@ -153,6 +153,7 @@ def _ticker_block(
             down_beta_core=down_beta_core,
             confidence_label=confidence_label,
             risk_free_rate=risk_free_rate or 0.0,
+            down_beta_min_for_scenario=config.down_beta_min_for_scenario,
             gold_scenarios=tuple(config.default_scenarios),
             quantity=quantity,
         )
@@ -251,8 +252,8 @@ def _current_stock_price(
 ) -> float | None:
     for value in (
         feature.get("underlying_price"),
-        (tool_b_row or {}).get("share_price_usd"),
         _first_chain_value(chain, "underlying_price"),
+        (tool_b_row or {}).get("share_price_usd"),
     ):
         price = _as_float(value)
         if price is not None and price > 0:
