@@ -165,7 +165,7 @@ def build_option_trading_detail(
     down_beta_min_for_scenario: float = 0.10,
     risk_free_rate_is_fallback: bool = False,
 ) -> OptionTradingDetailData:
-    """Build put-side detail data for a single ticker."""
+    """Build put and call detail data for a single ticker."""
 
     normalized = ticker.strip().upper()
     put_candidates = tuple(candidate_grids.get(normalized, []))
@@ -244,6 +244,8 @@ def build_option_sizing_result(
             bundle=None,
             notes=tuple(notes),
         )
+    if bundle.skipped_reason:
+        notes.append(bundle.skipped_reason)
 
     contracts = request.quantity
     leftover_cash = None

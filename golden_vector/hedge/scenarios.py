@@ -1,4 +1,4 @@
-"""Scenario P&L math for speculative put candidates."""
+"""Scenario P&L math for single-leg option candidates."""
 
 from __future__ import annotations
 

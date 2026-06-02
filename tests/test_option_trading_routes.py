@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 
+import pandas as pd
+
 from golden_vector.app.config import load_app_config
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.serve.option_trading_data import clear_option_trading_cache
@@ -104,6 +106,7 @@ def test_workspace_option_trading_calculator_contracts_mode(tmp_path):
     assert response["status"].startswith("200")
     body = response["body"]
     assert "Sizing Calculator" in body
+    assert 'class="radio-label"' in body
     assert "Selected: 60d call" in body
     assert "Contracts: 3." in body
     assert "Premium spend: 360.00." in body
@@ -168,6 +171,39 @@ def test_workspace_option_trading_calculator_invalid_inputs_fall_back(tmp_path):
     assert "Invalid budget; defaulted to contract quantity mode." in body
     assert "Invalid quantity; defaulted to 5." in body
     assert "Contracts: 5." in body
+
+
+def test_workspace_option_trading_calculator_explains_skipped_scenarios(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+    )
+    tool_a = pd.read_parquet(paths.latest_tool_a_snapshot_parquet_path)
+    tool_a["up_beta_core"] = 0.0
+    tool_a.to_parquet(paths.latest_tool_a_snapshot_parquet_path, index=False)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path=(
+            "/ticker/AEM?lens=option-trading&side=call&horizon=60"
+            "&size_mode=contracts&quantity=3"
+        ),
+    )
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "Selected: 60d call" in body
+    assert "Contracts: 3." in body
+    assert "Up-beta is too small to model meaningful gold-up scenarios." in body
+    assert "Net P&amp;L Now" not in body
 
 
 def test_workspace_option_trading_calculator_get_writes_no_files(tmp_path):

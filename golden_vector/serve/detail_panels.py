@@ -10,7 +10,7 @@ import pandas as pd
 
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge.candidate_puts import OptionCandidate
-from golden_vector.hedge.option_trading import OptionTradingDetailData
+from golden_vector.hedge.option_trading import OptionSizingResult, OptionTradingDetailData
 from golden_vector.hedge.scenarios import CandidateScenarioBundle
 from golden_vector.model.structural import build_trailing_window_rows
 from golden_vector.serve.charts import (
@@ -178,8 +178,8 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
     body = [
         "<section id=\"option-trading\" class=\"panel\">",
         "<h2>Option Trading</h2>",
-        "<p class=\"hint\">Downside put candidates are modeled server-side from the "
-        "same cached candidate grid used by the Option Trading tab.</p>",
+        "<p class=\"hint\">Put and call candidates are modeled server-side from "
+        "the same cached candidate grids used by the Option Trading tab.</p>",
     ]
     if detail is None:
         body.append(
@@ -236,7 +236,8 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
             bundles=detail.put_bundles,
             hint=(
                 "P&L/share uses listed per-share option quotes. Net P&L uses one "
-                "standard 100-share contract until the sizing calculator lands."
+                "standard 100-share contract in these base tables. Use the "
+                "calculator below to resize a selected scenario."
             ),
         )
     )
@@ -410,12 +411,12 @@ def _render_option_sizing_calculator(detail: OptionTradingDetailData) -> str:
         "<label>Horizon "
         f"<select name=\"horizon\">{horizon_options}</select>"
         "</label>"
-        "<label><input type=\"radio\" name=\"size_mode\" value=\"contracts\""
+        "<label class=\"radio-label\"><input type=\"radio\" name=\"size_mode\" value=\"contracts\""
         f"{mode_contracts_checked}> Contracts</label>"
         "<label>Qty "
         f"<input type=\"number\" name=\"quantity\" min=\"1\" step=\"1\" value=\"{request.quantity}\">"
         "</label>"
-        "<label><input type=\"radio\" name=\"size_mode\" value=\"budget\""
+        "<label class=\"radio-label\"><input type=\"radio\" name=\"size_mode\" value=\"budget\""
         f"{mode_budget_checked}> Budget</label>"
         "<label>$ "
         f"<input type=\"number\" name=\"budget\" min=\"0\" step=\"0.01\" value=\"{escape(budget_value)}\">"
@@ -427,7 +428,7 @@ def _render_option_sizing_calculator(detail: OptionTradingDetailData) -> str:
     )
 
 
-def _render_option_sizing_result(sizing: Any) -> str:
+def _render_option_sizing_result(sizing: OptionSizingResult) -> str:
     request = sizing.request
     label = "put" if request.side == "put" else "call"
     if sizing.bundle is None:
@@ -438,6 +439,25 @@ def _render_option_sizing_result(sizing: Any) -> str:
             "</p>"
         )
     bundle = sizing.bundle
+    leftover = (
+        f" Leftover cash: {_fmt_number(sizing.leftover_cash, decimals=2)}."
+        if sizing.leftover_cash is not None
+        else ""
+    )
+    spend = (
+        f" Premium spend: {_fmt_number(sizing.premium_spend, decimals=2)}."
+        if sizing.premium_spend is not None
+        else ""
+    )
+    if bundle.skipped_reason or not bundle.rows:
+        reason = bundle.skipped_reason or "No modeled sizing scenarios are available for this selection."
+        return (
+            "<div class=\"option-sizing-result\">"
+            f"<p>Selected: {escape(bundle.horizon)} {escape(label)}. "
+            f"Contracts: {sizing.contracts}.{spend}{leftover}</p>"
+            f"<p>{escape(reason)}</p>"
+            "</div>"
+        )
     rows = []
     for row in bundle.rows:
         rows.append(
@@ -450,16 +470,6 @@ def _render_option_sizing_result(sizing: Any) -> str:
             f"<td>{_fmt_number(row.net_pnl_at_expiry, decimals=0)}</td>"
             "</tr>"
         )
-    leftover = (
-        f" Leftover cash: {_fmt_number(sizing.leftover_cash, decimals=2)}."
-        if sizing.leftover_cash is not None
-        else ""
-    )
-    spend = (
-        f" Premium spend: {_fmt_number(sizing.premium_spend, decimals=2)}."
-        if sizing.premium_spend is not None
-        else ""
-    )
     return (
         "<div class=\"option-sizing-result\">"
         f"<p>Selected: {escape(bundle.horizon)} {escape(label)}. "

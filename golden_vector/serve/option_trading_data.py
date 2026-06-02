@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pandas as pd
 
@@ -22,9 +22,11 @@ from golden_vector.hedge._helpers import (
 )
 from golden_vector.hedge.candidate_puts import OptionCandidate, build_candidate_grid
 from golden_vector.hedge.option_trading import (
+    OptionSide,
+    OptionSizingRequest,
     OptionTradingDetailData,
     OptionTradingOverviewData,
-    OptionSizingRequest,
+    SizingMode,
     build_option_trading_detail,
     build_option_trading_overview,
 )
@@ -109,7 +111,9 @@ def parse_option_sizing_request(
 
     notes: list[str] = []
     side_raw = _query_value(query, "side").lower()
-    side = side_raw if side_raw in {"put", "call"} else "put"
+    side: OptionSide = (
+        cast(OptionSide, side_raw) if side_raw in {"put", "call"} else "put"
+    )
     if side_raw and side_raw not in {"put", "call"}:
         notes.append("Invalid side; defaulted to put.")
 
@@ -124,7 +128,11 @@ def parse_option_sizing_request(
 
     default_quantity = app_config.hedge_readiness.default_scenario_quantity
     mode_raw = _query_value(query, "size_mode").lower()
-    size_mode = mode_raw if mode_raw in {"contracts", "budget"} else "contracts"
+    size_mode: SizingMode = (
+        cast(SizingMode, mode_raw)
+        if mode_raw in {"contracts", "budget"}
+        else "contracts"
+    )
     if mode_raw and mode_raw not in {"contracts", "budget"}:
         notes.append("Invalid sizing mode; defaulted to contracts.")
 
@@ -141,9 +149,9 @@ def parse_option_sizing_request(
         budget = None
 
     return OptionSizingRequest(
-        side=side,  # type: ignore[arg-type]
+        side=side,
         horizon_days=horizon,
-        size_mode=size_mode,  # type: ignore[arg-type]
+        size_mode=size_mode,
         quantity=quantity,
         budget=budget,
         notes=tuple(notes),

@@ -50,6 +50,20 @@ def test_build_candidate_grid_matches_put_wrapper_for_puts():
     assert generic == wrapped
 
 
+def test_build_candidate_grid_normalizes_option_type_input():
+    candidates = build_candidate_grid(
+        option_type=" c ",
+        ticker="AEM",
+        chain=_candidate_chain(),
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        target_horizons_days=(30,),
+        as_of_date=date(2026, 5, 29),
+    )
+
+    assert [candidate.option_type for candidate in candidates] == ["C"]
+
+
 def test_build_candidate_grid_returns_listed_calls_by_horizon():
     candidates = build_candidate_grid(
         option_type="C",

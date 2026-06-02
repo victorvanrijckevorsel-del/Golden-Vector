@@ -1,10 +1,10 @@
-"""Candidate put selection for hedge-readiness reports."""
+"""Listed option candidate selection for hedge-readiness reports."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Literal
+from typing import Literal, cast
 
 import pandas as pd
 
@@ -60,9 +60,10 @@ def build_candidate_grid(
 ) -> list[OptionCandidate]:
     """Return tradable listed options nearest target delta for each horizon."""
 
-    normalized_type = option_type.upper()
-    if normalized_type not in {"P", "C"}:
+    normalized_type_raw = str(option_type).strip().upper()
+    if normalized_type_raw not in {"P", "C"}:
         raise ValueError(f"Unsupported option type: {option_type}")
+    normalized_type = cast(Literal["P", "C"], normalized_type_raw)
     effective_target_delta = (
         target_delta
         if target_delta is not None
