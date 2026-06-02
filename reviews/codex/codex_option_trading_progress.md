@@ -23,3 +23,4 @@
 - Claude review M2: threaded a `risk_free_rate_is_fallback` flag through the option-trading data, overview, and detail panel; the UI now discloses the 0% fallback and tests cover malformed manifests plus invalid lens fallback.
 - Step 5: generalized `CandidatePut` to the backwards-compatible `OptionCandidate` model, added `build_candidate_grid`, renamed scenario beta inputs to `gold_beta`, kept old put wrappers/aliases working, and verified with the full suite (`540 passed`).
 - Step 6: added call candidate grids, overview call context P&L, and ticker-detail Upside Call sections scaled with `up_beta_core` and labelled as bullish speculation; full suite stayed green (`542 passed`).
+- Checkpoint C self-review: reviewed the Batch 3 diff as one change, confirmed put wrappers/CLI compatibility, call scenarios use `up_beta_core`, no frontend financial math or markdown regex path was introduced, and no additional fixes were needed.
