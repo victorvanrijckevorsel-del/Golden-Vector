@@ -116,7 +116,11 @@ class HedgeReadinessConfig(StrictConfigModel):
         default_factory=lambda: [0.0, -0.05, -0.10, -0.15, -0.20],
         min_length=1,
     )
+    protection_levels: list[float] = Field(default_factory=lambda: [0.5, 1.0], min_length=1)
     optionability_tier_min: Literal["directly_hedgeable", "thin"] = "directly_hedgeable"
+    speculation_max_tickers_default: int = 15
+    ranking_max_tickers_default: int = 60
+    down_beta_min_for_scenario: float = 0.10
     max_tickers_speculation_section: int = 15
 
     @field_validator("target_delta")
@@ -146,7 +150,12 @@ class HedgeReadinessConfig(StrictConfigModel):
             raise ValueError("proxy_top_n must be positive")
         return value
 
-    @field_validator("default_scenario_quantity", "max_tickers_speculation_section")
+    @field_validator(
+        "default_scenario_quantity",
+        "speculation_max_tickers_default",
+        "ranking_max_tickers_default",
+        "max_tickers_speculation_section",
+    )
     @classmethod
     def positive_scenario_ints(cls, value: int) -> int:
         if value <= 0:
@@ -171,6 +180,7 @@ class HedgeReadinessConfig(StrictConfigModel):
         "proxy_max_beta_diff",
         "proxy_low_basis_max_beta_diff",
         "proxy_medium_basis_max_beta_diff",
+        "down_beta_min_for_scenario",
     )
     @classmethod
     def positive_float_thresholds(cls, value: float) -> float:
@@ -231,6 +241,16 @@ class HedgeReadinessConfig(StrictConfigModel):
             raise ValueError("default_scenarios must be fractions greater than -1 and at most 0")
         if len(set(normalized)) != len(normalized):
             raise ValueError("default_scenarios must be unique")
+        return normalized
+
+    @field_validator("protection_levels")
+    @classmethod
+    def valid_protection_levels(cls, values: list[float]) -> list[float]:
+        normalized = [float(value) for value in values]
+        if any(value <= 0 or value > 1 for value in normalized):
+            raise ValueError("protection_levels must be fractions between 0 and 1")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("protection_levels must be unique")
         return normalized
 
     @model_validator(mode="after")

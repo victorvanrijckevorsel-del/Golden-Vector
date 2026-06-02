@@ -212,7 +212,11 @@ def test_hedge_readiness_config_accepts_defaults():
             "gold_down_scenarios": [0.05, 0.10, 0.20],
             "default_scenario_quantity": 5,
             "default_scenarios": [0.0, -0.05, -0.10, -0.15, -0.20],
+            "protection_levels": [0.5, 1.0],
             "optionability_tier_min": "directly_hedgeable",
+            "speculation_max_tickers_default": 15,
+            "ranking_max_tickers_default": 60,
+            "down_beta_min_for_scenario": 0.10,
             "max_tickers_speculation_section": 15,
         }
     )
@@ -230,7 +234,11 @@ def test_hedge_readiness_config_accepts_defaults():
     assert config.proxy_low_basis_min_confidence == 0.70
     assert config.default_scenario_quantity == 5
     assert config.default_scenarios == [0.0, -0.05, -0.10, -0.15, -0.20]
+    assert config.protection_levels == [0.5, 1.0]
     assert config.optionability_tier_min == "directly_hedgeable"
+    assert config.speculation_max_tickers_default == 15
+    assert config.ranking_max_tickers_default == 60
+    assert config.down_beta_min_for_scenario == 0.10
     assert config.max_tickers_speculation_section == 15
 
 
@@ -259,7 +267,13 @@ def test_hedge_readiness_config_accepts_defaults():
         {"default_scenarios": [0.0, -0.05, -0.05]},
         {"default_scenarios": [0.05, -0.05]},
         {"default_scenarios": [-1.0, -0.05]},
+        {"protection_levels": [0.5, 0.5]},
+        {"protection_levels": [0.0, 0.5]},
+        {"protection_levels": [1.20]},
         {"optionability_tier_min": "none"},
+        {"speculation_max_tickers_default": 0},
+        {"ranking_max_tickers_default": 0},
+        {"down_beta_min_for_scenario": 0},
         {"max_tickers_speculation_section": 0},
     ],
 )
@@ -289,7 +303,11 @@ def test_hedge_readiness_config_rejects_invalid_thresholds(override):
         "gold_down_scenarios": [0.05, 0.10, 0.20],
         "default_scenario_quantity": 5,
         "default_scenarios": [0.0, -0.05, -0.10, -0.15, -0.20],
+        "protection_levels": [0.5, 1.0],
         "optionability_tier_min": "directly_hedgeable",
+        "speculation_max_tickers_default": 15,
+        "ranking_max_tickers_default": 60,
+        "down_beta_min_for_scenario": 0.10,
         "max_tickers_speculation_section": 15,
     }
     payload.update(override)
