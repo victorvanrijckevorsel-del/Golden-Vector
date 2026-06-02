@@ -26,3 +26,4 @@
 - Checkpoint C self-review: reviewed the Batch 3 diff as one change, confirmed put wrappers/CLI compatibility, call scenarios use `up_beta_core`, no frontend financial math or markdown regex path was introduced, and no additional fixes were needed.
 - Step 7: added the GET-only sizing calculator with contracts and budget modes, server-side scenario rescaling, validation fallback notes, and a no-file-mutation route test; full suite stayed green (`546 passed`).
 - Step 8: added workspace CSS for the put/call segments and sizing calculator, updated Hedge Readiness docs with the Option Trading tab and premium-budget semantics, and reran the full suite (`546 passed`).
+- Checkpoint D self-review: verified no custom frontend financial math, no markdown renderer path, GET calculator no-mutation coverage, browser-tested overview/detail/contracts/budget flows on port 8766, and wrote the completion report.
