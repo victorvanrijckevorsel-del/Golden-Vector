@@ -25,6 +25,7 @@ from golden_vector.serve.workspace_state import (
 from golden_vector.serve.http_helpers import (
     _flash_message,
     _html_response,
+    _no_content_response,
     _read_form_data,
     _redirect_response,
     _render_error_page,
@@ -76,6 +77,9 @@ def create_workspace_app(
         try:
             if method == "GET" and path.startswith("/static/"):
                 return _serve_static_file(path, start_response)
+
+            if method == "GET" and path == "/favicon.ico":
+                return _no_content_response(start_response)
 
             if method == "GET" and path in ("/", "/combined"):
                 state = _load_workspace_state(paths, normalized_tickers)

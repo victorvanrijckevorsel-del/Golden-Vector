@@ -76,6 +76,11 @@ def _redirect_response(start_response: Callable[..., Any], location: str) -> Ite
     return [b""]
 
 
+def _no_content_response(start_response: Callable[..., Any]) -> Iterable[bytes]:
+    start_response("204 No Content", [("Content-Length", "0")])
+    return [b""]
+
+
 def _serve_static_file(
     path: str, start_response: Callable[..., Any]
 ) -> Iterable[bytes]:

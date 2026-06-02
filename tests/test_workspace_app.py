@@ -45,6 +45,19 @@ def test_workspace_overview_renders_structural_tool_a_and_tool_b_outputs(tmp_pat
     assert "STRONG_CANDIDATE" in response["body"]
 
 
+def test_workspace_favicon_returns_no_content(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/favicon.ico")
+
+    assert response["status"].startswith("204")
+    assert response["body"] == ""
+
+
 def test_workspace_detail_page_renders_explanations_and_exploratory_ladder(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
