@@ -58,8 +58,17 @@ def render_detail_page(
     if visible_windows is None:
         visible_windows = [active_window]
 
+    option_lens_active = str(lens or "").strip().lower() == DETAIL_OPTION_TRADING_LENS_ID
     body = [f"<p><a href=\"/\">Back to workspace</a></p>", f"<h1>{escape(ticker)}</h1>"]
-    body.append(_render_window_switcher(ticker=ticker, active=active_window, canonical=canonical_anchor))
+    body.append(
+        _render_window_switcher(
+            ticker=ticker,
+            active=active_window,
+            canonical=canonical_anchor,
+            lens=DETAIL_OPTION_TRADING_LENS_ID if option_lens_active else None,
+            anchor="option-trading" if option_lens_active else None,
+        )
+    )
     if flash:
         body.append(f"<div class=\"flash\">{escape(flash)}</div>")
     if error:
@@ -88,7 +97,7 @@ def render_detail_page(
     body.append(_render_reporting_form(ticker=ticker, reporting_row=reporting_row))
     body.append(_render_verification_section(ticker=ticker, verification_rows=verification_rows))
     body.append(_render_note_section(ticker=ticker, note_rows=note_rows))
-    active_nav = "option_trading" if lens == DETAIL_OPTION_TRADING_LENS_ID else "combined"
+    active_nav = "option_trading" if option_lens_active else "combined"
     return _page_shell(
         f"Golden Vector Workspace - {ticker}",
         "".join(body),

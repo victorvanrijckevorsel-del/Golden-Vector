@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from html import escape
 from typing import Any
+from urllib.parse import quote
 
 import pandas as pd
 
@@ -38,26 +39,41 @@ from golden_vector.serve.workspace_state import (
 )
 
 
-def _render_window_switcher(*, ticker: str, active: str, canonical: str) -> str:
+def _render_window_switcher(
+    *,
+    ticker: str,
+    active: str,
+    canonical: str,
+    lens: str | None = None,
+    anchor: str | None = None,
+) -> str:
     """Three-tab switcher at the top of the detail page: 6M / 12M / 3Y.
 
-    Clicking a tab navigates to the same ticker with `?window=<id>`. The
-    active tab is bold; the canonical anchor is marked with a tiny label
-    so the user always knows which window the pipeline considers the
-    official read.
+    Clicking a tab navigates to the same ticker with `?window=<id>`. Optional
+    lens/anchor values keep tool-specific detail views stable while the user
+    switches structural windows.
     """
     tabs: list[str] = []
-    base = f"/ticker/{escape(ticker)}"
+    base = f"/ticker/{quote(str(ticker), safe='')}"
+    lens_value = str(lens or "").strip()
+    anchor_value = str(anchor or "").strip()
     for window in _STRUCTURAL_WINDOWS:
         is_active = window == active
         is_canonical = window == canonical
         cls = "window-tab active" if is_active else "window-tab"
-        href = base if window == canonical else f"{base}?window={window.lower()}"
+        query_parts = []
+        if window != canonical:
+            query_parts.append(f"window={window.lower()}")
+        if lens_value:
+            query_parts.append(f"lens={quote(lens_value, safe='')}")
+        query = f"?{'&'.join(query_parts)}" if query_parts else ""
+        fragment = f"#{quote(anchor_value, safe='')}" if anchor_value else ""
+        href = f"{base}{query}{fragment}"
         canonical_marker = (
             " <span class=\"window-canonical\">anchor</span>" if is_canonical else ""
         )
         tabs.append(
-            f"<a class=\"{cls}\" href=\"{href}\">{escape(window)}{canonical_marker}</a>"
+            f"<a class=\"{cls}\" href=\"{escape(href, quote=True)}\">{escape(window)}{canonical_marker}</a>"
         )
     mismatch_note = ""
     if active != canonical:

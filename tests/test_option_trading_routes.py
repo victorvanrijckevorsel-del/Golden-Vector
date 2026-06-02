@@ -74,6 +74,28 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
     assert "60d put, strike" in body
 
 
+def test_workspace_option_trading_lens_preserves_lens_in_window_switcher(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(app, method="GET", path="/ticker/AEM?lens=option-trading")
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "/ticker/AEM?window=6m&amp;lens=option-trading#option-trading" in body
+    assert "/ticker/AEM?lens=option-trading#option-trading" in body
+    assert "/ticker/AEM?window=3y&amp;lens=option-trading#option-trading" in body
+
+
 def test_workspace_hedge_readiness_route_redirects_to_option_trading(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
