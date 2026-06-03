@@ -100,6 +100,25 @@ def test_load_option_trading_data_uses_composite_cache_key(tmp_path):
     assert first.cache_key.options_refresh_run_id == "options-run"
     assert first.cache_key.tool_a_refresh_run_ids == ("tool-run-a",)
     assert [row.ticker for row in first.overview.rows] == ["AEM"]
+    assert app_config.hedge_readiness.target_horizons_days == [30, 60, 90]
+    assert app_config.hedge_readiness.display_horizons_days == [30, 60, 90, 120]
+    assert sorted({slot.horizon_days for slot in first.candidate_slots["AEM"]}) == [
+        30,
+        60,
+        90,
+        120,
+    ]
+    assert {slot.bucket for slot in first.candidate_slots["AEM"]} == {
+        "most_liquid",
+        "near_atm",
+        "directional",
+        "tail",
+        "model_fit",
+    }
+    assert first.overview.rows[0].optionability_tier == "directly_hedgeable"
+    assert first.overview.source_context is not None
+    assert first.overview.source_context.as_of_date == "2026-05-29"
+    assert first.overview.source_context.refresh_run_id == "options-run"
 
     _write_tool_outputs(paths, refresh_run_id="tool-run-b")
     changed = load_option_trading_data(paths, app_config=app_config)
@@ -122,6 +141,15 @@ def test_build_option_trading_detail_data_reuses_cached_overview_row(tmp_path):
     assert data.overview.rows
     assert detail.row is data.overview.rows[0]
     assert detail.row.pnl_put_at_minus10_60d == data.overview.rows[0].pnl_put_at_minus10_60d
+    assert sorted({slot.horizon_days for slot in detail.put_slots}) == [30, 60, 90, 120]
+    assert {slot.bucket for slot in detail.put_slots} == {
+        "most_liquid",
+        "near_atm",
+        "directional",
+        "tail",
+        "model_fit",
+    }
+    assert detail.source_context is data.overview.source_context
 
 
 def test_load_option_trading_data_handles_missing_manifest(tmp_path):
@@ -227,6 +255,19 @@ def test_parse_option_sizing_request_budget_mode_ignores_unused_quantity(tmp_pat
     assert request.budget == 500.0
     assert request.quantity == app_config.hedge_readiness.default_scenario_quantity
     assert "Invalid quantity" not in " ".join(request.notes)
+
+
+def test_parse_option_sizing_request_accepts_display_only_120d_horizon(tmp_path):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+
+    request = parse_option_sizing_request(
+        {"horizon": ["120"]},
+        app_config=app_config,
+    )
+
+    assert request.horizon_days == 120
+    assert request.notes == ()
 
 
 def _write_option_inputs(

@@ -143,6 +143,7 @@ def _contract_result(row: pd.Series) -> dict[str, object]:
         "bid": _value(row, "bid"),
         "ask": _value(row, "ask"),
         "mid": _value(row, "mid"),
+        "last_price": _value(row, "last_price"),
         "open_interest": _value(row, "open_interest"),
         "volume": _value(row, "volume"),
         "implied_volatility": _value(row, "implied_volatility"),

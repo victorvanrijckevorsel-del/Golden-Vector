@@ -1127,6 +1127,7 @@ def _candidate_grids(
             max_implied_volatility=(
                 app_config.hedge_readiness.candidate_max_implied_volatility
             ),
+            max_delta_gap=app_config.hedge_readiness.delta_gap_warning_threshold,
         )
     return grids
 

@@ -31,9 +31,11 @@ def test_workspace_option_trading_route_renders_native_tab(tmp_path):
     assert "Option Trading" in response["body"]
     assert "/option-trading" in response["body"]
     assert "/ticker/AEM?lens=option-trading#option-trading" in response["body"]
-    assert "/hedge-readiness/latest.md" in response["body"]
-    assert "directly_hedgeable" in response["body"]
-    assert "available" in response["body"]
+    assert "/hedge-readiness/latest.md" not in response["body"]
+    assert "Directly hedgeable" not in response["body"]
+    assert "Sensible liquid contract" in response["body"]
+    assert "Snapshot Date" in response["body"]
+    assert "Put P&amp;L/share @ Gold -10% (60d)" not in response["body"]
     assert "markdown-report" not in response["body"]
 
 
@@ -71,21 +73,33 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
     assert 'class="nav-tab active" href="/option-trading"' in body
     assert 'id="option-trading"' in body
     assert "Downside Put Candidates" in body
-    assert "Downside Put Scenarios" in body
     assert "Upside Call Candidates" in body
-    assert "Upside Call Scenarios" in body
-    assert "Plain Beta" in body
-    assert "IV Skew 60d" in body
-    assert "IV/RV Ratio 60d" in body
-    assert "downside protection is more expensive" in body
-    assert "options look expensive versus how much" in body
+    assert "Downside Put Scenarios" not in body
+    assert "Upside Call Scenarios" not in body
+    assert "Plain Beta" not in body
+    assert "IV Skew 60d" not in body
+    assert "IV/RV Ratio 60d" not in body
     assert "Buying puts/calls can be right on direction" in body
     assert "approximate - linear beta can understate real downside" in body
-    assert "Leveraged bullish speculation" in body
-    assert "Put P&amp;L/share @ Gold -10% (60d)" in body
-    assert "Call P&amp;L/share @ Gold +10% (60d)" in body
-    assert "60d put, strike" in body
-    assert "60d call, strike" in body
+    assert "Leveraged bullish speculation" not in body
+    assert "Stock Price" in body
+    assert "Snapshot Date" in body
+    assert "Source" in body
+    assert "Cached Yahoo Finance data via yfinance" in body
+    assert "Last" in body
+    assert "Bid" in body
+    assert "Ask" in body
+    assert "Mid" in body
+    assert "Half-spread Cost" in body
+    assert "Bucket" in body
+    assert "Tradable" in body
+    assert "Open Yahoo chain for this expiry" in body
+    assert "120d" in body
+    assert "Put P&amp;L/share @ Gold -10% (60d)" not in body
+    assert "Call P&amp;L/share @ Gold +10% (60d)" not in body
+    assert "60d put, strike" not in body
+    assert "60d call, strike" not in body
+    assert "Sizing Calculator" in body
 
 
 def test_workspace_default_detail_uses_lightweight_option_trading_link(
@@ -149,7 +163,7 @@ def test_workspace_option_trading_calculator_contracts_mode(tmp_path):
     assert "Sizing Calculator" in body
     assert "Buying puts/calls can be right on direction" in body
     assert 'class="radio-label"' in body
-    assert "Selected: 60d call" in body
+    assert "Selected: 60d Most liquid call" in body
     assert "Contracts: 3." in body
     assert "Premium spend: 360.00." in body
 
@@ -178,7 +192,7 @@ def test_workspace_option_trading_calculator_budget_mode(tmp_path):
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert "Selected: 60d put" in body
+    assert "Selected: 60d Most liquid put" in body
     assert "Contracts: 4." in body
     assert "Premium spend: 480.00." in body
     assert "Leftover cash: 20.00." in body
@@ -242,7 +256,7 @@ def test_workspace_option_trading_calculator_explains_skipped_scenarios(tmp_path
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert "Selected: 60d call" in body
+    assert "Selected: 60d Most liquid call" in body
     assert "Contracts: 3." in body
     assert "Up-beta is too small to model meaningful gold-up scenarios." in body
     assert "Net P&amp;L Now" not in body

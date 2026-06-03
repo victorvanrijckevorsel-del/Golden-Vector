@@ -207,6 +207,7 @@ def _candidate_grid(
         min_volume=config.candidate_min_volume,
         min_implied_volatility=config.candidate_min_implied_volatility,
         max_implied_volatility=config.candidate_max_implied_volatility,
+        max_delta_gap=config.delta_gap_warning_threshold,
     )
 
 

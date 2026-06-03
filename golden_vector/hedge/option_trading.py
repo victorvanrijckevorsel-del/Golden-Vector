@@ -15,7 +15,7 @@ from golden_vector.hedge._helpers import (
     row_string,
     rows_by_ticker_series,
 )
-from golden_vector.hedge.candidate_puts import OptionCandidate
+from golden_vector.hedge.candidate_puts import OptionCandidate, OptionCandidateSlot
 from golden_vector.hedge.scenarios import (
     CandidateScenarioBundle,
     OptionStrategy,
@@ -36,6 +36,7 @@ CALL_CONTEXT_GOLD_MOVE = 0.10
 class OptionSizingRequest:
     side: OptionSide = "put"
     horizon_days: int = PREFERRED_OPTION_HORIZON_DAYS
+    bucket: str | None = None
     size_mode: SizingMode = "contracts"
     quantity: int = 5
     budget: float | None = None
@@ -50,6 +51,15 @@ class OptionSizingResult:
     leftover_cash: float | None
     bundle: CandidateScenarioBundle | None
     notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class OptionTradingSourceContext:
+    as_of_date: str | None = None
+    refresh_run_id: str | None = None
+    risk_free_rate: float | None = None
+    risk_free_rate_is_fallback: bool = False
+    source_label: str = "Cached Yahoo Finance data via yfinance"
 
 
 @dataclass(frozen=True)
@@ -69,6 +79,7 @@ class OptionTradingRow:
     pnl_put_at_minus10_60d: float | None
     pnl_call_at_plus10_60d: float | None
     notes: tuple[str, ...]
+    current_stock_price: float | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +87,7 @@ class OptionTradingOverviewData:
     rows: tuple[OptionTradingRow, ...]
     reason: str | None = None
     risk_free_rate_is_fallback: bool = False
+    source_context: OptionTradingSourceContext | None = None
 
 
 @dataclass(frozen=True)
@@ -84,11 +96,14 @@ class OptionTradingDetailData:
     row: OptionTradingRow | None
     put_candidates: tuple[OptionCandidate, ...]
     put_bundles: tuple[CandidateScenarioBundle, ...]
+    put_slots: tuple[OptionCandidateSlot, ...] = ()
     call_candidates: tuple[OptionCandidate, ...] = ()
     call_bundles: tuple[CandidateScenarioBundle, ...] = ()
+    call_slots: tuple[OptionCandidateSlot, ...] = ()
     sizing: OptionSizingResult | None = None
     reason: str | None = None
     risk_free_rate_is_fallback: bool = False
+    source_context: OptionTradingSourceContext | None = None
 
 
 def build_option_trading_overview(
@@ -104,6 +119,7 @@ def build_option_trading_overview(
     call_context_gold_move: float = CALL_CONTEXT_GOLD_MOVE,
     down_beta_min_for_scenario: float = 0.10,
     risk_free_rate_is_fallback: bool = False,
+    source_context: OptionTradingSourceContext | None = None,
 ) -> OptionTradingOverviewData:
     """Build optionable ticker rows for the workspace overview tab."""
 
@@ -112,6 +128,7 @@ def build_option_trading_overview(
             rows=(),
             reason="No options feature snapshot is available yet.",
             risk_free_rate_is_fallback=risk_free_rate_is_fallback,
+            source_context=source_context,
         )
 
     feature_by_ticker = rows_by_ticker_series(options_features, strip=True)
@@ -153,6 +170,7 @@ def build_option_trading_overview(
         rows=tuple(rows),
         reason=reason,
         risk_free_rate_is_fallback=risk_free_rate_is_fallback,
+        source_context=source_context,
     )
 
 
@@ -164,16 +182,21 @@ def build_option_trading_detail(
     overview_row: OptionTradingRow | None,
     risk_free_rate: float,
     call_candidate_grids: dict[str, list[OptionCandidate]] | None = None,
+    put_candidate_slots: dict[str, list[OptionCandidateSlot]] | None = None,
+    call_candidate_slots: dict[str, list[OptionCandidateSlot]] | None = None,
     sizing_request: OptionSizingRequest | None = None,
     target_horizons_days: tuple[int, ...] = (30, 60, 90),
     down_beta_min_for_scenario: float = 0.10,
     risk_free_rate_is_fallback: bool = False,
+    source_context: OptionTradingSourceContext | None = None,
 ) -> OptionTradingDetailData:
     """Build put and call detail data for a single ticker."""
 
     normalized = ticker.strip().upper()
     put_candidates = tuple(candidate_grids.get(normalized, []))
     call_candidates = tuple((call_candidate_grids or {}).get(normalized, []))
+    put_slots = tuple((put_candidate_slots or {}).get(normalized, []))
+    call_slots = tuple((call_candidate_slots or {}).get(normalized, []))
     tool_a_row = rows_by_ticker_series(tool_a, strip=True).get(normalized)
     down_beta = row_float(tool_a_row, "down_beta_core")
     up_beta = row_float(tool_a_row, "up_beta_core")
@@ -215,8 +238,10 @@ def build_option_trading_detail(
         row=overview_row,
         put_candidates=put_candidates,
         put_bundles=put_bundles,
+        put_slots=put_slots,
         call_candidates=call_candidates,
         call_bundles=call_bundles,
+        call_slots=call_slots,
         sizing=sizing,
         reason=(
             None
@@ -224,6 +249,7 @@ def build_option_trading_detail(
             else "Ticker is not optionable in the latest snapshot."
         ),
         risk_free_rate_is_fallback=risk_free_rate_is_fallback,
+        source_context=source_context,
     )
 
 
@@ -236,10 +262,13 @@ def build_option_sizing_result(
     """Apply contracts/budget sizing to one cached per-contract scenario bundle."""
 
     bundles = put_bundles if request.side == "put" else call_bundles
-    bundle = _bundle_for_horizon(bundles, request.horizon_days)
+    bundle = _bundle_for_request(bundles, request)
     notes = list(request.notes)
     if bundle is None:
-        notes.append(f"No {request.horizon_days}d {request.side} candidate is available.")
+        bucket_note = f" {request.bucket.replace('_', ' ')}" if request.bucket else ""
+        notes.append(
+            f"No {request.horizon_days}d{bucket_note} {request.side} candidate is available."
+        )
         return OptionSizingResult(
             request=request,
             contracts=0,
@@ -279,13 +308,15 @@ def build_option_sizing_result(
     )
 
 
-def _bundle_for_horizon(
+def _bundle_for_request(
     bundles: tuple[CandidateScenarioBundle, ...],
-    horizon_days: int,
+    request: OptionSizingRequest,
 ) -> CandidateScenarioBundle | None:
-    horizon = f"{horizon_days}d"
+    horizon = f"{request.horizon_days}d"
+    bucket = str(request.bucket or "").strip()
     for bundle in bundles:
-        if bundle.horizon == horizon:
+        candidate_bucket = str(bundle.candidate.bucket or "").strip()
+        if bundle.horizon == horizon and (not bucket or candidate_bucket == bucket):
             return bundle
     return None
 
@@ -334,6 +365,10 @@ def _build_row(
     up_beta = row_float(tool_a_row, "up_beta_core")
     confidence_label = row_string(tool_a_row, "confidence_label") or "n/a"
     notes: list[str] = []
+    current_stock_price = _current_stock_price(
+        feature,
+        put_candidates if put_candidates else call_candidates,
+    )
 
     put_status = _candidate_side_status(
         feature=feature,
@@ -374,12 +409,8 @@ def _build_row(
     )
     if put_status != "available":
         notes.append("No usable put candidate found.")
-    elif pnl_put is None:
-        notes.append("No 60d put scenario could be modeled.")
     if call_status != "available":
         notes.append("No usable call candidate found.")
-    elif pnl_call is None:
-        notes.append("No 60d call scenario could be modeled.")
 
     return OptionTradingRow(
         ticker=ticker,
@@ -403,6 +434,7 @@ def _build_row(
         pnl_put_at_minus10_60d=pnl_put,
         pnl_call_at_plus10_60d=pnl_call,
         notes=tuple(notes),
+        current_stock_price=current_stock_price,
     )
 
 

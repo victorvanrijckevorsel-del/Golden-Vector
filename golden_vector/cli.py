@@ -29,6 +29,7 @@ from golden_vector.app.run_context import RunContext, to_jsonable
 from golden_vector.features.horizons import parse_requested_horizons
 from golden_vector.features.returns import RETURN_COLUMNS, compute_horizon_returns_for_ticker
 from golden_vector.hedge.comparison import COMPARISON_SORT_COLUMNS
+from golden_vector.hedge.options_liquidity import slot_tier_counts
 from golden_vector.ingestion.foundation import execute_foundation_pipeline
 from golden_vector.ingestion.options_phase import (
     run_options_ingestion_phase,
@@ -52,6 +53,7 @@ from golden_vector.screening.manual_store import (
 )
 from golden_vector.screening.pipeline import execute_tool_b_pipeline
 from golden_vector.serve.workspace import run_workspace_server
+from golden_vector.serve.option_trading_data import load_option_trading_data
 
 LOGGER = logging.getLogger(__name__)
 
@@ -177,6 +179,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_int,
         default=None,
         help="Put-contract quantity for scenario P&L.",
+    )
+
+    liquidity_parser = subparsers.add_parser(
+        "options-liquidity-summary",
+        help="Print cached option-liquidity tier counts by ticker.",
+    )
+    liquidity_parser.add_argument(
+        "--ticker",
+        default=None,
+        help="Optional ticker to inspect.",
     )
 
     manual_data_parser = subparsers.add_parser(
@@ -377,6 +389,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             quantity=args.quantity,
         )
 
+    if args.command == "options-liquidity-summary":
+        return run_options_liquidity_summary(paths, ticker=args.ticker)
+
     if args.command == "refresh":
         return run_refresh(
             paths,
@@ -409,6 +424,37 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser.error(f"Unsupported command: {args.command}")
     return 2
+
+
+def run_options_liquidity_summary(
+    paths: ProjectPaths,
+    *,
+    ticker: str | None = None,
+) -> int:
+    loaded_config = load_app_config(paths)
+    data = load_option_trading_data(paths, app_config=loaded_config.app)
+    rows = list(data.overview.rows)
+    if ticker:
+        normalized = ticker.strip().upper()
+        rows = [row for row in rows if row.ticker == normalized]
+    if not rows:
+        reason = data.overview.reason or "No matching option-liquidity rows."
+        print(reason)
+        return 0
+
+    print(
+        "Ticker | Put Tradable | Put Watch | Put No-trade | "
+        "Call Tradable | Call Watch | Call No-trade"
+    )
+    for row in rows:
+        put_counts = slot_tier_counts(data.candidate_slots.get(row.ticker, []))
+        call_counts = slot_tier_counts(data.call_candidate_slots.get(row.ticker, []))
+        print(
+            f"{row.ticker} | "
+            f"{put_counts['tradable']} | {put_counts['watch']} | {put_counts['no_trade']} | "
+            f"{call_counts['tradable']} | {call_counts['watch']} | {call_counts['no_trade']}"
+        )
+    return 0
 
 
 def run_foundation(

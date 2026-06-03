@@ -3,6 +3,7 @@ from __future__ import annotations
 from golden_vector.hedge.option_trading import (
     OptionTradingOverviewData,
     OptionTradingRow,
+    OptionTradingSourceContext,
 )
 from golden_vector.serve.overview_option_trading import _render_option_trading_overview_page
 
@@ -27,27 +28,38 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
                     pnl_put_at_minus10_60d=1.25,
                     pnl_call_at_plus10_60d=2.50,
                     notes=("candidate ok",),
+                    current_stock_price=174.96,
                 ),
-            )
+            ),
+            source_context=OptionTradingSourceContext(
+                as_of_date="2026-06-01",
+                refresh_run_id="options-run",
+            ),
         )
     )
 
     assert "Option Trading" in html
-    assert "Descriptive stress-sensitivity view" in html
-    assert "Buying puts/calls can be right on direction" in html
+    assert "Cached options snapshot: 2026-06-01; screening only" in html
+    assert "Method" in html
+    assert "Last is informational only" in html
     assert "/ticker/AEM?lens=option-trading#option-trading" in html
     assert "option-trading-table" in html
-    assert "Plain Beta" in html
-    assert "IV Skew 60d" in html
-    assert "IV/RV 60d" in html
-    assert "8.0%" in html
-    assert "downside protection is more expensive" in html
-    assert "options look expensive versus how much" in html
+    assert "Stock Price" in html
+    assert "174.96" in html
+    assert "Tool A Confidence" in html
+    assert "IV %ile" in html
+    assert "IV Skew 60d" not in html
+    assert "IV/RV 60d" not in html
     assert "data-filter-column=\"put_status\"" in html
     assert "data-filter-column=\"call_status\"" in html
-    assert "Put P&amp;L/share @ Gold -10% (60d)" in html
-    assert "Call P&amp;L/share @ Gold +10% (60d, context)" in html
-    assert "2.50" in html
+    assert "data-filter-column=\"optionability\"" not in html
+    assert "Sensible liquid contract" in html
+    assert "Snapshot Date" in html
+    assert "2026-06-01" in html
+    assert "Put P&amp;L/share @ Gold -10% (60d)" not in html
+    assert "Call P&amp;L/share @ Gold +10% (60d, context)" not in html
+    assert "2.50" not in html
+    assert "Optionability" not in html
     assert "candidate ok" in html
     assert "markdown-report" not in html
 
@@ -73,3 +85,33 @@ def test_option_trading_overview_discloses_risk_free_rate_fallback():
 
     assert "Risk-free rate was missing" in html
     assert "0% rate fallback" in html
+
+
+def test_option_trading_overview_hides_raw_thin_status_label():
+    html = _render_option_trading_overview_page(
+        OptionTradingOverviewData(
+            rows=(
+                OptionTradingRow(
+                    ticker="FSM",
+                    structural_delta_core=1.2,
+                    down_beta_core=1.4,
+                    up_beta_core=1.1,
+                    confidence_label="HIGH",
+                    confidence_score=0.9,
+                    iv_percentile_cross_sectional=77.0,
+                    iv_skew_60d=None,
+                    iv_rv_ratio_60d=None,
+                    optionability_tier="directly_hedgeable",
+                    put_status="thin",
+                    call_status="thin",
+                    pnl_put_at_minus10_60d=None,
+                    pnl_call_at_plus10_60d=None,
+                    notes=(),
+                    current_stock_price=50.0,
+                ),
+            )
+        )
+    )
+
+    assert "No sensible liquid contract" in html
+    assert ">thin<" not in html

@@ -8,6 +8,7 @@ from golden_vector.hedge.candidate_puts import (
     OptionCandidate,
     build_candidate_grid,
     build_candidate_put_grid,
+    build_candidate_slots,
 )
 from golden_vector.hedge.expected_downside import compute_premium_vs_downside
 from golden_vector.hedge.holdings import Holding
@@ -48,6 +49,81 @@ def test_build_candidate_grid_matches_put_wrapper_for_puts():
     wrapped = build_candidate_put_grid(**kwargs)
 
     assert generic == wrapped
+
+
+def test_build_candidate_slots_rejects_far_otm_delta_survivor():
+    chain = pd.DataFrame(
+        [
+            _option("2026-07-31", "P", 50.0, 1.70, 2.05, 7, 2, 2.25),
+            _option("2026-07-31", "P", 155.0, 1.90, 4.00, 8, 1, 0.48),
+        ]
+    )
+
+    slots = build_candidate_slots(
+        option_type="P",
+        ticker="AEM",
+        chain=chain,
+        underlying_price=175.0,
+        risk_free_rate=0.04,
+        target_horizons_days=(60,),
+        target_delta=-0.25,
+        max_delta_gap=0.10,
+        as_of_date=date(2026, 5, 29),
+    )
+    candidates = build_candidate_put_grid(
+        ticker="AEM",
+        chain=chain,
+        underlying_price=175.0,
+        risk_free_rate=0.04,
+        target_horizons_days=(60,),
+        target_delta=-0.25,
+        max_delta_gap=0.10,
+        as_of_date=date(2026, 5, 29),
+    )
+
+    assert candidates == []
+    assert len(slots) == 1
+    slot = slots[0]
+    assert slot.status == "rejected"
+    assert slot.candidate is None
+    assert slot.rejected_candidate is not None
+    assert slot.rejected_candidate.strike == 50.0
+    assert slot.rejected_candidate.delta_gap is not None
+    assert slot.rejected_candidate.delta_gap > 0.10
+    assert "No acceptable 60d put candidate" in slot.reason
+    assert "strike 50.00" in slot.reason
+    assert "target -0.25" in slot.reason
+    assert "cached stock price" in slot.reason
+
+
+def test_build_candidate_slots_returns_display_rows_for_empty_chain():
+    slots = build_candidate_slots(
+        option_type="P",
+        ticker="AEM",
+        chain=pd.DataFrame(),
+        underlying_price=175.0,
+        risk_free_rate=0.04,
+        target_horizons_days=(30, 60, 90, 120),
+        max_delta_gap=0.10,
+        as_of_date=date(2026, 5, 29),
+    )
+
+    assert [slot.horizon_days for slot in slots] == [30, 60, 90, 120]
+    assert all(slot.status == "no_chain" for slot in slots)
+    assert all(slot.display_candidate is None for slot in slots)
+
+
+def test_build_candidate_grid_preserves_cached_yahoo_last_price():
+    candidates = build_candidate_put_grid(
+        ticker="AEM",
+        chain=_candidate_chain(),
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        target_horizons_days=(30,),
+        as_of_date=date(2026, 5, 29),
+    )
+
+    assert candidates[0].last_price == pytest.approx(candidates[0].mid)
 
 
 def test_build_candidate_grid_normalizes_option_type_input():

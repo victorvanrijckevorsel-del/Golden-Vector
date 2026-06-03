@@ -92,6 +92,10 @@ class HedgeReadinessConfig(StrictConfigModel):
     version: int = 1
     target_delta: float = -0.25
     target_horizons_days: list[int] = Field(default_factory=lambda: [30, 60, 90], min_length=1)
+    display_horizons_days: list[int] = Field(
+        default_factory=lambda: [30, 60, 90, 120],
+        min_length=1,
+    )
     optionability_open_interest_threshold: int = 1000
     implied_move_max_spread_pct: float = 0.35
     implied_move_min_open_interest: int = 1
@@ -101,6 +105,24 @@ class HedgeReadinessConfig(StrictConfigModel):
     candidate_min_volume: int = 0
     candidate_min_implied_volatility: float = 0.01
     candidate_max_implied_volatility: float = 3.0
+    option_liquidity_tradable_spread_pct: float = 0.20
+    option_liquidity_watch_spread_pct: float = 0.50
+    option_liquidity_min_open_interest: int = 1
+    option_liquidity_min_premium: float = 0.15
+    option_liquidity_near_spot_pct: float = 0.10
+    option_liquidity_target_depth_count: int = 10
+    option_liquidity_oi_cap: int = 1000
+    option_liquidity_volume_cap: int = 1000
+    option_sensible_moneyness_max_pct: float = 0.35
+    option_dte_bands: dict[int, list[int]] = Field(
+        default_factory=lambda: {
+            30: [21, 45],
+            60: [46, 75],
+            90: [76, 105],
+            120: [106, 150],
+        },
+        min_length=1,
+    )
     delta_gap_warning_threshold: float = 0.10
     hedge_ratio_cheap_max: float = 0.40
     hedge_ratio_expensive_min: float = 0.80
@@ -135,6 +157,7 @@ class HedgeReadinessConfig(StrictConfigModel):
         "implied_move_min_volume",
         "candidate_min_open_interest",
         "candidate_min_volume",
+        "option_liquidity_min_open_interest",
     )
     @classmethod
     def non_negative_ints(cls, value: int) -> int:
@@ -153,6 +176,9 @@ class HedgeReadinessConfig(StrictConfigModel):
         "default_scenario_quantity",
         "speculation_max_tickers_default",
         "ranking_max_tickers_default",
+        "option_liquidity_target_depth_count",
+        "option_liquidity_oi_cap",
+        "option_liquidity_volume_cap",
     )
     @classmethod
     def positive_scenario_ints(cls, value: int) -> int:
@@ -160,13 +186,13 @@ class HedgeReadinessConfig(StrictConfigModel):
             raise ValueError("scenario integer settings must be positive")
         return value
 
-    @field_validator("target_horizons_days")
+    @field_validator("target_horizons_days", "display_horizons_days")
     @classmethod
     def valid_target_horizons(cls, values: list[int]) -> list[int]:
         if any(value <= 0 for value in values):
-            raise ValueError("target_horizons_days must be positive")
+            raise ValueError("option horizons must be positive")
         if len(set(values)) != len(values):
-            raise ValueError("target_horizons_days must be unique")
+            raise ValueError("option horizons must be unique")
         return values
 
     @field_validator(
@@ -174,6 +200,11 @@ class HedgeReadinessConfig(StrictConfigModel):
         "candidate_max_spread_pct",
         "candidate_min_implied_volatility",
         "candidate_max_implied_volatility",
+        "option_liquidity_tradable_spread_pct",
+        "option_liquidity_watch_spread_pct",
+        "option_liquidity_min_premium",
+        "option_liquidity_near_spot_pct",
+        "option_sensible_moneyness_max_pct",
         "delta_gap_warning_threshold",
         "proxy_max_beta_diff",
         "proxy_low_basis_max_beta_diff",
@@ -201,6 +232,32 @@ class HedgeReadinessConfig(StrictConfigModel):
                 "candidate_max_implied_volatility"
             )
         return self
+
+    @model_validator(mode="after")
+    def ordered_option_liquidity_bands(self) -> "HedgeReadinessConfig":
+        if self.option_liquidity_tradable_spread_pct >= self.option_liquidity_watch_spread_pct:
+            raise ValueError(
+                "option_liquidity_tradable_spread_pct must be less than "
+                "option_liquidity_watch_spread_pct"
+            )
+        return self
+
+    @field_validator("option_dte_bands")
+    @classmethod
+    def valid_option_dte_bands(cls, values: dict[int, list[int]]) -> dict[int, list[int]]:
+        normalized: dict[int, list[int]] = {}
+        for horizon, band in values.items():
+            horizon_int = int(horizon)
+            if horizon_int <= 0:
+                raise ValueError("option_dte_bands horizons must be positive")
+            if len(band) != 2:
+                raise ValueError("each option_dte_bands value must have [min, max]")
+            lower = int(band[0])
+            upper = int(band[1])
+            if lower <= 0 or upper <= 0 or lower > upper:
+                raise ValueError("option_dte_bands ranges must be positive and ordered")
+            normalized[horizon_int] = [lower, upper]
+        return normalized
 
     @model_validator(mode="after")
     def ordered_proxy_basis_bands(self) -> "HedgeReadinessConfig":

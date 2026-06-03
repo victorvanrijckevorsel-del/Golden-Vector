@@ -20,16 +20,21 @@ from golden_vector.hedge._helpers import (
     row_string,
     rows_by_ticker_series,
 )
-from golden_vector.hedge.candidate_puts import OptionCandidate, build_candidate_grid
+from golden_vector.hedge.candidate_puts import (
+    OptionCandidate,
+    OptionCandidateSlot,
+)
 from golden_vector.hedge.option_trading import (
     OptionSide,
     OptionSizingRequest,
     OptionTradingDetailData,
     OptionTradingOverviewData,
+    OptionTradingSourceContext,
     SizingMode,
     build_option_trading_detail,
     build_option_trading_overview,
 )
+from golden_vector.hedge.options_liquidity import build_bucket_slots, settings_from_config
 from golden_vector.ingestion.persist_options import safe_options_file_name
 
 
@@ -45,6 +50,8 @@ class OptionTradingData:
     overview: OptionTradingOverviewData
     candidate_grids: dict[str, list[OptionCandidate]]
     call_candidate_grids: dict[str, list[OptionCandidate]]
+    candidate_slots: dict[str, list[OptionCandidateSlot]]
+    call_candidate_slots: dict[str, list[OptionCandidateSlot]]
     options_features: pd.DataFrame
     tool_a: pd.DataFrame
     tool_b: pd.DataFrame
@@ -78,11 +85,14 @@ def build_option_trading_detail_data(
         tool_a=data.tool_a,
         candidate_grids=data.candidate_grids,
         call_candidate_grids=data.call_candidate_grids,
+        put_candidate_slots=data.candidate_slots,
+        call_candidate_slots=data.call_candidate_slots,
         sizing_request=sizing_request,
         overview_row=overview_row,
         risk_free_rate=data.risk_free_rate,
         risk_free_rate_is_fallback=data.risk_free_rate_is_fallback,
-        target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
+        source_context=data.overview.source_context,
+        target_horizons_days=tuple(app_config.hedge_readiness.display_horizons_days),
         down_beta_min_for_scenario=(
             app_config.hedge_readiness.down_beta_min_for_scenario
         ),
@@ -94,11 +104,14 @@ def build_option_trading_detail_data(
         row=detail.row,
         put_candidates=detail.put_candidates,
         put_bundles=detail.put_bundles,
+        put_slots=detail.put_slots,
         call_candidates=detail.call_candidates,
         call_bundles=detail.call_bundles,
+        call_slots=detail.call_slots,
         sizing=detail.sizing,
         reason=data.overview.reason,
         risk_free_rate_is_fallback=detail.risk_free_rate_is_fallback,
+        source_context=detail.source_context,
     )
 
 
@@ -117,7 +130,7 @@ def parse_option_sizing_request(
     if side_raw and side_raw not in {"put", "call"}:
         notes.append("Invalid side; defaulted to put.")
 
-    target_horizons = tuple(app_config.hedge_readiness.target_horizons_days)
+    target_horizons = tuple(app_config.hedge_readiness.display_horizons_days)
     default_horizon = 60 if 60 in target_horizons else target_horizons[0]
     horizon_raw = _query_value(query, "horizon")
     horizon = _parse_int(horizon_raw)
@@ -125,6 +138,11 @@ def parse_option_sizing_request(
         if horizon_raw:
             notes.append(f"Invalid horizon; defaulted to {default_horizon}d.")
         horizon = default_horizon
+
+    bucket_raw = _query_value(query, "bucket").lower().replace("-", "_")
+    bucket = bucket_raw if bucket_raw in _allowed_buckets(side) else None
+    if bucket_raw and bucket is None:
+        notes.append("Invalid bucket; defaulted to the first available contract.")
 
     default_quantity = app_config.hedge_readiness.default_scenario_quantity
     mode_raw = _query_value(query, "size_mode").lower()
@@ -151,6 +169,7 @@ def parse_option_sizing_request(
     return OptionSizingRequest(
         side=side,
         horizon_days=horizon,
+        bucket=bucket,
         size_mode=size_mode,
         quantity=quantity,
         budget=budget,
@@ -177,6 +196,13 @@ def _parse_float(raw: str) -> float | None:
         return float(cleaned)
     except ValueError:
         return None
+
+
+def _allowed_buckets(side: OptionSide) -> set[str]:
+    common = {"most_liquid", "near_atm", "directional", "model_fit"}
+    if side == "put":
+        return {*common, "tail"}
+    return common
 
 
 def load_option_trading_data(
@@ -206,9 +232,10 @@ def load_option_trading_data(
     risk_free_rate = as_float(manifest.get("risk_free_rate"))
     risk_free_rate_is_fallback = risk_free_rate is None
     effective_risk_free_rate = risk_free_rate if risk_free_rate is not None else 0.0
-    candidate_grids = _candidate_grids(
+    candidate_slots = _candidate_slots(
         app_config=app_config,
         features=features,
+        tool_a=tool_a,
         tool_b=tool_b,
         chains=chains,
         risk_free_rate=effective_risk_free_rate,
@@ -216,15 +243,23 @@ def load_option_trading_data(
         option_type="P",
         target_delta=app_config.hedge_readiness.target_delta,
     )
-    call_candidate_grids = _candidate_grids(
+    call_candidate_slots = _candidate_slots(
         app_config=app_config,
         features=features,
+        tool_a=tool_a,
         tool_b=tool_b,
         chains=chains,
         risk_free_rate=effective_risk_free_rate,
         manifest=manifest,
         option_type="C",
         target_delta=abs(app_config.hedge_readiness.target_delta),
+    )
+    candidate_grids = _accepted_candidate_grids(candidate_slots)
+    call_candidate_grids = _accepted_candidate_grids(call_candidate_slots)
+    source_context = _source_context(
+        manifest=manifest,
+        risk_free_rate=effective_risk_free_rate,
+        risk_free_rate_is_fallback=risk_free_rate_is_fallback,
     )
     overview = build_option_trading_overview(
         tool_a=tool_a,
@@ -235,11 +270,14 @@ def load_option_trading_data(
         target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
         down_beta_min_for_scenario=app_config.hedge_readiness.down_beta_min_for_scenario,
         risk_free_rate_is_fallback=risk_free_rate_is_fallback,
+        source_context=source_context,
     )
     data = OptionTradingData(
         overview=overview,
         candidate_grids=candidate_grids,
         call_candidate_grids=call_candidate_grids,
+        candidate_slots=candidate_slots,
+        call_candidate_slots=call_candidate_slots,
         options_features=features,
         tool_a=tool_a,
         tool_b=tool_b,
@@ -262,6 +300,8 @@ def _empty_data(
         overview=OptionTradingOverviewData(rows=(), reason=reason),
         candidate_grids={},
         call_candidate_grids={},
+        candidate_slots={},
+        call_candidate_slots={},
         options_features=pd.DataFrame(),
         tool_a=tool_a,
         tool_b=tool_b,
@@ -361,24 +401,33 @@ def _load_features(
     return result
 
 
-def _candidate_grids(
+def _candidate_slots(
     *,
     app_config: AppConfig,
     features: pd.DataFrame,
+    tool_a: pd.DataFrame,
     tool_b: pd.DataFrame,
     chains: dict[str, pd.DataFrame],
     risk_free_rate: float,
     manifest: dict[str, Any],
     option_type: Literal["P", "C"],
     target_delta: float,
-) -> dict[str, list[OptionCandidate]]:
+) -> dict[str, list[OptionCandidateSlot]]:
     feature_by_ticker = rows_by_ticker_series(features, strip=True)
+    tool_a_by_ticker = rows_by_ticker_series(tool_a, strip=True)
     tool_b_by_ticker = rows_by_ticker_series(tool_b, strip=True)
     as_of_date = _manifest_as_of_date(manifest)
-    grids: dict[str, list[OptionCandidate]] = {}
+    liquidity_settings = settings_from_config(app_config.hedge_readiness)
+    slots_by_ticker: dict[str, list[OptionCandidateSlot]] = {}
     for ticker, feature in feature_by_ticker.items():
         if not is_optionable_tier(optionability_tier(row_string(feature, "optionability_tier"))):
             continue
+        tool_a_row = tool_a_by_ticker.get(ticker)
+        gold_beta = (
+            row_float(tool_a_row, "down_beta_core")
+            if option_type == "P"
+            else row_float(tool_a_row, "up_beta_core")
+        )
         chain = chains.get(ticker, pd.DataFrame())
         price = _current_stock_price(
             feature=feature,
@@ -386,28 +435,80 @@ def _candidate_grids(
             chain=chain,
         )
         if price is None or price <= 0:
-            grids[ticker] = []
+            slots_by_ticker[ticker] = [
+                OptionCandidateSlot(
+                    ticker=ticker,
+                    option_type=option_type,
+                    horizon_days=horizon,
+                    target_delta=float(target_delta),
+                    expiration=None,
+                    days_to_expiry=None,
+                    status="no_price",
+                    reason=(
+                        "No cached stock price is available, so option deltas "
+                        "cannot be computed."
+                    ),
+                )
+                for horizon in app_config.hedge_readiness.display_horizons_days
+            ]
             continue
-        grids[ticker] = build_candidate_grid(
+        slots_by_ticker[ticker] = build_bucket_slots(
             option_type=option_type,
             ticker=ticker,
             chain=chain,
             underlying_price=price,
             risk_free_rate=risk_free_rate,
-            target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
-            target_delta=target_delta,
-            max_spread_pct=app_config.hedge_readiness.candidate_max_spread_pct,
-            min_open_interest=app_config.hedge_readiness.candidate_min_open_interest,
-            min_volume=app_config.hedge_readiness.candidate_min_volume,
-            min_implied_volatility=(
-                app_config.hedge_readiness.candidate_min_implied_volatility
-            ),
-            max_implied_volatility=(
-                app_config.hedge_readiness.candidate_max_implied_volatility
-            ),
+            target_horizons_days=tuple(app_config.hedge_readiness.display_horizons_days),
+            settings=liquidity_settings,
+            gold_beta=gold_beta,
             as_of_date=as_of_date,
         )
-    return grids
+    return slots_by_ticker
+
+
+def _accepted_candidate_grids(
+    slots_by_ticker: dict[str, list[OptionCandidateSlot]],
+) -> dict[str, list[OptionCandidate]]:
+    return {
+        ticker: _unique_candidates(
+            [slot.candidate for slot in slots if slot.candidate is not None]
+        )
+        for ticker, slots in slots_by_ticker.items()
+    }
+
+
+def _unique_candidates(candidates: list[OptionCandidate]) -> list[OptionCandidate]:
+    seen: set[tuple[int, str | None, str, float, str]] = set()
+    unique: list[OptionCandidate] = []
+    for candidate in candidates:
+        key = (
+            candidate.horizon_days,
+            candidate.bucket,
+            candidate.expiration,
+            candidate.strike,
+            candidate.option_type,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def _source_context(
+    *,
+    manifest: dict[str, Any],
+    risk_free_rate: float,
+    risk_free_rate_is_fallback: bool,
+) -> OptionTradingSourceContext:
+    as_of_raw = str(manifest.get("as_of_date") or "").strip() or None
+    refresh_raw = str(manifest.get("refresh_run_id") or "").strip() or None
+    return OptionTradingSourceContext(
+        as_of_date=as_of_raw,
+        refresh_run_id=refresh_raw,
+        risk_free_rate=risk_free_rate,
+        risk_free_rate_is_fallback=risk_free_rate_is_fallback,
+    )
 
 
 def _current_stock_price(

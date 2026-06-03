@@ -191,6 +191,7 @@ def test_hedge_readiness_config_accepts_defaults():
             "version": 1,
             "target_delta": -0.25,
             "target_horizons_days": [30, 60, 90],
+            "display_horizons_days": [30, 60, 90, 120],
             "optionability_open_interest_threshold": 1000,
             "implied_move_max_spread_pct": 0.35,
             "implied_move_min_open_interest": 1,
@@ -200,6 +201,21 @@ def test_hedge_readiness_config_accepts_defaults():
             "candidate_min_volume": 0,
             "candidate_min_implied_volatility": 0.01,
             "candidate_max_implied_volatility": 3.0,
+            "option_liquidity_tradable_spread_pct": 0.20,
+            "option_liquidity_watch_spread_pct": 0.50,
+            "option_liquidity_min_open_interest": 1,
+            "option_liquidity_min_premium": 0.15,
+            "option_liquidity_near_spot_pct": 0.10,
+            "option_liquidity_target_depth_count": 10,
+            "option_liquidity_oi_cap": 1000,
+            "option_liquidity_volume_cap": 1000,
+            "option_sensible_moneyness_max_pct": 0.35,
+            "option_dte_bands": {
+                30: [21, 45],
+                60: [46, 75],
+                90: [76, 105],
+                120: [106, 150],
+            },
             "delta_gap_warning_threshold": 0.10,
             "hedge_ratio_cheap_max": 0.40,
             "hedge_ratio_expensive_min": 0.80,
@@ -222,12 +238,28 @@ def test_hedge_readiness_config_accepts_defaults():
 
     assert config.target_delta == -0.25
     assert config.target_horizons_days == [30, 60, 90]
+    assert config.display_horizons_days == [30, 60, 90, 120]
     assert config.benchmark_tickers == ["GDX", "GDXJ"]
     assert config.candidate_max_spread_pct == 0.35
     assert config.candidate_min_open_interest == 1
     assert config.candidate_min_volume == 0
     assert config.candidate_min_implied_volatility == 0.01
     assert config.candidate_max_implied_volatility == 3.0
+    assert config.option_liquidity_tradable_spread_pct == 0.20
+    assert config.option_liquidity_watch_spread_pct == 0.50
+    assert config.option_liquidity_min_open_interest == 1
+    assert config.option_liquidity_min_premium == 0.15
+    assert config.option_liquidity_near_spot_pct == 0.10
+    assert config.option_liquidity_target_depth_count == 10
+    assert config.option_liquidity_oi_cap == 1000
+    assert config.option_liquidity_volume_cap == 1000
+    assert config.option_sensible_moneyness_max_pct == 0.35
+    assert config.option_dte_bands == {
+        30: [21, 45],
+        60: [46, 75],
+        90: [76, 105],
+        120: [106, 150],
+    }
     assert config.proxy_low_basis_max_beta_diff == 0.10
     assert config.proxy_medium_basis_max_beta_diff == 0.30
     assert config.proxy_low_basis_min_confidence == 0.70
@@ -245,6 +277,7 @@ def test_hedge_readiness_config_accepts_defaults():
     [
         {"target_delta": 0.25},
         {"target_horizons_days": [30, 30]},
+        {"display_horizons_days": [30, 30]},
         {"hedge_ratio_cheap_max": 1.0, "hedge_ratio_expensive_min": 0.8},
         {"gold_down_scenarios": [0.10, 1.20]},
         {"benchmark_tickers": ["GDX", "gdx"]},
@@ -261,6 +294,18 @@ def test_hedge_readiness_config_accepts_defaults():
         {"candidate_min_implied_volatility": 0.0},
         {"candidate_max_implied_volatility": 0.0},
         {"candidate_min_implied_volatility": 0.5, "candidate_max_implied_volatility": 0.5},
+        {"option_liquidity_tradable_spread_pct": 0},
+        {"option_liquidity_watch_spread_pct": 0},
+        {"option_liquidity_tradable_spread_pct": 0.50, "option_liquidity_watch_spread_pct": 0.20},
+        {"option_liquidity_min_open_interest": -1},
+        {"option_liquidity_min_premium": 0},
+        {"option_liquidity_near_spot_pct": 0},
+        {"option_liquidity_target_depth_count": 0},
+        {"option_liquidity_oi_cap": 0},
+        {"option_liquidity_volume_cap": 0},
+        {"option_sensible_moneyness_max_pct": 0},
+        {"option_dte_bands": {30: [45, 21]}},
+        {"option_dte_bands": {30: [21]}},
         {"default_scenario_quantity": 0},
         {"default_scenarios": [0.0, -0.05, -0.05]},
         {"default_scenarios": [0.05, -0.05]},
@@ -279,6 +324,7 @@ def test_hedge_readiness_config_rejects_invalid_thresholds(override):
         "version": 1,
         "target_delta": -0.25,
         "target_horizons_days": [30, 60, 90],
+        "display_horizons_days": [30, 60, 90, 120],
         "optionability_open_interest_threshold": 1000,
         "implied_move_max_spread_pct": 0.35,
         "implied_move_min_open_interest": 1,
@@ -288,6 +334,21 @@ def test_hedge_readiness_config_rejects_invalid_thresholds(override):
         "candidate_min_volume": 0,
         "candidate_min_implied_volatility": 0.01,
         "candidate_max_implied_volatility": 3.0,
+        "option_liquidity_tradable_spread_pct": 0.20,
+        "option_liquidity_watch_spread_pct": 0.50,
+        "option_liquidity_min_open_interest": 1,
+        "option_liquidity_min_premium": 0.15,
+        "option_liquidity_near_spot_pct": 0.10,
+        "option_liquidity_target_depth_count": 10,
+        "option_liquidity_oi_cap": 1000,
+        "option_liquidity_volume_cap": 1000,
+        "option_sensible_moneyness_max_pct": 0.35,
+        "option_dte_bands": {
+            30: [21, 45],
+            60: [46, 75],
+            90: [76, 105],
+            120: [106, 150],
+        },
         "delta_gap_warning_threshold": 0.10,
         "hedge_ratio_cheap_max": 0.40,
         "hedge_ratio_expensive_min": 0.80,
