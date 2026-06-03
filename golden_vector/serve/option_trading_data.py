@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -26,6 +27,7 @@ from golden_vector.hedge.candidate_puts import (
 )
 from golden_vector.hedge.option_trading import (
     OptionSide,
+    OptionLiquidityMeasurement,
     OptionSizingRequest,
     OptionTradingDetailData,
     OptionTradingOverviewData,
@@ -34,7 +36,11 @@ from golden_vector.hedge.option_trading import (
     build_option_trading_detail,
     build_option_trading_overview,
 )
-from golden_vector.hedge.options_liquidity import build_bucket_slots, settings_from_config
+from golden_vector.hedge.options_liquidity import (
+    build_bucket_slots,
+    scan_option_chain,
+    settings_from_config,
+)
 from golden_vector.ingestion.persist_options import safe_options_file_name
 
 
@@ -261,6 +267,14 @@ def load_option_trading_data(
         risk_free_rate=effective_risk_free_rate,
         risk_free_rate_is_fallback=risk_free_rate_is_fallback,
     )
+    liquidity_measurements = _liquidity_measurements(
+        app_config=app_config,
+        features=features,
+        tool_b=tool_b,
+        chains=chains,
+        risk_free_rate=effective_risk_free_rate,
+        manifest=manifest,
+    )
     overview = build_option_trading_overview(
         tool_a=tool_a,
         options_features=features,
@@ -271,6 +285,7 @@ def load_option_trading_data(
         down_beta_min_for_scenario=app_config.hedge_readiness.down_beta_min_for_scenario,
         risk_free_rate_is_fallback=risk_free_rate_is_fallback,
         source_context=source_context,
+        liquidity_measurements=liquidity_measurements,
     )
     data = OptionTradingData(
         overview=overview,
@@ -493,6 +508,106 @@ def _unique_candidates(candidates: list[OptionCandidate]) -> list[OptionCandidat
         seen.add(key)
         unique.append(candidate)
     return unique
+
+
+def _liquidity_measurements(
+    *,
+    app_config: AppConfig,
+    features: pd.DataFrame,
+    tool_b: pd.DataFrame,
+    chains: dict[str, pd.DataFrame],
+    risk_free_rate: float,
+    manifest: dict[str, Any],
+) -> tuple[OptionLiquidityMeasurement, ...]:
+    feature_by_ticker = rows_by_ticker_series(features, strip=True)
+    tool_b_by_ticker = rows_by_ticker_series(tool_b, strip=True)
+    benchmark_tickers = {
+        str(ticker).upper()
+        for ticker in app_config.hedge_readiness.benchmark_tickers
+    }
+    settings = settings_from_config(app_config.hedge_readiness)
+    as_of_date = _manifest_as_of_date(manifest)
+    grouped: dict[str, list[dict[str, float]]] = {
+        "Benchmark ETFs": [],
+        "Single-stock miners": [],
+    }
+    seen_tickers: dict[str, set[str]] = {
+        "Benchmark ETFs": set(),
+        "Single-stock miners": set(),
+    }
+
+    for ticker, chain in chains.items():
+        feature = feature_by_ticker.get(ticker)
+        if feature is None:
+            continue
+        price = _current_stock_price(
+            feature=feature,
+            tool_b_row=tool_b_by_ticker.get(ticker),
+            chain=chain,
+        )
+        if price is None or price <= 0:
+            continue
+        scan = scan_option_chain(
+            ticker=ticker,
+            chain=chain,
+            underlying_price=price,
+            risk_free_rate=risk_free_rate,
+            settings=settings,
+            as_of_date=as_of_date,
+        )
+        metrics = [
+            metric
+            for metric in scan.metrics
+            if metric.rel_spread is not None
+            and metric.mid is not None
+            and metric.mid > 0
+        ]
+        if not metrics:
+            continue
+        group = (
+            "Benchmark ETFs"
+            if ticker in benchmark_tickers
+            or row_string(feature, "option_vehicle_type") == "benchmark_etf"
+            else "Single-stock miners"
+        )
+        seen_tickers[group].add(ticker)
+        grouped[group].extend(
+            {
+                "rel_spread": float(metric.rel_spread),
+                "open_interest": float(metric.open_interest),
+                "volume": float(metric.volume),
+                "near_spot_depth": float(metric.near_spot_depth_count),
+            }
+            for metric in metrics
+        )
+
+    measurements: list[OptionLiquidityMeasurement] = []
+    for group in ("Benchmark ETFs", "Single-stock miners"):
+        rows = grouped[group]
+        if not rows:
+            continue
+        measurements.append(
+            OptionLiquidityMeasurement(
+                group_label=group,
+                ticker_count=len(seen_tickers[group]),
+                contract_count=len(rows),
+                median_rel_spread=_median(row["rel_spread"] for row in rows),
+                median_open_interest=_median(row["open_interest"] for row in rows),
+                median_volume=_median(row["volume"] for row in rows),
+                median_near_spot_depth=_median(row["near_spot_depth"] for row in rows),
+            )
+        )
+    return tuple(measurements)
+
+
+def _median(values: Iterable[float]) -> float | None:
+    numeric = sorted(float(value) for value in values if value is not None)
+    if not numeric:
+        return None
+    midpoint = len(numeric) // 2
+    if len(numeric) % 2:
+        return numeric[midpoint]
+    return (numeric[midpoint - 1] + numeric[midpoint]) / 2.0
 
 
 def _source_context(

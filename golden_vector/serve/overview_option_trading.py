@@ -5,8 +5,17 @@ from __future__ import annotations
 from html import escape
 from urllib.parse import quote
 
-from golden_vector.hedge.option_trading import OptionTradingOverviewData, OptionTradingRow
-from golden_vector.serve.format_helpers import _fmt_numeric_td, _fmt_text
+from golden_vector.hedge.option_trading import (
+    OptionLiquidityMeasurement,
+    OptionTradingOverviewData,
+    OptionTradingRow,
+)
+from golden_vector.serve.format_helpers import (
+    _fmt_number,
+    _fmt_numeric_td,
+    _fmt_percent,
+    _fmt_text,
+)
 from golden_vector.serve.overview_combined import _collect_filter_options, _render_filter_bar
 from golden_vector.serve.page_shell import _page_shell
 
@@ -38,6 +47,7 @@ def _render_option_trading_overview_page(
             "<p class=\"hint\">Risk-free rate was missing from the options manifest; "
             "scenario values use a 0% rate fallback.</p>"
         )
+    body.append(_render_liquidity_measurements(overview.liquidity_measurements))
     if not overview.rows:
         reason = overview.reason or "No optionable tickers are available."
         body.append(
@@ -95,6 +105,39 @@ def _render_option_trading_overview_page(
         "Option Trading - Golden Vector Workspace",
         "".join(body),
         active_nav="option_trading",
+    )
+
+
+def _render_liquidity_measurements(
+    measurements: tuple[OptionLiquidityMeasurement, ...],
+) -> str:
+    if not measurements:
+        return ""
+    rows = []
+    for measurement in measurements:
+        rows.append(
+            "<tr>"
+            f"<td>{escape(measurement.group_label)}</td>"
+            f"<td>{_fmt_number(measurement.ticker_count, decimals=0)}</td>"
+            f"<td>{_fmt_number(measurement.contract_count, decimals=0)}</td>"
+            f"<td>{_fmt_percent(measurement.median_rel_spread, decimals=1)}</td>"
+            f"<td>{_fmt_number(measurement.median_open_interest, decimals=0)}</td>"
+            f"<td>{_fmt_number(measurement.median_volume, decimals=0)}</td>"
+            f"<td>{_fmt_number(measurement.median_near_spot_depth, decimals=0)}</td>"
+            "</tr>"
+        )
+    return (
+        "<section class=\"nested-panel\">"
+        "<h2>Cached Liquidity Check</h2>"
+        "<p class=\"hint\">Informational only: medians use cached contracts with usable bid/ask/mid. "
+        "They measure whether benchmark ETFs are actually liquid in the snapshot.</p>"
+        "<table><thead><tr>"
+        "<th>Group</th><th>Tickers</th><th>Measured Contracts</th>"
+        "<th>Median Spread</th><th>Median OI</th><th>Median Volume</th>"
+        "<th>Median Near-Spot Depth</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+        "</section>"
     )
 
 

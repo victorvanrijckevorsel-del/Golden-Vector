@@ -80,6 +80,18 @@ class OptionTradingRow:
     pnl_call_at_plus10_60d: float | None
     notes: tuple[str, ...]
     current_stock_price: float | None = None
+    option_vehicle_type: str = "single_stock"
+
+
+@dataclass(frozen=True)
+class OptionLiquidityMeasurement:
+    group_label: str
+    ticker_count: int
+    contract_count: int
+    median_rel_spread: float | None
+    median_open_interest: float | None
+    median_volume: float | None
+    median_near_spot_depth: float | None
 
 
 @dataclass(frozen=True)
@@ -88,6 +100,7 @@ class OptionTradingOverviewData:
     reason: str | None = None
     risk_free_rate_is_fallback: bool = False
     source_context: OptionTradingSourceContext | None = None
+    liquidity_measurements: tuple[OptionLiquidityMeasurement, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -120,6 +133,7 @@ def build_option_trading_overview(
     down_beta_min_for_scenario: float = 0.10,
     risk_free_rate_is_fallback: bool = False,
     source_context: OptionTradingSourceContext | None = None,
+    liquidity_measurements: tuple[OptionLiquidityMeasurement, ...] = (),
 ) -> OptionTradingOverviewData:
     """Build optionable ticker rows for the workspace overview tab."""
 
@@ -129,6 +143,7 @@ def build_option_trading_overview(
             reason="No options feature snapshot is available yet.",
             risk_free_rate_is_fallback=risk_free_rate_is_fallback,
             source_context=source_context,
+            liquidity_measurements=liquidity_measurements,
         )
 
     feature_by_ticker = rows_by_ticker_series(options_features, strip=True)
@@ -160,6 +175,7 @@ def build_option_trading_overview(
 
     rows.sort(
         key=lambda row: (
+            row.option_vehicle_type != "benchmark_etf",
             row.down_beta_core is None,
             -(row.down_beta_core or 0.0),
             row.ticker,
@@ -171,6 +187,7 @@ def build_option_trading_overview(
         reason=reason,
         risk_free_rate_is_fallback=risk_free_rate_is_fallback,
         source_context=source_context,
+        liquidity_measurements=liquidity_measurements,
     )
 
 
@@ -365,6 +382,7 @@ def _build_row(
     up_beta = row_float(tool_a_row, "up_beta_core")
     confidence_label = row_string(tool_a_row, "confidence_label") or "n/a"
     notes: list[str] = []
+    option_vehicle_type = row_string(feature, "option_vehicle_type") or "single_stock"
     current_stock_price = _current_stock_price(
         feature,
         put_candidates if put_candidates else call_candidates,
@@ -411,6 +429,8 @@ def _build_row(
         notes.append("No usable put candidate found.")
     if call_status != "available":
         notes.append("No usable call candidate found.")
+    if option_vehicle_type == "benchmark_etf":
+        notes.append("Benchmark ETF option vehicle.")
 
     return OptionTradingRow(
         ticker=ticker,
@@ -435,6 +455,7 @@ def _build_row(
         pnl_call_at_plus10_60d=pnl_call,
         notes=tuple(notes),
         current_stock_price=current_stock_price,
+        option_vehicle_type=option_vehicle_type,
     )
 
 

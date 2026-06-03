@@ -220,6 +220,33 @@ def test_load_option_trading_data_builds_call_context_from_up_beta(tmp_path):
     assert detail.call_bundles[0].gold_beta_used == 1.1
 
 
+def test_load_option_trading_data_surfaces_benchmark_etf_option_rows(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        include_benchmarks=True,
+    )
+
+    data = load_option_trading_data(paths, app_config=app_config)
+    tickers = {row.ticker for row in data.overview.rows}
+    gdx = next(row for row in data.overview.rows if row.ticker == "GDX")
+
+    assert {"GDX", "GDXJ"}.issubset(tickers)
+    assert gdx.option_vehicle_type == "benchmark_etf"
+    assert "Benchmark ETF option vehicle." in gdx.notes
+    assert data.candidate_slots["GDX"]
+    assert data.call_candidate_slots["GDX"]
+    assert any(
+        measurement.group_label == "Benchmark ETFs"
+        for measurement in data.overview.liquidity_measurements
+    )
+
+
 def test_load_option_trading_data_ignores_stale_feature_rows(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
@@ -276,11 +303,23 @@ def _write_option_inputs(
     refresh_run_id: str,
     tool_refresh_run_id: str,
     risk_free_rate: float | None = 0.04,
+    include_benchmarks: bool = False,
 ) -> None:
     paths.ensure_runtime_dirs()
-    snapshot_path = paths.runs_dir / refresh_run_id / "snapshots" / "options" / "AEM.parquet"
-    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-    _chain("AEM").to_parquet(snapshot_path, index=False)
+    snapshot_dir = paths.runs_dir / refresh_run_id / "snapshots" / "options"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    tickers = ["AEM", "GDX", "GDXJ"] if include_benchmarks else ["AEM"]
+    snapshot_items = []
+    for ticker in tickers:
+        snapshot_path = snapshot_dir / f"{safe_options_file_name(ticker)}.parquet"
+        _chain(ticker).to_parquet(snapshot_path, index=False)
+        snapshot_items.append(
+            {
+                "ticker": ticker,
+                "options_available": True,
+                "snapshot_path": snapshot_path.relative_to(paths.repo_root).as_posix(),
+            }
+        )
     paths.latest_options_manifest_path.parent.mkdir(parents=True, exist_ok=True)
     paths.latest_options_manifest_path.write_text(
         json.dumps(
@@ -288,25 +327,30 @@ def _write_option_inputs(
                 "refresh_run_id": refresh_run_id,
                 "as_of_date": "2026-05-29",
                 "risk_free_rate": risk_free_rate,
-                "snapshots": [
-                    {
-                        "ticker": "AEM",
-                        "options_available": True,
-                        "snapshot_path": snapshot_path.relative_to(paths.repo_root).as_posix(),
-                    }
-                ],
+                "snapshots": snapshot_items,
             }
         ),
         encoding="utf-8",
     )
-    feature = _feature("AEM", "directly_hedgeable", put_iv=0.4, call_iv=0.5, iv_rank=40.0)
-    feature["run_id"] = refresh_run_id
-    feature["underlying_price"] = 50.0
     paths.options_features_dir.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame([feature]).to_parquet(
-        paths.options_features_dir / f"{safe_options_file_name('AEM')}.parquet",
-        index=False,
-    )
+    for ticker in tickers:
+        feature = _feature(
+            ticker,
+            "directly_hedgeable",
+            put_iv=0.4,
+            call_iv=0.5,
+            iv_rank=40.0,
+        )
+        feature["run_id"] = refresh_run_id
+        feature["underlying_price"] = 50.0
+        feature["option_vehicle_type"] = (
+            "benchmark_etf" if ticker in {"GDX", "GDXJ"} else "single_stock"
+        )
+        feature["options_source_symbol"] = ticker
+        pd.DataFrame([feature]).to_parquet(
+            paths.options_features_dir / f"{safe_options_file_name(ticker)}.parquet",
+            index=False,
+        )
     _write_tool_outputs(paths, refresh_run_id=tool_refresh_run_id)
 
 

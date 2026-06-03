@@ -57,3 +57,23 @@ Self-review notes:
 Checks:
 - `python -m pytest tests/test_options_phase.py tests/test_replay_manifest.py tests/test_persist_options.py -q` -> 29 passed.
 - `python -m pytest tests/test_options_phase.py tests/test_option_trading_data.py tests/test_options_liquidity.py -q` -> 19 passed.
+
+## 2026-06-03 - Phase 2, Step P2.2
+
+Implemented:
+- Benchmark ETF option feature rows now flow through the same Option Trading overview/detail path as miner rows when their cached snapshots exist.
+- Overview rows carry `option_vehicle_type`; GDX/GDXJ benchmark ETF rows are labelled in Notes and sorted ahead of single-stock miners so they are easy to find.
+- Added cached liquidity measurements comparing Benchmark ETFs vs Single-stock miners: ticker count, measured contract count, median relative spread, median open interest, median volume, and median near-spot depth.
+- Rendered the liquidity measurement as a compact informational table on the Option Trading overview.
+
+Self-review notes:
+- The measurement is descriptive only and uses cached contracts with usable bid/ask/mid; it does not recommend a trade or size a hedge.
+- GDX/GDXJ still require a fresh `python main.py update-data` run before they appear in Emanuel's local cached website data, because the current cache predates benchmark option-chain ingestion.
+- No refresh button behavior was added; the disabled placeholder remains honest.
+- The Phase 1 `is_usable_candidate()` gate remains the only suggested-contract gate.
+
+Checks:
+- `python -m pytest tests/test_option_trading_data.py tests/test_option_trading_overview.py tests/test_option_trading_routes.py tests/test_options_liquidity.py -q` -> 34 passed.
+- `python -m pytest tests/test_options_phase.py tests/test_option_trading_data.py tests/test_option_trading_overview.py tests/test_option_trading_routes.py tests/test_options_liquidity.py tests/test_options_liquidity_cli.py -q` -> 40 passed.
+- `python -m pytest tests/test_options_phase.py tests/test_replay_manifest.py tests/test_persist_options.py tests/test_option_trading_data.py tests/test_option_trading_overview.py tests/test_option_trading_routes.py tests/test_options_liquidity.py tests/test_options_liquidity_cli.py tests/test_config_models.py -q` -> 128 passed.
+- `python -m pytest -q` -> 585 passed.

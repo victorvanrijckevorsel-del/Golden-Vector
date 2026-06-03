@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from golden_vector.hedge.option_trading import (
+    OptionLiquidityMeasurement,
     OptionTradingOverviewData,
     OptionTradingRow,
     OptionTradingSourceContext,
@@ -35,6 +36,26 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
                 as_of_date="2026-06-01",
                 refresh_run_id="options-run",
             ),
+            liquidity_measurements=(
+                OptionLiquidityMeasurement(
+                    group_label="Benchmark ETFs",
+                    ticker_count=2,
+                    contract_count=120,
+                    median_rel_spread=0.08,
+                    median_open_interest=300.0,
+                    median_volume=40.0,
+                    median_near_spot_depth=12.0,
+                ),
+                OptionLiquidityMeasurement(
+                    group_label="Single-stock miners",
+                    ticker_count=1,
+                    contract_count=30,
+                    median_rel_spread=0.18,
+                    median_open_interest=80.0,
+                    median_volume=8.0,
+                    median_near_spot_depth=4.0,
+                ),
+            ),
         )
     )
 
@@ -56,6 +77,10 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
     assert "Sensible liquid contract" in html
     assert "Snapshot Date" in html
     assert "2026-06-01" in html
+    assert "Cached Liquidity Check" in html
+    assert "Benchmark ETFs" in html
+    assert "Single-stock miners" in html
+    assert "8.0%" in html
     assert "Put P&amp;L/share @ Gold -10% (60d)" not in html
     assert "Call P&amp;L/share @ Gold +10% (60d, context)" not in html
     assert "2.50" not in html
