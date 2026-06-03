@@ -10,8 +10,12 @@ import pandas as pd
 
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge.candidate_puts import OptionCandidate
+from golden_vector.hedge.disclosures import (
+    LONG_OPTION_PREMIUM_CAVEAT,
+    OPTION_REPRICE_ASSUMPTION,
+)
 from golden_vector.hedge.option_trading import OptionSizingResult, OptionTradingDetailData
-from golden_vector.hedge.scenarios import CandidateScenarioBundle
+from golden_vector.hedge.scenarios import CandidateScenarioBundle, scenario_model_note
 from golden_vector.model.structural import build_trailing_window_rows
 from golden_vector.serve.charts import (
     _build_beta_history_svg,
@@ -38,13 +42,6 @@ from golden_vector.serve.workspace_state import (
     _WINDOW_WEEKS,
     _structural_history_matches_tool_a,
 )
-
-OPTION_REPRICE_ASSUMPTION = (
-    "Value Now and P&L Now are instant Black-Scholes model values using "
-    "unchanged days-to-expiry and constant implied volatility; they are not "
-    "live market quotes."
-)
-
 
 def _render_window_switcher(
     *,
@@ -199,7 +196,8 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
         "<h2>Option Trading</h2>",
         "<p class=\"hint\">This lens uses the Hedge Readiness optionable subset: "
         "downside put candidates are the ranking basis, and upside calls are "
-        "shown as context where listed calls pass the same liquidity checks.</p>",
+        "shown as context where listed calls pass the same liquidity checks. "
+        f"{LONG_OPTION_PREMIUM_CAVEAT}</p>",
     ]
     if detail is None:
         body.append(
@@ -225,6 +223,8 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
             "<table><tbody>",
             "<tr><th>Down Beta</th>"
             f"<td>{_fmt_number(row.down_beta_core, decimals=2)}</td></tr>",
+            "<tr><th>Plain Beta</th>"
+            f"<td>{_fmt_number(row.structural_delta_core, decimals=2)}</td></tr>",
             "<tr><th>Up Beta</th>"
             f"<td>{_fmt_number(row.up_beta_core, decimals=2)}</td></tr>",
             f"<tr><th>Put Status</th><td>{_fmt_text(row.put_status)}</td></tr>",
@@ -364,6 +364,7 @@ def _render_option_scenario_tables(
             )
         rows = []
         for row in bundle.rows:
+            model_note = scenario_model_note(row.gold_pct_change)
             rows.append(
                 "<tr>"
                 f"<td>{_fmt_percent(row.gold_pct_change, decimals=1)}</td>"
@@ -373,13 +374,14 @@ def _render_option_scenario_tables(
                 f"<td>{_fmt_number(row.pnl_per_contract_if_closed_today, decimals=2)}</td>"
                 f"<td>{_fmt_number(row.pnl_per_contract_at_expiry, decimals=2)}</td>"
                 f"<td>{_fmt_number(row.net_pnl_at_expiry, decimals=0)}</td>"
+                f"<td>{escape(model_note) if model_note else ''}</td>"
                 "</tr>"
             )
         sections.append(
             "<table>"
             "<thead><tr><th>Gold Move</th><th>Modeled Stock</th><th>Value Now</th>"
             "<th>Value At Expiry</th><th>P&amp;L/share Now</th><th>P&amp;L/share Expiry</th>"
-            "<th>Net Expiry P&amp;L</th></tr></thead>"
+            "<th>Net Expiry P&amp;L</th><th>Model Note</th></tr></thead>"
             f"<tbody>{''.join(rows)}</tbody>"
             "</table>"
         )
@@ -424,7 +426,7 @@ def _render_option_sizing_calculator(detail: OptionTradingDetailData) -> str:
         "<h3>Sizing Calculator</h3>"
         "<p class=\"hint\">GET-only calculator. Values are recomputed server-side "
         "from cached per-contract scenarios and are not saved. "
-        f"{OPTION_REPRICE_ASSUMPTION}</p>"
+        f"{OPTION_REPRICE_ASSUMPTION} {LONG_OPTION_PREMIUM_CAVEAT}</p>"
         f"<form method=\"get\" action=\"/ticker/{quote(detail.ticker, safe='')}#option-trading\" class=\"option-sizing-form\">"
         "<input type=\"hidden\" name=\"lens\" value=\"option-trading\">"
         "<label>Side "
@@ -482,6 +484,7 @@ def _render_option_sizing_result(sizing: OptionSizingResult) -> str:
         )
     rows = []
     for row in bundle.rows:
+        model_note = scenario_model_note(row.gold_pct_change)
         rows.append(
             "<tr>"
             f"<td>{_fmt_percent(row.gold_pct_change, decimals=1)}</td>"
@@ -490,6 +493,7 @@ def _render_option_sizing_result(sizing: OptionSizingResult) -> str:
             f"<td>{_fmt_number(row.pnl_per_contract_at_expiry, decimals=2)}</td>"
             f"<td>{_fmt_number(row.net_pnl_if_closed_today, decimals=0)}</td>"
             f"<td>{_fmt_number(row.net_pnl_at_expiry, decimals=0)}</td>"
+            f"<td>{escape(model_note) if model_note else ''}</td>"
             "</tr>"
         )
     return (
@@ -498,7 +502,8 @@ def _render_option_sizing_result(sizing: OptionSizingResult) -> str:
         f"Contracts: {sizing.contracts}.{spend}{leftover}</p>"
         "<table>"
         "<thead><tr><th>Gold Move</th><th>Modeled Stock</th><th>P&amp;L/share Now</th>"
-        "<th>P&amp;L/share Expiry</th><th>Net P&amp;L Now</th><th>Net P&amp;L Expiry</th></tr></thead>"
+        "<th>P&amp;L/share Expiry</th><th>Net P&amp;L Now</th><th>Net P&amp;L Expiry</th>"
+        "<th>Model Note</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"
         "</div>"

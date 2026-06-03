@@ -33,6 +33,11 @@ from golden_vector.hedge.expected_downside import (
     PremiumVsDownsideCard,
     compute_premium_vs_downside,
 )
+from golden_vector.hedge.disclosures import (
+    LONG_OPTION_PREMIUM_CAVEAT,
+    OPTION_REPRICE_ASSUMPTION,
+    SENSITIVITY_RANKING_CAVEAT,
+)
 from golden_vector.hedge.header_context import HeaderContext, build_header_context
 from golden_vector.hedge.holdings import Holding, load_holdings
 from golden_vector.hedge.portfolio_totals import (
@@ -43,6 +48,7 @@ from golden_vector.hedge.proxy_hedge import ProxyMatch, map_proxy_hedges
 from golden_vector.hedge.scenarios import (
     CandidateScenarioBundle,
     compute_scenario_bundle,
+    scenario_model_note,
 )
 from golden_vector.hedge.sensitivity_ranking import (
     RANKING_PNL_GOLD_MOVE,
@@ -546,6 +552,8 @@ def _render_sensitivity_ranking(ranking: SensitivityRankingData) -> list[str]:
     lines = [
         "## Sensitivity Ranking",
         "",
+        SENSITIVITY_RANKING_CAVEAT,
+        "",
         f"Sorted by `{ranking.sort_by}`. "
         f"Showing {len(ranking.rows)} of {ranking.total_count} tickers.",
         "",
@@ -554,10 +562,10 @@ def _render_sensitivity_ranking(ranking: SensitivityRankingData) -> list[str]:
         return [*lines, "No Tool A rows are available for sensitivity ranking.", ""]
     lines.extend(
         [
-            "| Rank | Ticker | Down beta | Up beta | Confidence | IV percentile | "
+            "| Rank | Ticker | Down beta | Plain beta | Up beta | Confidence | IV percentile | "
             f"P&L/share at gold {RANKING_PNL_GOLD_MOVE:.0%} | "
             "Optionability | Notes |",
-            "|---:|---|---:|---:|---|---:|---:|---|---|",
+            "|---:|---|---:|---:|---:|---|---:|---:|---|---|",
         ]
     )
     for row in ranking.rows:
@@ -566,6 +574,7 @@ def _render_sensitivity_ranking(ranking: SensitivityRankingData) -> list[str]:
             f"{row.rank if row.rank is not None else 'n/a'} | "
             f"{row.ticker} | "
             f"{_fmt_number(row.down_beta_core)} | "
+            f"{_fmt_number(row.structural_delta_core)} | "
             f"{_fmt_number(row.up_beta_core)} | "
             f"{row.confidence_label} | "
             f"{_fmt_number(row.iv_percentile_cross_sectional)} | "
@@ -684,6 +693,7 @@ def _render_speculation_candidates(
         "",
         f"Sorted by `{data.sort_by}` ascending. "
         f"Showing up to {data.max_tickers_applied} optionable tickers.",
+        LONG_OPTION_PREMIUM_CAVEAT,
         "",
     ]
     if risk_free_rate_is_fallback:
@@ -876,8 +886,11 @@ def _render_scenario_bundles(bundles: list[CandidateScenarioBundle]) -> list[str
     lines = [
         "Scenario P&L:",
         "",
-        "Quoted option values and P&L/share use the listed per-share option quote; "
-        "net P&L applies the selected contract quantity and the standard 100-share multiplier.",
+        "Modeled option values use Black-Scholes with unchanged days-to-expiry "
+        "and constant implied volatility; they are not live market quotes. "
+        f"{OPTION_REPRICE_ASSUMPTION}",
+        "P&L/share starts from the listed per-share option premium; net P&L applies "
+        "the selected contract quantity and the standard 100-share multiplier.",
         "",
     ]
     if not bundles:
@@ -896,13 +909,15 @@ def _render_scenario_bundles(bundles: list[CandidateScenarioBundle]) -> list[str
             lines.extend([bundle.breakeven_annotation, ""])
         lines.extend(
             [
-                "| Gold move | Modeled stock | Expiry quote | Current quote | "
-                "P&L/share expiry | P&L/share today | Net P&L expiry |",
-                "|---:|---:|---:|---:|---:|---:|---:|",
+                "| Gold move | Modeled stock | Modeled value at expiry | "
+                "Modeled value now | P&L/share expiry | P&L/share today | "
+                "Net P&L expiry | Model note |",
+                "|---:|---:|---:|---:|---:|---:|---:|---|",
             ]
         )
         for row in bundle.rows:
             clamp_note = " (clamped)" if row.stock_clamped_at_zero else ""
+            model_note = scenario_model_note(row.gold_pct_change)
             lines.append(
                 "| "
                 f"{_fmt_pct(row.gold_pct_change)} | "
@@ -911,7 +926,8 @@ def _render_scenario_bundles(bundles: list[CandidateScenarioBundle]) -> list[str
                 f"{_fmt_price(row.current_value_per_contract)} | "
                 f"{_fmt_price(row.pnl_per_contract_at_expiry)} | "
                 f"{_fmt_price(row.pnl_per_contract_if_closed_today)} | "
-                f"{_fmt_money(row.net_pnl_at_expiry)} |"
+                f"{_fmt_money(row.net_pnl_at_expiry)} | "
+                f"{model_note} |"
             )
         lines.append("")
     return lines

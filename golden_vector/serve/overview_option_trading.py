@@ -5,6 +5,10 @@ from __future__ import annotations
 from html import escape
 from urllib.parse import quote
 
+from golden_vector.hedge.disclosures import (
+    LONG_OPTION_PREMIUM_CAVEAT,
+    SENSITIVITY_RANKING_CAVEAT,
+)
 from golden_vector.hedge.option_trading import OptionTradingOverviewData, OptionTradingRow
 from golden_vector.serve.format_helpers import _fmt_numeric_td, _fmt_text
 from golden_vector.serve.overview_combined import _collect_filter_options, _render_filter_bar
@@ -20,6 +24,8 @@ def _render_option_trading_overview_page(
         "sensitivity. Put columns are the downside ranking basis. Call columns "
         "are bullish-gold context where listed calls pass the same liquidity "
         "checks, not the ranking basis.</p>",
+        f"<p class=\"hint\">{escape(SENSITIVITY_RANKING_CAVEAT)} "
+        f"{escape(LONG_OPTION_PREMIUM_CAVEAT)}</p>",
         "<p class=\"hint\"><a class=\"raw-report-download\" href=\"/hedge-readiness/latest.md\">"
         "Download latest raw hedge-readiness markdown report</a></p>",
     ]
@@ -69,6 +75,7 @@ def _render_option_trading_overview_page(
         "<thead><tr>"
         "<th data-col-name=\"ticker\">Ticker</th>"
         "<th data-col-name=\"down_beta\" data-sort-numeric>Down Beta</th>"
+        "<th data-col-name=\"plain_beta\" data-sort-numeric>Plain Beta</th>"
         "<th data-col-name=\"up_beta\" data-sort-numeric>Up Beta</th>"
         "<th data-col-name=\"confidence\">Confidence</th>"
         "<th data-col-name=\"iv\" data-sort-numeric>IV Percentile</th>"
@@ -95,6 +102,7 @@ def _render_row(row: OptionTradingRow) -> str:
         "<tr>"
         f"<td><a href=\"{escape(detail_href)}\">{escape(row.ticker)}</a></td>"
         f"{_fmt_numeric_td(row.down_beta_core, decimals=2)}"
+        f"{_fmt_numeric_td(row.structural_delta_core, decimals=2)}"
         f"{_fmt_numeric_td(row.up_beta_core, decimals=2)}"
         f"<td>{_fmt_text(row.confidence_label)}</td>"
         f"{_fmt_numeric_td(row.iv_percentile_cross_sectional, decimals=1)}"

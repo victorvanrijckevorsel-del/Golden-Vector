@@ -29,6 +29,7 @@ def test_build_option_trading_overview_filters_and_sorts_optionable_rows():
         [
             {
                 "ticker": "AEM",
+                "structural_delta_core": 1.3,
                 "down_beta_core": 1.2,
                 "up_beta_core": 1.1,
                 "confidence_label": "HIGH",
@@ -36,6 +37,7 @@ def test_build_option_trading_overview_filters_and_sorts_optionable_rows():
             },
             {
                 "ticker": "NEM",
+                "structural_delta_core": 1.9,
                 "down_beta_core": 1.8,
                 "up_beta_core": 1.0,
                 "confidence_label": "MEDIUM",
@@ -56,6 +58,7 @@ def test_build_option_trading_overview_filters_and_sorts_optionable_rows():
     )
 
     assert [row.ticker for row in overview.rows] == ["NEM", "AEM"]
+    assert overview.rows[0].structural_delta_core == 1.9
     assert overview.rows[0].put_status == "available"
     assert overview.rows[0].call_status == "available"
     assert overview.rows[0].pnl_put_at_minus10_60d is not None
@@ -270,6 +273,7 @@ def _write_tool_outputs(paths, *, refresh_run_id: str) -> None:
         [
             {
                 "ticker": "AEM",
+                "structural_delta_core": 1.3,
                 "down_beta_core": 1.4,
                 "up_beta_core": 1.1,
                 "confidence_label": "HIGH",

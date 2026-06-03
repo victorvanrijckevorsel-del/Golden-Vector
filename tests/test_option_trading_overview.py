@@ -13,6 +13,7 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
             rows=(
                 OptionTradingRow(
                     ticker="AEM",
+                    structural_delta_core=1.3,
                     down_beta_core=1.4,
                     up_beta_core=1.1,
                     confidence_label="HIGH",
@@ -30,8 +31,11 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
     )
 
     assert "Option Trading" in html
+    assert "Descriptive stress-sensitivity view" in html
+    assert "Buying puts/calls can be right on direction" in html
     assert "/ticker/AEM?lens=option-trading#option-trading" in html
     assert "option-trading-table" in html
+    assert "Plain Beta" in html
     assert "data-filter-column=\"put_status\"" in html
     assert "data-filter-column=\"call_status\"" in html
     assert "Put P&amp;L/share @ Gold -10% (60d)" in html

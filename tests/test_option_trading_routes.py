@@ -74,6 +74,9 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
     assert "Downside Put Scenarios" in body
     assert "Upside Call Candidates" in body
     assert "Upside Call Scenarios" in body
+    assert "Plain Beta" in body
+    assert "Buying puts/calls can be right on direction" in body
+    assert "approximate - linear beta can understate real downside" in body
     assert "Leveraged bullish speculation" in body
     assert "Put P&amp;L/share @ Gold -10% (60d)" in body
     assert "Call P&amp;L/share @ Gold +10% (60d)" in body
@@ -140,6 +143,7 @@ def test_workspace_option_trading_calculator_contracts_mode(tmp_path):
     assert response["status"].startswith("200")
     body = response["body"]
     assert "Sizing Calculator" in body
+    assert "Buying puts/calls can be right on direction" in body
     assert 'class="radio-label"' in body
     assert "Selected: 60d call" in body
     assert "Contracts: 3." in body

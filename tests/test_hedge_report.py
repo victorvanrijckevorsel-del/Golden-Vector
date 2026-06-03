@@ -121,6 +121,8 @@ def test_run_hedge_readiness_writes_markdown_report(tmp_path, capsys):
     assert latest_report.exists()
     markdown = latest_report.read_text(encoding="utf-8")
     assert "# Hedge Readiness Report" in markdown
+    assert "Descriptive stress-sensitivity view" in markdown
+    assert "Buying puts/calls can be right on direction" in markdown
     _assert_heading_order(
         markdown,
         [
@@ -355,6 +357,17 @@ def test_scenario_rendering_labels_quote_units_and_multiplier():
                 pnl_per_contract_if_closed_today=1.2,
                 net_pnl_at_expiry=400.0,
                 net_pnl_if_closed_today=600.0,
+            ),
+            ScenarioRow(
+                gold_pct_change=-0.20,
+                implied_stock_price=36.0,
+                stock_clamped_at_zero=False,
+                expiry_value_per_contract=9.0,
+                current_value_per_contract=9.4,
+                pnl_per_contract_at_expiry=7.8,
+                pnl_per_contract_if_closed_today=8.2,
+                net_pnl_at_expiry=3900.0,
+                net_pnl_if_closed_today=4100.0,
             )
         ],
         breakeven_gold_pct=None,
@@ -366,7 +379,13 @@ def test_scenario_rendering_labels_quote_units_and_multiplier():
     rendered = "\n".join(report_module._render_scenario_bundles([bundle]))
 
     assert "P&L/share expiry" in rendered
+    assert "Modeled value at expiry" in rendered
+    assert "Modeled value now" in rendered
+    assert "Expiry quote" not in rendered
+    assert "Current quote" not in rendered
     assert "standard 100-share multiplier" in rendered
+    assert "constant implied volatility" in rendered
+    assert "approximate - linear beta can understate real downside" in rendered
     assert "P&L/contract" not in rendered
 
 
@@ -451,8 +470,18 @@ def _write_tool_outputs(paths, *, refresh_run_id: str | None = "refresh-run") ->
     paths.output_tool_a_dir.mkdir(parents=True, exist_ok=True)
     paths.output_tool_b_dir.mkdir(parents=True, exist_ok=True)
     tool_a_rows = [
-        {"ticker": "AEM", "down_beta_core": 1.4, "confidence_score": 0.8},
-        {"ticker": "AAUC.TO", "down_beta_core": 1.2, "confidence_score": 0.6},
+        {
+            "ticker": "AEM",
+            "structural_delta_core": 1.3,
+            "down_beta_core": 1.4,
+            "confidence_score": 0.8,
+        },
+        {
+            "ticker": "AAUC.TO",
+            "structural_delta_core": 1.1,
+            "down_beta_core": 1.2,
+            "confidence_score": 0.6,
+        },
     ]
     tool_b_rows = [
         {"ticker": "AEM", "share_price_usd": 50.0, "screening_verdict": "WATCH"},

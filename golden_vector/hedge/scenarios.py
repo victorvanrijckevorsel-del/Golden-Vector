@@ -11,9 +11,11 @@ from golden_vector.features.black_scholes import (
 )
 from golden_vector.features.options_chain import CALENDAR_DAYS_PER_YEAR
 from golden_vector.hedge.candidate_puts import OptionCandidate
+from golden_vector.hedge.disclosures import EXTREME_DOWNSIDE_SCENARIO_CAVEAT
 
 DOWN_BETA_MIN_FOR_SCENARIO = 0.10
 OPTION_CONTRACT_MULTIPLIER = 100
+EXTREME_DOWNSIDE_SCENARIO_THRESHOLD = -0.15
 
 
 class OptionStrategy(Enum):
@@ -59,6 +61,14 @@ class CandidateScenarioBundle:
         """Backward-compatible alias for put-only callers."""
 
         return self.gold_beta_used
+
+
+def scenario_model_note(gold_pct_change: float) -> str:
+    """Return the display caveat for scenarios where the linear model is thin."""
+
+    if gold_pct_change <= EXTREME_DOWNSIDE_SCENARIO_THRESHOLD:
+        return EXTREME_DOWNSIDE_SCENARIO_CAVEAT
+    return ""
 
 
 def compute_scenario_bundle(

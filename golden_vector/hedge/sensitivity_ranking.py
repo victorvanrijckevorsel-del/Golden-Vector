@@ -24,6 +24,7 @@ RANKING_PNL_GOLD_MOVE = -0.10
 class SensitivityRow:
     rank: int | None
     ticker: str
+    structural_delta_core: float | None
     down_beta_core: float | None
     up_beta_core: float | None
     confidence_label: str
@@ -75,6 +76,7 @@ def build_sensitivity_ranking(
         SensitivityRow(
             rank=index,
             ticker=row.ticker,
+            structural_delta_core=row.structural_delta_core,
             down_beta_core=row.down_beta_core,
             up_beta_core=row.up_beta_core,
             confidence_label=row.confidence_label,
@@ -151,6 +153,7 @@ def _build_row(
         SensitivityRow(
             rank=None,
             ticker=ticker,
+            structural_delta_core=as_float(tool_a_row.get("structural_delta_core")),
             down_beta_core=down_beta,
             up_beta_core=as_float(tool_a_row.get("up_beta_core")),
             confidence_label=str(tool_a_row.get("confidence_label") or "n/a"),

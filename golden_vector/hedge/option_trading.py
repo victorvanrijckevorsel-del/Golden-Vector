@@ -54,6 +54,7 @@ class OptionSizingResult:
 @dataclass(frozen=True)
 class OptionTradingRow:
     ticker: str
+    structural_delta_core: float | None
     down_beta_core: float | None
     up_beta_core: float | None
     confidence_label: str
@@ -379,6 +380,7 @@ def _build_row(
 
     return OptionTradingRow(
         ticker=ticker,
+        structural_delta_core=row_float(tool_a_row, "structural_delta_core"),
         down_beta_core=down_beta,
         up_beta_core=up_beta,
         confidence_label=confidence_label,
