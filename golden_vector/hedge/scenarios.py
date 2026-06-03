@@ -71,6 +71,25 @@ def scenario_model_note(gold_pct_change: float) -> str:
     return ""
 
 
+def downside_magnitudes_to_signed_returns(
+    gold_downside_magnitudes: tuple[float, ...],
+) -> tuple[float, ...]:
+    """Convert positive downside magnitudes into signed gold-return scenarios."""
+
+    signed: list[float] = []
+    for magnitude in gold_downside_magnitudes:
+        value = float(magnitude)
+        if value < 0:
+            raise ValueError(
+                "Downside magnitudes must be non-negative; signed scenarios "
+                "belong in compute_scenario_bundle."
+            )
+        if value >= 1:
+            raise ValueError("Downside magnitudes must be less than 100%.")
+        signed.append(-value if value else 0.0)
+    return tuple(signed)
+
+
 def compute_scenario_bundle(
     *,
     candidate: OptionCandidate,
@@ -86,6 +105,11 @@ def compute_scenario_bundle(
     quantity: int = 5,
 ) -> CandidateScenarioBundle:
     """Compute model-based option P&L scenarios for one listed candidate."""
+
+    _validate_signed_gold_scenarios(
+        strategy=strategy,
+        gold_scenarios=gold_scenarios,
+    )
 
     effective_gold_beta = gold_beta if gold_beta is not None else down_beta_core
     effective_min_beta = (
@@ -191,6 +215,20 @@ def compute_scenario_bundle(
         skipped_reason=None,
         **base_kwargs,
     )
+
+
+def _validate_signed_gold_scenarios(
+    *,
+    strategy: OptionStrategy,
+    gold_scenarios: tuple[float, ...],
+) -> None:
+    if strategy in {OptionStrategy.LONG_PUT, OptionStrategy.SHORT_PUT} and any(
+        float(gold_pct_change) > 0 for gold_pct_change in gold_scenarios
+    ):
+        raise ValueError(
+            "Put scenario gold moves must be signed returns <= 0; use "
+            "downside_magnitudes_to_signed_returns for positive downside magnitudes."
+        )
 
 
 def _skip_reason(

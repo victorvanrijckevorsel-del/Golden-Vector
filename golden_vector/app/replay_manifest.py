@@ -116,6 +116,7 @@ def update_manifest_with_foundation(
             "manifest_original_path": _best_effort_repo_relative(foundation_manifest_path),
             "snapshot_path": _run_relative(run_dir, snapshot_path),
             "manifest_sha256": _sha256_file(snapshot_path),
+            "source_assets": _foundation_source_assets(run_dir, snapshot_path),
         }
         manifest["foundation_load_status"] = "captured"
     except Exception as exc:  # noqa: BLE001 - phase 2 must record and proceed.
@@ -152,6 +153,7 @@ def update_manifest_with_options(
             ),
             "snapshot_path": _run_relative(run_dir, snapshot_path),
             "latest_options_manifest_sha256": _sha256_file(snapshot_path),
+            "source_assets": _options_source_assets(run_dir, snapshot_path),
         }
         manifest["options_manifest_status"] = "captured"
     except Exception as exc:  # noqa: BLE001 - options capture should record and proceed.
@@ -222,6 +224,16 @@ def verify_manifest(run_dir_or_id: Path | str) -> VerifyResult:
                 name=OPTIONS_MANIFEST_SNAPSHOT_FILE,
                 snapshot_path=Path(str(options_data.get("snapshot_path", ""))),
                 expected_sha256=str(options_data.get("latest_options_manifest_sha256", "")),
+            )
+        )
+
+    for source_asset in _manifest_source_assets(manifest):
+        asset_statuses.append(
+            _verify_source_asset(
+                run_dir,
+                name=str(source_asset.get("name", "source_asset")),
+                original_path=Path(str(source_asset.get("original_path", ""))),
+                expected_sha256=str(source_asset.get("sha256", "")),
             )
         )
 
@@ -357,6 +369,75 @@ def _verify_snapshot_asset(
     )
 
 
+def _verify_source_asset(
+    run_dir: Path,
+    *,
+    name: str,
+    original_path: Path,
+    expected_sha256: str,
+) -> VerifyAssetStatus:
+    resolved_path = _resolve_original_asset_path(run_dir, original_path)
+    if not resolved_path.exists():
+        return VerifyAssetStatus(
+            name=name,
+            snapshot_path=resolved_path,
+            expected_sha256=expected_sha256,
+            actual_sha256=None,
+            status="missing",
+            message="source file is missing",
+        )
+
+    actual_sha256 = _sha256_file(resolved_path)
+    if actual_sha256 != expected_sha256:
+        return VerifyAssetStatus(
+            name=name,
+            snapshot_path=resolved_path,
+            expected_sha256=expected_sha256,
+            actual_sha256=actual_sha256,
+            status="hash_mismatch",
+            message="source hash does not match captured manifest",
+        )
+
+    return VerifyAssetStatus(
+        name=name,
+        snapshot_path=resolved_path,
+        expected_sha256=expected_sha256,
+        actual_sha256=actual_sha256,
+        status="ok",
+        message="source sha256 matches captured manifest",
+    )
+
+
+def _manifest_source_assets(manifest: dict[str, Any]) -> list[dict[str, str]]:
+    assets: list[dict[str, str]] = []
+    foundation_data = manifest.get("foundation_run_consumed") or {}
+    assets.extend(_valid_source_assets(foundation_data.get("source_assets", [])))
+    options_data = manifest.get("options_manifest_captured") or {}
+    assets.extend(_valid_source_assets(options_data.get("source_assets", [])))
+    return assets
+
+
+def _valid_source_assets(raw_assets: object) -> list[dict[str, str]]:
+    if not isinstance(raw_assets, list):
+        return []
+    assets: list[dict[str, str]] = []
+    for raw_asset in raw_assets:
+        if not isinstance(raw_asset, dict):
+            continue
+        original_path = str(raw_asset.get("original_path", "")).strip()
+        expected_sha256 = str(raw_asset.get("sha256", "")).strip()
+        if not original_path or not expected_sha256:
+            continue
+        assets.append(
+            {
+                "name": str(raw_asset.get("name", "source_asset")),
+                "original_path": original_path,
+                "sha256": expected_sha256,
+            }
+        )
+    return assets
+
+
 def _resolve_run_dir(run_dir_or_id: Path | str) -> Path:
     if isinstance(run_dir_or_id, Path):
         return run_dir_or_id
@@ -431,6 +512,102 @@ def _manifest_original_assets(
         for name, original_path, expected_sha256 in assets
         if original_path and expected_sha256
     ]
+
+
+def _foundation_source_assets(
+    run_dir: Path,
+    foundation_manifest_path: Path,
+) -> list[dict[str, str]]:
+    try:
+        foundation_manifest = _read_manifest_path(foundation_manifest_path)
+    except Exception:
+        return []
+
+    fields = (
+        ("foundation:raw_gold.parquet", "gold_history_path"),
+        ("foundation:usd_equities.parquet", "normalized_equities_snapshot_path"),
+        (
+            "foundation:market_snapshots_usd.parquet",
+            "normalized_market_snapshots_snapshot_path",
+        ),
+    )
+    assets: list[dict[str, str]] = []
+    for name, field in fields:
+        raw_path = str(foundation_manifest.get(field, "")).strip()
+        asset = _source_asset_record(run_dir, name=name, raw_path=raw_path)
+        if asset is not None:
+            assets.append(asset)
+    return assets
+
+
+def _options_source_assets(
+    run_dir: Path,
+    options_manifest_path: Path,
+) -> list[dict[str, str]]:
+    try:
+        options_manifest = _read_manifest_path(options_manifest_path)
+    except Exception:
+        return []
+
+    assets: list[dict[str, str]] = []
+    for snapshot in options_manifest.get("snapshots", []):
+        if not isinstance(snapshot, dict):
+            continue
+        raw_path = str(snapshot.get("snapshot_path", "")).strip()
+        expected_sha256 = str(snapshot.get("sha256", "")).strip()
+        if not raw_path or not expected_sha256:
+            continue
+        ticker = str(snapshot.get("ticker", "unknown")).strip() or "unknown"
+        assets.append(
+            {
+                "name": f"options:{ticker}.parquet",
+                "original_path": raw_path,
+                "sha256": expected_sha256,
+            }
+        )
+
+    benchmark_paths = options_manifest.get("benchmark_snapshot_paths", [])
+    for index, raw_path_obj in enumerate(benchmark_paths, start=1):
+        raw_path = str(raw_path_obj).strip()
+        asset = _source_asset_record(
+            run_dir,
+            name=f"options:benchmark:{index}",
+            raw_path=raw_path,
+        )
+        if asset is not None:
+            assets.append(asset)
+    return assets
+
+
+def _source_asset_record(
+    run_dir: Path,
+    *,
+    name: str,
+    raw_path: str,
+) -> dict[str, str] | None:
+    if not raw_path:
+        return None
+    resolved_path = _resolve_original_asset_path(run_dir, Path(raw_path))
+    if not resolved_path.exists():
+        return {
+            "name": name,
+            "original_path": raw_path,
+            "sha256": "",
+        }
+    return {
+        "name": name,
+        "original_path": raw_path,
+        "sha256": _sha256_file(resolved_path),
+    }
+
+
+def _resolve_original_asset_path(run_dir: Path, path: Path) -> Path:
+    if path.is_absolute():
+        return path
+    try:
+        return run_dir.parents[2] / path
+    except IndexError:
+        return path
 
 
 def _copy_file_atomic(source_path: Path, target_path: Path) -> None:

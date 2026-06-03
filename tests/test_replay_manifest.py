@@ -347,6 +347,37 @@ def test_fixture_tool_a_run_with_foundation_replay_manifest_verifies(tmp_path, c
     assert "Verdict: OK." in output
 
 
+def test_verify_replay_detects_changed_foundation_source_asset(tmp_path, capsys):
+    paths = _prepare_paths(tmp_path)
+    context = RunContext.start(
+        paths=paths,
+        command="tool-a",
+        parameters={"fixture": True},
+        config_hash="test-config-hash",
+    )
+    foundation_manifest_path = _write_foundation_manifest(paths)
+    update_manifest_with_foundation(
+        context.run_dir,
+        foundation_run_id="foundation-run",
+        foundation_manifest_path=foundation_manifest_path,
+    )
+    foundation_manifest = json.loads(
+        foundation_manifest_path.read_text(encoding="utf-8")
+    )
+    raw_gold_path = paths.repo_root / foundation_manifest["gold_history_path"]
+    raw_gold_path.write_text("changed after capture\n", encoding="utf-8")
+
+    exit_code = run_verify_replay(paths, run_id_or_path=context.run_id)
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert (
+        "[FAIL] foundation:raw_gold.parquet - source hash does not match captured manifest"
+        in output
+    )
+    assert "SNAPSHOT INTEGRITY FAILED" in output
+
+
 def test_verify_replay_checks_options_manifest_snapshot(tmp_path, capsys):
     paths = _prepare_paths(tmp_path)
     context = RunContext.start(
@@ -366,7 +397,35 @@ def test_verify_replay_checks_options_manifest_snapshot(tmp_path, capsys):
     output = capsys.readouterr().out
     assert exit_code == 0
     assert "[OK] options_manifest.json - sha256 matches recorded" in output
+    assert "[OK] options:AEM.parquet - source sha256 matches captured manifest" in output
     assert "Verdict: OK." in output
+
+
+def test_verify_replay_detects_missing_options_source_asset(tmp_path, capsys):
+    paths = _prepare_paths(tmp_path)
+    context = RunContext.start(
+        paths=paths,
+        command="update-data",
+        parameters={"fixture": True},
+        config_hash="test-config-hash",
+    )
+    options_manifest_path = _write_options_manifest(paths)
+    update_manifest_with_options(
+        context.run_dir,
+        options_manifest_path=options_manifest_path,
+    )
+    options_manifest = json.loads(options_manifest_path.read_text(encoding="utf-8"))
+    options_snapshot_path = (
+        paths.repo_root / options_manifest["snapshots"][0]["snapshot_path"]
+    )
+    options_snapshot_path.unlink()
+
+    exit_code = run_verify_replay(paths, run_id_or_path=context.run_id)
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "[FAIL] options:AEM.parquet - source file is missing" in output
+    assert "SNAPSHOT INTEGRITY FAILED" in output
 
 
 def _prepare_paths(tmp_path: Path, *, manual_db: bool = True):
@@ -412,18 +471,56 @@ def _initialize_git_repo(repo_root: Path) -> None:
 
 
 def _write_foundation_manifest(paths) -> Path:
+    snapshot_dir = paths.runs_dir / "foundation-run" / "snapshots"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    raw_gold = snapshot_dir / "raw_gold.parquet"
+    usd_equities = snapshot_dir / "usd_equities.parquet"
+    market_snapshots = snapshot_dir / "market_snapshots_usd.parquet"
+    raw_gold.write_text("raw gold\n", encoding="utf-8")
+    usd_equities.write_text("usd equities\n", encoding="utf-8")
+    market_snapshots.write_text("market snapshots\n", encoding="utf-8")
     paths.latest_foundation_manifest_path.parent.mkdir(parents=True, exist_ok=True)
     paths.latest_foundation_manifest_path.write_text(
-        json.dumps({"refresh_run_id": "foundation-run"}, sort_keys=True),
+        json.dumps(
+            {
+                "refresh_run_id": "foundation-run",
+                "gold_history_path": raw_gold.relative_to(paths.repo_root).as_posix(),
+                "normalized_equities_snapshot_path": (
+                    usd_equities.relative_to(paths.repo_root).as_posix()
+                ),
+                "normalized_market_snapshots_snapshot_path": (
+                    market_snapshots.relative_to(paths.repo_root).as_posix()
+                ),
+            },
+            sort_keys=True,
+        ),
         encoding="utf-8",
     )
     return paths.latest_foundation_manifest_path
 
 
 def _write_options_manifest(paths) -> Path:
+    snapshot_path = (
+        paths.runs_dir / "options-run" / "snapshots" / "options" / "AEM.parquet"
+    )
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text("options chain\n", encoding="utf-8")
     paths.latest_options_manifest_path.parent.mkdir(parents=True, exist_ok=True)
     paths.latest_options_manifest_path.write_text(
-        json.dumps({"refresh_run_id": "options-run", "snapshots": []}),
+        json.dumps(
+            {
+                "refresh_run_id": "options-run",
+                "snapshots": [
+                    {
+                        "ticker": "AEM",
+                        "snapshot_path": snapshot_path.relative_to(
+                            paths.repo_root
+                        ).as_posix(),
+                        "sha256": _sha256(snapshot_path),
+                    }
+                ],
+            }
+        ),
         encoding="utf-8",
     )
     return paths.latest_options_manifest_path

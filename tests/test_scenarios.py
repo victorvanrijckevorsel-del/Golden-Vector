@@ -7,6 +7,7 @@ from golden_vector.hedge.candidate_puts import CandidatePut
 from golden_vector.hedge.scenarios import (
     DOWN_BETA_MIN_FOR_SCENARIO,
     compute_scenario_bundle,
+    downside_magnitudes_to_signed_returns,
 )
 
 
@@ -32,6 +33,27 @@ def test_compute_scenario_bundle_calculates_put_pnl_rows_and_breakeven():
     assert downside.net_pnl_at_expiry == pytest.approx(400.0)
     assert downside.current_value_per_contract > 0
     assert downside.net_pnl_if_closed_today is not None
+
+
+def test_downside_magnitudes_to_signed_returns_converts_config_values():
+    assert downside_magnitudes_to_signed_returns((0.0, 0.05, 0.10)) == (
+        0.0,
+        -0.05,
+        -0.10,
+    )
+
+
+def test_compute_scenario_bundle_rejects_positive_put_gold_scenarios():
+    with pytest.raises(ValueError, match="Put scenario gold moves must be signed"):
+        compute_scenario_bundle(
+            candidate=_candidate(),
+            current_stock_price=50.0,
+            gold_beta=1.4,
+            confidence_label="high",
+            risk_free_rate=0.04,
+            gold_scenarios=(0.10,),
+            quantity=5,
+        )
 
 
 def test_compute_scenario_bundle_skips_low_down_beta_without_fake_breakeven():
