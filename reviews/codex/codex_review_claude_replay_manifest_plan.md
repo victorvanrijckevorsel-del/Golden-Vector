@@ -1,0 +1,32 @@
+# Codex Review: Claude Replay Manifest Plan
+
+Grade: NEEDS CHANGES
+
+Reviewed:
+- `reviews/codex/claude_replay_manifest_plan.md`
+- `docs/snapshot_retention_audit.md`
+- Existing run lifecycle in `golden_vector/app/run_context.py`, `golden_vector/cli.py`, `golden_vector/app/latest_data.py`, `golden_vector/app/config.py`, and `golden_vector/screening/manual_store.py`
+
+## Findings On The 5 Named Risks
+
+1. Best-effort failure handling: the plan's direction is right for git-unavailable and missing-manual-store cases, but too broad as written. The proposed `RunContext.start()` catch around all replay-manifest exceptions (`reviews/codex/claude_replay_manifest_plan.md:133-142`) can silently violate the acceptance criterion that every new run produces `replay_manifest.json` and `replay_snapshots/` (`reviews/codex/claude_replay_manifest_plan.md:220`). Do not hard-fail because `git` is unavailable, the working tree is dirty, or the manual DB is absent; those are expected states. But failures to copy required configs or write the manifest itself should at least be recorded in run metadata/logs, and I would prefer they fail the run for pipeline commands. Otherwise we get a "successful" run with the exact audit gap still present.
+
+2. SQLite backup semantics: `sqlite3.Connection.backup()` is the right primitive, and I do not think a project-level lockfile is necessary yet. It is designed for online backups and is safer than `shutil.copyfile()` if the DB is active. The plan should still specify defensive connection details because the workspace can write through the same store while a run starts: current manual-store connections use plain `sqlite3.connect(store_path)` (`golden_vector/screening/manual_store.py:506-508`), and workspace/manual commands write through that store. Use a read-only source URI where possible, a reasonable timeout, context managers that always close both source/destination connections, and write to a temp file before moving into `replay_snapshots/`. If backup hits `database is locked`, treat it as a manifest failure with an explicit warning/failure status, not a silent `manual_data: null` case.
+
+3. Snapshot path interpretation: repo-root-relative `original_path` and run-dir-relative `snapshot_path` are the right defaults. They make snapshot integrity verifiable after the run folder is moved, while drift checks remain interpretable relative to the current checkout. The only change I want is in the CLI shape: `verify_manifest(run_dir: Path)` already supports moved folders by design, but `python main.py verify-replay <run_id>` only works for folders still under `data/runs/`. Either document that limitation or allow the argument to be a run id or a path. Current repo-relative helpers already assume a current checkout for drift checks (`ProjectPaths.resolve_repo_relative()` at `golden_vector/app/paths.py:75`), so the report should clearly separate "snapshot integrity" from "current repo drift unavailable."
+
+4. `foundation_run_consumed` schema/timing: this is the blocking issue. The plan says the manifest is written once at `RunContext.start()` (`reviews/codex/claude_replay_manifest_plan.md:60`, `reviews/codex/claude_replay_manifest_plan.md:133-142`), but Tool A and Tool B only know the consumed foundation run after `_load_latest_foundation_snapshot()` loads it (`golden_vector/cli.py:479-486`, `golden_vector/cli.py:618-625`) and writes `foundation_snapshot_summary.json` (`golden_vector/cli.py:1297-1306`). Option (b), "read `foundation_snapshot_summary.json` if present," cannot work if the writer only runs at start; the file does not exist yet. Also, the audit asks for an immutable copy of the foundation manifest, but `write_latest_foundation_manifest()` currently writes only the moving pointer at `data/intermediate/status/latest_foundation_manifest.json` (`golden_vector/app/latest_data.py:67-73`), and the proposed schema stores only `manifest_sha256`, not the manifest content. Change the plan to a two-phase write: write config/manual/git snapshots at start, then update the replay manifest immediately after `_load_latest_foundation_snapshot()` with `foundation_run_consumed` and a copied `replay_snapshots/foundation_manifest.json` plus its hash. That avoids changing the `RunContext` constructor while still meeting the audit.
+
+5. Forward-only choice: I agree with no backfill. Backfilling old runs with today's git commit/config/manual state would create false provenance, which is worse than no manifest. Do not create placeholder replay manifests either; that makes `verify-replay` look uniform while carrying no replay value. Instead, make `verify-replay` fail clearly for old folders with a message like "run predates replay manifests" and update `docs/snapshot_retention_audit.md` as planned (`reviews/codex/claude_replay_manifest_plan.md:210`, `reviews/codex/claude_replay_manifest_plan.md:225`).
+
+## Additional Findings
+
+- The plan says "all run types" but names foundation/update-data, Tool A, Tool B, and combined (`reviews/codex/claude_replay_manifest_plan.md:61`). In this repo, `RunContext.start()` is also used for `manual-data`, `manual-note`, and `compare-horizons` commands (`golden_vector/cli.py:711`, `golden_vector/cli.py:993`, `golden_vector/cli.py:1134`). If the hook lives in `RunContext.start()`, those commands will also get replay manifests. I think that is acceptable and probably desirable, but the plan and tests should say so explicitly, especially for `manual-data init` where the manual DB may be absent at start and created during the command.
+
+- The config file list should be kept in sync with `load_app_config()`'s required files (`golden_vector/app/config.py:30-35`). Hardcoding the same five names in a second module is okay for this small change, but add a focused test that the manifest config names equal the loader's expected config set, or extract a tiny shared constant if that is cleaner. Otherwise a future config YAML can become part of runtime behavior without becoming part of replay metadata.
+
+- Step 4 asks Codex to run the full local pipeline, including `update-data` (`reviews/codex/claude_replay_manifest_plan.md:210`). That may call external market-data sources. Keep the implementation tests fixture-based, and only run external refresh smoke after Emanuel explicitly accepts that cost/risk for that turn.
+
+## Recommendation
+
+Revise the plan before implementation. The main change is the two-phase foundation-manifest update. After that, this becomes a small and reasonable infrastructure addition.

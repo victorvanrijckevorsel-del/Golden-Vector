@@ -1,0 +1,31 @@
+# Codex Review: Claude Workspace Split Plan
+
+**Grade: READY WITH MINOR CHANGES**
+
+## Risk 1 - Hidden coupling
+
+Finding: the high-level move plan is sound, but the function-only move table misses several module constants that moved helpers read directly. Targeted grep shows examples across multiple planned files: detail forms use `COMPANY_FORM_FIELDS`, `REPORTING_FORM_FIELDS`, `REQUIRED_MANUAL_FIELDS`, `VERIFICATION_STATUS_OPTIONS`, and `NOTE_STATUS_OPTIONS` (`golden_vector/serve/workspace.py:2472`, `golden_vector/serve/workspace.py:2480`, `golden_vector/serve/workspace.py:2559`, `golden_vector/serve/workspace.py:2603`, `golden_vector/serve/workspace.py:2620`, `golden_vector/serve/workspace.py:2738`); format helpers use `RATE_FIELDS`, `TOOL_A_PERCENT_FIELDS`, `TOOL_A_NUMERIC_FIELDS`, and `_MISSING_SORT_SENTINEL` (`golden_vector/serve/workspace.py:3343`, `golden_vector/serve/workspace.py:3453`, `golden_vector/serve/workspace.py:3458`, `golden_vector/serve/workspace.py:3473`); state/chart/detail helpers share `_STRUCTURAL_WINDOWS`, `_WINDOW_WEEKS`, `_WINDOW_COLORS`, and the `DETAIL_ALIGNMENT_*` constants (`golden_vector/serve/workspace.py:655`, `golden_vector/serve/workspace.py:1587`, `golden_vector/serve/workspace.py:2354`, `golden_vector/serve/workspace.py:2794`, `golden_vector/serve/workspace.py:2797`, `golden_vector/serve/workspace.py:3786`, `golden_vector/serve/workspace.py:3884`); static serving uses `_STATIC_ROOT` and `_STATIC_ALLOWED_EXTENSIONS` (`golden_vector/serve/workspace.py:16`, `golden_vector/serve/workspace.py:17`, `golden_vector/serve/workspace.py:3576`, `golden_vector/serve/workspace.py:3586`). Add these constants to the move table and move each with the first module that needs it, otherwise the step order can produce `NameError`s or backward imports into `workspace.py`.
+
+## Risk 2 - CSS extraction
+
+Finding: CSS extraction is safe as planned. I checked the `_page_shell` style block (`golden_vector/serve/workspace.py:2870` through `golden_vector/serve/workspace.py:3253`) for any `{` or `}` not represented as doubled `{{` / `}}`; none were present. The only Python interpolation in `_page_shell` is outside the CSS block for title/nav/body (`golden_vector/serve/workspace.py:2865`, `golden_vector/serve/workspace.py:3256`, `golden_vector/serve/workspace.py:3257`). The proposed `{{` -> `{` and `}}` -> `}` extraction plus a final grep for doubled braces in `static/workspace.css` is the right acceptance check.
+
+## Risk 3 - Step 11 size
+
+Finding: Step 11 is reviewable as one step. The current detail renderer has one definition (`golden_vector/serve/workspace.py:1437`) and five call sites (`golden_vector/serve/workspace.py:295`, `golden_vector/serve/workspace.py:336`, `golden_vector/serve/workspace.py:373`, `golden_vector/serve/workspace.py:424`, `golden_vector/serve/workspace.py:456`), so rename + `lens` parameter + router query plumbing is small enough to audit in one diff. Splitting into 11a/11b is optional, not necessary for safety.
+
+## Risk 4 - `lens` default
+
+Finding: silently falling back to `"tool-a"` for `/ticker/AEM?lens=banana` is the right UX call because the existing overview lens system already treats unknown lens IDs as a stable default instead of a hard error (`golden_vector/serve/lenses.py:197`, `tests/test_workspace_app.py:1685`). The load-bearing detail is that `golden_vector.serve.lenses.DEFAULT_LENS_ID` is `"composite"` (`golden_vector/serve/lenses.py:194`), so the ticker detail page needs its own detail-lens default/resolver rather than reusing the overview constant. Add a smoke check for `/ticker/AEM?lens=banana` rendering the same as `/ticker/AEM`.
+
+## Risk 5 - Snapshot retention audit
+
+Finding: the author is right that retention is largely already present, but the audit should explicitly separate "snapshots retained" from "all metadata needed to replay a run retained." `write_latest_foundation_manifest` writes run-local snapshot paths for gold, normalized equities, and market snapshots (`golden_vector/app/latest_data.py:53` through `golden_vector/app/latest_data.py:64`), and `load_latest_foundation_snapshot` reads from those paths rather than from mutable latest parquet files (`golden_vector/app/latest_data.py:100` through `golden_vector/app/latest_data.py:124`). Filesystem evidence also matches the plan: `data/runs/20260424T140753Z-update-data-6175c3fb/snapshots/` contains raw and normalized foundation snapshots, and Tool A/B each have matching historical `latest` and `output` parquet counts. The gap to call out is that `latest_foundation_manifest.json` is still a moving pointer, and `RunContext.record_artifact` records artifact paths without copying their contents (`golden_vector/app/run_context.py:92` through `golden_vector/app/run_context.py:98`); for future backtesting, the audit should state whether each run has enough run-local manifest/config/signature data to reconstruct exactly what produced the snapshot.
+
+## Additional Findings
+
+1. Step ordering needs one fix: the plan moves `_render_error_page` to `http_helpers.py` in step 4, but `_render_error_page` calls `_page_shell` (`golden_vector/serve/workspace.py:3289` through `golden_vector/serve/workspace.py:3295`), and `_page_shell` does not move until step 7. That violates the plan's "only imports from steps already done" rule. Move `page_shell.py` before `http_helpers.py`, or leave `_render_error_page` with page-shell extraction.
+
+2. The dataclass destination is inconsistent. The target layout says `workspace.py` keeps "router + dataclasses" (`reviews/codex/claude_workspace_split_plan.md:89`, `reviews/codex/claude_workspace_split_plan.md:109`), but the move table sends `WorkspaceState`, `ToolADetailState`, and `OverviewFilters` to `workspace_state.py` (`reviews/codex/claude_workspace_split_plan.md:133` through `reviews/codex/claude_workspace_split_plan.md:135`). Pick one before implementation.
+
+3. The out-of-scope section says not to touch anything outside `golden_vector/serve/` (`reviews/codex/claude_workspace_split_plan.md:269`), but step 1 and the acceptance criteria require writing `docs/snapshot_retention_audit.md` (`reviews/codex/claude_workspace_split_plan.md:236`, `reviews/codex/claude_workspace_split_plan.md:260`). That exception should be stated explicitly.
