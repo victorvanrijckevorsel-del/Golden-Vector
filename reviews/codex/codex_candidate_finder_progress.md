@@ -59,3 +59,51 @@ Checks:
 - `python -m compileall golden_vector/model/candidate_finder.py` -> passed.
 - `python -m pytest -q` -> 603 passed.
 - `git diff --check` -> passed with only Windows line-ending warnings.
+
+## 2026-06-03 - Batch 2, Checkpoint B
+
+Implemented:
+- Added `golden_vector/serve/candidate_finder_data.py`.
+- The data layer now joins the active ticker universe to latest Tool A, Tool B, options features, and the manual screening company-input store.
+- Added derived market-cap ratios with missing/zero-market-cap guards:
+  - `debt_to_mktcap`
+  - `ebitda_to_mktcap`
+  - `revenue_to_mktcap`
+  - `netincome_to_mktcap`
+- Added side-aware `has_usable_put_candidate` and `has_usable_call_candidate` fields from the existing option-trading bucket slots. No second usability rule was added; slot candidates are populated only through the shared `is_usable_candidate()` path.
+- Added source alignment metadata for Tool A, Tool B, options, and manual store hash/as-of. Mixed Tool A / Tool B / options refresh ids are surfaced as warnings.
+- Added a composite in-process cache key using Tool A refresh ids, Tool B refresh ids, options refresh id, and manual store hash.
+- Added the `candidate-finder` CLI command. It reads a YAML/JSON screen spec, filters the peer pool by options side, runs the pure scorer, writes ranked parquet output, and records a run summary.
+
+Self-review fixes made in the same batch:
+- Guarded derived-ratio calculation when Tool B or any numerator field is absent.
+- Allowed `--out` to point outside the repo without failing while printing or writing run metadata.
+- Made CLI run status `WARN` when any Candidate Finder screen warning exists, not only when refresh alignment is mixed.
+- Added regression tests for missing sources and external output paths.
+
+Checks:
+- `python -m pytest tests/test_candidate_finder_data.py tests/test_candidate_finder_scoring.py tests/test_candidate_finder_config.py tests/test_percentile_ranks.py tests/test_config_loading.py tests/test_latest_data.py tests/test_options_phase.py tests/test_option_trading_data.py tests/test_options_liquidity.py tests/test_cli_refresh_and_status.py -q` -> 59 passed.
+- `python -m compileall golden_vector/serve/candidate_finder_data.py golden_vector/cli.py` -> passed.
+- `git diff --check -- golden_vector/serve/candidate_finder_data.py golden_vector/cli.py tests/test_candidate_finder_data.py` -> passed with only the existing Windows line-ending warning on `golden_vector/cli.py`.
+- `python -m pytest -q` -> 609 passed.
+- `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in this Python environment.
+- `python -m mypy golden_vector` -> not run; `mypy` is not installed in this Python environment.
+- `python -m pyright golden_vector` -> not run; `pyright` is not installed in this Python environment.
+
+Real current-data sample:
+
+```text
+Candidate Finder ranked parquet written: C:\Users\Emanuel\AppData\Local\Temp\candidate_finder_bearish_put.parquet
+Rows: 5; peer pool: 5; options side: puts.
+Warnings:
+- Mixed refreshes in Candidate Finder sources (Tool A: 20260424T140753Z-update-data-6175c3fb; Tool B: 20260424T140753Z-update-data-6175c3fb; Options: 20260601T135914Z-update-data-f555b2fe).
+Preview:
+ rank ticker     score  rank_eligible  present_criteria_count  selected_criteria_count  top_n_tally
+    1    AEM 74.000000           True                       5                        5            5
+    2    NEM 64.666667           True                       5                        5            5
+    3    KGC 61.333333           True                       5                        5            5
+    4     CG 52.500000           True                       4                        5            4
+    5    PRU 47.500000           True                       4                        5            4
+```
+
+Checkpoint B status: reached. Stop here before Batch 3 UI/routes.

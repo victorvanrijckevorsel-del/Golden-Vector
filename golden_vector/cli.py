@@ -52,8 +52,14 @@ from golden_vector.screening.manual_store import (
     upsert_source_verification,
 )
 from golden_vector.screening.pipeline import execute_tool_b_pipeline
-from golden_vector.serve.workspace import run_workspace_server
+from golden_vector.serve.candidate_finder_data import (
+    candidate_finder_result_frame,
+    load_candidate_finder_data,
+    load_candidate_finder_spec,
+    run_candidate_finder_screen,
+)
 from golden_vector.serve.option_trading_data import load_option_trading_data
+from golden_vector.serve.workspace import run_workspace_server
 
 LOGGER = logging.getLogger(__name__)
 
@@ -189,6 +195,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--ticker",
         default=None,
         help="Optional ticker to inspect.",
+    )
+
+    candidate_finder_parser = subparsers.add_parser(
+        "candidate-finder",
+        help="Run a Candidate Finder screen spec and write a ranked parquet.",
+    )
+    candidate_finder_parser.add_argument(
+        "--spec",
+        required=True,
+        help="JSON/YAML screen spec with preset, criteria, options_side, and top_n.",
+    )
+    candidate_finder_parser.add_argument(
+        "--out",
+        default=None,
+        help=(
+            "Output parquet path. Defaults to "
+            "data/output/candidate_finder/candidate_finder_latest.parquet."
+        ),
     )
 
     manual_data_parser = subparsers.add_parser(
@@ -392,6 +416,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "options-liquidity-summary":
         return run_options_liquidity_summary(paths, ticker=args.ticker)
 
+    if args.command == "candidate-finder":
+        return run_candidate_finder(paths, spec_path=args.spec, out_path=args.out)
+
     if args.command == "refresh":
         return run_refresh(
             paths,
@@ -455,6 +482,119 @@ def run_options_liquidity_summary(
             f"{call_counts['tradable']} | {call_counts['watch']} | {call_counts['no_trade']}"
         )
     return 0
+
+
+def run_candidate_finder(
+    paths: ProjectPaths,
+    *,
+    spec_path: str,
+    out_path: str | None = None,
+) -> int:
+    run_context: RunContext | None = None
+    parameters = {"spec_path": spec_path, "out_path": out_path}
+    try:
+        loaded_config = load_app_config(paths)
+        run_context = RunContext.start(
+            paths=paths,
+            command="candidate-finder",
+            parameters=parameters,
+            config_hash=loaded_config.combined_hash,
+        )
+        configure_logging(run_context.log_path)
+        spec_file = Path(spec_path)
+        if not spec_file.is_absolute():
+            spec_file = paths.repo_root / spec_file
+        spec = load_candidate_finder_spec(spec_file)
+        data = load_candidate_finder_data(paths, app_config=loaded_config.app)
+        screen = run_candidate_finder_screen(data, spec=spec)
+        ranked = candidate_finder_result_frame(screen)
+        output_path = _candidate_finder_output_path(paths, out_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        ranked.to_parquet(output_path, index=False)
+        run_context.record_artifact(output_path)
+        output_display_path = _display_path(paths, output_path)
+        summary = {
+            "candidate_finder_row_count": len(ranked.index),
+            "candidate_finder_peer_count": len(screen.peer_frame.index),
+            "candidate_finder_options_side": screen.options_side,
+            "candidate_finder_top_n": screen.top_n,
+            "candidate_finder_alignment_status": screen.data.alignment.status,
+            "candidate_finder_alignment_message": screen.data.alignment.message,
+            "candidate_finder_warning_count": len(screen.warnings),
+            "candidate_finder_output_path": output_display_path,
+        }
+        run_context.write_json("candidate_finder_summary.json", summary)
+        final_status = "PASS" if not screen.warnings else "WARN"
+        run_context.finalize(
+            status=final_status,
+            summary=summary,
+            notes=[
+                "Candidate Finder screen rendered.",
+                f"Output path: {output_display_path}.",
+            ],
+        )
+        print(
+            "Candidate Finder ranked parquet written: "
+            f"{output_display_path}"
+        )
+        print(
+            f"Rows: {len(ranked.index)}; peer pool: {len(screen.peer_frame.index)}; "
+            f"options side: {screen.options_side}."
+        )
+        if screen.warnings:
+            print("Warnings:")
+            for warning in screen.warnings:
+                print(f"- {warning}")
+        if ranked.empty:
+            print("No ranked rows.")
+        else:
+            preview_cols = [
+                column
+                for column in (
+                    "rank",
+                    "ticker",
+                    "score",
+                    "rank_eligible",
+                    "present_criteria_count",
+                    "selected_criteria_count",
+                    "top_n_tally",
+                )
+                if column in ranked.columns
+            ]
+            print("Preview:")
+            print(ranked[preview_cols].head(10).to_string(index=False))
+        return 0
+    except Exception as exc:
+        if run_context is None:
+            run_context = RunContext.start(
+                paths=paths,
+                command="candidate-finder",
+                parameters=parameters,
+                config_hash="UNAVAILABLE",
+            )
+            configure_logging(run_context.log_path)
+        LOGGER.exception("Candidate Finder screen failed.")
+        run_context.finalize(
+            status="FAIL",
+            summary={"error": str(exc)},
+            notes=["Candidate Finder screen failed before completion."],
+        )
+        print(f"Candidate Finder failed: {exc}")
+        return 1
+
+
+def _candidate_finder_output_path(paths: ProjectPaths, out_path: str | None) -> Path:
+    if out_path:
+        path = Path(out_path)
+        return path if path.is_absolute() else paths.repo_root / path
+    return paths.output_dir / "candidate_finder" / "candidate_finder_latest.parquet"
+
+
+def _display_path(paths: ProjectPaths, path: Path) -> str:
+    try:
+        return path.relative_to(paths.repo_root).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def run_foundation(
