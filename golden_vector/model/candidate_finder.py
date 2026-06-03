@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
@@ -10,6 +11,7 @@ import pandas as pd
 from golden_vector.features.percentile_ranks import oriented_percentile
 
 CriterionDirection = Literal["high_good", "low_good"]
+VALID_DIRECTIONS = frozenset({"high_good", "low_good"})
 
 TOOL_A_SCORE_ELIGIBLE_FIELDS = frozenset(
     {
@@ -172,13 +174,28 @@ def _resolve_selections(
     warnings: list[str],
 ) -> list[ResolvedCriterion]:
     resolved: list[ResolvedCriterion] = []
+    seen: set[str] = set()
     for selection in selections:
-        criterion = registry.get(str(selection.id).strip())
+        selection_id = str(selection.id).strip()
+        if selection_id in seen:
+            warnings.append(f"Duplicate criterion ignored: {selection_id}")
+            continue
+        criterion = registry.get(selection_id)
         if criterion is None:
             warnings.append(f"Unknown criterion ignored: {selection.id}")
             continue
-        direction = selection.direction or criterion.default_direction
-        weight = float(selection.weight) if selection.weight is not None else 1.0
+        seen.add(selection_id)
+        direction = _selection_direction(
+            selection.direction,
+            default_direction=criterion.default_direction,
+            criterion_id=criterion.id,
+            warnings=warnings,
+        )
+        weight = _selection_weight(
+            selection.weight,
+            criterion_id=criterion.id,
+            warnings=warnings,
+        )
         resolved.append(
             ResolvedCriterion(
                 id=criterion.id,
@@ -193,6 +210,46 @@ def _resolve_selections(
     if resolved and all(criterion.weight <= 0 for criterion in resolved):
         resolved = [replace(criterion, weight=1.0) for criterion in resolved]
     return resolved
+
+
+def _selection_direction(
+    value: object,
+    *,
+    default_direction: CriterionDirection,
+    criterion_id: str,
+    warnings: list[str],
+) -> CriterionDirection:
+    if value is None:
+        return default_direction
+    normalized = str(value).strip()
+    if normalized in VALID_DIRECTIONS:
+        return normalized  # type: ignore[return-value]
+    warnings.append(
+        f"Invalid direction for {criterion_id}; defaulted to {default_direction}."
+    )
+    return default_direction
+
+
+def _selection_weight(
+    value: object,
+    *,
+    criterion_id: str,
+    warnings: list[str],
+) -> float:
+    if value is None:
+        return 1.0
+    try:
+        weight = float(value)
+    except (TypeError, ValueError):
+        warnings.append(f"Invalid weight for {criterion_id}; defaulted to 1.0.")
+        return 1.0
+    if not math.isfinite(weight):
+        warnings.append(f"Invalid weight for {criterion_id}; defaulted to 1.0.")
+        return 1.0
+    if weight < 0:
+        warnings.append(f"Negative weight for {criterion_id}; treated as 0.")
+        return 0.0
+    return weight
 
 
 def _prepare_frame(frame: pd.DataFrame, *, ticker_column: str) -> pd.DataFrame:

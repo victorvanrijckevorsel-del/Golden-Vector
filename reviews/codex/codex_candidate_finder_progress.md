@@ -42,3 +42,20 @@ Checks:
 - `python -m pyright golden_vector` -> not run; `pyright` is not installed in this Python environment.
 
 Checkpoint A status: reached. Stop here before Batch 2.
+
+## 2026-06-03 - Batch 1 self-review fixes
+
+Reviewed:
+- Re-read the pure scoring engine and tests with a focus on malformed future UI/CLI input.
+- Rechecked that the shared percentile helper remains the only `rank(pct=True)` implementation.
+- Rechecked that no second usable-options definition was added.
+
+Fixes:
+- Added scoring-engine guards for duplicate selected criteria, invalid direction strings, malformed weights, non-finite weights, and negative weights.
+- Added regression tests for duplicate criteria and invalid direction/weight inputs.
+
+Checks:
+- `python -m pytest tests/test_candidate_finder_scoring.py tests/test_percentile_ranks.py tests/test_candidate_finder_config.py tests/test_config_loading.py tests/test_latest_data.py tests/test_options_phase.py tests/test_option_trading_data.py tests/test_options_liquidity.py -q` -> 46 passed.
+- `python -m compileall golden_vector/model/candidate_finder.py` -> passed.
+- `python -m pytest -q` -> 603 passed.
+- `git diff --check` -> passed with only Windows line-ending warnings.

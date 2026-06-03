@@ -131,6 +131,55 @@ def test_candidate_finder_empty_selection_returns_guard_warning():
     assert "Pick at least one criterion." in result.warnings
 
 
+def test_candidate_finder_ignores_duplicate_selected_criteria():
+    result = rank_candidates(
+        pd.DataFrame(
+            [
+                {"ticker": "A", "down_beta_core": 1.0},
+                {"ticker": "B", "down_beta_core": 2.0},
+            ]
+        ),
+        criteria=_criteria(),
+        selections=[
+            CriterionSelection("down_beta"),
+            CriterionSelection("down_beta", weight=5.0),
+        ],
+    )
+
+    assert len(result.selected_criteria) == 1
+    assert result.selected_criteria[0].weight == 1.0
+    assert "Duplicate criterion ignored: down_beta" in result.warnings
+
+
+def test_candidate_finder_defaults_invalid_direction_and_weight_inputs():
+    result = rank_candidates(
+        pd.DataFrame(
+            [
+                {"ticker": "A", "down_beta_core": 1.0, "aisc_usd_per_oz": 2000},
+                {"ticker": "B", "down_beta_core": 2.0, "aisc_usd_per_oz": 1000},
+            ]
+        ),
+        criteria=_criteria(),
+        selections=[
+            CriterionSelection(  # type: ignore[arg-type]
+                "down_beta",
+                direction="banana",
+                weight="bad",
+            ),
+            CriterionSelection("aisc", weight=-1.0),
+        ],
+    )
+
+    criteria = {criterion.id: criterion for criterion in result.selected_criteria}
+
+    assert criteria["down_beta"].direction == "high_good"
+    assert criteria["down_beta"].weight == 1.0
+    assert criteria["aisc"].weight == 0.0
+    assert any("Invalid direction for down_beta" in item for item in result.warnings)
+    assert any("Invalid weight for down_beta" in item for item in result.warnings)
+    assert any("Negative weight for aisc" in item for item in result.warnings)
+
+
 def _criteria() -> list[CriterionDefinition]:
     return [
         CriterionDefinition(
