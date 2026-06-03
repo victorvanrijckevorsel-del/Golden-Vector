@@ -39,3 +39,21 @@ Checks so far:
 - Browser verification on `http://127.0.0.1:8771/ticker/AEM?lens=option-trading&side=put&horizon=60&bucket=most_liquid#option-sizing` -> bucket rows, corrected liquidity counts, stock price, snapshot date, spread/half-spread cost, disabled refresh placeholder, no old scenario tables, and selected bucket calculator verified.
 
 Checkpoint 1 status: reached. Phase 1 code implemented and verified.
+
+## 2026-06-03 - Phase 2, Step P2.1
+
+Implemented:
+- Extended options ingestion targets from universe-only to universe plus active benchmark ETFs configured in `hedge_readiness.benchmark_tickers`.
+- GDX/GDXJ option chains are now fetched through the same per-ticker best-effort path, persisted under `snapshots/options`, included in the latest options manifest, and captured by the replay manifest source-asset list.
+- Added `option_vehicle_type` and `options_source_symbol` to option feature rows so benchmark ETF rows remain auditable when they later surface in the lab.
+- Reused persisted benchmark histories as price history context for benchmark ETF option features.
+
+Self-review notes:
+- No live data path was introduced in tests; fixture client covers AEM, GDX, and GDXJ.
+- GDX/GDXJ are config-driven through `benchmarks.yaml` + `hedge_readiness.benchmark_tickers`; there is no hard-coded fetch in the loop.
+- Per-ticker failure isolation still wraps the full fetch/persist/feature pipeline for each option target.
+- Replay manifest capture needed no custom branch because it already enumerates every latest-options manifest snapshot.
+
+Checks:
+- `python -m pytest tests/test_options_phase.py tests/test_replay_manifest.py tests/test_persist_options.py -q` -> 29 passed.
+- `python -m pytest tests/test_options_phase.py tests/test_option_trading_data.py tests/test_options_liquidity.py -q` -> 19 passed.

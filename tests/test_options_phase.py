@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from datetime import date
 
@@ -44,13 +45,34 @@ def test_run_options_ingestion_phase_writes_manifest_snapshots_and_features(tmp_
     assert result.manifest_path == paths.latest_options_manifest_path
     assert paths.latest_options_manifest_path.exists()
     assert (context.run_dir / "snapshots" / "options" / "AEM.parquet").exists()
+    assert (context.run_dir / "snapshots" / "options" / "GDX.parquet").exists()
+    assert (context.run_dir / "snapshots" / "options" / "GDXJ.parquet").exists()
     assert (context.run_dir / "snapshots" / "benchmarks" / "GDX.parquet").exists()
     aem_features = pd.read_parquet(paths.options_features_dir / "AEM.parquet")
+    gdx_features = pd.read_parquet(paths.options_features_dir / "GDX.parquet")
     assert aem_features.loc[0, "ticker"] == "AEM"
     assert bool(aem_features.loc[0, "options_available"]) is True
-    assert aem_features.loc[0, "iv_percentile_cross_sectional"] == 100.0
+    assert gdx_features.loc[0, "ticker"] == "GDX"
+    assert gdx_features.loc[0, "option_vehicle_type"] == "benchmark_etf"
+    assert gdx_features.loc[0, "options_source_symbol"] == "GDX"
+    assert result.summary["options_ticker_count"] == (
+        result.summary["options_universe_ticker_count"] + 2
+    )
+    assert result.summary["options_benchmark_ticker_count"] == 2
+    latest_manifest = json.loads(paths.latest_options_manifest_path.read_text(encoding="utf-8"))
+    assert {
+        "AEM",
+        "GDX",
+        "GDXJ",
+    }.issubset({item["ticker"] for item in latest_manifest["snapshots"]})
     manifest = read_manifest(context.run_dir)
     assert manifest["options_manifest_status"] == "captured"
+    source_asset_names = {
+        item["name"]
+        for item in manifest["options_manifest_captured"]["source_assets"]
+    }
+    assert "options:GDX.parquet" in source_asset_names
+    assert "options:GDXJ.parquet" in source_asset_names
 
 
 def test_run_options_ingestion_phase_continues_after_ticker_pipeline_error(
@@ -134,11 +156,17 @@ def test_skipped_options_phase_summary_records_operator_choice():
 
 
 class _OptionsPhaseClient:
-    def __init__(self, fixture: pd.DataFrame) -> None:
+    def __init__(
+        self,
+        fixture: pd.DataFrame,
+        *,
+        option_symbols: tuple[str, ...] = ("AEM", "GDX", "GDXJ"),
+    ) -> None:
         self.fixture = fixture
+        self.option_symbols = {symbol.upper() for symbol in option_symbols}
 
     def fetch_options_expirations(self, symbol: str) -> list[str]:
-        if symbol == "AEM":
+        if symbol.upper() in self.option_symbols:
             return sorted(self.fixture["expiration"].astype(str).unique().tolist())
         return []
 

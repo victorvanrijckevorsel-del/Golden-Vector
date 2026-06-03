@@ -48,6 +48,13 @@ class OptionsPhaseResult:
     manifest_path: Path | None
 
 
+@dataclass(frozen=True)
+class _OptionFetchTarget:
+    ticker: str
+    yahoo_symbol: str
+    vehicle_type: str
+
+
 def skipped_options_phase_summary(*, reason: str) -> dict[str, Any]:
     """Return the metadata summary used when options ingestion is intentionally skipped."""
 
@@ -70,16 +77,18 @@ def run_options_ingestion_phase(
     """Fetch, persist, and feature-engineer the latest option-chain snapshot."""
 
     client = yahoo_client or YahooClient()
-    active_tickers = [
-        ticker.ticker
-        for ticker in app_config.universe.tickers
-        if ticker.active
-    ]
+    targets = _option_fetch_targets(app_config)
+    universe_target_count = sum(
+        1 for target in targets if target.vehicle_type == "single_stock"
+    )
+    benchmark_target_count = sum(
+        1 for target in targets if target.vehicle_type == "benchmark_etf"
+    )
     risk_free_rate, risk_free_message = _fetch_risk_free_rate(
         client=client,
         as_of_date=as_of_date,
     )
-    benchmark_paths, benchmark_statuses = _fetch_and_persist_benchmarks(
+    benchmark_paths, benchmark_statuses, benchmark_histories = _fetch_and_persist_benchmarks(
         paths=paths,
         run_context=run_context,
         app_config=app_config,
@@ -94,20 +103,25 @@ def run_options_ingestion_phase(
         OPTIONS_STATUS_ERROR: 0,
     }
 
-    for ticker in active_tickers:
+    for target in targets:
         try:
             result = fetch_options_chain(
-                ticker=ticker,
+                ticker=target.yahoo_symbol,
                 as_of_date=as_of_date,
                 yahoo_client=client,
             )
             if result.status == OPTIONS_STATUS_ERROR:
-                LOGGER.warning("Options fetch failed for %s: %s", ticker, result.message)
+                LOGGER.warning(
+                    "Options fetch failed for %s (%s): %s",
+                    target.ticker,
+                    target.yahoo_symbol,
+                    result.message,
+                )
 
             record = persist_options_snapshot(
                 paths=paths,
                 run_context=run_context,
-                ticker=ticker,
+                ticker=target.ticker,
                 frame=result.frame,
                 as_of_date=as_of_date,
                 options_available=result.options_available,
@@ -117,18 +131,24 @@ def run_options_ingestion_phase(
                 snapshot_record=record,
                 options_result=result,
                 paths=paths,
-                ticker=ticker,
+                ticker=target.ticker,
                 as_of_date=as_of_date,
                 risk_free_rate=risk_free_rate,
                 run_id=run_context.run_id,
                 app_config=app_config,
-                price_history=normalized_equity_histories.get(ticker, pd.DataFrame()),
+                price_history=_price_history_for_target(
+                    target=target,
+                    normalized_equity_histories=normalized_equity_histories,
+                    benchmark_histories=benchmark_histories,
+                ),
             )
+            feature_row["option_vehicle_type"] = target.vehicle_type
+            feature_row["options_source_symbol"] = target.yahoo_symbol
         except Exception as exc:  # noqa: BLE001 - per-ticker best effort by design.
             status_counts[OPTIONS_STATUS_ERROR] = (
                 status_counts.get(OPTIONS_STATUS_ERROR, 0) + 1
             )
-            LOGGER.warning("Options pipeline failed for %s: %s", ticker, exc)
+            LOGGER.warning("Options pipeline failed for %s: %s", target.ticker, exc)
             continue
 
         status_counts[result.status] = status_counts.get(result.status, 0) + 1
@@ -155,7 +175,9 @@ def run_options_ingestion_phase(
         "options_phase_status": status,
         "options_phase_requested": True,
         "options_as_of_date": as_of_date.isoformat(),
-        "options_ticker_count": len(active_tickers),
+        "options_ticker_count": len(targets),
+        "options_universe_ticker_count": universe_target_count,
+        "options_benchmark_ticker_count": benchmark_target_count,
         "options_success_count": status_counts.get(OPTIONS_STATUS_SUCCESS, 0),
         "options_empty_count": status_counts.get(OPTIONS_STATUS_EMPTY, 0),
         "options_error_count": status_counts.get(OPTIONS_STATUS_ERROR, 0),
@@ -183,6 +205,53 @@ def run_options_ingestion_phase(
     )
     run_context.write_json("options_phase_summary.json", summary)
     return OptionsPhaseResult(status=status, summary=summary, manifest_path=manifest_path)
+
+
+def _option_fetch_targets(app_config: AppConfig) -> list[_OptionFetchTarget]:
+    targets: list[_OptionFetchTarget] = []
+    seen: set[str] = set()
+    for universe_ticker in app_config.universe.tickers:
+        if not universe_ticker.active:
+            continue
+        ticker = universe_ticker.ticker.upper()
+        targets.append(
+            _OptionFetchTarget(
+                ticker=ticker,
+                yahoo_symbol=ticker,
+                vehicle_type="single_stock",
+            )
+        )
+        seen.add(ticker)
+
+    benchmark_by_ticker = {
+        benchmark.ticker.upper(): benchmark
+        for benchmark in app_config.benchmarks.benchmarks
+        if benchmark.active
+    }
+    for ticker in app_config.hedge_readiness.benchmark_tickers:
+        benchmark = benchmark_by_ticker.get(ticker.upper())
+        if benchmark is None or benchmark.ticker.upper() in seen:
+            continue
+        targets.append(
+            _OptionFetchTarget(
+                ticker=benchmark.ticker.upper(),
+                yahoo_symbol=benchmark.yahoo_symbol.upper(),
+                vehicle_type="benchmark_etf",
+            )
+        )
+        seen.add(benchmark.ticker.upper())
+    return targets
+
+
+def _price_history_for_target(
+    *,
+    target: _OptionFetchTarget,
+    normalized_equity_histories: dict[str, pd.DataFrame],
+    benchmark_histories: dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    if target.vehicle_type == "benchmark_etf":
+        return benchmark_histories.get(target.ticker, pd.DataFrame())
+    return normalized_equity_histories.get(target.ticker, pd.DataFrame())
 
 
 def _compute_feature_row(
@@ -284,7 +353,7 @@ def _fetch_and_persist_benchmarks(
     run_context: RunContext,
     app_config: AppConfig,
     client: YahooClient,
-) -> tuple[list[Path], list[BenchmarkFetchStatus]]:
+) -> tuple[list[Path], list[BenchmarkFetchStatus], dict[str, pd.DataFrame]]:
     histories, statuses = fetch_benchmark_histories(
         client,
         app_config.benchmarks.benchmarks,
@@ -301,7 +370,7 @@ def _fetch_and_persist_benchmarks(
         run_context.record_artifact(run_path)
         run_context.record_artifact(latest_path)
         written_paths.append(run_path)
-    return written_paths, statuses
+    return written_paths, statuses, histories
 
 
 def _underlying_price(
