@@ -33,3 +33,10 @@
 - Full suite: `python -m pytest -q` -> `557 passed in 328.60s`.
 - Local commits created, not pushed: `c52ccbc`, `19e94fb`, `30e5075`.
 - Remaining unrelated dirty state: pre-existing modified `tests/test_workspace_app.py` plus untracked docs/data/review files; not touched by this brief.
+
+## Post-Implementation Self-Review
+
+- Issues found and fixed: replay source assets with missing hashes were silently skipped; source path resolution was too brittle for non-standard run locations; the Option Trading overview displayed IV skew as a raw decimal while other surfaces displayed it as a percentage; the hedge contract test manually added options provenance fields instead of proving the options-phase producer emitted them.
+- Fixes made: replay verification now reports source hashes unavailable at capture as a failing status, resolves source paths defensively, displays overview IV skew as a percentage, and tests options provenance through `_compute_feature_row`.
+- Verification: `python -m pytest -q tests/test_replay_manifest.py tests/test_hedge_data_contracts.py tests/test_option_trading_overview.py; python -m compileall -q golden_vector tests` -> `30 passed` plus compile success.
+- Full suite after review fixes: `python -m pytest -q` -> `559 passed in 232.54s`.

@@ -111,7 +111,7 @@ def _render_row(row: OptionTradingRow) -> str:
         f"{_fmt_numeric_td(row.up_beta_core, decimals=2)}"
         f"<td>{_fmt_text(row.confidence_label)}</td>"
         f"{_fmt_numeric_td(row.iv_percentile_cross_sectional, decimals=1)}"
-        f"{_fmt_numeric_td(row.iv_skew_60d, decimals=3)}"
+        f"{_fmt_numeric_td(row.iv_skew_60d, decimals=1, as_percent=True)}"
         f"{_fmt_numeric_td(row.iv_rv_ratio_60d, decimals=2)}"
         f"<td>{_fmt_text(row.optionability_tier)}</td>"
         f"<td>{_status_label(row.put_status)}</td>"

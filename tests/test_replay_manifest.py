@@ -378,6 +378,38 @@ def test_verify_replay_detects_changed_foundation_source_asset(tmp_path, capsys)
     assert "SNAPSHOT INTEGRITY FAILED" in output
 
 
+def test_verify_replay_reports_foundation_source_missing_at_capture(tmp_path, capsys):
+    paths = _prepare_paths(tmp_path)
+    context = RunContext.start(
+        paths=paths,
+        command="tool-a",
+        parameters={"fixture": True},
+        config_hash="test-config-hash",
+    )
+    foundation_manifest_path = _write_foundation_manifest(paths)
+    foundation_manifest = json.loads(
+        foundation_manifest_path.read_text(encoding="utf-8")
+    )
+    raw_gold_path = paths.repo_root / foundation_manifest["gold_history_path"]
+    raw_gold_path.unlink()
+
+    update_manifest_with_foundation(
+        context.run_dir,
+        foundation_run_id="foundation-run",
+        foundation_manifest_path=foundation_manifest_path,
+    )
+
+    exit_code = run_verify_replay(paths, run_id_or_path=context.run_id)
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert (
+        "[FAIL] foundation:raw_gold.parquet - source sha256 was unavailable "
+        "when manifest was captured"
+    ) in output
+    assert "SNAPSHOT INTEGRITY FAILED" in output
+
+
 def test_verify_replay_checks_options_manifest_snapshot(tmp_path, capsys):
     paths = _prepare_paths(tmp_path)
     context = RunContext.start(

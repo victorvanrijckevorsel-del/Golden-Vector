@@ -233,7 +233,7 @@ def verify_manifest(run_dir_or_id: Path | str) -> VerifyResult:
                 run_dir,
                 name=str(source_asset.get("name", "source_asset")),
                 original_path=Path(str(source_asset.get("original_path", ""))),
-                expected_sha256=str(source_asset.get("sha256", "")),
+                expected_sha256=_optional_sha256(source_asset.get("sha256")),
             )
         )
 
@@ -374,9 +374,20 @@ def _verify_source_asset(
     *,
     name: str,
     original_path: Path,
-    expected_sha256: str,
+    expected_sha256: str | None,
 ) -> VerifyAssetStatus:
     resolved_path = _resolve_original_asset_path(run_dir, original_path)
+    if not expected_sha256:
+        return VerifyAssetStatus(
+            name=name,
+            snapshot_path=resolved_path,
+            expected_sha256=None,
+            actual_sha256=(
+                _sha256_file(resolved_path) if resolved_path.exists() else None
+            ),
+            status="missing_at_capture",
+            message="source sha256 was unavailable when manifest was captured",
+        )
     if not resolved_path.exists():
         return VerifyAssetStatus(
             name=name,
@@ -408,8 +419,8 @@ def _verify_source_asset(
     )
 
 
-def _manifest_source_assets(manifest: dict[str, Any]) -> list[dict[str, str]]:
-    assets: list[dict[str, str]] = []
+def _manifest_source_assets(manifest: dict[str, Any]) -> list[dict[str, str | None]]:
+    assets: list[dict[str, str | None]] = []
     foundation_data = manifest.get("foundation_run_consumed") or {}
     assets.extend(_valid_source_assets(foundation_data.get("source_assets", [])))
     options_data = manifest.get("options_manifest_captured") or {}
@@ -417,22 +428,21 @@ def _manifest_source_assets(manifest: dict[str, Any]) -> list[dict[str, str]]:
     return assets
 
 
-def _valid_source_assets(raw_assets: object) -> list[dict[str, str]]:
+def _valid_source_assets(raw_assets: object) -> list[dict[str, str | None]]:
     if not isinstance(raw_assets, list):
         return []
-    assets: list[dict[str, str]] = []
+    assets: list[dict[str, str | None]] = []
     for raw_asset in raw_assets:
         if not isinstance(raw_asset, dict):
             continue
         original_path = str(raw_asset.get("original_path", "")).strip()
-        expected_sha256 = str(raw_asset.get("sha256", "")).strip()
-        if not original_path or not expected_sha256:
+        if not original_path:
             continue
         assets.append(
             {
                 "name": str(raw_asset.get("name", "source_asset")),
                 "original_path": original_path,
-                "sha256": expected_sha256,
+                "sha256": _optional_sha256(raw_asset.get("sha256")) or "",
             }
         )
     return assets
@@ -517,7 +527,7 @@ def _manifest_original_assets(
 def _foundation_source_assets(
     run_dir: Path,
     foundation_manifest_path: Path,
-) -> list[dict[str, str]]:
+) -> list[dict[str, str | None]]:
     try:
         foundation_manifest = _read_manifest_path(foundation_manifest_path)
     except Exception:
@@ -531,7 +541,7 @@ def _foundation_source_assets(
             "normalized_market_snapshots_snapshot_path",
         ),
     )
-    assets: list[dict[str, str]] = []
+    assets: list[dict[str, str | None]] = []
     for name, field in fields:
         raw_path = str(foundation_manifest.get(field, "")).strip()
         asset = _source_asset_record(run_dir, name=name, raw_path=raw_path)
@@ -543,13 +553,13 @@ def _foundation_source_assets(
 def _options_source_assets(
     run_dir: Path,
     options_manifest_path: Path,
-) -> list[dict[str, str]]:
+) -> list[dict[str, str | None]]:
     try:
         options_manifest = _read_manifest_path(options_manifest_path)
     except Exception:
         return []
 
-    assets: list[dict[str, str]] = []
+    assets: list[dict[str, str | None]] = []
     for snapshot in options_manifest.get("snapshots", []):
         if not isinstance(snapshot, dict):
             continue
@@ -584,7 +594,7 @@ def _source_asset_record(
     *,
     name: str,
     raw_path: str,
-) -> dict[str, str] | None:
+) -> dict[str, str | None] | None:
     if not raw_path:
         return None
     resolved_path = _resolve_original_asset_path(run_dir, Path(raw_path))
@@ -592,7 +602,7 @@ def _source_asset_record(
         return {
             "name": name,
             "original_path": raw_path,
-            "sha256": "",
+            "sha256": None,
         }
     return {
         "name": name,
@@ -605,9 +615,31 @@ def _resolve_original_asset_path(run_dir: Path, path: Path) -> Path:
     if path.is_absolute():
         return path
     try:
-        return run_dir.parents[2] / path
+        run_repo_candidate = run_dir.parents[2] / path
     except IndexError:
-        return path
+        run_repo_candidate = path
+    if _run_dir_is_repo_run_dir(run_dir):
+        return run_repo_candidate
+    if run_repo_candidate.exists():
+        return run_repo_candidate
+    try:
+        checkout_candidate = ProjectPaths.discover().repo_root / path
+        if checkout_candidate.exists():
+            return checkout_candidate
+    except Exception:
+        pass
+    return run_repo_candidate
+
+
+def _run_dir_is_repo_run_dir(run_dir: Path) -> bool:
+    return run_dir.parent.name == "runs" and run_dir.parent.parent.name == "data"
+
+
+def _optional_sha256(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _copy_file_atomic(source_path: Path, target_path: Path) -> None:

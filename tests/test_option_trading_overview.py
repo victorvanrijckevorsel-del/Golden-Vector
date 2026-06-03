@@ -40,6 +40,7 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
     assert "Plain Beta" in html
     assert "IV Skew 60d" in html
     assert "IV/RV 60d" in html
+    assert "8.0%" in html
     assert "downside protection is more expensive" in html
     assert "options look expensive versus how much" in html
     assert "data-filter-column=\"put_status\"" in html
