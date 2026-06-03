@@ -18,6 +18,7 @@ from golden_vector.hedge.candidate_puts import CandidatePut
 from golden_vector.hedge.scenarios import compute_scenario_bundle
 
 RANKING_PNL_GOLD_MOVE = -0.10
+RANKING_CONTEXT_SIGNAL_HORIZON_DAYS = 60
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,8 @@ class SensitivityRow:
     confidence_label: str
     confidence_score: float | None
     iv_percentile_cross_sectional: float | None
+    iv_skew_60d: float | None
+    iv_rv_ratio_60d: float | None
     pnl_at_minus10_60d: float | None
     optionability_tier: str
     notes: list[str]
@@ -82,6 +85,8 @@ def build_sensitivity_ranking(
             confidence_label=row.confidence_label,
             confidence_score=row.confidence_score,
             iv_percentile_cross_sectional=row.iv_percentile_cross_sectional,
+            iv_skew_60d=row.iv_skew_60d,
+            iv_rv_ratio_60d=row.iv_rv_ratio_60d,
             pnl_at_minus10_60d=row.pnl_at_minus10_60d,
             optionability_tier=row.optionability_tier,
             notes=row.notes,
@@ -160,6 +165,14 @@ def _build_row(
             confidence_score=as_float(tool_a_row.get("confidence_score")),
             iv_percentile_cross_sectional=as_float(
                 (feature or {}).get("iv_percentile_cross_sectional")
+            ),
+            iv_skew_60d=as_float(
+                (feature or {}).get(f"iv_skew_{RANKING_CONTEXT_SIGNAL_HORIZON_DAYS}d")
+            ),
+            iv_rv_ratio_60d=as_float(
+                (feature or {}).get(
+                    f"iv_rv_ratio_{RANKING_CONTEXT_SIGNAL_HORIZON_DAYS}d"
+                )
             ),
             pnl_at_minus10_60d=pnl_at_minus10,
             optionability_tier=optionability_tier,

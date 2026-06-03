@@ -27,6 +27,7 @@ OptionSide = Literal["put", "call"]
 SizingMode = Literal["contracts", "budget"]
 
 PREFERRED_OPTION_HORIZON_DAYS = 60
+OPTION_CONTEXT_SIGNAL_HORIZON_DAYS = 60
 PUT_CONTEXT_GOLD_MOVE = -0.10
 CALL_CONTEXT_GOLD_MOVE = 0.10
 
@@ -60,6 +61,8 @@ class OptionTradingRow:
     confidence_label: str
     confidence_score: float | None
     iv_percentile_cross_sectional: float | None
+    iv_skew_60d: float | None
+    iv_rv_ratio_60d: float | None
     optionability_tier: str
     put_status: SideStatus
     call_status: SideStatus
@@ -386,6 +389,14 @@ def _build_row(
         confidence_label=confidence_label,
         confidence_score=row_float(tool_a_row, "confidence_score"),
         iv_percentile_cross_sectional=row_float(feature, "iv_percentile_cross_sectional"),
+        iv_skew_60d=row_float(
+            feature,
+            f"iv_skew_{OPTION_CONTEXT_SIGNAL_HORIZON_DAYS}d",
+        ),
+        iv_rv_ratio_60d=row_float(
+            feature,
+            f"iv_rv_ratio_{OPTION_CONTEXT_SIGNAL_HORIZON_DAYS}d",
+        ),
         optionability_tier=tier,
         put_status=put_status,
         call_status=call_status,

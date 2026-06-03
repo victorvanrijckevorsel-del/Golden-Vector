@@ -13,3 +13,9 @@
 - Focused tests: `python -m pytest -q tests/test_option_trading_overview.py tests/test_option_trading_data.py tests/test_option_trading_routes.py tests/test_hedge_report.py tests/test_sensitivity_ranking.py tests/test_scenarios.py` -> `59 passed`.
 - Self-review fixes made: moved scenario-table assertions from the high-level report smoke fixture to the direct scenario-rendering test because the smoke fixture does not always render scenario bundles.
 
+## Batch 2 Self-Review
+
+- Items covered: `iv_skew_60d` and `iv_rv_ratio_60d` surfaced in the Option Trading overview, ticker option lens, Sensitivity Ranking, and Speculation Candidates; Tool A beta formula documented and pinned by a deterministic test.
+- Scope check: no option pricing, candidate selection, or Tool A beta calculation changed.
+- Focused tests: `python -m pytest -q tests/test_structural_beta_formula.py tests/test_option_trading_overview.py tests/test_option_trading_data.py tests/test_option_trading_routes.py tests/test_hedge_report.py tests/test_sensitivity_ranking.py tests/test_options_features.py` -> `60 passed`.
+- Self-review fixes made: changed one IV-skew assertion to `pytest.approx` because the fixture computes `0.4 - 0.5`.

@@ -11,8 +11,11 @@ import pandas as pd
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge.candidate_puts import OptionCandidate
 from golden_vector.hedge.disclosures import (
+    IV_RV_RATIO_CAVEAT,
+    IV_SKEW_CAVEAT,
     LONG_OPTION_PREMIUM_CAVEAT,
     OPTION_REPRICE_ASSUMPTION,
+    TOOL_A_BETA_FORMULA,
 )
 from golden_vector.hedge.option_trading import OptionSizingResult, OptionTradingDetailData
 from golden_vector.hedge.scenarios import CandidateScenarioBundle, scenario_model_note
@@ -198,6 +201,7 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
         "downside put candidates are the ranking basis, and upside calls are "
         "shown as context where listed calls pass the same liquidity checks. "
         f"{LONG_OPTION_PREMIUM_CAVEAT}</p>",
+        f"<p class=\"hint\">{escape(IV_SKEW_CAVEAT)} {escape(IV_RV_RATIO_CAVEAT)}</p>",
     ]
     if detail is None:
         body.append(
@@ -227,6 +231,10 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
             f"<td>{_fmt_number(row.structural_delta_core, decimals=2)}</td></tr>",
             "<tr><th>Up Beta</th>"
             f"<td>{_fmt_number(row.up_beta_core, decimals=2)}</td></tr>",
+            "<tr><th>IV Skew 60d</th>"
+            f"<td>{_fmt_percent(row.iv_skew_60d, decimals=1)}</td></tr>",
+            "<tr><th>IV/RV Ratio 60d</th>"
+            f"<td>{_fmt_number(row.iv_rv_ratio_60d, decimals=2)}</td></tr>",
             f"<tr><th>Put Status</th><td>{_fmt_text(row.put_status)}</td></tr>",
             f"<tr><th>Call Status</th><td>{_fmt_text(row.call_status)}</td></tr>",
             f"<tr><th>Optionability</th><td>{_fmt_text(row.optionability_tier)}</td></tr>",
@@ -545,7 +553,8 @@ def _render_tool_a_panel(
         "<section class=\"panel\">",
         "<h2>Structural Tool A</h2>",
         "<p class=\"hint\">Official Tool A uses weekly structural delta, regime-split gamma, explicit asymmetry, "
-        "confidence, and volatility diagnostics. The horizon-return ladder below is exploratory only.</p>",
+        "confidence, and volatility diagnostics. "
+        f"{TOOL_A_BETA_FORMULA} The horizon-return ladder below is exploratory only.</p>",
         _render_signal_notice(tool_a_row),
         _render_detail_alignment_notice(alignment),
         _render_structural_metrics_load_notice(tool_a_detail.structural_metrics_load),

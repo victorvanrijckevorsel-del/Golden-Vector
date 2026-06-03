@@ -270,6 +270,15 @@ def compute_window_metric(
     issue_summary: str | None,
     scoring_config: ScoringConfig,
 ) -> dict[str, object]:
+    """Compute full and regime-split Tool A betas for one trailing window.
+
+    ``structural_delta`` is the OLS slope, with intercept, of weekly stock
+    log-returns on weekly gold log-returns. ``up_beta`` and ``down_beta`` use
+    the same OLS-with-intercept estimator on split samples where weekly gold
+    returns are positive or negative. This is a descriptive conditional-beta
+    split, not an Estrada/D-CAPM downside beta.
+    """
+
     minimum_observations = scoring_config.confidence_thresholds.minimum_observations_for_window(
         window_id
     )
@@ -515,6 +524,13 @@ def annualize_downside_volatility(values: Iterable[float]) -> float | None:
 
 
 def compute_regression(x: pd.Series, y: pd.Series) -> RegressionResult | None:
+    """Return the ordinary least-squares line ``y = alpha + beta * x``.
+
+    The estimator includes an intercept by centering both series before
+    computing the slope. Tool A's full, up-week, and down-week beta metrics all
+    use this same OLS-with-intercept regression.
+    """
+
     x_values = pd.to_numeric(x, errors="coerce").to_numpy(dtype=float)
     y_values = pd.to_numeric(y, errors="coerce").to_numpy(dtype=float)
     valid_mask = np.isfinite(x_values) & np.isfinite(y_values)

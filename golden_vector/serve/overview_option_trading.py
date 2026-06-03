@@ -6,6 +6,8 @@ from html import escape
 from urllib.parse import quote
 
 from golden_vector.hedge.disclosures import (
+    IV_RV_RATIO_CAVEAT,
+    IV_SKEW_CAVEAT,
     LONG_OPTION_PREMIUM_CAVEAT,
     SENSITIVITY_RANKING_CAVEAT,
 )
@@ -26,6 +28,7 @@ def _render_option_trading_overview_page(
         "checks, not the ranking basis.</p>",
         f"<p class=\"hint\">{escape(SENSITIVITY_RANKING_CAVEAT)} "
         f"{escape(LONG_OPTION_PREMIUM_CAVEAT)}</p>",
+        f"<p class=\"hint\">{escape(IV_SKEW_CAVEAT)} {escape(IV_RV_RATIO_CAVEAT)}</p>",
         "<p class=\"hint\"><a class=\"raw-report-download\" href=\"/hedge-readiness/latest.md\">"
         "Download latest raw hedge-readiness markdown report</a></p>",
     ]
@@ -79,6 +82,8 @@ def _render_option_trading_overview_page(
         "<th data-col-name=\"up_beta\" data-sort-numeric>Up Beta</th>"
         "<th data-col-name=\"confidence\">Confidence</th>"
         "<th data-col-name=\"iv\" data-sort-numeric>IV Percentile</th>"
+        "<th data-col-name=\"iv_skew\" data-sort-numeric>IV Skew 60d</th>"
+        "<th data-col-name=\"iv_rv\" data-sort-numeric>IV/RV 60d</th>"
         "<th data-col-name=\"optionability\">Optionability</th>"
         "<th data-col-name=\"put_status\">Put Status</th>"
         "<th data-col-name=\"call_status\">Call Status</th>"
@@ -106,6 +111,8 @@ def _render_row(row: OptionTradingRow) -> str:
         f"{_fmt_numeric_td(row.up_beta_core, decimals=2)}"
         f"<td>{_fmt_text(row.confidence_label)}</td>"
         f"{_fmt_numeric_td(row.iv_percentile_cross_sectional, decimals=1)}"
+        f"{_fmt_numeric_td(row.iv_skew_60d, decimals=3)}"
+        f"{_fmt_numeric_td(row.iv_rv_ratio_60d, decimals=2)}"
         f"<td>{_fmt_text(row.optionability_tier)}</td>"
         f"<td>{_status_label(row.put_status)}</td>"
         f"<td>{_status_label(row.call_status)}</td>"

@@ -4,6 +4,7 @@ import json
 from datetime import date
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.hedge.option_trading import build_option_trading_overview
@@ -59,6 +60,8 @@ def test_build_option_trading_overview_filters_and_sorts_optionable_rows():
 
     assert [row.ticker for row in overview.rows] == ["NEM", "AEM"]
     assert overview.rows[0].structural_delta_core == 1.9
+    assert overview.rows[0].iv_skew_60d == pytest.approx(-0.1)
+    assert overview.rows[0].iv_rv_ratio_60d == 1.25
     assert overview.rows[0].put_status == "available"
     assert overview.rows[0].call_status == "available"
     assert overview.rows[0].pnl_put_at_minus10_60d is not None
@@ -311,6 +314,10 @@ def _feature(
     for horizon in (30, 60, 90):
         row[f"put_iv_25d_{horizon}d"] = put_iv
         row[f"call_iv_25d_{horizon}d"] = call_iv
+        row[f"iv_skew_{horizon}d"] = (
+            None if put_iv is None or call_iv is None else put_iv - call_iv
+        )
+        row[f"iv_rv_ratio_{horizon}d"] = 1.25 if put_iv is not None else None
     return row
 
 

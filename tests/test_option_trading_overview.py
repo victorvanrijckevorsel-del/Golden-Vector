@@ -19,6 +19,8 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
                     confidence_label="HIGH",
                     confidence_score=0.9,
                     iv_percentile_cross_sectional=40.0,
+                    iv_skew_60d=0.08,
+                    iv_rv_ratio_60d=1.25,
                     optionability_tier="directly_hedgeable",
                     put_status="available",
                     call_status="available",
@@ -36,6 +38,10 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
     assert "/ticker/AEM?lens=option-trading#option-trading" in html
     assert "option-trading-table" in html
     assert "Plain Beta" in html
+    assert "IV Skew 60d" in html
+    assert "IV/RV 60d" in html
+    assert "downside protection is more expensive" in html
+    assert "options look expensive versus how much" in html
     assert "data-filter-column=\"put_status\"" in html
     assert "data-filter-column=\"call_status\"" in html
     assert "Put P&amp;L/share @ Gold -10% (60d)" in html

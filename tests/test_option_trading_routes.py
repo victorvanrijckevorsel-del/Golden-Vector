@@ -75,6 +75,10 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
     assert "Upside Call Candidates" in body
     assert "Upside Call Scenarios" in body
     assert "Plain Beta" in body
+    assert "IV Skew 60d" in body
+    assert "IV/RV Ratio 60d" in body
+    assert "downside protection is more expensive" in body
+    assert "options look expensive versus how much" in body
     assert "Buying puts/calls can be right on direction" in body
     assert "approximate - linear beta can understate real downside" in body
     assert "Leveraged bullish speculation" in body

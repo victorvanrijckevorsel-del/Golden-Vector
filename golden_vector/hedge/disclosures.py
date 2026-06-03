@@ -22,3 +22,21 @@ SENSITIVITY_RANKING_CAVEAT = (
     "Descriptive stress-sensitivity view: how a stock has behaved when gold "
     "fell, not a forecast of returns."
 )
+
+IV_SKEW_CAVEAT = (
+    "IV skew (25-delta put IV minus 25-delta call IV): more positive means "
+    "downside protection is more expensive, so more crash risk is priced in. "
+    "In-sample signal only - validate before treating it as a trigger."
+)
+
+IV_RV_RATIO_CAVEAT = (
+    "IV/RV ratio compares short-horizon implied volatility with realized "
+    "volatility; higher values mean options look expensive versus how much "
+    "the stock has actually moved."
+)
+
+TOOL_A_BETA_FORMULA = (
+    "Split-sample conditional beta: OLS slope with intercept of weekly stock "
+    "log-returns on weekly gold log-returns, computed separately over "
+    "gold-up and gold-down weeks."
+)

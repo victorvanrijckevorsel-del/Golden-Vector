@@ -34,6 +34,8 @@ from golden_vector.hedge.expected_downside import (
     compute_premium_vs_downside,
 )
 from golden_vector.hedge.disclosures import (
+    IV_RV_RATIO_CAVEAT,
+    IV_SKEW_CAVEAT,
     LONG_OPTION_PREMIUM_CAVEAT,
     OPTION_REPRICE_ASSUMPTION,
     SENSITIVITY_RANKING_CAVEAT,
@@ -553,6 +555,8 @@ def _render_sensitivity_ranking(ranking: SensitivityRankingData) -> list[str]:
         "## Sensitivity Ranking",
         "",
         SENSITIVITY_RANKING_CAVEAT,
+        IV_SKEW_CAVEAT,
+        IV_RV_RATIO_CAVEAT,
         "",
         f"Sorted by `{ranking.sort_by}`. "
         f"Showing {len(ranking.rows)} of {ranking.total_count} tickers.",
@@ -563,9 +567,10 @@ def _render_sensitivity_ranking(ranking: SensitivityRankingData) -> list[str]:
     lines.extend(
         [
             "| Rank | Ticker | Down beta | Plain beta | Up beta | Confidence | IV percentile | "
+            "IV skew 60d | IV/RV 60d | "
             f"P&L/share at gold {RANKING_PNL_GOLD_MOVE:.0%} | "
             "Optionability | Notes |",
-            "|---:|---|---:|---:|---:|---|---:|---:|---|---|",
+            "|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---|---|",
         ]
     )
     for row in ranking.rows:
@@ -578,6 +583,8 @@ def _render_sensitivity_ranking(ranking: SensitivityRankingData) -> list[str]:
             f"{_fmt_number(row.up_beta_core)} | "
             f"{row.confidence_label} | "
             f"{_fmt_number(row.iv_percentile_cross_sectional)} | "
+            f"{_fmt_pct(row.iv_skew_60d)} | "
+            f"{_fmt_number(row.iv_rv_ratio_60d)} | "
             f"{_fmt_price(row.pnl_at_minus10_60d)} | "
             f"{row.optionability_tier} | "
             f"{'; '.join(row.notes) if row.notes else ''} |"
@@ -694,6 +701,8 @@ def _render_speculation_candidates(
         f"Sorted by `{data.sort_by}` ascending. "
         f"Showing up to {data.max_tickers_applied} optionable tickers.",
         LONG_OPTION_PREMIUM_CAVEAT,
+        IV_SKEW_CAVEAT,
+        IV_RV_RATIO_CAVEAT,
         "",
     ]
     if risk_free_rate_is_fallback:
@@ -713,6 +722,8 @@ def _render_speculation_candidates(
                 f"- Current stock price: {_fmt_price(block.current_stock_price)}",
                 f"- Optionability: {block.optionability_tier}",
                 f"- IV percentile: {_fmt_number(block.iv_percentile_cross_sectional)}",
+                f"- IV skew 60d: {_fmt_pct(block.iv_skew_60d)}",
+                f"- IV/RV ratio 60d: {_fmt_number(block.iv_rv_ratio_60d)}",
                 f"- Tool A down beta: {_fmt_number(block.down_beta_core)}",
                 f"- Tool A confidence: {block.confidence_label}",
                 "",

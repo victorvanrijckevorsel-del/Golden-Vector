@@ -123,6 +123,10 @@ def test_run_hedge_readiness_writes_markdown_report(tmp_path, capsys):
     assert "# Hedge Readiness Report" in markdown
     assert "Descriptive stress-sensitivity view" in markdown
     assert "Buying puts/calls can be right on direction" in markdown
+    assert "IV skew 60d" in markdown
+    assert "IV/RV ratio 60d" in markdown
+    assert "downside protection is more expensive" in markdown
+    assert "options look expensive versus how much" in markdown
     _assert_heading_order(
         markdown,
         [
@@ -443,6 +447,8 @@ def _write_options_inputs(
             "underlying_price": 50.0,
             "optionability_tier": "directly_hedgeable",
             "iv_percentile_cross_sectional": 100.0,
+            "iv_skew_60d": 0.08,
+            "iv_rv_ratio_60d": 1.25,
         }
     )
     aauc_features = compute_options_features(
