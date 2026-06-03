@@ -10,6 +10,7 @@ from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.config_models import (
     AppConfig,
     BenchmarksConfig,
+    CandidateFinderConfig,
     HorizonsConfig,
     QaConfig,
     ScoringConfig,
@@ -53,6 +54,18 @@ def _app_config() -> AppConfig:
             benchmarks=[
                 {"ticker": "GDX", "yahoo_symbol": "GDX"},
                 {"ticker": "GDXJ", "yahoo_symbol": "GDXJ"},
+            ]
+        ),
+        candidate_finder=CandidateFinderConfig(
+            criteria=[
+                {
+                    "id": "down_beta",
+                    "label": "Down-beta",
+                    "source_field": "down_beta_core",
+                    "group": "Sensitivity",
+                    "default_direction": "high_good",
+                    "unit": "beta",
+                }
             ]
         ),
         horizons=HorizonsConfig(

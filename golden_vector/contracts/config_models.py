@@ -705,9 +705,110 @@ class ScreeningParamsConfig(StrictConfigModel):
         return values
 
 
+CandidateCriterionDirection = Literal["high_good", "low_good"]
+CandidateOptionsSide = Literal["puts", "calls", "either"]
+
+
+class CandidateFinderCriterion(StrictConfigModel):
+    id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    source_field: str = Field(min_length=1)
+    group: str = Field(min_length=1)
+    default_direction: CandidateCriterionDirection
+    unit: str = Field(min_length=1)
+    available_now: bool = True
+
+    @field_validator("id", "label", "source_field", "group", "unit")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        cleaned = str(value).strip()
+        if not cleaned:
+            raise ValueError("candidate finder text fields must not be blank")
+        return cleaned
+
+
+class CandidateFinderPresetCriterion(StrictConfigModel):
+    id: str = Field(min_length=1)
+    direction: CandidateCriterionDirection | None = None
+    weight: float = 1.0
+
+    @field_validator("id")
+    @classmethod
+    def strip_id(cls, value: str) -> str:
+        cleaned = str(value).strip()
+        if not cleaned:
+            raise ValueError("preset criterion id must not be blank")
+        return cleaned
+
+    @field_validator("weight")
+    @classmethod
+    def non_negative_weight(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("preset criterion weights must be non-negative")
+        return float(value)
+
+
+class CandidateFinderPreset(StrictConfigModel):
+    id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    options_side: CandidateOptionsSide = "either"
+    criteria: list[CandidateFinderPresetCriterion] = Field(min_length=1)
+
+    @field_validator("id", "label")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        cleaned = str(value).strip()
+        if not cleaned:
+            raise ValueError("candidate finder preset text fields must not be blank")
+        return cleaned
+
+    @model_validator(mode="after")
+    def unique_preset_criteria(self) -> "CandidateFinderPreset":
+        seen: set[str] = set()
+        for criterion in self.criteria:
+            if criterion.id in seen:
+                raise ValueError(f"Duplicate criterion in preset {self.id}: {criterion.id}")
+            seen.add(criterion.id)
+        return self
+
+
+class CandidateFinderConfig(StrictConfigModel):
+    version: int = 1
+    default_top_n: int = Field(default=10, gt=0)
+    min_criteria_fraction: float = Field(default=0.67, gt=0, le=1)
+    criteria: list[CandidateFinderCriterion] = Field(min_length=1)
+    presets: list[CandidateFinderPreset] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_and_referenced_criteria(self) -> "CandidateFinderConfig":
+        criterion_ids: set[str] = set()
+        for criterion in self.criteria:
+            if criterion.id in criterion_ids:
+                raise ValueError(f"Duplicate candidate finder criterion: {criterion.id}")
+            criterion_ids.add(criterion.id)
+
+        preset_ids: set[str] = set()
+        for preset in self.presets:
+            if preset.id in preset_ids:
+                raise ValueError(f"Duplicate candidate finder preset: {preset.id}")
+            preset_ids.add(preset.id)
+            missing = sorted(
+                criterion.id
+                for criterion in preset.criteria
+                if criterion.id not in criterion_ids
+            )
+            if missing:
+                raise ValueError(
+                    f"Preset {preset.id} references unknown criteria: "
+                    + ", ".join(missing)
+                )
+        return self
+
+
 class AppConfig(StrictConfigModel):
     universe: UniverseConfig
     benchmarks: BenchmarksConfig
+    candidate_finder: CandidateFinderConfig
     hedge_readiness: HedgeReadinessConfig = Field(default_factory=HedgeReadinessConfig)
     horizons: HorizonsConfig
     qa: QaConfig

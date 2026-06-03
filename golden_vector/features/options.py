@@ -17,6 +17,7 @@ from golden_vector.features.options_chain import (
     normalize_options_chain,
     option_quote_is_tradable,
 )
+from golden_vector.features.percentile_ranks import oriented_percentile
 
 DEFAULT_TARGET_HORIZONS_DAYS = (30, 60, 90)
 TRADING_DAYS_PER_YEAR = 252
@@ -158,7 +159,7 @@ def rank_options_iv_cross_section(
     if iv_column not in features.columns:
         return pd.Series([math.nan] * len(features.index), index=features.index)
     values = pd.to_numeric(features[iv_column], errors="coerce")
-    return values.rank(pct=True, method="average") * 100.0
+    return oriented_percentile(values, high_good=True)
 
 
 def _tradable_option_slice(

@@ -1,0 +1,162 @@
+version: 1
+default_top_n: 10
+min_criteria_fraction: 0.67
+criteria:
+  - id: down_beta
+    label: Down-beta
+    source_field: down_beta_core
+    group: Sensitivity
+    default_direction: high_good
+    unit: beta
+    available_now: true
+  - id: up_beta
+    label: Up-beta
+    source_field: up_beta_core
+    group: Sensitivity
+    default_direction: high_good
+    unit: beta
+    available_now: true
+  - id: gold_beta_core
+    label: Gold beta (core)
+    source_field: structural_delta_core
+    group: Sensitivity
+    default_direction: high_good
+    unit: beta
+    available_now: true
+  - id: downside_volatility
+    label: Downside volatility
+    source_field: downside_volatility_52w
+    group: Sensitivity
+    default_direction: high_good
+    unit: percent
+    available_now: true
+  - id: confidence
+    label: Confidence
+    source_field: confidence_score
+    group: Quality
+    default_direction: high_good
+    unit: score
+    available_now: true
+  - id: aisc
+    label: AISC
+    source_field: aisc_usd_per_oz
+    group: Fragility
+    default_direction: high_good
+    unit: usd_per_oz
+    available_now: true
+  - id: leverage
+    label: Net Debt / EBITDA
+    source_field: leverage
+    group: Leverage
+    default_direction: high_good
+    unit: multiple
+    available_now: true
+  - id: debt_to_mktcap
+    label: Debt / market cap
+    source_field: debt_to_mktcap
+    group: Leverage
+    default_direction: high_good
+    unit: ratio
+    available_now: true
+  - id: ebitda_to_mktcap
+    label: EBITDA / market cap
+    source_field: ebitda_to_mktcap
+    group: Valuation
+    default_direction: high_good
+    unit: ratio
+    available_now: true
+  - id: revenue_to_mktcap
+    label: Revenue / market cap
+    source_field: revenue_to_mktcap
+    group: Valuation
+    default_direction: high_good
+    unit: ratio
+    available_now: true
+  - id: ev_ebitda
+    label: EV/EBITDA
+    source_field: ev_ebitda
+    group: Valuation
+    default_direction: low_good
+    unit: multiple
+    available_now: true
+  - id: forward_pe
+    label: Forward P/E
+    source_field: forward_pe
+    group: Valuation
+    default_direction: low_good
+    unit: multiple
+    available_now: true
+  - id: fcf_yield
+    label: FCF yield
+    source_field: fcf_yield
+    group: Valuation
+    default_direction: high_good
+    unit: percent
+    available_now: true
+  - id: best_upside
+    label: Best upside %
+    source_field: best_upside_pct
+    group: Upside
+    default_direction: high_good
+    unit: percent
+    available_now: true
+  - id: market_cap
+    label: Market cap
+    source_field: market_cap_musd
+    group: Size
+    default_direction: high_good
+    unit: musd
+    available_now: true
+  - id: iv_percentile
+    label: IV percentile
+    source_field: iv_percentile_cross_sectional
+    group: Options
+    default_direction: low_good
+    unit: percentile
+    available_now: true
+  - id: iv_skew
+    label: IV skew
+    source_field: iv_skew_60d
+    group: Options
+    default_direction: high_good
+    unit: percent
+    available_now: true
+presets:
+  - id: bearish_put
+    label: Bearish put screen
+    options_side: puts
+    criteria:
+      - id: down_beta
+        direction: high_good
+        weight: 1.0
+      - id: aisc
+        direction: high_good
+        weight: 1.0
+      - id: debt_to_mktcap
+        direction: high_good
+        weight: 1.0
+      - id: iv_percentile
+        direction: low_good
+        weight: 1.0
+      - id: confidence
+        direction: high_good
+        weight: 1.0
+  - id: bullish_call
+    label: Bullish call screen
+    options_side: calls
+    criteria:
+      - id: up_beta
+        direction: high_good
+        weight: 1.0
+      - id: aisc
+        direction: low_good
+        weight: 1.0
+      - id: fcf_yield
+        direction: high_good
+        weight: 1.0
+      - id: best_upside
+        direction: high_good
+        weight: 1.0
+      - id: iv_percentile
+        direction: low_good
+        weight: 1.0
