@@ -166,13 +166,18 @@ def scan_option_chain(
         underlying_price=underlying_price,
         risk_free_rate=risk_free_rate,
     )
+    near_spot_depth_by_key = _near_spot_depth_counts(
+        frame=frame,
+        underlying_price=underlying_price,
+        settings=settings,
+    )
     metrics = tuple(
         _metric_from_row(
             ticker=ticker,
             row=row,
-            frame=frame,
             underlying_price=underlying_price,
             settings=settings,
+            near_spot_depth_by_key=near_spot_depth_by_key,
         )
         for _, row in frame.iterrows()
     )
@@ -297,9 +302,9 @@ def _metric_from_row(
     *,
     ticker: str,
     row: pd.Series,
-    frame: pd.DataFrame,
     underlying_price: float,
     settings: OptionLiquiditySettings,
+    near_spot_depth_by_key: dict[tuple[str, OptionSideType], int],
 ) -> OptionContractMetrics:
     option_type = _normalize_option_type(str(row.get("option_type", "")))
     bid = as_float(row.get("bid"))
@@ -323,12 +328,9 @@ def _metric_from_row(
     premium_pct_spot = (
         mid / underlying_price if mid is not None and underlying_price > 0 else None
     )
-    near_spot_depth = _near_spot_depth_count(
-        frame=frame,
-        expiration=expiration_value,
-        option_type=option_type,
-        underlying_price=underlying_price,
-        settings=settings,
+    near_spot_depth = near_spot_depth_by_key.get(
+        (str(expiration_value), option_type),
+        0,
     )
     flags = _quote_flags(
         bid=bid,
@@ -447,7 +449,9 @@ def _slot_for_bucket(
             reason=_accepted_reason(metric, bucket=bucket),
             candidate=candidate,
             listed_contract_count=listed_contract_count,
-            tradable_contract_count=sum(1 for metric in metrics if metric.liquidity_tier == "tradable"),
+            tradable_contract_count=sum(
+                1 for item in metrics if item.liquidity_tier == "tradable"
+            ),
             bucket=bucket,
             liquidity_tier=metric.liquidity_tier,
         )
@@ -469,7 +473,9 @@ def _slot_for_bucket(
         reason=_near_miss_reason(metric, bucket=bucket, settings=settings),
         rejected_candidate=rejected,
         listed_contract_count=listed_contract_count,
-        tradable_contract_count=sum(1 for metric in metrics if metric.liquidity_tier == "tradable"),
+        tradable_contract_count=sum(
+            1 for item in metrics if item.liquidity_tier == "tradable"
+        ),
         bucket=bucket,
         liquidity_tier=metric.liquidity_tier,
     )
@@ -699,31 +705,37 @@ def _liquidity_score(
     )
 
 
-def _near_spot_depth_count(
+def _near_spot_depth_counts(
     *,
     frame: pd.DataFrame,
-    expiration: object,
-    option_type: OptionSideType,
     underlying_price: float,
     settings: OptionLiquiditySettings,
-) -> int:
+) -> dict[tuple[str, OptionSideType], int]:
     if underlying_price <= 0:
-        return 0
-    subset = frame[
-        (frame["expiration"] == expiration)
-        & (frame["option_type"].astype(str).str.upper() == option_type)
-    ]
-    count = 0
-    for _, row in subset.iterrows():
+        return {}
+    counts: dict[tuple[str, OptionSideType], int] = {}
+    for _, row in frame.iterrows():
         strike = as_float(row.get("strike"))
         bid = as_float(row.get("bid"))
         ask = as_float(row.get("ask"))
         mid = as_float(row.get("mid"))
-        if strike is None or abs(strike - underlying_price) / underlying_price > settings.near_spot_pct:
+        if (
+            strike is None
+            or abs(strike - underlying_price) / underlying_price > settings.near_spot_pct
+        ):
             continue
-        if bid is not None and ask is not None and mid is not None and bid > 0 and ask > 0 and mid > 0:
-            count += 1
-    return count
+        if (
+            bid is not None
+            and ask is not None
+            and mid is not None
+            and bid > 0
+            and ask > 0
+            and mid > 0
+        ):
+            option_type = _normalize_option_type(str(row.get("option_type", "")))
+            key = (str(row.get("expiration")), option_type)
+            counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def _quote_flags(

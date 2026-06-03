@@ -77,3 +77,35 @@ Checks:
 - `python -m pytest tests/test_options_phase.py tests/test_option_trading_data.py tests/test_option_trading_overview.py tests/test_option_trading_routes.py tests/test_options_liquidity.py tests/test_options_liquidity_cli.py -q` -> 40 passed.
 - `python -m pytest tests/test_options_phase.py tests/test_replay_manifest.py tests/test_persist_options.py tests/test_option_trading_data.py tests/test_option_trading_overview.py tests/test_option_trading_routes.py tests/test_options_liquidity.py tests/test_options_liquidity_cli.py tests/test_config_models.py -q` -> 128 passed.
 - `python -m pytest -q` -> 585 passed.
+
+## 2026-06-03 - Holistic self-review after Phase 2
+
+Reviewed:
+- Phase 1 option liquidity scanner, bucket selection, detail-panel rows, sizing query parsing, and overview labels.
+- Phase 2 benchmark ETF ingestion targets, option feature provenance fields, replay manifest inclusion, cached data loading, and overview liquidity measurements.
+- Live local cached-data load and browser routes for `/option-trading` and the AEM option-trading detail lens.
+
+Fixes:
+- Optimized near-spot depth calculation in `scan_option_chain()` from per-contract rescans of the whole chain to one precomputed expiry/side map. On the current cached data this reduced observed cold option-tab data loading from about 147 seconds before the fix to the low tens of seconds after the fix.
+- Added a regression test proving near-spot depth is counted once per expiry/side and excludes far OTM or invalid-quote rows.
+- Cleaned a confusing local variable reuse while computing tradable-contract counts.
+
+Self-review notes:
+- The current local cache still predates benchmark ETF option-chain ingestion, so live website data shows single-stock liquidity measurements only. GDX/GDXJ will appear after the next approved `python main.py update-data` run.
+- No live Yahoo refresh or external data fetch was run during this review.
+- The top-level Option Trading overview no longer contains the long explanatory copy or the old P&L columns. The remaining option caveats are confined to method/sizing context.
+
+Checks:
+- `python -m pytest tests/test_options_liquidity.py tests/test_options_liquidity_cli.py tests/test_option_trading_data.py tests/test_option_trading_overview.py tests/test_option_trading_detail_panel.py tests/test_option_trading_routes.py -q` -> 38 passed before cleanup.
+- `python -m pytest tests/test_options_phase.py tests/test_replay_manifest.py tests/test_persist_options.py -q` -> 29 passed.
+- `python -m pytest tests/test_options_phase.py tests/test_replay_manifest.py tests/test_persist_options.py tests/test_option_trading_data.py tests/test_option_trading_overview.py tests/test_option_trading_detail_panel.py tests/test_option_trading_routes.py tests/test_options_liquidity.py tests/test_options_liquidity_cli.py tests/test_config_models.py -q` -> 130 passed.
+- `python -m pytest -q` -> 586 passed.
+- `python -m pytest tests/test_options_liquidity.py tests/test_option_trading_data.py tests/test_option_trading_overview.py tests/test_option_trading_detail_panel.py tests/test_option_trading_routes.py -q` -> 36 passed after final scanner cleanup.
+- `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in this Python environment.
+- `python -m mypy golden_vector` -> not run; `mypy` is not installed in this Python environment.
+- `python -m pyright golden_vector` -> not run; `pyright` is not installed in this Python environment.
+- `git diff --check` -> passed with only existing Windows line-ending warnings.
+- Live data load -> 22 option-trading rows, single-stock liquidity measurement present, GDX absent because the current cache predates benchmark option snapshots.
+- HTTP verification on `http://127.0.0.1:8771/option-trading` -> 200, cached liquidity check present, old overview P&L columns absent.
+- HTTP verification on the AEM option-trading detail URL -> 200, stock price and sizing calculator present.
+- Browser verification on port 8771 -> overview and AEM detail route render from the patched server.

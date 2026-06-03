@@ -58,6 +58,39 @@ def test_is_usable_candidate_requires_tradable_tier_and_bucket_fit():
     assert not is_usable_candidate(metric, bucket_fit=False)
 
 
+def test_scan_option_chain_counts_near_spot_depth_once_per_expiry_side():
+    scan = scan_option_chain(
+        ticker="NEM",
+        chain=pd.DataFrame(
+            [
+                _option("2026-07-17", "P", 95.0, 4.00, 4.40, 100, 20),
+                _option("2026-07-17", "P", 105.0, 5.00, 5.40, 100, 20),
+                _option("2026-07-17", "P", 80.0, 1.00, 1.20, 100, 20),
+                _option("2026-07-17", "P", 100.0, 0.00, 1.00, 100, 20),
+                _option("2026-07-17", "C", 105.0, 4.00, 4.40, 100, 20),
+            ]
+        ),
+        underlying_price=100.0,
+        risk_free_rate=0.04,
+        as_of_date=date(2026, 5, 29),
+    )
+
+    puts_by_strike = {
+        metric.strike: metric
+        for metric in scan.metrics
+        if metric.option_type == "P"
+    }
+    calls_by_strike = {
+        metric.strike: metric
+        for metric in scan.metrics
+        if metric.option_type == "C"
+    }
+
+    assert puts_by_strike[95.0].near_spot_depth_count == 2
+    assert puts_by_strike[105.0].near_spot_depth_count == 2
+    assert calls_by_strike[105.0].near_spot_depth_count == 1
+
+
 def test_build_bucket_slots_never_accepts_absurdly_far_otm_contract():
     slots = build_bucket_slots(
         option_type="P",
