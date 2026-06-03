@@ -26,3 +26,10 @@
 - Scope check: replay verification is stricter for newly captured manifests but remains backward-compatible for older manifests without `source_assets`; call scenarios still allow positive gold-up moves.
 - Focused tests: `python -m pytest -q tests/test_replay_manifest.py tests/test_scenarios.py tests/test_strategy_generic_math.py tests/test_comparison.py tests/test_sensitivity_ranking.py tests/test_hedge_data_contracts.py` -> `64 passed`.
 - Self-review fixes made: cleaned long lines/import order in the replay helper and tests before rerunning the focused suite.
+
+## Final Verification
+
+- Lint/type command discovery: `python -m ruff --version` and `python -m mypy --version` both failed because those modules are not installed; `requirements.txt` only lists `pytest>=8.0.0`.
+- Full suite: `python -m pytest -q` -> `557 passed in 328.60s`.
+- Local commits created, not pushed: `c52ccbc`, `19e94fb`, `30e5075`.
+- Remaining unrelated dirty state: pre-existing modified `tests/test_workspace_app.py` plus untracked docs/data/review files; not touched by this brief.
