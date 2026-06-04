@@ -207,7 +207,7 @@ def _build_tool_d_row(
         "market_cap_musd": market_cap,
         "screening_verdict": stressed_row.get("screening_verdict"),
         "confidence": stressed_row.get("confidence"),
-        "fcf_yield": _optional_float(stressed_row.get("fcf_yield")),
+        "fcf_yield": _optional_float(spot_row.get("fcf_yield")),
         "reserve_life_years": _optional_float(manual_row.get("reserve_life_years")),
         "cash_cost_usd_per_oz": _optional_float(manual_row.get("cash_cost_usd_per_oz")),
         "best_upside_pct": _optional_float(stressed_row.get("best_upside_pct")),

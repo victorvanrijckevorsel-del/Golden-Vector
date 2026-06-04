@@ -407,14 +407,12 @@ def test_tool_c_config_rejects_invalid_settings(override):
 def test_tool_d_config_accepts_defaults():
     config = ToolDConfig()
 
-    assert config.stress_gold_price == 3000.0
     assert config.max_reasonable_ev_ebitda == 100.0
 
 
 @pytest.mark.parametrize(
     "override",
     [
-        {"stress_gold_price": 0},
         {"max_reasonable_ev_ebitda": 0},
     ],
 )

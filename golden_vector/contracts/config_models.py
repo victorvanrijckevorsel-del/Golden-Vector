@@ -368,10 +368,9 @@ class ToolCConfig(StrictConfigModel):
 
 class ToolDConfig(StrictConfigModel):
     version: int = 1
-    stress_gold_price: float = 3000.0
     max_reasonable_ev_ebitda: float = 100.0
 
-    @field_validator("stress_gold_price", "max_reasonable_ev_ebitda")
+    @field_validator("max_reasonable_ev_ebitda")
     @classmethod
     def positive_floats(cls, value: float) -> float:
         if value <= 0:

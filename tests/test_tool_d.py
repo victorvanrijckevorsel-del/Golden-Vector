@@ -73,9 +73,9 @@ def test_tool_d_quality_rank_uses_exact_three_components_fcf_context_only():
     )
     stressed = pd.DataFrame(
         [
-            _tool_b_row("AAA", forward_ebitda=1000, fcf_yield=0.05),
+            _tool_b_row("AAA", forward_ebitda=1000, fcf_yield=0.01),
             # BBB has much higher FCF yield, but worse headroom/leverage/EV-EBITDA.
-            _tool_b_row("BBB", forward_ebitda=500, fcf_yield=0.90),
+            _tool_b_row("BBB", forward_ebitda=500, fcf_yield=0.02),
         ]
     )
     spot = pd.DataFrame(
@@ -106,6 +106,30 @@ def test_tool_d_quality_rank_uses_exact_three_components_fcf_context_only():
     assert rows.loc["AAA", "tool_d_quality_rank"] == 100.0
     assert rows.loc["BBB", "tool_d_quality_rank"] == 50.0
     assert rows.loc["BBB", "fcf_yield"] > rows.loc["AAA", "fcf_yield"]
+    assert rows.loc["BBB", "fcf_yield"] == 0.90
+
+
+def test_tool_d_ebitda_nonpositive_makes_leverage_and_ev_ebitda_null():
+    manual_data = _manual_data([_manual_payload(ticker="AAA", aisc=3500, net_debt=1000)])
+    stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=-100, fcf_yield=-0.1)])
+    spot = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=900, fcf_yield=0.05)])
+
+    output = build_tool_d_output_frame(
+        stressed_tool_b=stressed,
+        spot_tool_b=spot,
+        manual_data=manual_data,
+        tool_b_latest=pd.DataFrame([{"ticker": "AAA", "source_run_id": "tool-b-run"}]),
+        config=ToolDConfig(),
+        gold_price=3000.0,
+        spot_gold_usd=4000.0,
+        spot_gold_date="2026-06-01",
+        source_run_id="tool-d-run",
+    )
+    row = output.iloc[0]
+
+    assert pd.isna(row["leverage_stressed_at_g"])
+    assert pd.isna(row["ev_ebitda_at_g"])
+    assert "leverage_undefined_at_G" in row["tool_d_tags"]
 
 
 def _only_active_tickers(app_config, *tickers: str):

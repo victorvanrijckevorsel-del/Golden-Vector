@@ -143,3 +143,14 @@ Self-review notes:
 
 - Tool D in refresh intentionally uses spot gold even if Tool B receives a gold-price override; this preserves the L1 Candidate Finder contract that it consumes the spot Tool D rank only.
 - Updated refresh/status tests for the five-step chain, missing Tool C/D outputs, populated Tool C/D summaries, and spot Tool D wording.
+
+### Batch 2 self-review fixes
+
+- Removed unused `stress_gold_price` from Tool D config. The locked CLI behavior is default-to-current-spot; keeping an unused stress default was misleading.
+- Fixed Tool D `fcf_yield` context to come from the spot Tool B frame, not the stressed frame.
+- Added an EBITDA<=0 regression test: stressed leverage and EV/EBITDA are null, with `leverage_undefined_at_G`, never infinite.
+
+Focused verification:
+
+- `python -m pytest tests/test_config_loading.py tests/test_config_models.py tests/test_tool_b_pipeline.py tests/test_tool_d.py tests/test_persist_tool_d.py tests/test_cli_tool_d.py tests/test_cli_refresh_and_status.py tests/test_replay_manifest.py`
+- Result: 117 passed.
