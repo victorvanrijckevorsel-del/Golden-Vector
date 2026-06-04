@@ -132,3 +132,14 @@ Self-review notes:
 
 - Added a CLI test proving the default gold price resolves to spot, not the YAML stress value.
 - Added persistence metadata coverage for `spot_gold_date` per L6.
+
+### Step 4 - Refresh and status
+
+- Extended `python main.py refresh` to run update-data, Tool A, Tool B, Tool C, and Tool D at spot.
+- If `--skip-tool-b` is passed, Tool B/C/D are skipped together because Tool C/D depend on published Tool A/B context.
+- Extended `python main.py status` to summarize Tool C and Tool D latest outputs and include both in refresh-id alignment checks.
+
+Self-review notes:
+
+- Tool D in refresh intentionally uses spot gold even if Tool B receives a gold-price override; this preserves the L1 Candidate Finder contract that it consumes the spot Tool D rank only.
+- Updated refresh/status tests for the five-step chain, missing Tool C/D outputs, populated Tool C/D summaries, and spot Tool D wording.

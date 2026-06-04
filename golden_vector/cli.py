@@ -127,8 +127,8 @@ def build_parser() -> argparse.ArgumentParser:
     refresh_parser = subparsers.add_parser(
         "refresh",
         help=(
-            "One-command operational refresh: runs update-data, then tool-a, then tool-b "
-            "in sequence, then prints a one-screen status summary."
+            "One-command operational refresh: runs update-data, tool-a, tool-b, "
+            "tool-c, and spot tool-d, then prints a one-screen status summary."
         ),
     )
     refresh_parser.add_argument(
@@ -2341,14 +2341,15 @@ def run_refresh(
     gold_price_override: float | None,
     skip_tool_b: bool,
 ) -> int:
-    """One-command operational pipeline: update-data → tool-a → tool-b → status.
+    """One-command operational pipeline through the latest ranking tools.
 
     Stops early and prints the partial status if any step fails. The whole point of
-    this command is that the user runs ONE thing instead of remembering three commands
-    plus a magic gold-price number.
+    this command is that the user runs one operational command instead of remembering
+    the individual tool commands.
     """
 
-    print("== Step 1/3: update-data ==")
+    total_steps = 5 if not skip_tool_b else 3
+    print(f"== Step 1/{total_steps}: update-data ==")
     update_exit = run_foundation(paths, command_name="update-data")
     if update_exit != 0:
         print()
@@ -2357,26 +2358,42 @@ def run_refresh(
         return update_exit
 
     print()
-    print("== Step 2/3: tool-a ==")
+    print(f"== Step 2/{total_steps}: tool-a ==")
     tool_a_exit = run_tool_a(paths)
     if tool_a_exit != 0:
         print()
-        print("tool-a failed (exit code {}). Skipping Tool B.".format(tool_a_exit))
+        print("tool-a failed (exit code {}). Skipping downstream tools.".format(tool_a_exit))
         run_status(paths)
         return tool_a_exit
 
     if skip_tool_b:
         print()
-        print("== Step 3/3: tool-b SKIPPED (--skip-tool-b) ==")
+        print("== Step 3/3: tool-b/tool-c/tool-d SKIPPED (--skip-tool-b) ==")
     else:
         print()
-        print("== Step 3/3: tool-b ==")
+        print("== Step 3/5: tool-b ==")
         tool_b_exit = run_tool_b(paths, gold_price=gold_price_override)
         if tool_b_exit != 0:
             print()
-            print("tool-b failed (exit code {}).".format(tool_b_exit))
+            print("tool-b failed (exit code {}). Skipping Tool C and Tool D.".format(tool_b_exit))
             run_status(paths)
             return tool_b_exit
+        print()
+        print("== Step 4/5: tool-c ==")
+        tool_c_exit = run_tool_c(paths)
+        if tool_c_exit != 0:
+            print()
+            print("tool-c failed (exit code {}). Skipping Tool D.".format(tool_c_exit))
+            run_status(paths)
+            return tool_c_exit
+        print()
+        print("== Step 5/5: tool-d (spot gold) ==")
+        tool_d_exit = run_tool_d(paths, gold_price=None)
+        if tool_d_exit != 0:
+            print()
+            print("tool-d failed (exit code {}).".format(tool_d_exit))
+            run_status(paths)
+            return tool_d_exit
 
     print()
     print("== Refresh complete. Operational status: ==")
@@ -2490,6 +2507,69 @@ def _render_status_summary(paths: ProjectPaths) -> str:
         except Exception as exc:
             lines.append(f"Tool B latest output: ERROR reading parquet ({exc}).")
 
+    # Tool C latest
+    tool_c_path = paths.latest_tool_c_snapshot_parquet_path
+    tool_c_run_ids: set[str] = set()
+    if not tool_c_path.exists():
+        lines.append("Tool C latest output: NOT FOUND. Run `python main.py tool-c`.")
+    else:
+        try:
+            df = pd.read_parquet(tool_c_path)
+            ranked_down = (
+                int(df["tool_c_downside_rank"].notna().sum())
+                if "tool_c_downside_rank" in df.columns
+                else 0
+            )
+            ranked_up = (
+                int(df["tool_c_upside_rank"].notna().sum())
+                if "tool_c_upside_rank" in df.columns
+                else 0
+            )
+            if "snapshot_refresh_run_id" in df.columns:
+                tool_c_run_ids = {
+                    str(value)
+                    for value in df["snapshot_refresh_run_id"].dropna().unique()
+                    if str(value) and str(value).lower() != "nan"
+                }
+            lines.append(
+                f"Tool C latest output: {len(df.index)} rows, "
+                f"{ranked_down} downside ranked, {ranked_up} upside ranked."
+            )
+        except Exception as exc:
+            lines.append(f"Tool C latest output: ERROR reading parquet ({exc}).")
+
+    # Tool D latest
+    tool_d_path = paths.latest_tool_d_snapshot_parquet_path
+    tool_d_run_ids: set[str] = set()
+    if not tool_d_path.exists():
+        lines.append("Tool D latest output: NOT FOUND. Run `python main.py tool-d`.")
+    else:
+        try:
+            df = pd.read_parquet(tool_d_path)
+            ranked = (
+                int(df["tool_d_quality_rank"].notna().sum())
+                if "tool_d_quality_rank" in df.columns
+                else 0
+            )
+            if "snapshot_refresh_run_id" in df.columns:
+                tool_d_run_ids = {
+                    str(value)
+                    for value in df["snapshot_refresh_run_id"].dropna().unique()
+                    if str(value) and str(value).lower() != "nan"
+                }
+            gold_price = "?"
+            if "gold_price_used" in df.columns and len(df.index):
+                gold_price = f"${df['gold_price_used'].iloc[0]:.0f}/oz"
+            spot_date = "?"
+            if "spot_gold_date" in df.columns and len(df.index):
+                spot_date = str(df["spot_gold_date"].iloc[0])
+            lines.append(
+                f"Tool D latest output: {len(df.index)} rows, {ranked} ranked, "
+                f"gold price used {gold_price}, spot date {spot_date}."
+            )
+        except Exception as exc:
+            lines.append(f"Tool D latest output: ERROR reading parquet ({exc}).")
+
     # Refresh-id alignment
     alignment_msg = "Refresh alignment:    OK"
     if manifest_run_id:
@@ -2502,6 +2582,16 @@ def _render_status_summary(paths: ProjectPaths) -> str:
             alignment_msg = (
                 f"Refresh alignment:    MISMATCH  "
                 f"(manifest={manifest_run_id}, Tool B={sorted(tool_b_run_ids)[0]})"
+            )
+        elif tool_c_run_ids and manifest_run_id not in tool_c_run_ids:
+            alignment_msg = (
+                f"Refresh alignment:    MISMATCH  "
+                f"(manifest={manifest_run_id}, Tool C={sorted(tool_c_run_ids)[0]})"
+            )
+        elif tool_d_run_ids and manifest_run_id not in tool_d_run_ids:
+            alignment_msg = (
+                f"Refresh alignment:    MISMATCH  "
+                f"(manifest={manifest_run_id}, Tool D={sorted(tool_d_run_ids)[0]})"
             )
     lines.append(alignment_msg)
 

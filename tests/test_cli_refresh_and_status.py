@@ -17,6 +17,8 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.cli import run_refresh, run_status, run_tool_b
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
+from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
+from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from tests.helpers import build_test_paths
 
@@ -104,6 +106,8 @@ def test_status_command_runs_cleanly_with_no_artifacts(tmp_path, monkeypatch, ca
     assert "Foundation snapshot:  NOT FOUND" in captured
     assert "Tool A latest output: NOT FOUND" in captured
     assert "Tool B latest output: NOT FOUND" in captured
+    assert "Tool C latest output: NOT FOUND" in captured
+    assert "Tool D latest output: NOT FOUND" in captured
     assert "No manual-data store yet" in captured
 
 
@@ -184,8 +188,74 @@ def test_status_command_surfaces_refresh_id_mismatch(tmp_path, monkeypatch, caps
     assert "refresh-B" in captured
 
 
+def test_status_command_summarizes_tool_c_and_tool_d_outputs(tmp_path, monkeypatch, capsys):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+    paths.latest_foundation_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_foundation_manifest_path.write_text(
+        json.dumps(
+            {
+                "refresh_run_id": "refresh-A",
+                "snapshot_as_of_date": "2026-04-22",
+                "foundation_status": "PASS",
+            }
+        ),
+        encoding="utf-8",
+    )
+    tool_c_context = RunContext.start(
+        paths=paths, command="tool-c", parameters={}, config_hash="h",
+    )
+    persist_tool_c_outputs(
+        paths=paths,
+        run_context=tool_c_context,
+        tool_c_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 4, 22),
+                    "snapshot_refresh_run_id": "refresh-A",
+                    "tool_c_downside_rank": 100.0,
+                    "tool_c_upside_rank": 50.0,
+                }
+            ]
+        ),
+    )
+    tool_d_context = RunContext.start(
+        paths=paths, command="tool-d", parameters={}, config_hash="h",
+    )
+    persist_tool_d_outputs(
+        paths=paths,
+        run_context=tool_d_context,
+        tool_d_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 4, 22),
+                    "snapshot_refresh_run_id": "refresh-A",
+                    "gold_price_used": 4000.0,
+                    "spot_gold_date": "2026-04-22",
+                    "tool_d_quality_rank": 100.0,
+                }
+            ]
+        ),
+    )
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+
+    exit_code = run_status(paths)
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Tool C latest output: 1 rows, 1 downside ranked, 1 upside ranked." in captured
+    assert "Tool D latest output: 1 rows, 1 ranked, gold price used $4000/oz" in captured
+
+
 def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeypatch, capsys):
-    """The refresh command must call run_foundation, run_tool_a, run_tool_b in order
+    """The refresh command must call the operational pipeline in order
     and then print the status summary. If a step fails, it must stop early.
     """
     paths = build_test_paths(tmp_path)
@@ -209,18 +279,30 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
         call_order.append(f"tool-b@{gold_price}")
         return 0
 
+    def fake_tool_c(_paths):
+        call_order.append("tool-c")
+        return 0
+
+    def fake_tool_d(_paths, *, gold_price):
+        call_order.append(f"tool-d@{gold_price}")
+        return 0
+
     monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
     monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
     monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
+    monkeypatch.setattr("golden_vector.cli.run_tool_c", fake_tool_c)
+    monkeypatch.setattr("golden_vector.cli.run_tool_d", fake_tool_d)
 
     exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
 
     assert exit_code == 0
-    assert call_order == ["update-data", "tool-a", "tool-b@None"]  # default resolved inside tool-b
+    assert call_order == ["update-data", "tool-a", "tool-b@None", "tool-c", "tool-d@None"]
     out = capsys.readouterr().out
-    assert "Step 1/3: update-data" in out
-    assert "Step 2/3: tool-a" in out
-    assert "Step 3/3: tool-b" in out
+    assert "Step 1/5: update-data" in out
+    assert "Step 2/5: tool-a" in out
+    assert "Step 3/5: tool-b" in out
+    assert "Step 4/5: tool-c" in out
+    assert "Step 5/5: tool-d (spot gold)" in out
     assert "Refresh complete" in out
 
 
@@ -289,4 +371,4 @@ def test_refresh_command_skips_tool_b_when_flag_passed(tmp_path, monkeypatch, ca
     assert exit_code == 0
     assert call_order == ["update-data", "tool-a"]
     out = capsys.readouterr().out
-    assert "tool-b SKIPPED" in out
+    assert "tool-b/tool-c/tool-d SKIPPED" in out
