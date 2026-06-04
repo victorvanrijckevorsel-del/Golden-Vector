@@ -380,6 +380,8 @@ def test_tool_c_config_accepts_defaults():
 
     assert config.minimum_observations == 52
     assert config.min_events == 8
+    assert config.regime_rolling_weeks == 156
+    assert config.regime_min_weeks == 52
     assert config.downside_hit_rate_threshold_pct == -10.0
     assert config.downside_hit_rate_threshold == -0.10
     assert config.upside_hit_rate_threshold_pct == 10.0
@@ -391,6 +393,9 @@ def test_tool_c_config_accepts_defaults():
     [
         {"minimum_observations": 0},
         {"min_events": 0},
+        {"regime_rolling_weeks": 0},
+        {"regime_min_weeks": 0},
+        {"regime_rolling_weeks": 51, "regime_min_weeks": 52},
         {"rolling_volatility_weeks": 0},
         {"downside_hit_rate_threshold_pct": 0},
         {"upside_hit_rate_threshold_pct": 0},

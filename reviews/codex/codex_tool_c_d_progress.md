@@ -32,3 +32,15 @@ Self-review notes:
 
 - Corrected Tool C config from a nested fractional threshold block to the locked top-level fields `downside_hit_rate_threshold_pct` and `upside_hit_rate_threshold_pct`.
 - Kept fractional convenience properties on the config model so analytics code does not re-divide ad hoc.
+
+### Step 3 - Gold regimes and relative behavior
+
+- Added rolling gold regime classification with production defaults of 156 weeks and a 52-week warm-up.
+- Added relative weakness/strength, hit-rate, and tail-average feature construction.
+- Every relative/hit-rate/tail metric now carries its own event count and returns null when count is below `min_events`.
+
+Self-review notes:
+
+- Added `regime_rolling_weeks` and `regime_min_weeks` to Tool C config rather than hard-coding the rolling-regime rule.
+- Relative GDX metrics use their own benchmark intersection count, so missing GDX history does not accidentally borrow the gold denominator.
+- Fixed a test-only NumPy boolean identity assertion after the first focused run.
