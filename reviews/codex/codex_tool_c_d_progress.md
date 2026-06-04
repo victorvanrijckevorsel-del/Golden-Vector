@@ -56,3 +56,14 @@ Self-review notes:
 
 - Removed an over-strict first draft gate that made a thin hit-rate metric sink the full side; the intended behavior is exclude the thin metric and keep ranking if enough robust inputs remain.
 - Added defensive creation of missing component columns so empty/missing relative metric inputs degrade to null ranks instead of a `KeyError`.
+
+### Step 5 - Tool C persistence and provenance
+
+- Added `persist_tool_c_outputs` with retained full output, per-run latest output, and stable latest aliases.
+- Added replay manifest source snapshot support for Tool C and Tool D named sources.
+- Tool C source assets are copied under `replay_snapshots/tool_c/`, hashed, and verified by `verify_manifest`.
+
+Self-review notes:
+
+- Kept Tool C persistence separate from generic Tool A/B persistence but reused the existing local write/latest helpers.
+- Added a replay verification test so the manifest checks both copied source snapshots and the current source file hash.

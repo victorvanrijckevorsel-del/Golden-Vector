@@ -26,6 +26,8 @@ CONFIG_SNAPSHOT_DIR = "configs"
 MANUAL_DB_SNAPSHOT_FILE = "manual_screening.sqlite3"
 FOUNDATION_MANIFEST_SNAPSHOT_FILE = "foundation_manifest.json"
 OPTIONS_MANIFEST_SNAPSHOT_FILE = "options_manifest.json"
+TOOL_C_SNAPSHOT_DIR = "tool_c"
+TOOL_D_SNAPSHOT_DIR = "tool_d"
 
 VERDICT_OK = "OK"
 VERDICT_PREDATES_REPLAY_MANIFEST = "PREDATES_REPLAY_MANIFEST"
@@ -85,6 +87,10 @@ def write_initial_replay_manifest(run_context: RunContext) -> Path:
         "foundation_load_status": "not-applicable",
         "options_manifest_captured": None,
         "options_manifest_status": "not-applicable",
+        "tool_c_sources_captured": None,
+        "tool_c_sources_status": "not-applicable",
+        "tool_d_sources_captured": None,
+        "tool_d_sources_status": "not-applicable",
     }
 
     manifest_path = run_context.run_dir / REPLAY_MANIFEST_FILE
@@ -166,6 +172,38 @@ def update_manifest_with_options(
         return
 
 
+def update_manifest_with_tool_c_sources(
+    run_dir: Path,
+    *,
+    source_paths: dict[str, Path],
+) -> list[Path]:
+    """Patch a replay manifest with Tool C source snapshots."""
+
+    return _update_manifest_with_named_sources(
+        run_dir,
+        field_name="tool_c_sources_captured",
+        status_field_name="tool_c_sources_status",
+        snapshot_subdir=TOOL_C_SNAPSHOT_DIR,
+        source_paths=source_paths,
+    )
+
+
+def update_manifest_with_tool_d_sources(
+    run_dir: Path,
+    *,
+    source_paths: dict[str, Path],
+) -> list[Path]:
+    """Patch a replay manifest with Tool D source snapshots."""
+
+    return _update_manifest_with_named_sources(
+        run_dir,
+        field_name="tool_d_sources_captured",
+        status_field_name="tool_d_sources_status",
+        snapshot_subdir=TOOL_D_SNAPSHOT_DIR,
+        source_paths=source_paths,
+    )
+
+
 def read_manifest(run_dir_or_id: Path | str) -> dict[str, Any]:
     return _read_manifest_path(_resolve_run_dir(run_dir_or_id) / REPLAY_MANIFEST_FILE)
 
@@ -226,6 +264,20 @@ def verify_manifest(run_dir_or_id: Path | str) -> VerifyResult:
                 expected_sha256=str(options_data.get("latest_options_manifest_sha256", "")),
             )
         )
+
+    for source_block_name in ("tool_c_sources_captured", "tool_d_sources_captured"):
+        source_block = manifest.get(source_block_name)
+        if not source_block:
+            continue
+        for source_asset in _valid_source_assets(source_block.get("source_assets", [])):
+            asset_statuses.append(
+                _verify_snapshot_asset(
+                    run_dir,
+                    name=str(source_asset.get("name", "source_asset")),
+                    snapshot_path=Path(str(source_asset.get("snapshot_path", ""))),
+                    expected_sha256=str(source_asset.get("sha256", "")),
+                )
+            )
 
     for source_asset in _manifest_source_assets(manifest):
         asset_statuses.append(
@@ -425,6 +477,10 @@ def _manifest_source_assets(manifest: dict[str, Any]) -> list[dict[str, str | No
     assets.extend(_valid_source_assets(foundation_data.get("source_assets", [])))
     options_data = manifest.get("options_manifest_captured") or {}
     assets.extend(_valid_source_assets(options_data.get("source_assets", [])))
+    tool_c_data = manifest.get("tool_c_sources_captured") or {}
+    assets.extend(_valid_source_assets(tool_c_data.get("source_assets", [])))
+    tool_d_data = manifest.get("tool_d_sources_captured") or {}
+    assets.extend(_valid_source_assets(tool_d_data.get("source_assets", [])))
     return assets
 
 
@@ -442,6 +498,7 @@ def _valid_source_assets(raw_assets: object) -> list[dict[str, str | None]]:
             {
                 "name": str(raw_asset.get("name", "source_asset")),
                 "original_path": original_path,
+                "snapshot_path": str(raw_asset.get("snapshot_path", "")),
                 "sha256": _optional_sha256(raw_asset.get("sha256")) or "",
             }
         )
@@ -609,6 +666,71 @@ def _source_asset_record(
         "original_path": raw_path,
         "sha256": _sha256_file(resolved_path),
     }
+
+
+def _update_manifest_with_named_sources(
+    run_dir: Path,
+    *,
+    field_name: str,
+    status_field_name: str,
+    snapshot_subdir: str,
+    source_paths: dict[str, Path],
+) -> list[Path]:
+    manifest_path = run_dir / REPLAY_MANIFEST_FILE
+    copied_paths: list[Path] = []
+    try:
+        manifest = _read_manifest_path(manifest_path)
+    except Exception:
+        return copied_paths
+
+    try:
+        source_assets: list[dict[str, str]] = []
+        snapshot_dir = run_dir / REPLAY_SNAPSHOT_DIR / snapshot_subdir
+        for name, source_path in sorted(source_paths.items()):
+            snapshot_path = snapshot_dir / _safe_snapshot_file_name(name, source_path)
+            _copy_file_atomic(source_path, snapshot_path)
+            copied_paths.append(snapshot_path)
+            source_assets.append(
+                {
+                    "name": name,
+                    "original_path": _best_effort_run_repo_relative(run_dir, source_path),
+                    "snapshot_path": _run_relative(run_dir, snapshot_path),
+                    "sha256": _sha256_file(snapshot_path),
+                }
+            )
+        manifest[field_name] = {"source_assets": source_assets}
+        manifest[status_field_name] = "captured"
+    except Exception as exc:  # noqa: BLE001 - source provenance should record and proceed.
+        manifest[field_name] = None
+        manifest[status_field_name] = f"error: {exc}"
+        copied_paths = []
+
+    try:
+        _write_json_atomic(manifest_path, manifest)
+    except Exception:
+        return copied_paths
+    return copied_paths
+
+
+def _safe_snapshot_file_name(name: str, source_path: Path) -> str:
+    safe_name = str(name).strip() or source_path.stem
+    for old, new in (
+        ("\\", "_"),
+        ("/", "_"),
+        (":", "_"),
+        ("*", "_"),
+        ("?", "_"),
+        ('"', "_"),
+        ("<", "_"),
+        (">", "_"),
+        ("|", "_"),
+        ("=", "-"),
+    ):
+        safe_name = safe_name.replace(old, new)
+    suffix = source_path.suffix or ".dat"
+    if safe_name.endswith(suffix):
+        return safe_name
+    return f"{safe_name}{suffix}"
 
 
 def _resolve_original_asset_path(run_dir: Path, path: Path) -> Path:
