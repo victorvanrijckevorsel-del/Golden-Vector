@@ -32,7 +32,10 @@ def test_candidate_finder_page_renders_default_bearish_put_screen():
     assert "Eligible Ranking" in html
     assert "Low-Coverage Rows" in html
     assert "js-datatable candidate-ranking-table" in html
+    assert 'data-col-name="score" data-sort-numeric' in html
+    assert 'data-col-name="criterion_down_beta" data-sort-numeric' in html
     assert "Score = your weighted-average percentile" in html
+    assert 'aria-label="Use Down-beta"' in html
     assert "Mixed refreshes in Candidate Finder sources" in html
     assert "/ticker/AEM?lens=option-trading#option-trading" in html
     assert "recommend" not in html.lower()
@@ -60,6 +63,27 @@ def test_candidate_finder_page_custom_query_preserves_side_direction_and_weight(
     assert 'name="weight_up_beta" min="0" max="10" step="0.25" value="2"' in html
     assert "Invalid direction" not in html
     assert "candidate-preset is-active" not in html
+
+
+def test_candidate_finder_page_invalid_preset_falls_back_to_default():
+    data = _candidate_finder_data()
+
+    html = render_candidate_finder_page(data, query={"preset": ["banana"]})
+
+    assert "candidate-preset is-active" in html
+    assert "Bearish put screen" in html
+    assert "Pick at least one criterion" not in html
+    assert "Unknown preset ignored" not in html
+
+
+def test_candidate_finder_page_url_encodes_ticker_links():
+    data = _candidate_finder_data()
+    data.frame.loc[0, "ticker"] = "A&B"
+
+    html = render_candidate_finder_page(data)
+
+    assert ">A&amp;B</a>" in html
+    assert "/ticker/A%26B?lens=option-trading#option-trading" in html
 
 
 def test_candidate_finder_route_is_reachable(monkeypatch, tmp_path):

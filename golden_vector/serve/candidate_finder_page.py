@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from html import escape
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
-from golden_vector.contracts.config_models import CandidateFinderCriterion
+from golden_vector.contracts.config_models import (
+    CandidateFinderConfig,
+    CandidateFinderCriterion,
+)
 from golden_vector.model.candidate_finder import (
     CandidateScore,
     CriterionTopEntry,
@@ -35,9 +38,9 @@ def render_candidate_finder_page(
     """Render the Candidate Finder workspace page."""
 
     query = query or {}
-    spec = _screen_spec_from_query(query, data.criteria_config.criteria)
+    spec = _screen_spec_from_query(query, data.criteria_config)
     screen = run_candidate_finder_screen(data, spec=spec)
-    active_preset_id = _active_preset_id(query)
+    active_preset_id = _active_preset_id(query, data.criteria_config)
 
     body = "\n".join(
         (
@@ -62,13 +65,13 @@ def render_candidate_finder_page(
 
 def _screen_spec_from_query(
     query: Mapping[str, Sequence[str]],
-    criteria_config: Sequence[CandidateFinderCriterion],
+    config: CandidateFinderConfig,
 ) -> dict[str, object]:
     custom = _first(query, "custom") == "1"
     spec: dict[str, object] = {}
 
     if not custom:
-        preset_id = _first(query, "preset") or _DEFAULT_PRESET_ID
+        preset_id = _valid_preset_id(_first(query, "preset"), config)
         spec["preset"] = preset_id
 
     options_side = _first(query, "options_side")
@@ -81,7 +84,7 @@ def _screen_spec_from_query(
 
     selected_ids = [item.strip() for item in query.get("criteria", ()) if item.strip()]
     if custom or selected_ids:
-        known_ids = {criterion.id for criterion in criteria_config}
+        known_ids = {criterion.id for criterion in config.criteria}
         criteria: list[dict[str, object]] = []
         for criterion_id in selected_ids:
             if criterion_id not in known_ids:
@@ -224,11 +227,12 @@ def _render_builder_row(
     direction = selected.direction if selected else criterion.default_direction
     weight = selected.weight if selected else 1.0
     criterion_id = escape(criterion.id, quote=True)
+    checkbox_label = escape(f"Use {criterion.label}", quote=True)
     direction_name = escape(f"direction_{criterion.id}", quote=True)
     weight_name = escape(f"weight_{criterion.id}", quote=True)
     return f"""
 <tr>
-  <td><input type="checkbox" name="criteria" value="{criterion_id}"{" checked" if checked else ""}></td>
+  <td><input type="checkbox" name="criteria" value="{criterion_id}" aria-label="{checkbox_label}"{" checked" if checked else ""}></td>
   <td>{escape(criterion.label)}</td>
   <td>
     <select name="{direction_name}">
@@ -289,12 +293,8 @@ def _render_top_list_card(
 
 
 def _render_ranking_tables(screen: CandidateFinderScreen) -> str:
-    eligible = [
-        row
-        for row in screen.ranking.rows
-        if row.rank_eligible and row.score is not None
-    ]
-    low_coverage = [row for row in screen.ranking.rows if row not in eligible]
+    eligible = [row for row in screen.ranking.rows if _is_ranked(row)]
+    low_coverage = [row for row in screen.ranking.rows if not _is_ranked(row)]
     return f"""
 <section class="candidate-view-section">
   <h2>View 2: Combined Fit Ranking</h2>
@@ -311,7 +311,11 @@ def _render_score_table(
     table_id: str,
 ) -> str:
     criterion_headers = "".join(
-        f"<th>{escape(criterion.label)}</th>" for criterion in criteria
+        (
+            f"<th data-col-name=\"criterion_{escape(criterion.id, quote=True)}\" "
+            f"data-sort-numeric>{escape(criterion.label)}</th>"
+        )
+        for criterion in criteria
     )
     body_rows: list[str] = []
     for row in rows:
@@ -326,7 +330,7 @@ def _render_score_table(
 <tr>
   <td>{_ticker_link(row.ticker)}</td>
   {_fmt_numeric_td(row.score, decimals=2)}
-  <td class="numeric">{row.present_criteria_count}/{row.selected_criteria_count}</td>
+  {_coverage_td(row)}
   {_fmt_numeric_td(row.top_n_tally, decimals=0)}
   {criterion_cells}
   <td>{escape(_coverage_status(row))}</td>
@@ -350,12 +354,14 @@ def _render_score_table(
     <table id="{escape(table_id, quote=True)}" class="{table_class}">
       <thead>
         <tr>
-          <th>Ticker</th>
-          <th><span class="score-help" title="{escape(_SCORE_TOOLTIP, quote=True)}">Fit Score</span></th>
-          <th>Coverage</th>
-          <th>Top-N Hits</th>
+          <th data-col-name="ticker">Ticker</th>
+          <th data-col-name="score" data-sort-numeric>
+            <span class="score-help" title="{escape(_SCORE_TOOLTIP, quote=True)}">Fit Score</span>
+          </th>
+          <th data-col-name="coverage" data-sort-numeric>Coverage</th>
+          <th data-col-name="top_n_hits" data-sort-numeric>Top-N Hits</th>
           {criterion_headers}
-          <th>Status</th>
+          <th data-col-name="status">Status</th>
         </tr>
       </thead>
       <tbody>{body}</tbody>
@@ -367,8 +373,8 @@ def _render_score_table(
 
 def _ticker_link(ticker: str) -> str:
     clean = escape(ticker)
-    href = f"/ticker/{escape(ticker, quote=True)}?lens=option-trading#option-trading"
-    return f"<a href=\"{href}\">{clean}</a>"
+    href = f"/ticker/{quote(str(ticker), safe='')}?lens=option-trading#option-trading"
+    return f"<a href=\"{escape(href, quote=True)}\">{clean}</a>"
 
 
 def _option_tag(value: str, label: str, selected: bool) -> str:
@@ -389,17 +395,41 @@ def _side_label(side: str) -> str:
 
 
 def _coverage_status(row: CandidateScore) -> str:
-    if row.rank_eligible and row.score is not None:
+    if _is_ranked(row):
         return "Eligible"
     if row.score is None:
         return "No score"
     return "Low coverage"
 
 
-def _active_preset_id(query: Mapping[str, Sequence[str]]) -> str:
+def _is_ranked(row: CandidateScore) -> bool:
+    return row.rank_eligible and row.score is not None
+
+
+def _coverage_td(row: CandidateScore) -> str:
+    value = f"{row.criteria_fraction:.6f}"
+    display = f"{row.present_criteria_count}/{row.selected_criteria_count}"
+    return f"<td data-order=\"{escape(value, quote=True)}\">{escape(display)}</td>"
+
+
+def _active_preset_id(
+    query: Mapping[str, Sequence[str]],
+    config: CandidateFinderConfig,
+) -> str:
     if _first(query, "custom") == "1":
         return ""
-    return _first(query, "preset") or _DEFAULT_PRESET_ID
+    return _valid_preset_id(_first(query, "preset"), config)
+
+
+def _valid_preset_id(raw_preset_id: str, config: CandidateFinderConfig) -> str:
+    preset_ids = {preset.id for preset in config.presets}
+    if raw_preset_id in preset_ids:
+        return raw_preset_id
+    if _DEFAULT_PRESET_ID in preset_ids:
+        return _DEFAULT_PRESET_ID
+    if config.presets:
+        return config.presets[0].id
+    return ""
 
 
 def _first(query: Mapping[str, Sequence[str]], key: str) -> str:

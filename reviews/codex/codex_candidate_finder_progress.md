@@ -186,3 +186,32 @@ Browser sample:
 - Sample screenshot saved to `reviews/codex/candidate_finder_checkpoint_c_sample.png`.
 
 Checkpoint C status: reached. Stop here before any next batch.
+
+## 2026-06-04 - Checkpoint C self-review fixes
+
+Reviewed:
+- Re-read the Candidate Finder renderer, route, CSS, and tests against the Batch 3 brief and the existing workspace DataTables contract.
+- Rechecked browser behavior in the narrow in-app viewport against the live `/candidate-finder` page.
+
+Fixes:
+- Candidate Finder ranking table headers now emit `data-col-name` and `data-sort-numeric`, matching the existing workspace DataTables contract.
+- Invalid preset URLs such as `/candidate-finder?preset=banana` now fall back to the default bearish-put preset instead of producing an empty "pick a criterion" screen.
+- Ticker links now URL-encode the ticker path segment, matching the existing option-trading overview/detail-link pattern.
+- Builder checkboxes now include criterion-specific `aria-label` values.
+- Ranking-table coverage now sorts by the raw criteria fraction while displaying `present/selected`.
+- The wide ranking table now scrolls inside `.table-scroll`; the page no longer gets document-level horizontal overflow in the narrow in-app browser.
+
+Checks:
+- `python -m pytest tests/test_candidate_finder_page.py -q` -> 5 passed.
+- `python -m pytest tests/test_candidate_finder_page.py tests/test_candidate_finder_data.py tests/test_candidate_finder_scoring.py tests/test_workspace_datatables.py -q` -> 51 passed.
+- `python -m pytest tests/test_candidate_finder_page.py tests/test_workspace_datatables.py -q` -> 32 passed after the `.table-scroll` overflow fix.
+- `python -m compileall golden_vector/serve/candidate_finder_page.py golden_vector/serve/workspace.py golden_vector/serve/page_shell.py` -> passed.
+- `python -m pytest -q` -> first rerun timed out at 304 seconds; rerun with a longer cap -> 620 passed.
+- `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in this Python environment.
+- `python -m mypy golden_vector` -> not run; `mypy` is not installed in this Python environment.
+- `python -m pyright golden_vector` -> not run; `pyright` is not installed in this Python environment.
+
+Browser verification:
+- Started a fresh workspace server on `http://127.0.0.1:8773` so the browser loaded the updated modules.
+- Verified invalid preset fallback, active bearish preset, DataTables header attributes, checkbox label, and narrow-viewport layout.
+- Confirmed document-level horizontal overflow is gone (`scrollWidth == clientWidth`) while the ranking table keeps an internal horizontal scroll area.

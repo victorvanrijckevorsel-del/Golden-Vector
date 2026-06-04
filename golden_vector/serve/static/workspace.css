@@ -159,6 +159,10 @@
       border-collapse: collapse;
       font-size: 0.95rem;
     }
+    .table-scroll {
+      max-width: 100%;
+      overflow-x: auto;
+    }
     th, td {
       padding: 10px 12px;
       border-bottom: 1px solid var(--line);
