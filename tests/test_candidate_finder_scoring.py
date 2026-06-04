@@ -64,6 +64,30 @@ def test_candidate_finder_all_zero_weights_falls_back_to_equal_weights():
     assert all(row.score == 75.0 for row in result.rows)
 
 
+def test_candidate_finder_zero_weight_disables_criterion_when_others_are_active():
+    frame = pd.DataFrame(
+        [
+            {"ticker": "A", "down_beta_core": 1.0, "aisc_usd_per_oz": 2000},
+            {"ticker": "B", "down_beta_core": 2.0, "aisc_usd_per_oz": 1000},
+        ]
+    )
+
+    result = rank_candidates(
+        frame,
+        criteria=_criteria(),
+        selections=[
+            CriterionSelection("down_beta", weight=1.0),
+            CriterionSelection("aisc", weight=0.0),
+        ],
+    )
+
+    assert [criterion.id for criterion in result.selected_criteria] == ["down_beta"]
+    assert "aisc" not in result.top_lists
+    assert all(row.selected_criteria_count == 1 for row in result.rows)
+    assert all("aisc" not in row.raw_values for row in result.rows)
+    assert "Zero-weight criteria disabled: aisc." in result.warnings
+
+
 def test_candidate_finder_single_criterion_score_equals_percentile():
     frame = pd.DataFrame(
         [
@@ -174,10 +198,11 @@ def test_candidate_finder_defaults_invalid_direction_and_weight_inputs():
 
     assert criteria["down_beta"].direction == "high_good"
     assert criteria["down_beta"].weight == 1.0
-    assert criteria["aisc"].weight == 0.0
+    assert "aisc" not in criteria
     assert any("Invalid direction for down_beta" in item for item in result.warnings)
     assert any("Invalid weight for down_beta" in item for item in result.warnings)
     assert any("Negative weight for aisc" in item for item in result.warnings)
+    assert "Zero-weight criteria disabled: aisc." in result.warnings
 
 
 def _criteria() -> list[CriterionDefinition]:

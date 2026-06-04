@@ -209,6 +209,15 @@ def _resolve_selections(
         )
     if resolved and all(criterion.weight <= 0 for criterion in resolved):
         resolved = [replace(criterion, weight=1.0) for criterion in resolved]
+    elif resolved:
+        disabled_ids = [criterion.id for criterion in resolved if criterion.weight <= 0]
+        if disabled_ids:
+            warnings.append(
+                "Zero-weight criteria disabled: " + ", ".join(disabled_ids) + "."
+            )
+            resolved = [
+                criterion for criterion in resolved if criterion.weight > 0
+            ]
     return resolved
 
 

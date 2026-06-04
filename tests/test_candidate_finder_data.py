@@ -42,6 +42,22 @@ def test_candidate_finder_data_joins_sources_and_derives_ratios(tmp_path):
     assert frame.loc["AEM", "netincome_to_mktcap"] == pytest.approx(0.30)
 
 
+def test_candidate_finder_configured_source_fields_exist_in_joined_frame(tmp_path):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+
+    data = load_candidate_finder_data(paths, app_config=app_config)
+    missing = [
+        criterion.source_field
+        for criterion in app_config.candidate_finder.criteria
+        if criterion.source_field not in data.frame.columns
+    ]
+
+    assert missing == []
+
+
 def test_candidate_finder_data_handles_missing_sources(tmp_path):
     clear_candidate_finder_cache()
     paths = build_test_paths(tmp_path)
@@ -55,6 +71,34 @@ def test_candidate_finder_data_handles_missing_sources(tmp_path):
     assert data.frame["debt_to_mktcap"].isna().all()
     assert data.frame["has_usable_put_candidate"].eq(False).all()
     assert data.frame["has_usable_call_candidate"].eq(False).all()
+
+
+def test_candidate_finder_data_cache_notices_new_corrupt_latest_file(tmp_path):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    first = load_candidate_finder_data(paths, app_config=app_config)
+    paths.latest_tool_a_snapshot_parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_tool_a_snapshot_parquet_path.write_text("not parquet", encoding="utf-8")
+
+    second = load_candidate_finder_data(paths, app_config=app_config)
+
+    assert first.cache_key != second.cache_key
+    assert any("Tool A latest parquet could not be read" in item for item in second.alignment.messages)
+
+
+def test_candidate_finder_data_warns_when_latest_parquet_is_corrupt(tmp_path):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    paths.latest_tool_a_snapshot_parquet_path.write_text("not parquet", encoding="utf-8")
+
+    data = load_candidate_finder_data(paths, app_config=app_config)
+    screen = run_candidate_finder_screen(data, spec={"preset": "bearish_put"})
+
+    assert data.alignment.status == "UNKNOWN"
+    assert any("Tool A latest parquet could not be read" in item for item in screen.warnings)
 
 
 def test_candidate_finder_screen_filters_peer_pool_before_ranking(tmp_path):
@@ -79,6 +123,32 @@ def test_candidate_finder_screen_filters_peer_pool_before_ranking(tmp_path):
     assert screen.ranking.rows[0].score == 100.0
 
 
+def test_candidate_finder_screen_surfaces_invalid_spec_warnings(tmp_path):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    data = load_candidate_finder_data(paths, app_config=app_config)
+
+    screen = run_candidate_finder_screen(
+        data,
+        spec={
+            "preset": "missing",
+            "options_side": "banana",
+            "top_n": 0,
+            "criteria": "down_beta",
+        },
+    )
+
+    assert screen.options_side == "either"
+    assert screen.top_n == app_config.candidate_finder.default_top_n
+    assert "Unknown preset ignored: missing." in screen.warnings
+    assert "Invalid options_side ignored: banana." in screen.warnings
+    assert "Invalid top_n ignored: 0; using 10." in screen.warnings
+    assert "Invalid criteria ignored: expected a list." in screen.warnings
+    assert "Pick at least one criterion." in screen.warnings
+
+
 def test_candidate_finder_data_warns_on_mixed_refreshes(tmp_path):
     clear_candidate_finder_cache()
     paths = build_test_paths(tmp_path)
@@ -97,6 +167,22 @@ def test_candidate_finder_data_warns_on_mixed_refreshes(tmp_path):
     assert "Tool A" in data.alignment.message
     assert "Tool B" in data.alignment.message
     assert "Options" in data.alignment.message
+
+
+def test_candidate_finder_data_warns_when_manual_store_is_newer_than_tool_b(tmp_path):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(
+        paths,
+        refresh_run_id="refresh-run",
+        tool_b_source_run_id="20200101T000000Z-tool-b-old",
+    )
+
+    data = load_candidate_finder_data(paths, app_config=app_config)
+
+    assert data.alignment.status == "WARN"
+    assert any("Manual store was updated after" in item for item in data.alignment.messages)
 
 
 def test_candidate_finder_cli_writes_ranked_parquet(tmp_path, capsys):
@@ -162,6 +248,7 @@ def _write_candidate_finder_inputs(
     refresh_run_id: str,
     tool_a_refresh_run_id: str | None = None,
     tool_b_refresh_run_id: str | None = None,
+    tool_b_source_run_id: str | None = None,
 ) -> None:
     paths.ensure_runtime_dirs()
     tool_a_run = tool_a_refresh_run_id or refresh_run_id
@@ -207,6 +294,7 @@ def _write_candidate_finder_inputs(
                 "leverage": 0.4,
                 "best_upside_pct": 0.30,
                 "snapshot_refresh_run_id": tool_b_run,
+                "source_run_id": tool_b_source_run_id,
             },
             {
                 "ticker": "NEM",
@@ -221,6 +309,7 @@ def _write_candidate_finder_inputs(
                 "leverage": 0.2,
                 "best_upside_pct": 0.20,
                 "snapshot_refresh_run_id": tool_b_run,
+                "source_run_id": tool_b_source_run_id,
             },
         ]
     ).to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)

@@ -15,6 +15,7 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import (
     AppConfig,
     CandidateFinderConfig,
+    CandidateFinderPreset,
     CandidateFinderPresetCriterion,
 )
 from golden_vector.model.candidate_finder import (
@@ -37,6 +38,14 @@ class CandidateFinderCacheKey:
     tool_b_refresh_run_ids: tuple[str, ...]
     options_refresh_run_id: str
     manual_store_hash: str | None
+    tool_a_latest_hash: str | None
+    tool_b_latest_hash: str | None
+
+
+@dataclass(frozen=True)
+class CandidateFinderSourceLoad:
+    frame: pd.DataFrame
+    warning: str | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +57,7 @@ class CandidateFinderAlignment:
     options_refresh_run_id: str | None
     manual_store_hash: str | None
     manual_store_as_of: str | None
+    messages: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -82,8 +92,16 @@ def load_candidate_finder_data(
 ) -> CandidateFinderData:
     """Load the latest joined frame used by Candidate Finder screens."""
 
-    tool_a = _read_optional_parquet(paths.latest_tool_a_snapshot_parquet_path)
-    tool_b = _read_optional_parquet(paths.latest_tool_b_snapshot_parquet_path)
+    tool_a_load = _read_optional_parquet(
+        paths.latest_tool_a_snapshot_parquet_path,
+        label="Tool A",
+    )
+    tool_b_load = _read_optional_parquet(
+        paths.latest_tool_b_snapshot_parquet_path,
+        label="Tool B",
+    )
+    tool_a = tool_a_load.frame
+    tool_b = tool_b_load.frame
     option_data = load_option_trading_data(paths, app_config=app_config)
     manual_company, _, _, _ = load_store_tables(paths)
     manual_hash = _file_sha256(paths.manual_screening_store_path)
@@ -94,6 +112,8 @@ def load_candidate_finder_data(
         tool_b_refresh_run_ids=_unique_strings(tool_b, "snapshot_refresh_run_id"),
         options_refresh_run_id=options_refresh_run_id or "unknown",
         manual_store_hash=manual_hash,
+        tool_a_latest_hash=_file_sha256(paths.latest_tool_a_snapshot_parquet_path),
+        tool_b_latest_hash=_file_sha256(paths.latest_tool_b_snapshot_parquet_path),
     )
     cached = _CACHE.get(cache_key)
     if cached is not None:
@@ -113,6 +133,11 @@ def load_candidate_finder_data(
         options_refresh_run_id=options_refresh_run_id,
         manual_store_hash=manual_hash,
         manual_store_as_of=manual_as_of,
+        source_load_warnings=tuple(
+            warning
+            for warning in (tool_a_load.warning, tool_b_load.warning)
+            if warning is not None
+        ),
     )
     data = CandidateFinderData(
         frame=frame,
@@ -143,10 +168,22 @@ def run_candidate_finder_screen(
     """Apply a screen spec and return ranked Candidate Finder results."""
 
     screen_spec = dict(spec or {})
-    options_side = _options_side(screen_spec, data.criteria_config)
+    spec_warnings: list[str] = []
+    preset = _preset(screen_spec, data.criteria_config)
+    if _preset_id(screen_spec) and preset is None:
+        spec_warnings.append(f"Unknown preset ignored: {_preset_id(screen_spec)}.")
+    options_side = _options_side(
+        screen_spec,
+        preset=preset,
+        warnings=spec_warnings,
+    )
     peer_frame = _apply_options_filter(data.frame, options_side=options_side)
-    top_n = _top_n(screen_spec, data.criteria_config)
-    selections = _selections(screen_spec, data.criteria_config)
+    top_n = _top_n(screen_spec, data.criteria_config, warnings=spec_warnings)
+    selections = _selections(
+        screen_spec,
+        preset=preset,
+        warnings=spec_warnings,
+    )
     ranking = rank_candidates(
         peer_frame,
         criteria=list(data.criteria_config.criteria),
@@ -154,9 +191,11 @@ def run_candidate_finder_screen(
         top_n=top_n,
         min_criteria_fraction=data.criteria_config.min_criteria_fraction,
     )
-    warnings = list(ranking.warnings)
+    warnings = list(data.alignment.messages) + spec_warnings + list(ranking.warnings)
     if data.alignment.status != "OK":
-        warnings.insert(0, data.alignment.message or "Candidate Finder sources are not aligned.")
+        fallback = "Candidate Finder sources are not aligned."
+        if data.alignment.message and data.alignment.message not in warnings:
+            warnings.insert(0, data.alignment.message or fallback)
     if peer_frame.empty:
         warnings.append("No tickers survived the options-side filter.")
     return CandidateFinderScreen(
@@ -320,12 +359,15 @@ def _has_usable_slots(slots: object) -> bool:
 
 def _options_side(
     spec: Mapping[str, Any],
-    config: CandidateFinderConfig,
+    *,
+    preset: CandidateFinderPreset | None,
+    warnings: list[str],
 ) -> OptionsSide:
     raw = str(spec.get("options_side") or "").strip().lower()
     if raw in {"puts", "calls", "either", "none"}:
         return raw  # type: ignore[return-value]
-    preset = _preset(spec, config)
+    if raw:
+        warnings.append(f"Invalid options_side ignored: {raw}.")
     if preset is not None:
         return preset.options_side
     return "either"
@@ -345,25 +387,40 @@ def _apply_options_filter(frame: pd.DataFrame, *, options_side: OptionsSide) -> 
     return frame[put_mask | call_mask].copy()
 
 
-def _top_n(spec: Mapping[str, Any], config: CandidateFinderConfig) -> int:
-    try:
-        value = int(spec.get("top_n", config.default_top_n))
-    except (TypeError, ValueError):
+def _top_n(
+    spec: Mapping[str, Any],
+    config: CandidateFinderConfig,
+    *,
+    warnings: list[str],
+) -> int:
+    if "top_n" not in spec:
         return config.default_top_n
-    return value if value > 0 else config.default_top_n
+    try:
+        value = int(spec["top_n"])
+    except (TypeError, ValueError):
+        warnings.append(
+            f"Invalid top_n ignored: {spec.get('top_n')!r}; using {config.default_top_n}."
+        )
+        return config.default_top_n
+    if value <= 0:
+        warnings.append(f"Invalid top_n ignored: {value}; using {config.default_top_n}.")
+        return config.default_top_n
+    return value
 
 
 def _selections(
     spec: Mapping[str, Any],
-    config: CandidateFinderConfig,
+    *,
+    preset: CandidateFinderPreset | None,
+    warnings: list[str],
 ) -> list[CriterionSelection]:
     raw_criteria = spec.get("criteria")
     if raw_criteria is None:
-        preset = _preset(spec, config)
         if preset is not None:
             return [_selection_from_preset(item) for item in preset.criteria]
         raw_criteria = []
     if not isinstance(raw_criteria, list):
+        warnings.append("Invalid criteria ignored: expected a list.")
         return []
     return [_selection_from_raw(item) for item in raw_criteria]
 
@@ -389,10 +446,14 @@ def _selection_from_raw(item: object) -> CriterionSelection:
 
 
 def _preset(spec: Mapping[str, Any], config: CandidateFinderConfig):
-    preset_id = str(spec.get("preset") or "").strip()
+    preset_id = _preset_id(spec)
     if not preset_id:
         return None
     return next((preset for preset in config.presets if preset.id == preset_id), None)
+
+
+def _preset_id(spec: Mapping[str, Any]) -> str:
+    return str(spec.get("preset") or "").strip()
 
 
 def _alignment(
@@ -402,6 +463,7 @@ def _alignment(
     options_refresh_run_id: str | None,
     manual_store_hash: str | None,
     manual_store_as_of: str | None,
+    source_load_warnings: tuple[str, ...] = (),
 ) -> CandidateFinderAlignment:
     tool_a_ids = _unique_strings(tool_a, "snapshot_refresh_run_id")
     tool_b_ids = _unique_strings(tool_b, "snapshot_refresh_run_id")
@@ -413,15 +475,24 @@ def _alignment(
     }
     missing = [name for name, values in source_ids.items() if not values]
     seen = {value for values in source_ids.values() for value in values}
+    warnings = list(source_load_warnings)
+    manual_warning = _manual_freshness_warning(
+        tool_b=tool_b,
+        manual_store_as_of=manual_store_as_of,
+    )
+    if manual_warning is not None:
+        warnings.append(manual_warning)
     if missing:
+        message = "Missing refresh ids for: " + ", ".join(missing) + "."
         return CandidateFinderAlignment(
             status="UNKNOWN",
-            message="Missing refresh ids for: " + ", ".join(missing) + ".",
+            message=message,
             tool_a_refresh_run_ids=tool_a_ids,
             tool_b_refresh_run_ids=tool_b_ids,
             options_refresh_run_id=options_id,
             manual_store_hash=manual_store_hash,
             manual_store_as_of=manual_store_as_of,
+            messages=tuple([message, *warnings]),
         )
     if len(seen) > 1:
         parts = [
@@ -429,14 +500,28 @@ def _alignment(
             for name, values in source_ids.items()
             if values
         ]
+        message = "Mixed refreshes in Candidate Finder sources (" + "; ".join(parts) + ")."
         return CandidateFinderAlignment(
             status="WARN",
-            message="Mixed refreshes in Candidate Finder sources (" + "; ".join(parts) + ").",
+            message=message,
             tool_a_refresh_run_ids=tool_a_ids,
             tool_b_refresh_run_ids=tool_b_ids,
             options_refresh_run_id=options_id,
             manual_store_hash=manual_store_hash,
             manual_store_as_of=manual_store_as_of,
+            messages=tuple([message, *warnings]),
+        )
+    if warnings:
+        message = warnings[0]
+        return CandidateFinderAlignment(
+            status="WARN",
+            message=message,
+            tool_a_refresh_run_ids=tool_a_ids,
+            tool_b_refresh_run_ids=tool_b_ids,
+            options_refresh_run_id=options_id,
+            manual_store_hash=manual_store_hash,
+            manual_store_as_of=manual_store_as_of,
+            messages=tuple(warnings),
         )
     return CandidateFinderAlignment(
         status="OK",
@@ -446,6 +531,7 @@ def _alignment(
         options_refresh_run_id=options_id,
         manual_store_hash=manual_store_hash,
         manual_store_as_of=manual_store_as_of,
+        messages=(),
     )
 
 
@@ -467,6 +553,58 @@ def _manual_as_of(company_inputs: pd.DataFrame) -> str | None:
     return str(values.max())
 
 
+def _manual_freshness_warning(
+    *,
+    tool_b: pd.DataFrame,
+    manual_store_as_of: str | None,
+) -> str | None:
+    manual_timestamp = _parse_timestamp(manual_store_as_of)
+    tool_b_timestamp = _latest_tool_b_run_timestamp(tool_b)
+    if manual_timestamp is None or tool_b_timestamp is None:
+        return None
+    if manual_timestamp <= tool_b_timestamp:
+        return None
+    return (
+        "Manual store was updated after the latest Tool B run; rerun Tool B "
+        "before relying on manual-dependent Candidate Finder criteria."
+    )
+
+
+def _latest_tool_b_run_timestamp(tool_b: pd.DataFrame) -> pd.Timestamp | None:
+    if tool_b.empty:
+        return None
+    candidates: list[pd.Timestamp] = []
+    if "source_run_id" in tool_b.columns:
+        for value in tool_b["source_run_id"].dropna().astype(str).unique():
+            parsed = _parse_run_id_timestamp(value)
+            if parsed is not None:
+                candidates.append(parsed)
+    if candidates:
+        return max(candidates)
+    if "snapshot_refresh_run_id" in tool_b.columns:
+        for value in tool_b["snapshot_refresh_run_id"].dropna().astype(str).unique():
+            parsed = _parse_run_id_timestamp(value)
+            if parsed is not None:
+                candidates.append(parsed)
+    return max(candidates) if candidates else None
+
+
+def _parse_run_id_timestamp(value: object) -> pd.Timestamp | None:
+    text = str(value or "").strip()
+    if len(text) < 16:
+        return None
+    return _parse_timestamp(text[:16])
+
+
+def _parse_timestamp(value: object) -> pd.Timestamp | None:
+    if value is None:
+        return None
+    parsed = pd.to_datetime(value, errors="coerce", utc=True)
+    if pd.isna(parsed):
+        return None
+    return parsed
+
+
 def _file_sha256(path: Path) -> str | None:
     if not path.exists() or not path.is_file():
         return None
@@ -477,13 +615,16 @@ def _file_sha256(path: Path) -> str | None:
     return digest.hexdigest()
 
 
-def _read_optional_parquet(path: Path) -> pd.DataFrame:
+def _read_optional_parquet(path: Path, *, label: str) -> CandidateFinderSourceLoad:
     if not path.exists():
-        return pd.DataFrame()
+        return CandidateFinderSourceLoad(frame=pd.DataFrame())
     try:
-        return pd.read_parquet(path)
-    except Exception:
-        return pd.DataFrame()
+        return CandidateFinderSourceLoad(frame=pd.read_parquet(path))
+    except Exception as exc:
+        return CandidateFinderSourceLoad(
+            frame=pd.DataFrame(),
+            warning=f"{label} latest parquet could not be read: {exc}.",
+        )
 
 
 def _unique_strings(frame: pd.DataFrame, column: str) -> tuple[str, ...]:

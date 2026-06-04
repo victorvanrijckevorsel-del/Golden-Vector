@@ -107,3 +107,44 @@ Preview:
 ```
 
 Checkpoint B status: reached. Stop here before Batch 3 UI/routes.
+
+## 2026-06-04 - Checkpoint B review fixes
+
+Reviewed:
+- Merged Claude's Checkpoint B review with Codex's self-review.
+- Rechecked the data/scoring boundary, source freshness behavior, screen-spec parsing, zero-weight semantics, and producer-consumer field contract before UI work.
+
+Fixes:
+- Corrupt Tool A / Tool B latest parquet files now surface explicit Candidate Finder warnings instead of being indistinguishable from missing files.
+- Candidate Finder cache keys now include Tool A / Tool B latest-file hashes, so a corrupt or changed latest file cannot be hidden by an earlier cached empty load.
+- Added malformed-spec warnings for unknown presets, invalid `options_side`, invalid `top_n`, and non-list `criteria`.
+- Zero-weight criteria now mean disabled when at least one selected criterion has positive weight. All-zero screens still fall back to equal weighting to avoid an empty accidental screen.
+- Added a manual-store freshness warning when the manual store was updated after the latest Tool B source run timestamp.
+- Added a producer-consumer contract test that every configured Candidate Finder criterion source field exists in the joined frame.
+
+Checks:
+- `python -m pytest tests/test_candidate_finder_data.py tests/test_candidate_finder_scoring.py tests/test_candidate_finder_config.py tests/test_percentile_ranks.py -q` -> 29 passed.
+- `python -m compileall golden_vector/serve/candidate_finder_data.py golden_vector/model/candidate_finder.py golden_vector/cli.py` -> passed.
+- `git diff --check -- golden_vector/serve/candidate_finder_data.py golden_vector/model/candidate_finder.py tests/test_candidate_finder_data.py tests/test_candidate_finder_scoring.py` -> passed with only Windows line-ending warnings.
+- `python -m pytest -q` -> 615 passed.
+- `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in this Python environment.
+- `python -m mypy golden_vector` -> not run; `mypy` is not installed in this Python environment.
+- `python -m pyright golden_vector` -> not run; `pyright` is not installed in this Python environment.
+
+Real current-data sample after fixes:
+
+```text
+Candidate Finder ranked parquet written: C:\Users\Emanuel\AppData\Local\Temp\candidate_finder_bearish_put_after_fixes.parquet
+Rows: 5; peer pool: 5; options side: puts.
+Warnings:
+- Mixed refreshes in Candidate Finder sources (Tool A: 20260424T140753Z-update-data-6175c3fb; Tool B: 20260424T140753Z-update-data-6175c3fb; Options: 20260601T135914Z-update-data-f555b2fe).
+Preview:
+ rank ticker     score  rank_eligible  present_criteria_count  selected_criteria_count  top_n_tally
+    1    AEM 74.000000           True                       5                        5            5
+    2    NEM 64.666667           True                       5                        5            5
+    3    KGC 61.333333           True                       5                        5            5
+    4     CG 52.500000           True                       4                        5            4
+    5    PRU 47.500000           True                       4                        5            4
+```
+
+Status: review fixes complete. Candidate Finder remains stopped before Batch 3 UI/routes.
