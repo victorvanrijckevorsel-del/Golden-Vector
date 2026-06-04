@@ -9,6 +9,7 @@ import pytest
 from golden_vector.app.config import load_app_config
 from golden_vector.hedge.option_trading import (
     OptionSizingRequest,
+    build_option_trading_detail,
     build_option_trading_overview,
 )
 from golden_vector.ingestion.persist_options import safe_options_file_name
@@ -118,6 +119,11 @@ def test_load_option_trading_data_uses_composite_cache_key(tmp_path):
     assert first.overview.source_context is not None
     assert first.overview.source_context.as_of_date == "2026-05-29"
     assert first.overview.source_context.refresh_run_id == "options-run"
+    assert first.overview.source_context.tool_a_refresh_run_ids == ("tool-run-a",)
+    assert first.overview.source_context.tool_b_refresh_run_ids == ("tool-run-a",)
+    assert first.overview.source_context.context_warnings
+    assert "Refresh context is mixed" in first.overview.source_context.context_warnings[0]
+    assert "Tool A uses tool-run-a" in first.overview.source_context.context_warnings[0]
 
     _write_tool_outputs(paths, refresh_run_id="tool-run-b")
     changed = load_option_trading_data(paths, app_config=app_config)
@@ -146,6 +152,38 @@ def test_build_option_trading_detail_data_reuses_cached_overview_row(tmp_path):
         "directional",
     }
     assert detail.source_context is data.overview.source_context
+
+
+def test_build_option_trading_detail_does_not_model_watch_candidates():
+    watch_candidate = _candidate("AEM", liquidity_tier="watch")
+
+    detail = build_option_trading_detail(
+        ticker="AEM",
+        tool_a=pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "down_beta_core": 1.2,
+                    "up_beta_core": 1.0,
+                    "confidence_label": "HIGH",
+                }
+            ]
+        ),
+        candidate_grids={"AEM": [watch_candidate]},
+        overview_row=None,
+        risk_free_rate=0.04,
+        sizing_request=OptionSizingRequest(
+            side="put",
+            horizon_days=60,
+            bucket="near_atm",
+        ),
+    )
+
+    assert detail.put_candidates == (watch_candidate,)
+    assert detail.put_bundles == ()
+    assert detail.sizing is not None
+    assert detail.sizing.bundle is None
+    assert "No 60d Near-ATM put candidate is available." in detail.sizing.notes
 
 
 def test_load_option_trading_data_handles_missing_manifest(tmp_path):
@@ -516,7 +554,12 @@ def _feature(
     return row
 
 
-def _candidate(ticker: str, *, option_type: str = "P"):
+def _candidate(
+    ticker: str,
+    *,
+    option_type: str = "P",
+    liquidity_tier: str = "tradable",
+):
     from golden_vector.hedge.candidate_puts import CandidatePut
 
     strike = 45.0 if option_type == "P" else 55.0
@@ -539,7 +582,7 @@ def _candidate(ticker: str, *, option_type: str = "P"):
         underlying_price=50.0,
         option_type=option_type,
         bucket="near_atm",
-        liquidity_tier="tradable",
+        liquidity_tier=liquidity_tier,
         otm_pct=0.10,
     )
 

@@ -238,6 +238,7 @@ def _render_option_trading_panel(
         f"Cached options snapshot: {_fmt_text(snapshot_date)}; screening only - live prices may differ."
         "</p>"
     )
+    body.append(_render_option_context_warnings(detail.source_context))
     body.append(
         "<details class=\"method-disclosure\"><summary>Method</summary>"
         "<p>Contracts are scanned from cached Yahoo Finance option chains. "
@@ -332,6 +333,14 @@ def _render_option_proxy_fallback(detail: OptionTradingDetailData) -> str:
         f"{note}{table}"
         "</section>"
     )
+
+
+def _render_option_context_warnings(context: object | None) -> str:
+    warnings = tuple(getattr(context, "context_warnings", ()) or ())
+    if not warnings:
+        return ""
+    paragraphs = "".join(f"<p>{escape(str(warning))}</p>" for warning in warnings)
+    return f"<div class=\"flash option-context-warning\">{paragraphs}</div>"
 
 
 def _render_option_trading_context_table(
@@ -480,11 +489,15 @@ def _render_option_candidate_matrix_row(
             f"<td>{escape(slot.reason)}</td>"
             "</tr>"
         )
-    select_link = _contract_select_link(
-        ticker=ticker,
-        side=side,
-        horizon_days=slot.horizon_days,
-        bucket=slot.bucket,
+    select_link = (
+        _contract_select_link(
+            ticker=ticker,
+            side=side,
+            horizon_days=slot.horizon_days,
+            bucket=slot.bucket,
+        )
+        if candidate.liquidity_tier == "tradable"
+        else "-"
     )
     bid_ask = (
         f"{_fmt_number(candidate.bid, decimals=2)} / "
@@ -673,7 +686,9 @@ def _bucket_options_for_request(
     buckets = [
         slot.bucket
         for slot in slots
-        if slot.horizon_days == request.horizon_days and slot.candidate is not None
+        if slot.horizon_days == request.horizon_days
+        and slot.candidate is not None
+        and slot.candidate.liquidity_tier == "tradable"
     ]
     if request.bucket and request.bucket not in buckets:
         buckets.append(request.bucket)

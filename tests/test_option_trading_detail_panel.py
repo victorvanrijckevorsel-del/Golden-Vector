@@ -66,6 +66,14 @@ def test_option_trading_detail_renders_watch_candidate_without_half_spread_colum
         source_context=OptionTradingSourceContext(
             as_of_date="2026-06-01",
             refresh_run_id="options-run",
+            tool_a_refresh_run_ids=("tool-run",),
+            tool_b_refresh_run_ids=("tool-run",),
+            context_warnings=(
+                "Refresh context is mixed: options snapshot uses options-run; "
+                "Tool A uses tool-run; Tool B uses tool-run. Scenario betas and "
+                "fundamentals may lag the option chains. Run python main.py "
+                "refresh to realign the full model outputs.",
+            ),
             risk_free_rate=0.036,
         ),
     )
@@ -79,6 +87,7 @@ def test_option_trading_detail_renders_watch_candidate_without_half_spread_colum
     assert "2026-06-01" in html
     assert "Cached Yahoo Finance data via yfinance" in html
     assert "Method" in html
+    assert "Refresh context is mixed" in html
     assert "Last" in html
     assert "Mid" in html
     assert "1.88" in html
@@ -86,7 +95,7 @@ def test_option_trading_detail_renders_watch_candidate_without_half_spread_colum
     assert "Watch" in html
     assert "midpoint may be optimistic" in html
     assert "Put Directional" in html
-    assert "Select" in html
+    assert "button-link" not in html
     assert "Half-spread Cost" not in html
     assert f"https://finance.yahoo.com/quote/AEM/options?date={expiry_epoch}" in html
 

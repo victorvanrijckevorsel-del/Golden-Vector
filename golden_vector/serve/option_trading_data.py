@@ -152,8 +152,8 @@ def _with_proxy_fallbacks(
     if not _benchmark_liquidity_supports_proxy(data.overview.liquidity_measurements):
         note = (
             "GDX/GDXJ proxy alternatives are hidden because benchmark ETF option "
-            "chains are not measured, or the cached liquidity check does not show "
-            "a cleaner ETF market."
+            "chains are not measured, or the cached benchmark ETF contracts did "
+            "not pass the Tradable gate."
         )
         return replace(detail, proxy_fallback_note=note)
     source = data.candidate_grids if side == "put" else data.call_candidate_grids
@@ -201,24 +201,9 @@ def _benchmark_liquidity_supports_proxy(
         ),
         None,
     )
-    single_stock = next(
-        (
-            measurement
-            for measurement in measurements
-            if measurement.group_label == "Single-stock miners"
-        ),
-        None,
-    )
     if benchmark is None or benchmark.tradable_count < 1:
         return False
-    if single_stock is None:
-        return True
-    if (
-        benchmark.median_rel_spread is not None
-        and single_stock.median_rel_spread is not None
-    ):
-        return benchmark.median_rel_spread <= single_stock.median_rel_spread
-    return benchmark.contract_count > 0
+    return True
 
 
 def _proxy_candidate_for_request(
@@ -394,6 +379,8 @@ def load_option_trading_data(
     call_candidate_grids = _accepted_candidate_grids(call_candidate_slots)
     source_context = _source_context(
         manifest=manifest,
+        tool_a=tool_a,
+        tool_b=tool_b,
         risk_free_rate=effective_risk_free_rate,
         risk_free_rate_is_fallback=risk_free_rate_is_fallback,
     )
@@ -769,17 +756,59 @@ def _safe_float(value: float | str) -> float | None:
 def _source_context(
     *,
     manifest: dict[str, Any],
+    tool_a: pd.DataFrame,
+    tool_b: pd.DataFrame,
     risk_free_rate: float,
     risk_free_rate_is_fallback: bool,
 ) -> OptionTradingSourceContext:
     as_of_raw = str(manifest.get("as_of_date") or "").strip() or None
     refresh_raw = str(manifest.get("refresh_run_id") or "").strip() or None
+    tool_a_refresh_run_ids = _unique_strings(tool_a, "snapshot_refresh_run_id")
+    tool_b_refresh_run_ids = _unique_strings(tool_b, "snapshot_refresh_run_id")
     return OptionTradingSourceContext(
         as_of_date=as_of_raw,
         refresh_run_id=refresh_raw,
+        tool_a_refresh_run_ids=tool_a_refresh_run_ids,
+        tool_b_refresh_run_ids=tool_b_refresh_run_ids,
+        context_warnings=_context_warnings(
+            options_refresh_run_id=refresh_raw,
+            tool_a_refresh_run_ids=tool_a_refresh_run_ids,
+            tool_b_refresh_run_ids=tool_b_refresh_run_ids,
+        ),
         risk_free_rate=risk_free_rate,
         risk_free_rate_is_fallback=risk_free_rate_is_fallback,
     )
+
+
+def _context_warnings(
+    *,
+    options_refresh_run_id: str | None,
+    tool_a_refresh_run_ids: tuple[str, ...],
+    tool_b_refresh_run_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    if not options_refresh_run_id:
+        return ()
+    mixed_parts: list[str] = []
+    if not _run_ids_match(tool_a_refresh_run_ids, options_refresh_run_id):
+        mixed_parts.append(f"Tool A uses {_format_run_ids(tool_a_refresh_run_ids)}")
+    if not _run_ids_match(tool_b_refresh_run_ids, options_refresh_run_id):
+        mixed_parts.append(f"Tool B uses {_format_run_ids(tool_b_refresh_run_ids)}")
+    if not mixed_parts:
+        return ()
+    return (
+        "Refresh context is mixed: options snapshot uses "
+        f"{options_refresh_run_id}; {'; '.join(mixed_parts)}. "
+        "Scenario betas and fundamentals may lag the option chains. Run "
+        "python main.py refresh to realign the full model outputs.",
+    )
+
+
+def _run_ids_match(run_ids: tuple[str, ...], expected: str) -> bool:
+    return bool(run_ids) and all(run_id == expected for run_id in run_ids)
+
+
+def _format_run_ids(run_ids: tuple[str, ...]) -> str:
+    return ", ".join(run_ids) if run_ids else "no recorded refresh id"
 
 
 def _current_stock_price(

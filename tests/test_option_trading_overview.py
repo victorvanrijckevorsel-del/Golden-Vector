@@ -35,6 +35,14 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
             source_context=OptionTradingSourceContext(
                 as_of_date="2026-06-01",
                 refresh_run_id="options-run",
+                tool_a_refresh_run_ids=("tool-run",),
+                tool_b_refresh_run_ids=("tool-run",),
+                context_warnings=(
+                    "Refresh context is mixed: options snapshot uses options-run; "
+                    "Tool A uses tool-run; Tool B uses tool-run. Scenario betas and "
+                    "fundamentals may lag the option chains. Run python main.py "
+                    "refresh to realign the full model outputs.",
+                ),
             ),
             liquidity_measurements=(
                 OptionLiquidityMeasurement(
@@ -67,6 +75,8 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
 
     assert "Option Trading" in html
     assert "Cached options snapshot: 2026-06-01; screening only" in html
+    assert "Refresh context is mixed" in html
+    assert "Run python main.py refresh" in html
     assert "Method" in html
     assert "Last is informational only" in html
     assert "/ticker/AEM?lens=option-trading#option-trading" in html

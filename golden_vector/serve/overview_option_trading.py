@@ -46,6 +46,7 @@ def _render_option_trading_overview_page(
             refresh_status or OptionRefreshStatus(),
             return_to="/option-trading",
         ),
+        _render_context_warnings(overview.source_context),
         "<details class=\"method-disclosure\"><summary>Method</summary>"
         "<p>Contracts are selected from cached Yahoo Finance option-chain data. "
         "Last is informational only; bid, ask, spread, open interest, premium, "
@@ -155,6 +156,14 @@ def _render_liquidity_measurements(
         f"<tbody>{''.join(rows)}</tbody></table>"
         "</section>"
     )
+
+
+def _render_context_warnings(context: object | None) -> str:
+    warnings = tuple(getattr(context, "context_warnings", ()) or ())
+    if not warnings:
+        return ""
+    paragraphs = "".join(f"<p>{escape(str(warning))}</p>" for warning in warnings)
+    return f"<div class=\"flash option-context-warning\">{paragraphs}</div>"
 
 
 def _render_row(row: OptionTradingRow, *, snapshot_date: str | None) -> str:

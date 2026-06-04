@@ -57,6 +57,9 @@ class OptionSizingResult:
 class OptionTradingSourceContext:
     as_of_date: str | None = None
     refresh_run_id: str | None = None
+    tool_a_refresh_run_ids: tuple[str, ...] = ()
+    tool_b_refresh_run_ids: tuple[str, ...] = ()
+    context_warnings: tuple[str, ...] = ()
     risk_free_rate: float | None = None
     risk_free_rate_is_fallback: bool = False
     source_label: str = "Cached Yahoo Finance data via yfinance"
@@ -244,6 +247,7 @@ def build_option_trading_detail(
             quantity=1,
         )
         for candidate in put_candidates
+        if candidate.liquidity_tier == "tradable"
     )
     call_bundles = tuple(
         compute_scenario_bundle(
@@ -258,6 +262,7 @@ def build_option_trading_detail(
             quantity=1,
         )
         for candidate in call_candidates
+        if candidate.liquidity_tier == "tradable"
     )
     sizing = build_option_sizing_result(
         request=sizing_request or OptionSizingRequest(),
@@ -296,7 +301,7 @@ def build_option_sizing_result(
     bundle = _bundle_for_request(bundles, request)
     notes = list(request.notes)
     if bundle is None:
-        bucket_note = f" {request.bucket.replace('_', ' ')}" if request.bucket else ""
+        bucket_note = f" {_sizing_bucket_label(request.bucket)}" if request.bucket else ""
         notes.append(
             f"No {request.horizon_days}d{bucket_note} {request.side} candidate is available."
         )
@@ -544,9 +549,17 @@ def _candidate_for_horizon(
     horizon_days: int,
 ) -> OptionCandidate | None:
     for candidate in candidates:
-        if candidate.horizon_days == horizon_days:
+        if candidate.horizon_days == horizon_days and candidate.liquidity_tier == "tradable":
             return candidate
     return None
+
+
+def _sizing_bucket_label(bucket: str | None) -> str:
+    if bucket == "near_atm":
+        return "Near-ATM"
+    if bucket == "directional":
+        return "Directional"
+    return str(bucket or "").replace("_", " ").title()
 
 
 def _current_stock_price(
