@@ -44,3 +44,15 @@ Self-review notes:
 - Added `regime_rolling_weeks` and `regime_min_weeks` to Tool C config rather than hard-coding the rolling-regime rule.
 - Relative GDX metrics use their own benchmark intersection count, so missing GDX history does not accidentally borrow the gold denominator.
 - Fixed a test-only NumPy boolean identity assertion after the first focused run.
+
+### Step 4 - Tool C model
+
+- Added `golden_vector/model/tool_c.py`.
+- Tool C now joins Tool A latest fields with relative behavior metrics and produces `tool_c_downside_rank` plus `tool_c_upside_rank`.
+- Robust components are equal-weighted through the shared `oriented_percentile` helper; tail averages remain context only.
+- Score-ineligible rows are sunk, and thin relative metrics are tagged without blocking the whole side when enough other robust components exist.
+
+Self-review notes:
+
+- Removed an over-strict first draft gate that made a thin hit-rate metric sink the full side; the intended behavior is exclude the thin metric and keep ranking if enough robust inputs remain.
+- Added defensive creation of missing component columns so empty/missing relative metric inputs degrade to null ranks instead of a `KeyError`.
