@@ -316,41 +316,13 @@ class HedgeReadinessConfig(StrictConfigModel):
         return self
 
 
-class ToolCHitRateThresholds(StrictConfigModel):
-    gold_down_10pct: float = -0.10
-    gold_down_20pct: float = -0.20
-    gold_up_10pct: float = 0.10
-    gold_up_20pct: float = 0.20
-
-    @field_validator(
-        "gold_down_10pct",
-        "gold_down_20pct",
-        "gold_up_10pct",
-        "gold_up_20pct",
-    )
-    @classmethod
-    def non_zero_threshold(cls, value: float) -> float:
-        if value == 0:
-            raise ValueError("Tool C hit-rate thresholds must be non-zero")
-        return float(value)
-
-    @model_validator(mode="after")
-    def ordered_thresholds(self) -> "ToolCHitRateThresholds":
-        if not self.gold_down_20pct < self.gold_down_10pct < 0:
-            raise ValueError("Tool C downside thresholds must satisfy down20 < down10 < 0")
-        if not 0 < self.gold_up_10pct < self.gold_up_20pct:
-            raise ValueError("Tool C upside thresholds must satisfy 0 < up10 < up20")
-        return self
-
-
 class ToolCConfig(StrictConfigModel):
     version: int = 1
     minimum_observations: int = 52
     min_events: int = 8
     rolling_volatility_weeks: int = 52
-    hit_rate_thresholds: ToolCHitRateThresholds = Field(
-        default_factory=ToolCHitRateThresholds
-    )
+    downside_hit_rate_threshold_pct: float = -10.0
+    upside_hit_rate_threshold_pct: float = 10.0
 
     @field_validator("minimum_observations", "min_events", "rolling_volatility_weeks")
     @classmethod
@@ -358,6 +330,28 @@ class ToolCConfig(StrictConfigModel):
         if value <= 0:
             raise ValueError("Tool C integer settings must be positive")
         return int(value)
+
+    @field_validator("downside_hit_rate_threshold_pct")
+    @classmethod
+    def negative_downside_threshold(cls, value: float) -> float:
+        if value >= 0:
+            raise ValueError("Tool C downside hit-rate threshold must be negative")
+        return float(value)
+
+    @field_validator("upside_hit_rate_threshold_pct")
+    @classmethod
+    def positive_upside_threshold(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("Tool C upside hit-rate threshold must be positive")
+        return float(value)
+
+    @property
+    def downside_hit_rate_threshold(self) -> float:
+        return self.downside_hit_rate_threshold_pct / 100.0
+
+    @property
+    def upside_hit_rate_threshold(self) -> float:
+        return self.upside_hit_rate_threshold_pct / 100.0
 
 
 class ToolDConfig(StrictConfigModel):

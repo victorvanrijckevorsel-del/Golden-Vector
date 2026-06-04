@@ -11,6 +11,7 @@ def test_load_app_config_reads_repo_yaml():
     assert loaded.app.hedge_readiness.target_delta == -0.25
     assert "hedge_readiness" in loaded.file_hashes
     assert loaded.app.tool_c.min_events == 8
+    assert loaded.app.tool_c.downside_hit_rate_threshold_pct == -10.0
     assert "tool_c" in loaded.file_hashes
     assert loaded.app.tool_d.stress_gold_price == 3000.0
     assert "tool_d" in loaded.file_hashes

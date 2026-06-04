@@ -27,3 +27,8 @@ Self-review notes:
 
 - Fixed a defensive issue where benchmark files without `return_basis_usd` could produce a non-Series basis.
 - Kept benchmark columns fixed to the locked GDX/GDXJ output contract while allowing missing benchmark histories to surface as nulls.
+
+### Early self-review correction - Tool C threshold shape
+
+- Corrected Tool C config from a nested fractional threshold block to the locked top-level fields `downside_hit_rate_threshold_pct` and `upside_hit_rate_threshold_pct`.
+- Kept fractional convenience properties on the config model so analytics code does not re-divide ad hoc.

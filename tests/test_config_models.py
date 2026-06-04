@@ -16,7 +16,6 @@ from golden_vector.contracts.config_models import (
     StructuralDeltaBands,
     StructuralWindowWeights,
     ToolCConfig,
-    ToolCHitRateThresholds,
     ToolDConfig,
     UniverseConfig,
     VolatilityDiagnosticBands,
@@ -381,7 +380,10 @@ def test_tool_c_config_accepts_defaults():
 
     assert config.minimum_observations == 52
     assert config.min_events == 8
-    assert config.hit_rate_thresholds.gold_down_10pct == -0.10
+    assert config.downside_hit_rate_threshold_pct == -10.0
+    assert config.downside_hit_rate_threshold == -0.10
+    assert config.upside_hit_rate_threshold_pct == 10.0
+    assert config.upside_hit_rate_threshold == 0.10
 
 
 @pytest.mark.parametrize(
@@ -390,25 +392,13 @@ def test_tool_c_config_accepts_defaults():
         {"minimum_observations": 0},
         {"min_events": 0},
         {"rolling_volatility_weeks": 0},
+        {"downside_hit_rate_threshold_pct": 0},
+        {"upside_hit_rate_threshold_pct": 0},
     ],
 )
-def test_tool_c_config_rejects_invalid_integer_settings(override):
+def test_tool_c_config_rejects_invalid_settings(override):
     with pytest.raises(ValidationError):
         ToolCConfig.model_validate({"version": 1, **override})
-
-
-@pytest.mark.parametrize(
-    "override",
-    [
-        {"gold_down_10pct": 0},
-        {"gold_down_20pct": -0.05},
-        {"gold_up_10pct": 0.25},
-        {"gold_up_20pct": 0.05},
-    ],
-)
-def test_tool_c_hit_rate_thresholds_must_be_ordered(override):
-    with pytest.raises(ValidationError):
-        ToolCHitRateThresholds.model_validate(override)
 
 
 def test_tool_d_config_accepts_defaults():
