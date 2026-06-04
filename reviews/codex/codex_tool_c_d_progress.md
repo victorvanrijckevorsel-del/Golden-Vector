@@ -67,3 +67,14 @@ Self-review notes:
 
 - Kept Tool C persistence separate from generic Tool A/B persistence but reused the existing local write/latest helpers.
 - Added a replay verification test so the manifest checks both copied source snapshots and the current source file hash.
+
+### Step 6 - Tool C CLI
+
+- Added `python main.py tool-c`.
+- The runner loads latest foundation gold/equities, latest Tool A output, and cached benchmark histories, then writes Tool C outputs.
+- Tool C source paths include Tool A latest, foundation raw gold, foundation USD equities, and any cached benchmark histories found.
+
+Self-review notes:
+
+- The CLI permits missing benchmark histories; those only remove benchmark-relative metrics and show through event counts/nulls.
+- Added tests for parser registration and the runner's latest-local-input plumbing.

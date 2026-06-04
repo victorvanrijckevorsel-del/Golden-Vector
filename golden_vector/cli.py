@@ -35,8 +35,11 @@ from golden_vector.ingestion.options_phase import (
     run_options_ingestion_phase,
     skipped_options_phase_summary,
 )
+from golden_vector.ingestion.persist_options import safe_options_file_name
+from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.hedge.report import write_hedge_readiness_report
 from golden_vector.model.pipeline import execute_tool_a_profile_pipeline
+from golden_vector.model.tool_c import ToolCExecutionInputs, compute_tool_c_outputs
 from golden_vector.screening.manual_data import (
     bootstrap_manual_screening_data,
     load_manual_screening_data,
@@ -103,6 +106,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "tool-a",
         help="Run structural Tool A from the latest validated local USD-normalized snapshot.",
+    )
+    subparsers.add_parser(
+        "tool-c",
+        help="Run symmetric Tool C behavior ranking from Tool A and weekly return history.",
     )
 
     refresh_parser = subparsers.add_parser(
@@ -399,6 +406,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "tool-a":
         return run_tool_a(paths)
+
+    if args.command == "tool-c":
+        return run_tool_c(paths)
 
     if args.command == "tool-b":
         return run_tool_b(paths, gold_price=args.gold_price)
@@ -990,6 +1000,164 @@ def run_tool_a(paths: ProjectPaths) -> int:
             status="FAIL",
             summary={"error": str(exc)},
             notes=["Tool A run failed before completion."],
+        )
+        return 1
+
+
+def run_tool_c(paths: ProjectPaths) -> int:
+    run_context: RunContext | None = None
+
+    try:
+        loaded_config = load_app_config(paths)
+        run_context = RunContext.start(
+            paths=paths,
+            command="tool-c",
+            parameters={},
+            config_hash=loaded_config.combined_hash,
+        )
+        configure_logging(run_context.log_path)
+
+        configured_tickers = loaded_config.app.universe.tickers
+        active_tickers = [ticker for ticker in configured_tickers if ticker.active]
+        tool_a_enabled = [
+            ticker for ticker in active_tickers if ticker.tool_a_enabled
+        ]
+        config_summary = {
+            "configured_ticker_count": len(configured_tickers),
+            "active_ticker_count": len(active_tickers),
+            "tool_a_enabled_ticker_count": len(tool_a_enabled),
+            "combined_config_hash": loaded_config.combined_hash,
+            "tool_c_min_events": loaded_config.app.tool_c.min_events,
+            "tool_c_regime_rolling_weeks": loaded_config.app.tool_c.regime_rolling_weeks,
+            "tool_c_regime_min_weeks": loaded_config.app.tool_c.regime_min_weeks,
+        }
+        run_context.write_json("config_summary.json", config_summary)
+        if not tool_a_enabled:
+            run_context.finalize(
+                status="FAIL",
+                summary=config_summary,
+                notes=["Tool C cannot run because no active Tool A tickers are configured."],
+            )
+            LOGGER.error("Tool C stopped because no active Tool A tickers are configured.")
+            return 1
+
+        foundation_snapshot = _load_latest_foundation_snapshot(
+            paths=paths,
+            app_config=loaded_config.app,
+            run_context=run_context,
+            include_gold_history=True,
+            include_equity_histories=True,
+            include_market_snapshots=False,
+        )
+        _capture_foundation_for_replay_manifest(run_context, foundation_snapshot)
+
+        if not paths.latest_tool_a_snapshot_parquet_path.exists():
+            raise FileNotFoundError(
+                "No Tool A latest output exists yet. Run `python main.py tool-a` first."
+            )
+        tool_a_latest = pd.read_parquet(paths.latest_tool_a_snapshot_parquet_path)
+        benchmark_histories = _load_cached_benchmark_histories(
+            paths=paths,
+            app_config=loaded_config.app,
+        )
+        tool_c_outputs = compute_tool_c_outputs(
+            inputs=ToolCExecutionInputs(
+                normalized_equity_histories=foundation_snapshot.normalized_equity_histories,
+                gold_history=foundation_snapshot.gold_history,
+                benchmark_histories=benchmark_histories,
+                tool_a_latest=tool_a_latest,
+            ),
+            config=loaded_config.app.tool_c,
+            source_run_id=run_context.run_id,
+        )
+        source_paths = _tool_c_source_paths(
+            paths=paths,
+            foundation_snapshot=foundation_snapshot,
+            app_config=loaded_config.app,
+        )
+        persist_tool_c_outputs(
+            paths=paths,
+            run_context=run_context,
+            tool_c_outputs=tool_c_outputs,
+            source_paths=source_paths,
+            publish_latest_aliases=not tool_c_outputs.empty,
+        )
+
+        ranked_downside = (
+            int(tool_c_outputs["tool_c_downside_rank"].notna().sum())
+            if "tool_c_downside_rank" in tool_c_outputs.columns
+            else 0
+        )
+        ranked_upside = (
+            int(tool_c_outputs["tool_c_upside_rank"].notna().sum())
+            if "tool_c_upside_rank" in tool_c_outputs.columns
+            else 0
+        )
+        tool_c_status = "PASS"
+        if tool_c_outputs.empty:
+            tool_c_status = "FAIL"
+        elif ranked_downside == 0 and ranked_upside == 0:
+            tool_c_status = "WARN"
+        summary = {
+            "tool_c_output_row_count": len(tool_c_outputs.index),
+            "tool_c_ranked_downside_row_count": ranked_downside,
+            "tool_c_ranked_upside_row_count": ranked_upside,
+            "tool_c_output_overall_status": tool_c_status,
+            "benchmark_history_count": len(benchmark_histories),
+        }
+        run_context.write_json("tool_c_output_summary.json", summary)
+        overall_status = _combine_statuses(
+            foundation_snapshot.raw_qa_summary.get("overall_status"),
+            foundation_snapshot.normalization_qa_summary.get("overall_status"),
+            tool_c_status,
+        )
+        run_context.write_json(
+            "qa_summary.json",
+            {
+                "overall_status": overall_status,
+                "raw": foundation_snapshot.raw_qa_summary,
+                "normalization": foundation_snapshot.normalization_qa_summary,
+                "tool_c_output": summary,
+            },
+        )
+        notes = [
+            "Tool C ran from the latest validated local market-data snapshot, latest Tool A output, and cached benchmark histories.",
+            f"Snapshot refresh run: {foundation_snapshot.refresh_run_id}.",
+            f"Snapshot as-of date: {foundation_snapshot.snapshot_as_of_date}.",
+            f"Tool C output status: {tool_c_status}.",
+        ]
+        run_context.finalize(
+            status=overall_status,
+            summary={
+                **config_summary,
+                **foundation_snapshot.summary,
+                "snapshot_refresh_run_id": foundation_snapshot.refresh_run_id,
+                "snapshot_as_of_date": foundation_snapshot.snapshot_as_of_date,
+                **summary,
+            },
+            notes=notes,
+        )
+
+        if overall_status == "FAIL":
+            LOGGER.error("Tool C run completed with blocking failures.")
+            return 1
+
+        LOGGER.info("Tool C run completed with status %s.", overall_status)
+        return 0
+    except Exception as exc:
+        if run_context is None:
+            run_context = RunContext.start(
+                paths=paths,
+                command="tool-c",
+                parameters={},
+                config_hash="UNAVAILABLE",
+            )
+            configure_logging(run_context.log_path)
+        LOGGER.exception("Tool C run failed.")
+        run_context.finalize(
+            status="FAIL",
+            summary={"error": str(exc)},
+            notes=["Tool C run failed before completion."],
         )
         return 1
 
@@ -1799,6 +1967,58 @@ def run_compare_horizons(
             notes=["compare-horizons failed before completion."],
         )
         return 1
+
+
+def _load_cached_benchmark_histories(
+    *,
+    paths: ProjectPaths,
+    app_config: object,
+) -> dict[str, pd.DataFrame]:
+    histories: dict[str, pd.DataFrame] = {}
+    for benchmark in getattr(app_config.benchmarks, "benchmarks", []):
+        if not getattr(benchmark, "active", True):
+            continue
+        ticker = str(benchmark.ticker).upper()
+        path = paths.benchmarks_dir / f"{safe_options_file_name(ticker)}.parquet"
+        if not path.exists():
+            continue
+        try:
+            histories[ticker] = pd.read_parquet(path)
+        except Exception as exc:  # noqa: BLE001 - Tool C can run without benchmark metrics.
+            LOGGER.warning("Benchmark history %s could not be read: %s", ticker, exc)
+    return histories
+
+
+def _tool_c_source_paths(
+    *,
+    paths: ProjectPaths,
+    foundation_snapshot: LatestFoundationSnapshot,
+    app_config: object,
+) -> dict[str, Path]:
+    source_paths: dict[str, Path] = {
+        "tool_a_latest": paths.latest_tool_a_snapshot_parquet_path,
+    }
+    try:
+        manifest = json.loads(foundation_snapshot.manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - source capture degrades to available files.
+        LOGGER.warning("Foundation manifest could not be read for Tool C sources: %s", exc)
+        manifest = {}
+    for name, field in (
+        ("foundation_raw_gold", "gold_history_path"),
+        ("foundation_usd_equities", "normalized_equities_snapshot_path"),
+    ):
+        raw_path = str(manifest.get(field, "")).strip()
+        if raw_path:
+            source_paths[name] = paths.resolve_repo_relative(raw_path)
+
+    for benchmark in getattr(app_config.benchmarks, "benchmarks", []):
+        if not getattr(benchmark, "active", True):
+            continue
+        ticker = str(benchmark.ticker).upper()
+        path = paths.benchmarks_dir / f"{safe_options_file_name(ticker)}.parquet"
+        if path.exists():
+            source_paths[f"benchmark_{ticker}"] = path
+    return source_paths
 
 
 def _load_latest_foundation_snapshot(
