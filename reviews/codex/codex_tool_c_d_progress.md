@@ -112,3 +112,12 @@ Self-review notes:
 
 - Added a contract test with a deliberately bogus Tool B `leverage` value to prove Tool D ignores it.
 - Added a ranking test where a worse-quality ticker has much higher FCF yield; it still ranks lower, proving FCF is not a quality component.
+
+### Step 2 - Tool D persistence and provenance
+
+- Added `persist_tool_d_outputs` with retained full output, per-run latest output, and stable latest aliases.
+- Tool D source assets are copied under `replay_snapshots/tool_d/`, hashed, and verified by `verify_manifest`.
+
+Self-review notes:
+
+- Mirrored the Tool C persistence shape so Candidate Finder can consume stable latest aliases consistently.
