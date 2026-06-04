@@ -1,5 +1,4 @@
 version: 1
-minimum_observations: 52
 min_events: 8
 regime_rolling_weeks: 156
 regime_min_weeks: 52

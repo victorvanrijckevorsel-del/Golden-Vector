@@ -44,10 +44,13 @@ def compute_relative_behavior_metrics(
     if weekly_returns.empty or gold_regimes.empty:
         return pd.DataFrame(columns=RELATIVE_BEHAVIOR_COLUMNS)
 
+    regime_columns = [
+        column for column in gold_regimes.columns if column != "gold_log_ret"
+    ]
     data = weekly_returns.merge(
-        gold_regimes,
+        gold_regimes[regime_columns],
         how="left",
-        on=["week_period", "gold_log_ret"],
+        on="week_period",
     )
     if data.empty or "ticker" not in data.columns:
         return pd.DataFrame(columns=RELATIVE_BEHAVIOR_COLUMNS)

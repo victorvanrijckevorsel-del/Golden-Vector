@@ -78,3 +78,14 @@ Self-review notes:
 
 - The CLI permits missing benchmark histories; those only remove benchmark-relative metrics and show through event counts/nulls.
 - Added tests for parser registration and the runner's latest-local-input plumbing.
+
+### Batch 1 self-review fixes
+
+- Removed unused `minimum_observations` from Tool C config; the actual observation controls are `regime_min_weeks`, `regime_rolling_weeks`, and `min_events`.
+- Fixed Tool C component percentile scoring so `score_eligible=false` Tool A rows are masked before percentiles are calculated, not merely sunk afterward.
+- Changed relative-behavior regime joins to use only `week_period`; joining on `gold_log_ret` float equality was unnecessarily fragile.
+
+Focused verification:
+
+- `python -m pytest tests/test_config_loading.py tests/test_config_models.py tests/test_weekly_returns.py tests/test_gold_regime.py tests/test_relative_behavior.py tests/test_tool_c.py tests/test_persist_tool_c.py tests/test_cli_tool_c.py tests/test_replay_manifest.py`
+- Result: 109 passed.

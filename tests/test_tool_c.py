@@ -53,7 +53,9 @@ def test_build_tool_c_output_frame_produces_symmetric_ranks():
 
     assert list(output.columns) == TOOL_C_OUTPUT_COLUMNS
     assert rows.loc["AAA", "tool_c_downside_rank"] == 100.0
+    assert rows.loc["AAA", "tool_c_downside_score"] == 100.0
     assert rows.loc["BBB", "tool_c_upside_rank"] == 100.0
+    assert rows.loc["BBB", "tool_c_upside_score"] == 100.0
     assert pd.isna(rows.loc["CCC", "tool_c_downside_rank"])
     assert pd.isna(rows.loc["CCC", "tool_c_upside_rank"])
     assert "score_ineligible" in rows.loc["CCC", "tool_c_downside_tags"]

@@ -378,7 +378,6 @@ def test_hedge_readiness_config_rejects_invalid_thresholds(override):
 def test_tool_c_config_accepts_defaults():
     config = ToolCConfig()
 
-    assert config.minimum_observations == 52
     assert config.min_events == 8
     assert config.regime_rolling_weeks == 156
     assert config.regime_min_weeks == 52
@@ -391,7 +390,6 @@ def test_tool_c_config_accepts_defaults():
 @pytest.mark.parametrize(
     "override",
     [
-        {"minimum_observations": 0},
         {"min_events": 0},
         {"regime_rolling_weeks": 0},
         {"regime_min_weeks": 0},

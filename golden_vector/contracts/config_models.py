@@ -318,7 +318,6 @@ class HedgeReadinessConfig(StrictConfigModel):
 
 class ToolCConfig(StrictConfigModel):
     version: int = 1
-    minimum_observations: int = 52
     min_events: int = 8
     regime_rolling_weeks: int = 156
     regime_min_weeks: int = 52
@@ -327,7 +326,6 @@ class ToolCConfig(StrictConfigModel):
     upside_hit_rate_threshold_pct: float = 10.0
 
     @field_validator(
-        "minimum_observations",
         "min_events",
         "regime_rolling_weeks",
         "regime_min_weeks",

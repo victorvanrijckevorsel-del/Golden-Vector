@@ -222,8 +222,9 @@ def _add_component_scores(
     score_column: str,
 ) -> None:
     percentiles: list[pd.Series] = []
+    eligible = output["score_eligible"].map(_truthy_score_eligible)
     for component in components:
-        values = _numeric(output, component)
+        values = _numeric(output, component).where(eligible)
         percentiles.append(oriented_percentile(values, high_good=True))
     if not percentiles:
         output[score_column] = pd.NA
