@@ -22,7 +22,7 @@ from golden_vector.hedge.scenarios import (
     compute_scenario_bundle,
 )
 
-SideStatus = Literal["available", "thin", "none"]
+SideStatus = Literal["tradable", "watch", "none"]
 OptionSide = Literal["put", "call"]
 SizingMode = Literal["contracts", "budget"]
 
@@ -126,7 +126,7 @@ def build_option_trading_overview(
     candidate_grids: dict[str, list[OptionCandidate]],
     risk_free_rate: float,
     call_candidate_grids: dict[str, list[OptionCandidate]] | None = None,
-    target_horizons_days: tuple[int, ...] = (30, 60, 90),
+    target_horizons_days: tuple[int, ...] = (60, 90, 120),
     preferred_horizon_days: int = PREFERRED_OPTION_HORIZON_DAYS,
     put_context_gold_move: float = PUT_CONTEXT_GOLD_MOVE,
     call_context_gold_move: float = CALL_CONTEXT_GOLD_MOVE,
@@ -202,7 +202,7 @@ def build_option_trading_detail(
     put_candidate_slots: dict[str, list[OptionCandidateSlot]] | None = None,
     call_candidate_slots: dict[str, list[OptionCandidateSlot]] | None = None,
     sizing_request: OptionSizingRequest | None = None,
-    target_horizons_days: tuple[int, ...] = (30, 60, 90),
+    target_horizons_days: tuple[int, ...] = (60, 90, 120),
     down_beta_min_for_scenario: float = 0.10,
     risk_free_rate_is_fallback: bool = False,
     source_context: OptionTradingSourceContext | None = None,
@@ -425,10 +425,14 @@ def _build_row(
         context_gold_move=call_context_gold_move,
         gold_beta_min_for_scenario=down_beta_min_for_scenario,
     )
-    if put_status != "available":
-        notes.append("No usable put candidate found.")
-    if call_status != "available":
-        notes.append("No usable call candidate found.")
+    if put_status == "watch":
+        notes.append("Put candidate is Watch tier; spread may be expensive.")
+    elif put_status != "tradable":
+        notes.append("No liquid put candidate found.")
+    if call_status == "watch":
+        notes.append("Call candidate is Watch tier; spread may be expensive.")
+    elif call_status != "tradable":
+        notes.append("No liquid call candidate found.")
     if option_vehicle_type == "benchmark_etf":
         notes.append("Benchmark ETF option vehicle.")
 
@@ -467,12 +471,14 @@ def _candidate_side_status(
     optionability: str,
     target_horizons_days: tuple[int, ...],
 ) -> SideStatus:
-    if candidates:
-        return "available"
+    if any(candidate.liquidity_tier == "tradable" for candidate in candidates):
+        return "tradable"
+    if any(candidate.liquidity_tier == "watch" for candidate in candidates):
+        return "watch"
     if _side_feature_present(feature, side, target_horizons_days):
-        return "thin"
+        return "none"
     if is_optionable_tier(optionability):
-        return "thin"
+        return "none"
     return "none"
 
 

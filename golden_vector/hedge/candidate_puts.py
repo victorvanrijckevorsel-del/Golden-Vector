@@ -55,6 +55,7 @@ class OptionCandidate:
     half_spread_cost_pct: float | None = None
     liquidity_score: float | None = None
     moneyness_pct: float | None = None
+    otm_pct: float | None = None
     quote_flags: tuple[str, ...] = ()
 
 

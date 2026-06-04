@@ -169,9 +169,11 @@ def _row_filter_dict(row: OptionTradingRow) -> dict[str, str]:
 
 def _status_label(status: str) -> str:
     css_class = {
-        "available": "badge-verified",
-        "thin": "badge-estimated",
+        "tradable": "badge-verified",
+        "watch": "badge-estimated",
         "none": "badge-missing",
+        "available": "badge-verified",
+        "thin": "badge-missing",
     }.get(status, "badge")
     label = _status_text(status)
     return f"<span class=\"badge {css_class}\">{escape(label)}</span>"
@@ -179,7 +181,9 @@ def _status_label(status: str) -> str:
 
 def _status_text(status: str) -> str:
     return {
-        "available": "Sensible liquid contract",
-        "thin": "No sensible liquid contract",
-        "none": "No listed options",
+        "tradable": "Tradable candidate",
+        "watch": "Watch candidate",
+        "none": "No liquid candidate",
+        "available": "Tradable candidate",
+        "thin": "No liquid candidate",
     }.get(status, status)

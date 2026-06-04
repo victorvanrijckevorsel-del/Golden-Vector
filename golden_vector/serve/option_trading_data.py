@@ -38,6 +38,7 @@ from golden_vector.hedge.option_trading import (
 )
 from golden_vector.hedge.options_liquidity import (
     build_bucket_slots,
+    candidate_bucket_ids,
     scan_option_chain,
     settings_from_config,
 )
@@ -146,7 +147,7 @@ def parse_option_sizing_request(
         horizon = default_horizon
 
     bucket_raw = _query_value(query, "bucket").lower().replace("-", "_")
-    bucket = bucket_raw if bucket_raw in _allowed_buckets(side) else None
+    bucket = bucket_raw if bucket_raw in _allowed_buckets() else None
     if bucket_raw and bucket is None:
         notes.append("Invalid bucket; defaulted to the first available contract.")
 
@@ -204,11 +205,8 @@ def _parse_float(raw: str) -> float | None:
         return None
 
 
-def _allowed_buckets(side: OptionSide) -> set[str]:
-    common = {"most_liquid", "near_atm", "directional", "model_fit"}
-    if side == "put":
-        return {*common, "tail"}
-    return common
+def _allowed_buckets() -> set[str]:
+    return set(candidate_bucket_ids())
 
 
 def load_option_trading_data(
@@ -281,7 +279,7 @@ def load_option_trading_data(
         candidate_grids=candidate_grids,
         call_candidate_grids=call_candidate_grids,
         risk_free_rate=effective_risk_free_rate,
-        target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
+        target_horizons_days=tuple(app_config.hedge_readiness.display_horizons_days),
         down_beta_min_for_scenario=app_config.hedge_readiness.down_beta_min_for_scenario,
         risk_free_rate_is_fallback=risk_free_rate_is_fallback,
         source_context=source_context,
@@ -437,12 +435,6 @@ def _candidate_slots(
     for ticker, feature in feature_by_ticker.items():
         if not is_optionable_tier(optionability_tier(row_string(feature, "optionability_tier"))):
             continue
-        tool_a_row = tool_a_by_ticker.get(ticker)
-        gold_beta = (
-            row_float(tool_a_row, "down_beta_core")
-            if option_type == "P"
-            else row_float(tool_a_row, "up_beta_core")
-        )
         chain = chains.get(ticker, pd.DataFrame())
         price = _current_stock_price(
             feature=feature,
@@ -463,8 +455,10 @@ def _candidate_slots(
                         "No cached stock price is available, so option deltas "
                         "cannot be computed."
                     ),
+                    bucket=bucket,
                 )
                 for horizon in app_config.hedge_readiness.display_horizons_days
+                for bucket in candidate_bucket_ids()
             ]
             continue
         slots_by_ticker[ticker] = build_bucket_slots(
@@ -475,7 +469,6 @@ def _candidate_slots(
             risk_free_rate=risk_free_rate,
             target_horizons_days=tuple(app_config.hedge_readiness.display_horizons_days),
             settings=liquidity_settings,
-            gold_beta=gold_beta,
             as_of_date=as_of_date,
         )
     return slots_by_ticker
@@ -493,12 +486,11 @@ def _accepted_candidate_grids(
 
 
 def _unique_candidates(candidates: list[OptionCandidate]) -> list[OptionCandidate]:
-    seen: set[tuple[int, str | None, str, float, str]] = set()
+    seen: set[tuple[int, str, float, str]] = set()
     unique: list[OptionCandidate] = []
     for candidate in candidates:
         key = (
             candidate.horizon_days,
-            candidate.bucket,
             candidate.expiration,
             candidate.strike,
             candidate.option_type,

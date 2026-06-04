@@ -91,9 +91,9 @@ class BenchmarksConfig(StrictConfigModel):
 class HedgeReadinessConfig(StrictConfigModel):
     version: int = 1
     target_delta: float = -0.25
-    target_horizons_days: list[int] = Field(default_factory=lambda: [30, 60, 90], min_length=1)
+    target_horizons_days: list[int] = Field(default_factory=lambda: [60, 90, 120], min_length=1)
     display_horizons_days: list[int] = Field(
-        default_factory=lambda: [30, 60, 90, 120],
+        default_factory=lambda: [60, 90, 120],
         min_length=1,
     )
     optionability_open_interest_threshold: int = 1000
@@ -116,10 +116,9 @@ class HedgeReadinessConfig(StrictConfigModel):
     option_sensible_moneyness_max_pct: float = 0.35
     option_dte_bands: dict[int, list[int]] = Field(
         default_factory=lambda: {
-            30: [21, 45],
-            60: [46, 75],
-            90: [76, 105],
-            120: [106, 150],
+            60: [40, 74],
+            90: [75, 104],
+            120: [105, 150],
         },
         min_length=1,
     )

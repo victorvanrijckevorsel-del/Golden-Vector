@@ -23,21 +23,25 @@ from golden_vector.hedge.candidate_puts import (
 )
 
 OptionLiquidityTier = Literal["tradable", "watch", "no_trade"]
-OptionBucket = Literal["most_liquid", "near_atm", "directional", "tail", "model_fit"]
+OptionBucket = Literal["near_atm", "directional"]
 OptionSideType = Literal["P", "C"]
 
 BUCKET_LABELS: dict[str, str] = {
-    "most_liquid": "Most liquid",
     "near_atm": "Near-ATM",
     "directional": "Directional",
-    "tail": "Tail",
-    "model_fit": "Model fit",
 }
 
-DIRECTIONAL_CALL_DELTA = (0.35, 0.50)
-DIRECTIONAL_PUT_DELTA = (-0.50, -0.35)
-TAIL_PUT_DELTA = (-0.30, -0.15)
-MODEL_FIT_GOLD_MOVE = {"P": -0.10, "C": 0.10}
+CANDIDATE_BUCKETS: tuple[Literal["near_atm", "directional"], ...] = (
+    "near_atm",
+    "directional",
+)
+
+
+@dataclass(frozen=True)
+class SlotLiquidityThresholds:
+    max_spread_pct: float
+    min_open_interest: int
+    min_mid: float
 
 
 class OptionLiquidityConfigLike(Protocol):
@@ -69,13 +73,33 @@ class OptionLiquiditySettings:
     min_implied_volatility: float = 0.01
     max_implied_volatility: float = 3.0
     dte_bands: dict[int, tuple[int, int]] | None = None
+    near_atm_otm_min: float = 0.0
+    near_atm_otm_max: float = 0.05
+    directional_preferred_otm_min: float = 0.15
+    directional_preferred_otm_max: float = 0.20
+    directional_allowed_otm_min: float = 0.12
+    directional_allowed_otm_max: float = 0.22
+    near_atm_strict_max_spread_pct: float = 0.25
+    near_atm_strict_min_open_interest: int = 100
+    near_atm_strict_min_mid: float = 0.20
+    near_atm_watch_max_spread_pct: float = 0.35
+    near_atm_watch_min_open_interest: int = 50
+    near_atm_watch_min_mid: float = 0.15
+    directional_strict_max_spread_pct: float = 0.35
+    directional_strict_min_open_interest: int = 50
+    directional_strict_min_mid: float = 0.10
+    directional_watch_max_spread_pct: float = 0.45
+    directional_watch_min_open_interest: int = 25
+    directional_watch_min_mid: float = 0.05
+    lottery_iv_threshold: float = 0.75
+    lottery_abs_delta_max: float = 0.15
+    lottery_dte_max: int = 75
 
     def band_for_horizon(self, horizon_days: int) -> tuple[int, int]:
         bands = self.dte_bands or {
-            30: (21, 45),
-            60: (46, 75),
-            90: (76, 105),
-            120: (106, 150),
+            60: (40, 74),
+            90: (75, 104),
+            120: (105, 150),
         }
         return bands.get(horizon_days, (horizon_days, horizon_days))
 
@@ -99,6 +123,7 @@ class OptionContractMetrics:
     rel_spread: float | None
     half_spread_cost_pct: float | None
     moneyness_pct: float | None
+    otm_pct: float | None
     premium_pct_spot: float | None
     near_spot_depth_count: int
     liquidity_score: float
@@ -197,7 +222,6 @@ def build_bucket_slots(
     risk_free_rate: float | None,
     target_horizons_days: tuple[int, ...],
     settings: OptionLiquiditySettings | None = None,
-    gold_beta: float | None = None,
     as_of_date: date | None = None,
 ) -> list[OptionCandidateSlot]:
     normalized_type = _normalize_option_type(option_type)
@@ -221,7 +245,7 @@ def build_bucket_slots(
                 reason="No listed options chain is available in the cached snapshot.",
             )
             for horizon in target_horizons_days
-            for bucket in _buckets_for_side(normalized_type)
+            for bucket in _buckets_for_side()
         ]
 
     slots: list[OptionCandidateSlot] = []
@@ -233,7 +257,7 @@ def build_bucket_slots(
             for metric in side_metrics
             if lower <= metric.days_to_expiry <= upper
         )
-        for bucket in _buckets_for_side(normalized_type):
+        for bucket in _buckets_for_side():
             slots.append(
                 _slot_for_bucket(
                     option_type=normalized_type,
@@ -241,13 +265,15 @@ def build_bucket_slots(
                     horizon_days=horizon,
                     bucket=bucket,
                     metrics=horizon_metrics,
-                    underlying_price=underlying_price,
                     settings=settings,
-                    gold_beta=gold_beta,
                     listed_contract_count=len(horizon_metrics),
                 )
             )
     return slots
+
+
+def candidate_bucket_ids() -> tuple[str, ...]:
+    return CANDIDATE_BUCKETS
 
 
 def is_usable_candidate(
@@ -260,6 +286,7 @@ def is_usable_candidate(
     return (
         bucket_fit
         and metric.liquidity_tier == "tradable"
+        and metric.otm_pct is not None
         and metric.moneyness_pct is not None
         and metric.moneyness_pct <= settings.sensible_moneyness_max_pct
         and _iv_is_usable(metric, settings)
@@ -324,6 +351,11 @@ def _metric_from_row(
         if strike > 0 and underlying_price > 0
         else None
     )
+    otm_pct = _otm_pct(
+        option_type=option_type,
+        strike=strike,
+        underlying_price=underlying_price,
+    )
     half_spread = rel_spread / 2.0 if rel_spread is not None else None
     premium_pct_spot = (
         mid / underlying_price if mid is not None and underlying_price > 0 else None
@@ -375,6 +407,7 @@ def _metric_from_row(
         rel_spread=rel_spread,
         half_spread_cost_pct=half_spread,
         moneyness_pct=moneyness_pct,
+        otm_pct=otm_pct,
         premium_pct_spot=premium_pct_spot,
         near_spot_depth_count=near_spot_depth,
         liquidity_score=score,
@@ -391,9 +424,7 @@ def _slot_for_bucket(
     horizon_days: int,
     bucket: OptionBucket,
     metrics: tuple[OptionContractMetrics, ...],
-    underlying_price: float,
     settings: OptionLiquiditySettings,
-    gold_beta: float | None,
     listed_contract_count: int,
 ) -> OptionCandidateSlot:
     if not metrics:
@@ -405,38 +436,21 @@ def _slot_for_bucket(
             status="no_expiration",
             reason="No listed expiry is available inside this DTE band.",
         )
-    ranked = _rank_bucket_metrics(
-        option_type=option_type,
+    strict_candidates = _rank_slot_candidates(
         bucket=bucket,
         metrics=metrics,
         horizon_days=horizon_days,
-        underlying_price=underlying_price,
         settings=settings,
-        gold_beta=gold_beta,
+        pass_type="strict",
     )
-    if not ranked:
-        return _empty_bucket_slot(
-            ticker=ticker,
-            option_type=option_type,
-            horizon_days=horizon_days,
-            bucket=bucket,
-            status="no_tradable",
-            reason=(
-                f"No sensible liquid contract for the {bucket_label(bucket)} bucket."
-            ),
-            listed_contract_count=listed_contract_count,
-        )
-    tradable = [
-        metric
-        for metric, bucket_fit in ranked
-        if is_usable_candidate(metric, bucket_fit=bucket_fit, settings=settings)
-    ]
-    if tradable:
-        metric = tradable[0]
+    if strict_candidates:
+        metric = strict_candidates[0]
         candidate = _candidate_from_metric(
             metric,
             horizon_days=horizon_days,
             bucket=bucket,
+            settings=settings,
+            liquidity_tier="tradable",
         )
         return OptionCandidateSlot(
             ticker=ticker,
@@ -450,137 +464,247 @@ def _slot_for_bucket(
             candidate=candidate,
             listed_contract_count=listed_contract_count,
             tradable_contract_count=sum(
-                1 for item in metrics if item.liquidity_tier == "tradable"
+                1
+                for item in metrics
+                if _passes_slot_liquidity(
+                    item,
+                    bucket=bucket,
+                    settings=settings,
+                    pass_type="strict",
+                )
             ),
             bucket=bucket,
-            liquidity_tier=metric.liquidity_tier,
+            liquidity_tier="tradable",
         )
 
-    metric, _ = ranked[0]
-    rejected = _candidate_from_metric(
-        metric,
-        horizon_days=horizon_days,
+    watch_candidates = _rank_slot_candidates(
         bucket=bucket,
+        metrics=metrics,
+        horizon_days=horizon_days,
+        settings=settings,
+        pass_type="watch",
     )
-    return OptionCandidateSlot(
+    if watch_candidates:
+        metric = watch_candidates[0]
+        candidate = _candidate_from_metric(
+            metric,
+            horizon_days=horizon_days,
+            bucket=bucket,
+            settings=settings,
+            liquidity_tier="watch",
+        )
+        return OptionCandidateSlot(
+            ticker=ticker,
+            option_type=option_type,
+            horizon_days=horizon_days,
+            target_delta=_target_delta(option_type, bucket),
+            expiration=candidate.expiration,
+            days_to_expiry=candidate.days_to_expiry,
+            status="accepted",
+            reason=_watch_reason(metric, bucket=bucket),
+            candidate=candidate,
+            listed_contract_count=listed_contract_count,
+            tradable_contract_count=0,
+            bucket=bucket,
+            liquidity_tier="watch",
+        )
+
+    return _empty_bucket_slot(
         ticker=ticker,
         option_type=option_type,
         horizon_days=horizon_days,
-        target_delta=_target_delta(option_type, bucket),
-        expiration=rejected.expiration,
-        days_to_expiry=rejected.days_to_expiry,
-        status="rejected",
-        reason=_near_miss_reason(metric, bucket=bucket, settings=settings),
-        rejected_candidate=rejected,
-        listed_contract_count=listed_contract_count,
-        tradable_contract_count=sum(
-            1 for item in metrics if item.liquidity_tier == "tradable"
-        ),
         bucket=bucket,
-        liquidity_tier=metric.liquidity_tier,
+        status="no_tradable",
+        reason=_no_candidate_reason(bucket=bucket),
+        listed_contract_count=listed_contract_count,
+        expiration=_representative_expiration(metrics, horizon_days=horizon_days),
+        days_to_expiry=_representative_days_to_expiry(metrics, horizon_days=horizon_days),
     )
 
 
-def _rank_bucket_metrics(
+def _rank_slot_candidates(
     *,
-    option_type: OptionSideType,
     bucket: OptionBucket,
     metrics: tuple[OptionContractMetrics, ...],
     horizon_days: int,
-    underlying_price: float,
     settings: OptionLiquiditySettings,
-    gold_beta: float | None,
-) -> list[tuple[OptionContractMetrics, bool]]:
-    scored: list[tuple[OptionContractMetrics, bool, tuple[float, ...]]] = []
-    target_price = _model_fit_target_price(
-        option_type=option_type,
-        underlying_price=underlying_price,
-        gold_beta=gold_beta,
-    )
+    pass_type: Literal["strict", "watch"],
+) -> list[OptionContractMetrics]:
+    scored: list[tuple[float, OptionContractMetrics]] = []
     for metric in metrics:
-        bucket_fit = _bucket_fit(
-            option_type=option_type,
+        if not _bucket_fit(
             bucket=bucket,
             metric=metric,
             settings=settings,
-            target_price=target_price,
-        )
-        if bucket == "model_fit" and target_price is None:
+        ):
             continue
-        if not _sensible_moneyness(metric, settings) and bucket != "model_fit":
-            bucket_fit = False
-        if bucket_fit or metric.liquidity_tier != "no_trade":
-            scored.append(
-                (
-                    metric,
-                    bucket_fit,
-                    _bucket_sort_key(
-                        bucket=bucket,
-                        metric=metric,
-                        bucket_fit=bucket_fit,
-                        horizon_days=horizon_days,
-                        target_price=target_price,
-                    ),
-                )
+        if not _passes_slot_liquidity(
+            metric,
+            bucket=bucket,
+            settings=settings,
+            pass_type=pass_type,
+        ):
+            continue
+        scored.append(
+            (
+                _slot_fit_score(
+                    metric=metric,
+                    bucket=bucket,
+                    horizon_days=horizon_days,
+                    settings=settings,
+                    pass_type=pass_type,
+                ),
+                metric,
             )
-    scored.sort(key=lambda item: item[2])
-    return [(metric, bucket_fit) for metric, bucket_fit, _ in scored]
+        )
+    scored.sort(
+        key=lambda item: (
+            -item[0],
+            abs(item[1].days_to_expiry - horizon_days),
+            item[1].strike,
+        )
+    )
+    return [metric for _, metric in scored]
 
 
-def _bucket_sort_key(
+def _passes_slot_liquidity(
+    metric: OptionContractMetrics,
     *,
     bucket: OptionBucket,
-    metric: OptionContractMetrics,
-    bucket_fit: bool,
-    horizon_days: int,
-    target_price: float | None,
-) -> tuple[float, ...]:
-    tier_rank = {"tradable": 0.0, "watch": 1.0, "no_trade": 2.0}[metric.liquidity_tier]
-    monthly_rank = 0.0 if metric.is_standard_monthly else 1.0
-    dte_distance = abs(metric.days_to_expiry - horizon_days)
-    if bucket == "near_atm":
-        primary = metric.moneyness_pct if metric.moneyness_pct is not None else 99.0
-    elif bucket == "directional":
-        target = 0.425 if metric.option_type == "C" else -0.425
-        primary = abs((metric.delta if metric.delta is not None else 99.0) - target)
-    elif bucket == "tail":
-        primary = abs((metric.delta if metric.delta is not None else 99.0) - -0.225)
-    elif bucket == "model_fit" and target_price is not None:
-        primary = abs(metric.strike - target_price)
-    else:
-        primary = -metric.liquidity_score
+    settings: OptionLiquiditySettings,
+    pass_type: Literal["strict", "watch"],
+) -> bool:
+    thresholds = _slot_thresholds(bucket=bucket, settings=settings, pass_type=pass_type)
     return (
-        0.0 if bucket_fit else 1.0,
-        tier_rank,
-        primary,
-        monthly_rank,
-        -metric.liquidity_score,
-        float(dte_distance),
-        metric.strike,
+        metric.bid is not None
+        and metric.ask is not None
+        and metric.mid is not None
+        and metric.bid > 0
+        and metric.ask > 0
+        and metric.mid >= thresholds.min_mid
+        and metric.rel_spread is not None
+        and metric.rel_spread <= thresholds.max_spread_pct
+        and metric.open_interest >= thresholds.min_open_interest
+        and _iv_is_usable(metric, settings)
     )
+
+
+def _slot_thresholds(
+    *,
+    bucket: OptionBucket,
+    settings: OptionLiquiditySettings,
+    pass_type: Literal["strict", "watch"],
+) -> SlotLiquidityThresholds:
+    if bucket == "near_atm":
+        if pass_type == "strict":
+            return SlotLiquidityThresholds(
+                max_spread_pct=settings.near_atm_strict_max_spread_pct,
+                min_open_interest=settings.near_atm_strict_min_open_interest,
+                min_mid=settings.near_atm_strict_min_mid,
+            )
+        return SlotLiquidityThresholds(
+            max_spread_pct=settings.near_atm_watch_max_spread_pct,
+            min_open_interest=settings.near_atm_watch_min_open_interest,
+            min_mid=settings.near_atm_watch_min_mid,
+        )
+    if pass_type == "strict":
+        return SlotLiquidityThresholds(
+            max_spread_pct=settings.directional_strict_max_spread_pct,
+            min_open_interest=settings.directional_strict_min_open_interest,
+            min_mid=settings.directional_strict_min_mid,
+        )
+    return SlotLiquidityThresholds(
+        max_spread_pct=settings.directional_watch_max_spread_pct,
+        min_open_interest=settings.directional_watch_min_open_interest,
+        min_mid=settings.directional_watch_min_mid,
+    )
+
+
+def _slot_fit_score(
+    *,
+    metric: OptionContractMetrics,
+    bucket: OptionBucket,
+    horizon_days: int,
+    settings: OptionLiquiditySettings,
+    pass_type: Literal["strict", "watch"],
+) -> float:
+    thresholds = _slot_thresholds(bucket=bucket, settings=settings, pass_type=pass_type)
+    spread_score = (
+        _clamp(1.0 - (metric.rel_spread or thresholds.max_spread_pct) / thresholds.max_spread_pct)
+        if thresholds.max_spread_pct > 0
+        else 0.0
+    )
+    otm_score = _otm_fit_score(metric=metric, bucket=bucket, settings=settings)
+    oi_score = _log_score(metric.open_interest, settings.oi_cap)
+    volume_score = _log_score(metric.volume, settings.volume_cap)
+    lower, upper = settings.band_for_horizon(horizon_days)
+    max_dte_distance = max(abs(horizon_days - lower), abs(upper - horizon_days), 1)
+    dte_score = _clamp(1.0 - abs(metric.days_to_expiry - horizon_days) / max_dte_distance)
+    monthly_score = 1.0 if metric.is_standard_monthly else 0.0
+    return (
+        0.35 * spread_score
+        + 0.25 * otm_score
+        + 0.20 * oi_score
+        + 0.10 * dte_score
+        + 0.05 * volume_score
+        + 0.05 * monthly_score
+    )
+
+
+def _otm_fit_score(
+    *,
+    metric: OptionContractMetrics,
+    bucket: OptionBucket,
+    settings: OptionLiquiditySettings,
+) -> float:
+    if metric.otm_pct is None:
+        return 0.0
+    if bucket == "near_atm":
+        midpoint = (settings.near_atm_otm_min + settings.near_atm_otm_max) / 2.0
+        half_width = max((settings.near_atm_otm_max - settings.near_atm_otm_min) / 2.0, 0.001)
+        return _clamp(1.0 - abs(metric.otm_pct - midpoint) / half_width)
+
+    if (
+        settings.directional_preferred_otm_min
+        <= metric.otm_pct
+        <= settings.directional_preferred_otm_max
+    ):
+        return 1.0
+    if metric.otm_pct < settings.directional_preferred_otm_min:
+        width = max(
+            settings.directional_preferred_otm_min
+            - settings.directional_allowed_otm_min,
+            0.001,
+        )
+        return _clamp((metric.otm_pct - settings.directional_allowed_otm_min) / width)
+    width = max(
+        settings.directional_allowed_otm_max
+        - settings.directional_preferred_otm_max,
+        0.001,
+    )
+    return _clamp((settings.directional_allowed_otm_max - metric.otm_pct) / width)
 
 
 def _bucket_fit(
     *,
-    option_type: OptionSideType,
     bucket: OptionBucket,
     metric: OptionContractMetrics,
     settings: OptionLiquiditySettings,
-    target_price: float | None,
 ) -> bool:
-    if not _sensible_moneyness(metric, settings):
+    if metric.otm_pct is None:
         return False
-    if bucket in {"most_liquid", "near_atm"}:
-        return True
-    if bucket == "directional":
-        return _delta_in_range(
-            metric.delta,
-            DIRECTIONAL_CALL_DELTA if option_type == "C" else DIRECTIONAL_PUT_DELTA,
+    if bucket == "near_atm":
+        return (
+            settings.near_atm_otm_min
+            <= metric.otm_pct
+            <= settings.near_atm_otm_max
         )
-    if bucket == "tail":
-        return option_type == "P" and _delta_in_range(metric.delta, TAIL_PUT_DELTA)
-    if bucket == "model_fit":
-        return target_price is not None
+    if bucket == "directional":
+        return (
+            settings.directional_allowed_otm_min
+            <= metric.otm_pct
+            <= settings.directional_allowed_otm_max
+        )
     return False
 
 
@@ -589,6 +713,8 @@ def _candidate_from_metric(
     *,
     horizon_days: int,
     bucket: OptionBucket,
+    settings: OptionLiquiditySettings,
+    liquidity_tier: OptionLiquidityTier | None = None,
 ) -> OptionCandidate:
     delta_gap = None
     target_delta = _target_delta(metric.option_type, bucket)
@@ -613,12 +739,13 @@ def _candidate_from_metric(
         underlying_price=metric.underlying_price,
         option_type=metric.option_type,
         bucket=bucket,
-        liquidity_tier=metric.liquidity_tier,
+        liquidity_tier=liquidity_tier or metric.liquidity_tier,
         rel_spread=metric.rel_spread,
         half_spread_cost_pct=metric.half_spread_cost_pct,
         liquidity_score=metric.liquidity_score,
         moneyness_pct=metric.moneyness_pct,
-        quote_flags=metric.quote_flags,
+        otm_pct=metric.otm_pct,
+        quote_flags=_candidate_quote_flags(metric, bucket=bucket, settings=settings),
     )
 
 
@@ -631,19 +758,55 @@ def _empty_bucket_slot(
     status: CandidateSlotStatus,
     reason: str,
     listed_contract_count: int = 0,
+    expiration: str | None = None,
+    days_to_expiry: int | None = None,
 ) -> OptionCandidateSlot:
     return OptionCandidateSlot(
         ticker=ticker,
         option_type=option_type,
         horizon_days=horizon_days,
         target_delta=_target_delta(option_type, bucket),
-        expiration=None,
-        days_to_expiry=None,
+        expiration=expiration,
+        days_to_expiry=days_to_expiry,
         status=status,
         reason=reason,
         listed_contract_count=listed_contract_count,
         bucket=bucket,
         liquidity_tier=None,
+    )
+
+
+def _representative_expiration(
+    metrics: tuple[OptionContractMetrics, ...],
+    *,
+    horizon_days: int,
+) -> str | None:
+    metric = _representative_metric(metrics, horizon_days=horizon_days)
+    return metric.expiration if metric is not None else None
+
+
+def _representative_days_to_expiry(
+    metrics: tuple[OptionContractMetrics, ...],
+    *,
+    horizon_days: int,
+) -> int | None:
+    metric = _representative_metric(metrics, horizon_days=horizon_days)
+    return metric.days_to_expiry if metric is not None else None
+
+
+def _representative_metric(
+    metrics: tuple[OptionContractMetrics, ...],
+    *,
+    horizon_days: int,
+) -> OptionContractMetrics | None:
+    if not metrics:
+        return None
+    return min(
+        metrics,
+        key=lambda metric: (
+            abs(metric.days_to_expiry - horizon_days),
+            -metric.liquidity_score,
+        ),
     )
 
 
@@ -781,79 +944,81 @@ def _iv_value_is_usable(
     )
 
 
-def _sensible_moneyness(
+def _otm_pct(
+    *,
+    option_type: OptionSideType,
+    strike: float,
+    underlying_price: float,
+) -> float | None:
+    if strike <= 0 or underlying_price <= 0:
+        return None
+    if option_type == "P":
+        if strike >= underlying_price:
+            return None
+        return (underlying_price - strike) / underlying_price
+    if strike <= underlying_price:
+        return None
+    return (strike - underlying_price) / underlying_price
+
+
+def _candidate_quote_flags(
     metric: OptionContractMetrics,
+    *,
+    bucket: OptionBucket,
+    settings: OptionLiquiditySettings,
+) -> tuple[str, ...]:
+    flags = list(metric.quote_flags)
+    if _is_lottery_like(metric, bucket=bucket, settings=settings):
+        flags.append("lottery_like")
+    return tuple(dict.fromkeys(flags))
+
+
+def _is_lottery_like(
+    metric: OptionContractMetrics,
+    *,
+    bucket: OptionBucket,
     settings: OptionLiquiditySettings,
 ) -> bool:
     return (
-        metric.moneyness_pct is not None
-        and metric.moneyness_pct <= settings.sensible_moneyness_max_pct
+        bucket == "directional"
+        and metric.days_to_expiry <= settings.lottery_dte_max
+        and metric.implied_volatility is not None
+        and metric.implied_volatility >= settings.lottery_iv_threshold
+        and metric.delta is not None
+        and abs(metric.delta) <= settings.lottery_abs_delta_max
     )
 
 
 def _accepted_reason(metric: OptionContractMetrics, *, bucket: OptionBucket) -> str:
     spread = _format_percent(metric.rel_spread)
-    half_spread = _format_percent(metric.half_spread_cost_pct)
     return (
-        f"{bucket_label(bucket)} bucket has a sensible liquid contract: "
-        f"{metric.liquidity_tier.replace('_', '-')} tier, spread {spread}, "
-        f"half-spread cost {half_spread}."
+        f"{bucket_label(bucket)} candidate passed the strict liquidity checks "
+        f"with spread {spread}."
     )
 
 
-def _near_miss_reason(
-    metric: OptionContractMetrics,
-    *,
-    bucket: OptionBucket,
-    settings: OptionLiquiditySettings,
-) -> str:
-    problems: list[str] = []
-    if metric.liquidity_tier != "tradable":
-        problems.append(f"tier is {metric.liquidity_tier.replace('_', '-')}")
-    if not _sensible_moneyness(metric, settings):
-        problems.append("strike is too far from the cached stock price")
-    if not _iv_is_usable(metric, settings):
-        problems.append("IV is missing or outside configured bounds")
-    if metric.quote_flags:
-        problems.append(", ".join(flag.replace("_", " ") for flag in metric.quote_flags))
-    detail = "; ".join(dict.fromkeys(problems)) or "it did not pass all gates"
+def _watch_reason(metric: OptionContractMetrics, *, bucket: OptionBucket) -> str:
+    spread = _format_percent(metric.rel_spread)
     return (
-        f"No sensible liquid contract for the {bucket_label(bucket)} bucket. "
-        f"Nearest visible contract is shown for context, but {detail}."
+        f"{bucket_label(bucket)} candidate passed the relaxed liquidity checks "
+        f"with spread {spread}. Watch: wide spreads mean the midpoint may be optimistic."
     )
+
+
+def _no_candidate_reason(*, bucket: OptionBucket) -> str:
+    if bucket == "near_atm":
+        return "No liquid candidate in the 0-5% OTM range passed the cached checks."
+    return "No liquid candidate in the 12-22% OTM range passed the cached checks."
 
 
 def _target_delta(option_type: OptionSideType, bucket: OptionBucket) -> float:
     if bucket == "directional":
         return 0.425 if option_type == "C" else -0.425
-    if bucket == "tail":
-        return -0.225
     return 0.0
 
 
-def _model_fit_target_price(
-    *,
-    option_type: OptionSideType,
-    underlying_price: float,
-    gold_beta: float | None,
-) -> float | None:
-    if gold_beta is None or underlying_price <= 0:
-        return None
-    gold_move = MODEL_FIT_GOLD_MOVE[option_type]
-    return max(0.01, underlying_price * (1.0 + gold_beta * gold_move))
-
-
-def _buckets_for_side(option_type: OptionSideType) -> tuple[OptionBucket, ...]:
-    if option_type == "P":
-        return ("most_liquid", "near_atm", "directional", "tail", "model_fit")
-    return ("most_liquid", "near_atm", "directional", "model_fit")
-
-
-def _delta_in_range(value: float | None, bounds: tuple[float, float]) -> bool:
-    if value is None:
-        return False
-    lower, upper = bounds
-    return lower <= value <= upper
+def _buckets_for_side() -> tuple[OptionBucket, ...]:
+    return CANDIDATE_BUCKETS
 
 
 def _is_standard_monthly(value: object) -> bool:

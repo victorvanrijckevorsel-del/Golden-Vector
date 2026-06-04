@@ -1,11 +1,10 @@
 version: 1
 target_delta: -0.25
 target_horizons_days:
-  - 30
   - 60
   - 90
+  - 120
 display_horizons_days:
-  - 30
   - 60
   - 90
   - 120
@@ -28,17 +27,14 @@ option_liquidity_oi_cap: 1000
 option_liquidity_volume_cap: 1000
 option_sensible_moneyness_max_pct: 0.35
 option_dte_bands:
-  30:
-    - 21
-    - 45
   60:
-    - 46
-    - 75
+    - 40
+    - 74
   90:
-    - 76
-    - 105
+    - 75
+    - 104
   120:
-    - 106
+    - 105
     - 150
 delta_gap_warning_threshold: 0.10
 hedge_ratio_cheap_max: 0.40

@@ -352,9 +352,10 @@ def _ratio_series(values: pd.Series, denominator: pd.Series) -> pd.Series:
 
 
 def _has_usable_slots(slots: object) -> bool:
-    # Slot candidates are populated by build_bucket_slots() only after
-    # is_usable_candidate() passes, so this reuses the shared options gate.
-    return any(getattr(slot, "candidate", None) is not None for slot in slots or [])
+    return any(
+        getattr(getattr(slot, "candidate", None), "liquidity_tier", None) == "tradable"
+        for slot in slots or []
+    )
 
 
 def _options_side(

@@ -24,8 +24,8 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
                     iv_skew_60d=0.08,
                     iv_rv_ratio_60d=1.25,
                     optionability_tier="directly_hedgeable",
-                    put_status="available",
-                    call_status="available",
+                    put_status="tradable",
+                    call_status="tradable",
                     pnl_put_at_minus10_60d=1.25,
                     pnl_call_at_plus10_60d=2.50,
                     notes=("candidate ok",),
@@ -74,7 +74,7 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
     assert "data-filter-column=\"put_status\"" in html
     assert "data-filter-column=\"call_status\"" in html
     assert "data-filter-column=\"optionability\"" not in html
-    assert "Sensible liquid contract" in html
+    assert "Tradable candidate" in html
     assert "Snapshot Date" in html
     assert "2026-06-01" in html
     assert "Cached Liquidity Check" in html
@@ -127,8 +127,8 @@ def test_option_trading_overview_hides_raw_thin_status_label():
                     iv_skew_60d=None,
                     iv_rv_ratio_60d=None,
                     optionability_tier="directly_hedgeable",
-                    put_status="thin",
-                    call_status="thin",
+                    put_status="none",
+                    call_status="none",
                     pnl_put_at_minus10_60d=None,
                     pnl_call_at_plus10_60d=None,
                     notes=(),
@@ -138,5 +138,5 @@ def test_option_trading_overview_hides_raw_thin_status_label():
         )
     )
 
-    assert "No sensible liquid contract" in html
-    assert ">thin<" not in html
+    assert "No liquid candidate" in html
+    assert ">none<" not in html

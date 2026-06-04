@@ -62,8 +62,8 @@ def test_build_option_trading_overview_filters_and_sorts_optionable_rows():
     assert overview.rows[0].structural_delta_core == 1.9
     assert overview.rows[0].iv_skew_60d == pytest.approx(-0.1)
     assert overview.rows[0].iv_rv_ratio_60d == 1.25
-    assert overview.rows[0].put_status == "available"
-    assert overview.rows[0].call_status == "available"
+    assert overview.rows[0].put_status == "tradable"
+    assert overview.rows[0].call_status == "tradable"
     assert overview.rows[0].pnl_put_at_minus10_60d is not None
     assert overview.rows[0].pnl_call_at_plus10_60d is not None
     assert {row.ticker for row in overview.rows} == {"AEM", "NEM"}
@@ -80,8 +80,8 @@ def test_build_option_trading_overview_tracks_side_specific_status():
     )
 
     row = overview.rows[0]
-    assert row.put_status == "thin"
-    assert row.call_status == "thin"
+    assert row.put_status == "none"
+    assert row.call_status == "none"
     assert row.pnl_put_at_minus10_60d is None
 
 
@@ -100,20 +100,16 @@ def test_load_option_trading_data_uses_composite_cache_key(tmp_path):
     assert first.cache_key.options_refresh_run_id == "options-run"
     assert first.cache_key.tool_a_refresh_run_ids == ("tool-run-a",)
     assert [row.ticker for row in first.overview.rows] == ["AEM"]
-    assert app_config.hedge_readiness.target_horizons_days == [30, 60, 90]
-    assert app_config.hedge_readiness.display_horizons_days == [30, 60, 90, 120]
+    assert app_config.hedge_readiness.target_horizons_days == [60, 90, 120]
+    assert app_config.hedge_readiness.display_horizons_days == [60, 90, 120]
     assert sorted({slot.horizon_days for slot in first.candidate_slots["AEM"]}) == [
-        30,
         60,
         90,
         120,
     ]
     assert {slot.bucket for slot in first.candidate_slots["AEM"]} == {
-        "most_liquid",
         "near_atm",
         "directional",
-        "tail",
-        "model_fit",
     }
     assert first.overview.rows[0].optionability_tier == "directly_hedgeable"
     assert first.overview.source_context is not None
@@ -141,13 +137,10 @@ def test_build_option_trading_detail_data_reuses_cached_overview_row(tmp_path):
     assert data.overview.rows
     assert detail.row is data.overview.rows[0]
     assert detail.row.pnl_put_at_minus10_60d == data.overview.rows[0].pnl_put_at_minus10_60d
-    assert sorted({slot.horizon_days for slot in detail.put_slots}) == [30, 60, 90, 120]
+    assert sorted({slot.horizon_days for slot in detail.put_slots}) == [60, 90, 120]
     assert {slot.bucket for slot in detail.put_slots} == {
-        "most_liquid",
         "near_atm",
         "directional",
-        "tail",
-        "model_fit",
     }
     assert detail.source_context is data.overview.source_context
 
@@ -213,7 +206,7 @@ def test_load_option_trading_data_builds_call_context_from_up_beta(tmp_path):
 
     assert data.call_candidate_grids["AEM"]
     assert all(candidate.option_type == "C" for candidate in data.call_candidate_grids["AEM"])
-    assert data.overview.rows[0].call_status == "available"
+    assert data.overview.rows[0].call_status == "tradable"
     assert data.overview.rows[0].pnl_call_at_plus10_60d is not None
     assert detail.call_candidates
     assert detail.call_bundles
@@ -396,7 +389,7 @@ def _feature(
         "iv_percentile_cross_sectional": iv_rank,
         "underlying_price": 50.0,
     }
-    for horizon in (30, 60, 90):
+    for horizon in (60, 90, 120):
         row[f"put_iv_25d_{horizon}d"] = put_iv
         row[f"call_iv_25d_{horizon}d"] = call_iv
         row[f"iv_skew_{horizon}d"] = (
@@ -428,6 +421,9 @@ def _candidate(ticker: str, *, option_type: str = "P"):
         premium_pct_spot=1.20 / 50.0,
         underlying_price=50.0,
         option_type=option_type,
+        bucket="near_atm",
+        liquidity_tier="tradable",
+        otm_pct=0.10,
     )
 
 
@@ -435,8 +431,12 @@ def _chain(ticker: str) -> pd.DataFrame:
     rows = []
     for expiration, strike, days in (
         ("2026-06-27", 47.5, 29),
-        ("2026-07-31", 45.0, 62),
+        ("2026-07-31", 48.0, 62),
+        ("2026-07-31", 42.5, 62),
+        ("2026-08-29", 48.0, 92),
         ("2026-08-29", 42.5, 92),
+        ("2026-09-30", 48.0, 124),
+        ("2026-09-30", 42.5, 124),
     ):
         rows.append(
             {
@@ -454,12 +454,21 @@ def _chain(ticker: str) -> pd.DataFrame:
                 "underlying_price": 50.0,
             }
         )
+    for expiration, strike, days in (
+        ("2026-06-27", 52.5, 29),
+        ("2026-07-31", 52.0, 62),
+        ("2026-07-31", 60.0, 62),
+        ("2026-08-29", 52.0, 92),
+        ("2026-08-29", 60.0, 92),
+        ("2026-09-30", 52.0, 124),
+        ("2026-09-30", 60.0, 124),
+    ):
         rows.append(
             {
                 "ticker": ticker,
                 "expiration": expiration,
                 "option_type": "C",
-                "strike": 55.0,
+                "strike": strike,
                 "bid": 1.10,
                 "ask": 1.30,
                 "lastPrice": 1.20,

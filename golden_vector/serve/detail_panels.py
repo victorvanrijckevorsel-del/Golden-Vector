@@ -12,8 +12,6 @@ import pandas as pd
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge.candidate_puts import OptionCandidate, OptionCandidateSlot
 from golden_vector.hedge.disclosures import (
-    LONG_OPTION_PREMIUM_CAVEAT,
-    OPTION_REPRICE_ASSUMPTION,
     TOOL_A_BETA_FORMULA,
 )
 from golden_vector.hedge.option_trading import OptionSizingResult, OptionTradingDetailData
@@ -225,11 +223,10 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
     body.append(
         "<details class=\"method-disclosure\"><summary>Method</summary>"
         "<p>Contracts are scanned from cached Yahoo Finance option chains. "
-        "Only Tradable-tier, bucket-fit contracts are selectable; Watch rows are "
-        "shown as near-misses when quotes are too expensive or thin. "
-        f"{escape(LONG_OPTION_PREMIUM_CAVEAT)}</p>"
-        "<p>Last is informational only. Bid, ask, spread, open interest, premium, "
-        "DTE, moneyness, and delta drive the screening labels.</p>"
+        "Tradable rows passed stricter spread and open-interest checks. Watch rows "
+        "passed one relaxed check and can be expensive to enter or exit.</p>"
+        "<p>Open interest is existing open contracts. Volume is today's trading. "
+        "Spread is ask minus bid divided by mid; lower is usually better.</p>"
         "</details>"
     )
     if detail.risk_free_rate_is_fallback:
@@ -241,37 +238,14 @@ def _render_option_trading_panel(detail: OptionTradingDetailData | None) -> str:
         [
             _render_option_trading_context_table(detail),
             _render_option_liquidity_summary(detail),
-            "<div class=\"segmented-control\">"
-            "<a href=\"#option-trading-puts\">Downside puts</a>"
-            "<a href=\"#option-trading-calls\">Upside calls</a>"
-            "</div>",
         ]
     )
-    body.append(
-        _render_option_candidate_table(
-            title="Downside Put Candidates",
-            section_id="option-trading-puts",
-            side="put",
-            ticker=detail.ticker,
-            slots=detail.put_slots,
-            empty_message="No downside put buckets are available for this ticker.",
-        )
-    )
-    body.append(
-        _render_option_candidate_table(
-            title="Upside Call Candidates",
-            section_id="option-trading-calls",
-            side="call",
-            ticker=detail.ticker,
-            slots=detail.call_slots,
-            empty_message="No upside call buckets are available for this ticker.",
-        )
-    )
+    body.append(_render_option_candidate_matrix(detail))
     body.append(
         "<details class=\"method-disclosure\"><summary>Glossary</summary>"
         "<p>Bid is the price buyers currently show. Ask is the price sellers show. "
         "Mid is the midpoint of bid and ask. Last is the most recent reported trade, "
-        "not necessarily executable now. IV is implied volatility from the option quote.</p>"
+        "not necessarily executable now. Delta is shown as context, not as the bucket rule.</p>"
         "</details>"
     )
     body.append(_render_option_sizing_calculator(detail))
@@ -328,14 +302,14 @@ def _render_option_liquidity_summary(detail: OptionTradingDetailData) -> str:
     call_counts = slot_tier_counts(detail.call_slots)
     thin_note = ""
     total_slots = len(detail.put_slots) + len(detail.call_slots)
-    accepted_slots = len(
+    tradable_slots = len(
         [
             slot
             for slot in (*detail.put_slots, *detail.call_slots)
-            if slot.candidate is not None
+            if slot.candidate is not None and slot.candidate.liquidity_tier == "tradable"
         ]
     )
-    if total_slots and accepted_slots < max(1, total_slots // 4):
+    if total_slots and tradable_slots < max(1, total_slots // 4):
         thin_note = "<p class=\"hint\">Options look thin here; most buckets did not pass the Tradable gate.</p>"
     return (
         "<div class=\"metric-grid option-liquidity-summary\">"
@@ -350,53 +324,35 @@ def _render_option_liquidity_summary(detail: OptionTradingDetailData) -> str:
     )
 
 
-def _render_option_candidate_table(
-    *,
-    title: str,
-    section_id: str,
-    side: str,
-    ticker: str,
-    slots: tuple[OptionCandidateSlot, ...],
-    empty_message: str,
-) -> str:
+def _render_option_candidate_matrix(detail: OptionTradingDetailData) -> str:
+    slots = _ordered_candidate_slots(detail)
     if not slots:
         return (
-            f"<section id=\"{escape(section_id)}\" class=\"nested-panel\">"
-            f"<h3>{escape(title)}</h3>"
-            f"<p>{escape(empty_message)}</p>"
+            "<section id=\"option-candidates\" class=\"nested-panel\">"
+            "<h3>Option Candidates</h3>"
+            "<p>No option candidate slots are available for this ticker.</p>"
             "</section>"
         )
     rows = []
-    grouped = _slots_by_horizon(slots)
+    grouped = _slots_by_horizon(tuple(slots))
     for horizon in sorted(grouped):
         rows.append(
             "<tr class=\"option-horizon-row\">"
-            f"<th colspan=\"12\">{escape(str(horizon))}d "
-            f"{'tactical / high time-decay' if horizon == 30 else 'DTE band'}</th>"
+            f"<th colspan=\"14\">~{escape(str(horizon))}d target</th>"
             "</tr>"
         )
         for slot in grouped[horizon]:
-            candidate = slot.display_candidate
-            expiry = slot.expiration or (
-                candidate.expiration if candidate is not None else None
-            )
-            rows.append(
-                _render_option_candidate_slot_row(
-                    slot=slot,
-                    candidate=candidate,
-                    expiry=expiry,
-                    side=side,
-                    ticker=ticker,
-                )
-            )
+            rows.append(_render_option_candidate_matrix_row(slot=slot, ticker=detail.ticker))
     return (
-        f"<section id=\"{escape(section_id)}\" class=\"nested-panel\">"
-        f"<h3>{escape(title)}</h3>"
+        "<section id=\"option-candidates\" class=\"nested-panel\">"
+        "<h3>Option Candidates</h3>"
+        "<p class=\"hint\">Each horizon shows up to four OTM candidates: put near-ATM, "
+        "put directional, call near-ATM, and call directional.</p>"
         "<table>"
         "<thead><tr>"
-        "<th>Bucket</th><th>Expiry</th><th>Strike</th><th>Moneyness</th>"
-        "<th>Bid / Ask / Mid</th><th>Spread</th><th>Half-spread Cost</th>"
-        "<th>OI</th><th>Volume</th><th>Tier</th><th>Select</th><th>Detail</th>"
+        "<th>Candidate</th><th>Expiry / DTE</th><th>Strike</th><th>OTM</th>"
+        "<th>Mid</th><th>Bid / Ask</th><th>Spread</th><th>OI</th><th>Volume</th>"
+        "<th>Delta</th><th>Tier</th><th>Select</th><th>Yahoo Chain</th><th>Note</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"
@@ -404,59 +360,88 @@ def _render_option_candidate_table(
     )
 
 
-def _render_option_candidate_slot_row(
+def _ordered_candidate_slots(detail: OptionTradingDetailData) -> list[OptionCandidateSlot]:
+    slots = [*detail.put_slots, *detail.call_slots]
+    side_order = {"P": 0, "C": 1}
+    bucket_order = {"near_atm": 0, "directional": 1}
+    return sorted(
+        slots,
+        key=lambda slot: (
+            slot.horizon_days,
+            side_order.get(slot.option_type, 9),
+            bucket_order.get(str(slot.bucket or ""), 9),
+        ),
+    )
+
+
+def _render_option_candidate_matrix_row(
     *,
     slot: OptionCandidateSlot,
-    candidate: OptionCandidate | None,
-    expiry: str | None,
-    side: str,
     ticker: str,
 ) -> str:
-    yahoo_link = _yahoo_chain_link(slot.ticker, expiry)
-    bucket = bucket_label(slot.bucket)
+    candidate = slot.candidate
+    side = "put" if slot.option_type == "P" else "call"
+    label = _candidate_slot_label(slot)
+    yahoo_link = _yahoo_chain_link(slot.ticker, slot.expiration)
     if candidate is None:
         return (
             "<tr>"
-            f"<td>{escape(bucket)}</td>"
-            f"<td>{_fmt_text(expiry)}</td>"
-            "<td>-</td><td>No sensible liquid contract</td>"
-            "<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>"
+            f"<td>{escape(label)}</td>"
+            f"<td>{_fmt_text(slot.expiration)}"
+            f"{_dte_suffix(slot.days_to_expiry)}</td>"
+            "<td>-</td><td colspan=\"7\">-</td>"
             f"<td>{_tier_label(slot)}</td><td>-</td>"
-            f"<td>{_detail_disclosure(slot.reason, yahoo_link=yahoo_link)}</td>"
+            f"<td>{yahoo_link}</td>"
+            f"<td>{escape(slot.reason)}</td>"
             "</tr>"
         )
-    itm_label, moneyness = _moneyness_labels(candidate)
-    quote = (
-        f"{_fmt_number(candidate.bid, decimals=2)} / "
-        f"{_fmt_number(candidate.ask, decimals=2)} / "
-        f"{_fmt_number(candidate.mid, decimals=2)}"
+    select_link = _contract_select_link(
+        ticker=ticker,
+        side=side,
+        horizon_days=slot.horizon_days,
+        bucket=slot.bucket,
     )
-    select_link = (
-        _contract_select_link(
-            ticker=ticker,
-            side=side,
-            horizon_days=slot.horizon_days,
-            bucket=slot.bucket,
-        )
-        if slot.candidate is not None
-        else "-"
+    bid_ask = (
+        f"{_fmt_number(candidate.bid, decimals=2)} / "
+        f"{_fmt_number(candidate.ask, decimals=2)}"
     )
     return (
         "<tr>"
-        f"<td>{escape(bucket)}</td>"
-        f"<td>{_fmt_text(expiry)}</td>"
+        f"<td>{escape(label)}</td>"
+        f"<td>{_fmt_text(candidate.expiration)}{_dte_suffix(candidate.days_to_expiry)}</td>"
         f"<td>{_fmt_number(candidate.strike, decimals=2)}</td>"
-        f"<td>{escape(moneyness)} ({escape(itm_label)})</td>"
-        f"<td>{quote}</td>"
+        f"<td>{_fmt_percent(candidate.otm_pct, decimals=1)} OTM</td>"
+        f"<td>{_fmt_number(candidate.mid, decimals=2)}</td>"
+        f"<td>{bid_ask}</td>"
         f"<td>{_fmt_percent(candidate.rel_spread, decimals=1)}</td>"
-        f"<td>{_fmt_percent(candidate.half_spread_cost_pct, decimals=1)}</td>"
         f"<td>{_fmt_number(candidate.open_interest, decimals=0)}</td>"
         f"<td>{_fmt_number(candidate.volume, decimals=0)}</td>"
+        f"<td>{_fmt_number(candidate.delta, decimals=2)}</td>"
         f"<td>{_tier_label(slot)}</td>"
         f"<td>{select_link}</td>"
-        f"<td>{_render_contract_detail(slot, candidate, yahoo_link=yahoo_link)}</td>"
+        f"<td>{yahoo_link}</td>"
+        f"<td>{escape(_candidate_note(slot, candidate))}</td>"
         "</tr>"
     )
+
+
+def _candidate_slot_label(slot: OptionCandidateSlot) -> str:
+    side = "Put" if slot.option_type == "P" else "Call"
+    return f"{side} {bucket_label(slot.bucket)}"
+
+
+def _dte_suffix(days_to_expiry: int | None) -> str:
+    if days_to_expiry is None:
+        return ""
+    return f" ({_fmt_number(days_to_expiry, decimals=0)} DTE)"
+
+
+def _candidate_note(slot: OptionCandidateSlot, candidate: OptionCandidate) -> str:
+    if candidate.liquidity_tier == "watch":
+        return "Watch: wide spread, midpoint may be optimistic."
+    if "lottery_like" in candidate.quote_flags:
+        return "Lottery-like: high IV, short DTE, low delta."
+    return slot.reason
 
 
 def _slots_by_horizon(
@@ -483,7 +468,7 @@ def _tier_label(slot: OptionCandidateSlot) -> str:
         return '<span class="badge badge-missing">No-trade</span>'
     if slot.status == "accepted":
         return '<span class="badge badge-verified">Tradable</span>'
-    return '<span class="badge badge-missing">No sensible liquid contract</span>'
+    return '<span class="badge badge-missing">No candidate</span>'
 
 
 def _contract_select_link(
@@ -502,74 +487,12 @@ def _contract_select_link(
     return f"<a class=\"button-link\" href=\"{escape(href, quote=True)}\">Select</a>"
 
 
-def _detail_disclosure(reason: str, *, yahoo_link: str) -> str:
-    return (
-        "<details><summary>Why</summary>"
-        f"<p>{escape(reason)}</p>"
-        f"<p>{yahoo_link}</p>"
-        "</details>"
-    )
-
-
-def _render_contract_detail(
-    slot: OptionCandidateSlot,
-    candidate: OptionCandidate,
-    *,
-    yahoo_link: str,
-) -> str:
-    flags = (
-        ", ".join(flag.replace("_", " ") for flag in candidate.quote_flags)
-        if candidate.quote_flags
-        else "-"
-    )
-    detail_rows = (
-        "<table><tbody>"
-        "<tr><th>Days</th>"
-        f"<td>{_fmt_number(slot.days_to_expiry, decimals=0)}</td></tr>"
-        "<tr><th>Stock Price</th>"
-        f"<td>{_fmt_number(candidate.underlying_price, decimals=2)}</td></tr>"
-        "<tr><th>Last</th>"
-        f"<td>{_fmt_number(candidate.last_price, decimals=2)}</td></tr>"
-        "<tr><th>Delta</th>"
-        f"<td>{_fmt_number(candidate.delta, decimals=2)}</td></tr>"
-        "<tr><th>IV</th>"
-        f"<td>{_fmt_percent(candidate.implied_volatility, decimals=1)}</td></tr>"
-        "<tr><th>Score</th>"
-        f"<td>{_fmt_number(candidate.liquidity_score, decimals=2)}</td></tr>"
-        "<tr><th>Flags</th>"
-        f"<td>{escape(flags)}</td></tr>"
-        "</tbody></table>"
-    )
-    return (
-        "<details><summary>Detail</summary>"
-        f"<p>{escape(slot.reason)}</p>"
-        f"{detail_rows}"
-        f"<p>{yahoo_link}</p>"
-        "</details>"
-    )
-
-
 def _first_slot_stock_price(slots: tuple[OptionCandidateSlot, ...]) -> float | None:
     for slot in slots:
         candidate = slot.display_candidate
         if candidate is not None and candidate.underlying_price > 0:
             return candidate.underlying_price
     return None
-
-
-def _moneyness_labels(candidate: OptionCandidate) -> tuple[str, str]:
-    stock_price = candidate.underlying_price
-    if stock_price <= 0:
-        return "Unknown", "-"
-    pct = abs(candidate.strike - stock_price) / stock_price
-    if candidate.strike == stock_price:
-        return "ATM", "At the money"
-    if candidate.option_type == "P":
-        is_itm = candidate.strike > stock_price
-    else:
-        is_itm = candidate.strike < stock_price
-    relation = "ITM" if is_itm else "OTM"
-    return relation, f"{pct * 100:.1f}% {relation}"
 
 
 def _yahoo_chain_link(ticker: str, expiration: str | None) -> str:
@@ -628,9 +551,7 @@ def _render_option_sizing_calculator(detail: OptionTradingDetailData) -> str:
     return (
         "<section id=\"option-sizing\" class=\"nested-panel option-sizing-calculator\">"
         "<h3>Sizing Calculator</h3>"
-        "<p class=\"hint\">GET-only calculator. Values are recomputed server-side "
-        "from cached per-contract scenarios and are not saved. "
-        f"{OPTION_REPRICE_ASSUMPTION} {LONG_OPTION_PREMIUM_CAVEAT}</p>"
+        "<p class=\"hint\">Uses cached per-contract scenarios. Live option quotes may differ.</p>"
         f"<form method=\"get\" action=\"/ticker/{quote(detail.ticker, safe='')}#option-sizing\" class=\"option-sizing-form\">"
         "<input type=\"hidden\" name=\"lens\" value=\"option-trading\">"
         "<label>Side "
@@ -700,6 +621,11 @@ def _render_option_sizing_result(sizing: OptionSizingResult) -> str:
         )
     bundle = sizing.bundle
     selected_bucket = bucket_label(bundle.candidate.bucket)
+    watch_warning = (
+        " Watch candidate: spread is wide, so midpoint pricing may be optimistic."
+        if bundle.candidate.liquidity_tier == "watch"
+        else ""
+    )
     leftover = (
         f" Leftover cash: {_fmt_number(sizing.leftover_cash, decimals=2)}."
         if sizing.leftover_cash is not None
@@ -715,7 +641,7 @@ def _render_option_sizing_result(sizing: OptionSizingResult) -> str:
         return (
             "<div class=\"option-sizing-result\">"
             f"<p>Selected: {escape(bundle.horizon)} {escape(selected_bucket)} {escape(label)}. "
-            f"Contracts: {sizing.contracts}.{spend}{leftover}</p>"
+            f"Contracts: {sizing.contracts}.{spend}{leftover}{escape(watch_warning)}</p>"
             f"<p>{escape(reason)}</p>"
             "</div>"
         )
@@ -736,7 +662,7 @@ def _render_option_sizing_result(sizing: OptionSizingResult) -> str:
     return (
         "<div class=\"option-sizing-result\">"
         f"<p>Selected: {escape(bundle.horizon)} {escape(selected_bucket)} {escape(label)}. "
-        f"Contracts: {sizing.contracts}.{spend}{leftover}</p>"
+        f"Contracts: {sizing.contracts}.{spend}{leftover}{escape(watch_warning)}</p>"
         "<table>"
         "<thead><tr><th>Gold Move</th><th>Modeled Stock</th><th>P&amp;L/share Now</th>"
         "<th>P&amp;L/share Expiry</th><th>Net P&amp;L Now</th><th>Net P&amp;L Expiry</th>"

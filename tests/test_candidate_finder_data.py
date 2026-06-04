@@ -42,6 +42,91 @@ def test_candidate_finder_data_joins_sources_and_derives_ratios(tmp_path):
     assert frame.loc["AEM", "netincome_to_mktcap"] == pytest.approx(0.30)
 
 
+def test_candidate_finder_usable_side_filter_excludes_watch_candidates():
+    from golden_vector.hedge.candidate_puts import OptionCandidate, OptionCandidateSlot
+    from golden_vector.serve.candidate_finder_data import _has_usable_slots
+
+    watch_candidate = OptionCandidate(
+        ticker="AEM",
+        horizon_days=60,
+        expiration="2026-07-17",
+        days_to_expiry=43,
+        strike=96.0,
+        bid=3.00,
+        ask=4.00,
+        mid=3.50,
+        open_interest=60,
+        volume=5,
+        implied_volatility=0.40,
+        delta=-0.35,
+        delta_gap=0.0,
+        premium_pct_spot=0.035,
+        underlying_price=100.0,
+        option_type="P",
+        bucket="near_atm",
+        liquidity_tier="watch",
+        rel_spread=1.0 / 3.5,
+        otm_pct=0.04,
+    )
+    tradable_candidate = OptionCandidate(
+        ticker="AEM",
+        horizon_days=60,
+        expiration="2026-07-17",
+        days_to_expiry=43,
+        strike=96.0,
+        bid=3.20,
+        ask=3.40,
+        mid=3.30,
+        open_interest=200,
+        volume=5,
+        implied_volatility=0.40,
+        delta=-0.35,
+        delta_gap=0.0,
+        premium_pct_spot=0.033,
+        underlying_price=100.0,
+        option_type="P",
+        bucket="near_atm",
+        liquidity_tier="tradable",
+        rel_spread=0.2 / 3.3,
+        otm_pct=0.04,
+    )
+
+    assert not _has_usable_slots(
+        [
+            OptionCandidateSlot(
+                ticker="AEM",
+                option_type="P",
+                horizon_days=60,
+                target_delta=-0.25,
+                expiration="2026-07-17",
+                days_to_expiry=43,
+                status="accepted",
+                reason="Watch only.",
+                candidate=watch_candidate,
+                bucket="near_atm",
+                liquidity_tier="watch",
+            )
+        ]
+    )
+    assert _has_usable_slots(
+        [
+            OptionCandidateSlot(
+                ticker="AEM",
+                option_type="P",
+                horizon_days=60,
+                target_delta=-0.25,
+                expiration="2026-07-17",
+                days_to_expiry=43,
+                status="accepted",
+                reason="Tradable.",
+                candidate=tradable_candidate,
+                bucket="near_atm",
+                liquidity_tier="tradable",
+            )
+        ]
+    )
+
+
 def test_candidate_finder_configured_source_fields_exist_in_joined_frame(tmp_path):
     clear_candidate_finder_cache()
     paths = build_test_paths(tmp_path)
@@ -342,7 +427,7 @@ def _write_options(paths, *, refresh_run_id: str) -> None:
             "iv_skew_60d": 0.05,
             "underlying_price": 100.0,
         }
-        for horizon in (30, 60, 90):
+        for horizon in (60, 90, 120):
             feature[f"put_iv_25d_{horizon}d"] = 0.4
             feature[f"call_iv_25d_{horizon}d"] = 0.4 if include_call else None
         paths.options_features_dir.mkdir(parents=True, exist_ok=True)
