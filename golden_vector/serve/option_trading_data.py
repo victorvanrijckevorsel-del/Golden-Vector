@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -28,6 +28,7 @@ from golden_vector.hedge.candidate_puts import (
 from golden_vector.hedge.option_trading import (
     OptionSide,
     OptionLiquidityMeasurement,
+    OptionProxyFallback,
     OptionSizingRequest,
     OptionTradingDetailData,
     OptionTradingOverviewData,
@@ -104,6 +105,12 @@ def build_option_trading_detail_data(
             app_config.hedge_readiness.down_beta_min_for_scenario
         ),
     )
+    detail = _with_proxy_fallbacks(
+        data=data,
+        detail=detail,
+        app_config=app_config,
+        request=sizing_request or OptionSizingRequest(),
+    )
     if detail.row is not None or not data.overview.reason:
         return detail
     return OptionTradingDetailData(
@@ -119,7 +126,132 @@ def build_option_trading_detail_data(
         reason=data.overview.reason,
         risk_free_rate_is_fallback=detail.risk_free_rate_is_fallback,
         source_context=detail.source_context,
+        proxy_fallbacks=detail.proxy_fallbacks,
+        proxy_fallback_note=detail.proxy_fallback_note,
     )
+
+
+def _with_proxy_fallbacks(
+    *,
+    data: OptionTradingData,
+    detail: OptionTradingDetailData,
+    app_config: AppConfig,
+    request: OptionSizingRequest,
+) -> OptionTradingDetailData:
+    if detail.row is None or detail.row.option_vehicle_type == "benchmark_etf":
+        return detail
+    if detail.sizing is not None and detail.sizing.bundle is not None:
+        return detail
+    side = request.side
+    horizon_days = request.horizon_days
+    benchmark_tickers = tuple(
+        str(ticker).strip().upper()
+        for ticker in app_config.hedge_readiness.benchmark_tickers
+        if str(ticker).strip()
+    )
+    if not _benchmark_liquidity_supports_proxy(data.overview.liquidity_measurements):
+        note = (
+            "GDX/GDXJ proxy alternatives are hidden because benchmark ETF option "
+            "chains are not measured, or the cached liquidity check does not show "
+            "a cleaner ETF market."
+        )
+        return replace(detail, proxy_fallback_note=note)
+    source = data.candidate_grids if side == "put" else data.call_candidate_grids
+    fallbacks: list[OptionProxyFallback] = []
+    for ticker in benchmark_tickers:
+        candidate = _proxy_candidate_for_request(
+            source.get(ticker, []),
+            side=side,
+            horizon_days=horizon_days,
+            requested_bucket=request.bucket,
+        )
+        if candidate is None:
+            continue
+        fallbacks.append(
+            OptionProxyFallback(
+                ticker=ticker,
+                side=side,
+                horizon_days=horizon_days,
+                candidate=candidate,
+                reason=(
+                    "Benchmark ETF option vehicle. It expresses the sector, "
+                    f"not {detail.ticker} one-for-one."
+                ),
+            )
+        )
+    if not fallbacks:
+        return replace(
+            detail,
+            proxy_fallback_note=(
+                "Benchmark ETF chains were measured, but no same-side, same-horizon "
+                "ETF proxy candidate passed the Tradable gate."
+            ),
+        )
+    return replace(detail, proxy_fallbacks=tuple(fallbacks))
+
+
+def _benchmark_liquidity_supports_proxy(
+    measurements: tuple[OptionLiquidityMeasurement, ...],
+) -> bool:
+    benchmark = next(
+        (
+            measurement
+            for measurement in measurements
+            if measurement.group_label == "Benchmark ETFs"
+        ),
+        None,
+    )
+    single_stock = next(
+        (
+            measurement
+            for measurement in measurements
+            if measurement.group_label == "Single-stock miners"
+        ),
+        None,
+    )
+    if benchmark is None or benchmark.tradable_count < 1:
+        return False
+    if single_stock is None:
+        return True
+    if (
+        benchmark.median_rel_spread is not None
+        and single_stock.median_rel_spread is not None
+    ):
+        return benchmark.median_rel_spread <= single_stock.median_rel_spread
+    return benchmark.contract_count > 0
+
+
+def _proxy_candidate_for_request(
+    candidates: list[OptionCandidate],
+    *,
+    side: OptionSide,
+    horizon_days: int,
+    requested_bucket: str | None,
+) -> OptionCandidate | None:
+    side_type = "P" if side == "put" else "C"
+    eligible = [
+        candidate
+        for candidate in candidates
+        if candidate.option_type == side_type
+        and candidate.horizon_days == horizon_days
+        and candidate.liquidity_tier == "tradable"
+    ]
+    if not eligible:
+        return None
+    bucket_order = {
+        str(requested_bucket or ""): 0,
+        "near_atm": 1,
+        "directional": 2,
+    }
+    return sorted(
+        eligible,
+        key=lambda candidate: (
+            bucket_order.get(str(candidate.bucket or ""), 9),
+            candidate.rel_spread is None,
+            candidate.rel_spread or 999.0,
+            -(candidate.open_interest or 0),
+        ),
+    )[0]
 
 
 def parse_option_sizing_request(

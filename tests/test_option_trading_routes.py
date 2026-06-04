@@ -9,7 +9,7 @@ from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.serve.option_trading_data import clear_option_trading_cache
 from golden_vector.serve.workspace import create_workspace_app
 from tests.helpers import build_test_paths
-from tests.test_option_trading_data import _write_option_inputs
+from tests.test_option_trading_data import _make_snapshot_untradable, _write_option_inputs
 
 
 def test_workspace_option_trading_route_renders_native_tab(tmp_path):
@@ -315,6 +315,80 @@ def test_workspace_option_trading_detail_discloses_risk_free_rate_fallback(tmp_p
     assert detail_response["status"].startswith("200")
     assert "Risk-free rate was missing" in overview_response["body"]
     assert "Risk-free rate was missing" in detail_response["body"]
+
+
+def test_workspace_option_vehicle_detail_page_renders_option_lens_only(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        include_benchmarks=True,
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(app, method="GET", path="/ticker/GDX?lens=option-trading")
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "Option vehicle page" in body
+    assert "Option Candidates" in body
+    assert "Benchmark ETF option vehicle" in body
+    assert "Company Inputs" not in body
+    assert "Source Verification" not in body
+
+
+def test_workspace_option_vehicle_without_option_lens_stays_404(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        include_benchmarks=True,
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(app, method="GET", path="/ticker/GDX")
+
+    assert response["status"].startswith("404")
+
+
+def test_workspace_option_trading_detail_shows_proxy_fallback_not_overview(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        include_benchmarks=True,
+    )
+    _make_snapshot_untradable(paths, refresh_run_id="options-run", ticker="AEM")
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    overview_response = _call_wsgi_app(app, method="GET", path="/option-trading")
+    detail_response = _call_wsgi_app(
+        app,
+        method="GET",
+        path="/ticker/AEM?lens=option-trading&side=put&horizon=60",
+    )
+
+    assert overview_response["status"].startswith("200")
+    assert detail_response["status"].startswith("200")
+    assert "ETF Proxy Alternatives" not in overview_response["body"]
+    assert "ETF Proxy Alternatives" in detail_response["body"]
+    assert "/ticker/GDX?lens=option-trading" in detail_response["body"]
+    assert "not AEM one-for-one" in detail_response["body"]
 
 
 def test_workspace_detail_invalid_lens_falls_back_to_combined_nav(tmp_path):

@@ -262,6 +262,7 @@ def _render_option_trading_panel(
         ]
     )
     body.append(_render_option_candidate_matrix(detail))
+    body.append(_render_option_proxy_fallback(detail))
     body.append(
         "<details class=\"method-disclosure\"><summary>Glossary</summary>"
         "<p>Bid is the price buyers currently show. Ask is the price sellers show. "
@@ -275,6 +276,62 @@ def _render_option_trading_panel(
         body.append(f"<ul class=\"hint\">{notes}</ul>")
     body.append("</section>")
     return "".join(body)
+
+
+def _render_option_proxy_fallback(detail: OptionTradingDetailData) -> str:
+    if not detail.proxy_fallbacks and not detail.proxy_fallback_note:
+        return ""
+    rows = []
+    for fallback in detail.proxy_fallbacks:
+        candidate = fallback.candidate
+        href = (
+            f"/ticker/{quote(fallback.ticker, safe='')}?lens=option-trading"
+            f"&side={quote(fallback.side, safe='')}&horizon={fallback.horizon_days}"
+            f"&bucket={quote(str(candidate.bucket or ''), safe='')}#option-sizing"
+        )
+        rows.append(
+            "<tr>"
+            f"<td><a href=\"{escape(href, quote=True)}\">{escape(fallback.ticker)}</a></td>"
+            f"<td>{escape(fallback.side.title())} {escape(bucket_label(candidate.bucket))}</td>"
+            f"<td>{_fmt_text(candidate.expiration)}{_dte_suffix(candidate.days_to_expiry)}</td>"
+            f"<td>{_fmt_number(candidate.strike, decimals=2)}</td>"
+            f"<td>{_fmt_number(candidate.mid, decimals=2)}</td>"
+            f"<td>{_fmt_percent(candidate.rel_spread, decimals=1)}</td>"
+            f"<td>{_fmt_number(candidate.open_interest, decimals=0)}</td>"
+            f"<td>{escape(fallback.reason)}</td>"
+            "</tr>"
+        )
+    note = ""
+    if detail.proxy_fallback_note:
+        note = f"<p class=\"hint\">{escape(detail.proxy_fallback_note)}</p>"
+    table = ""
+    if rows:
+        table = (
+            "<table><thead><tr>"
+            "<th>Vehicle</th><th>Candidate</th><th>Expiry / DTE</th>"
+            "<th>Strike</th><th>Mid</th><th>Spread</th><th>OI</th><th>Basis Risk</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>"
+        )
+    heading = "ETF Proxy Alternatives" if rows else "ETF Proxy Check"
+    intro = (
+        "Shown only when the selected single-name contract is missing and cached "
+        "GDX/GDXJ liquidity supports showing a sector proxy. These are not "
+        f"{escape(detail.ticker)} contracts and do not track it one-for-one."
+        if rows
+        else (
+            "Checked because the selected single-name contract is missing. "
+            "Proxy alternatives remain hidden unless cached GDX/GDXJ liquidity "
+            "supports showing a sector proxy."
+        )
+    )
+    return (
+        "<section class=\"nested-panel option-proxy-fallback\">"
+        f"<h3>{heading}</h3>"
+        f"<p class=\"hint\">{intro}</p>"
+        f"{note}{table}"
+        "</section>"
+    )
 
 
 def _render_option_trading_context_table(

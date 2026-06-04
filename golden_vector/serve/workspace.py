@@ -212,17 +212,40 @@ def create_workspace_app(
 
             if path.startswith("/ticker/"):
                 ticker, action = _parse_ticker_route(path)
+                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+                detail_lens = (
+                    resolve_detail_lens(query.get("lens", [""])[0])
+                    if method == "GET" and action is None
+                    else DEFAULT_LENS_ID
+                )
+                option_vehicle_detail = False
+                prefetched_option_trading_data = None
                 if ticker not in allowed_tickers:
-                    return _html_response(
-                        start_response,
-                        _render_error_page(f"{ticker} is not an active Tool B ticker."),
-                        status="404 Not Found",
-                    )
+                    if method == "GET" and action is None and detail_lens == DETAIL_OPTION_TRADING_LENS_ID:
+                        prefetched_option_trading_data = load_option_trading_data(
+                            paths,
+                            app_config=app_config,
+                        )
+                        option_vehicle_row = next(
+                            (
+                                row
+                                for row in prefetched_option_trading_data.overview.rows
+                                if row.ticker == ticker
+                                and row.option_vehicle_type == "benchmark_etf"
+                            ),
+                            None,
+                        )
+                        option_vehicle_detail = option_vehicle_row is not None
+                    if not option_vehicle_detail:
+                        return _html_response(
+                            start_response,
+                            _render_error_page(f"{ticker} is not an active Tool B ticker."),
+                            status="404 Not Found",
+                        )
 
                 if method == "GET" and action is None:
                     state = _load_workspace_state(paths, normalized_tickers)
                     tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker)
-                    query = parse_qs(str(environ.get("QUERY_STRING", "")))
                     flash = _flash_message(query.get("saved", [""])[0])
                     # Resolve the active structural window for this page
                     # render. Defaults to the ticker's canonical anchor.
@@ -234,13 +257,15 @@ def create_workspace_app(
                     visible_windows = _resolve_visible_windows(
                         query.get("show", [""])[0], active_window,
                     )
-                    detail_lens = resolve_detail_lens(query.get("lens", [""])[0])
                     option_trading_detail = None
                     option_refresh_status = None
                     if detail_lens == DETAIL_OPTION_TRADING_LENS_ID:
-                        option_trading_data = load_option_trading_data(
-                            paths,
-                            app_config=app_config,
+                        option_trading_data = (
+                            prefetched_option_trading_data
+                            or load_option_trading_data(
+                                paths,
+                                app_config=app_config,
+                            )
                         )
                         option_refresh_status = read_option_refresh_status(paths)
                         option_trading_detail = build_option_trading_detail_data(
@@ -266,6 +291,8 @@ def create_workspace_app(
                             app_config=app_config,
                             option_trading_detail=option_trading_detail,
                             option_refresh_status=option_refresh_status,
+                            show_workspace_panels=not option_vehicle_detail,
+                            show_manual_sections=not option_vehicle_detail,
                         ),
                     )
 

@@ -7,7 +7,10 @@ import pandas as pd
 import pytest
 
 from golden_vector.app.config import load_app_config
-from golden_vector.hedge.option_trading import build_option_trading_overview
+from golden_vector.hedge.option_trading import (
+    OptionSizingRequest,
+    build_option_trading_overview,
+)
 from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.serve.option_trading_data import (
     build_option_trading_detail_data,
@@ -287,6 +290,59 @@ def test_load_option_trading_data_shows_missing_benchmark_etf_measurement(tmp_pa
     assert benchmark_measurement.tradable_count == 0
 
 
+def test_option_detail_shows_proxy_fallback_when_single_name_missing(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        include_benchmarks=True,
+    )
+    _make_snapshot_untradable(paths, refresh_run_id="options-run", ticker="AEM")
+
+    data = load_option_trading_data(paths, app_config=app_config)
+    detail = build_option_trading_detail_data(
+        data,
+        ticker="AEM",
+        app_config=app_config,
+        sizing_request=OptionSizingRequest(side="put", horizon_days=60),
+    )
+
+    assert detail.sizing is not None
+    assert detail.sizing.bundle is None
+    assert {fallback.ticker for fallback in detail.proxy_fallbacks} == {"GDX", "GDXJ"}
+    assert detail.proxy_fallback_note is None
+
+
+def test_option_detail_hides_proxy_fallback_when_etfs_unmeasured(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        include_benchmarks=False,
+    )
+    _make_snapshot_untradable(paths, refresh_run_id="options-run", ticker="AEM")
+
+    data = load_option_trading_data(paths, app_config=app_config)
+    detail = build_option_trading_detail_data(
+        data,
+        ticker="AEM",
+        app_config=app_config,
+        sizing_request=OptionSizingRequest(side="put", horizon_days=60),
+    )
+
+    assert detail.proxy_fallbacks == ()
+    assert detail.proxy_fallback_note is not None
+    assert "benchmark ETF option chains are not measured" in detail.proxy_fallback_note
+
+
 def test_load_option_trading_data_ignores_stale_feature_rows(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
@@ -419,6 +475,20 @@ def _write_tool_outputs(paths, *, refresh_run_id: str) -> None:
             }
         ]
     ).to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)
+
+
+def _make_snapshot_untradable(paths, *, refresh_run_id: str, ticker: str) -> None:
+    snapshot_path = (
+        paths.runs_dir
+        / refresh_run_id
+        / "snapshots"
+        / "options"
+        / f"{safe_options_file_name(ticker)}.parquet"
+    )
+    frame = pd.read_parquet(snapshot_path)
+    frame["bid"] = 0.0
+    frame["ask"] = 0.0
+    frame.to_parquet(snapshot_path, index=False)
 
 
 def _feature(

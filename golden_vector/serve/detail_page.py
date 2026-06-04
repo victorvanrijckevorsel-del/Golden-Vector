@@ -51,6 +51,8 @@ def render_detail_page(
     app_config: AppConfig | None = None,
     option_trading_detail: OptionTradingDetailData | None = None,
     option_refresh_status: OptionRefreshStatus | None = None,
+    show_workspace_panels: bool = True,
+    show_manual_sections: bool = True,
 ) -> str:
     company_row = _frame_index_by_ticker(state.company_inputs).get(ticker, {})
     reporting_row = _frame_index_by_ticker(state.reporting_calendar).get(ticker, {})
@@ -63,32 +65,39 @@ def render_detail_page(
 
     option_lens_active = str(lens or "").strip().lower() == DETAIL_OPTION_TRADING_LENS_ID
     body = [f"<p><a href=\"/\">Back to workspace</a></p>", f"<h1>{escape(ticker)}</h1>"]
-    body.append(
-        _render_window_switcher(
-            ticker=ticker,
-            active=active_window,
-            canonical=canonical_anchor,
-            lens=DETAIL_OPTION_TRADING_LENS_ID if option_lens_active else None,
-            anchor="option-trading" if option_lens_active else None,
+    if show_workspace_panels:
+        body.append(
+            _render_window_switcher(
+                ticker=ticker,
+                active=active_window,
+                canonical=canonical_anchor,
+                lens=DETAIL_OPTION_TRADING_LENS_ID if option_lens_active else None,
+                anchor="option-trading" if option_lens_active else None,
+            )
         )
-    )
+    elif option_lens_active:
+        body.append(
+            "<p class=\"hint\">Option vehicle page. This ticker is used for listed "
+            "option liquidity and scenarios, not as a Tool A / Tool B mining-company row.</p>"
+        )
     if flash:
         body.append(f"<div class=\"flash\">{escape(flash)}</div>")
     if error:
         body.append(f"<div class=\"flash\">{escape(error)}</div>")
     alignment = _detail_alignment(tool_a_row, state.foundation_manifest)
-    body.append(
-        _render_latest_panels(
-            ticker=ticker,
-            tool_a_row=tool_a_row,
-            tool_b_row=tool_b_row,
-            tool_a_detail=tool_a_detail,
-            alignment=alignment,
-            active_window=active_window,
-            visible_windows=visible_windows,
-            app_config=app_config,
+    if show_workspace_panels:
+        body.append(
+            _render_latest_panels(
+                ticker=ticker,
+                tool_a_row=tool_a_row,
+                tool_b_row=tool_b_row,
+                tool_a_detail=tool_a_detail,
+                alignment=alignment,
+                active_window=active_window,
+                visible_windows=visible_windows,
+                app_config=app_config,
+            )
         )
-    )
     body.append(
         _render_option_trading_panel(
             option_trading_detail,
@@ -97,16 +106,17 @@ def render_detail_page(
         if option_lens_active
         else _render_option_trading_link_panel(ticker)
     )
-    body.append(
-        _render_company_form(
-            ticker=ticker,
-            company_row=company_row,
-            verification_rows=verification_rows,
+    if show_manual_sections:
+        body.append(
+            _render_company_form(
+                ticker=ticker,
+                company_row=company_row,
+                verification_rows=verification_rows,
+            )
         )
-    )
-    body.append(_render_reporting_form(ticker=ticker, reporting_row=reporting_row))
-    body.append(_render_verification_section(ticker=ticker, verification_rows=verification_rows))
-    body.append(_render_note_section(ticker=ticker, note_rows=note_rows))
+        body.append(_render_reporting_form(ticker=ticker, reporting_row=reporting_row))
+        body.append(_render_verification_section(ticker=ticker, verification_rows=verification_rows))
+        body.append(_render_note_section(ticker=ticker, note_rows=note_rows))
     active_nav = "option_trading" if option_lens_active else "combined"
     return _page_shell(
         f"Golden Vector Workspace - {ticker}",

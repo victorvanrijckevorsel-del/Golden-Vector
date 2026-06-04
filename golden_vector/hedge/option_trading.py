@@ -107,6 +107,15 @@ class OptionTradingOverviewData:
 
 
 @dataclass(frozen=True)
+class OptionProxyFallback:
+    ticker: str
+    side: OptionSide
+    horizon_days: int
+    candidate: OptionCandidate
+    reason: str
+
+
+@dataclass(frozen=True)
 class OptionTradingDetailData:
     ticker: str
     row: OptionTradingRow | None
@@ -120,6 +129,8 @@ class OptionTradingDetailData:
     reason: str | None = None
     risk_free_rate_is_fallback: bool = False
     source_context: OptionTradingSourceContext | None = None
+    proxy_fallbacks: tuple[OptionProxyFallback, ...] = ()
+    proxy_fallback_note: str | None = None
 
 
 def build_option_trading_overview(
