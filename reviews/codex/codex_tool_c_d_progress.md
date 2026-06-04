@@ -100,3 +100,15 @@ Focused verification:
 Self-review notes:
 
 - No Tool B extraction was needed; the existing in-memory seam is sufficient for Tool D.
+
+### Step 1 - Tool D model
+
+- Added `golden_vector/model/tool_d.py`.
+- Tool D calls `compute_tool_b_in_memory` at the selected gold price and at spot.
+- Stressed leverage is computed directly as `net_debt_musd / forward_ebitda_musd_at_g`; Tool D does not read Tool B's trailing `leverage` column.
+- Quality rank uses exactly three equal-weight components: margin headroom, stressed leverage, and EV/EBITDA(G). FCF yield is exported as context only.
+
+Self-review notes:
+
+- Added a contract test with a deliberately bogus Tool B `leverage` value to prove Tool D ignores it.
+- Added a ranking test where a worse-quality ticker has much higher FCF yield; it still ranks lower, proving FCF is not a quality component.
