@@ -148,3 +148,41 @@ Preview:
 ```
 
 Status: review fixes complete. Candidate Finder remains stopped before Batch 3 UI/routes.
+
+## 2026-06-04 - Batch 3, Checkpoint C
+
+Implemented:
+- Added the `/candidate-finder` workspace route and top-nav tab.
+- Added `golden_vector/serve/candidate_finder_page.py` as the server-rendered Candidate Finder UI.
+- Added the default bearish-put and bullish-call preset lenses as URL-driven screen links.
+- Added a custom screen builder with options-side toggle (`puts`, `calls`, `either`, `none`), per-criterion direction, weight, and top-N controls.
+- Added View 1 per-criterion top-list cards and View 2 split ranking tables for eligible rows and low-coverage rows.
+- Added the mixed-refresh warning banner and a Fit Score tooltip that explains the weighted-percentile score without treating it as a forecast.
+- Added focused route/renderer regression tests for default preset rendering, custom query plumbing, route reachability, warning display, DataTables markup, and recommendation-language avoidance.
+
+Self-review fixes made in the same batch:
+- Corrected UI direction values to use the scorer contract (`high_good` / `low_good`) instead of display-only labels.
+- Corrected the top-list renderer to use `CriterionTopEntry` objects from the scoring engine.
+- Avoided false invalid-direction warnings when a manually-entered query omits optional direction or weight fields.
+- Used the existing sortable numeric `<td data-order=...>` helper for Candidate Finder ranking table numeric columns.
+- Kept empty ranking tables out of DataTables enhancement to avoid unsupported `colspan` rows in enhanced tables.
+- Made the top navigation wrap so the new fifth tab stays reachable in the narrow in-app browser.
+
+Checks:
+- `python -m pytest tests/test_candidate_finder_page.py tests/test_candidate_finder_data.py tests/test_candidate_finder_scoring.py -q` -> 22 passed.
+- `python -m pytest tests/test_candidate_finder_page.py tests/test_candidate_finder_data.py tests/test_candidate_finder_scoring.py tests/test_workspace_datatables.py -q` -> 49 passed.
+- `python -m pytest tests/test_candidate_finder_page.py tests/test_workspace_datatables.py -q` -> 30 passed after the nav wrap fix.
+- `python -m compileall golden_vector/serve/candidate_finder_page.py golden_vector/serve/workspace.py golden_vector/serve/page_shell.py` -> passed.
+- `python -m pytest -q` -> 618 passed.
+- `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in this Python environment.
+- `python -m mypy golden_vector` -> not run; `mypy` is not installed in this Python environment.
+- `python -m pyright golden_vector` -> not run; `pyright` is not installed in this Python environment.
+
+Browser sample:
+- Started a fresh workspace server on `http://127.0.0.1:8772` because port `8771` was already in use.
+- Opened `http://127.0.0.1:8772/candidate-finder?preset=bearish_put`.
+- Verified title, active bearish preset, mixed-refresh banner, View 1, View 2, Fit Score tooltip, and DataTables markup against current cached data.
+- Verified the bullish-call preset and a custom `options_side=either` query also render with the expected selected controls.
+- Sample screenshot saved to `reviews/codex/candidate_finder_checkpoint_c_sample.png`.
+
+Checkpoint C status: reached. Stop here before any next batch.

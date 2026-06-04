@@ -49,6 +49,8 @@ from golden_vector.serve.option_trading_data import (
     load_option_trading_data,
     parse_option_sizing_request,
 )
+from golden_vector.serve.candidate_finder_data import load_candidate_finder_data
+from golden_vector.serve.candidate_finder_page import render_candidate_finder_page
 from golden_vector.serve.overview_option_trading import _render_option_trading_overview_page
 from golden_vector.serve.overview_combined import _render_overview_page
 from golden_vector.serve.overview_tool_a import _render_tool_a_overview_page
@@ -179,6 +181,17 @@ def create_workspace_app(
                 return _html_response(
                     start_response,
                     _render_option_trading_overview_page(option_trading_data.overview),
+                )
+
+            if method == "GET" and path == "/candidate-finder":
+                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+                candidate_data = load_candidate_finder_data(
+                    paths,
+                    app_config=app_config,
+                )
+                return _html_response(
+                    start_response,
+                    render_candidate_finder_page(candidate_data, query=query),
                 )
 
             if path.startswith("/ticker/"):

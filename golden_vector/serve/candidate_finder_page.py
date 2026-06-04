@@ -1,0 +1,413 @@
+"""Workspace UI for the Candidate Finder screen."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from html import escape
+from urllib.parse import urlencode
+
+from golden_vector.contracts.config_models import CandidateFinderCriterion
+from golden_vector.model.candidate_finder import (
+    CandidateScore,
+    CriterionTopEntry,
+    ResolvedCriterion,
+)
+from golden_vector.serve.candidate_finder_data import (
+    CandidateFinderData,
+    CandidateFinderScreen,
+    run_candidate_finder_screen,
+)
+from golden_vector.serve.format_helpers import _fmt_number, _fmt_numeric_td, _metric_card
+from golden_vector.serve.page_shell import _page_shell
+
+_DEFAULT_PRESET_ID = "bearish_put"
+_SCORE_TOOLTIP = (
+    "Score = your weighted-average percentile across the criteria you chose "
+    "(0-100). Higher = better fit. Not a return forecast."
+)
+
+
+def render_candidate_finder_page(
+    data: CandidateFinderData,
+    *,
+    query: Mapping[str, Sequence[str]] | None = None,
+) -> str:
+    """Render the Candidate Finder workspace page."""
+
+    query = query or {}
+    spec = _screen_spec_from_query(query, data.criteria_config.criteria)
+    screen = run_candidate_finder_screen(data, spec=spec)
+    active_preset_id = _active_preset_id(query)
+
+    body = "\n".join(
+        (
+            "<section class=\"workspace-section\">",
+            "<h1>Candidate Finder</h1>",
+            "<p class=\"lead\">Build a ranked list from model signals and option-market filters.</p>",
+            _render_preset_bar(data, active_preset_id),
+            _render_warning_banner(screen.warnings),
+            _render_summary_cards(screen),
+            _render_builder(data, screen, query),
+            _render_top_lists(screen),
+            _render_ranking_tables(screen),
+            "</section>",
+        )
+    )
+    return _page_shell(
+        "Candidate Finder - Golden Vector Workspace",
+        body,
+        active_nav="candidate_finder",
+    )
+
+
+def _screen_spec_from_query(
+    query: Mapping[str, Sequence[str]],
+    criteria_config: Sequence[CandidateFinderCriterion],
+) -> dict[str, object]:
+    custom = _first(query, "custom") == "1"
+    spec: dict[str, object] = {}
+
+    if not custom:
+        preset_id = _first(query, "preset") or _DEFAULT_PRESET_ID
+        spec["preset"] = preset_id
+
+    options_side = _first(query, "options_side")
+    if options_side:
+        spec["options_side"] = options_side
+
+    top_n = _first(query, "top_n")
+    if top_n:
+        spec["top_n"] = top_n
+
+    selected_ids = [item.strip() for item in query.get("criteria", ()) if item.strip()]
+    if custom or selected_ids:
+        known_ids = {criterion.id for criterion in criteria_config}
+        criteria: list[dict[str, object]] = []
+        for criterion_id in selected_ids:
+            if criterion_id not in known_ids:
+                criteria.append({"id": criterion_id})
+                continue
+            raw_item: dict[str, object] = {"id": criterion_id}
+            direction = _first(query, f"direction_{criterion_id}")
+            weight = _first(query, f"weight_{criterion_id}")
+            if direction:
+                raw_item["direction"] = direction
+            if weight:
+                raw_item["weight"] = weight
+            criteria.append(raw_item)
+        spec["criteria"] = criteria
+
+    return spec
+
+
+def _render_preset_bar(data: CandidateFinderData, active_preset_id: str) -> str:
+    links: list[str] = []
+    for preset in data.criteria_config.presets:
+        href = "/candidate-finder?" + urlencode({"preset": preset.id})
+        active = " is-active" if preset.id == active_preset_id else ""
+        links.append(
+            (
+                f"<a class=\"candidate-preset{active}\" href=\"{escape(href, quote=True)}\">"
+                f"{escape(preset.label)}</a>"
+            )
+        )
+    return (
+        "<div class=\"candidate-preset-bar\" aria-label=\"Candidate Finder presets\">"
+        + "".join(links)
+        + "</div>"
+    )
+
+
+def _render_warning_banner(warnings: Sequence[str]) -> str:
+    if not warnings:
+        return ""
+    items = "".join(f"<li>{escape(warning)}</li>" for warning in warnings)
+    return (
+        "<div class=\"flash flash-warning\">"
+        "<strong>Review this screen before using it.</strong>"
+        f"<ul class=\"candidate-warning-list\">{items}</ul>"
+        "</div>"
+    )
+
+
+def _render_summary_cards(screen: CandidateFinderScreen) -> str:
+    eligible = sum(
+        1
+        for row in screen.ranking.rows
+        if row.rank_eligible and row.score is not None
+    )
+    low_coverage = max(0, len(screen.ranking.rows) - eligible)
+    selected = len(screen.ranking.selected_criteria)
+    cards = "\n".join(
+        (
+            _metric_card("Options Side", _side_label(screen.options_side)),
+            _metric_card("Selected Criteria", str(selected)),
+            _metric_card("Eligible Rows", str(eligible)),
+            _metric_card("Low Coverage Rows", str(low_coverage)),
+            _metric_card("Per-Criterion List Size", str(screen.top_n)),
+        )
+    )
+    return f"<div class=\"metric-grid candidate-summary-grid\">{cards}</div>"
+
+
+def _render_builder(
+    data: CandidateFinderData,
+    screen: CandidateFinderScreen,
+    query: Mapping[str, Sequence[str]],
+) -> str:
+    selected_by_id = {
+        criterion.id: criterion for criterion in screen.ranking.selected_criteria
+    }
+    options = "\n".join(
+        _option_tag(value, label, value == screen.options_side)
+        for value, label in (
+            ("puts", "Puts"),
+            ("calls", "Calls"),
+            ("either", "Puts or calls"),
+            ("none", "No option filter"),
+        )
+    )
+    rows = "\n".join(
+        _render_builder_row(criterion, selected_by_id.get(criterion.id))
+        for criterion in data.criteria_config.criteria
+    )
+    active_custom = _first(query, "custom") == "1"
+    custom_note = (
+        "<p class=\"hint\">Custom criteria are active for this screen.</p>"
+        if active_custom
+        else ""
+    )
+    return f"""
+<section class="panel candidate-builder-panel">
+  <div class="candidate-panel-heading">
+    <h2>Screen Builder</h2>
+    <a href="/candidate-finder">Reset</a>
+  </div>
+  {custom_note}
+  <form method="get" action="/candidate-finder" class="candidate-finder-form">
+    <input type="hidden" name="custom" value="1">
+    <div class="candidate-form-row">
+      <label>
+        Options side
+        <select name="options_side">{options}</select>
+      </label>
+      <label>
+        Top rows per criterion
+        <input type="number" name="top_n" min="1" max="25" step="1" value="{screen.top_n}">
+      </label>
+      <button type="submit">Apply Screen</button>
+    </div>
+    <div class="table-scroll">
+      <table class="candidate-criteria-table">
+        <thead>
+          <tr>
+            <th>Use</th>
+            <th>Criterion</th>
+            <th>Direction</th>
+            <th>Weight</th>
+            <th>Field</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>
+  </form>
+</section>
+"""
+
+
+def _render_builder_row(
+    criterion: CandidateFinderCriterion,
+    selected: ResolvedCriterion | None,
+) -> str:
+    checked = selected is not None
+    direction = selected.direction if selected else criterion.default_direction
+    weight = selected.weight if selected else 1.0
+    criterion_id = escape(criterion.id, quote=True)
+    direction_name = escape(f"direction_{criterion.id}", quote=True)
+    weight_name = escape(f"weight_{criterion.id}", quote=True)
+    return f"""
+<tr>
+  <td><input type="checkbox" name="criteria" value="{criterion_id}"{" checked" if checked else ""}></td>
+  <td>{escape(criterion.label)}</td>
+  <td>
+    <select name="{direction_name}">
+      {_option_tag("high_good", "High values fit", direction == "high_good")}
+      {_option_tag("low_good", "Low values fit", direction == "low_good")}
+    </select>
+  </td>
+  <td><input type="number" name="{weight_name}" min="0" max="10" step="0.25" value="{_fmt_weight(weight)}"></td>
+  <td><code>{escape(criterion.source_field)}</code></td>
+</tr>
+"""
+
+
+def _render_top_lists(screen: CandidateFinderScreen) -> str:
+    if not screen.ranking.selected_criteria:
+        return ""
+    cards = "\n".join(
+        _render_top_list_card(criterion, screen.ranking.top_lists.get(criterion.id, ()))
+        for criterion in screen.ranking.selected_criteria
+    )
+    return f"""
+<section class="candidate-view-section">
+  <h2>View 1: Top Rows By Criterion</h2>
+  <div class="candidate-top-list-grid">{cards}</div>
+</section>
+"""
+
+
+def _render_top_list_card(
+    criterion: ResolvedCriterion,
+    rows: Sequence[CriterionTopEntry],
+) -> str:
+    body = "\n".join(
+        f"""
+<tr>
+  <td>{_ticker_link(row.ticker)}</td>
+  <td class="numeric">{_fmt_number(row.raw_value, decimals=2)}</td>
+  <td class="numeric">{_fmt_number(row.percentile, decimals=1)}</td>
+</tr>
+"""
+        for row in rows
+    )
+    if not body:
+        body = "<tr><td colspan=\"3\">No rows found.</td></tr>"
+    direction = "High" if criterion.direction == "high_good" else "Low"
+    return f"""
+<article class="nested-panel candidate-top-list-card">
+  <h3>{escape(criterion.label)}</h3>
+  <p class="hint">{direction} values rank higher. Weight {_fmt_weight(criterion.weight)}.</p>
+  <table>
+    <thead>
+      <tr><th>Ticker</th><th>Value</th><th>Percentile</th></tr>
+    </thead>
+    <tbody>{body}</tbody>
+  </table>
+</article>
+"""
+
+
+def _render_ranking_tables(screen: CandidateFinderScreen) -> str:
+    eligible = [
+        row
+        for row in screen.ranking.rows
+        if row.rank_eligible and row.score is not None
+    ]
+    low_coverage = [row for row in screen.ranking.rows if row not in eligible]
+    return f"""
+<section class="candidate-view-section">
+  <h2>View 2: Combined Fit Ranking</h2>
+  {_render_score_table("Eligible Ranking", eligible, screen.ranking.selected_criteria, "candidate-eligible-ranking")}
+  {_render_score_table("Low-Coverage Rows", low_coverage, screen.ranking.selected_criteria, "candidate-low-coverage-ranking")}
+</section>
+"""
+
+
+def _render_score_table(
+    title: str,
+    rows: Sequence[CandidateScore],
+    criteria: Sequence[ResolvedCriterion],
+    table_id: str,
+) -> str:
+    criterion_headers = "".join(
+        f"<th>{escape(criterion.label)}</th>" for criterion in criteria
+    )
+    body_rows: list[str] = []
+    for row in rows:
+        criterion_cells = "".join(
+            (
+                _fmt_numeric_td(row.percentiles.get(criterion.id), decimals=1)
+            )
+            for criterion in criteria
+        )
+        body_rows.append(
+            f"""
+<tr>
+  <td>{_ticker_link(row.ticker)}</td>
+  {_fmt_numeric_td(row.score, decimals=2)}
+  <td class="numeric">{row.present_criteria_count}/{row.selected_criteria_count}</td>
+  {_fmt_numeric_td(row.top_n_tally, decimals=0)}
+  {criterion_cells}
+  <td>{escape(_coverage_status(row))}</td>
+</tr>
+"""
+        )
+    if not body_rows:
+        colspan = 5 + len(criteria)
+        body = f"<tr><td colspan=\"{colspan}\">No rows found.</td></tr>"
+    else:
+        body = "\n".join(body_rows)
+    table_class = (
+        "js-datatable candidate-ranking-table"
+        if body_rows
+        else "candidate-ranking-table"
+    )
+    return f"""
+<section class="nested-panel candidate-ranking-panel">
+  <h3>{escape(title)}</h3>
+  <div class="table-scroll">
+    <table id="{escape(table_id, quote=True)}" class="{table_class}">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th><span class="score-help" title="{escape(_SCORE_TOOLTIP, quote=True)}">Fit Score</span></th>
+          <th>Coverage</th>
+          <th>Top-N Hits</th>
+          {criterion_headers}
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>{body}</tbody>
+    </table>
+  </div>
+</section>
+"""
+
+
+def _ticker_link(ticker: str) -> str:
+    clean = escape(ticker)
+    href = f"/ticker/{escape(ticker, quote=True)}?lens=option-trading#option-trading"
+    return f"<a href=\"{href}\">{clean}</a>"
+
+
+def _option_tag(value: str, label: str, selected: bool) -> str:
+    selected_attr = " selected" if selected else ""
+    return (
+        f"<option value=\"{escape(value, quote=True)}\"{selected_attr}>"
+        f"{escape(label)}</option>"
+    )
+
+
+def _side_label(side: str) -> str:
+    return {
+        "puts": "Puts",
+        "calls": "Calls",
+        "either": "Puts or calls",
+        "none": "No option filter",
+    }.get(side, side)
+
+
+def _coverage_status(row: CandidateScore) -> str:
+    if row.rank_eligible and row.score is not None:
+        return "Eligible"
+    if row.score is None:
+        return "No score"
+    return "Low coverage"
+
+
+def _active_preset_id(query: Mapping[str, Sequence[str]]) -> str:
+    if _first(query, "custom") == "1":
+        return ""
+    return _first(query, "preset") or _DEFAULT_PRESET_ID
+
+
+def _first(query: Mapping[str, Sequence[str]], key: str) -> str:
+    values = query.get(key)
+    if not values:
+        return ""
+    return str(values[0]).strip()
+
+
+def _fmt_weight(value: float) -> str:
+    return f"{value:g}"

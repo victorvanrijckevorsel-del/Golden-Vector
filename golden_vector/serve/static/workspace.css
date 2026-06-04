@@ -358,6 +358,7 @@
       margin: 0 auto;
       padding: 18px 20px 0;
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
       border-bottom: 1px solid var(--line);
     }
@@ -398,6 +399,89 @@
     }
     .segmented-control a:hover {
       background: var(--accent-soft);
+    }
+    .segmented-control a.active {
+      background: var(--accent);
+      color: #fffdf8;
+      border-color: var(--accent);
+    }
+    .candidate-preset-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 12px 0 16px;
+    }
+    .candidate-preset {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 12px;
+      background: white;
+      color: var(--ink);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.92rem;
+    }
+    .candidate-preset:hover {
+      background: var(--accent-soft);
+    }
+    .candidate-preset.is-active {
+      background: var(--accent);
+      color: #fffdf8;
+      border-color: var(--accent);
+    }
+    .candidate-panel-heading {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .candidate-finder-form {
+      display: grid;
+      gap: 14px;
+    }
+    .candidate-form-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+      align-items: end;
+    }
+    .candidate-form-row label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.88rem;
+    }
+    .candidate-warning-list {
+      margin: 8px 0 0;
+      padding-left: 20px;
+    }
+    .candidate-criteria-table input[type="checkbox"] {
+      width: auto;
+    }
+    .candidate-criteria-table input[type="number"] {
+      max-width: 90px;
+    }
+    .candidate-top-list-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+    }
+    .candidate-top-list-card {
+      overflow-x: auto;
+    }
+    .candidate-view-section {
+      margin-top: 22px;
+    }
+    .candidate-ranking-panel {
+      margin-bottom: 16px;
+    }
+    .candidate-ranking-table {
+      margin-bottom: 18px;
+    }
+    .score-help {
+      border-bottom: 1px dotted var(--muted);
+      cursor: help;
     }
     .option-sizing-calculator {
       margin-top: 16px;
