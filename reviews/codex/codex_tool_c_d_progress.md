@@ -5,7 +5,7 @@
 ### Step 1 - Config and paths
 
 - Added Tool C and Tool D config contracts with safe defaults for direct `AppConfig` tests.
-- Added `config/tool_c.yaml` with hit-rate event thresholds and `config/tool_d.yaml` with the stressed gold assumption.
+- Added `config/tool_c.yaml` with hit-rate event thresholds and `config/tool_d.yaml` with Tool D's EV/EBITDA sanity guard.
 - Registered both config files in `EXPECTED_CONFIG_FILES` so replay manifests retain them.
 - Added Tool C and Tool D intermediate/output path properties.
 - Added focused config validation tests.
@@ -146,7 +146,7 @@ Self-review notes:
 
 ### Batch 2 self-review fixes
 
-- Removed unused `stress_gold_price` from Tool D config. The locked CLI behavior is default-to-current-spot; keeping an unused stress default was misleading.
+- Removed the unused Tool D stress-gold default from config. The locked CLI behavior is default-to-current-spot; keeping an unused stress default was misleading.
 - Fixed Tool D `fcf_yield` context to come from the spot Tool B frame, not the stressed frame.
 - Added an EBITDA<=0 regression test: stressed leverage and EV/EBITDA are null, with `leverage_undefined_at_G`, never infinite.
 
@@ -190,3 +190,18 @@ Focused verification:
 
 - `python -m pytest tests/test_candidate_finder_data.py tests/test_candidate_finder_config.py tests/test_candidate_finder_page.py tests/test_candidate_finder_scoring.py`
 - Result: 31 passed.
+
+## Holistic review
+
+- Rechecked Tool C and Tool D together against the locked seams: Tool C uses `build_structural_weekly_series` through the weekly-return builder and reuses `oriented_percentile`; Tool D uses `compute_tool_b_in_memory` at arbitrary gold prices and computes stressed leverage directly from manual net debt and EBITDA(G), not Tool B's trailing leverage column.
+- Rechecked Candidate Finder wiring: it consumes static latest Tool C ranks and the spot Tool D quality rank only; no per-lens gold dial was added.
+- Rechecked provenance/config registration: Tool C/D configs are included in replay config capture; Tool C/D source snapshots are captured and verified.
+- Fixed stale progress-log wording that still referred to the removed Tool D stress default.
+
+Final verification:
+
+- `python -m compileall golden_vector`
+- Result: passed.
+- `python -m pytest`
+- Result: 674 passed.
+- No repo lint/type-check config was present (`pyproject.toml`, `setup.cfg`, `tox.ini`, `mypy.ini`, `.ruff.toml` not found), so no separate lint/type command was run.
