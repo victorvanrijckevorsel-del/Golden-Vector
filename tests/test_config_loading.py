@@ -10,6 +10,10 @@ def test_load_app_config_reads_repo_yaml():
     assert "benchmarks" in loaded.file_hashes
     assert loaded.app.hedge_readiness.target_delta == -0.25
     assert "hedge_readiness" in loaded.file_hashes
+    assert loaded.app.tool_c.min_events == 8
+    assert "tool_c" in loaded.file_hashes
+    assert loaded.app.tool_d.stress_gold_price == 3000.0
+    assert "tool_d" in loaded.file_hashes
     assert loaded.app.horizons.core_horizons[0] == "5D"
     assert loaded.app.qa.near_zero_gold_return_threshold == 0.005
     assert 4000 in loaded.app.screening_params.gold_price_scenarios

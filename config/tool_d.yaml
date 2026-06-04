@@ -1,0 +1,3 @@
+version: 1
+stress_gold_price: 3000.0
+max_reasonable_ev_ebitda: 100.0

@@ -316,6 +316,63 @@ class HedgeReadinessConfig(StrictConfigModel):
         return self
 
 
+class ToolCHitRateThresholds(StrictConfigModel):
+    gold_down_10pct: float = -0.10
+    gold_down_20pct: float = -0.20
+    gold_up_10pct: float = 0.10
+    gold_up_20pct: float = 0.20
+
+    @field_validator(
+        "gold_down_10pct",
+        "gold_down_20pct",
+        "gold_up_10pct",
+        "gold_up_20pct",
+    )
+    @classmethod
+    def non_zero_threshold(cls, value: float) -> float:
+        if value == 0:
+            raise ValueError("Tool C hit-rate thresholds must be non-zero")
+        return float(value)
+
+    @model_validator(mode="after")
+    def ordered_thresholds(self) -> "ToolCHitRateThresholds":
+        if not self.gold_down_20pct < self.gold_down_10pct < 0:
+            raise ValueError("Tool C downside thresholds must satisfy down20 < down10 < 0")
+        if not 0 < self.gold_up_10pct < self.gold_up_20pct:
+            raise ValueError("Tool C upside thresholds must satisfy 0 < up10 < up20")
+        return self
+
+
+class ToolCConfig(StrictConfigModel):
+    version: int = 1
+    minimum_observations: int = 52
+    min_events: int = 8
+    rolling_volatility_weeks: int = 52
+    hit_rate_thresholds: ToolCHitRateThresholds = Field(
+        default_factory=ToolCHitRateThresholds
+    )
+
+    @field_validator("minimum_observations", "min_events", "rolling_volatility_weeks")
+    @classmethod
+    def positive_ints(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("Tool C integer settings must be positive")
+        return int(value)
+
+
+class ToolDConfig(StrictConfigModel):
+    version: int = 1
+    stress_gold_price: float = 3000.0
+    max_reasonable_ev_ebitda: float = 100.0
+
+    @field_validator("stress_gold_price", "max_reasonable_ev_ebitda")
+    @classmethod
+    def positive_floats(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("Tool D numeric settings must be positive")
+        return float(value)
+
+
 class CustomHorizonValidation(StrictConfigModel):
     allowed_units: list[Literal["D", "M", "Y"]] = Field(default_factory=lambda: ["D", "M", "Y"])
     min_value: int = 1
@@ -809,6 +866,8 @@ class AppConfig(StrictConfigModel):
     benchmarks: BenchmarksConfig
     candidate_finder: CandidateFinderConfig
     hedge_readiness: HedgeReadinessConfig = Field(default_factory=HedgeReadinessConfig)
+    tool_c: ToolCConfig = Field(default_factory=ToolCConfig)
+    tool_d: ToolDConfig = Field(default_factory=ToolDConfig)
     horizons: HorizonsConfig
     qa: QaConfig
     scoring: ScoringConfig

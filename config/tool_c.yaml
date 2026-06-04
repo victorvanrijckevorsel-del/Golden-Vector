@@ -1,0 +1,9 @@
+version: 1
+minimum_observations: 52
+min_events: 8
+rolling_volatility_weeks: 52
+hit_rate_thresholds:
+  gold_down_10pct: -0.10
+  gold_down_20pct: -0.20
+  gold_up_10pct: 0.10
+  gold_up_20pct: 0.20

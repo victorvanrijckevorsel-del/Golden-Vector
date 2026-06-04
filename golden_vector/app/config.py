@@ -18,6 +18,8 @@ EXPECTED_CONFIG_FILES: tuple[tuple[str, str], ...] = (
     ("benchmarks", "benchmarks.yaml"),
     ("candidate_finder", "candidate_finder.yaml"),
     ("hedge_readiness", "hedge_readiness.yaml"),
+    ("tool_c", "tool_c.yaml"),
+    ("tool_d", "tool_d.yaml"),
     ("horizons", "horizons.yaml"),
     ("qa", "qa.yaml"),
     ("scoring", "scoring.yaml"),

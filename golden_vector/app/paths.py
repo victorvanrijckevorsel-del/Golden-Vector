@@ -65,11 +65,15 @@ class ProjectPaths:
             self.intermediate_tool_a_structural_dir,
             self.intermediate_tool_a_profiles_dir,
             self.intermediate_tool_b_dir,
+            self.intermediate_tool_c_dir,
+            self.intermediate_tool_d_dir,
             self.options_features_dir,
             self.benchmarks_dir,
             self.intermediate_status_dir,
             self.output_tool_a_dir,
             self.output_tool_b_dir,
+            self.output_tool_c_dir,
+            self.output_tool_d_dir,
             self.output_combined_dir,
             self.output_hedge_readiness_dir,
             self.manual_holdings_dir,
@@ -160,6 +164,14 @@ class ProjectPaths:
         return self.intermediate_dir / "tool_b"
 
     @property
+    def intermediate_tool_c_dir(self) -> Path:
+        return self.intermediate_dir / "tool_c"
+
+    @property
+    def intermediate_tool_d_dir(self) -> Path:
+        return self.intermediate_dir / "tool_d"
+
+    @property
     def options_features_dir(self) -> Path:
         return self.intermediate_dir / "options_features"
 
@@ -216,6 +228,30 @@ class ProjectPaths:
     @property
     def latest_tool_b_snapshot_csv_path(self) -> Path:
         return self.output_tool_b_dir / "tool_b_latest.csv"
+
+    @property
+    def output_tool_c_dir(self) -> Path:
+        return self.output_dir / "tool_c"
+
+    @property
+    def latest_tool_c_snapshot_parquet_path(self) -> Path:
+        return self.output_tool_c_dir / "tool_c_latest.parquet"
+
+    @property
+    def latest_tool_c_snapshot_csv_path(self) -> Path:
+        return self.output_tool_c_dir / "tool_c_latest.csv"
+
+    @property
+    def output_tool_d_dir(self) -> Path:
+        return self.output_dir / "tool_d"
+
+    @property
+    def latest_tool_d_snapshot_parquet_path(self) -> Path:
+        return self.output_tool_d_dir / "tool_d_latest.parquet"
+
+    @property
+    def latest_tool_d_snapshot_csv_path(self) -> Path:
+        return self.output_tool_d_dir / "tool_d_latest.csv"
 
     @property
     def output_combined_dir(self) -> Path:

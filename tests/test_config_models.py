@@ -15,6 +15,9 @@ from golden_vector.contracts.config_models import (
     ScoringConfig,
     StructuralDeltaBands,
     StructuralWindowWeights,
+    ToolCConfig,
+    ToolCHitRateThresholds,
+    ToolDConfig,
     UniverseConfig,
     VolatilityDiagnosticBands,
 )
@@ -371,6 +374,60 @@ def test_hedge_readiness_config_rejects_invalid_thresholds(override):
 
     with pytest.raises(ValidationError):
         HedgeReadinessConfig.model_validate(payload)
+
+
+def test_tool_c_config_accepts_defaults():
+    config = ToolCConfig()
+
+    assert config.minimum_observations == 52
+    assert config.min_events == 8
+    assert config.hit_rate_thresholds.gold_down_10pct == -0.10
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"minimum_observations": 0},
+        {"min_events": 0},
+        {"rolling_volatility_weeks": 0},
+    ],
+)
+def test_tool_c_config_rejects_invalid_integer_settings(override):
+    with pytest.raises(ValidationError):
+        ToolCConfig.model_validate({"version": 1, **override})
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"gold_down_10pct": 0},
+        {"gold_down_20pct": -0.05},
+        {"gold_up_10pct": 0.25},
+        {"gold_up_20pct": 0.05},
+    ],
+)
+def test_tool_c_hit_rate_thresholds_must_be_ordered(override):
+    with pytest.raises(ValidationError):
+        ToolCHitRateThresholds.model_validate(override)
+
+
+def test_tool_d_config_accepts_defaults():
+    config = ToolDConfig()
+
+    assert config.stress_gold_price == 3000.0
+    assert config.max_reasonable_ev_ebitda == 100.0
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"stress_gold_price": 0},
+        {"max_reasonable_ev_ebitda": 0},
+    ],
+)
+def test_tool_d_config_rejects_invalid_settings(override):
+    with pytest.raises(ValidationError):
+        ToolDConfig.model_validate({"version": 1, **override})
 
 
 def test_score_weights_must_sum_to_one():
