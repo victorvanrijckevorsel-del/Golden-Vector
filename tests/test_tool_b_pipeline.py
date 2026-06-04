@@ -412,3 +412,60 @@ def test_compute_tool_b_in_memory_matches_execute_tool_b_pipeline(tmp_path):
     in_memory_sorted = in_memory.sort_values(sort_keys, na_position="last").reset_index(drop=True)
 
     pd.testing.assert_frame_equal(persistent_sorted, in_memory_sorted, check_like=True)
+
+
+def test_compute_tool_b_in_memory_accepts_arbitrary_gold_price_without_persistence(tmp_path):
+    """Tool D depends on this seam: Tool B math must be callable at any
+    gold price using already-loaded inputs, without writing Tool B outputs.
+    """
+    from golden_vector.screening.manual_data import load_manual_screening_data
+    from golden_vector.screening.pipeline import compute_tool_b_in_memory
+
+    paths = build_test_paths(tmp_path)
+    app_config = _activate_for_test(load_app_config(ProjectPaths.discover()).app, "GOLD")
+    _populate_manual_store(
+        paths,
+        {
+            "NEM": {
+                "production_oz": 6_000_000,
+                "aisc_usd_per_oz": 1300,
+                "cash_cost_usd_per_oz": 900,
+                "royalty_rate": 0.03,
+                "sustaining_capex_musd": 900,
+                "da_musd": 500,
+                "interest_expense_musd": 100,
+                "tax_rate": 0.30,
+                "reserve_life_years": 12,
+                "net_debt_musd": 2000,
+                "ebitda_ltm_musd": 5000,
+            }
+        },
+    )
+    manual_data = load_manual_screening_data(
+        paths,
+        tickers=sorted(
+            ticker.ticker
+            for ticker in app_config.universe.tickers
+            if ticker.active and ticker.tool_b_enabled
+        ),
+    )
+
+    low_gold = compute_tool_b_in_memory(
+        app_config=app_config,
+        manual_data=manual_data,
+        normalized_market_snapshots=_market_snapshots(),
+        gold_price_assumption=3000,
+    )
+    high_gold = compute_tool_b_in_memory(
+        app_config=app_config,
+        manual_data=manual_data,
+        normalized_market_snapshots=_market_snapshots(),
+        gold_price_assumption=4000,
+    )
+
+    low_nem = low_gold.set_index("ticker").loc["NEM"]
+    high_nem = high_gold.set_index("ticker").loc["NEM"]
+    assert low_nem["gold_price_assumption"] == 3000
+    assert high_nem["gold_price_assumption"] == 4000
+    assert high_nem["forward_ebitda_musd"] > low_nem["forward_ebitda_musd"]
+    assert not paths.latest_tool_b_snapshot_parquet_path.exists()

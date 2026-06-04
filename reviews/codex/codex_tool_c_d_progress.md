@@ -89,3 +89,14 @@ Focused verification:
 
 - `python -m pytest tests/test_config_loading.py tests/test_config_models.py tests/test_weekly_returns.py tests/test_gold_regime.py tests/test_relative_behavior.py tests/test_tool_c.py tests/test_persist_tool_c.py tests/test_cli_tool_c.py tests/test_replay_manifest.py`
 - Result: 109 passed.
+
+## Batch 2 - Tool D
+
+### Step 0 - Tool B in-memory seam
+
+- Confirmed `compute_tool_b_in_memory` is callable at arbitrary gold prices using already-loaded manual data and market snapshots.
+- Added a contract test that verifies EBITDA changes with the gold price and no Tool B latest output is written.
+
+Self-review notes:
+
+- No Tool B extraction was needed; the existing in-memory seam is sufficient for Tool D.
