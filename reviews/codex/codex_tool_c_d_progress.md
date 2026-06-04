@@ -179,3 +179,14 @@ Focused verification:
 
 - `python -m pytest tests/test_candidate_finder_config.py tests/test_candidate_finder_data.py tests/test_candidate_finder_page.py tests/test_candidate_finder_scoring.py`
 - Result: 29 passed.
+
+### Batch 3 self-review fixes
+
+- Fixed Candidate Finder alignment so missing Tool C or Tool D latest outputs are visible as missing required sources instead of silently becoming nullable criteria.
+- Added a spot-gold contract around Tool D consumption: if the latest Tool D snapshot was produced at a non-spot gold price, Candidate Finder blanks `tool_d_quality_rank` and warns instead of consuming the stressed rank.
+- Added regression tests for both behaviors.
+
+Focused verification:
+
+- `python -m pytest tests/test_candidate_finder_data.py tests/test_candidate_finder_config.py tests/test_candidate_finder_page.py tests/test_candidate_finder_scoring.py`
+- Result: 31 passed.

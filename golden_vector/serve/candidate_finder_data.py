@@ -117,7 +117,8 @@ def load_candidate_finder_data(
         label="Tool D",
     )
     tool_c = tool_c_load.frame
-    tool_d = tool_d_load.frame
+    tool_d_spot_load = _spot_tool_d_source(tool_d_load.frame)
+    tool_d = tool_d_spot_load.frame
     option_data = load_option_trading_data(paths, app_config=app_config)
     manual_company, _, _, _ = load_store_tables(paths)
     manual_hash = _file_sha256(paths.manual_screening_store_path)
@@ -164,6 +165,7 @@ def load_candidate_finder_data(
                 tool_b_load.warning,
                 tool_c_load.warning,
                 tool_d_load.warning,
+                tool_d_spot_load.warning,
             )
             if warning is not None
         ),
@@ -537,12 +539,10 @@ def _alignment(
     source_ids: dict[str, tuple[str, ...]] = {
         "Tool A": tool_a_ids,
         "Tool B": tool_b_ids,
+        "Tool C": tool_c_ids,
+        "Tool D": tool_d_ids,
         "Options": (options_id,) if options_id else (),
     }
-    if not tool_c.empty:
-        source_ids["Tool C"] = tool_c_ids
-    if not tool_d.empty:
-        source_ids["Tool D"] = tool_d_ids
     missing = [name for name, values in source_ids.items() if not values]
     seen = {value for values in source_ids.values() for value in values}
     warnings = list(source_load_warnings)
@@ -703,6 +703,40 @@ def _read_optional_parquet(path: Path, *, label: str) -> CandidateFinderSourceLo
             frame=pd.DataFrame(),
             warning=f"{label} latest parquet could not be read: {exc}.",
         )
+
+
+def _spot_tool_d_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:
+    if frame.empty:
+        return CandidateFinderSourceLoad(frame=frame)
+    required = {"gold_price_used", "spot_gold_usd"}
+    if not required.issubset(frame.columns):
+        return CandidateFinderSourceLoad(
+            frame=_blank_tool_d_quality(frame),
+            warning=(
+                "Tool D latest parquet does not record spot-gold provenance; "
+                "Candidate Finder treats Tool D quality rank as missing."
+            ),
+        )
+    gold_price = pd.to_numeric(frame["gold_price_used"], errors="coerce")
+    spot_gold = pd.to_numeric(frame["spot_gold_usd"], errors="coerce")
+    comparable = gold_price.notna() & spot_gold.notna()
+    is_spot = comparable & gold_price.sub(spot_gold).abs().le(0.01)
+    if bool(is_spot.all()):
+        return CandidateFinderSourceLoad(frame=frame)
+    return CandidateFinderSourceLoad(
+        frame=_blank_tool_d_quality(frame),
+        warning=(
+            "Tool D latest parquet is not a spot-gold run; Candidate Finder "
+            "treats Tool D quality rank as missing until spot Tool D is rerun."
+        ),
+    )
+
+
+def _blank_tool_d_quality(frame: pd.DataFrame) -> pd.DataFrame:
+    result = frame.copy()
+    if "tool_d_quality_rank" in result.columns:
+        result["tool_d_quality_rank"] = pd.NA
+    return result
 
 
 def _unique_strings(frame: pd.DataFrame, column: str) -> tuple[str, ...]:

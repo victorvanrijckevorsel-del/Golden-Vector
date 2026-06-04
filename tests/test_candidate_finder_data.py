@@ -162,6 +162,44 @@ def test_candidate_finder_data_handles_missing_sources(tmp_path):
     assert data.frame["has_usable_call_candidate"].eq(False).all()
 
 
+def test_candidate_finder_data_warns_when_tool_c_or_tool_d_outputs_are_missing(tmp_path):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(
+        paths,
+        refresh_run_id="refresh-run",
+        include_tool_c_d=False,
+    )
+
+    data = load_candidate_finder_data(paths, app_config=app_config)
+
+    assert data.alignment.status == "UNKNOWN"
+    assert data.alignment.message is not None
+    assert "Tool C" in data.alignment.message
+    assert "Tool D" in data.alignment.message
+    assert data.frame["tool_c_downside_rank"].isna().all()
+    assert data.frame["tool_d_quality_rank"].isna().all()
+
+
+def test_candidate_finder_data_rejects_non_spot_tool_d_latest(tmp_path):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    non_spot = pd.read_parquet(paths.latest_tool_d_snapshot_parquet_path)
+    non_spot["gold_price_used"] = 3500.0
+    non_spot["spot_gold_usd"] = 4000.0
+    non_spot.to_parquet(paths.latest_tool_d_snapshot_parquet_path, index=False)
+
+    data = load_candidate_finder_data(paths, app_config=app_config)
+
+    assert data.alignment.status == "WARN"
+    assert data.alignment.message is not None
+    assert "not a spot-gold run" in data.alignment.message
+    assert data.frame["tool_d_quality_rank"].isna().all()
+
+
 def test_candidate_finder_data_cache_notices_new_corrupt_latest_file(tmp_path):
     clear_candidate_finder_cache()
     paths = build_test_paths(tmp_path)
@@ -338,6 +376,7 @@ def _write_candidate_finder_inputs(
     tool_a_refresh_run_id: str | None = None,
     tool_b_refresh_run_id: str | None = None,
     tool_b_source_run_id: str | None = None,
+    include_tool_c_d: bool = True,
 ) -> None:
     paths.ensure_runtime_dirs()
     tool_a_run = tool_a_refresh_run_id or refresh_run_id
@@ -404,44 +443,47 @@ def _write_candidate_finder_inputs(
             },
         ]
     ).to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)
-    pd.DataFrame(
-        [
-            {
-                "ticker": "AEM",
-                "tool_c_downside_rank": 90.0,
-                "tool_c_upside_rank": 75.0,
-                "snapshot_refresh_run_id": refresh_run_id,
-                "source_run_id": "tool-c-run",
-            },
-            {
-                "ticker": "NEM",
-                "tool_c_downside_rank": 60.0,
-                "tool_c_upside_rank": 55.0,
-                "snapshot_refresh_run_id": refresh_run_id,
-                "source_run_id": "tool-c-run",
-            },
-        ]
-    ).to_parquet(paths.latest_tool_c_snapshot_parquet_path, index=False)
-    pd.DataFrame(
-        [
-            {
-                "ticker": "AEM",
-                "tool_d_quality_rank": 45.0,
-                "gold_price_used": 4000.0,
-                "spot_gold_date": "2026-06-01",
-                "snapshot_refresh_run_id": refresh_run_id,
-                "source_run_id": "tool-d-run",
-            },
-            {
-                "ticker": "NEM",
-                "tool_d_quality_rank": 80.0,
-                "gold_price_used": 4000.0,
-                "spot_gold_date": "2026-06-01",
-                "snapshot_refresh_run_id": refresh_run_id,
-                "source_run_id": "tool-d-run",
-            },
-        ]
-    ).to_parquet(paths.latest_tool_d_snapshot_parquet_path, index=False)
+    if include_tool_c_d:
+        pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "tool_c_downside_rank": 90.0,
+                    "tool_c_upside_rank": 75.0,
+                    "snapshot_refresh_run_id": refresh_run_id,
+                    "source_run_id": "tool-c-run",
+                },
+                {
+                    "ticker": "NEM",
+                    "tool_c_downside_rank": 60.0,
+                    "tool_c_upside_rank": 55.0,
+                    "snapshot_refresh_run_id": refresh_run_id,
+                    "source_run_id": "tool-c-run",
+                },
+            ]
+        ).to_parquet(paths.latest_tool_c_snapshot_parquet_path, index=False)
+        pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "tool_d_quality_rank": 45.0,
+                    "gold_price_used": 4000.0,
+                    "spot_gold_usd": 4000.0,
+                    "spot_gold_date": "2026-06-01",
+                    "snapshot_refresh_run_id": refresh_run_id,
+                    "source_run_id": "tool-d-run",
+                },
+                {
+                    "ticker": "NEM",
+                    "tool_d_quality_rank": 80.0,
+                    "gold_price_used": 4000.0,
+                    "spot_gold_usd": 4000.0,
+                    "spot_gold_date": "2026-06-01",
+                    "snapshot_refresh_run_id": refresh_run_id,
+                    "source_run_id": "tool-d-run",
+                },
+            ]
+        ).to_parquet(paths.latest_tool_d_snapshot_parquet_path, index=False)
     bootstrap_manual_screening_data(paths, tickers=["AEM", "NEM"])
     upsert_company_input(paths, ticker="AEM", values={"net_debt_musd": 200.0, "aisc_usd_per_oz": 1700.0})
     upsert_company_input(paths, ticker="NEM", values={"net_debt_musd": 100.0, "aisc_usd_per_oz": 1500.0})
