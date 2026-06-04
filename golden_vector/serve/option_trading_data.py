@@ -519,7 +519,7 @@ def _liquidity_measurements(
     }
     settings = settings_from_config(app_config.hedge_readiness)
     as_of_date = _manifest_as_of_date(manifest)
-    grouped: dict[str, list[dict[str, float]]] = {
+    grouped: dict[str, list[dict[str, float | str]]] = {
         "Benchmark ETFs": [],
         "Single-stock miners": [],
     }
@@ -569,6 +569,7 @@ def _liquidity_measurements(
                 "open_interest": float(metric.open_interest),
                 "volume": float(metric.volume),
                 "near_spot_depth": float(metric.near_spot_depth_count),
+                "liquidity_tier": metric.liquidity_tier,
             }
             for metric in metrics
         )
@@ -577,6 +578,18 @@ def _liquidity_measurements(
     for group in ("Benchmark ETFs", "Single-stock miners"):
         rows = grouped[group]
         if not rows:
+            if group == "Benchmark ETFs" and benchmark_tickers:
+                measurements.append(
+                    OptionLiquidityMeasurement(
+                        group_label=group,
+                        ticker_count=0,
+                        contract_count=0,
+                        median_rel_spread=None,
+                        median_open_interest=None,
+                        median_volume=None,
+                        median_near_spot_depth=None,
+                    )
+                )
             continue
         measurements.append(
             OptionLiquidityMeasurement(
@@ -587,19 +600,38 @@ def _liquidity_measurements(
                 median_open_interest=_median(row["open_interest"] for row in rows),
                 median_volume=_median(row["volume"] for row in rows),
                 median_near_spot_depth=_median(row["near_spot_depth"] for row in rows),
+                tradable_count=_tier_count(rows, "tradable"),
+                watch_count=_tier_count(rows, "watch"),
+                no_trade_count=_tier_count(rows, "no_trade"),
             )
         )
     return tuple(measurements)
 
 
-def _median(values: Iterable[float]) -> float | None:
-    numeric = sorted(float(value) for value in values if value is not None)
+def _tier_count(rows: list[dict[str, float | str]], tier: str) -> int:
+    return sum(1 for row in rows if row.get("liquidity_tier") == tier)
+
+
+def _median(values: Iterable[float | str]) -> float | None:
+    numeric = [
+        value
+        for value in (_safe_float(value) for value in values)
+        if value is not None
+    ]
+    numeric.sort()
     if not numeric:
         return None
     midpoint = len(numeric) // 2
     if len(numeric) % 2:
         return numeric[midpoint]
     return (numeric[midpoint - 1] + numeric[midpoint]) / 2.0
+
+
+def _safe_float(value: float | str) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _source_context(

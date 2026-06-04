@@ -92,6 +92,9 @@ class OptionLiquidityMeasurement:
     median_open_interest: float | None
     median_volume: float | None
     median_near_spot_depth: float | None
+    tradable_count: int = 0
+    watch_count: int = 0
+    no_trade_count: int = 0
 
 
 @dataclass(frozen=True)

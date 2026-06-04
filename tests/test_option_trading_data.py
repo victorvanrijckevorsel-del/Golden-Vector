@@ -238,6 +238,53 @@ def test_load_option_trading_data_surfaces_benchmark_etf_option_rows(tmp_path):
         measurement.group_label == "Benchmark ETFs"
         for measurement in data.overview.liquidity_measurements
     )
+    benchmark_measurement = next(
+        measurement
+        for measurement in data.overview.liquidity_measurements
+        if measurement.group_label == "Benchmark ETFs"
+    )
+    single_stock_measurement = next(
+        measurement
+        for measurement in data.overview.liquidity_measurements
+        if measurement.group_label == "Single-stock miners"
+    )
+    assert benchmark_measurement.tradable_count > 0
+    assert (
+        benchmark_measurement.tradable_count
+        + benchmark_measurement.watch_count
+        + benchmark_measurement.no_trade_count
+        == benchmark_measurement.contract_count
+    )
+    assert (
+        single_stock_measurement.tradable_count
+        + single_stock_measurement.watch_count
+        + single_stock_measurement.no_trade_count
+        == single_stock_measurement.contract_count
+    )
+
+
+def test_load_option_trading_data_shows_missing_benchmark_etf_measurement(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        include_benchmarks=False,
+    )
+
+    data = load_option_trading_data(paths, app_config=app_config)
+    benchmark_measurement = next(
+        measurement
+        for measurement in data.overview.liquidity_measurements
+        if measurement.group_label == "Benchmark ETFs"
+    )
+
+    assert benchmark_measurement.ticker_count == 0
+    assert benchmark_measurement.contract_count == 0
+    assert benchmark_measurement.tradable_count == 0
 
 
 def test_load_option_trading_data_ignores_stale_feature_rows(tmp_path):

@@ -45,6 +45,9 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
                     median_open_interest=300.0,
                     median_volume=40.0,
                     median_near_spot_depth=12.0,
+                    tradable_count=80,
+                    watch_count=30,
+                    no_trade_count=10,
                 ),
                 OptionLiquidityMeasurement(
                     group_label="Single-stock miners",
@@ -54,6 +57,9 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
                     median_open_interest=80.0,
                     median_volume=8.0,
                     median_near_spot_depth=4.0,
+                    tradable_count=4,
+                    watch_count=8,
+                    no_trade_count=18,
                 ),
             ),
         )
@@ -80,7 +86,14 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
     assert "Cached Liquidity Check" in html
     assert "Benchmark ETFs" in html
     assert "Single-stock miners" in html
+    assert "Tradable" in html
+    assert "Watch" in html
+    assert "No-trade" in html
+    assert ">80<" in html
+    assert ">18<" in html
     assert "8.0%" in html
+    assert "If Benchmark ETFs show zero contracts" in html
+    assert "Proxy alternatives stay hidden unless this cached check supports them." in html
     assert "Put P&amp;L/share @ Gold -10% (60d)" not in html
     assert "Call P&amp;L/share @ Gold +10% (60d, context)" not in html
     assert "2.50" not in html
