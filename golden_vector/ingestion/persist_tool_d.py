@@ -18,6 +18,7 @@ def persist_tool_d_outputs(
     run_context: RunContext,
     tool_d_outputs: pd.DataFrame,
     source_paths: dict[str, Path] | None = None,
+    provenance_metadata: dict[str, object] | None = None,
     publish_latest_aliases: bool = True,
 ) -> list[Path]:
     """Persist Tool D full/latest outputs and replay source snapshots."""
@@ -64,6 +65,7 @@ def persist_tool_d_outputs(
             update_manifest_with_tool_d_sources(
                 run_context.run_dir,
                 source_paths=source_paths,
+                metadata=provenance_metadata,
             )
         )
 

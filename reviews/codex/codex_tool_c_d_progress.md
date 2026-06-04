@@ -121,3 +121,14 @@ Self-review notes:
 Self-review notes:
 
 - Mirrored the Tool C persistence shape so Candidate Finder can consume stable latest aliases consistently.
+
+### Step 3 - Tool D CLI
+
+- Added `python main.py tool-d --gold-price <G>`.
+- If `--gold-price` is omitted, Tool D uses the latest spot gold close from the foundation snapshot.
+- The runner loads latest Tool B, manual data, normalized market snapshots, and gold history; output provenance records `gold_price_used`, `spot_gold_usd`, and `spot_gold_date`.
+
+Self-review notes:
+
+- Added a CLI test proving the default gold price resolves to spot, not the YAML stress value.
+- Added persistence metadata coverage for `spot_gold_date` per L6.

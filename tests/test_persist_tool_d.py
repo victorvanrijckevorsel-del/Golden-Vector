@@ -33,6 +33,11 @@ def test_persist_tool_d_outputs_writes_latest_and_source_snapshots(tmp_path):
         run_context=run_context,
         tool_d_outputs=outputs,
         source_paths={"tool_b_latest": source_path},
+        provenance_metadata={
+            "gold_price_used": 3000.0,
+            "spot_gold_usd": 4000.0,
+            "spot_gold_date": "2026-06-01",
+        },
     )
 
     assert len(written_paths) == 8
@@ -44,6 +49,7 @@ def test_persist_tool_d_outputs_writes_latest_and_source_snapshots(tmp_path):
         (run_context.run_dir / "replay_manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["tool_d_sources_status"] == "captured"
+    assert manifest["tool_d_sources_captured"]["metadata"]["spot_gold_date"] == "2026-06-01"
     asset = manifest["tool_d_sources_captured"]["source_assets"][0]
     assert asset["name"] == "tool_b_latest"
     assert (run_context.run_dir / asset["snapshot_path"]).exists()

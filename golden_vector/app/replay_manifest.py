@@ -192,6 +192,7 @@ def update_manifest_with_tool_d_sources(
     run_dir: Path,
     *,
     source_paths: dict[str, Path],
+    metadata: dict[str, Any] | None = None,
 ) -> list[Path]:
     """Patch a replay manifest with Tool D source snapshots."""
 
@@ -201,6 +202,7 @@ def update_manifest_with_tool_d_sources(
         status_field_name="tool_d_sources_status",
         snapshot_subdir=TOOL_D_SNAPSHOT_DIR,
         source_paths=source_paths,
+        metadata=metadata,
     )
 
 
@@ -675,6 +677,7 @@ def _update_manifest_with_named_sources(
     status_field_name: str,
     snapshot_subdir: str,
     source_paths: dict[str, Path],
+    metadata: dict[str, Any] | None = None,
 ) -> list[Path]:
     manifest_path = run_dir / REPLAY_MANIFEST_FILE
     copied_paths: list[Path] = []
@@ -698,7 +701,10 @@ def _update_manifest_with_named_sources(
                     "sha256": _sha256_file(snapshot_path),
                 }
             )
-        manifest[field_name] = {"source_assets": source_assets}
+        block: dict[str, Any] = {"source_assets": source_assets}
+        if metadata:
+            block["metadata"] = metadata
+        manifest[field_name] = block
         manifest[status_field_name] = "captured"
     except Exception as exc:  # noqa: BLE001 - source provenance should record and proceed.
         manifest[field_name] = None

@@ -37,9 +37,11 @@ from golden_vector.ingestion.options_phase import (
 )
 from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
+from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
 from golden_vector.hedge.report import write_hedge_readiness_report
 from golden_vector.model.pipeline import execute_tool_a_profile_pipeline
 from golden_vector.model.tool_c import ToolCExecutionInputs, compute_tool_c_outputs
+from golden_vector.model.tool_d import ToolDExecutionInputs, compute_tool_d_outputs
 from golden_vector.screening.manual_data import (
     bootstrap_manual_screening_data,
     load_manual_screening_data,
@@ -110,6 +112,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "tool-c",
         help="Run symmetric Tool C behavior ranking from Tool A and weekly return history.",
+    )
+    tool_d_parser = subparsers.add_parser(
+        "tool-d",
+        help="Run Tool D gold-stressed quality scorecard from Tool B/manual data.",
+    )
+    tool_d_parser.add_argument(
+        "--gold-price",
+        type=float,
+        default=None,
+        help="Gold price G in USD per oz. Defaults to the latest spot gold close.",
     )
 
     refresh_parser = subparsers.add_parser(
@@ -409,6 +421,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "tool-c":
         return run_tool_c(paths)
+
+    if args.command == "tool-d":
+        return run_tool_d(paths, gold_price=args.gold_price)
 
     if args.command == "tool-b":
         return run_tool_b(paths, gold_price=args.gold_price)
@@ -1158,6 +1173,185 @@ def run_tool_c(paths: ProjectPaths) -> int:
             status="FAIL",
             summary={"error": str(exc)},
             notes=["Tool C run failed before completion."],
+        )
+        return 1
+
+
+def run_tool_d(paths: ProjectPaths, *, gold_price: float | None) -> int:
+    run_context: RunContext | None = None
+
+    try:
+        loaded_config = load_app_config(paths)
+        run_context = RunContext.start(
+            paths=paths,
+            command="tool-d",
+            parameters={"gold_price": gold_price},
+            config_hash=loaded_config.combined_hash,
+        )
+        configure_logging(run_context.log_path)
+
+        configured_tickers = loaded_config.app.universe.tickers
+        active_tickers = [ticker for ticker in configured_tickers if ticker.active]
+        tool_b_enabled = [
+            ticker for ticker in active_tickers if ticker.tool_b_enabled
+        ]
+        config_summary = {
+            "configured_ticker_count": len(configured_tickers),
+            "active_ticker_count": len(active_tickers),
+            "tool_b_enabled_ticker_count": len(tool_b_enabled),
+            "combined_config_hash": loaded_config.combined_hash,
+        }
+        run_context.write_json("config_summary.json", config_summary)
+        if not tool_b_enabled:
+            run_context.finalize(
+                status="FAIL",
+                summary=config_summary,
+                notes=["Tool D cannot run because no active Tool B tickers are configured."],
+            )
+            LOGGER.error("Tool D stopped because no active Tool B tickers are configured.")
+            return 1
+        if not manual_store_exists(paths):
+            missing_store_note = _missing_manual_store_note()
+            run_context.finalize(
+                status="FAIL",
+                summary=config_summary,
+                notes=[missing_store_note],
+            )
+            LOGGER.error("%s", missing_store_note)
+            return 1
+
+        foundation_snapshot = _load_latest_foundation_snapshot(
+            paths=paths,
+            app_config=loaded_config.app,
+            run_context=run_context,
+            include_gold_history=True,
+            include_equity_histories=False,
+            include_market_snapshots=True,
+        )
+        _capture_foundation_for_replay_manifest(run_context, foundation_snapshot)
+        spot_gold_usd, spot_gold_date = _spot_gold_from_history(
+            foundation_snapshot.gold_history
+        )
+        resolved_gold_price = float(gold_price) if gold_price is not None else spot_gold_usd
+        if resolved_gold_price <= 0:
+            raise ValueError("gold price must be positive")
+
+        if not paths.latest_tool_b_snapshot_parquet_path.exists():
+            raise FileNotFoundError(
+                "No Tool B latest output exists yet. Run `python main.py tool-b` first."
+            )
+        tool_b_latest = pd.read_parquet(paths.latest_tool_b_snapshot_parquet_path)
+        manual_data = load_manual_screening_data(
+            paths,
+            tickers=sorted(
+                ticker.ticker
+                for ticker in loaded_config.app.universe.tickers
+                if ticker.active and ticker.tool_b_enabled
+            ),
+        )
+        tool_d_outputs = compute_tool_d_outputs(
+            inputs=ToolDExecutionInputs(
+                app_config=loaded_config.app,
+                manual_data=manual_data,
+                normalized_market_snapshots=foundation_snapshot.normalized_market_snapshots,
+                tool_b_latest=tool_b_latest,
+                spot_gold_usd=spot_gold_usd,
+                spot_gold_date=spot_gold_date,
+                snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
+                snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
+            ),
+            config=loaded_config.app.tool_d,
+            gold_price=resolved_gold_price,
+            source_run_id=run_context.run_id,
+        )
+        persist_tool_d_outputs(
+            paths=paths,
+            run_context=run_context,
+            tool_d_outputs=tool_d_outputs,
+            source_paths=_tool_d_source_paths(
+                paths=paths,
+                foundation_snapshot=foundation_snapshot,
+            ),
+            provenance_metadata={
+                "gold_price_used": resolved_gold_price,
+                "spot_gold_usd": spot_gold_usd,
+                "spot_gold_date": spot_gold_date,
+            },
+            publish_latest_aliases=not tool_d_outputs.empty,
+        )
+
+        ranked = (
+            int(tool_d_outputs["tool_d_quality_rank"].notna().sum())
+            if "tool_d_quality_rank" in tool_d_outputs.columns
+            else 0
+        )
+        tool_d_status = "PASS"
+        if tool_d_outputs.empty:
+            tool_d_status = "FAIL"
+        elif ranked == 0:
+            tool_d_status = "WARN"
+        summary = {
+            "tool_d_output_row_count": len(tool_d_outputs.index),
+            "tool_d_ranked_row_count": ranked,
+            "tool_d_output_overall_status": tool_d_status,
+            "gold_price_used": resolved_gold_price,
+            "spot_gold_usd": spot_gold_usd,
+            "spot_gold_date": spot_gold_date,
+        }
+        run_context.write_json("tool_d_output_summary.json", summary)
+        overall_status = _combine_statuses(
+            foundation_snapshot.raw_qa_summary.get("overall_status"),
+            foundation_snapshot.normalization_qa_summary.get("overall_status"),
+            tool_d_status,
+        )
+        run_context.write_json(
+            "qa_summary.json",
+            {
+                "overall_status": overall_status,
+                "raw": foundation_snapshot.raw_qa_summary,
+                "normalization": foundation_snapshot.normalization_qa_summary,
+                "tool_d_output": summary,
+            },
+        )
+        notes = [
+            "Tool D ran from the latest validated local market-data snapshot, latest Tool B output, and the local manual-data store.",
+            f"Snapshot refresh run: {foundation_snapshot.refresh_run_id}.",
+            f"Spot gold reference: ${spot_gold_usd:.2f}/oz on {spot_gold_date}.",
+            f"Gold price used: ${resolved_gold_price:.2f}/oz.",
+            f"Tool D output status: {tool_d_status}.",
+        ]
+        run_context.finalize(
+            status=overall_status,
+            summary={
+                **config_summary,
+                **foundation_snapshot.summary,
+                "snapshot_refresh_run_id": foundation_snapshot.refresh_run_id,
+                "snapshot_as_of_date": foundation_snapshot.snapshot_as_of_date,
+                **summary,
+            },
+            notes=notes,
+        )
+
+        if overall_status == "FAIL":
+            LOGGER.error("Tool D run completed with blocking failures.")
+            return 1
+
+        LOGGER.info("Tool D run completed with status %s.", overall_status)
+        return 0
+    except Exception as exc:
+        if run_context is None:
+            run_context = RunContext.start(
+                paths=paths,
+                command="tool-d",
+                parameters={"gold_price": gold_price},
+                config_hash="UNAVAILABLE",
+            )
+            configure_logging(run_context.log_path)
+        LOGGER.exception("Tool D run failed.")
+        run_context.finalize(
+            status="FAIL",
+            summary={"error": str(exc)},
+            notes=["Tool D run failed before completion."],
         )
         return 1
 
@@ -2019,6 +2213,49 @@ def _tool_c_source_paths(
         if path.exists():
             source_paths[f"benchmark_{ticker}"] = path
     return source_paths
+
+
+def _tool_d_source_paths(
+    *,
+    paths: ProjectPaths,
+    foundation_snapshot: LatestFoundationSnapshot,
+) -> dict[str, Path]:
+    source_paths: dict[str, Path] = {
+        "tool_b_latest": paths.latest_tool_b_snapshot_parquet_path,
+        "manual_screening_store": paths.manual_screening_store_path,
+    }
+    try:
+        manifest = json.loads(foundation_snapshot.manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - source capture degrades to available files.
+        LOGGER.warning("Foundation manifest could not be read for Tool D sources: %s", exc)
+        manifest = {}
+    raw_gold_path = str(manifest.get("gold_history_path", "")).strip()
+    if raw_gold_path:
+        source_paths["foundation_raw_gold"] = paths.resolve_repo_relative(raw_gold_path)
+    return source_paths
+
+
+def _spot_gold_from_history(gold_history: pd.DataFrame) -> tuple[float, str | None]:
+    if gold_history.empty or "date" not in gold_history.columns:
+        raise ValueError("Latest foundation snapshot has no gold history for Tool D spot reference.")
+    working = gold_history.copy()
+    working["date"] = pd.to_datetime(working["date"], errors="coerce")
+    if "adj_close_usd" in working.columns:
+        working["spot_gold_usd"] = pd.to_numeric(working["adj_close_usd"], errors="coerce")
+    else:
+        working["spot_gold_usd"] = pd.NA
+    if "close_usd" in working.columns:
+        working["spot_gold_usd"] = working["spot_gold_usd"].where(
+            working["spot_gold_usd"].notna(),
+            pd.to_numeric(working["close_usd"], errors="coerce"),
+        )
+    working = working.loc[
+        working["date"].notna() & pd.to_numeric(working["spot_gold_usd"], errors="coerce").gt(0)
+    ].copy()
+    if working.empty:
+        raise ValueError("Latest foundation snapshot has no positive gold close for Tool D.")
+    row = working.sort_values("date").iloc[-1]
+    return float(row["spot_gold_usd"]), str(pd.Timestamp(row["date"]).date())
 
 
 def _load_latest_foundation_snapshot(
