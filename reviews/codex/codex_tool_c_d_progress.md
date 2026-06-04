@@ -15,3 +15,15 @@ Self-review notes:
 - The Tool C hit-rate thresholds live in YAML and validation enforces down/up ordering.
 - Defaults avoid breaking unit tests that instantiate `AppConfig` directly.
 - Replay coverage is inherited from `expected_config_paths`; the existing replay test now verifies the expanded list.
+
+### Step 2 - Weekly return contract
+
+- Added `golden_vector/features/weekly_returns.py`.
+- Tool C stock/gold returns reuse `build_structural_weekly_series` so sampling stays aligned with Tool A.
+- Benchmark ETF returns are joined by the same W-FRI `week_period` key and exposed as `gdx_log_ret` / `gdxj_log_ret`.
+- Added unit tests for output columns, benchmark alignment, and incomplete-week dropping.
+
+Self-review notes:
+
+- Fixed a defensive issue where benchmark files without `return_basis_usd` could produce a non-Series basis.
+- Kept benchmark columns fixed to the locked GDX/GDXJ output contract while allowing missing benchmark histories to surface as nulls.
