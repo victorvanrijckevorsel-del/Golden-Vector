@@ -49,6 +49,10 @@ from golden_vector.serve.option_trading_data import (
     load_option_trading_data,
     parse_option_sizing_request,
 )
+from golden_vector.serve.option_refresh import (
+    read_option_refresh_status,
+    start_options_refresh,
+)
 from golden_vector.serve.candidate_finder_data import load_candidate_finder_data
 from golden_vector.serve.candidate_finder_page import render_candidate_finder_page
 from golden_vector.serve.overview_option_trading import _render_option_trading_overview_page
@@ -103,6 +107,14 @@ def create_workspace_app(
                     paths.output_hedge_readiness_dir / "latest.md",
                     content_type="text/markdown; charset=utf-8",
                     download_name="golden-vector-hedge-readiness-latest.md",
+                )
+
+            if method == "POST" and path == "/option-trading/refresh":
+                form_data = _read_form_data(environ)
+                start_options_refresh(paths)
+                return _redirect_response(
+                    start_response,
+                    _safe_return_to(form_data.get("return_to", ["/option-trading"])[0]),
                 )
 
             if method == "GET" and path in ("/", "/combined"):
@@ -178,9 +190,13 @@ def create_workspace_app(
                     paths,
                     app_config=app_config,
                 )
+                refresh_status = read_option_refresh_status(paths)
                 return _html_response(
                     start_response,
-                    _render_option_trading_overview_page(option_trading_data.overview),
+                    _render_option_trading_overview_page(
+                        option_trading_data.overview,
+                        refresh_status=refresh_status,
+                    ),
                 )
 
             if method == "GET" and path == "/candidate-finder":
@@ -220,11 +236,13 @@ def create_workspace_app(
                     )
                     detail_lens = resolve_detail_lens(query.get("lens", [""])[0])
                     option_trading_detail = None
+                    option_refresh_status = None
                     if detail_lens == DETAIL_OPTION_TRADING_LENS_ID:
                         option_trading_data = load_option_trading_data(
                             paths,
                             app_config=app_config,
                         )
+                        option_refresh_status = read_option_refresh_status(paths)
                         option_trading_detail = build_option_trading_detail_data(
                             option_trading_data,
                             ticker=ticker,
@@ -247,6 +265,7 @@ def create_workspace_app(
                             lens=detail_lens,
                             app_config=app_config,
                             option_trading_detail=option_trading_detail,
+                            option_refresh_status=option_refresh_status,
                         ),
                     )
 
@@ -435,6 +454,13 @@ def create_workspace_app(
             )
 
     return app
+
+
+def _safe_return_to(raw_value: object) -> str:
+    value = str(raw_value or "").strip()
+    if not value or not value.startswith("/") or value.startswith("//") or "\\" in value:
+        return "/option-trading"
+    return value
 
 
 def run_workspace_server(

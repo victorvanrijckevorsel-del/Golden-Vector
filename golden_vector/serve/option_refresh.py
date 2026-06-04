@@ -1,0 +1,451 @@
+"""Local refresh job state for the Option Trading workspace UI."""
+
+from __future__ import annotations
+
+import argparse
+import ctypes
+import json
+import os
+import subprocess
+import sys
+import time
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Callable, Sequence
+
+from golden_vector.app.paths import ProjectPaths
+
+REFRESH_STATUS_IDLE = "idle"
+REFRESH_STATUS_RUNNING = "running"
+REFRESH_STATUS_SUCCEEDED = "succeeded"
+REFRESH_STATUS_FAILED = "failed"
+REFRESH_STATUS_UNKNOWN = "unknown"
+
+_STILL_ACTIVE = 259
+_DETACHED_PROCESS = 0x00000008
+
+
+@dataclass(frozen=True)
+class OptionRefreshStatus:
+    status: str = REFRESH_STATUS_IDLE
+    job_id: str | None = None
+    process_id: int | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    command: tuple[str, ...] = ()
+    latest_run_id: str | None = None
+    log_path: str | None = None
+    error_summary: str | None = None
+
+    @property
+    def is_running(self) -> bool:
+        return self.status == REFRESH_STATUS_RUNNING
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "job_id": self.job_id,
+            "process_id": self.process_id,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "command": list(self.command),
+            "latest_run_id": self.latest_run_id,
+            "log_path": self.log_path,
+            "error_summary": self.error_summary,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "OptionRefreshStatus":
+        command = payload.get("command") or []
+        if not isinstance(command, list):
+            command = []
+        return cls(
+            status=str(payload.get("status") or REFRESH_STATUS_UNKNOWN),
+            job_id=_optional_text(payload.get("job_id")),
+            process_id=_optional_int(payload.get("process_id")),
+            started_at=_optional_text(payload.get("started_at")),
+            finished_at=_optional_text(payload.get("finished_at")),
+            command=tuple(str(part) for part in command),
+            latest_run_id=_optional_text(payload.get("latest_run_id")),
+            log_path=_optional_text(payload.get("log_path")),
+            error_summary=_optional_text(payload.get("error_summary")),
+        )
+
+
+@dataclass(frozen=True)
+class OptionRefreshStartResult:
+    status: OptionRefreshStatus
+    started: bool
+    already_running: bool = False
+
+
+ProcessExists = Callable[[int], bool]
+PopenFactory = Callable[..., Any]
+
+
+def option_refresh_status_path(paths: ProjectPaths) -> Path:
+    return paths.runs_dir / "ui_refresh_status.json"
+
+
+def option_refresh_logs_dir(paths: ProjectPaths) -> Path:
+    return paths.runs_dir / "ui_refresh_logs"
+
+
+def read_option_refresh_status(
+    paths: ProjectPaths,
+    *,
+    process_exists: ProcessExists | None = None,
+) -> OptionRefreshStatus:
+    status_path = option_refresh_status_path(paths)
+    if not status_path.exists():
+        return OptionRefreshStatus()
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("refresh status JSON root must be an object")
+        status = OptionRefreshStatus.from_payload(payload)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return OptionRefreshStatus(
+            status=REFRESH_STATUS_UNKNOWN,
+            finished_at=_utc_now(),
+            error_summary=f"Could not read refresh status: {exc}",
+        )
+    if status.status == REFRESH_STATUS_RUNNING and status.process_id is not None:
+        exists = process_exists or is_process_running
+        if not exists(status.process_id):
+            recovered = OptionRefreshStatus(
+                status=REFRESH_STATUS_FAILED,
+                job_id=status.job_id,
+                process_id=status.process_id,
+                started_at=status.started_at,
+                finished_at=_utc_now(),
+                command=status.command,
+                latest_run_id=status.latest_run_id,
+                log_path=status.log_path,
+                error_summary="Refresh process is no longer running.",
+            )
+            write_option_refresh_status(paths, recovered)
+            return recovered
+    return status
+
+
+def write_option_refresh_status(
+    paths: ProjectPaths,
+    status: OptionRefreshStatus,
+) -> Path:
+    status_path = option_refresh_status_path(paths)
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = status_path.with_suffix(status_path.suffix + ".tmp")
+    temporary_path.write_text(
+        json.dumps(status.to_payload(), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    temporary_path.replace(status_path)
+    return status_path
+
+
+def start_options_refresh(
+    paths: ProjectPaths,
+    *,
+    process_exists: ProcessExists | None = None,
+    popen_factory: PopenFactory | None = None,
+) -> OptionRefreshStartResult:
+    current = read_option_refresh_status(paths, process_exists=process_exists)
+    if current.status == REFRESH_STATUS_RUNNING:
+        return OptionRefreshStartResult(
+            status=current,
+            started=False,
+            already_running=True,
+        )
+
+    job_id = _new_job_id()
+    log_path = option_refresh_logs_dir(paths) / f"{job_id}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    command = _options_refresh_command(paths)
+    runner_command = [
+        sys.executable,
+        "-m",
+        "golden_vector.serve.option_refresh",
+        "--run",
+        "--job-id",
+        job_id,
+        "--log-path",
+        str(log_path),
+    ]
+    try:
+        process = _spawn_runner(
+            runner_command,
+            paths=paths,
+            popen_factory=popen_factory,
+        )
+    except OSError as exc:
+        failed = OptionRefreshStatus(
+            status=REFRESH_STATUS_FAILED,
+            job_id=job_id,
+            started_at=_utc_now(),
+            finished_at=_utc_now(),
+            command=tuple(command),
+            log_path=_repo_relative_or_absolute(paths, log_path),
+            error_summary=f"Could not start refresh process: {exc}",
+        )
+        write_option_refresh_status(paths, failed)
+        return OptionRefreshStartResult(status=failed, started=False)
+
+    status = OptionRefreshStatus(
+        status=REFRESH_STATUS_RUNNING,
+        job_id=job_id,
+        process_id=_optional_int(getattr(process, "pid", None)),
+        started_at=_utc_now(),
+        command=tuple(command),
+        log_path=_repo_relative_or_absolute(paths, log_path),
+    )
+    write_option_refresh_status(paths, status)
+    return OptionRefreshStartResult(status=status, started=True)
+
+
+def complete_options_refresh(
+    paths: ProjectPaths,
+    *,
+    job_id: str,
+    return_code: int,
+    error_summary: str | None = None,
+) -> OptionRefreshStatus:
+    current = read_option_refresh_status(paths, process_exists=lambda _pid: True)
+    if current.job_id is not None and current.job_id != job_id:
+        return current
+    latest_run_id = _latest_options_refresh_run_id(paths)
+    status = OptionRefreshStatus(
+        status=REFRESH_STATUS_SUCCEEDED
+        if return_code == 0
+        else REFRESH_STATUS_FAILED,
+        job_id=job_id,
+        process_id=current.process_id,
+        started_at=current.started_at,
+        finished_at=_utc_now(),
+        command=current.command or tuple(_options_refresh_command(paths)),
+        latest_run_id=latest_run_id,
+        log_path=current.log_path,
+        error_summary=error_summary if return_code != 0 else None,
+    )
+    write_option_refresh_status(paths, status)
+    return status
+
+
+def is_process_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        return _is_windows_process_running(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def run_refresh_child(*, job_id: str, log_path: Path) -> int:
+    paths = ProjectPaths.discover()
+    _wait_for_parent_status(paths, job_id=job_id)
+    command = _options_refresh_command(paths)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as log_file:
+        log_file.write(f"[{_utc_now()}] Starting option refresh: {' '.join(command)}\n")
+        log_file.flush()
+        completed = subprocess.run(
+            command,
+            cwd=paths.repo_root,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        log_file.write(
+            f"[{_utc_now()}] Option refresh finished with exit code {completed.returncode}.\n"
+        )
+    complete_options_refresh(
+        paths,
+        job_id=job_id,
+        return_code=completed.returncode,
+        error_summary=_tail_log(log_path) if completed.returncode != 0 else None,
+    )
+    return completed.returncode
+
+
+def render_option_refresh_control(
+    status: OptionRefreshStatus,
+    *,
+    return_to: str,
+) -> str:
+    disabled = " disabled" if status.status == REFRESH_STATUS_RUNNING else ""
+    status_text = _refresh_status_text(status)
+    return (
+        "<section class=\"option-refresh-control\">"
+        "<form method=\"post\" action=\"/option-trading/refresh\" class=\"inline-form\">"
+        f"<input type=\"hidden\" name=\"return_to\" value=\"{_html_attr(return_to)}\">"
+        f"<button type=\"submit\"{disabled}>Refresh cached options data</button>"
+        "</form>"
+        f"<p class=\"hint\">{_html_text(status_text)}</p>"
+        "</section>"
+    )
+
+
+def _spawn_runner(
+    command: Sequence[str],
+    *,
+    paths: ProjectPaths,
+    popen_factory: PopenFactory | None,
+) -> Any:
+    kwargs: dict[str, Any] = {
+        "cwd": paths.repo_root,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | _DETACHED_PROCESS
+        )
+    else:
+        kwargs["start_new_session"] = True
+    factory = popen_factory or subprocess.Popen
+    return factory(list(command), **kwargs)
+
+
+def _options_refresh_command(paths: ProjectPaths) -> list[str]:
+    return [sys.executable, str(paths.repo_root / "main.py"), "update-data", "--options"]
+
+
+def _latest_options_refresh_run_id(paths: ProjectPaths) -> str | None:
+    try:
+        payload = json.loads(paths.latest_options_manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    run_id = payload.get("refresh_run_id")
+    return str(run_id) if run_id else None
+
+
+def _tail_log(path: Path, *, line_count: int = 8) -> str | None:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    tail = [line.strip() for line in lines[-line_count:] if line.strip()]
+    return "\n".join(tail) if tail else None
+
+
+def _wait_for_parent_status(
+    paths: ProjectPaths,
+    *,
+    job_id: str,
+    timeout_seconds: float = 10.0,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        status = read_option_refresh_status(paths, process_exists=lambda _pid: True)
+        if status.job_id == job_id:
+            return
+        time.sleep(0.05)
+
+
+def _is_windows_process_running(pid: int) -> bool:
+    try:
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, int(pid))
+        if not handle:
+            return False
+        exit_code = ctypes.c_ulong()
+        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+        kernel32.CloseHandle(handle)
+        return bool(ok) and exit_code.value == _STILL_ACTIVE
+    except Exception:  # noqa: BLE001 - fallback to conservative POSIX-style probe.
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except (PermissionError, OSError):
+            return True
+        return True
+
+
+def _refresh_status_text(status: OptionRefreshStatus) -> str:
+    if status.status == REFRESH_STATUS_RUNNING:
+        started = f" since {status.started_at}" if status.started_at else ""
+        return f"Options refresh running{started}."
+    if status.status == REFRESH_STATUS_SUCCEEDED:
+        finished = f" at {status.finished_at}" if status.finished_at else ""
+        run = f" Latest options run: {status.latest_run_id}." if status.latest_run_id else ""
+        return f"Options refresh succeeded{finished}.{run}"
+    if status.status == REFRESH_STATUS_FAILED:
+        detail = f" {status.error_summary}" if status.error_summary else ""
+        return f"Options refresh failed.{detail}"
+    if status.status == REFRESH_STATUS_UNKNOWN:
+        detail = f" {status.error_summary}" if status.error_summary else ""
+        return f"Options refresh status unknown.{detail}"
+    return "Options refresh idle."
+
+
+def _repo_relative_or_absolute(paths: ProjectPaths, path: Path) -> str:
+    try:
+        return path.relative_to(paths.repo_root).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _new_job_id() -> str:
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return f"{timestamp}-{uuid.uuid4().hex[:8]}"
+
+
+def _html_text(value: str) -> str:
+    from html import escape
+
+    return escape(value)
+
+
+def _html_attr(value: str) -> str:
+    from html import escape
+
+    return escape(value, quote=True)
+
+
+def _main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run", action="store_true")
+    parser.add_argument("--job-id", required=True)
+    parser.add_argument("--log-path", required=True)
+    args = parser.parse_args(argv)
+    if not args.run:
+        parser.error("--run is required")
+    return run_refresh_child(job_id=args.job_id, log_path=Path(args.log_path))
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
