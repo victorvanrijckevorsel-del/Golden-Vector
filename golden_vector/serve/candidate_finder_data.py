@@ -36,10 +36,14 @@ OptionsSide = Literal["puts", "calls", "either", "none"]
 class CandidateFinderCacheKey:
     tool_a_refresh_run_ids: tuple[str, ...]
     tool_b_refresh_run_ids: tuple[str, ...]
+    tool_c_refresh_run_ids: tuple[str, ...]
+    tool_d_refresh_run_ids: tuple[str, ...]
     options_refresh_run_id: str
     manual_store_hash: str | None
     tool_a_latest_hash: str | None
     tool_b_latest_hash: str | None
+    tool_c_latest_hash: str | None
+    tool_d_latest_hash: str | None
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,8 @@ class CandidateFinderAlignment:
     message: str | None
     tool_a_refresh_run_ids: tuple[str, ...]
     tool_b_refresh_run_ids: tuple[str, ...]
+    tool_c_refresh_run_ids: tuple[str, ...]
+    tool_d_refresh_run_ids: tuple[str, ...]
     options_refresh_run_id: str | None
     manual_store_hash: str | None
     manual_store_as_of: str | None
@@ -102,6 +108,16 @@ def load_candidate_finder_data(
     )
     tool_a = tool_a_load.frame
     tool_b = tool_b_load.frame
+    tool_c_load = _read_optional_parquet(
+        paths.latest_tool_c_snapshot_parquet_path,
+        label="Tool C",
+    )
+    tool_d_load = _read_optional_parquet(
+        paths.latest_tool_d_snapshot_parquet_path,
+        label="Tool D",
+    )
+    tool_c = tool_c_load.frame
+    tool_d = tool_d_load.frame
     option_data = load_option_trading_data(paths, app_config=app_config)
     manual_company, _, _, _ = load_store_tables(paths)
     manual_hash = _file_sha256(paths.manual_screening_store_path)
@@ -110,10 +126,14 @@ def load_candidate_finder_data(
     cache_key = CandidateFinderCacheKey(
         tool_a_refresh_run_ids=_unique_strings(tool_a, "snapshot_refresh_run_id"),
         tool_b_refresh_run_ids=_unique_strings(tool_b, "snapshot_refresh_run_id"),
+        tool_c_refresh_run_ids=_unique_strings(tool_c, "snapshot_refresh_run_id"),
+        tool_d_refresh_run_ids=_unique_strings(tool_d, "snapshot_refresh_run_id"),
         options_refresh_run_id=options_refresh_run_id or "unknown",
         manual_store_hash=manual_hash,
         tool_a_latest_hash=_file_sha256(paths.latest_tool_a_snapshot_parquet_path),
         tool_b_latest_hash=_file_sha256(paths.latest_tool_b_snapshot_parquet_path),
+        tool_c_latest_hash=_file_sha256(paths.latest_tool_c_snapshot_parquet_path),
+        tool_d_latest_hash=_file_sha256(paths.latest_tool_d_snapshot_parquet_path),
     )
     cached = _CACHE.get(cache_key)
     if cached is not None:
@@ -123,6 +143,8 @@ def load_candidate_finder_data(
         app_config=app_config,
         tool_a=tool_a,
         tool_b=tool_b,
+        tool_c=tool_c,
+        tool_d=tool_d,
         options=option_data.options_features,
         manual_company=manual_company,
         option_data=option_data,
@@ -130,12 +152,19 @@ def load_candidate_finder_data(
     alignment = _alignment(
         tool_a=tool_a,
         tool_b=tool_b,
+        tool_c=tool_c,
+        tool_d=tool_d,
         options_refresh_run_id=options_refresh_run_id,
         manual_store_hash=manual_hash,
         manual_store_as_of=manual_as_of,
         source_load_warnings=tuple(
             warning
-            for warning in (tool_a_load.warning, tool_b_load.warning)
+            for warning in (
+                tool_a_load.warning,
+                tool_b_load.warning,
+                tool_c_load.warning,
+                tool_d_load.warning,
+            )
             if warning is not None
         ),
     )
@@ -239,6 +268,8 @@ def _joined_frame(
     app_config: AppConfig,
     tool_a: pd.DataFrame,
     tool_b: pd.DataFrame,
+    tool_c: pd.DataFrame,
+    tool_d: pd.DataFrame,
     options: pd.DataFrame,
     manual_company: pd.DataFrame,
     option_data: OptionTradingData,
@@ -266,6 +297,16 @@ def _joined_frame(
         on="ticker",
     )
     joined = joined.merge(
+        _prepare_source(tool_c, rename=_TOOL_C_RENAMES),
+        how="left",
+        on="ticker",
+    )
+    joined = joined.merge(
+        _prepare_source(tool_d, rename=_TOOL_D_RENAMES),
+        how="left",
+        on="ticker",
+    )
+    joined = joined.merge(
         _prepare_source(options, rename=_OPTIONS_RENAMES),
         how="left",
         on="ticker",
@@ -282,6 +323,7 @@ def _joined_frame(
         lambda ticker: _has_usable_slots(option_data.call_candidate_slots.get(str(ticker), []))
     )
     _add_derived_ratios(joined)
+    _ensure_configured_source_fields(joined, app_config.candidate_finder)
     return joined.sort_values("ticker").reset_index(drop=True)
 
 
@@ -295,6 +337,16 @@ _TOOL_B_RENAMES = {
     "snapshot_refresh_run_id": "tool_b_snapshot_refresh_run_id",
     "source_run_id": "tool_b_source_run_id",
     "confidence": "tool_b_confidence",
+}
+_TOOL_C_RENAMES = {
+    "as_of_date": "tool_c_as_of_date",
+    "source_run_id": "tool_c_source_run_id",
+    "snapshot_refresh_run_id": "tool_c_snapshot_refresh_run_id",
+}
+_TOOL_D_RENAMES = {
+    "as_of_date": "tool_d_as_of_date",
+    "source_run_id": "tool_d_source_run_id",
+    "snapshot_refresh_run_id": "tool_d_snapshot_refresh_run_id",
 }
 _OPTIONS_RENAMES = {
     "as_of_date": "options_as_of_date",
@@ -337,6 +389,15 @@ def _add_derived_ratios(frame: pd.DataFrame) -> None:
         _numeric_source_series(frame, "forward_net_income_musd"),
         market_cap,
     )
+
+
+def _ensure_configured_source_fields(
+    frame: pd.DataFrame,
+    config: CandidateFinderConfig,
+) -> None:
+    for criterion in config.criteria:
+        if criterion.source_field not in frame.columns:
+            frame[criterion.source_field] = pd.NA
 
 
 def _numeric_source_series(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -461,6 +522,8 @@ def _alignment(
     *,
     tool_a: pd.DataFrame,
     tool_b: pd.DataFrame,
+    tool_c: pd.DataFrame,
+    tool_d: pd.DataFrame,
     options_refresh_run_id: str | None,
     manual_store_hash: str | None,
     manual_store_as_of: str | None,
@@ -468,12 +531,18 @@ def _alignment(
 ) -> CandidateFinderAlignment:
     tool_a_ids = _unique_strings(tool_a, "snapshot_refresh_run_id")
     tool_b_ids = _unique_strings(tool_b, "snapshot_refresh_run_id")
+    tool_c_ids = _unique_strings(tool_c, "snapshot_refresh_run_id")
+    tool_d_ids = _unique_strings(tool_d, "snapshot_refresh_run_id")
     options_id = str(options_refresh_run_id or "").strip() or None
     source_ids: dict[str, tuple[str, ...]] = {
         "Tool A": tool_a_ids,
         "Tool B": tool_b_ids,
         "Options": (options_id,) if options_id else (),
     }
+    if not tool_c.empty:
+        source_ids["Tool C"] = tool_c_ids
+    if not tool_d.empty:
+        source_ids["Tool D"] = tool_d_ids
     missing = [name for name, values in source_ids.items() if not values]
     seen = {value for values in source_ids.values() for value in values}
     warnings = list(source_load_warnings)
@@ -490,6 +559,8 @@ def _alignment(
             message=message,
             tool_a_refresh_run_ids=tool_a_ids,
             tool_b_refresh_run_ids=tool_b_ids,
+            tool_c_refresh_run_ids=tool_c_ids,
+            tool_d_refresh_run_ids=tool_d_ids,
             options_refresh_run_id=options_id,
             manual_store_hash=manual_store_hash,
             manual_store_as_of=manual_store_as_of,
@@ -507,6 +578,8 @@ def _alignment(
             message=message,
             tool_a_refresh_run_ids=tool_a_ids,
             tool_b_refresh_run_ids=tool_b_ids,
+            tool_c_refresh_run_ids=tool_c_ids,
+            tool_d_refresh_run_ids=tool_d_ids,
             options_refresh_run_id=options_id,
             manual_store_hash=manual_store_hash,
             manual_store_as_of=manual_store_as_of,
@@ -519,6 +592,8 @@ def _alignment(
             message=message,
             tool_a_refresh_run_ids=tool_a_ids,
             tool_b_refresh_run_ids=tool_b_ids,
+            tool_c_refresh_run_ids=tool_c_ids,
+            tool_d_refresh_run_ids=tool_d_ids,
             options_refresh_run_id=options_id,
             manual_store_hash=manual_store_hash,
             manual_store_as_of=manual_store_as_of,
@@ -529,6 +604,8 @@ def _alignment(
         message=None,
         tool_a_refresh_run_ids=tool_a_ids,
         tool_b_refresh_run_ids=tool_b_ids,
+        tool_c_refresh_run_ids=tool_c_ids,
+        tool_d_refresh_run_ids=tool_d_ids,
         options_refresh_run_id=options_id,
         manual_store_hash=manual_store_hash,
         manual_store_as_of=manual_store_as_of,

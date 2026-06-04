@@ -40,6 +40,10 @@ def test_candidate_finder_data_joins_sources_and_derives_ratios(tmp_path):
     assert frame.loc["AEM", "ebitda_to_mktcap"] == pytest.approx(0.50)
     assert frame.loc["AEM", "revenue_to_mktcap"] == pytest.approx(1.20)
     assert frame.loc["AEM", "netincome_to_mktcap"] == pytest.approx(0.30)
+    assert frame.loc["AEM", "tool_c_downside_rank"] == pytest.approx(90.0)
+    assert frame.loc["AEM", "tool_c_upside_rank"] == pytest.approx(75.0)
+    assert frame.loc["AEM", "tool_d_quality_rank"] == pytest.approx(45.0)
+    assert frame.loc["NEM", "tool_d_quality_rank"] == pytest.approx(80.0)
 
 
 def test_candidate_finder_usable_side_filter_excludes_watch_candidates():
@@ -340,6 +344,8 @@ def _write_candidate_finder_inputs(
     tool_b_run = tool_b_refresh_run_id or refresh_run_id
     paths.output_tool_a_dir.mkdir(parents=True, exist_ok=True)
     paths.output_tool_b_dir.mkdir(parents=True, exist_ok=True)
+    paths.output_tool_c_dir.mkdir(parents=True, exist_ok=True)
+    paths.output_tool_d_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
         [
             {
@@ -398,6 +404,44 @@ def _write_candidate_finder_inputs(
             },
         ]
     ).to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)
+    pd.DataFrame(
+        [
+            {
+                "ticker": "AEM",
+                "tool_c_downside_rank": 90.0,
+                "tool_c_upside_rank": 75.0,
+                "snapshot_refresh_run_id": refresh_run_id,
+                "source_run_id": "tool-c-run",
+            },
+            {
+                "ticker": "NEM",
+                "tool_c_downside_rank": 60.0,
+                "tool_c_upside_rank": 55.0,
+                "snapshot_refresh_run_id": refresh_run_id,
+                "source_run_id": "tool-c-run",
+            },
+        ]
+    ).to_parquet(paths.latest_tool_c_snapshot_parquet_path, index=False)
+    pd.DataFrame(
+        [
+            {
+                "ticker": "AEM",
+                "tool_d_quality_rank": 45.0,
+                "gold_price_used": 4000.0,
+                "spot_gold_date": "2026-06-01",
+                "snapshot_refresh_run_id": refresh_run_id,
+                "source_run_id": "tool-d-run",
+            },
+            {
+                "ticker": "NEM",
+                "tool_d_quality_rank": 80.0,
+                "gold_price_used": 4000.0,
+                "spot_gold_date": "2026-06-01",
+                "snapshot_refresh_run_id": refresh_run_id,
+                "source_run_id": "tool-d-run",
+            },
+        ]
+    ).to_parquet(paths.latest_tool_d_snapshot_parquet_path, index=False)
     bootstrap_manual_screening_data(paths, tickers=["AEM", "NEM"])
     upsert_company_input(paths, ticker="AEM", values={"net_debt_musd": 200.0, "aisc_usd_per_oz": 1700.0})
     upsert_company_input(paths, ticker="NEM", values={"net_debt_musd": 100.0, "aisc_usd_per_oz": 1500.0})

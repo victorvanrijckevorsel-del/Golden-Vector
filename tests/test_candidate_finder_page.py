@@ -122,6 +122,9 @@ def _candidate_finder_data() -> CandidateFinderData:
                 "confidence_score": 0.92,
                 "fcf_yield": 0.05,
                 "best_upside_pct": 0.22,
+                "tool_c_downside_rank": 95.0,
+                "tool_c_upside_rank": 80.0,
+                "tool_d_quality_rank": 60.0,
                 "score_eligible": True,
             },
             {
@@ -136,6 +139,9 @@ def _candidate_finder_data() -> CandidateFinderData:
                 "confidence_score": 0.84,
                 "fcf_yield": 0.03,
                 "best_upside_pct": 0.15,
+                "tool_c_downside_rank": 70.0,
+                "tool_c_upside_rank": 55.0,
+                "tool_d_quality_rank": 85.0,
                 "score_eligible": True,
             },
         ]
@@ -148,6 +154,8 @@ def _candidate_finder_data() -> CandidateFinderData:
             message="Mixed refreshes in Candidate Finder sources.",
             tool_a_refresh_run_ids=("tool-a-run",),
             tool_b_refresh_run_ids=("tool-b-run",),
+            tool_c_refresh_run_ids=("tool-c-run",),
+            tool_d_refresh_run_ids=("tool-d-run",),
             options_refresh_run_id="options-run",
             manual_store_hash="manual-hash",
             manual_store_as_of="2026-06-04T09:00:00Z",
@@ -156,10 +164,14 @@ def _candidate_finder_data() -> CandidateFinderData:
         cache_key=CandidateFinderCacheKey(
             tool_a_refresh_run_ids=("tool-a-run",),
             tool_b_refresh_run_ids=("tool-b-run",),
+            tool_c_refresh_run_ids=("tool-c-run",),
+            tool_d_refresh_run_ids=("tool-d-run",),
             options_refresh_run_id="options-run",
             manual_store_hash="manual-hash",
             tool_a_latest_hash="tool-a-hash",
             tool_b_latest_hash="tool-b-hash",
+            tool_c_latest_hash="tool-c-hash",
+            tool_d_latest_hash="tool-d-hash",
         ),
     )
 

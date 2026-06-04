@@ -121,6 +121,27 @@ criteria:
     default_direction: high_good
     unit: percent
     available_now: true
+  - id: tool_c_downside_rank
+    label: Tool C downside rank
+    source_field: tool_c_downside_rank
+    group: Tool C
+    default_direction: high_good
+    unit: percentile
+    available_now: true
+  - id: tool_c_upside_rank
+    label: Tool C upside rank
+    source_field: tool_c_upside_rank
+    group: Tool C
+    default_direction: high_good
+    unit: percentile
+    available_now: true
+  - id: tool_d_quality_rank
+    label: Tool D quality rank
+    source_field: tool_d_quality_rank
+    group: Tool D
+    default_direction: high_good
+    unit: percentile
+    available_now: true
 presets:
   - id: bearish_put
     label: Bearish put screen
@@ -141,6 +162,12 @@ presets:
       - id: confidence
         direction: high_good
         weight: 1.0
+      - id: tool_c_downside_rank
+        direction: high_good
+        weight: 1.0
+      - id: tool_d_quality_rank
+        direction: low_good
+        weight: 1.0
   - id: bullish_call
     label: Bullish call screen
     options_side: calls
@@ -159,4 +186,10 @@ presets:
         weight: 1.0
       - id: iv_percentile
         direction: low_good
+        weight: 1.0
+      - id: tool_c_upside_rank
+        direction: high_good
+        weight: 1.0
+      - id: tool_d_quality_rank
+        direction: high_good
         weight: 1.0

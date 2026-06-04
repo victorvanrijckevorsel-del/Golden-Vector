@@ -154,3 +154,28 @@ Focused verification:
 
 - `python -m pytest tests/test_config_loading.py tests/test_config_models.py tests/test_tool_b_pipeline.py tests/test_tool_d.py tests/test_persist_tool_d.py tests/test_cli_tool_d.py tests/test_cli_refresh_and_status.py tests/test_replay_manifest.py`
 - Result: 117 passed.
+
+## Batch 3 - Candidate Finder wiring and docs
+
+### Step 1 - Candidate Finder source wiring
+
+- Added Tool C downside/upside ranks and Tool D quality rank to `config/candidate_finder.yaml`.
+- Bearish put preset now includes `tool_c_downside_rank` and uses low spot `tool_d_quality_rank` as a fragility input.
+- Bullish call preset now includes `tool_c_upside_rank` and uses high spot `tool_d_quality_rank` as a quality input.
+- `candidate_finder_data.py` now optionally loads latest Tool C and Tool D snapshots, includes them in cache invalidation/alignment when present, and keeps missing Tool C/D fields as nullable columns rather than breaking older partial data states.
+
+Self-review notes:
+
+- Candidate Finder does not add a gold-price dial; it consumes the latest Tool D rank as a static spot-gold source field per L1.
+- The source-field contract test now covers the expanded config so missing Tool C/D fields are caught.
+- The joined-frame test asserts that Tool C and Tool D ranks flow through to the ranking input frame.
+
+### Step 2 - Tool C/D documentation
+
+- Added `docs/tool_c_tool_d.md`.
+- The doc states the descriptive/non-predictive scope, Tool C thin-event behavior, Tool D's exact three quality-rank components, the spot-only Candidate Finder decision, and the future gold-dial enhancement.
+
+Focused verification:
+
+- `python -m pytest tests/test_candidate_finder_config.py tests/test_candidate_finder_data.py tests/test_candidate_finder_page.py tests/test_candidate_finder_scoring.py`
+- Result: 29 passed.
