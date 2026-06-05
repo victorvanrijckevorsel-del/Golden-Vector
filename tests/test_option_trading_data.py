@@ -140,33 +140,11 @@ def test_load_option_trading_data_cache_key_tracks_model_state_manifest(tmp_path
     paths.ensure_runtime_dirs()
     app_config = load_app_config(paths).app
     _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
-    paths.latest_model_state_manifest_path.write_text(
-        json.dumps(
-            {
-                "manifest_version": 1,
-                "manifest_readable": True,
-                "state": "incomplete",
-                "artifacts": {},
-                "marker": "first-pointer",
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_option_trading_model_state_pointer(paths, marker="first-pointer")
 
     first = load_option_trading_data(paths, app_config=app_config)
     second = load_option_trading_data(paths, app_config=app_config)
-    paths.latest_model_state_manifest_path.write_text(
-        json.dumps(
-            {
-                "manifest_version": 1,
-                "manifest_readable": True,
-                "state": "incomplete",
-                "artifacts": {},
-                "marker": "second-pointer",
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_option_trading_model_state_pointer(paths, marker="second-pointer")
     changed = load_option_trading_data(paths, app_config=app_config)
 
     assert first is second
@@ -560,6 +538,48 @@ def _write_tool_outputs(paths, *, refresh_run_id: str) -> None:
             }
         ]
     ).to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)
+
+
+def _write_option_trading_model_state_pointer(paths, *, marker: str) -> None:
+    paths.latest_model_state_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    status_path = paths.intermediate_status_dir / f"options_manifest_{marker}.json"
+    tool_a_path = paths.output_tool_a_dir / f"tool_a_latest_{marker}.parquet"
+    tool_b_path = paths.output_tool_b_dir / f"tool_b_latest_{marker}.parquet"
+    status_path.write_bytes(paths.latest_options_manifest_path.read_bytes())
+    tool_a_path.write_bytes(paths.latest_tool_a_snapshot_parquet_path.read_bytes())
+    tool_b_path.write_bytes(paths.latest_tool_b_snapshot_parquet_path.read_bytes())
+
+    def rel(path):
+        return path.relative_to(paths.repo_root).as_posix()
+
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "manifest_readable": True,
+                "state": "incomplete",
+                "artifacts": {
+                    "options": {
+                        "path": rel(status_path),
+                        "usable": True,
+                        "immutable": True,
+                    },
+                    "tool_a": {
+                        "path": rel(tool_a_path),
+                        "usable": True,
+                        "immutable": True,
+                    },
+                    "tool_b": {
+                        "path": rel(tool_b_path),
+                        "usable": True,
+                        "immutable": True,
+                    },
+                },
+                "marker": marker,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _make_snapshot_untradable(paths, *, refresh_run_id: str, ticker: str) -> None:

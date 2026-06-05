@@ -11,6 +11,7 @@ import pandas as pd
 import yaml
 
 from golden_vector.common.files import optional_sha256_file as _file_sha256
+from golden_vector.common.strings import unique_strings as _common_unique_strings
 from golden_vector.app.model_state import (
     load_current_model_state_manifest,
     resolve_current_model_artifact_path,
@@ -758,11 +759,4 @@ def _blank_tool_d_quality(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _unique_strings(frame: pd.DataFrame, column: str) -> tuple[str, ...]:
-    if frame.empty or column not in frame.columns:
-        return ()
-    values = {
-        str(value).strip()
-        for value in frame[column].dropna().unique()
-        if str(value).strip() and str(value).strip().lower() != "nan"
-    }
-    return tuple(sorted(values))
+    return tuple(_common_unique_strings(frame, column))

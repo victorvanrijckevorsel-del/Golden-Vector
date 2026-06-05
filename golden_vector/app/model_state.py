@@ -16,8 +16,12 @@ from typing import Any
 
 import pandas as pd
 
+from golden_vector.common.files import atomic_write_bytes as _atomic_write_bytes
+from golden_vector.common.files import atomic_write_text as _atomic_write_text
 from golden_vector.common.files import repo_relative as _repo_relative
 from golden_vector.common.files import sha256_file as _sha256_file
+from golden_vector.common.strings import clean_string as _common_clean_string
+from golden_vector.common.strings import unique_strings as _common_unique_strings
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import to_jsonable
 
@@ -60,13 +64,10 @@ def write_current_model_state_manifest(
         stage_timings=stage_timings,
     )
     target = paths.latest_model_state_manifest_path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = target.with_suffix(target.suffix + ".tmp")
-    tmp_path.write_text(
+    _atomic_write_text(
+        target,
         json.dumps(to_jsonable(payload), indent=2, sort_keys=True),
-        encoding="utf-8",
     )
-    tmp_path.replace(target)
     return payload
 
 
@@ -89,9 +90,11 @@ def resolve_current_model_artifact_path(
         return _existing_path_or_none(fallback_path)
     if payload.get("manifest_readable") is False:
         return None
+    if not isinstance(payload.get("artifacts"), dict):
+        return None
     artifact = _manifest_artifact(payload, artifact_name)
     if artifact is None:
-        return _existing_path_or_none(fallback_path)
+        return None
     if not artifact.get("usable"):
         return None
     if artifact.get("immutable") is not True:
@@ -295,6 +298,7 @@ def _artifact_map(
             path=paths.latest_tool_a_snapshot_parquet_path,
             required_for_complete=True,
         ),
+        "tool_a_structural_metrics": _tool_a_structural_metrics_artifact(paths),
         "tool_b": _parquet_artifact(
             paths=paths,
             name="tool_b",
@@ -457,8 +461,6 @@ def _parquet_artifact(
     immutable_path = _resolve_run_stamped_parquet(
         paths=paths,
         name=name,
-        alias_path=path,
-        alias_sha256=_clean_string(alias_artifact.get("sha256")),
         source_run_ids=source_ids,
     )
     artifact = alias_artifact
@@ -486,6 +488,55 @@ def _parquet_artifact(
         frame,
         "snapshot_refresh_run_id",
     )
+    artifact["source_run_ids"] = source_ids
+    return artifact
+
+
+def _tool_a_structural_metrics_artifact(paths: ProjectPaths) -> dict[str, Any]:
+    path = paths.latest_tool_a_structural_metrics_path
+    alias_artifact = _file_artifact(
+        paths=paths,
+        name="tool_a_structural_metrics",
+        path=path,
+        kind="parquet",
+        required_for_complete=False,
+    )
+    if not alias_artifact["present"]:
+        return alias_artifact
+    try:
+        frame = pd.read_parquet(path)
+    except Exception as exc:
+        alias_artifact["read_error"] = str(exc)
+        alias_artifact["readable"] = False
+        alias_artifact["usable"] = False
+        return alias_artifact
+
+    source_ids = _unique_strings(frame, "source_run_id")
+    immutable_path = _resolve_tool_a_structural_metrics_path(
+        paths=paths,
+        source_run_ids=source_ids,
+    )
+    artifact = alias_artifact
+    if immutable_path is not None:
+        artifact = _file_artifact(
+            paths=paths,
+            name="tool_a_structural_metrics",
+            path=immutable_path,
+            kind="parquet",
+            required_for_complete=False,
+        )
+        artifact["source_alias_path"] = _repo_relative(paths, path)
+        artifact["immutable"] = True
+        try:
+            frame = pd.read_parquet(immutable_path)
+        except Exception as exc:
+            artifact["read_error"] = str(exc)
+            artifact["readable"] = False
+            artifact["usable"] = False
+            return artifact
+    artifact["row_count"] = int(len(frame.index))
+    artifact["columns"] = [str(column) for column in frame.columns]
+    artifact["schema_version"] = _clean_string(_first_present(frame, "schema_version"))
     artifact["source_run_ids"] = source_ids
     return artifact
 
@@ -619,23 +670,11 @@ def _first_present(frame: pd.DataFrame, column: str) -> object | None:
 
 
 def _unique_strings(frame: pd.DataFrame, column: str) -> list[str]:
-    if frame.empty or column not in frame.columns:
-        return []
-    values: set[str] = set()
-    for value in frame[column].dropna().unique():
-        normalized = _clean_string(value)
-        if normalized:
-            values.add(normalized)
-    return sorted(values)
+    return _common_unique_strings(frame, column)
 
 
 def _clean_string(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text or text.lower() == "nan":
-        return None
-    return text
+    return _common_clean_string(value)
 
 
 def _manifest_artifact(
@@ -692,9 +731,7 @@ def _snapshot_json_artifact(
     target = paths.intermediate_status_dir / f"{file_prefix}_{_safe_file_fragment(stamp)}.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
-        tmp_path = target.with_suffix(target.suffix + ".tmp")
-        tmp_path.write_bytes(source_path.read_bytes())
-        tmp_path.replace(target)
+        _atomic_write_bytes(target, source_path.read_bytes())
         artifact["source_alias_path"] = _repo_relative(paths, source_path)
         artifact["path"] = _repo_relative(paths, target)
         artifact["immutable"] = True
@@ -709,24 +746,29 @@ def _resolve_run_stamped_parquet(
     *,
     paths: ProjectPaths,
     name: str,
-    alias_path: Path,
-    alias_sha256: str | None,
     source_run_ids: list[str],
 ) -> Path | None:
-    if not alias_sha256:
-        return None
     directory, prefix = _tool_latest_directory_and_prefix(paths, name)
     for run_id in source_run_ids:
-        candidate = directory / f"{prefix}_latest_{run_id}.parquet"
-        if _is_matching_immutable_parquet(candidate, alias_path, alias_sha256, prefix):
+        candidate = directory / f"{prefix}_latest_{_safe_file_fragment(run_id)}.parquet"
+        if _is_run_stamped_tool_latest(candidate, prefix):
             return candidate
-    matching: list[Path] = []
-    for candidate in directory.glob(f"{prefix}_latest_*.parquet"):
-        if _is_matching_immutable_parquet(candidate, alias_path, alias_sha256, prefix):
-            matching.append(candidate)
-    if not matching:
-        return None
-    return sorted(matching, key=lambda item: item.stat().st_mtime, reverse=True)[0]
+    return None
+
+
+def _resolve_tool_a_structural_metrics_path(
+    *,
+    paths: ProjectPaths,
+    source_run_ids: list[str],
+) -> Path | None:
+    for run_id in source_run_ids:
+        candidate = (
+            paths.intermediate_tool_a_structural_dir
+            / f"tool_a_structural_{_safe_file_fragment(run_id)}.parquet"
+        )
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
 
 
 def _tool_latest_directory_and_prefix(paths: ProjectPaths, name: str) -> tuple[Path, str]:
@@ -741,20 +783,12 @@ def _tool_latest_directory_and_prefix(paths: ProjectPaths, name: str) -> tuple[P
     raise ValueError(f"Unsupported model artifact for immutable lookup: {name}")
 
 
-def _is_matching_immutable_parquet(
-    candidate: Path,
-    alias_path: Path,
-    alias_sha256: str,
-    prefix: str,
-) -> bool:
-    if candidate == alias_path or not candidate.exists() or not candidate.is_file():
-        return False
-    if not _has_run_stamped_tool_latest_name(candidate.name, prefix):
-        return False
-    try:
-        return _sha256_file(candidate) == alias_sha256
-    except OSError:
-        return False
+def _is_run_stamped_tool_latest(candidate: Path, prefix: str) -> bool:
+    return (
+        candidate.exists()
+        and candidate.is_file()
+        and _has_run_stamped_tool_latest_name(candidate.name, prefix)
+    )
 
 
 def _has_run_stamped_tool_latest_name(file_name: str, prefix: str) -> bool:

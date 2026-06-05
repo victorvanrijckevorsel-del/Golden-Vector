@@ -11,9 +11,14 @@ from typing import Any
 
 import pandas as pd
 
+from golden_vector.app.model_state import (
+    read_current_model_parquet,
+    resolve_current_model_artifact_path,
+)
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.replay_manifest import update_manifest_with_options
 from golden_vector.app.run_context import RunContext
+from golden_vector.common.strings import unique_strings as _common_unique_strings
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge._helpers import (
     as_float as _as_float,
@@ -177,10 +182,11 @@ def write_hedge_readiness_report(
 ) -> HedgeReportResult:
     """Render and persist the latest hedge-readiness markdown report."""
 
-    payload = _read_latest_options_manifest(paths)
+    options_manifest_path = _current_options_manifest_path(paths)
+    payload = _read_latest_options_manifest(paths, manifest_path=options_manifest_path)
     update_manifest_with_options(
         run_context.run_dir,
-        options_manifest_path=paths.latest_options_manifest_path,
+        options_manifest_path=options_manifest_path,
     )
     as_of_date = date.fromisoformat(str(payload["as_of_date"]))
     data = _load_report_data(paths=paths, manifest=payload)
@@ -949,11 +955,18 @@ def _load_report_data(
     paths: ProjectPaths,
     manifest: dict[str, Any],
 ) -> dict[str, Any]:
-    tool_a = _read_required_parquet(
-        paths.latest_tool_a_snapshot_parquet_path,
-        "Tool A latest output",
+    tool_a = read_current_model_parquet(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
     )
-    tool_b = _read_optional_parquet(paths.latest_tool_b_snapshot_parquet_path)
+    if tool_a.empty:
+        raise FileNotFoundError("Missing Tool A current output.")
+    tool_b = read_current_model_parquet(
+        paths,
+        "tool_b",
+        fallback_path=paths.latest_tool_b_snapshot_parquet_path,
+    )
     chains = _load_chains(paths=paths, manifest=manifest)
     features = _load_features(paths=paths, manifest=manifest)
     return {
@@ -1206,12 +1219,26 @@ def _optionable_tickers(features: pd.DataFrame) -> set[str]:
     return set(optionable["ticker"].astype(str).str.upper())
 
 
-def _read_latest_options_manifest(paths: ProjectPaths) -> dict[str, Any]:
-    if not paths.latest_options_manifest_path.exists():
+def _current_options_manifest_path(paths: ProjectPaths) -> Path:
+    path = resolve_current_model_artifact_path(
+        paths,
+        "options",
+        fallback_path=paths.latest_options_manifest_path,
+    )
+    if path is None:
         raise FileNotFoundError(
             "No hedge-readiness options snapshot exists yet. Run `python main.py update-data` first."
         )
-    return json.loads(paths.latest_options_manifest_path.read_text(encoding="utf-8"))
+    return path
+
+
+def _read_latest_options_manifest(
+    paths: ProjectPaths,
+    *,
+    manifest_path: Path | None = None,
+) -> dict[str, Any]:
+    path = manifest_path or _current_options_manifest_path(paths)
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _read_required_parquet(path: Path, description: str) -> pd.DataFrame:
@@ -1334,10 +1361,7 @@ def _holdings_mode(holdings: list[Holding]) -> str:
 
 
 def _unique_strings(frame: pd.DataFrame, column: str) -> list[str]:
-    if frame.empty or column not in frame.columns:
-        return []
-    values = frame[column].dropna().astype(str).str.strip()
-    return sorted(value for value in values.unique().tolist() if value)
+    return _common_unique_strings(frame, column)
 
 
 def _confidence_label(row: pd.Series | None) -> str:

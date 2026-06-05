@@ -9,6 +9,7 @@ from typing import Any
 
 import pandas as pd
 
+from golden_vector.app.model_state import resolve_current_model_artifact_path
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.hedge._helpers import (
     as_float as _as_float,
@@ -67,10 +68,15 @@ def build_header_context(
 
 
 def _read_latest_options_manifest(paths: ProjectPaths) -> tuple[dict[str, Any], list[str]]:
-    if not paths.latest_options_manifest_path.exists():
+    manifest_path = resolve_current_model_artifact_path(
+        paths,
+        "options",
+        fallback_path=paths.latest_options_manifest_path,
+    )
+    if manifest_path is None:
         return {}, ["latest options manifest unavailable"]
     try:
-        payload = json.loads(paths.latest_options_manifest_path.read_text(encoding="utf-8"))
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return {}, [f"latest options manifest unreadable: {exc}"]
     if not isinstance(payload, dict):

@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from golden_vector.common.files import atomic_write_text as _atomic_write_text
+from golden_vector.common.files import repo_relative as _repo_relative
 from golden_vector.app.paths import ProjectPaths
 
 REFRESH_STATUS_IDLE = "idle"
@@ -141,13 +143,10 @@ def write_option_refresh_status(
     status: OptionRefreshStatus,
 ) -> Path:
     status_path = option_refresh_status_path(paths)
-    status_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = status_path.with_suffix(status_path.suffix + ".tmp")
-    temporary_path.write_text(
+    _atomic_write_text(
+        status_path,
         json.dumps(status.to_payload(), indent=2, sort_keys=True),
-        encoding="utf-8",
     )
-    temporary_path.replace(status_path)
     return status_path
 
 
@@ -429,10 +428,7 @@ def _refresh_status_text(status: OptionRefreshStatus) -> str:
 
 
 def _repo_relative_or_absolute(paths: ProjectPaths, path: Path) -> str:
-    try:
-        return path.relative_to(paths.repo_root).as_posix()
-    except ValueError:
-        return str(path)
+    return _repo_relative(paths, path)
 
 
 def _optional_text(value: Any) -> str | None:

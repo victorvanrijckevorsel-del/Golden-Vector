@@ -229,6 +229,35 @@ def test_current_model_reader_rejects_non_object_manifest(tmp_path):
     assert frame.empty
 
 
+def test_current_model_reader_rejects_object_manifest_without_artifacts(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    paths.output_tool_a_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "ticker": "STALE",
+                "snapshot_refresh_run_id": "stale-alias",
+            }
+        ]
+    ).to_parquet(paths.latest_tool_a_snapshot_parquet_path, index=False)
+    paths.latest_model_state_manifest_path.write_text("{}", encoding="utf-8")
+
+    resolved = resolve_current_model_artifact_path(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+    frame = read_current_model_parquet(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+
+    assert resolved is None
+    assert frame.empty
+
+
 def test_current_model_reader_rejects_non_immutable_manifest_artifact(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -275,6 +304,65 @@ def test_current_model_reader_rejects_non_immutable_manifest_artifact(tmp_path):
 
     assert resolved is None
     assert frame.empty
+
+
+def test_manifest_resolves_run_stamped_artifact_by_source_run_id_not_alias_bytes(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(paths, refresh_run_id="refresh-A")
+    alias = pd.read_parquet(paths.latest_tool_a_snapshot_parquet_path)
+    alias.loc[:, "ticker"] = "ALIAS_ONLY"
+    alias.to_parquet(paths.latest_tool_a_snapshot_parquet_path, index=False)
+
+    payload = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+        parent_refresh_id="parent-refresh-A",
+    )
+    frame = read_current_model_parquet(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+
+    assert payload["artifacts"]["tool_a"]["immutable"] is True
+    assert payload["artifacts"]["tool_a"]["path"].startswith("data/output/tool_a/tool_a_latest_")
+    assert frame["ticker"].tolist() == ["NEM"]
+
+
+def test_manifest_records_tool_a_structural_metrics_immutable_artifact(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(paths, refresh_run_id="refresh-A")
+    tool_a_run_id = pd.read_parquet(paths.latest_tool_a_snapshot_parquet_path)["source_run_id"].iloc[0]
+    structural = pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "as_of_date": date(2026, 6, 1),
+                "window_id": "12M",
+                "window_status": "ELIGIBLE",
+                "structural_delta": 1.2,
+                "source_run_id": tool_a_run_id,
+            }
+        ]
+    )
+    paths.intermediate_tool_a_structural_dir.mkdir(parents=True, exist_ok=True)
+    structural.to_parquet(
+        paths.intermediate_tool_a_structural_dir / f"tool_a_structural_{tool_a_run_id}.parquet",
+        index=False,
+    )
+    structural.to_parquet(paths.latest_tool_a_structural_metrics_path, index=False)
+
+    payload = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+        parent_refresh_id="parent-refresh-A",
+    )
+
+    artifact = payload["artifacts"]["tool_a_structural_metrics"]
+    assert artifact["immutable"] is True
+    assert artifact["path"].startswith("data/intermediate/tool_a_structural/tool_a_structural_")
 
 
 def test_model_state_manifest_marks_corrupt_required_artifact_not_usable(tmp_path):
@@ -396,7 +484,7 @@ def _write_tool_outputs(
                     "ticker": "NEM",
                     "as_of_date": date(2026, 6, 1),
                     "snapshot_refresh_run_id": refresh_run_id,
-                    "source_run_id": "tool-a-run",
+                    "source_run_id": tool_a_context.run_id,
                     "tool_a_rank": 1,
                     "score_eligible": True,
                 }
@@ -418,7 +506,7 @@ def _write_tool_outputs(
                     "ticker": "NEM",
                     "as_of_date": date(2026, 6, 1),
                     "snapshot_refresh_run_id": refresh_run_id,
-                    "source_run_id": "tool-b-run",
+                    "source_run_id": tool_b_context.run_id,
                     "tool_b_rank": 1,
                     "screening_verdict": "PASS",
                 }
@@ -441,7 +529,7 @@ def _write_tool_outputs(
                         "ticker": "NEM",
                         "as_of_date": date(2026, 6, 1),
                         "snapshot_refresh_run_id": refresh_run_id,
-                        "source_run_id": "tool-c-run",
+                        "source_run_id": tool_c_context.run_id,
                         "tool_c_downside_rank": 1,
                         "tool_c_upside_rank": 1,
                     }
@@ -464,7 +552,7 @@ def _write_tool_outputs(
                         "ticker": "NEM",
                         "as_of_date": date(2026, 6, 1),
                         "snapshot_refresh_run_id": refresh_run_id,
-                        "source_run_id": "tool-d-run",
+                        "source_run_id": tool_d_context.run_id,
                         "gold_price_used": 4000.0,
                         "spot_gold_date": "2026-06-01",
                         "tool_d_quality_rank": 1,

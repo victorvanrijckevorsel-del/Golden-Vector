@@ -494,6 +494,60 @@ def test_refresh_command_skips_tool_b_when_flag_passed(tmp_path, monkeypatch, ca
     assert call_order == ["update-data", "tool-a"]
     out = capsys.readouterr().out
     assert "tool-b/tool-c/tool-d SKIPPED" in out
+    assert "Model state manifest published after partial refresh" in out
+    assert paths.latest_model_state_manifest_path.exists()
+
+
+def test_refresh_skip_tool_b_publishes_partial_manifest_for_new_tool_a(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+    _write_refresh_inputs(paths, refresh_run_id="refresh-old")
+    previous_manifest = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="hash",
+        parent_refresh_id="parent-refresh-old",
+    )
+
+    def fake_foundation(_paths, *, command_name="update-data"):
+        _write_foundation_and_options(_paths, refresh_run_id="refresh-new")
+        return 0
+
+    def fake_tool_a(_paths):
+        _write_tool_a(_paths, refresh_run_id="refresh-new", rank=99)
+        return 0
+
+    def fake_tool_b(_paths, *, gold_price):
+        raise AssertionError("Tool B must not run with --skip-tool-b.")
+
+    monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
+    monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
+    monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
+
+    exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=True)
+    current_manifest = json.loads(paths.latest_model_state_manifest_path.read_text(encoding="utf-8"))
+    current_tool_a = read_current_model_parquet(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+
+    assert exit_code == 0
+    assert current_manifest != previous_manifest
+    assert current_manifest["parent_refresh_id"] != "parent-refresh-old"
+    assert current_manifest["state"] == "incomplete"
+    assert current_tool_a["snapshot_refresh_run_id"].tolist() == ["refresh-new"]
+    assert current_tool_a["tool_a_rank"].tolist() == [99]
+    out = capsys.readouterr().out
+    assert "Model state manifest published after partial refresh" in out
 
 
 def _write_refresh_inputs(paths: ProjectPaths, *, refresh_run_id: str) -> None:

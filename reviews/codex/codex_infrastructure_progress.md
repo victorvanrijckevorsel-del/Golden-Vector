@@ -264,3 +264,28 @@ Checks:
 - `python -m compileall golden_vector` -> passed.
 - `python -m pytest -q` -> 712 passed.
 - `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in the active Python environment.
+
+### I2 gate review merge fixes
+
+Merged:
+
+- Claude's I2 gate review at `reviews/codex/claude_review_i2_gate.md`.
+- Codex's I1/I2 self-review at `reviews/codex/codex_self_review_i1_i2_manifest_integration.md`.
+
+Findings fixed:
+
+- Current-model artifact resolution now fails closed for syntactically valid but wrong-shaped model-state manifests such as `{}` or manifests without an `artifacts` object. Once `latest_model_state.json` exists, readers no longer fall back to mutable aliases just because an artifact key is absent.
+- `python main.py refresh --skip-tool-b` now publishes a model-state manifest after the partial refresh. The manifest is expected to be `incomplete` when Tool B/C/D are carried from older runs, but readers no longer stay silently pinned to the previous full build after fresh foundation/Tool A aliases were written.
+- Model-state immutable Parquet resolution now uses the published `source_run_id` to select the run-id-stamped retained artifact instead of sha256-matching the mutable alias against retained twins. This removes the fragile byte-identity dependency and avoids retained-run glob scans on the normal path.
+- Hedge Readiness report generation and header context now resolve options, Tool A, and Tool B through the model-state manifest instead of reading mutable latest aliases directly.
+- Tool A structural metrics are now represented as an optional model-state artifact and the detail page resolves that artifact through the manifest before reading structural side data.
+- Atomic JSON/status writes touched in I2 now use shared unique-temp-file helpers instead of fixed `.tmp` names.
+- `_unique_strings` behavior is centralized through `golden_vector.common.strings`, so freshness-id handling now filters blank and NaN-like strings consistently across model state, Option Trading, Candidate Finder, and Hedge Readiness.
+
+Checks:
+
+- `python -m pytest tests/test_model_state.py tests/test_cli_refresh_and_status.py tests/test_hedge_report.py tests/test_header_context.py tests/test_workspace_app.py tests/test_candidate_finder_data.py tests/test_option_trading_data.py tests/test_common_helpers.py tests/test_option_refresh.py -q` -> 157 passed.
+- `python -m pytest tests/test_cli_tool_c.py tests/test_cli_tool_d.py tests/test_tool_c.py tests/test_tool_d.py tests/test_latest_data.py tests/test_candidate_finder_scoring.py tests/test_lenses.py -q` -> 53 passed.
+- `python -m pytest -q` -> 718 passed.
+- `python -m compileall golden_vector` -> passed.
+- `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in the active Python environment.

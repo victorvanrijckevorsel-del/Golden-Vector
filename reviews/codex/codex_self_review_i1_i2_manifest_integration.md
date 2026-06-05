@@ -1,0 +1,43 @@
+# Codex Self-Review - I1/I2 Manifest Integration And Duplication Cleanup
+
+**Grade: NEEDS CHANGES before I3**
+
+**Scope:** read-only review of the I1/I2 current-state manifest work, the full-refresh publish path, reader migration, and the recent shared-helper cleanup. I did not change application code. I did not rerun tests because the request was review-only; I inspected the code and the recorded progress log, which reports the latest full suite at 712 passed.
+
+## Verified Strengths
+
+- The happy path is correctly shaped: `write_current_model_state_manifest` builds one JSON pointer and swaps it with a temp-file replace (`golden_vector/app/model_state.py:47`, `golden_vector/app/model_state.py:64`).
+- Required Tool A/B/C/D artifacts are converted from mutable aliases to retained run-id-stamped Parquet files when the manifest is built (`golden_vector/app/model_state.py:432`, `golden_vector/app/model_state.py:457`, `golden_vector/app/model_state.py:473`).
+- Readers in the main workspace, Option Trading, Candidate Finder, CLI status, and standalone Tool C/D now go through `resolve_current_model_artifact_path` / `read_current_model_parquet` / `read_current_model_json` for their primary model inputs (`golden_vector/serve/workspace_state.py:94`, `golden_vector/serve/option_trading_data.py:342`, `golden_vector/serve/candidate_finder_data.py:108`, `golden_vector/cli.py:1061`, `golden_vector/cli.py:1252`, `golden_vector/cli.py:2540`).
+- The fault-injection test is aimed at the right failure mode: after a failed refresh following Tool B, mutable aliases can be overwritten but `latest_model_state.json` remains the old pointer and current readers still return the old Tool B artifact (`tests/test_cli_refresh_and_status.py:361`).
+- The duplication cleanup moved score eligibility, status precedence, repo-relative formatting, and file hashing into shared helpers (`golden_vector/common/eligibility.py:10`, `golden_vector/common/status.py:9`, `golden_vector/common/files.py:10`).
+
+## Findings
+
+### P1 - A readable but semantically invalid manifest can still fall back to mutable aliases
+
+`load_current_model_state_manifest` rejects corrupt JSON and non-object roots (`golden_vector/app/model_state.py:176`, `golden_vector/app/model_state.py:190`), and the resolver fails closed when `manifest_readable` is explicitly false (`golden_vector/app/model_state.py:87`). But if `latest_model_state.json` exists as a syntactically valid object with no usable `artifacts` map, for example `{}` or `{"artifacts": {}}`, `_manifest_artifact` returns `None` and `resolve_current_model_artifact_path` returns the fallback mutable alias (`golden_vector/app/model_state.py:92`, `golden_vector/app/model_state.py:94`). That violates the I2 rule that once a manifest pointer exists, readers should not silently read mutable aliases. The tests cover parse failure, non-object roots, and non-immutable artifact entries (`tests/test_model_state.py:170`, `tests/test_model_state.py:199`, `tests/test_model_state.py:232`), but they do not cover a valid-object/bad-shape manifest. This should be fixed before I3 because I3 will add more artifacts behind the same resolver.
+
+### P1 - Hedge Readiness still bypasses the manifest and can produce a mixed report
+
+The `hedge-readiness` CLI command is still a user-facing reader of the model/option state (`golden_vector/cli.py:809`, `golden_vector/cli.py:835`), but the report loads Tool A, Tool B, and options directly from mutable latest files (`golden_vector/hedge/report.py:947`, `golden_vector/hedge/report.py:952`, `golden_vector/hedge/report.py:956`, `golden_vector/hedge/report.py:1209`). The header context does the same for the options manifest (`golden_vector/hedge/header_context.py:69`). After the exact failure mode I2 is designed for, a failed refresh after Tool B can leave the old manifest intact while these report paths read the newer mutable aliases. The main UI redirects `/hedge-readiness` to Option Trading, but `/hedge-readiness/latest.md` still serves the generated report and the CLI can generate it at any time (`golden_vector/serve/workspace.py:102`, `golden_vector/serve/workspace.py:105`). Either this must move through the model-state resolver or be explicitly documented as out-of-scope legacy behavior; as written, it contradicts "readers now resolve through the manifest."
+
+### P2 - Tool A structural side artifacts remain mutable and can leak into detail pages
+
+The Tool A detail page now resolves foundation through the manifest, but its structural side data still comes from the mutable `tool_a_structural_latest.parquet` alias (`golden_vector/serve/workspace_state.py:224`, `golden_vector/serve/workspace_state.py:250`, `golden_vector/serve/workspace_state.py:312`). The rolling chart has a source-run provenance guard (`golden_vector/serve/detail_panels.py:1635`), but the active-window/anchor metrics are pulled from `tool_a_detail.structural_window_metrics` without the same manifest pinning (`golden_vector/serve/detail_panels.py:1217`, `golden_vector/serve/detail_panels.py:1251`). If a refresh fails after Tool A, the manifest-selected Tool A row can be old while this side artifact is new. That is a smaller blast radius than Tool A/B main tables, but it is still a coherent-state leak in a visible page. The clean fix is to make the structural side artifact manifest-addressable or suppress it unless it matches the selected Tool A run.
+
+### P2 - The atomic writes use fixed temp paths, which are not safe under concurrent writers
+
+The manifest and related JSON/status writes use deterministic sibling temp names like `latest_model_state.json.tmp` (`golden_vector/app/model_state.py:64`, `golden_vector/app/model_state.py:695`, `golden_vector/serve/option_refresh.py:145`). The final replace is atomic, but concurrent CLI/UI refresh writers could clobber each other's temp file before the replace. The UI blocks duplicate refreshes in one server process, but there is no global lock for two CLI processes or CLI plus UI. This is not the same as "normal user clicks once"; it is a robustness issue around the single pointer that everything else will trust. A unique temp name per write would make the atomic-write primitive safer before it becomes the common pattern for I3/I4.
+
+### P2 - Freshness/alignment reconciliation remains duplicated and can still drift
+
+The new shared helpers fixed some duplication, but the most important logic duplication from Claude's review is still present: model-state alignment reports `OK/WARN` (`golden_vector/app/model_state.py:531`), Candidate Finder has a separate `OK/WARN/UNKNOWN` model (`golden_vector/serve/candidate_finder_data.py:536`), Hedge Readiness has another alignment implementation (`golden_vector/hedge/report.py:1236`), and CLI status still manually recomputes run-id alignment from loaded tables (`golden_vector/cli.py:2705`). This is planned for I5, so it is not necessarily an I2 blocker. The risk is that I3 will add option/Finder artifacts and more freshness UI; if new code calls the local copies instead of one model-state primitive, the current drift gets locked in deeper.
+
+### P3 - The duplication cleanup is useful but partial; do not add to the remaining helper copies
+
+The new `golden_vector/common` helpers are good, but several common suspects from the permanent AGENTS rule still have multiple copies: optional numeric coercion (`golden_vector/model/tool_c.py:374`, `golden_vector/model/candidate_finder.py:458`, `golden_vector/model/tool_d.py:376`, `golden_vector/features/options_chain.py:267`, `golden_vector/hedge/_helpers.py:12`), optional Parquet reads (`golden_vector/serve/candidate_finder_data.py:699`, `golden_vector/serve/option_trading_data.py:473`, `golden_vector/hedge/report.py:1223`), `_unique_strings` (`golden_vector/app/model_state.py:621`, `golden_vector/serve/candidate_finder_data.py:760`, `golden_vector/serve/option_trading_data.py:497`, `golden_vector/hedge/report.py:1336`), and ticker normalization (`golden_vector/model/tool_c.py:208`, `golden_vector/model/tool_d.py:304`, `golden_vector/model/candidate_finder.py:286`). These are not all urgent, but I3 should reuse or extract rather than adding one more copy.
+
+## Suggested Gate Decision
+
+Do not start I3 until at least the first two findings are resolved or consciously carved out. The manifest pointer itself is close, but I3 depends on the resolver being strict and on all user-facing readers agreeing that the manifest is authoritative. The remaining findings can be split: structural side artifact pinning is worth fixing with I2 hardening, while the broader freshness/utility consolidation can stay scheduled for I5 as long as I3 does not duplicate it further.

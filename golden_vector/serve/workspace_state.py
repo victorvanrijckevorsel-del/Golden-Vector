@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, ClassVar
 
 import pandas as pd
@@ -221,7 +222,9 @@ def _load_published_structural_metrics(
     result as the chart helper so the workspace can present one consistent
     artifact-health story across the detail page (codex follow-up to Fix #5).
     """
-    parquet_path = paths.latest_tool_a_structural_metrics_path
+    parquet_path = _current_structural_metrics_path(paths)
+    if parquet_path is None:
+        return StructuralHistoryLoad(status="missing", history=pd.DataFrame())
     if not parquet_path.exists():
         return StructuralHistoryLoad(status="missing", history=pd.DataFrame())
     try:
@@ -247,7 +250,9 @@ def _safe_load_structural_history(paths: ProjectPaths, ticker: str) -> "Structur
     so the chart panel can render the right fallback (codex P2 fix).
     """
 
-    parquet_path = paths.latest_tool_a_structural_metrics_path
+    parquet_path = _current_structural_metrics_path(paths)
+    if parquet_path is None:
+        return StructuralHistoryLoad(status="missing", history=pd.DataFrame())
     if not parquet_path.exists():
         return StructuralHistoryLoad(status="missing", history=pd.DataFrame())
     try:
@@ -309,7 +314,11 @@ def _load_structural_delta_history(
     exist for the ticker.
     """
 
-    parquet_path = paths.latest_tool_a_structural_metrics_path
+    parquet_path = _current_structural_metrics_path(paths)
+    if parquet_path is None:
+        return pd.DataFrame(
+            columns=["ticker", "as_of_date", "window_id", "structural_delta", "source_run_id"]
+        )
     if not parquet_path.exists():
         return pd.DataFrame(
             columns=["ticker", "as_of_date", "window_id", "structural_delta", "source_run_id"]
@@ -337,6 +346,14 @@ def _load_structural_delta_history(
     history = history.loc[history["as_of_date"].notna()].copy()
     history = history.sort_values("as_of_date").reset_index(drop=True)
     return history
+
+
+def _current_structural_metrics_path(paths: ProjectPaths) -> Path | None:
+    return resolve_current_model_artifact_path(
+        paths,
+        "tool_a_structural_metrics",
+        fallback_path=paths.latest_tool_a_structural_metrics_path,
+    )
 
 
 def _structural_history_matches_tool_a(

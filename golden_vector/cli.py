@@ -2441,6 +2441,19 @@ def run_refresh(
     if skip_tool_b:
         print()
         print("== Step 3/3: tool-b/tool-c/tool-d SKIPPED (--skip-tool-b) ==")
+        loaded_config = load_app_config(paths)
+        model_state = write_current_model_state_manifest(
+            paths=paths,
+            config_hash=loaded_config.combined_hash,
+            parent_refresh_id=parent_refresh_id,
+            stage_timings=stage_timings,
+        )
+        print()
+        print(
+            "Model state manifest published after partial refresh: "
+            f"{paths.latest_model_state_manifest_path.relative_to(paths.repo_root).as_posix()} "
+            f"({str(model_state.get('state')).upper()})"
+        )
     else:
         print()
         print("== Step 3/5: tool-b ==")
