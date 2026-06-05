@@ -71,6 +71,38 @@ Be ruthless about duplicated code and duplicated logic.
 - If divergent copies exist, reconcile the intended behavior first, then unify. Do not blind-merge helpers that currently disagree.
 - When duplication appears during other work, flag it and consolidate it if the cleanup is low-risk and in scope. Do not add one more copy.
 
+## Data architecture foundations
+Use the full checklist in [ARCHITECTURE_FOUNDATIONS.md](ARCHITECTURE_FOUNDATIONS.md) as a standing reference for every project and every major feature. The rule is not to gold-plate prototypes; it is to set the few cheap, load-bearing data foundations early and check the data spine before stacking features on top.
+
+Set these foundations as defaults from day one when building data-heavy features:
+
+- Compute once, persist, serve reads. Analytics must not run in request handlers or UI render paths. Each stage reads inputs, computes, and writes a persisted artifact; readers only read artifacts.
+- Use one atomic current-state pointer. A single manifest names the coherent current outputs and is published by write-temp-then-`os.replace`. Readers resolve through it instead of opening multiple mutable `latest` files directly.
+- Write immutable run-stamped outputs plus a convenience alias. The pointer references immutable run-id files, while `latest` aliases remain convenience outputs only.
+- Thread one refresh identity through every stage so coherence is an invariant, not a warning reconstructed later by comparing ids.
+- Publish all-or-nothing. A failed or interrupted build leaves the previous good current state intact.
+- Fail loud on bad data, never silent-empty. Required inputs use checked reads, schema validation, and checksum verification where it matters. Do not hide corrupt or missing required data behind empty frames.
+- Keep shared utilities in one common package from the start: coercion, hashing, atomic writes, Parquet IO, ticker normalization, status combining, freshness, and alignment. Grep before adding any helper.
+- Keep one source of truth for freshness/alignment and consume it everywhere. Do not recompute alignment separately per CLI command or screen.
+
+Before adding a major feature, run a short architecture checkpoint:
+
+- Is the data spine ready to carry this feature?
+- Is the feature computed once and persisted?
+- Are readers resolving through the current-state manifest?
+- Are required inputs fail-loud rather than silent-empty?
+- Did the work reuse existing common helpers instead of adding copies?
+
+Treat a feature as done only when it is computed-once-and-persisted, resolved through the manifest, adds no duplicated helper, and fails loud on required bad data. A screen rendering successfully is not enough.
+
+Smells that mean this debt is accumulating:
+
+- A request handler computes, scans, models, or aggregates instead of reading a prepared artifact.
+- More than one mutable `latest` file is treated as authoritative by readers.
+- A second copy appears of an existing helper.
+- Required input code does `except Exception: return empty`.
+- A warning reconciles states that should not be able to diverge.
+
 ## Codex role
 You are an implementation agent. You build features, write code, and review code. You work alongside Claude Code.
 
