@@ -150,7 +150,31 @@ def test_prune_runs_apply_is_noop_without_any_model_state_manifest(tmp_path):
 
     assert report.candidates == ()
     assert report.deleted_paths == ()
-    assert "No retained model-state manifests were found" in report.warnings[0]
+    assert "No readable retained model-state manifests" in report.warnings[0]
+    assert run_dir.exists()
+    assert artifact.exists()
+
+
+def test_prune_runs_apply_is_noop_when_only_model_state_is_unprotectable(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    run_dir = paths.runs_dir / "20260601T000000Z-tool-a-old"
+    run_dir.mkdir(parents=True)
+    artifact = paths.output_tool_a_dir / "tool_a_latest_20260601T000000Z-tool-a-old.parquet"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("old\n", encoding="utf-8")
+    paths.latest_model_state_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps({"state": "complete"}, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    report = prune_runs(paths, apply=True)
+
+    assert report.candidates == ()
+    assert report.deleted_paths == ()
+    assert any("non-protectable model-state" in warning for warning in report.warnings)
+    assert any("No readable retained model-state" in warning for warning in report.warnings)
     assert run_dir.exists()
     assert artifact.exists()
 

@@ -68,11 +68,20 @@ def validate_parquet_schema(
         errors.append(f"missing columns: {', '.join(missing)}")
 
     if schema_version is not None:
-        actual_schema_version = _schema_version(frame)
-        if actual_schema_version != str(schema_version):
+        actual_schema_versions = _schema_versions(frame)
+        if len(actual_schema_versions) > 1:
+            errors.append(
+                "schema_version expected "
+                f"{schema_version}, got multiple values: "
+                f"{', '.join(actual_schema_versions)}"
+            )
+        elif not actual_schema_versions or actual_schema_versions[0] != str(schema_version):
+            actual_schema_version = (
+                actual_schema_versions[0] if actual_schema_versions else "missing"
+            )
             errors.append(
                 f"schema_version expected {schema_version}, got "
-                f"{actual_schema_version or 'missing'}"
+                f"{actual_schema_version}"
             )
 
     for column, expected in (column_dtypes or {}).items():
@@ -105,12 +114,27 @@ def write_parquet_atomic(frame: pd.DataFrame, path: Path, *, index: bool = False
     )
 
 
-def _schema_version(frame: pd.DataFrame) -> str | None:
+def _schema_versions(frame: pd.DataFrame) -> list[str]:
     if "schema_version" in frame.columns:
-        values = frame["schema_version"].dropna()
-        if not values.empty:
-            return str(values.iloc[0])
+        values = [
+            str(value)
+            for value in frame["schema_version"].dropna().unique().tolist()
+        ]
+        if values:
+            return sorted(values)
     value = frame.attrs.get("schema_version")
-    if value is None or pd.isna(value):
-        return None
-    return str(value)
+    if _is_missing(value):
+        return []
+    return [str(value)]
+
+
+def _is_missing(value: object) -> bool:
+    if value is None:
+        return True
+    try:
+        missing = pd.isna(value)
+    except Exception:
+        return False
+    if isinstance(missing, bool):
+        return missing
+    return False

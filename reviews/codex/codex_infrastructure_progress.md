@@ -555,3 +555,27 @@ Remaining carry-forward:
 
 - I5 should still consolidate the four alignment/freshness consumers onto the model-state manifest alignment output.
 - I5 should still carry the Tool D spot/scenario and empty-option/core-option-artifact fault tests noted at the I3 gate.
+
+### I4 post-gate self-review fixes
+
+Reviewed:
+
+- The I4 collection-stat path from Yahoo/fetch status tables into `stage_timings`.
+- The schema validator and option-artifact checked-read integration.
+- Model-state retained snapshot publish order and replay raw-source provenance.
+- The `prune-runs` safety boundary, especially old-data/corrupt-manifest cases.
+
+Findings fixed:
+
+- A malformed fetch-status Parquet table with rows but no `status` column could break collection-stat summarization. The summarizer now emits `UNKNOWN` status counts without raising.
+- `prune-runs --apply` could produce delete candidates when the only retained model-state pointer was readable JSON but not a protectable model-state manifest. Pruning now no-ops unless at least one retained manifest is readable and carries an artifact map.
+- Schema validation accepted the first non-null `schema_version`; mixed-version artifacts now fail loudly as schema drift.
+
+Checks:
+
+- `python -m pytest tests/test_collection_resilience.py tests/test_run_pruning.py tests/test_fetch_options.py tests/test_options_phase.py tests/test_model_state.py tests/test_replay_manifest.py tests/test_parquet_contracts.py` -> 59 passed.
+- `python -m pytest tests/test_parquet_contracts.py tests/test_collection_resilience.py tests/test_run_pruning.py tests/test_option_trading_data.py` -> 30 passed.
+- `python main.py status` -> passed.
+- `python -m compileall golden_vector` -> passed.
+- `python -m pytest tests/test_model_state.py tests/test_replay_manifest.py tests/test_cli_refresh_and_status.py tests/test_options_phase.py tests/test_fetch_options.py tests/test_latest_data.py tests/test_option_trading_routes.py` -> 85 passed.
+- `python -m pytest -q` -> 744 passed in 742.61s.

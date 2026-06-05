@@ -142,7 +142,12 @@ def summarize_fetch_status_rows(
                 strict=False,
             )
         ]
-    status = working.get("status", pd.Series(dtype="object")).astype(str).str.upper()
+    status_values = (
+        working["status"]
+        if "status" in working.columns
+        else pd.Series(["UNKNOWN"] * len(working.index), index=working.index)
+    )
+    status = status_values.astype(str).str.upper()
     failures = working[status == "FAIL"].copy()
     duration = pd.to_numeric(working["duration_seconds"], errors="coerce")
     slow = working[duration >= float(slow_threshold_seconds)].copy()
@@ -187,7 +192,7 @@ def _duration_seconds(started: object, completed: object) -> float | None:
 def _as_datetime(value: object) -> datetime | None:
     if isinstance(value, datetime):
         return value
-    if value is None or pd.isna(value):
+    if _is_missing(value):
         return None
     try:
         parsed = pd.to_datetime(value, utc=True)
@@ -199,7 +204,7 @@ def _as_datetime(value: object) -> datetime | None:
 
 
 def _string_value(value: object) -> str:
-    if value is None or pd.isna(value):
+    if _is_missing(value):
         return ""
     return str(value)
 
@@ -216,3 +221,15 @@ def _float_value(value: object) -> float | None:
     if pd.isna(numeric):
         return None
     return float(numeric)
+
+
+def _is_missing(value: object) -> bool:
+    if value is None:
+        return True
+    try:
+        missing = pd.isna(value)
+    except Exception:
+        return False
+    if isinstance(missing, bool):
+        return missing
+    return False

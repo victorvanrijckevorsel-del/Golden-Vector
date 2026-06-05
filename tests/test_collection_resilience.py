@@ -1,9 +1,12 @@
 from datetime import datetime, timezone
 
+import pandas as pd
+
 from golden_vector.contracts.data_models import FetchStatusRecord
 from golden_vector.ingestion.collection_resilience import (
     RetryPolicy,
     call_with_retries,
+    summarize_fetch_status_rows,
     summarize_fetch_statuses,
 )
 
@@ -62,3 +65,24 @@ def test_summarize_fetch_statuses_records_failures_and_slowest_rows():
     assert summary["slow_count"] == 1
     assert summary["failed"][0]["entity"] == "CAD"
     assert summary["slowest"][0]["duration_seconds"] == 12.0
+
+
+def test_summarize_fetch_status_rows_handles_malformed_table_without_status():
+    summary = summarize_fetch_status_rows(
+        pd.DataFrame(
+            [
+                {
+                    "dataset": "equities",
+                    "entity": "AEM",
+                    "source_symbol": "AEM",
+                    "row_count": 10,
+                    "duration_seconds": 1.5,
+                }
+            ]
+        )
+    )
+
+    assert summary["total_count"] == 1
+    assert summary["pass_count"] == 0
+    assert summary["fail_count"] == 0
+    assert summary["slowest"][0]["status"] == ""

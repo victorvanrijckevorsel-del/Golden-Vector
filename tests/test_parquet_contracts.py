@@ -66,3 +66,24 @@ def test_read_required_parquet_validates_schema_version_from_attrs_on_empty_fram
             required_columns=("schema_version", "source_run_id"),
             schema_version=1,
         )
+
+
+def test_read_required_parquet_rejects_mixed_schema_versions(tmp_path):
+    path = tmp_path / "mixed_schema.parquet"
+    pd.DataFrame(
+        [
+            {"ticker": "AEM", "schema_version": 1, "source_run_id": "run-1"},
+            {"ticker": "NEM", "schema_version": 2, "source_run_id": "run-1"},
+        ]
+    ).to_parquet(path, index=False)
+
+    with pytest.raises(
+        ParquetSchemaError,
+        match="schema_version expected 1, got multiple values: 1, 2",
+    ):
+        read_required_parquet(
+            path,
+            label="mixed artifact",
+            required_columns=("ticker", "source_run_id"),
+            schema_version=1,
+        )

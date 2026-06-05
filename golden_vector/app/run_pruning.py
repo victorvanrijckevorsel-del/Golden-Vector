@@ -67,11 +67,15 @@ def prune_runs(
     model_states = _load_model_state_records(paths)
     retained_snapshots = model_states[:keep_model_states]
     pruned_snapshots = model_states[keep_model_states:]
-    retained_paths = _retained_model_state_paths(paths, retained_snapshots)
+    retained_paths, retained_warnings = _retained_model_state_paths(
+        paths,
+        retained_snapshots,
+    )
     warnings: list[str] = []
+    warnings.extend(retained_warnings)
     if not retained_paths:
         warnings.append(
-            "No retained model-state manifests were found; pruning is a no-op."
+            "No readable retained model-state manifests with artifacts were found; pruning is a no-op."
         )
         return PruneReport(
             dry_run=not apply,
@@ -140,12 +144,23 @@ def _load_model_state_records(paths: ProjectPaths) -> list[_ModelStateRecord]:
 def _retained_model_state_paths(
     paths: ProjectPaths,
     retained_snapshots: list[_ModelStateRecord],
-) -> list[Path]:
+) -> tuple[list[Path], list[str]]:
     retained: list[Path] = []
+    warnings: list[str] = []
     if paths.latest_model_state_manifest_path.exists():
         retained.append(paths.latest_model_state_manifest_path)
     retained.extend(record.path for record in retained_snapshots)
-    return _unique_paths(retained)
+    readable: list[Path] = []
+    for path in _unique_paths(retained):
+        payload = _read_json_object(path)
+        if payload is None:
+            warnings.append(f"Skipped unreadable model-state manifest: {path}")
+            continue
+        if not isinstance(payload.get("artifacts"), dict) or not payload["artifacts"]:
+            warnings.append(f"Skipped non-protectable model-state manifest: {path}")
+            continue
+        readable.append(path)
+    return readable, warnings
 
 
 def _protection_sets(
