@@ -108,6 +108,48 @@ def test_candidate_finder_single_criterion_score_equals_percentile():
     assert rows["B"].score == 100.0
 
 
+def test_candidate_finder_omits_universally_missing_criteria_from_coverage_gate():
+    frame = pd.DataFrame(
+        [
+            {
+                "ticker": "A",
+                "down_beta_core": 3.0,
+                "aisc_usd_per_oz": 1800,
+                "confidence_score": 0.9,
+            },
+            {
+                "ticker": "B",
+                "down_beta_core": 2.0,
+                "aisc_usd_per_oz": 1700,
+                "confidence_score": 0.8,
+            },
+        ]
+    )
+
+    result = rank_candidates(
+        frame,
+        criteria=_criteria(),
+        selections=[
+            CriterionSelection("down_beta"),
+            CriterionSelection("aisc"),
+            CriterionSelection("confidence"),
+            CriterionSelection("iv", direction="low_good"),
+        ],
+        min_criteria_fraction=0.75,
+    )
+    rows = {row.ticker: row for row in result.rows}
+
+    assert [criterion.id for criterion in result.selected_criteria] == [
+        "down_beta",
+        "aisc",
+        "confidence",
+    ]
+    assert all(row.rank_eligible for row in rows.values())
+    assert all(row.selected_criteria_count == 3 for row in rows.values())
+    assert "iv" not in rows["A"].missing_criteria
+    assert any("every row is missing: iv" in item for item in result.warnings)
+
+
 def test_candidate_finder_score_ineligible_treats_tool_a_beta_as_missing():
     frame = pd.DataFrame(
         [

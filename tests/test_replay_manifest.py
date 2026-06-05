@@ -370,12 +370,9 @@ def test_verify_replay_detects_changed_foundation_source_asset(tmp_path, capsys)
     exit_code = run_verify_replay(paths, run_id_or_path=context.run_id)
 
     output = capsys.readouterr().out
-    assert exit_code == 1
-    assert (
-        "[FAIL] foundation:raw_gold.parquet - source hash does not match captured manifest"
-        in output
-    )
-    assert "SNAPSHOT INTEGRITY FAILED" in output
+    assert exit_code == 0
+    assert "[WARN] foundation:raw_gold.parquet differs from the run snapshot" in output
+    assert "Verdict: OK." in output
 
 
 def test_verify_replay_reports_foundation_source_missing_at_capture(tmp_path, capsys):
@@ -402,12 +399,12 @@ def test_verify_replay_reports_foundation_source_missing_at_capture(tmp_path, ca
     exit_code = run_verify_replay(paths, run_id_or_path=context.run_id)
 
     output = capsys.readouterr().out
-    assert exit_code == 1
+    assert exit_code == 0
     assert (
-        "[FAIL] foundation:raw_gold.parquet - source sha256 was unavailable "
-        "when manifest was captured"
+        "[WARN] foundation:raw_gold.parquet was unavailable when the run snapshot "
+        "was captured"
     ) in output
-    assert "SNAPSHOT INTEGRITY FAILED" in output
+    assert "Verdict: OK." in output
 
 
 def test_verify_replay_checks_options_manifest_snapshot(tmp_path, capsys):
@@ -429,7 +426,7 @@ def test_verify_replay_checks_options_manifest_snapshot(tmp_path, capsys):
     output = capsys.readouterr().out
     assert exit_code == 0
     assert "[OK] options_manifest.json - sha256 matches recorded" in output
-    assert "[OK] options:AEM.parquet - source sha256 matches captured manifest" in output
+    assert "[OK] options:AEM.parquet matches the run snapshot" in output
     assert "Verdict: OK." in output
 
 
@@ -455,9 +452,9 @@ def test_verify_replay_detects_missing_options_source_asset(tmp_path, capsys):
     exit_code = run_verify_replay(paths, run_id_or_path=context.run_id)
 
     output = capsys.readouterr().out
-    assert exit_code == 1
-    assert "[FAIL] options:AEM.parquet - source file is missing" in output
-    assert "SNAPSHOT INTEGRITY FAILED" in output
+    assert exit_code == 0
+    assert "[WARN] options:AEM.parquet is missing from the current checkout" in output
+    assert "Verdict: OK." in output
 
 
 def _prepare_paths(tmp_path: Path, *, manual_db: bool = True):

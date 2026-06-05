@@ -109,6 +109,64 @@ def test_tool_d_quality_rank_uses_exact_three_components_fcf_context_only():
     assert rows.loc["BBB", "fcf_yield"] == 0.90
 
 
+def test_tool_d_quality_component_directions_come_from_config():
+    manual_data = _manual_data(
+        [
+            _manual_payload(ticker="AAA", aisc=1200, net_debt=None),
+            _manual_payload(ticker="BBB", aisc=2400, net_debt=None),
+        ]
+    )
+    stressed = pd.DataFrame(
+        [
+            _tool_b_row("AAA", forward_ebitda=1000, fcf_yield=0.01),
+            _tool_b_row("BBB", forward_ebitda=1000, fcf_yield=0.01),
+        ]
+    )
+    spot = stressed.copy()
+
+    default_output = build_tool_d_output_frame(
+        stressed_tool_b=stressed,
+        spot_tool_b=spot,
+        manual_data=manual_data,
+        tool_b_latest=pd.DataFrame(
+            [
+                {"ticker": "AAA", "source_run_id": "tool-b-run"},
+                {"ticker": "BBB", "source_run_id": "tool-b-run"},
+            ]
+        ),
+        config=ToolDConfig(),
+        gold_price=3000.0,
+        spot_gold_usd=4000.0,
+        spot_gold_date="2026-06-01",
+        source_run_id="tool-d-run",
+    )
+    flipped_output = build_tool_d_output_frame(
+        stressed_tool_b=stressed,
+        spot_tool_b=spot,
+        manual_data=manual_data,
+        tool_b_latest=pd.DataFrame(
+            [
+                {"ticker": "AAA", "source_run_id": "tool-b-run"},
+                {"ticker": "BBB", "source_run_id": "tool-b-run"},
+            ]
+        ),
+        config=ToolDConfig(
+            quality_components={
+                "headroom_to_breakeven_pct_at_g": "low_good",
+                "leverage_stressed_at_g": "low_good",
+                "ev_ebitda_at_g": "low_good",
+            }
+        ),
+        gold_price=3000.0,
+        spot_gold_usd=4000.0,
+        spot_gold_date="2026-06-01",
+        source_run_id="tool-d-run",
+    )
+
+    assert default_output.iloc[0]["ticker"] == "AAA"
+    assert flipped_output.iloc[0]["ticker"] == "BBB"
+
+
 def test_tool_d_ebitda_nonpositive_makes_leverage_and_ev_ebitda_null():
     manual_data = _manual_data([_manual_payload(ticker="AAA", aisc=3500, net_debt=1000)])
     stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=-100, fcf_yield=-0.1)])
@@ -130,6 +188,86 @@ def test_tool_d_ebitda_nonpositive_makes_leverage_and_ev_ebitda_null():
     assert pd.isna(row["leverage_stressed_at_g"])
     assert pd.isna(row["ev_ebitda_at_g"])
     assert "leverage_undefined_at_G" in row["tool_d_tags"]
+
+
+def test_tool_d_all_missing_quality_components_leave_score_and_rank_null():
+    manual_data = _manual_data(
+        [_manual_payload(ticker="AAA", aisc=None, net_debt=None)]
+    )
+    stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=None, fcf_yield=0.0)])
+    spot = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=None, fcf_yield=0.0)])
+
+    output = build_tool_d_output_frame(
+        stressed_tool_b=stressed,
+        spot_tool_b=spot,
+        manual_data=manual_data,
+        tool_b_latest=pd.DataFrame([{"ticker": "AAA", "source_run_id": "tool-b-run"}]),
+        config=ToolDConfig(),
+        gold_price=3000.0,
+        spot_gold_usd=4000.0,
+        spot_gold_date="2026-06-01",
+        source_run_id="tool-d-run",
+    )
+    row = output.iloc[0]
+
+    assert pd.isna(row["tool_d_quality_score"])
+    assert pd.isna(row["tool_d_quality_rank"])
+
+
+def test_tool_d_net_cash_flows_through_stressed_leverage_and_ev():
+    manual_data = _manual_data(
+        [_manual_payload(ticker="AAA", aisc=1400, net_debt=-500)]
+    )
+    stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=1000, fcf_yield=0.0)])
+    spot = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=900, fcf_yield=0.0)])
+
+    output = build_tool_d_output_frame(
+        stressed_tool_b=stressed,
+        spot_tool_b=spot,
+        manual_data=manual_data,
+        tool_b_latest=pd.DataFrame([{"ticker": "AAA", "source_run_id": "tool-b-run"}]),
+        config=ToolDConfig(),
+        gold_price=3000.0,
+        spot_gold_usd=4000.0,
+        spot_gold_date="2026-06-01",
+        source_run_id="tool-d-run",
+    )
+    row = output.iloc[0]
+
+    assert row["leverage_stressed_at_g"] == pytest.approx(-0.5)
+    assert row["ev_ebitda_at_g"] == pytest.approx(2.5)
+    assert "missing_debt" not in str(row["tool_d_tags"] or "")
+
+
+def test_tool_d_ignores_decoy_leverage_in_consumed_frames():
+    manual_data = _manual_data(
+        [_manual_payload(ticker="AAA", aisc=1400, net_debt=500)]
+    )
+    stressed = pd.DataFrame(
+        [_tool_b_row("AAA", forward_ebitda=1000, fcf_yield=0.0) | {"leverage": 999.0}]
+    )
+    spot = pd.DataFrame(
+        [_tool_b_row("AAA", forward_ebitda=900, fcf_yield=0.0) | {"leverage": 777.0}]
+    )
+    latest = pd.DataFrame(
+        [{"ticker": "AAA", "source_run_id": "tool-b-run", "leverage": 555.0}]
+    )
+
+    output = build_tool_d_output_frame(
+        stressed_tool_b=stressed,
+        spot_tool_b=spot,
+        manual_data=manual_data,
+        tool_b_latest=latest,
+        config=ToolDConfig(),
+        gold_price=3000.0,
+        spot_gold_usd=4000.0,
+        spot_gold_date="2026-06-01",
+        source_run_id="tool-d-run",
+    )
+    row = output.iloc[0]
+
+    assert row["leverage_stressed_at_g"] == pytest.approx(0.5)
+    assert row["leverage_stressed_at_g"] not in {999.0, 777.0, 555.0}
 
 
 def _only_active_tickers(app_config, *tickers: str):
@@ -161,8 +299,8 @@ def _market_snapshot() -> pd.DataFrame:
 def _manual_payload(
     *,
     ticker: str = "NEM",
-    aisc: float = 1300,
-    net_debt: float = 2000,
+    aisc: float | None = 1300,
+    net_debt: float | None = 2000,
 ) -> dict[str, object]:
     return {
         "ticker": ticker,

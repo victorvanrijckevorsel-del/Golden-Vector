@@ -10,10 +10,17 @@ RELATIVE_BEHAVIOR_COLUMNS = [
     "rel_weakness_vs_gold_n",
     "rel_weakness_vs_gdx_pct",
     "rel_weakness_vs_gdx_n",
+    "rel_weakness_vs_gdxj_pct",
+    "rel_weakness_vs_gdxj_n",
     "rel_strength_vs_gold_pct",
     "rel_strength_vs_gold_n",
     "rel_strength_vs_gdx_pct",
     "rel_strength_vs_gdx_n",
+    "rel_strength_vs_gdxj_pct",
+    "rel_strength_vs_gdxj_n",
+    "n_weeks_gold",
+    "n_weeks_gdx",
+    "n_weeks_gdxj",
     "downside_hit_rate_10pct",
     "downside_hit_rate_n",
     "upside_hit_rate_10pct",
@@ -80,6 +87,15 @@ def compute_relative_behavior_metrics(
                 ),
                 **_relative_rate(
                     ticker_rows,
+                    event_column="gold_worst20_event",
+                    compare_column="gdxj_log_ret",
+                    result_column="rel_weakness_vs_gdxj_pct",
+                    count_column="rel_weakness_vs_gdxj_n",
+                    min_events=min_events,
+                    high_side=False,
+                ),
+                **_relative_rate(
+                    ticker_rows,
                     event_column="gold_best20_event",
                     compare_column="gold_log_ret",
                     result_column="rel_strength_vs_gold_pct",
@@ -95,6 +111,27 @@ def compute_relative_behavior_metrics(
                     count_column="rel_strength_vs_gdx_n",
                     min_events=min_events,
                     high_side=True,
+                ),
+                **_relative_rate(
+                    ticker_rows,
+                    event_column="gold_best20_event",
+                    compare_column="gdxj_log_ret",
+                    result_column="rel_strength_vs_gdxj_pct",
+                    count_column="rel_strength_vs_gdxj_n",
+                    min_events=min_events,
+                    high_side=True,
+                ),
+                "n_weeks_gold": _complete_week_count(
+                    ticker_rows,
+                    ["stock_log_ret", "gold_log_ret"],
+                ),
+                "n_weeks_gdx": _complete_week_count(
+                    ticker_rows,
+                    ["stock_log_ret", "gdx_log_ret"],
+                ),
+                "n_weeks_gdxj": _complete_week_count(
+                    ticker_rows,
+                    ["stock_log_ret", "gdxj_log_ret"],
                 ),
                 **_threshold_rate(
                     ticker_rows,
@@ -145,6 +182,13 @@ def compute_relative_behavior_metrics(
             }
         )
     return pd.DataFrame(rows, columns=RELATIVE_BEHAVIOR_COLUMNS).reset_index(drop=True)
+
+
+def _complete_week_count(rows: pd.DataFrame, columns: list[str]) -> int:
+    if not all(column in rows.columns for column in columns):
+        return 0
+    numeric = rows[columns].apply(pd.to_numeric, errors="coerce")
+    return int(numeric.notna().all(axis=1).sum())
 
 
 def _relative_rate(

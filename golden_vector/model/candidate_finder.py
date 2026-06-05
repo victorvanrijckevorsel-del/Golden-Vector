@@ -150,9 +150,24 @@ def rank_candidates(
         top_lists[criterion.id] = tuple(top_entries)
         top_sets[criterion.id] = {entry.ticker for entry in top_entries}
 
+    scoring_selected = [
+        criterion
+        for criterion in selected
+        if percentiles[criterion.id].notna().any()
+    ]
+    omitted_ids = [
+        criterion.id for criterion in selected if criterion not in scoring_selected
+    ]
+    if omitted_ids:
+        warnings.append(
+            "Criteria omitted from scoring because every row is missing: "
+            + ", ".join(omitted_ids)
+            + "."
+        )
+
     rows = _score_rows(
         data=data,
-        selected=selected,
+        selected=scoring_selected,
         raw_values=raw_values,
         percentiles=percentiles,
         top_sets=top_sets,
@@ -162,7 +177,7 @@ def rank_candidates(
     return CandidateFinderResult(
         rows=tuple(ranked_rows),
         top_lists=top_lists,
-        selected_criteria=tuple(selected),
+        selected_criteria=tuple(scoring_selected),
         warnings=tuple(warnings),
     )
 
@@ -350,7 +365,7 @@ def _score_rows(
             present_weight += criterion.weight
 
         score = weighted_total / present_weight if present_weight > 0 else None
-        criteria_fraction = len(present) / selected_count
+        criteria_fraction = len(present) / selected_count if selected_count else 0.0
         rows.append(
             CandidateScore(
                 ticker=ticker,

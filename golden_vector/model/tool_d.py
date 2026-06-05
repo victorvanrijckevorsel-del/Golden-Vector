@@ -45,6 +45,12 @@ TOOL_D_OUTPUT_COLUMNS = [
     "missing_inputs",
 ]
 
+TOOL_D_QUALITY_COMPONENTS = (
+    "headroom_to_breakeven_pct_at_g",
+    "leverage_stressed_at_g",
+    "ev_ebitda_at_g",
+)
+
 
 @dataclass(frozen=True)
 class ToolDExecutionInputs:
@@ -148,7 +154,7 @@ def build_tool_d_output_frame(
         )
 
     output = pd.DataFrame(rows, columns=TOOL_D_OUTPUT_COLUMNS)
-    _add_quality_scores(output)
+    _add_quality_scores(output, config=config)
     output["tool_d_tags"] = output.apply(_tool_d_tags, axis=1)
     output["tool_d_explanation"] = output.apply(_tool_d_explanation, axis=1)
     return output[TOOL_D_OUTPUT_COLUMNS].sort_values(
@@ -230,21 +236,14 @@ def _build_tool_d_row(
     }
 
 
-def _add_quality_scores(output: pd.DataFrame) -> None:
+def _add_quality_scores(output: pd.DataFrame, *, config: ToolDConfig) -> None:
     component_percentiles = pd.concat(
         [
             oriented_percentile(
-                pd.to_numeric(output["headroom_to_breakeven_pct_at_g"], errors="coerce"),
-                high_good=True,
-            ),
-            oriented_percentile(
-                pd.to_numeric(output["leverage_stressed_at_g"], errors="coerce"),
-                high_good=False,
-            ),
-            oriented_percentile(
-                pd.to_numeric(output["ev_ebitda_at_g"], errors="coerce"),
-                high_good=False,
-            ),
+                pd.to_numeric(output[column], errors="coerce"),
+                high_good=config.quality_components[column] == "high_good",
+            )
+            for column in TOOL_D_QUALITY_COMPONENTS
         ],
         axis=1,
     )

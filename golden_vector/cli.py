@@ -1278,6 +1278,10 @@ def run_tool_d(paths: ProjectPaths, *, gold_price: float | None) -> int:
                 "spot_gold_date": spot_gold_date,
             },
             publish_latest_aliases=not tool_d_outputs.empty,
+            publish_spot_latest_aliases=(
+                not tool_d_outputs.empty
+                and _is_same_gold_price(resolved_gold_price, spot_gold_usd)
+            ),
         )
 
         ranked = (
@@ -1354,6 +1358,10 @@ def run_tool_d(paths: ProjectPaths, *, gold_price: float | None) -> int:
             notes=["Tool D run failed before completion."],
         )
         return 1
+
+
+def _is_same_gold_price(left: float, right: float) -> bool:
+    return abs(float(left) - float(right)) <= 0.01
 
 
 def run_tool_b(paths: ProjectPaths, *, gold_price: float | None) -> int:

@@ -200,6 +200,28 @@ def test_candidate_finder_data_rejects_non_spot_tool_d_latest(tmp_path):
     assert data.frame["tool_d_quality_rank"].isna().all()
 
 
+def test_candidate_finder_data_prefers_spot_tool_d_alias_over_scenario_latest(tmp_path):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    spot = pd.read_parquet(paths.latest_tool_d_snapshot_parquet_path)
+    paths.latest_tool_d_spot_snapshot_parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    spot.to_parquet(paths.latest_tool_d_spot_snapshot_parquet_path, index=False)
+    scenario = spot.copy()
+    scenario["gold_price_used"] = 3500.0
+    scenario["spot_gold_usd"] = 4000.0
+    scenario["tool_d_quality_rank"] = 1.0
+    scenario.to_parquet(paths.latest_tool_d_snapshot_parquet_path, index=False)
+
+    data = load_candidate_finder_data(paths, app_config=app_config)
+
+    frame = data.frame.set_index("ticker")
+    assert data.alignment.status == "OK"
+    assert frame.loc["AEM", "tool_d_quality_rank"] == pytest.approx(45.0)
+    assert frame.loc["NEM", "tool_d_quality_rank"] == pytest.approx(80.0)
+
+
 def test_candidate_finder_data_cache_notices_new_corrupt_latest_file(tmp_path):
     clear_candidate_finder_cache()
     paths = build_test_paths(tmp_path)

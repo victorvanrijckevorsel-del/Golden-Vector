@@ -29,10 +29,17 @@ TOOL_C_OUTPUT_COLUMNS = [
     "rel_weakness_vs_gold_n",
     "rel_weakness_vs_gdx_pct",
     "rel_weakness_vs_gdx_n",
+    "rel_weakness_vs_gdxj_pct",
+    "rel_weakness_vs_gdxj_n",
     "rel_strength_vs_gold_pct",
     "rel_strength_vs_gold_n",
     "rel_strength_vs_gdx_pct",
     "rel_strength_vs_gdx_n",
+    "rel_strength_vs_gdxj_pct",
+    "rel_strength_vs_gdxj_n",
+    "n_weeks_gold",
+    "n_weeks_gdx",
+    "n_weeks_gdxj",
     "downside_hit_rate_10pct",
     "downside_hit_rate_n",
     "upside_hit_rate_10pct",
@@ -60,12 +67,14 @@ DOWNSIDE_COMPONENTS = [
     "downside_volatility_52w",
     "rel_weakness_vs_gold_pct",
     "rel_weakness_vs_gdx_pct",
+    "rel_weakness_vs_gdxj_pct",
     "downside_hit_rate_10pct",
 ]
 UPSIDE_COMPONENTS = [
     "up_beta_core",
     "rel_strength_vs_gold_pct",
     "rel_strength_vs_gdx_pct",
+    "rel_strength_vs_gdxj_pct",
     "upside_hit_rate_10pct",
 ]
 MIN_DOWNSIDE_COMPONENTS = 3
@@ -134,6 +143,8 @@ def build_tool_c_output_frame(
         base = pd.DataFrame({"ticker": metrics["ticker"].astype(str)})
 
     output = base.merge(metrics, how="left", on="ticker")
+    if "score_eligible" not in output.columns:
+        output["score_eligible"] = True
     output["source_run_id"] = source_run_id
     output["source_tool_a_run_id"] = output.get("source_tool_a_run_id")
     output["snapshot_refresh_run_id"] = output.get("snapshot_refresh_run_id")
@@ -262,6 +273,7 @@ def _downside_tags(row: pd.Series, *, config: ToolCConfig) -> list[str]:
     if max(
         _optional_float(row.get("rel_weakness_vs_gold_pct")) or 0.0,
         _optional_float(row.get("rel_weakness_vs_gdx_pct")) or 0.0,
+        _optional_float(row.get("rel_weakness_vs_gdxj_pct")) or 0.0,
     ) >= 0.6:
         tags.append("persistent_relative_weakness")
     if (_optional_float(row.get("downside_hit_rate_10pct")) or 0.0) >= 0.25:
@@ -272,7 +284,10 @@ def _downside_tags(row: pd.Series, *, config: ToolCConfig) -> list[str]:
         fields=[
             ("rel_weakness_vs_gold_pct", "rel_weakness_vs_gold_n"),
             ("rel_weakness_vs_gdx_pct", "rel_weakness_vs_gdx_n"),
+            ("rel_weakness_vs_gdxj_pct", "rel_weakness_vs_gdxj_n"),
             ("downside_hit_rate_10pct", "downside_hit_rate_n"),
+            ("tail_avg_return_worst10pct", "tail_avg_return_worst10pct_n"),
+            ("tail_avg_return_worst20pct", "tail_avg_return_worst20pct_n"),
         ],
     ):
         tags.append("thin_history")
@@ -290,6 +305,7 @@ def _upside_tags(row: pd.Series, *, config: ToolCConfig) -> list[str]:
     if max(
         _optional_float(row.get("rel_strength_vs_gold_pct")) or 0.0,
         _optional_float(row.get("rel_strength_vs_gdx_pct")) or 0.0,
+        _optional_float(row.get("rel_strength_vs_gdxj_pct")) or 0.0,
     ) >= 0.6:
         tags.append("persistent_relative_strength")
     if (_optional_float(row.get("upside_hit_rate_10pct")) or 0.0) >= 0.25:
@@ -300,7 +316,10 @@ def _upside_tags(row: pd.Series, *, config: ToolCConfig) -> list[str]:
         fields=[
             ("rel_strength_vs_gold_pct", "rel_strength_vs_gold_n"),
             ("rel_strength_vs_gdx_pct", "rel_strength_vs_gdx_n"),
+            ("rel_strength_vs_gdxj_pct", "rel_strength_vs_gdxj_n"),
             ("upside_hit_rate_10pct", "upside_hit_rate_n"),
+            ("tail_avg_return_best10pct", "tail_avg_return_best10pct_n"),
+            ("tail_avg_return_best20pct", "tail_avg_return_best20pct_n"),
         ],
     ):
         tags.append("thin_history")

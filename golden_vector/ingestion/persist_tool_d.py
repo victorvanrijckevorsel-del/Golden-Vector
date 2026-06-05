@@ -20,6 +20,7 @@ def persist_tool_d_outputs(
     source_paths: dict[str, Path] | None = None,
     provenance_metadata: dict[str, object] | None = None,
     publish_latest_aliases: bool = True,
+    publish_spot_latest_aliases: bool = False,
 ) -> list[Path]:
     """Persist Tool D full/latest outputs and replay source snapshots."""
 
@@ -56,6 +57,19 @@ def persist_tool_d_outputs(
                 _write_csv(
                     latest_snapshot,
                     paths.latest_tool_d_snapshot_csv_path,
+                ),
+            ]
+        )
+    if publish_spot_latest_aliases:
+        written_paths.extend(
+            [
+                _write_parquet(
+                    latest_snapshot,
+                    paths.latest_tool_d_spot_snapshot_parquet_path,
+                ),
+                _write_csv(
+                    latest_snapshot,
+                    paths.latest_tool_d_spot_snapshot_csv_path,
                 ),
             ]
         )

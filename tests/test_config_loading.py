@@ -14,6 +14,7 @@ def test_load_app_config_reads_repo_yaml():
     assert loaded.app.tool_c.downside_hit_rate_threshold_pct == -10.0
     assert "tool_c" in loaded.file_hashes
     assert loaded.app.tool_d.max_reasonable_ev_ebitda == 100.0
+    assert loaded.app.tool_d.quality_components["leverage_stressed_at_g"] == "low_good"
     assert "tool_d" in loaded.file_hashes
     assert loaded.app.horizons.core_horizons[0] == "5D"
     assert loaded.app.qa.near_zero_gold_return_threshold == 0.005

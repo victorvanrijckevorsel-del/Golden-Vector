@@ -369,6 +369,13 @@ class ToolCConfig(StrictConfigModel):
 class ToolDConfig(StrictConfigModel):
     version: int = 1
     max_reasonable_ev_ebitda: float = 100.0
+    quality_components: dict[str, Literal["high_good", "low_good"]] = Field(
+        default_factory=lambda: {
+            "headroom_to_breakeven_pct_at_g": "high_good",
+            "leverage_stressed_at_g": "low_good",
+            "ev_ebitda_at_g": "low_good",
+        }
+    )
 
     @field_validator("max_reasonable_ev_ebitda")
     @classmethod
@@ -376,6 +383,28 @@ class ToolDConfig(StrictConfigModel):
         if value <= 0:
             raise ValueError("Tool D numeric settings must be positive")
         return float(value)
+
+    @model_validator(mode="after")
+    def exact_quality_component_set(self) -> "ToolDConfig":
+        expected = {
+            "headroom_to_breakeven_pct_at_g",
+            "leverage_stressed_at_g",
+            "ev_ebitda_at_g",
+        }
+        actual = set(self.quality_components)
+        if actual != expected:
+            missing = sorted(expected - actual)
+            extra = sorted(actual - expected)
+            details = []
+            if missing:
+                details.append("missing " + ", ".join(missing))
+            if extra:
+                details.append("unknown " + ", ".join(extra))
+            raise ValueError(
+                "Tool D quality_components must contain exactly the model components: "
+                + "; ".join(details)
+            )
+        return self
 
 
 class CustomHorizonValidation(StrictConfigModel):

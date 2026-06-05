@@ -72,12 +72,58 @@ def test_run_tool_d_defaults_gold_price_to_latest_spot(tmp_path, monkeypatch):
     assert captured["gold_price"] == 4050.0
     latest = pd.read_parquet(paths.latest_tool_d_snapshot_parquet_path)
     assert latest["gold_price_used"].iloc[0] == 4050.0
+    spot_latest = pd.read_parquet(paths.latest_tool_d_spot_snapshot_parquet_path)
+    assert spot_latest["gold_price_used"].iloc[0] == 4050.0
     manifest = json.loads(
         next(paths.runs_dir.glob("*-tool-d-*")).joinpath("replay_manifest.json").read_text(
             encoding="utf-8"
         )
     )
     assert manifest["tool_d_sources_captured"]["metadata"]["spot_gold_date"] == "2026-06-01"
+
+
+def test_run_tool_d_scenario_does_not_publish_spot_alias(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_tool_b_latest(paths)
+    snapshot = _latest_foundation_snapshot(paths)
+
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+    monkeypatch.setattr(
+        "golden_vector.cli.load_latest_foundation_snapshot",
+        lambda **_: snapshot,
+    )
+
+    def fake_compute_tool_d_outputs(**kwargs):
+        inputs = kwargs["inputs"]
+        return pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 6, 1),
+                    "gold_price_used": kwargs["gold_price"],
+                    "spot_gold_usd": inputs.spot_gold_usd,
+                    "spot_gold_date": inputs.spot_gold_date,
+                    "tool_d_quality_rank": 100.0,
+                }
+            ]
+        )
+
+    monkeypatch.setattr(
+        "golden_vector.cli.compute_tool_d_outputs",
+        fake_compute_tool_d_outputs,
+    )
+
+    exit_code = run_tool_d(paths, gold_price=3500.0)
+
+    assert exit_code == 0
+    latest = pd.read_parquet(paths.latest_tool_d_snapshot_parquet_path)
+    assert latest["gold_price_used"].iloc[0] == 3500.0
+    assert not paths.latest_tool_d_spot_snapshot_parquet_path.exists()
 
 
 def _write_tool_b_latest(paths):

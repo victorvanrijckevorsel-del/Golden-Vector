@@ -38,12 +38,15 @@ def test_persist_tool_d_outputs_writes_latest_and_source_snapshots(tmp_path):
             "spot_gold_usd": 4000.0,
             "spot_gold_date": "2026-06-01",
         },
+        publish_spot_latest_aliases=True,
     )
 
-    assert len(written_paths) == 8
+    assert len(written_paths) == 10
     latest = pd.read_parquet(paths.latest_tool_d_snapshot_parquet_path)
     assert set(latest["ticker"]) == {"AAA", "BBB"}
     assert latest.loc[latest["ticker"] == "AAA", "as_of_date"].iloc[0] == date(2026, 6, 1)
+    spot_latest = pd.read_parquet(paths.latest_tool_d_spot_snapshot_parquet_path)
+    assert set(spot_latest["ticker"]) == {"AAA", "BBB"}
 
     manifest = json.loads(
         (run_context.run_dir / "replay_manifest.json").read_text(encoding="utf-8")

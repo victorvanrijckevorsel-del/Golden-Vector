@@ -90,6 +90,56 @@ def test_tool_c_thin_relative_metric_is_tagged_and_excluded_from_rank():
     assert "thin_history" in row["tool_c_downside_tags"]
 
 
+def test_tool_c_missing_score_eligible_column_defaults_to_eligible():
+    tool_a = pd.DataFrame(
+        [
+            {
+                "ticker": "AAA",
+                "as_of_date": date(2026, 6, 1),
+                "source_run_id": "tool-a-run",
+                "down_beta_core": 2.0,
+                "up_beta_core": 1.0,
+                "downside_volatility_52w": 0.5,
+                "confidence_score": 0.9,
+            }
+        ]
+    )
+    metrics = pd.DataFrame(
+        [_metric_row("AAA", rel_weakness=0.7, rel_strength=0.4)]
+    )
+
+    output = build_tool_c_output_frame(
+        tool_a_latest=tool_a,
+        relative_metrics=metrics,
+        config=ToolCConfig(min_events=2),
+        source_run_id="tool-c-run",
+    )
+
+    row = output.iloc[0]
+    assert bool(row["score_eligible"]) is True
+    assert pd.notna(row["tool_c_downside_rank"])
+
+
+def test_tool_c_tail_counts_contribute_to_thin_history_tags():
+    tool_a = pd.DataFrame(
+        [_tool_a_row("AAA", down_beta=2.0, up_beta=1.0, score_eligible=True)]
+    )
+    metrics = pd.DataFrame(
+        [_metric_row("AAA", rel_weakness=0.7, rel_strength=0.4)]
+    )
+    metrics.loc[0, "tail_avg_return_worst10pct"] = None
+    metrics.loc[0, "tail_avg_return_worst10pct_n"] = 1
+
+    output = build_tool_c_output_frame(
+        tool_a_latest=tool_a,
+        relative_metrics=metrics,
+        config=ToolCConfig(min_events=2),
+        source_run_id="tool-c-run",
+    )
+
+    assert "thin_history" in output.iloc[0]["tool_c_downside_tags"]
+
+
 def _tool_a_row(
     ticker: str,
     *,
@@ -125,10 +175,17 @@ def _metric_row(
         "rel_weakness_vs_gold_n": 3,
         "rel_weakness_vs_gdx_pct": rel_weakness,
         "rel_weakness_vs_gdx_n": 3,
+        "rel_weakness_vs_gdxj_pct": rel_weakness,
+        "rel_weakness_vs_gdxj_n": 3,
         "rel_strength_vs_gold_pct": rel_strength,
         "rel_strength_vs_gold_n": 3,
         "rel_strength_vs_gdx_pct": rel_strength,
         "rel_strength_vs_gdx_n": 3,
+        "rel_strength_vs_gdxj_pct": rel_strength,
+        "rel_strength_vs_gdxj_n": 3,
+        "n_weeks_gold": 12,
+        "n_weeks_gdx": 12,
+        "n_weeks_gdxj": 12,
         "downside_hit_rate_10pct": downside_hit_rate,
         "downside_hit_rate_n": 3,
         "upside_hit_rate_10pct": upside_hit_rate,

@@ -281,23 +281,13 @@ def verify_manifest(run_dir_or_id: Path | str) -> VerifyResult:
                 )
             )
 
-    for source_asset in _manifest_source_assets(manifest):
-        asset_statuses.append(
-            _verify_source_asset(
-                run_dir,
-                name=str(source_asset.get("name", "source_asset")),
-                original_path=Path(str(source_asset.get("original_path", ""))),
-                expected_sha256=_optional_sha256(source_asset.get("sha256")),
-            )
-        )
-
     failed = any(asset.status != "ok" for asset in asset_statuses)
     return VerifyResult(
         run_dir=run_dir,
         manifest_path=manifest_path,
         verdict=VERDICT_SNAPSHOT_INTEGRITY_FAILED if failed else VERDICT_OK,
         asset_statuses=asset_statuses,
-        drift_findings=_current_checkout_drift_findings(manifest),
+        drift_findings=_current_checkout_drift_findings(manifest, run_dir=run_dir),
     )
 
 
@@ -423,56 +413,6 @@ def _verify_snapshot_asset(
     )
 
 
-def _verify_source_asset(
-    run_dir: Path,
-    *,
-    name: str,
-    original_path: Path,
-    expected_sha256: str | None,
-) -> VerifyAssetStatus:
-    resolved_path = _resolve_original_asset_path(run_dir, original_path)
-    if not expected_sha256:
-        return VerifyAssetStatus(
-            name=name,
-            snapshot_path=resolved_path,
-            expected_sha256=None,
-            actual_sha256=(
-                _sha256_file(resolved_path) if resolved_path.exists() else None
-            ),
-            status="missing_at_capture",
-            message="source sha256 was unavailable when manifest was captured",
-        )
-    if not resolved_path.exists():
-        return VerifyAssetStatus(
-            name=name,
-            snapshot_path=resolved_path,
-            expected_sha256=expected_sha256,
-            actual_sha256=None,
-            status="missing",
-            message="source file is missing",
-        )
-
-    actual_sha256 = _sha256_file(resolved_path)
-    if actual_sha256 != expected_sha256:
-        return VerifyAssetStatus(
-            name=name,
-            snapshot_path=resolved_path,
-            expected_sha256=expected_sha256,
-            actual_sha256=actual_sha256,
-            status="hash_mismatch",
-            message="source hash does not match captured manifest",
-        )
-
-    return VerifyAssetStatus(
-        name=name,
-        snapshot_path=resolved_path,
-        expected_sha256=expected_sha256,
-        actual_sha256=actual_sha256,
-        status="ok",
-        message="source sha256 matches captured manifest",
-    )
-
-
 def _manifest_source_assets(manifest: dict[str, Any]) -> list[dict[str, str | None]]:
     assets: list[dict[str, str | None]] = []
     foundation_data = manifest.get("foundation_run_consumed") or {}
@@ -519,17 +459,36 @@ def _resolve_run_dir(run_dir_or_id: Path | str) -> Path:
     return ProjectPaths.discover().runs_dir / run_dir_or_id
 
 
-def _current_checkout_drift_findings(manifest: dict[str, Any]) -> list[str]:
+def _current_checkout_drift_findings(
+    manifest: dict[str, Any],
+    *,
+    run_dir: Path,
+) -> list[str]:
     try:
-        repo_root = ProjectPaths.discover().repo_root
+        ProjectPaths.discover()
     except Exception:
         return ["unavailable - no current checkout context"]
     findings: list[str] = []
 
-    for name, original_path, expected_sha256 in _manifest_original_assets(manifest):
-        current_path = Path(original_path)
-        if not current_path.is_absolute():
-            current_path = repo_root / current_path
+    assets = _manifest_original_assets(manifest)
+    assets.extend(
+        (
+            str(source_asset.get("name", "source_asset")),
+            str(source_asset.get("original_path", "")),
+            _optional_sha256(source_asset.get("sha256")) or "",
+        )
+        for source_asset in _manifest_source_assets(manifest)
+    )
+
+    for name, original_path, expected_sha256 in assets:
+        if not original_path:
+            continue
+        if not expected_sha256:
+            findings.append(
+                f"[WARN] {name} was unavailable when the run snapshot was captured"
+            )
+            continue
+        current_path = _resolve_original_asset_path(run_dir, Path(original_path))
         if not current_path.exists():
             findings.append(f"[WARN] {name} is missing from the current checkout")
             continue

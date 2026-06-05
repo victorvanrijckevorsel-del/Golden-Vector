@@ -41,8 +41,13 @@ def test_compute_relative_behavior_metrics_outputs_values_and_counts():
     assert row["rel_weakness_vs_gold_pct"] == 1.0
     assert row["rel_weakness_vs_gold_n"] == 2
     assert row["rel_weakness_vs_gdx_pct"] == 0.5
+    assert row["rel_weakness_vs_gdxj_pct"] == 1.0
     assert row["rel_strength_vs_gold_pct"] == 1.0
     assert row["rel_strength_vs_gdx_pct"] == 0.5
+    assert row["rel_strength_vs_gdxj_pct"] == 1.0
+    assert row["n_weeks_gold"] == 4
+    assert row["n_weeks_gdx"] == 4
+    assert row["n_weeks_gdxj"] == 4
     assert row["downside_hit_rate_10pct"] == 0.5
     assert row["downside_hit_rate_n"] == 2
     assert row["upside_hit_rate_10pct"] == 0.5
@@ -80,4 +85,39 @@ def test_compute_relative_behavior_metrics_counts_each_benchmark_intersection():
 
     assert row["rel_weakness_vs_gold_n"] == 2
     assert row["rel_weakness_vs_gdx_n"] == 1
+    assert row["rel_weakness_vs_gdxj_n"] == 2
     assert pd.isna(row["rel_weakness_vs_gdx_pct"])
+
+
+def test_compute_relative_behavior_threshold_config_changes_hit_rates():
+    weekly_returns = pd.DataFrame(
+        {
+            "ticker": ["AAA"] * 2,
+            "week_period": ["w1", "w2"],
+            "stock_log_ret": [-0.08, -0.12],
+            "gold_log_ret": [-0.04, -0.05],
+        }
+    )
+    gold_regimes = pd.DataFrame(
+        {
+            "week_period": ["w1", "w2"],
+            "gold_log_ret": [-0.04, -0.05],
+            "gold_worst20_event": [True, True],
+        }
+    )
+
+    strict = compute_relative_behavior_metrics(
+        weekly_returns=weekly_returns,
+        gold_regimes=gold_regimes,
+        min_events=2,
+        downside_hit_rate_threshold=-0.10,
+    )
+    loose = compute_relative_behavior_metrics(
+        weekly_returns=weekly_returns,
+        gold_regimes=gold_regimes,
+        min_events=2,
+        downside_hit_rate_threshold=-0.05,
+    )
+
+    assert strict.loc[0, "downside_hit_rate_10pct"] == 0.5
+    assert loose.loc[0, "downside_hit_rate_10pct"] == 1.0

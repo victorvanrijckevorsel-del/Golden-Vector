@@ -408,12 +408,23 @@ def test_tool_d_config_accepts_defaults():
     config = ToolDConfig()
 
     assert config.max_reasonable_ev_ebitda == 100.0
+    assert config.quality_components == {
+        "headroom_to_breakeven_pct_at_g": "high_good",
+        "leverage_stressed_at_g": "low_good",
+        "ev_ebitda_at_g": "low_good",
+    }
 
 
 @pytest.mark.parametrize(
     "override",
     [
         {"max_reasonable_ev_ebitda": 0},
+        {
+            "quality_components": {
+                "headroom_to_breakeven_pct_at_g": "high_good",
+                "leverage_stressed_at_g": "low_good",
+            }
+        },
     ],
 )
 def test_tool_d_config_rejects_invalid_settings(override):

@@ -112,8 +112,9 @@ def load_candidate_finder_data(
         paths.latest_tool_c_snapshot_parquet_path,
         label="Tool C",
     )
+    tool_d_source_path = _tool_d_finder_source_path(paths)
     tool_d_load = _read_optional_parquet(
-        paths.latest_tool_d_snapshot_parquet_path,
+        tool_d_source_path,
         label="Tool D",
     )
     tool_c = tool_c_load.frame
@@ -134,7 +135,7 @@ def load_candidate_finder_data(
         tool_a_latest_hash=_file_sha256(paths.latest_tool_a_snapshot_parquet_path),
         tool_b_latest_hash=_file_sha256(paths.latest_tool_b_snapshot_parquet_path),
         tool_c_latest_hash=_file_sha256(paths.latest_tool_c_snapshot_parquet_path),
-        tool_d_latest_hash=_file_sha256(paths.latest_tool_d_snapshot_parquet_path),
+        tool_d_latest_hash=_file_sha256(tool_d_source_path),
     )
     cached = _CACHE.get(cache_key)
     if cached is not None:
@@ -703,6 +704,11 @@ def _read_optional_parquet(path: Path, *, label: str) -> CandidateFinderSourceLo
             frame=pd.DataFrame(),
             warning=f"{label} latest parquet could not be read: {exc}.",
         )
+
+
+def _tool_d_finder_source_path(paths: ProjectPaths) -> Path:
+    spot_path = paths.latest_tool_d_spot_snapshot_parquet_path
+    return spot_path if spot_path.exists() else paths.latest_tool_d_snapshot_parquet_path
 
 
 def _spot_tool_d_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:

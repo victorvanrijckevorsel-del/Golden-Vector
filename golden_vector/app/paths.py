@@ -254,6 +254,14 @@ class ProjectPaths:
         return self.output_tool_d_dir / "tool_d_latest.csv"
 
     @property
+    def latest_tool_d_spot_snapshot_parquet_path(self) -> Path:
+        return self.output_tool_d_dir / "tool_d_latest_spot.parquet"
+
+    @property
+    def latest_tool_d_spot_snapshot_csv_path(self) -> Path:
+        return self.output_tool_d_dir / "tool_d_latest_spot.csv"
+
+    @property
     def output_combined_dir(self) -> Path:
         return self.output_dir / "combined"
 

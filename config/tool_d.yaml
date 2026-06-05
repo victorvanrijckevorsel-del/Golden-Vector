@@ -1,2 +1,6 @@
 version: 1
 max_reasonable_ev_ebitda: 100.0
+quality_components:
+  headroom_to_breakeven_pct_at_g: high_good
+  leverage_stressed_at_g: low_good
+  ev_ebitda_at_g: low_good
