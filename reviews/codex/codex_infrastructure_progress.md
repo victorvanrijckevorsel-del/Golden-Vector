@@ -346,3 +346,22 @@ Checks:
 
 - `python -m pytest tests/test_option_artifact_persistence.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py` -> 36 passed.
 - `python -m compileall golden_vector/ingestion/persist_option_artifacts.py tests/test_option_artifact_persistence.py` -> passed.
+
+### I3 non-serve option source loader
+
+Built:
+
+- Added `golden_vector.hedge.option_artifact_sources` to load the options manifest, option feature snapshots, raw cached chains, Tool A, Tool B, and risk-free-rate context without importing `golden_vector.serve`.
+- Added a `use_model_state` switch: UI/current readers use the manifest-selected artifacts, while refresh-time artifact publishing can read the just-built latest aliases before the new manifest is published.
+- Added `golden_vector.common.parquet.read_optional_parquet` and moved Option Trading's optional Parquet reads to that shared helper instead of adding another local reader.
+- Updated `serve.option_trading_data` to use the non-serve source loader and removed its duplicated manifest/features/chains loader functions.
+
+Self-review findings:
+
+- Removed a stale `as_float` import from `serve.option_trading_data`.
+- Confirmed the serve file no longer defines `_read_optional_parquet`, `_load_chains`, or `_load_features`.
+
+Checks:
+
+- `python -m pytest tests/test_option_artifact_persistence.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py` -> 36 passed.
+- `python -m compileall golden_vector/common/parquet.py golden_vector/hedge/option_artifact_sources.py golden_vector/serve/option_trading_data.py` -> passed.

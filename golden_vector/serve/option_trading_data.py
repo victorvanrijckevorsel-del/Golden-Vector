@@ -3,23 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
 
 from golden_vector.common.files import optional_sha256_file as _file_sha256
 from golden_vector.common.strings import unique_strings as _common_unique_strings
-from golden_vector.app.model_state import (
-    read_current_model_json,
-    read_current_model_parquet,
-)
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
-from golden_vector.hedge._helpers import (
-    as_float,
-)
 from golden_vector.hedge.option_artifact_builder import build_option_artifact_inputs
+from golden_vector.hedge.option_artifact_sources import load_option_artifact_source_inputs
 from golden_vector.hedge.candidate_puts import (
     OptionCandidate,
     OptionCandidateSlot,
@@ -38,7 +31,6 @@ from golden_vector.hedge.option_trading import (
 from golden_vector.hedge.options_liquidity import (
     candidate_bucket_ids,
 )
-from golden_vector.ingestion.persist_options import safe_options_file_name
 
 
 @dataclass(frozen=True)
@@ -329,23 +321,16 @@ def load_option_trading_data(
 ) -> OptionTradingData:
     """Load latest option-trading rows and reuse them until provenance changes."""
 
-    manifest = _read_options_manifest(paths)
-    tool_a = read_current_model_parquet(
-        paths,
-        "tool_a",
-        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
-    )
-    tool_b = read_current_model_parquet(
-        paths,
-        "tool_b",
-        fallback_path=paths.latest_tool_b_snapshot_parquet_path,
-    )
-    if manifest is None:
+    sources = load_option_artifact_source_inputs(paths, use_model_state=True)
+    if sources is None:
         return _empty_data(
-            tool_a=tool_a,
-            tool_b=tool_b,
+            tool_a=pd.DataFrame(),
+            tool_b=pd.DataFrame(),
             reason="No options snapshot exists yet. Run `python main.py update-data` first.",
         )
+    manifest = sources.manifest
+    tool_a = sources.tool_a
+    tool_b = sources.tool_b
 
     cache_key = _cache_key(
         manifest=manifest,
@@ -357,19 +342,14 @@ def load_option_trading_data(
     if cached is not None:
         return cached
 
-    features = _load_features(paths=paths, manifest=manifest)
-    chains = _load_chains(paths=paths, manifest=manifest)
-    risk_free_rate = as_float(manifest.get("risk_free_rate"))
-    risk_free_rate_is_fallback = risk_free_rate is None
-    effective_risk_free_rate = risk_free_rate if risk_free_rate is not None else 0.0
     built = build_option_artifact_inputs(
         app_config=app_config,
-        features=features,
+        features=sources.features,
         tool_a=tool_a,
         tool_b=tool_b,
-        chains=chains,
-        risk_free_rate=effective_risk_free_rate,
-        risk_free_rate_is_fallback=risk_free_rate_is_fallback,
+        chains=sources.chains,
+        risk_free_rate=sources.risk_free_rate,
+        risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
         manifest=manifest,
     )
     data = OptionTradingData(
@@ -378,12 +358,12 @@ def load_option_trading_data(
         call_candidate_grids=built.call_candidate_grids,
         candidate_slots=built.candidate_slots,
         call_candidate_slots=built.call_candidate_slots,
-        options_features=features,
+        options_features=sources.features,
         tool_a=tool_a,
         tool_b=tool_b,
-        raw_options_by_ticker=chains,
-        risk_free_rate=effective_risk_free_rate,
-        risk_free_rate_is_fallback=risk_free_rate_is_fallback,
+        raw_options_by_ticker=sources.chains,
+        risk_free_rate=sources.risk_free_rate,
+        risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
         cache_key=cache_key,
     )
     _CACHE[cache_key] = data
@@ -412,23 +392,6 @@ def _empty_data(
     )
 
 
-def _read_options_manifest(paths: ProjectPaths) -> dict[str, Any] | None:
-    return read_current_model_json(
-        paths,
-        "options",
-        fallback_path=paths.latest_options_manifest_path,
-    )
-
-
-def _read_optional_parquet(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        return pd.DataFrame()
-    try:
-        return pd.read_parquet(path)
-    except Exception:
-        return pd.DataFrame()
-
-
 def _cache_key(
     *,
     manifest: dict[str, Any],
@@ -446,50 +409,3 @@ def _cache_key(
 
 def _unique_strings(frame: pd.DataFrame, column: str) -> tuple[str, ...]:
     return tuple(_common_unique_strings(frame, column))
-
-
-def _load_chains(
-    *,
-    paths: ProjectPaths,
-    manifest: dict[str, Any],
-) -> dict[str, pd.DataFrame]:
-    chains: dict[str, pd.DataFrame] = {}
-    for item in manifest.get("snapshots", []):
-        ticker = str(item.get("ticker", "")).strip().upper()
-        if not ticker:
-            continue
-        snapshot_path = paths.resolve_repo_relative(str(item.get("snapshot_path", "")))
-        chains[ticker] = _read_optional_parquet(snapshot_path)
-    return chains
-
-
-def _load_features(
-    *,
-    paths: ProjectPaths,
-    manifest: dict[str, Any],
-) -> pd.DataFrame:
-    rows: list[pd.Series] = []
-    refresh_run_id = str(manifest.get("refresh_run_id") or "")
-    for item in manifest.get("snapshots", []):
-        ticker = str(item.get("ticker", "")).strip()
-        if not ticker:
-            continue
-        feature_path = paths.options_features_dir / f"{safe_options_file_name(ticker)}.parquet"
-        frame = _read_optional_parquet(feature_path)
-        if frame.empty:
-            continue
-        if "run_id" in frame.columns and refresh_run_id:
-            matching = frame[frame["run_id"].astype(str) == refresh_run_id]
-            if not matching.empty:
-                rows.append(matching.iloc[-1])
-            continue
-        # Legacy feature snapshots without run_id cannot be provenance-checked.
-        # Use only the latest row so old local data still renders, but prefer
-        # modern run_id-bearing snapshots for stale-data protection.
-        rows.append(frame.iloc[-1])
-    if not rows:
-        return pd.DataFrame()
-    result = pd.DataFrame(rows).reset_index(drop=True)
-    if "ticker" in result.columns:
-        result["ticker"] = result["ticker"].astype(str).str.upper()
-    return result
