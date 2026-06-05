@@ -36,6 +36,7 @@ from golden_vector.app.replay_manifest import (
     update_manifest_with_foundation,
     verify_manifest,
 )
+from golden_vector.app.run_pruning import PruneReport, prune_runs
 from golden_vector.app.run_context import RunContext, to_jsonable
 from golden_vector.features.horizons import parse_requested_horizons
 from golden_vector.features.returns import RETURN_COLUMNS, compute_horizon_returns_for_ticker
@@ -420,6 +421,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run id under data/runs, or a direct path to a run directory.",
     )
 
+    prune_parser = subparsers.add_parser(
+        "prune-runs",
+        help="Dry-run or apply safe retention pruning for old run-stamped artifacts.",
+    )
+    prune_parser.add_argument(
+        "--keep-model-states",
+        type=_positive_int,
+        default=10,
+        help=(
+            "Number of retained model-state snapshots to protect. "
+            "The latest pointer is always protected separately."
+        ),
+    )
+    prune_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually delete the reported candidates. Omit for the default dry-run.",
+    )
+
     return parser
 
 
@@ -492,6 +512,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "verify-replay":
         return run_verify_replay(paths, run_id_or_path=args.run_id_or_path)
+
+    if args.command == "prune-runs":
+        return run_prune_runs(
+            paths,
+            keep_model_states=args.keep_model_states,
+            apply=args.apply,
+        )
 
     parser.error(f"Unsupported command: {args.command}")
     return 2
@@ -2060,6 +2087,51 @@ def run_verify_replay(paths: ProjectPaths, *, run_id_or_path: str) -> int:
     result = verify_manifest(run_dir)
     print(_format_verify_replay_result(result))
     return 0 if result.ok else 1
+
+
+def run_prune_runs(
+    paths: ProjectPaths,
+    *,
+    keep_model_states: int,
+    apply: bool,
+) -> int:
+    report = prune_runs(
+        paths,
+        keep_model_states=keep_model_states,
+        apply=apply,
+    )
+    print(_format_prune_report(paths, report))
+    return 0
+
+
+def _format_prune_report(paths: ProjectPaths, report: PruneReport) -> str:
+    mode = "DRY RUN" if report.dry_run else "APPLIED"
+    lines = [
+        f"Run pruning: {mode}",
+        f"Retained model-state snapshots: {report.keep_model_states}",
+        f"Retained model-state files: {len(report.retained_model_state_paths)}",
+        f"Protected artifact paths: {len(report.protected_paths)}",
+        f"Protected run ids: {len(report.protected_run_ids)}",
+        f"Delete candidates: {report.delete_count}",
+    ]
+    if report.warnings:
+        lines.append("")
+        lines.append("Warnings:")
+        for warning in report.warnings:
+            lines.append(f"  [INFO] {warning}")
+    if report.candidates:
+        lines.append("")
+        lines.append("Candidates:")
+        for candidate in report.candidates:
+            marker = "dir" if candidate.is_dir else "file"
+            lines.append(f"  [{marker}] {candidate.display(paths)}")
+    if report.deleted_paths:
+        lines.append("")
+        lines.append(f"Deleted: {len(report.deleted_paths)}")
+    if report.dry_run:
+        lines.append("")
+        lines.append("No files were deleted. Re-run with --apply to prune these candidates.")
+    return "\n".join(lines)
 
 
 def _resolve_verify_replay_run_dir(paths: ProjectPaths, run_id_or_path: str) -> Path:

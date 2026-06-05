@@ -514,3 +514,23 @@ Self-review findings fixed:
 Checks:
 
 - `python -m pytest tests/test_model_state.py tests/test_replay_manifest.py tests/test_latest_data.py tests/test_cli_refresh_and_status.py` -> 59 passed.
+
+### I4 Phase 5 prune-runs
+
+Built:
+
+- Added `golden_vector.app.run_pruning.prune_runs(...)` as a report-first retention helper.
+- Added `python main.py prune-runs`, dry-run by default; deletion requires `--apply`.
+- Protected `latest_model_state.json`, the retained model-state snapshots, every artifact path referenced by every retained model state, and every run id referenced by retained artifacts.
+- Included option artifacts in the same artifact-map protection path; there is no option-specific deletion shortcut.
+- Limited recursive deletion to directories under `data/runs`.
+
+Self-review findings fixed:
+
+- If no retained model-state manifest exists, pruning now no-ops with an informational warning instead of treating all historical run dirs as unprotected.
+- Artifact candidates now require a run-id-like timestamp stamp, so mutable latest aliases such as `tool_d_latest_spot.parquet` are not pruned just because they match a broad glob.
+
+Checks:
+
+- `python -m pytest tests/test_run_pruning.py tests/test_model_state.py tests/test_cli_refresh_and_status.py` -> 33 passed.
+- `python -m compileall golden_vector/app/run_pruning.py golden_vector/cli.py tests/test_run_pruning.py` -> passed.
