@@ -1,0 +1,138 @@
+{
+  "alignment": {
+    "foundation_refresh_run_id": "20260601T135914Z-update-data-f555b2fe",
+    "options_refresh_run_id": "20260601T135914Z-update-data-f555b2fe",
+    "status": "WARN",
+    "tool_refresh_run_ids": {
+      "tool_a": ["20260424T140753Z-update-data-6175c3fb"],
+      "tool_b": ["20260424T140753Z-update-data-6175c3fb"],
+      "tool_c": [],
+      "tool_d": []
+    },
+    "warnings": [
+      "tool_a references 20260424T140753Z-update-data-6175c3fb while foundation is 20260601T135914Z-update-data-f555b2fe.",
+      "tool_b references 20260424T140753Z-update-data-6175c3fb while foundation is 20260601T135914Z-update-data-f555b2fe."
+    ]
+  },
+  "artifacts": {
+    "foundation": {
+      "foundation_status": "WARN",
+      "kind": "json",
+      "name": "foundation",
+      "normalization_qa_status": "WARN",
+      "path": "data/intermediate/status/latest_foundation_manifest.json",
+      "present": true,
+      "raw_qa_status": "PASS",
+      "refresh_run_id": "20260601T135914Z-update-data-f555b2fe",
+      "required_for_complete": true,
+      "schema_version": null,
+      "sha256": "sample-foundation-sha",
+      "snapshot_as_of_date": "2026-06-01"
+    },
+    "options": {
+      "as_of_date": "2026-06-01",
+      "kind": "json",
+      "name": "options",
+      "options_error_count": 0,
+      "options_feature_row_count": 60,
+      "options_phase_status": "PASS",
+      "options_success_count": 22,
+      "path": "data/intermediate/status/latest_options_manifest.json",
+      "present": true,
+      "refresh_run_id": "20260601T135914Z-update-data-f555b2fe",
+      "required_for_complete": true,
+      "schema_version": null,
+      "sha256": "sample-options-sha"
+    },
+    "tool_a": {
+      "kind": "parquet",
+      "name": "tool_a",
+      "path": "data/output/tool_a/tool_a_latest.parquet",
+      "present": true,
+      "required_for_complete": true,
+      "row_count": 60,
+      "schema_version": null,
+      "sha256": "sample-tool-a-sha",
+      "snapshot_refresh_run_ids": ["20260424T140753Z-update-data-6175c3fb"],
+      "source_run_ids": ["20260424T191957Z-tool-a-f6e2bbf9"]
+    },
+    "tool_b": {
+      "kind": "parquet",
+      "name": "tool_b",
+      "path": "data/output/tool_b/tool_b_latest.parquet",
+      "present": true,
+      "required_for_complete": true,
+      "row_count": 60,
+      "schema_version": null,
+      "sha256": "sample-tool-b-sha",
+      "snapshot_refresh_run_ids": ["20260424T140753Z-update-data-6175c3fb"],
+      "source_run_ids": ["20260424T152429Z-tool-b-fc46f0dd"]
+    },
+    "tool_c": {
+      "kind": "parquet",
+      "name": "tool_c",
+      "path": "data/output/tool_c/tool_c_latest.parquet",
+      "present": false,
+      "required_for_complete": true,
+      "schema_version": null
+    },
+    "tool_d": {
+      "kind": "parquet",
+      "name": "tool_d",
+      "path": "data/output/tool_d/tool_d_latest.parquet",
+      "present": false,
+      "required_for_complete": true,
+      "schema_version": null
+    },
+    "option_candidate_slots": {
+      "kind": "planned",
+      "name": "option_candidate_slots",
+      "planned_phase": "I3",
+      "present": false,
+      "required_for_complete": false,
+      "schema_version": null
+    },
+    "candidate_finder_inputs": {
+      "kind": "planned",
+      "name": "candidate_finder_inputs",
+      "planned_phase": "I3",
+      "present": false,
+      "required_for_complete": false,
+      "schema_version": null
+    }
+  },
+  "build_kind": "full_model",
+  "config": {
+    "combined_hash": "sample-current-local"
+  },
+  "generated_at_utc": "2026-06-05T10:50:00Z",
+  "manifest_version": 1,
+  "manual_data": {
+    "kind": "sqlite",
+    "name": "manual_screening_store",
+    "path": "data/manual/screening/manual_screening.sqlite3",
+    "present": true,
+    "required_for_complete": false,
+    "schema_version": null,
+    "sha256": "sample-manual-store-sha"
+  },
+  "parent_refresh_id": null,
+  "publish": {
+    "atomic_pointer": true,
+    "latest_aliases_authoritative": false,
+    "path": "data/intermediate/status/latest_model_state.json"
+  },
+  "stage_timings": {
+    "tool_a": {
+      "duration_seconds": 1.25,
+      "exit_code": 0
+    }
+  },
+  "state": "incomplete",
+  "warnings": [
+    "tool_a references 20260424T140753Z-update-data-6175c3fb while foundation is 20260601T135914Z-update-data-f555b2fe.",
+    "tool_b references 20260424T140753Z-update-data-6175c3fb while foundation is 20260601T135914Z-update-data-f555b2fe.",
+    "Required artifact is missing: tool_c.",
+    "Required artifact is missing: tool_d."
+  ]
+}

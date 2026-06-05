@@ -50,3 +50,30 @@ Self-review:
 Checks:
 
 - `python -m pytest tests/test_model_state.py tests/test_cli_refresh_and_status.py tests/test_workspace_app.py -q` -> 72 passed.
+
+### Milestone I1 self-review
+
+Reviewed:
+
+- Manifest shape against Claude R1:
+  - single atomic pointer path present
+  - `parent_refresh_id` present and nullable
+  - extensible artifact map already includes I3 option/Finder slots
+  - legacy latest aliases explicitly marked non-authoritative
+- CLI status behavior:
+  - reads model-state first
+  - falls back to legacy latest-file inspection when absent
+  - reports all legacy mismatches, not only the first one
+- UI behavior:
+  - shared overview banner distinguishes complete vs incomplete/missing/corrupt model state
+  - no data readers were moved off legacy aliases yet
+
+Self-review findings:
+
+- No code changes were needed after the full-suite run.
+- Saved a compact sample manifest for review at `reviews/codex/latest_model_state_i1_sample.json`.
+
+Checks:
+
+- `python -m pytest -q` -> 692 passed.
+- `python main.py status` -> showed no local model-state manifest yet, foundation/options at `20260601T135914Z-update-data-f555b2fe`, Tool A/B stale at `20260424T140753Z-update-data-6175c3fb`, Tool C/D missing, and both Tool A and Tool B mismatches listed.
