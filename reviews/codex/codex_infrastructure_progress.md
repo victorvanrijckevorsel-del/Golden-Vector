@@ -192,3 +192,25 @@ Checks:
 - `python -m pytest tests/test_cli_refresh_and_status.py tests/test_cli_tool_c.py tests/test_cli_tool_d.py tests/test_tool_c.py tests/test_tool_d.py -q` -> 27 passed.
 - `python -m compileall golden_vector/cli.py tests/test_cli_refresh_and_status.py` -> passed.
 - `rg` check for direct `pd.read_parquet(paths.latest_tool_*_snapshot_parquet_path)` in CLI/serve -> no matches.
+
+### I2 gate checks
+
+Deliverables:
+
+- Sample manifest saved at `reviews/codex/latest_model_state_i2_sample.json`.
+- Manifest sample shows:
+  - `parent_refresh_id: 20260605T120000Z-refresh-sample`
+  - foundation/options paths stamped with the parent refresh id
+  - Tool A/B/C/D paths pointing at retained `tool_x_latest_<run_id>.parquet` files
+  - mutable alias paths recorded only as `source_alias_path`
+  - planned I3 option/Finder artifact keys still present and optional
+- Fault-injection test proves a failed refresh after Tool B leaves the previous model-state pointer intact and current-model readers still return the old coherent Tool B artifact.
+- Full workspace refresh button now starts the full model refresh and surfaces the latest logged stage.
+- Tool D scenario runs leave the spot alias intact; Candidate Finder resolves Tool D through the manifest's `tool_d_spot` artifact when present.
+
+Checks:
+
+- `python -m pytest -q` -> 699 passed.
+- `python -m compileall golden_vector` -> passed.
+- `python -m py_compile golden_vector/app/model_state.py golden_vector/cli.py golden_vector/serve/option_refresh.py` -> passed.
+- `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in the active Python environment.

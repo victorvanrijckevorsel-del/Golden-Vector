@@ -1,0 +1,296 @@
+{
+  "alignment": {
+    "foundation_refresh_run_id": "20260605T120000Z-update-data-sample",
+    "options_refresh_run_id": "20260605T120000Z-update-data-sample",
+    "status": "OK",
+    "tool_refresh_run_ids": {
+      "tool_a": [
+        "20260605T120000Z-update-data-sample"
+      ],
+      "tool_b": [
+        "20260605T120000Z-update-data-sample"
+      ],
+      "tool_c": [
+        "20260605T120000Z-update-data-sample"
+      ],
+      "tool_d": [
+        "20260605T120000Z-update-data-sample"
+      ]
+    },
+    "warnings": []
+  },
+  "artifacts": {
+    "candidate_finder_inputs": {
+      "kind": "planned",
+      "name": "candidate_finder_inputs",
+      "planned_phase": "I3",
+      "present": false,
+      "readable": false,
+      "required_for_complete": false,
+      "schema_version": null,
+      "usable": false
+    },
+    "foundation": {
+      "foundation_status": "PASS",
+      "immutable": true,
+      "kind": "json",
+      "modified_at_utc": "2026-06-05T11:40:17.283844Z",
+      "name": "foundation",
+      "normalization_qa_status": "PASS",
+      "path": "data/intermediate/status/foundation_manifest_20260605T120000Z-refresh-sample.json",
+      "present": true,
+      "raw_qa_status": "PASS",
+      "readable": true,
+      "refresh_run_id": "20260605T120000Z-update-data-sample",
+      "required_for_complete": true,
+      "schema_version": null,
+      "sha256": "040d5fb988bcd84d8ed391ffd14647811fe89e896be4d92a6722fa1211c04b9c",
+      "size_bytes": 225,
+      "snapshot_as_of_date": "2026-06-01",
+      "source_alias_path": "data/intermediate/status/latest_foundation_manifest.json",
+      "usable": true
+    },
+    "option_candidate_slots": {
+      "kind": "planned",
+      "name": "option_candidate_slots",
+      "planned_phase": "I3",
+      "present": false,
+      "readable": false,
+      "required_for_complete": false,
+      "schema_version": null,
+      "usable": false
+    },
+    "option_contract_metrics": {
+      "kind": "planned",
+      "name": "option_contract_metrics",
+      "planned_phase": "I3",
+      "present": false,
+      "readable": false,
+      "required_for_complete": false,
+      "schema_version": null,
+      "usable": false
+    },
+    "option_liquidity_measurements": {
+      "kind": "planned",
+      "name": "option_liquidity_measurements",
+      "planned_phase": "I3",
+      "present": false,
+      "readable": false,
+      "required_for_complete": false,
+      "schema_version": null,
+      "usable": false
+    },
+    "option_trading_overview": {
+      "kind": "planned",
+      "name": "option_trading_overview",
+      "planned_phase": "I3",
+      "present": false,
+      "readable": false,
+      "required_for_complete": false,
+      "schema_version": null,
+      "usable": false
+    },
+    "options": {
+      "as_of_date": "2026-06-01",
+      "immutable": true,
+      "kind": "json",
+      "modified_at_utc": "2026-06-05T11:40:17.318199Z",
+      "name": "options",
+      "options_error_count": 0,
+      "options_feature_row_count": 1,
+      "options_phase_status": "PASS",
+      "options_success_count": 1,
+      "path": "data/intermediate/status/options_manifest_20260605T120000Z-refresh-sample.json",
+      "present": true,
+      "readable": true,
+      "refresh_run_id": "20260605T120000Z-update-data-sample",
+      "required_for_complete": true,
+      "schema_version": null,
+      "sha256": "a456534880a9126689c80c68d3c23f926d167b310c89d8a77465ce3377e668a9",
+      "size_bytes": 239,
+      "source_alias_path": "data/intermediate/status/latest_options_manifest.json",
+      "usable": true
+    },
+    "tool_a": {
+      "columns": [
+        "ticker",
+        "as_of_date",
+        "snapshot_refresh_run_id",
+        "source_run_id",
+        "tool_a_rank",
+        "score_eligible"
+      ],
+      "immutable": true,
+      "kind": "parquet",
+      "modified_at_utc": "2026-06-05T11:40:16.530941Z",
+      "name": "tool_a",
+      "path": "data/output/tool_a/tool_a_latest_20260605T114016Z-tool-a-155100f0.parquet",
+      "present": true,
+      "readable": true,
+      "required_for_complete": true,
+      "row_count": 1,
+      "schema_version": null,
+      "sha256": "1ed1e154e312f3ba32c4eeac515509d374d1113ebbc4197135b623cf28678282",
+      "size_bytes": 4123,
+      "snapshot_refresh_run_ids": [
+        "20260605T120000Z-update-data-sample"
+      ],
+      "source_alias_path": "data/output/tool_a/tool_a_latest.parquet",
+      "source_run_ids": [
+        "tool-a-run"
+      ],
+      "usable": true
+    },
+    "tool_b": {
+      "columns": [
+        "ticker",
+        "as_of_date",
+        "snapshot_refresh_run_id",
+        "source_run_id",
+        "tool_b_rank",
+        "screening_verdict"
+      ],
+      "immutable": true,
+      "kind": "parquet",
+      "modified_at_utc": "2026-06-05T11:40:16.756836Z",
+      "name": "tool_b",
+      "path": "data/output/tool_b/tool_b_latest_20260605T114016Z-tool-b-4012f7c3.parquet",
+      "present": true,
+      "readable": true,
+      "required_for_complete": true,
+      "row_count": 1,
+      "schema_version": null,
+      "sha256": "dc500fae202c3e9cb7c358eebc705e86a3ce7cf830dc61cc0543b517e3bf5705",
+      "size_bytes": 4195,
+      "snapshot_refresh_run_ids": [
+        "20260605T120000Z-update-data-sample"
+      ],
+      "source_alias_path": "data/output/tool_b/tool_b_latest.parquet",
+      "source_run_ids": [
+        "tool-b-run"
+      ],
+      "usable": true
+    },
+    "tool_c": {
+      "columns": [
+        "ticker",
+        "as_of_date",
+        "snapshot_refresh_run_id",
+        "source_run_id",
+        "tool_c_downside_rank",
+        "tool_c_upside_rank"
+      ],
+      "immutable": true,
+      "kind": "parquet",
+      "modified_at_utc": "2026-06-05T11:40:16.982883Z",
+      "name": "tool_c",
+      "path": "data/output/tool_c/tool_c_latest_20260605T114016Z-tool-c-af4a1d76.parquet",
+      "present": true,
+      "readable": true,
+      "required_for_complete": true,
+      "row_count": 1,
+      "schema_version": null,
+      "sha256": "70964d5b90fe434c63eee5f9644e08fda238a82e79aa25bf89c827eef821a559",
+      "size_bytes": 4348,
+      "snapshot_refresh_run_ids": [
+        "20260605T120000Z-update-data-sample"
+      ],
+      "source_alias_path": "data/output/tool_c/tool_c_latest.parquet",
+      "source_run_ids": [
+        "tool-c-run"
+      ],
+      "usable": true
+    },
+    "tool_d": {
+      "columns": [
+        "ticker",
+        "as_of_date",
+        "snapshot_refresh_run_id",
+        "source_run_id",
+        "gold_price_used",
+        "spot_gold_date",
+        "tool_d_quality_rank"
+      ],
+      "immutable": true,
+      "kind": "parquet",
+      "modified_at_utc": "2026-06-05T11:40:17.236745Z",
+      "name": "tool_d",
+      "path": "data/output/tool_d/tool_d_latest_20260605T114017Z-tool-d-ad1056bc.parquet",
+      "present": true,
+      "readable": true,
+      "required_for_complete": true,
+      "row_count": 1,
+      "schema_version": null,
+      "sha256": "041272c7b90847b21f3121edae7a0f22d8af68e28cbb3a492b017117c1460325",
+      "size_bytes": 4891,
+      "snapshot_refresh_run_ids": [
+        "20260605T120000Z-update-data-sample"
+      ],
+      "source_alias_path": "data/output/tool_d/tool_d_latest.parquet",
+      "source_run_ids": [
+        "tool-d-run"
+      ],
+      "usable": true
+    },
+    "tool_d_spot": {
+      "immutable": false,
+      "kind": "parquet",
+      "name": "tool_d_spot",
+      "path": "data/output/tool_d/tool_d_latest_spot.parquet",
+      "present": false,
+      "readable": false,
+      "required_for_complete": false,
+      "schema_version": null,
+      "source_alias_path": null,
+      "usable": false
+    }
+  },
+  "build_kind": "full_model",
+  "config": {
+    "combined_hash": "sample-config-hash"
+  },
+  "generated_at_utc": "2026-06-05T11:40:17.254526Z",
+  "manifest_version": 1,
+  "manual_data": {
+    "immutable": false,
+    "kind": "sqlite",
+    "name": "manual_screening_store",
+    "path": "data/manual/screening/manual_screening.sqlite3",
+    "present": false,
+    "readable": false,
+    "required_for_complete": false,
+    "schema_version": null,
+    "source_alias_path": null,
+    "usable": false
+  },
+  "parent_refresh_id": "20260605T120000Z-refresh-sample",
+  "publish": {
+    "atomic_pointer": true,
+    "latest_aliases_authoritative": false,
+    "path": "data/intermediate/status/latest_model_state.json"
+  },
+  "stage_timings": {
+    "tool_a": {
+      "duration_seconds": 3.1,
+      "exit_code": 0
+    },
+    "tool_b": {
+      "duration_seconds": 2.7,
+      "exit_code": 0
+    },
+    "tool_c": {
+      "duration_seconds": 1.2,
+      "exit_code": 0
+    },
+    "tool_d": {
+      "duration_seconds": 1.0,
+      "exit_code": 0
+    },
+    "update_data": {
+      "duration_seconds": 12.5,
+      "exit_code": 0
+    }
+  },
+  "state": "complete",
+  "warnings": []
+}
