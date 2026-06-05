@@ -14,6 +14,7 @@ from uuid import uuid4
 import pandas as pd
 
 from golden_vector.common.status import combine_statuses as _combine_statuses
+from golden_vector.common.parquet import read_optional_parquet
 from golden_vector.app.config import load_app_config
 from golden_vector.app.latest_data import (
     LatestFoundationSnapshot,
@@ -47,6 +48,7 @@ from golden_vector.hedge.option_artifact_frames import build_option_artifact_fra
 from golden_vector.hedge.option_artifact_sources import load_option_artifact_source_inputs
 from golden_vector.hedge.options_liquidity import slot_tier_counts
 from golden_vector.ingestion.foundation import execute_foundation_pipeline
+from golden_vector.ingestion.collection_resilience import summarize_fetch_status_rows
 from golden_vector.ingestion.options_phase import (
     run_options_ingestion_phase,
     skipped_options_phase_summary,
@@ -2523,6 +2525,7 @@ def run_refresh(
     started_at = perf_counter()
     update_exit = run_foundation(paths, command_name="update-data")
     record_step("update_data", started_at, update_exit)
+    _attach_update_data_collection_stats(paths, stage_timings["update_data"])
     if update_exit != 0:
         print()
         print("update-data failed (exit code {}). Skipping the rest of the refresh.".format(update_exit))
@@ -2650,6 +2653,41 @@ def run_refresh(
 def _new_parent_refresh_id() -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{timestamp}-refresh-{uuid4().hex[:8]}"
+
+
+def _attach_update_data_collection_stats(
+    paths: ProjectPaths,
+    stage_timing: dict[str, object],
+) -> None:
+    stats = _load_update_data_collection_stats(paths)
+    if stats:
+        stage_timing["collection_stats"] = stats
+
+
+def _load_update_data_collection_stats(paths: ProjectPaths) -> dict[str, object]:
+    foundation_stats = summarize_fetch_status_rows(
+        read_optional_parquet(paths.latest_fetch_status_path),
+    )
+    options_stats: dict[str, object] = {}
+    if paths.latest_options_manifest_path.exists():
+        try:
+            options_manifest = json.loads(
+                paths.latest_options_manifest_path.read_text(encoding="utf-8")
+            )
+            summary = (
+                options_manifest.get("summary")
+                if isinstance(options_manifest.get("summary"), dict)
+                else {}
+            )
+            raw_stats = summary.get("options_collection_stats")
+            if isinstance(raw_stats, dict):
+                options_stats = raw_stats
+        except Exception:
+            options_stats = {}
+    return {
+        "foundation": foundation_stats,
+        "options": options_stats,
+    }
 
 
 def run_status(paths: ProjectPaths) -> int:

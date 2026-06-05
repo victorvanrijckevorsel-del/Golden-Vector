@@ -10,6 +10,7 @@ from typing import Any
 
 import pandas as pd
 
+from golden_vector.common.files import atomic_write_text
 from golden_vector.common.files import repo_relative as _repo_relative
 from golden_vector.common.files import sha256_file as _sha256_file
 from golden_vector.common.parquet import write_parquet_atomic
@@ -107,13 +108,10 @@ def write_latest_options_manifest(
         ],
         "summary": summary or {},
     }
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
-    temporary_path.write_text(
+    atomic_write_text(
+        manifest_path,
         json.dumps(to_jsonable(payload), indent=2, sort_keys=True),
-        encoding="utf-8",
     )
-    temporary_path.replace(manifest_path)
     run_context.record_artifact(manifest_path)
     return manifest_path
 

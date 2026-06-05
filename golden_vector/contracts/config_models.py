@@ -114,6 +114,7 @@ class HedgeReadinessConfig(StrictConfigModel):
     option_liquidity_oi_cap: int = 1000
     option_liquidity_volume_cap: int = 1000
     option_sensible_moneyness_max_pct: float = 0.35
+    options_expiry_fetch_mode: Literal["all", "targeted"] = "all"
     option_dte_bands: dict[int, list[int]] = Field(
         default_factory=lambda: {
             60: [40, 74],

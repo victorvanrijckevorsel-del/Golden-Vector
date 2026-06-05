@@ -1,0 +1,218 @@
+"""Shared retry and collection-stat helpers for market-data ingestion."""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+from datetime import datetime
+from time import sleep as default_sleep
+from typing import TypeVar
+
+import pandas as pd
+
+from golden_vector.contracts.data_models import FetchStatusRecord
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    """Retry/backoff settings for unofficial Yahoo/yfinance calls."""
+
+    max_attempts: int = 3
+    initial_backoff_seconds: float = 0.5
+    backoff_multiplier: float = 2.0
+    throttle_seconds: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.max_attempts <= 0:
+            raise ValueError("max_attempts must be positive")
+        if self.initial_backoff_seconds < 0:
+            raise ValueError("initial_backoff_seconds must be non-negative")
+        if self.backoff_multiplier < 1:
+            raise ValueError("backoff_multiplier must be at least 1")
+        if self.throttle_seconds < 0:
+            raise ValueError("throttle_seconds must be non-negative")
+
+
+def call_with_retries(
+    operation: str,
+    func: Callable[[], T],
+    *,
+    policy: RetryPolicy | None = None,
+    logger: logging.Logger | None = None,
+    sleep_func: Callable[[float], None] = default_sleep,
+) -> T:
+    """Run ``func`` with retry/backoff, preserving the original final exception."""
+
+    retry_policy = policy or RetryPolicy()
+    active_logger = logger or logging.getLogger(__name__)
+    backoff = retry_policy.initial_backoff_seconds
+    last_attempt = retry_policy.max_attempts
+    for attempt in range(1, last_attempt + 1):
+        try:
+            result = func()
+            if retry_policy.throttle_seconds:
+                sleep_func(retry_policy.throttle_seconds)
+            return result
+        except Exception as exc:
+            if attempt >= last_attempt:
+                raise
+            active_logger.warning(
+                "%s failed on attempt %s/%s: %s. Retrying in %.2fs.",
+                operation,
+                attempt,
+                last_attempt,
+                exc,
+                backoff,
+            )
+            if backoff:
+                sleep_func(backoff)
+            backoff *= retry_policy.backoff_multiplier
+
+    raise RuntimeError(f"{operation} retry loop exited unexpectedly")
+
+
+def summarize_fetch_statuses(
+    statuses: Iterable[FetchStatusRecord],
+    *,
+    slow_threshold_seconds: float = 10.0,
+    max_items: int = 10,
+) -> dict[str, object]:
+    """Summarize per-entity foundation fetch statuses for manifest telemetry."""
+
+    rows = [
+        {
+            "dataset": status.dataset,
+            "entity": status.entity,
+            "source_symbol": status.source_symbol,
+            "status": status.status,
+            "row_count": int(status.row_count),
+            "duration_seconds": _duration_seconds(
+                status.started_at_utc,
+                status.completed_at_utc,
+            ),
+            "message": status.message,
+        }
+        for status in statuses
+    ]
+    return summarize_fetch_status_rows(
+        pd.DataFrame(rows),
+        slow_threshold_seconds=slow_threshold_seconds,
+        max_items=max_items,
+    )
+
+
+def summarize_fetch_status_rows(
+    frame: pd.DataFrame,
+    *,
+    slow_threshold_seconds: float = 10.0,
+    max_items: int = 10,
+) -> dict[str, object]:
+    """Summarize a persisted fetch-status table using the same manifest shape."""
+
+    if frame.empty:
+        return {
+            "total_count": 0,
+            "pass_count": 0,
+            "fail_count": 0,
+            "slow_count": 0,
+            "failed": [],
+            "slowest": [],
+        }
+
+    working = frame.copy()
+    if "duration_seconds" not in working.columns:
+        started_values = (
+            working["started_at_utc"]
+            if "started_at_utc" in working.columns
+            else [None] * len(working.index)
+        )
+        completed_values = (
+            working["completed_at_utc"]
+            if "completed_at_utc" in working.columns
+            else [None] * len(working.index)
+        )
+        working["duration_seconds"] = [
+            _duration_seconds(started, completed)
+            for started, completed in zip(
+                started_values,
+                completed_values,
+                strict=False,
+            )
+        ]
+    status = working.get("status", pd.Series(dtype="object")).astype(str).str.upper()
+    failures = working[status == "FAIL"].copy()
+    duration = pd.to_numeric(working["duration_seconds"], errors="coerce")
+    slow = working[duration >= float(slow_threshold_seconds)].copy()
+    return {
+        "total_count": int(len(working.index)),
+        "pass_count": int((status == "PASS").sum()),
+        "fail_count": int((status == "FAIL").sum()),
+        "slow_count": int(len(slow.index)),
+        "failed": _status_rows(failures, max_items=max_items),
+        "slowest": _status_rows(
+            working.sort_values("duration_seconds", ascending=False),
+            max_items=max_items,
+        ),
+    }
+
+
+def _status_rows(frame: pd.DataFrame, *, max_items: int) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for _, row in frame.head(max_items).iterrows():
+        rows.append(
+            {
+                "dataset": _string_value(row.get("dataset")),
+                "entity": _string_value(row.get("entity")),
+                "source_symbol": _string_value(row.get("source_symbol")),
+                "status": _string_value(row.get("status")),
+                "row_count": _int_value(row.get("row_count")),
+                "duration_seconds": _float_value(row.get("duration_seconds")),
+                "message": _string_value(row.get("message")) or None,
+            }
+        )
+    return rows
+
+
+def _duration_seconds(started: object, completed: object) -> float | None:
+    start_dt = _as_datetime(started)
+    completed_dt = _as_datetime(completed)
+    if start_dt is None or completed_dt is None:
+        return None
+    return max(0.0, round((completed_dt - start_dt).total_seconds(), 3))
+
+
+def _as_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if value is None or pd.isna(value):
+        return None
+    try:
+        parsed = pd.to_datetime(value, utc=True)
+    except Exception:
+        return None
+    if pd.isna(parsed):
+        return None
+    return parsed.to_pydatetime()
+
+
+def _string_value(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value)
+
+
+def _int_value(value: object) -> int:
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return 0
+    return int(numeric)
+
+
+def _float_value(value: object) -> float | None:
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return None
+    return float(numeric)

@@ -11,6 +11,7 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.contracts.data_models import FetchStatusRecord
+from golden_vector.ingestion.collection_resilience import summarize_fetch_statuses
 from golden_vector.ingestion.fetch_equities import fetch_equity_histories
 from golden_vector.ingestion.fetch_fx import fetch_fx_histories
 from golden_vector.ingestion.fetch_gold import fetch_gold_history
@@ -148,6 +149,7 @@ def execute_foundation_pipeline(
         "market_snapshot_row_count": len(market_snapshots.index),
         "normalized_equity_row_count": _sum_rows(normalized_equity_histories.values()),
         "normalized_market_snapshot_row_count": len(normalized_market_snapshots.index),
+        "collection_stats": summarize_fetch_statuses(fetch_statuses),
     }
     return FoundationExecutionResult(
         registry=registry,

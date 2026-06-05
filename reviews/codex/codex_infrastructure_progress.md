@@ -456,3 +456,25 @@ Carry-forward into I4/I5 per I3 gate approval:
 
 - Consolidate the four alignment/freshness copies by consuming the model-state manifest's `_alignment` output instead of recomputing freshness separately in CLI status, Candidate Finder, Option Trading, and UI banners.
 - Carry Tool D spot/scenario and empty-option/core-option-artifact fault tests into the I4/I5 test plan.
+
+### I4 Phase 4 resilience
+
+Built:
+
+- Added one shared ingestion resilience helper for Yahoo retry/backoff and collection-stat summaries.
+- Routed real `YahooClient` history, fast-info, expiration, and option-chain calls through the shared retry helper.
+- Added optional targeted option-expiry fetching by configured DTE bands, defaulting to the existing full-chain behavior.
+- Preserved per-ticker best-effort options ingestion while making one bad expiration non-fatal when other expirations load.
+- Added option collection stats to the options manifest summary and exposed foundation/options collection stats through `latest_model_state.json` via existing `stage_timings.update_data.collection_stats`.
+- Reused the shared atomic text writer for the latest options manifest instead of a deterministic `.tmp` path.
+
+Self-review findings fixed:
+
+- Partial option-expiry failures were visible in stats but did not downgrade the options phase to `WARN`. The phase status now treats expiration-level failures as a warning.
+- Successful partial-expiry failures did not carry the explanatory message into the per-ticker event summary. The collection event now includes the fetch result message.
+- The fetch-status summarizer assumed both start/end timestamp columns existed if it needed to derive durations. It now handles malformed/missing timing columns without raising.
+
+Checks:
+
+- `python -m pytest tests/test_collection_resilience.py tests/test_fetch_options.py tests/test_options_phase.py tests/test_cli_refresh_and_status.py` -> 23 passed.
+- `python -m ruff check ...` -> not run; `ruff` is not installed in the active Python environment.

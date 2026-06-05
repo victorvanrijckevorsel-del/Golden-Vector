@@ -98,6 +98,7 @@ def run_options_ingestion_phase(
 
     snapshot_records: list[OptionsSnapshotRecord] = []
     feature_rows: list[dict[str, Any]] = []
+    collection_events: list[dict[str, Any]] = []
     status_counts = {
         OPTIONS_STATUS_SUCCESS: 0,
         OPTIONS_STATUS_EMPTY: 0,
@@ -110,6 +111,17 @@ def run_options_ingestion_phase(
                 ticker=target.yahoo_symbol,
                 as_of_date=as_of_date,
                 yahoo_client=client,
+                expiry_fetch_mode=app_config.hedge_readiness.options_expiry_fetch_mode,
+                target_dte_bands=app_config.hedge_readiness.option_dte_bands,
+            )
+            collection_events.append(
+                {
+                    **result.collection_stats,
+                    "ticker": target.ticker,
+                    "source_symbol": target.yahoo_symbol,
+                    "vehicle_type": target.vehicle_type,
+                    "message": result.message,
+                }
             )
             if result.status == OPTIONS_STATUS_ERROR:
                 LOGGER.warning(
@@ -149,6 +161,15 @@ def run_options_ingestion_phase(
             status_counts[OPTIONS_STATUS_ERROR] = (
                 status_counts.get(OPTIONS_STATUS_ERROR, 0) + 1
             )
+            collection_events.append(
+                {
+                    "ticker": target.ticker,
+                    "source_symbol": target.yahoo_symbol,
+                    "vehicle_type": target.vehicle_type,
+                    "status": OPTIONS_STATUS_ERROR,
+                    "message": str(exc),
+                }
+            )
             LOGGER.warning("Options pipeline failed for %s: %s", target.ticker, exc)
             continue
 
@@ -167,8 +188,12 @@ def run_options_ingestion_phase(
         feature_rows=feature_frame.to_dict(orient="records"),
     )
 
+    option_collection_stats = _summarize_option_collection_events(collection_events)
     status = _phase_status(
         error_count=status_counts.get(OPTIONS_STATUS_ERROR, 0),
+        expiration_error_count=int(
+            option_collection_stats.get("expiration_error_count") or 0
+        ),
         risk_free_message=risk_free_message,
         benchmark_statuses=benchmark_statuses,
     )
@@ -190,6 +215,7 @@ def run_options_ingestion_phase(
         "benchmark_pass_count": sum(1 for item in benchmark_statuses if item.status == "PASS"),
         "benchmark_fail_count": sum(1 for item in benchmark_statuses if item.status == "FAIL"),
         "benchmark_snapshot_count": len(benchmark_paths),
+        "options_collection_stats": option_collection_stats,
     }
     manifest_path = write_latest_options_manifest(
         paths=paths,
@@ -398,9 +424,104 @@ def _underlying_price(
 def _phase_status(
     *,
     error_count: int,
+    expiration_error_count: int,
     risk_free_message: str | None,
     benchmark_statuses: list[BenchmarkFetchStatus],
 ) -> str:
-    if error_count or risk_free_message or any(item.status == "FAIL" for item in benchmark_statuses):
+    if (
+        error_count
+        or expiration_error_count
+        or risk_free_message
+        or any(item.status == "FAIL" for item in benchmark_statuses)
+    ):
         return "WARN"
     return "PASS"
+
+
+def _summarize_option_collection_events(
+    events: list[dict[str, Any]],
+    *,
+    max_items: int = 10,
+) -> dict[str, Any]:
+    if not events:
+        return {
+            "total_count": 0,
+            "success_count": 0,
+            "empty_count": 0,
+            "error_count": 0,
+            "expiration_count_selected": 0,
+            "expiration_error_count": 0,
+            "failed": [],
+            "slowest": [],
+            "expiry_fetch_modes": {},
+        }
+
+    status_counts: dict[str, int] = {}
+    mode_counts: dict[str, int] = {}
+    for event in events:
+        status = str(event.get("status") or "UNKNOWN")
+        mode = str(event.get("expiry_fetch_mode") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        mode_counts[mode] = mode_counts.get(mode, 0) + 1
+
+    sorted_by_duration = sorted(
+        events,
+        key=lambda item: _event_float(item.get("duration_seconds")),
+        reverse=True,
+    )
+    failed = [
+        _event_summary(event)
+        for event in events
+        if str(event.get("status") or "").upper() == OPTIONS_STATUS_ERROR
+    ][:max_items]
+    return {
+        "total_count": len(events),
+        "success_count": status_counts.get(OPTIONS_STATUS_SUCCESS, 0),
+        "empty_count": status_counts.get(OPTIONS_STATUS_EMPTY, 0),
+        "error_count": status_counts.get(OPTIONS_STATUS_ERROR, 0),
+        "expiration_count_available": sum(
+            _event_int(event.get("expiration_count_available"))
+            for event in events
+        ),
+        "expiration_count_selected": sum(
+            _event_int(event.get("expiration_count_selected"))
+            for event in events
+        ),
+        "expiration_error_count": sum(
+            _event_int(event.get("expiration_error_count"))
+            for event in events
+        ),
+        "failed": failed,
+        "slowest": [
+            _event_summary(event)
+            for event in sorted_by_duration[:max_items]
+        ],
+        "expiry_fetch_modes": mode_counts,
+    }
+
+
+def _event_summary(event: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ticker": str(event.get("ticker") or ""),
+        "source_symbol": str(event.get("source_symbol") or ""),
+        "vehicle_type": str(event.get("vehicle_type") or ""),
+        "status": str(event.get("status") or ""),
+        "duration_seconds": _event_float(event.get("duration_seconds")),
+        "expiration_count_selected": _event_int(event.get("expiration_count_selected")),
+        "expiration_error_count": _event_int(event.get("expiration_error_count")),
+        "message": str(event.get("message") or "") or None,
+    }
+
+
+def _event_int(value: object) -> int:
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return 0
+    return int(numeric)
+
+
+def _event_float(value: object) -> float:
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return 0.0
+    return float(numeric)
