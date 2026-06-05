@@ -175,7 +175,7 @@ def build_current_model_state_manifest(
     """Inspect current published artifacts and return a coherent-state manifest."""
 
     generated_at = _utc_now_iso()
-    artifacts = _artifact_map(paths)
+    artifacts = _artifact_map(paths, artifact_stamp=parent_refresh_id)
     alignment = _alignment(artifacts)
     warnings = list(alignment["warnings"])
     missing_required = [
@@ -249,10 +249,14 @@ def summarize_model_state_manifest(payload: dict[str, Any] | None) -> list[str]:
     return lines
 
 
-def _artifact_map(paths: ProjectPaths) -> dict[str, dict[str, Any]]:
+def _artifact_map(
+    paths: ProjectPaths,
+    *,
+    artifact_stamp: str | None = None,
+) -> dict[str, dict[str, Any]]:
     artifacts: dict[str, dict[str, Any]] = {
-        "foundation": _foundation_artifact(paths),
-        "options": _options_artifact(paths),
+        "foundation": _foundation_artifact(paths, artifact_stamp=artifact_stamp),
+        "options": _options_artifact(paths, artifact_stamp=artifact_stamp),
         "tool_a": _parquet_artifact(
             paths=paths,
             name="tool_a",
@@ -298,7 +302,11 @@ def _artifact_map(paths: ProjectPaths) -> dict[str, dict[str, Any]]:
     return artifacts
 
 
-def _foundation_artifact(paths: ProjectPaths) -> dict[str, Any]:
+def _foundation_artifact(
+    paths: ProjectPaths,
+    *,
+    artifact_stamp: str | None,
+) -> dict[str, Any]:
     artifact = _json_artifact(
         paths=paths,
         name="foundation",
@@ -312,7 +320,7 @@ def _foundation_artifact(paths: ProjectPaths) -> dict[str, Any]:
             artifact=artifact,
             source_path=paths.latest_foundation_manifest_path,
             file_prefix="foundation_manifest",
-            stamp=_clean_string(payload.get("refresh_run_id")),
+            stamp=artifact_stamp or _clean_string(payload.get("refresh_run_id")),
         )
         artifact.update(
             {
@@ -328,7 +336,11 @@ def _foundation_artifact(paths: ProjectPaths) -> dict[str, Any]:
     return artifact
 
 
-def _options_artifact(paths: ProjectPaths) -> dict[str, Any]:
+def _options_artifact(
+    paths: ProjectPaths,
+    *,
+    artifact_stamp: str | None,
+) -> dict[str, Any]:
     artifact = _json_artifact(
         paths=paths,
         name="options",
@@ -342,7 +354,7 @@ def _options_artifact(paths: ProjectPaths) -> dict[str, Any]:
             artifact=artifact,
             source_path=paths.latest_options_manifest_path,
             file_prefix="options_manifest",
-            stamp=_clean_string(payload.get("refresh_run_id")),
+            stamp=artifact_stamp or _clean_string(payload.get("refresh_run_id")),
         )
         summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
         artifact.update(
