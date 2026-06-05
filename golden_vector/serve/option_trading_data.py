@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import date
@@ -54,6 +55,7 @@ class OptionTradingCacheKey:
     options_refresh_run_id: str
     tool_a_refresh_run_ids: tuple[str, ...]
     tool_b_refresh_run_ids: tuple[str, ...]
+    model_state_manifest_hash: str | None
 
 
 @dataclass(frozen=True)
@@ -354,7 +356,12 @@ def load_option_trading_data(
             reason="No options snapshot exists yet. Run `python main.py update-data` first.",
         )
 
-    cache_key = _cache_key(manifest=manifest, tool_a=tool_a, tool_b=tool_b)
+    cache_key = _cache_key(
+        manifest=manifest,
+        tool_a=tool_a,
+        tool_b=tool_b,
+        model_state_manifest_hash=_file_sha256(paths.latest_model_state_manifest_path),
+    )
     cached = _CACHE.get(cache_key)
     if cached is not None:
         return cached
@@ -477,12 +484,27 @@ def _cache_key(
     manifest: dict[str, Any],
     tool_a: pd.DataFrame,
     tool_b: pd.DataFrame,
+    model_state_manifest_hash: str | None,
 ) -> OptionTradingCacheKey:
     return OptionTradingCacheKey(
         options_refresh_run_id=str(manifest.get("refresh_run_id") or "unknown"),
         tool_a_refresh_run_ids=_unique_strings(tool_a, "snapshot_refresh_run_id"),
         tool_b_refresh_run_ids=_unique_strings(tool_b, "snapshot_refresh_run_id"),
+        model_state_manifest_hash=model_state_manifest_hash,
     )
+
+
+def _file_sha256(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
 
 
 def _unique_strings(frame: pd.DataFrame, column: str) -> tuple[str, ...]:

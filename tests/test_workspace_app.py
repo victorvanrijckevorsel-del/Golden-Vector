@@ -16,6 +16,7 @@ from golden_vector.screening.manual_data import (
 )
 from golden_vector.screening.manual_store import add_stock_note
 from golden_vector.serve.workspace import create_workspace_app
+from golden_vector.serve.workspace_state import _load_tool_a_detail
 from tests.helpers import build_test_paths
 
 
@@ -111,6 +112,20 @@ def test_workspace_detail_page_renders_explanations_and_exploratory_ladder(tmp_p
         in response["body"]
     )
     assert "Single-Period Ratio" in response["body"]
+
+
+def test_workspace_tool_a_detail_refuses_latest_foundation_when_model_state_corrupt(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    _write_latest_foundation_snapshot(paths)
+    paths.latest_model_state_manifest_path.write_text("{not-json", encoding="utf-8")
+
+    detail = _load_tool_a_detail(paths, app_config=app_config, ticker="NEM")
+
+    assert detail.weekly_series.empty
+    assert detail.foundation_error is not None
+    assert "does not expose a usable immutable foundation artifact" in detail.foundation_error
 
 
 def test_workspace_detail_lens_param_defaults_to_tool_a(tmp_path):

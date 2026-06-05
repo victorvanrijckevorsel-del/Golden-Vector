@@ -103,6 +103,7 @@ def test_load_option_trading_data_uses_composite_cache_key(tmp_path):
     assert first.cache_key is not None
     assert first.cache_key.options_refresh_run_id == "options-run"
     assert first.cache_key.tool_a_refresh_run_ids == ("tool-run-a",)
+    assert first.cache_key.model_state_manifest_hash is None
     assert [row.ticker for row in first.overview.rows] == ["AEM"]
     assert app_config.hedge_readiness.target_horizons_days == [60, 90, 120]
     assert app_config.hedge_readiness.display_horizons_days == [60, 90, 120]
@@ -131,6 +132,52 @@ def test_load_option_trading_data_uses_composite_cache_key(tmp_path):
     assert changed is not first
     assert changed.cache_key is not None
     assert changed.cache_key.tool_a_refresh_run_ids == ("tool-run-b",)
+
+
+def test_load_option_trading_data_cache_key_tracks_model_state_manifest(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "manifest_readable": True,
+                "state": "incomplete",
+                "artifacts": {},
+                "marker": "first-pointer",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    first = load_option_trading_data(paths, app_config=app_config)
+    second = load_option_trading_data(paths, app_config=app_config)
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "manifest_readable": True,
+                "state": "incomplete",
+                "artifacts": {},
+                "marker": "second-pointer",
+            }
+        ),
+        encoding="utf-8",
+    )
+    changed = load_option_trading_data(paths, app_config=app_config)
+
+    assert first is second
+    assert changed is not first
+    assert first.cache_key is not None
+    assert changed.cache_key is not None
+    assert first.cache_key.model_state_manifest_hash is not None
+    assert changed.cache_key.model_state_manifest_hash is not None
+    assert first.cache_key.model_state_manifest_hash != (
+        changed.cache_key.model_state_manifest_hash
+    )
 
 
 def test_build_option_trading_detail_data_reuses_cached_overview_row(tmp_path):

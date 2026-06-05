@@ -82,8 +82,9 @@ def load_latest_foundation_snapshot(
     include_equity_histories: bool = True,
     include_market_snapshots: bool = True,
     requested_tickers: list[str] | None = None,
+    manifest_path: Path | None = None,
 ) -> LatestFoundationSnapshot:
-    manifest_path = paths.latest_foundation_manifest_path
+    manifest_path = manifest_path or paths.latest_foundation_manifest_path
     if not manifest_path.exists():
         raise FileNotFoundError(
             "No validated local market-data snapshot exists yet. Run `python main.py update-data` first."

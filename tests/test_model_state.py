@@ -37,6 +37,7 @@ def test_model_state_manifest_records_complete_aligned_build(tmp_path):
 
     assert loaded == payload
     assert payload["state"] == "complete"
+    assert payload["manifest_readable"] is True
     assert payload["parent_refresh_id"] is None
     assert payload["publish"]["atomic_pointer"] is True
     assert payload["publish"]["latest_aliases_authoritative"] is False
@@ -161,7 +162,86 @@ def test_model_state_loader_reports_corrupt_manifest(tmp_path):
 
     assert payload is not None
     assert payload["state"] == "incomplete"
+    assert payload["manifest_readable"] is False
+    assert "read_error" in payload
     assert "Could not read model-state manifest" in payload["warnings"][0]
+
+
+def test_current_model_reader_does_not_fall_back_when_manifest_is_corrupt(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    paths.output_tool_a_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "ticker": "STALE",
+                "snapshot_refresh_run_id": "stale-alias",
+            }
+        ]
+    ).to_parquet(paths.latest_tool_a_snapshot_parquet_path, index=False)
+    paths.latest_model_state_manifest_path.write_text("{not-json", encoding="utf-8")
+
+    resolved = resolve_current_model_artifact_path(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+    frame = read_current_model_parquet(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+
+    assert resolved is None
+    assert frame.empty
+
+
+def test_current_model_reader_rejects_non_immutable_manifest_artifact(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    paths.output_tool_a_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "ticker": "MUTABLE",
+                "snapshot_refresh_run_id": "mutable-alias",
+            }
+        ]
+    ).to_parquet(paths.latest_tool_a_snapshot_parquet_path, index=False)
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "manifest_readable": True,
+                "state": "incomplete",
+                "artifacts": {
+                    "tool_a": {
+                        "name": "tool_a",
+                        "path": "data/output/tool_a/tool_a_latest.parquet",
+                        "present": True,
+                        "readable": True,
+                        "usable": True,
+                        "immutable": False,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    resolved = resolve_current_model_artifact_path(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+    frame = read_current_model_parquet(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+
+    assert resolved is None
+    assert frame.empty
 
 
 def test_model_state_manifest_marks_corrupt_required_artifact_not_usable(tmp_path):

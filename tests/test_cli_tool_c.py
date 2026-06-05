@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 import json
 
@@ -67,6 +67,115 @@ def test_run_tool_c_uses_latest_local_inputs(tmp_path, monkeypatch):
     assert captured["called"] is True
     latest = pd.read_parquet(paths.latest_tool_c_snapshot_parquet_path)
     assert latest["ticker"].tolist() == ["NEM"]
+
+
+def test_run_tool_c_standalone_uses_model_state_foundation_and_tool_a(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+
+    old_tool_a_path = paths.output_tool_a_dir / "tool_a_latest_refresh-old.parquet"
+    old_tool_a_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "as_of_date": date(2026, 6, 1),
+                "source_run_id": "tool-a-old",
+                "snapshot_refresh_run_id": "refresh-old",
+                "down_beta_core": 1.4,
+                "up_beta_core": 1.2,
+                "score_eligible": True,
+            }
+        ]
+    ).to_parquet(old_tool_a_path, index=False)
+    pd.DataFrame(
+        [
+            {
+                "ticker": "STALE_ALIAS",
+                "as_of_date": date(2026, 6, 2),
+                "source_run_id": "tool-a-new",
+                "snapshot_refresh_run_id": "refresh-new",
+                "down_beta_core": 1.0,
+                "up_beta_core": 1.0,
+                "score_eligible": True,
+            }
+        ]
+    ).to_parquet(paths.latest_tool_a_snapshot_parquet_path, index=False)
+
+    old_snapshot = _latest_foundation_snapshot(paths)
+    old_foundation_path = paths.intermediate_status_dir / "foundation_manifest_refresh-old.json"
+    old_foundation_path.write_bytes(paths.latest_foundation_manifest_path.read_bytes())
+    old_snapshot = replace(
+        old_snapshot,
+        refresh_run_id="refresh-old",
+        manifest_path=old_foundation_path,
+    )
+    paths.latest_foundation_manifest_path.write_text(
+        json.dumps({"refresh_run_id": "refresh-new"}),
+        encoding="utf-8",
+    )
+    paths.latest_model_state_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "manifest_readable": True,
+                "state": "complete",
+                "artifacts": {
+                    "foundation": {
+                        "path": old_foundation_path.relative_to(
+                            paths.repo_root
+                        ).as_posix(),
+                        "usable": True,
+                        "immutable": True,
+                    },
+                    "tool_a": {
+                        "path": old_tool_a_path.relative_to(paths.repo_root).as_posix(),
+                        "usable": True,
+                        "immutable": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+
+    def fake_load_latest_foundation_snapshot(**kwargs):
+        assert kwargs["manifest_path"] == old_foundation_path
+        return old_snapshot
+
+    monkeypatch.setattr(
+        "golden_vector.cli.load_latest_foundation_snapshot",
+        fake_load_latest_foundation_snapshot,
+    )
+
+    def fake_compute_tool_c_outputs(**kwargs):
+        inputs = kwargs["inputs"]
+        assert inputs.tool_a_latest["ticker"].tolist() == ["NEM"]
+        assert inputs.gold_history.equals(old_snapshot.gold_history)
+        assert "NEM" in inputs.normalized_equity_histories
+        return pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 6, 1),
+                    "tool_c_downside_rank": 100.0,
+                    "tool_c_upside_rank": 50.0,
+                }
+            ]
+        )
+
+    monkeypatch.setattr(
+        "golden_vector.cli.compute_tool_c_outputs",
+        fake_compute_tool_c_outputs,
+    )
+
+    assert run_tool_c(paths) == 0
 
 
 def _write_tool_a_latest(paths):

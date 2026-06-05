@@ -1075,6 +1075,7 @@ def run_tool_c(
             include_gold_history=True,
             include_equity_histories=True,
             include_market_snapshots=False,
+            use_model_state=_use_model_state_inputs,
         )
         _capture_foundation_for_replay_manifest(run_context, foundation_snapshot)
 
@@ -1248,6 +1249,7 @@ def run_tool_d(
             include_gold_history=True,
             include_equity_histories=False,
             include_market_snapshots=True,
+            use_model_state=_use_model_state_inputs,
         )
         _capture_foundation_for_replay_manifest(run_context, foundation_snapshot)
         spot_gold_usd, spot_gold_date = _spot_gold_from_history(
@@ -2302,7 +2304,20 @@ def _load_latest_foundation_snapshot(
     include_equity_histories: bool = True,
     include_market_snapshots: bool = True,
     requested_tickers: list[str] | None = None,
+    use_model_state: bool = False,
 ) -> LatestFoundationSnapshot:
+    manifest_path = None
+    if use_model_state:
+        manifest_path = resolve_current_model_artifact_path(
+            paths,
+            "foundation",
+            fallback_path=paths.latest_foundation_manifest_path,
+        )
+        if manifest_path is None:
+            raise FileNotFoundError(
+                "No current foundation artifact exists in the model-state manifest. "
+                "Run `python main.py refresh` first."
+            )
     snapshot = load_latest_foundation_snapshot(
         paths=paths,
         app_config=app_config,
@@ -2310,6 +2325,7 @@ def _load_latest_foundation_snapshot(
         include_equity_histories=include_equity_histories,
         include_market_snapshots=include_market_snapshots,
         requested_tickers=requested_tickers,
+        manifest_path=manifest_path,
     )
     run_context.write_json(
         "foundation_snapshot_summary.json",

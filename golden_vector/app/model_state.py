@@ -83,10 +83,14 @@ def resolve_current_model_artifact_path(
     payload = load_current_model_state_manifest(paths)
     if payload is None:
         return _existing_path_or_none(fallback_path)
+    if payload.get("manifest_readable") is False:
+        return None
     artifact = _manifest_artifact(payload, artifact_name)
     if artifact is None:
         return _existing_path_or_none(fallback_path)
     if not artifact.get("usable"):
+        return None
+    if artifact.get("immutable") is not True:
         return None
     raw_path = str(artifact.get("path") or "").strip()
     if not raw_path:
@@ -149,6 +153,7 @@ def load_current_model_state_manifest(paths: ProjectPaths) -> dict[str, Any] | N
     except Exception as exc:
         return {
             "manifest_version": MODEL_STATE_MANIFEST_VERSION,
+            "manifest_readable": False,
             "generated_at_utc": None,
             "parent_refresh_id": None,
             "build_kind": "full_model",
@@ -160,6 +165,7 @@ def load_current_model_state_manifest(paths: ProjectPaths) -> dict[str, Any] | N
             },
             "artifacts": {},
             "alignment": {"status": "WARN", "warnings": []},
+            "read_error": str(exc),
             "warnings": [f"Could not read model-state manifest: {exc}"],
             "stage_timings": {},
         }
@@ -198,6 +204,7 @@ def build_current_model_state_manifest(
 
     return {
         "manifest_version": MODEL_STATE_MANIFEST_VERSION,
+        "manifest_readable": True,
         "generated_at_utc": generated_at,
         "parent_refresh_id": parent_refresh_id,
         "build_kind": "full_model",

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 import json
 
@@ -171,6 +171,114 @@ def test_run_tool_d_scenario_leaves_existing_spot_alias_untouched(tmp_path, monk
     assert latest["gold_price_used"].iloc[0] == 3500.0
     assert spot_latest["gold_price_used"].iloc[0] == 4050.0
     assert paths.latest_tool_d_spot_snapshot_parquet_path.read_bytes() == spot_before
+
+
+def test_run_tool_d_standalone_uses_model_state_foundation_and_tool_b(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+
+    old_tool_b_path = paths.output_tool_b_dir / "tool_b_latest_refresh-old.parquet"
+    old_tool_b_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "as_of_date": date(2026, 6, 1),
+                "source_run_id": "tool-b-old",
+                "snapshot_refresh_run_id": "refresh-old",
+                "tool_b_rank": 1,
+            }
+        ]
+    ).to_parquet(old_tool_b_path, index=False)
+    pd.DataFrame(
+        [
+            {
+                "ticker": "STALE_ALIAS",
+                "as_of_date": date(2026, 6, 2),
+                "source_run_id": "tool-b-new",
+                "snapshot_refresh_run_id": "refresh-new",
+                "tool_b_rank": 1,
+            }
+        ]
+    ).to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)
+
+    old_snapshot = _latest_foundation_snapshot(paths)
+    old_foundation_path = paths.intermediate_status_dir / "foundation_manifest_refresh-old.json"
+    old_foundation_path.write_bytes(paths.latest_foundation_manifest_path.read_bytes())
+    old_snapshot = replace(
+        old_snapshot,
+        refresh_run_id="refresh-old",
+        manifest_path=old_foundation_path,
+    )
+    paths.latest_foundation_manifest_path.write_text(
+        json.dumps({"refresh_run_id": "refresh-new"}),
+        encoding="utf-8",
+    )
+    paths.latest_model_state_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "manifest_readable": True,
+                "state": "complete",
+                "artifacts": {
+                    "foundation": {
+                        "path": old_foundation_path.relative_to(
+                            paths.repo_root
+                        ).as_posix(),
+                        "usable": True,
+                        "immutable": True,
+                    },
+                    "tool_b": {
+                        "path": old_tool_b_path.relative_to(paths.repo_root).as_posix(),
+                        "usable": True,
+                        "immutable": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+
+    def fake_load_latest_foundation_snapshot(**kwargs):
+        assert kwargs["manifest_path"] == old_foundation_path
+        return old_snapshot
+
+    monkeypatch.setattr(
+        "golden_vector.cli.load_latest_foundation_snapshot",
+        fake_load_latest_foundation_snapshot,
+    )
+
+    def fake_compute_tool_d_outputs(**kwargs):
+        inputs = kwargs["inputs"]
+        assert inputs.tool_b_latest["ticker"].tolist() == ["NEM"]
+        assert inputs.snapshot_refresh_run_id == "refresh-old"
+        assert inputs.spot_gold_usd == 4050.0
+        return pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 6, 1),
+                    "gold_price_used": kwargs["gold_price"],
+                    "spot_gold_usd": inputs.spot_gold_usd,
+                    "spot_gold_date": inputs.spot_gold_date,
+                    "tool_d_quality_rank": 100.0,
+                }
+            ]
+        )
+
+    monkeypatch.setattr(
+        "golden_vector.cli.compute_tool_d_outputs",
+        fake_compute_tool_d_outputs,
+    )
+
+    assert run_tool_d(paths, gold_price=None) == 0
 
 
 def _write_tool_b_latest(paths):

@@ -214,3 +214,22 @@ Checks:
 - `python -m compileall golden_vector` -> passed.
 - `python -m py_compile golden_vector/app/model_state.py golden_vector/cli.py golden_vector/serve/option_refresh.py` -> passed.
 - `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in the active Python environment.
+
+### I2 deep-review hardening
+
+Findings fixed:
+
+- Current-model readers could fall back to mutable latest aliases when `latest_model_state.json` existed but was corrupt. That would make a damaged atomic pointer behave like no pointer at all. The loader now marks corrupt manifests as unreadable, and artifact resolution refuses alias fallback in that state.
+- Current-model readers accepted an artifact marked `usable` even when it was not immutable. That could let an incomplete manifest point readers at `*_latest` aliases. Resolution now requires manifest artifact entries to be immutable.
+- Standalone Tool C and Tool D read Tool A/B through the model-state manifest, but still loaded foundation from the mutable latest foundation alias. After a failed refresh, that could mix old Tool A/B with newer foundation data. Standalone Tool C/D now resolve foundation through the same model-state pointer; full `refresh` still uses the just-produced latest alias before atomic publish.
+- Tool A detail pages still loaded foundation directly from the mutable latest foundation alias for rebuilt chart inputs. Detail-state loading now resolves foundation through the model-state manifest and refuses alias fallback when a manifest exists but is unusable.
+- The Option Trading in-process cache did not include the current model-state manifest pointer in its key. Long-running workspace processes now invalidate option data when `latest_model_state.json` changes.
+
+Checks:
+
+- `python -m pytest tests/test_model_state.py tests/test_cli_tool_c.py tests/test_cli_tool_d.py tests/test_option_trading_data.py -q` -> 35 passed.
+- `python -m pytest tests/test_model_state.py tests/test_latest_data.py tests/test_cli_refresh_and_status.py tests/test_cli_tool_c.py tests/test_cli_tool_d.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py tests/test_workspace_app.py tests/test_option_refresh.py -q` -> 137 passed.
+- `python -m pytest tests/test_workspace_app.py tests/test_model_state.py tests/test_latest_data.py tests/test_cli_tool_c.py tests/test_cli_tool_d.py tests/test_option_trading_data.py -q` -> 101 passed.
+- `python -m compileall golden_vector` -> passed.
+- `python -m pytest -q` -> 705 passed.
+- `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in the active Python environment.
