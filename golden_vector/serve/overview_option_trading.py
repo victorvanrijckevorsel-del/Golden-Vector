@@ -10,6 +10,7 @@ from golden_vector.hedge.option_trading import (
     OptionTradingOverviewData,
     OptionTradingRow,
 )
+from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.format_helpers import (
     _fmt_number,
     _fmt_numeric_td,
@@ -28,6 +29,7 @@ def _render_option_trading_overview_page(
     overview: OptionTradingOverviewData,
     *,
     refresh_status: OptionRefreshStatus | None = None,
+    model_state_manifest: dict[str, object] | None = None,
 ) -> str:
     snapshot_date = (
         overview.source_context.as_of_date
@@ -42,6 +44,7 @@ def _render_option_trading_overview_page(
     body = [
         "<h1>Option Trading</h1>",
         f"<p class=\"hint\">{snapshot_note}</p>",
+        render_model_state_banner(model_state_manifest),
         render_option_refresh_control(
             refresh_status or OptionRefreshStatus(),
             return_to="/option-trading",

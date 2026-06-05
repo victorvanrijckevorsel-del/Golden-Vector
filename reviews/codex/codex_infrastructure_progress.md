@@ -77,3 +77,30 @@ Checks:
 
 - `python -m pytest -q` -> 692 passed.
 - `python main.py status` -> showed no local model-state manifest yet, foundation/options at `20260601T135914Z-update-data-f555b2fe`, Tool A/B stale at `20260424T140753Z-update-data-6175c3fb`, Tool C/D missing, and both Tool A and Tool B mismatches listed.
+
+### I1 deep-review fixes
+
+Reviewed:
+
+- Manifest artifact semantics.
+- CLI status behavior when no foundation refresh id exists.
+- UI coverage for the screens that depend on mixed model/option inputs.
+- Candidate Finder cache invalidation after model-state changes.
+- Duplicate model-state banner rendering.
+
+Findings fixed:
+
+- Required artifacts used `present` as the completion signal. A corrupt Parquet/JSON file could be present but unusable. Added explicit `readable` and `usable` fields and changed completion to depend on `usable`.
+- Corrupt required files now remain `present: true` with `usable: false` and a `read_error`, instead of being flattened into "missing".
+- Foundation/options manifests without required status fields can no longer produce a complete model state.
+- Legacy CLI status now reports refresh alignment as `UNKNOWN` when the foundation refresh id is absent, not `OK`.
+- Option Trading and Candidate Finder now render the model-state banner.
+- Candidate Finder cache keys now include the model-state manifest hash, so the banner cannot go stale behind the cache.
+- Consolidated duplicate banner HTML into `golden_vector.serve.model_state_banner`.
+- Refreshed `reviews/codex/latest_model_state_i1_sample.json` to show the hardened `present`/`readable`/`usable` contract.
+
+Checks:
+
+- `python -m pytest tests/test_model_state.py tests/test_cli_refresh_and_status.py tests/test_workspace_app.py tests/test_option_refresh.py tests/test_candidate_finder_data.py tests/test_candidate_finder_page.py -q` -> 105 passed.
+- `python -m compileall golden_vector/app/model_state.py golden_vector/cli.py golden_vector/serve/model_state_banner.py golden_vector/serve/overview_combined.py golden_vector/serve/overview_tool_a.py golden_vector/serve/overview_tool_b.py golden_vector/serve/overview_option_trading.py golden_vector/serve/candidate_finder_data.py golden_vector/serve/candidate_finder_page.py golden_vector/serve/workspace.py` -> passed.
+- `python -m pytest -q` -> 695 passed.

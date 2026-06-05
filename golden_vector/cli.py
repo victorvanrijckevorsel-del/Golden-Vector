@@ -2637,7 +2637,9 @@ def _render_status_summary(paths: ProjectPaths) -> str:
             alignment_messages.append(
                 f"Tool D={', '.join(sorted(tool_d_run_ids))}"
             )
-    if alignment_messages:
+    if not manifest_run_id:
+        lines.append("Refresh alignment:    UNKNOWN  (foundation refresh id missing)")
+    elif alignment_messages:
         lines.append(
             "Refresh alignment:    MISMATCH  "
             f"(manifest={manifest_run_id}; {'; '.join(alignment_messages)})"

@@ -49,6 +49,7 @@ from golden_vector.serve.option_trading_data import (
     load_option_trading_data,
     parse_option_sizing_request,
 )
+from golden_vector.app.model_state import load_current_model_state_manifest
 from golden_vector.serve.option_refresh import (
     read_option_refresh_status,
     start_options_refresh,
@@ -196,6 +197,7 @@ def create_workspace_app(
                     _render_option_trading_overview_page(
                         option_trading_data.overview,
                         refresh_status=refresh_status,
+                        model_state_manifest=load_current_model_state_manifest(paths),
                     ),
                 )
 

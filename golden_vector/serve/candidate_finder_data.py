@@ -11,6 +11,7 @@ from typing import Any, Literal
 import pandas as pd
 import yaml
 
+from golden_vector.app.model_state import load_current_model_state_manifest
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import (
     AppConfig,
@@ -44,6 +45,7 @@ class CandidateFinderCacheKey:
     tool_b_latest_hash: str | None
     tool_c_latest_hash: str | None
     tool_d_latest_hash: str | None
+    model_state_manifest_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,7 @@ class CandidateFinderData:
     criteria_config: CandidateFinderConfig
     alignment: CandidateFinderAlignment
     cache_key: CandidateFinderCacheKey
+    model_state_manifest: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -136,6 +139,7 @@ def load_candidate_finder_data(
         tool_b_latest_hash=_file_sha256(paths.latest_tool_b_snapshot_parquet_path),
         tool_c_latest_hash=_file_sha256(paths.latest_tool_c_snapshot_parquet_path),
         tool_d_latest_hash=_file_sha256(tool_d_source_path),
+        model_state_manifest_hash=_file_sha256(paths.latest_model_state_manifest_path),
     )
     cached = _CACHE.get(cache_key)
     if cached is not None:
@@ -176,6 +180,7 @@ def load_candidate_finder_data(
         criteria_config=app_config.candidate_finder,
         alignment=alignment,
         cache_key=cache_key,
+        model_state_manifest=load_current_model_state_manifest(paths),
     )
     _CACHE[cache_key] = data
     return data

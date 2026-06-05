@@ -16,13 +16,13 @@ from golden_vector.serve.format_helpers import (
     _metric_card,
     _optional_float,
 )
-from golden_vector.app.model_state import summarize_model_state_manifest
 from golden_vector.serve.lenses import (
     DEFAULT_LENS_ID,
     LENS_DEFINITIONS,
     compute_lens_score,
     resolve_lens,
 )
+from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.workspace_state import OverviewFilters, WorkspaceState
 
@@ -165,7 +165,7 @@ def _render_overview_page(
     ]
     if flash:
         body.append(f"<div class=\"flash\">{escape(flash)}</div>")
-    body.append(_render_model_state_banner(state))
+    body.append(render_model_state_banner(state.model_state_manifest))
     body.append(_render_provenance_warnings(state))
     body.append(_render_refresh_summary(state.foundation_manifest))
     body.append(
@@ -367,24 +367,6 @@ def _render_provenance_warnings(state: WorkspaceState) -> str:
     return (
         "<div class=\"flash\">"
         + "".join(f"<p>{notice}</p>" for notice in notices)
-        + "</div>"
-    )
-
-
-def _render_model_state_banner(state: WorkspaceState) -> str:
-    payload = state.model_state_manifest
-    lines = summarize_model_state_manifest(payload)
-    if payload is not None and str(payload.get("state") or "").lower() == "complete":
-        return (
-            "<div class=\"panel\">"
-            "<h2>Model Build Complete</h2>"
-            + "".join(f"<p>{escape(line)}</p>" for line in lines[1:])
-            + "</div>"
-        )
-    return (
-        "<div class=\"flash\">"
-        "<p><strong>Model build state needs attention.</strong></p>"
-        + "".join(f"<p>{escape(line)}</p>" for line in lines)
         + "</div>"
     )
 

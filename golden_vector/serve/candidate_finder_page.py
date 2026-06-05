@@ -21,6 +21,7 @@ from golden_vector.serve.candidate_finder_data import (
     run_candidate_finder_screen,
 )
 from golden_vector.serve.format_helpers import _fmt_number, _fmt_numeric_td, _metric_card
+from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.page_shell import _page_shell
 
 _DEFAULT_PRESET_ID = "bearish_put"
@@ -47,6 +48,7 @@ def render_candidate_finder_page(
             "<section class=\"workspace-section\">",
             "<h1>Candidate Finder</h1>",
             "<p class=\"lead\">Build a ranked list from model signals and option-market filters.</p>",
+            render_model_state_banner(data.model_state_manifest),
             _render_preset_bar(data, active_preset_id),
             _render_warning_banner(screen.warnings),
             _render_summary_cards(screen),

@@ -46,6 +46,33 @@ def test_candidate_finder_data_joins_sources_and_derives_ratios(tmp_path):
     assert frame.loc["NEM", "tool_d_quality_rank"] == pytest.approx(80.0)
 
 
+def test_candidate_finder_cache_key_tracks_model_state_manifest(tmp_path):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "state": "complete",
+                "parent_refresh_id": None,
+                "generated_at_utc": "2026-06-05T10:00:00Z",
+                "alignment": {"status": "OK"},
+                "warnings": [],
+                "artifacts": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    data = load_candidate_finder_data(paths, app_config=app_config)
+
+    assert data.cache_key.model_state_manifest_hash is not None
+    assert data.model_state_manifest is not None
+    assert data.model_state_manifest["state"] == "complete"
+
+
 def test_candidate_finder_usable_side_filter_excludes_watch_candidates():
     from golden_vector.hedge.candidate_puts import OptionCandidate, OptionCandidateSlot
     from golden_vector.serve.candidate_finder_data import _has_usable_slots

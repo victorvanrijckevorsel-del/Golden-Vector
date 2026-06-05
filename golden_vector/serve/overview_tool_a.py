@@ -14,10 +14,10 @@ from golden_vector.serve.format_helpers import (
 from golden_vector.serve.overview_combined import (
     _collect_filter_options,
     _render_filter_bar,
-    _render_model_state_banner,
     _render_provenance_warnings,
     _render_refresh_summary,
 )
+from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.workspace_state import WorkspaceState
 
@@ -95,7 +95,7 @@ def _render_tool_a_overview_page(
     )
     if flash:
         body.append(f"<div class=\"flash\">{escape(flash)}</div>")
-    body.append(_render_model_state_banner(state))
+    body.append(render_model_state_banner(state.model_state_manifest))
     body.append(_render_provenance_warnings(state))
     body.append(_render_refresh_summary(state.foundation_manifest))
     body.append(

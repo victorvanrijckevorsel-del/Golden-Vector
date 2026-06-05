@@ -35,6 +35,7 @@ def test_candidate_finder_page_renders_default_bearish_put_screen():
     assert 'data-col-name="score" data-sort-numeric' in html
     assert 'data-col-name="criterion_down_beta" data-sort-numeric' in html
     assert "Score = your weighted-average percentile" in html
+    assert "Model build state needs attention" in html
     assert 'aria-label="Use Down-beta"' in html
     assert "Mixed refreshes in Candidate Finder sources" in html
     assert "/ticker/AEM?lens=option-trading#option-trading" in html

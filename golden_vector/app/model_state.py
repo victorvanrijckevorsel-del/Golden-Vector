@@ -108,10 +108,13 @@ def build_current_model_state_manifest(
     missing_required = [
         name
         for name in REQUIRED_ARTIFACTS
-        if not artifacts[name].get("present")
+        if not artifacts[name].get("usable")
     ]
     for name in missing_required:
-        warnings.append(f"Required artifact is missing: {name}.")
+        if artifacts[name].get("present"):
+            warnings.append(f"Required artifact is not usable: {name}.")
+        else:
+            warnings.append(f"Required artifact is missing: {name}.")
     warnings.extend(_artifact_health_warnings(artifacts))
 
     state = "complete"
@@ -214,6 +217,8 @@ def _artifact_map(paths: ProjectPaths) -> dict[str, dict[str, Any]]:
             "kind": "planned",
             "planned_phase": "I3",
             "present": False,
+            "readable": False,
+            "usable": False,
             "required_for_complete": False,
             "schema_version": None,
         }
@@ -286,7 +291,8 @@ def _json_artifact(
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         artifact["read_error"] = str(exc)
-        artifact["present"] = False
+        artifact["readable"] = False
+        artifact["usable"] = False
         return artifact
     artifact["_payload"] = payload
     return artifact
@@ -312,7 +318,8 @@ def _parquet_artifact(
         frame = pd.read_parquet(path)
     except Exception as exc:
         artifact["read_error"] = str(exc)
-        artifact["present"] = False
+        artifact["readable"] = False
+        artifact["usable"] = False
         return artifact
     artifact["row_count"] = int(len(frame.index))
     artifact["columns"] = [str(column) for column in frame.columns]
@@ -339,17 +346,25 @@ def _file_artifact(
         "kind": kind,
         "path": _repo_relative(paths, path),
         "present": present,
+        "readable": False,
+        "usable": False,
         "required_for_complete": required_for_complete,
         "schema_version": None,
     }
     if present:
-        artifact.update(
-            {
-                "sha256": _sha256_file(path),
-                "modified_at_utc": _mtime_iso(path),
-                "size_bytes": path.stat().st_size,
-            }
-        )
+        try:
+            stat = path.stat()
+            artifact.update(
+                {
+                    "sha256": _sha256_file(path),
+                    "modified_at_utc": _mtime_iso(path),
+                    "size_bytes": stat.st_size,
+                    "readable": True,
+                    "usable": True,
+                }
+            )
+        except Exception as exc:
+            artifact["read_error"] = str(exc)
     return artifact
 
 
@@ -357,6 +372,10 @@ def _alignment(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
     warnings: list[str] = []
     foundation_id = _clean_string(artifacts["foundation"].get("refresh_run_id"))
     options_id = _clean_string(artifacts["options"].get("refresh_run_id"))
+    if artifacts["foundation"].get("usable") and not foundation_id:
+        warnings.append("foundation does not carry refresh_run_id.")
+    if artifacts["options"].get("usable") and not options_id:
+        warnings.append("options does not carry refresh_run_id.")
     if foundation_id and options_id and foundation_id != options_id:
         warnings.append(
             f"Foundation refresh {foundation_id} does not match options refresh {options_id}."
@@ -393,9 +412,13 @@ def _alignment(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
 def _artifact_health_warnings(artifacts: dict[str, dict[str, Any]]) -> list[str]:
     warnings: list[str] = []
     foundation_status = _clean_string(artifacts["foundation"].get("foundation_status"))
+    if artifacts["foundation"].get("usable") and not foundation_status:
+        warnings.append("Foundation status is missing.")
     if foundation_status and foundation_status not in {"PASS", "WARN"}:
         warnings.append(f"Foundation status is not usable: {foundation_status}.")
     options_status = _clean_string(artifacts["options"].get("options_phase_status"))
+    if artifacts["options"].get("usable") and not options_status:
+        warnings.append("Options phase status is missing.")
     if options_status and options_status == "FAIL":
         warnings.append("Options phase status is FAIL.")
     for name in ("tool_a", "tool_b", "tool_c", "tool_d"):
@@ -408,6 +431,8 @@ def _artifact_health_warnings(artifacts: dict[str, dict[str, Any]]) -> list[str]
 def _is_required_health_warning(warning: str) -> bool:
     return (
         warning.startswith("Foundation status is not usable:")
+        or warning == "Foundation status is missing."
+        or warning == "Options phase status is missing."
         or warning == "Options phase status is FAIL."
         or warning.endswith(" has zero rows.")
     )

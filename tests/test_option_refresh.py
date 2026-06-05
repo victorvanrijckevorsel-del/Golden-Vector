@@ -238,6 +238,7 @@ def test_option_trading_overview_shows_refresh_status(tmp_path):
     response = _call_wsgi_app(app, method="GET", path="/option-trading")
 
     assert response["status"].startswith("200")
+    assert "Model build state needs attention" in response["body"]
     assert "Refresh cached options data" in response["body"]
     assert "Options refresh running since 2026-06-04T10:00:00Z." in response["body"]
 

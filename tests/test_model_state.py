@@ -107,6 +107,66 @@ def test_model_state_loader_reports_corrupt_manifest(tmp_path):
     assert "Could not read model-state manifest" in payload["warnings"][0]
 
 
+def test_model_state_manifest_marks_corrupt_required_artifact_not_usable(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(paths, refresh_run_id="refresh-A")
+    paths.latest_tool_c_snapshot_parquet_path.write_text(
+        "not a parquet file",
+        encoding="utf-8",
+    )
+
+    payload = build_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+    )
+
+    tool_c = payload["artifacts"]["tool_c"]
+    assert payload["state"] == "incomplete"
+    assert tool_c["present"] is True
+    assert tool_c["readable"] is False
+    assert tool_c["usable"] is False
+    assert "read_error" in tool_c
+    assert "Required artifact is not usable: tool_c." in payload["warnings"]
+
+
+def test_model_state_manifest_requires_foundation_and_options_status(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    paths.latest_foundation_manifest_path.write_text(
+        json.dumps(
+            {
+                "refresh_run_id": "refresh-A",
+                "snapshot_as_of_date": "2026-06-01",
+                "raw_qa_summary": {"overall_status": "PASS"},
+                "normalization_qa_summary": {"overall_status": "PASS"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    paths.latest_options_manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "refresh_run_id": "refresh-A",
+                "as_of_date": "2026-06-01",
+                "summary": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_tool_outputs(paths, refresh_run_id="refresh-A")
+
+    payload = build_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+    )
+
+    assert payload["state"] == "incomplete"
+    assert "Foundation status is missing." in payload["warnings"]
+    assert "Options phase status is missing." in payload["warnings"]
+
+
 def _write_foundation_and_options_manifests(
     paths: ProjectPaths,
     *,

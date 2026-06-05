@@ -109,6 +109,7 @@ def test_status_command_runs_cleanly_with_no_artifacts(tmp_path, monkeypatch, ca
     assert "Tool B latest output: NOT FOUND" in captured
     assert "Tool C latest output: NOT FOUND" in captured
     assert "Tool D latest output: NOT FOUND" in captured
+    assert "Refresh alignment:    UNKNOWN" in captured
     assert "No manual-data store yet" in captured
 
 

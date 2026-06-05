@@ -4,8 +4,12 @@
     "options_refresh_run_id": "20260601T135914Z-update-data-f555b2fe",
     "status": "WARN",
     "tool_refresh_run_ids": {
-      "tool_a": ["20260424T140753Z-update-data-6175c3fb"],
-      "tool_b": ["20260424T140753Z-update-data-6175c3fb"],
+      "tool_a": [
+        "20260424T140753Z-update-data-6175c3fb"
+      ],
+      "tool_b": [
+        "20260424T140753Z-update-data-6175c3fb"
+      ],
       "tool_c": [],
       "tool_d": []
     },
@@ -15,23 +19,78 @@
     ]
   },
   "artifacts": {
+    "candidate_finder_inputs": {
+      "kind": "planned",
+      "name": "candidate_finder_inputs",
+      "planned_phase": "I3",
+      "present": false,
+      "readable": false,
+      "required_for_complete": false,
+      "schema_version": null,
+      "usable": false
+    },
     "foundation": {
       "foundation_status": "WARN",
       "kind": "json",
+      "modified_at_utc": "sample-modified-at",
       "name": "foundation",
       "normalization_qa_status": "WARN",
       "path": "data/intermediate/status/latest_foundation_manifest.json",
       "present": true,
       "raw_qa_status": "PASS",
+      "readable": true,
       "refresh_run_id": "20260601T135914Z-update-data-f555b2fe",
       "required_for_complete": true,
       "schema_version": null,
       "sha256": "sample-foundation-sha",
-      "snapshot_as_of_date": "2026-06-01"
+      "size_bytes": "sample-size",
+      "snapshot_as_of_date": "2026-06-01",
+      "usable": true
+    },
+    "option_candidate_slots": {
+      "kind": "planned",
+      "name": "option_candidate_slots",
+      "planned_phase": "I3",
+      "present": false,
+      "readable": false,
+      "required_for_complete": false,
+      "schema_version": null,
+      "usable": false
+    },
+    "option_contract_metrics": {
+      "kind": "planned",
+      "name": "option_contract_metrics",
+      "planned_phase": "I3",
+      "present": false,
+      "readable": false,
+      "required_for_complete": false,
+      "schema_version": null,
+      "usable": false
+    },
+    "option_liquidity_measurements": {
+      "kind": "planned",
+      "name": "option_liquidity_measurements",
+      "planned_phase": "I3",
+      "present": false,
+      "readable": false,
+      "required_for_complete": false,
+      "schema_version": null,
+      "usable": false
+    },
+    "option_trading_overview": {
+      "kind": "planned",
+      "name": "option_trading_overview",
+      "planned_phase": "I3",
+      "present": false,
+      "readable": false,
+      "required_for_complete": false,
+      "schema_version": null,
+      "usable": false
     },
     "options": {
       "as_of_date": "2026-06-01",
       "kind": "json",
+      "modified_at_utc": "sample-modified-at",
       "name": "options",
       "options_error_count": 0,
       "options_feature_row_count": 60,
@@ -39,66 +98,83 @@
       "options_success_count": 22,
       "path": "data/intermediate/status/latest_options_manifest.json",
       "present": true,
+      "readable": true,
       "refresh_run_id": "20260601T135914Z-update-data-f555b2fe",
       "required_for_complete": true,
       "schema_version": null,
-      "sha256": "sample-options-sha"
+      "sha256": "sample-options-sha",
+      "size_bytes": "sample-size",
+      "usable": true
     },
     "tool_a": {
       "kind": "parquet",
+      "modified_at_utc": "sample-modified-at",
       "name": "tool_a",
       "path": "data/output/tool_a/tool_a_latest.parquet",
       "present": true,
+      "readable": true,
       "required_for_complete": true,
       "row_count": 60,
       "schema_version": null,
-      "sha256": "sample-tool-a-sha",
-      "snapshot_refresh_run_ids": ["20260424T140753Z-update-data-6175c3fb"],
-      "source_run_ids": ["20260424T191957Z-tool-a-f6e2bbf9"]
+      "sha256": "sample-tool_a-sha",
+      "size_bytes": "sample-size",
+      "snapshot_refresh_run_ids": [
+        "20260424T140753Z-update-data-6175c3fb"
+      ],
+      "source_run_ids": [
+        "20260424T191957Z-tool-a-f6e2bbf9"
+      ],
+      "usable": true
     },
     "tool_b": {
       "kind": "parquet",
+      "modified_at_utc": "sample-modified-at",
       "name": "tool_b",
       "path": "data/output/tool_b/tool_b_latest.parquet",
       "present": true,
+      "readable": true,
       "required_for_complete": true,
       "row_count": 60,
       "schema_version": null,
-      "sha256": "sample-tool-b-sha",
-      "snapshot_refresh_run_ids": ["20260424T140753Z-update-data-6175c3fb"],
-      "source_run_ids": ["20260424T152429Z-tool-b-fc46f0dd"]
+      "sha256": "sample-tool_b-sha",
+      "size_bytes": "sample-size",
+      "snapshot_refresh_run_ids": [
+        "20260424T140753Z-update-data-6175c3fb"
+      ],
+      "source_run_ids": [
+        "20260424T152429Z-tool-b-fc46f0dd"
+      ],
+      "usable": true
     },
     "tool_c": {
       "kind": "parquet",
       "name": "tool_c",
       "path": "data/output/tool_c/tool_c_latest.parquet",
       "present": false,
+      "readable": false,
       "required_for_complete": true,
-      "schema_version": null
+      "schema_version": null,
+      "usable": false
     },
     "tool_d": {
       "kind": "parquet",
       "name": "tool_d",
       "path": "data/output/tool_d/tool_d_latest.parquet",
       "present": false,
+      "readable": false,
       "required_for_complete": true,
-      "schema_version": null
+      "schema_version": null,
+      "usable": false
     },
-    "option_candidate_slots": {
-      "kind": "planned",
-      "name": "option_candidate_slots",
-      "planned_phase": "I3",
+    "tool_d_spot": {
+      "kind": "parquet",
+      "name": "tool_d_spot",
+      "path": "data/output/tool_d/tool_d_latest_spot.parquet",
       "present": false,
+      "readable": false,
       "required_for_complete": false,
-      "schema_version": null
-    },
-    "candidate_finder_inputs": {
-      "kind": "planned",
-      "name": "candidate_finder_inputs",
-      "planned_phase": "I3",
-      "present": false,
-      "required_for_complete": false,
-      "schema_version": null
+      "schema_version": null,
+      "usable": false
     }
   },
   "build_kind": "full_model",
@@ -109,12 +185,16 @@
   "manifest_version": 1,
   "manual_data": {
     "kind": "sqlite",
+    "modified_at_utc": "sample-modified-at",
     "name": "manual_screening_store",
     "path": "data/manual/screening/manual_screening.sqlite3",
     "present": true,
+    "readable": true,
     "required_for_complete": false,
     "schema_version": null,
-    "sha256": "sample-manual-store-sha"
+    "sha256": "sample-manual-store-sha",
+    "size_bytes": "sample-size",
+    "usable": true
   },
   "parent_refresh_id": null,
   "publish": {
