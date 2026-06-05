@@ -7,6 +7,7 @@ from typing import Iterable
 
 import pandas as pd
 
+from golden_vector.common.eligibility import is_score_eligible, score_eligible_mask
 from golden_vector.contracts.config_models import ToolCConfig
 from golden_vector.features.gold_regime import build_gold_regime_frame
 from golden_vector.features.percentile_ranks import oriented_percentile
@@ -233,7 +234,7 @@ def _add_component_scores(
     score_column: str,
 ) -> None:
     percentiles: list[pd.Series] = []
-    eligible = output["score_eligible"].map(_truthy_score_eligible)
+    eligible = score_eligible_mask(output["score_eligible"])
     for component in components:
         values = _numeric(output, component).where(eligible)
         percentiles.append(oriented_percentile(values, high_good=True))
@@ -245,7 +246,7 @@ def _add_component_scores(
 
 
 def _sink_ineligible_rows(output: pd.DataFrame) -> None:
-    score_eligible = output["score_eligible"].map(_truthy_score_eligible)
+    score_eligible = score_eligible_mask(output["score_eligible"])
     downside_count = output[DOWNSIDE_COMPONENTS].apply(
         lambda row: pd.to_numeric(row, errors="coerce").notna().sum(),
         axis=1,
@@ -264,7 +265,7 @@ def _sink_ineligible_rows(output: pd.DataFrame) -> None:
 
 def _downside_tags(row: pd.Series, *, config: ToolCConfig) -> list[str]:
     tags: list[str] = []
-    if not _truthy_score_eligible(row.get("score_eligible")):
+    if not is_score_eligible(row.get("score_eligible")):
         tags.append("score_ineligible")
     if _optional_float(row.get("confidence_score")) is not None and _optional_float(row.get("confidence_score")) < 0.5:
         tags.append("low_confidence")
@@ -296,7 +297,7 @@ def _downside_tags(row: pd.Series, *, config: ToolCConfig) -> list[str]:
 
 def _upside_tags(row: pd.Series, *, config: ToolCConfig) -> list[str]:
     tags: list[str] = []
-    if not _truthy_score_eligible(row.get("score_eligible")):
+    if not is_score_eligible(row.get("score_eligible")):
         tags.append("score_ineligible")
     if _optional_float(row.get("confidence_score")) is not None and _optional_float(row.get("confidence_score")) < 0.5:
         tags.append("low_confidence")
@@ -368,16 +369,6 @@ def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
     if column not in frame.columns:
         return pd.Series([pd.NA] * len(frame.index), index=frame.index, dtype="Float64")
     return pd.to_numeric(frame[column], errors="coerce")
-
-
-def _truthy_score_eligible(value: object) -> bool:
-    if value is None or pd.isna(value):
-        return True
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return str(value).strip().lower() not in {"false", "0", "no", "n"}
 
 
 def _optional_float(value: object) -> float | None:

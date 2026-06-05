@@ -249,3 +249,18 @@ Checks:
 - `python -m compileall golden_vector` -> passed.
 - `python -m pytest -q` -> 707 passed.
 - `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in the active Python environment.
+
+### Duplication review cleanup
+
+Findings fixed:
+
+- Score-eligible coercion had drifted between model code and UI lenses. Added `golden_vector.common.eligibility` and routed Tool C, Candidate Finder, Tool A ranking, overview lenses, and detail panels through one policy: missing values default to eligible for older Tool A snapshots; explicit false-like values block scoring.
+- PASS/WARN/FAIL precedence was implemented in multiple places. Added `golden_vector.common.status.combine_statuses` and routed CLI/foundation status combining through it, with `SKIPPED` treated as neutral and unknown statuses rejected.
+- SHA256 file hashing and repo-relative path formatting were copied across model-state, replay manifests, options manifests, Candidate Finder, and Option Trading. Added `golden_vector.common.files` and moved those call sites onto shared helpers.
+
+Checks:
+
+- `python -m pytest tests/test_common_helpers.py tests/test_lenses.py tests/test_tool_c.py tests/test_candidate_finder_scoring.py tests/test_tool_a_scoring.py tests/test_cli_tool_a.py tests/test_cli_refresh_and_status.py tests/test_latest_data.py tests/test_model_state.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py tests/test_replay_manifest.py tests/test_persist_options.py tests/test_options_phase.py -q` -> 134 passed.
+- `python -m compileall golden_vector` -> passed.
+- `python -m pytest -q` -> 712 passed.
+- `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in the active Python environment.

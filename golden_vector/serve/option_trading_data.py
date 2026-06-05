@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import date
@@ -11,6 +10,7 @@ from typing import Any, Literal, cast
 
 import pandas as pd
 
+from golden_vector.common.files import optional_sha256_file as _file_sha256
 from golden_vector.app.model_state import (
     read_current_model_json,
     read_current_model_parquet,
@@ -492,19 +492,6 @@ def _cache_key(
         tool_b_refresh_run_ids=_unique_strings(tool_b, "snapshot_refresh_run_id"),
         model_state_manifest_hash=model_state_manifest_hash,
     )
-
-
-def _file_sha256(path: Path) -> str | None:
-    if not path.exists():
-        return None
-    digest = hashlib.sha256()
-    try:
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-    except OSError:
-        return None
-    return digest.hexdigest()
 
 
 def _unique_strings(frame: pd.DataFrame, column: str) -> tuple[str, ...]:

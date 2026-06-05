@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from golden_vector.common.files import repo_relative as _repo_relative
+from golden_vector.common.files import sha256_file as _sha256_file
 from golden_vector.app.config import expected_config_paths
 from golden_vector.app.paths import ProjectPaths
 
@@ -758,20 +760,6 @@ def _write_json_atomic(target_path: Path, payload: dict[str, Any]) -> None:
 
 def _read_manifest_path(manifest_path: Path) -> dict[str, Any]:
     return json.loads(manifest_path.read_text(encoding="utf-8"))
-
-
-def _sha256_file(path: Path) -> str:
-    import hashlib
-
-    digest = hashlib.sha256()
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _repo_relative(paths: ProjectPaths, path: Path) -> str:
-    return path.relative_to(paths.repo_root).as_posix()
 
 
 def _run_relative(run_dir: Path, path: Path) -> str:

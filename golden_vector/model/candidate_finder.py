@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 import pandas as pd
 
+from golden_vector.common.eligibility import is_score_eligible, score_eligible_mask
 from golden_vector.features.percentile_ranks import oriented_percentile
 
 CriterionDirection = Literal["high_good", "low_good"]
@@ -295,7 +296,7 @@ def _criterion_values(data: pd.DataFrame, criterion: ResolvedCriterion) -> pd.Se
         return pd.Series([pd.NA] * len(data.index), index=data.index, dtype="Float64")
     values = pd.to_numeric(data[criterion.source_field], errors="coerce")
     if criterion.source_field in TOOL_A_SCORE_ELIGIBLE_FIELDS and "score_eligible" in data.columns:
-        score_eligible = data["score_eligible"].map(_truthy_score_eligible)
+        score_eligible = score_eligible_mask(data["score_eligible"])
         values = values.mask(~score_eligible)
     return values
 
@@ -451,17 +452,7 @@ def _get_text(value: Any, field: str, *, default: str | None = None) -> str:
 def _row_score_eligible(data: pd.DataFrame, ticker: str) -> bool:
     if "score_eligible" not in data.columns:
         return True
-    return _truthy_score_eligible(data.at[ticker, "score_eligible"])
-
-
-def _truthy_score_eligible(value: object) -> bool:
-    if value is None or pd.isna(value):
-        return True
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return str(value).strip().lower() not in {"false", "0", "no", "n"}
+    return is_score_eligible(data.at[ticker, "score_eligible"])
 
 
 def _optional_float(value: object) -> float | None:

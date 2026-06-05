@@ -9,6 +9,7 @@ from typing import Any
 
 import pandas as pd
 
+from golden_vector.common.files import repo_relative as _repo_relative
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.config_models import AppConfig
@@ -169,10 +170,6 @@ def _read_required_parquet(path: Path, *, description: str) -> pd.DataFrame:
             f"Latest local snapshot is incomplete because {description} is missing: {path}"
         )
     return pd.read_parquet(path)
-
-
-def _repo_relative(paths: ProjectPaths, path: Path) -> str:
-    return path.relative_to(paths.repo_root).as_posix()
 
 
 def _foundation_signature(app_config: AppConfig) -> dict[str, object]:

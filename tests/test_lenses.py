@@ -69,6 +69,13 @@ def test_composite_lens_returns_none_when_score_ineligible():
     assert compute_lens_score(row, lens_id="composite", scoring_config=_scoring()) is None
 
 
+def test_composite_lens_treats_missing_score_eligible_as_eligible():
+    row = _eligible_row(tool_a_score=87.2)
+    row.pop("score_eligible")
+
+    assert compute_lens_score(row, lens_id="composite", scoring_config=_scoring()) == 87.2
+
+
 # --- upside_torque ---------------------------------------------------------------------
 
 

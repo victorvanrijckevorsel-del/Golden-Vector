@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from datetime import date
@@ -11,6 +10,8 @@ from typing import Any
 
 import pandas as pd
 
+from golden_vector.common.files import repo_relative as _repo_relative
+from golden_vector.common.files import sha256_file as _sha256_file
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext, to_jsonable
 
@@ -151,18 +152,6 @@ def _with_snapshot_identity(
 
 def _options_snapshot_dir(run_context: RunContext) -> Path:
     return run_context.run_dir / "snapshots" / "options"
-
-
-def _repo_relative(paths: ProjectPaths, path: Path) -> str:
-    return path.relative_to(paths.repo_root).as_posix()
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def safe_options_file_name(value: str) -> str:

@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import pandas as pd
 
+from golden_vector.common.status import combine_statuses as _combine_statuses
 from golden_vector.app.config import load_app_config
 from golden_vector.app.latest_data import (
     LatestFoundationSnapshot,
@@ -752,9 +753,9 @@ def run_foundation(
             run_context.write_json("options_phase_summary.json", options_summary)
             notes.append("Options phase skipped by --no-options.")
 
-        final_status = _combine_foundation_and_options_status(
-            foundation_status=result.overall_status,
-            options_status=str(options_summary.get("options_phase_status", "SKIPPED")),
+        final_status = _combine_statuses(
+            result.overall_status,
+            str(options_summary.get("options_phase_status", "SKIPPED")),
         )
         run_context.finalize(
             status=final_status,
@@ -803,18 +804,6 @@ def _foundation_result_as_of_date(result: object) -> date:
             if not values.empty:
                 return pd.to_datetime(values.max()).date()
     return pd.Timestamp.utcnow().date()
-
-
-def _combine_foundation_and_options_status(
-    *,
-    foundation_status: str,
-    options_status: str,
-) -> str:
-    if foundation_status == "FAIL":
-        return "FAIL"
-    if options_status == "WARN" and foundation_status == "PASS":
-        return "WARN"
-    return foundation_status
 
 
 def run_hedge_readiness(
@@ -2359,23 +2348,6 @@ def _missing_manual_store_note() -> str:
         "No local Tool B manual-data store exists yet. "
         "Run `python main.py manual-data init` first."
     )
-
-
-def _combine_statuses(*statuses: str | None) -> str:
-    active_statuses = [status for status in statuses if status]
-    allowed_statuses = {"PASS", "WARN", "FAIL"}
-    unknown_statuses = sorted(
-        {status for status in active_statuses if status not in allowed_statuses}
-    )
-    if unknown_statuses:
-        raise ValueError(
-            "Unsupported pipeline statuses: " + ", ".join(unknown_statuses)
-        )
-    if any(status == "FAIL" for status in active_statuses):
-        return "FAIL"
-    if any(status == "WARN" for status in active_statuses):
-        return "WARN"
-    return "PASS"
 
 
 def _tool_input_path(

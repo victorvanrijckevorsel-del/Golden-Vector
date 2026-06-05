@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 import pandas as pd
 
+from golden_vector.common.eligibility import is_score_eligible
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge.candidate_puts import OptionCandidate, OptionCandidateSlot
 from golden_vector.hedge.disclosures import (
@@ -892,7 +893,7 @@ def _render_structural_metrics_load_notice(
 
 
 def _render_signal_notice(tool_a_row: dict[str, Any]) -> str:
-    score_eligible = bool(tool_a_row.get("score_eligible"))
+    score_eligible = is_score_eligible(tool_a_row.get("score_eligible"))
     score_reason = str(tool_a_row.get("score_eligibility_reason") or "").strip()
     normalization_issue_summary = _fmt_text(tool_a_row.get("normalization_issue_summary"))
     notices: list[str] = []
@@ -979,7 +980,7 @@ def _build_active_window_explanations(
     structural_delta_core = _optional_float(tool_a_row.get("structural_delta_core"))
     asymmetry_core = _optional_float(tool_a_row.get("asymmetry_ratio_core"))
     structural_gamma_core = _optional_float(tool_a_row.get("structural_gamma_core"))
-    score_eligible = bool(tool_a_row.get("score_eligible"))
+    score_eligible = is_score_eligible(tool_a_row.get("score_eligible"))
     score_eligibility_reason = str(tool_a_row.get("score_eligibility_reason") or "").strip()
     profile_label = str(tool_a_row.get("profile_label") or "").strip().upper()
     confidence_label = str(tool_a_row.get("confidence_label") or "").strip().upper()
@@ -1660,7 +1661,7 @@ def _render_beta_history_panel(
         )
 
     current_delta_core = _optional_float(tool_a_row.get("structural_delta_core"))
-    score_eligible = bool(tool_a_row.get("score_eligible"))
+    score_eligible = is_score_eligible(tool_a_row.get("score_eligible"))
     watermark = ""
     if not score_eligible:
         watermark = (

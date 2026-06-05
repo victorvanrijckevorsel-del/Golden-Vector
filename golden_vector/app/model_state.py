@@ -8,7 +8,6 @@ through in I2/I3.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -17,6 +16,8 @@ from typing import Any
 
 import pandas as pd
 
+from golden_vector.common.files import repo_relative as _repo_relative
+from golden_vector.common.files import sha256_file as _sha256_file
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import to_jsonable
 
@@ -776,21 +777,6 @@ def _refresh_file_metadata(artifact: dict[str, Any], path: Path) -> None:
 
 def _safe_file_fragment(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._") or "unknown"
-
-
-def _repo_relative(paths: ProjectPaths, path: Path) -> str:
-    try:
-        return path.relative_to(paths.repo_root).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _mtime_iso(path: Path) -> str:

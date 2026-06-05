@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import Any, Literal
 import pandas as pd
 import yaml
 
+from golden_vector.common.files import optional_sha256_file as _file_sha256
 from golden_vector.app.model_state import (
     load_current_model_state_manifest,
     resolve_current_model_artifact_path,
@@ -694,16 +694,6 @@ def _parse_timestamp(value: object) -> pd.Timestamp | None:
     if pd.isna(parsed):
         return None
     return parsed
-
-
-def _file_sha256(path: Path | None) -> str | None:
-    if path is None or not path.exists() or not path.is_file():
-        return None
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _read_optional_parquet(path: Path | None, *, label: str) -> CandidateFinderSourceLoad:

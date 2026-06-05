@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 import pandas as pd
 
+from golden_vector.common.eligibility import is_score_eligible
 from golden_vector.contracts.config_models import ScoringConfig
 
 
@@ -33,20 +34,7 @@ class LensSpec:
 
 
 def _is_score_eligible(row: dict[str, Any]) -> bool:
-    value = row.get("score_eligible")
-    if value is None:
-        return False
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        try:
-            if pd.isna(value):
-                return False
-        except (TypeError, ValueError):
-            pass
-        return bool(value)
-    text = str(value).strip().lower()
-    return text in {"true", "1", "yes"}
+    return is_score_eligible(row.get("score_eligible"))
 
 
 def _finite_float(value: Any) -> float | None:

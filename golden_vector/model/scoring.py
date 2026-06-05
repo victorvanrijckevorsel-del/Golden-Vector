@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from golden_vector.common.eligibility import score_eligible_mask
 from golden_vector.contracts.config_models import (
     AsymmetryThresholds,
     GammaThresholds,
@@ -95,10 +96,11 @@ def rank_tool_a_outputs(tool_a_outputs: pd.DataFrame) -> pd.DataFrame:
 
     ranked = tool_a_outputs.copy()
     ranked["tool_a_rank"] = pd.Series([pd.NA] * len(ranked.index), dtype="Int64")
-    eligible_mask = (
-        ranked["score_eligible"].fillna(False).astype(bool)
-        & ranked["tool_a_score"].notna()
-    )
+    if "score_eligible" in ranked.columns:
+        eligible = score_eligible_mask(ranked["score_eligible"])
+    else:
+        eligible = pd.Series([True] * len(ranked.index), index=ranked.index)
+    eligible_mask = eligible & ranked["tool_a_score"].notna()
     if eligible_mask.any():
         eligible_rows = ranked.loc[eligible_mask].copy()
         eligible_rows["tool_a_rank"] = (

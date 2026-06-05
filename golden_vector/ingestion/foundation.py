@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from golden_vector.common.status import combine_statuses
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.config_models import AppConfig
@@ -117,7 +118,7 @@ def execute_foundation_pipeline(
             qa_results=normalization_qa_report.results,
         )
 
-    overall_status = _combine_statuses(
+    overall_status = combine_statuses(
         raw_qa_report.overall_status,
         normalization_qa_report.overall_status if normalization_qa_report else None,
     )
@@ -162,15 +163,6 @@ def execute_foundation_pipeline(
 
 def _sum_rows(frames: object) -> int:
     return sum(len(frame.index) for frame in frames if isinstance(frame, pd.DataFrame))
-
-
-def _combine_statuses(*statuses: str | None) -> str:
-    active_statuses = [status for status in statuses if status]
-    if any(status == "FAIL" for status in active_statuses):
-        return "FAIL"
-    if any(status == "WARN" for status in active_statuses):
-        return "WARN"
-    return "PASS"
 
 
 def _prefix_keys(summary: dict[str, object], prefix: str) -> dict[str, object]:
