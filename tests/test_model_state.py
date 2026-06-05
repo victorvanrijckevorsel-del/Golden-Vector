@@ -48,6 +48,9 @@ def test_model_state_manifest_records_complete_aligned_build(tmp_path):
     assert payload["parent_refresh_id"] is None
     assert payload["publish"]["atomic_pointer"] is True
     assert payload["publish"]["latest_aliases_authoritative"] is False
+    snapshot_path = paths.repo_root / payload["publish"]["retention_snapshot_path"]
+    assert snapshot_path.exists()
+    assert json.loads(snapshot_path.read_text(encoding="utf-8")) == payload
     assert payload["artifacts"]["foundation"]["immutable"] is True
     assert payload["artifacts"]["foundation"]["source_alias_path"] == (
         "data/intermediate/status/latest_foundation_manifest.json"

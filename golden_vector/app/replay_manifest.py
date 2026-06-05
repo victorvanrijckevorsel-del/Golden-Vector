@@ -555,6 +555,8 @@ def _foundation_source_assets(
 
     fields = (
         ("foundation:raw_gold.parquet", "gold_history_path"),
+        ("foundation:raw_equities.parquet", "raw_equities_snapshot_path"),
+        ("foundation:raw_fx.parquet", "raw_fx_snapshot_path"),
         ("foundation:usd_equities.parquet", "normalized_equities_snapshot_path"),
         (
             "foundation:market_snapshots_usd.parquet",

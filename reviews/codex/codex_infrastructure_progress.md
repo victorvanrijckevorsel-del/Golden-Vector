@@ -497,3 +497,20 @@ Checks:
 
 - `python -m pytest tests/test_parquet_contracts.py tests/test_latest_data.py tests/test_hedge_report.py tests/test_option_trading_data.py tests/test_option_trading_routes.py` -> 60 passed.
 - `python -m compileall golden_vector/common/parquet.py golden_vector/app/latest_data.py golden_vector/hedge/report.py golden_vector/serve/option_trading_data.py` -> passed.
+
+### I4 Phase 5 replay provenance and retained model states
+
+Built:
+
+- Added raw equity and raw FX snapshot paths to the latest foundation manifest.
+- Extended replay-manifest foundation source assets so raw equity, raw FX, raw gold, normalized equities, and normalized market snapshots are all hashed and checked for drift.
+- Added retained model-state JSON snapshots under `data/intermediate/status/model_states/`.
+- Kept atomic publish ordering: write the retained model-state snapshot first, then swap `latest_model_state.json`.
+
+Self-review findings fixed:
+
+- `prune-runs` would not be able to preserve older coherent states if the project only retained one mutable latest pointer. The writer now emits a retained snapshot for each model-state publish.
+
+Checks:
+
+- `python -m pytest tests/test_model_state.py tests/test_replay_manifest.py tests/test_latest_data.py tests/test_cli_refresh_and_status.py` -> 59 passed.

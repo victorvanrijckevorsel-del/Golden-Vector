@@ -65,11 +65,12 @@ def write_current_model_state_manifest(
         parent_refresh_id=parent_refresh_id,
         stage_timings=stage_timings,
     )
+    snapshot_path = _model_state_snapshot_path(paths, payload)
+    payload["publish"]["retention_snapshot_path"] = _repo_relative(paths, snapshot_path)
+    serialized = json.dumps(to_jsonable(payload), indent=2, sort_keys=True)
+    _atomic_write_text(snapshot_path, serialized)
     target = paths.latest_model_state_manifest_path
-    _atomic_write_text(
-        target,
-        json.dumps(to_jsonable(payload), indent=2, sort_keys=True),
-    )
+    _atomic_write_text(target, serialized)
     return payload
 
 
@@ -860,3 +861,12 @@ def _mtime_iso(path: Path) -> str:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _model_state_snapshot_path(paths: ProjectPaths, payload: dict[str, Any]) -> Path:
+    stamp = (
+        _clean_string(payload.get("parent_refresh_id"))
+        or _clean_string(payload.get("generated_at_utc"))
+        or "unknown"
+    )
+    return paths.model_state_manifests_dir / f"model_state_{_safe_file_fragment(stamp)}.json"

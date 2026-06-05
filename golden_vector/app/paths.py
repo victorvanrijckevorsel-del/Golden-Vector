@@ -70,6 +70,7 @@ class ProjectPaths:
             self.options_features_dir,
             self.benchmarks_dir,
             self.intermediate_status_dir,
+            self.model_state_manifests_dir,
             self.output_tool_a_dir,
             self.output_tool_b_dir,
             self.output_tool_c_dir,
@@ -203,6 +204,10 @@ class ProjectPaths:
     @property
     def latest_model_state_manifest_path(self) -> Path:
         return self.intermediate_status_dir / "latest_model_state.json"
+
+    @property
+    def model_state_manifests_dir(self) -> Path:
+        return self.intermediate_status_dir / "model_states"
 
     @property
     def output_tool_a_dir(self) -> Path:

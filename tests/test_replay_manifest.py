@@ -153,6 +153,12 @@ def test_phase2_updates_foundation_block(tmp_path):
     assert snapshot_path.exists()
     assert foundation_block["manifest_sha256"] == _sha256(snapshot_path)
     assert foundation_block["manifest_sha256"] == _sha256(foundation_manifest_path)
+    source_asset_names = {
+        item["name"]
+        for item in foundation_block["source_assets"]
+    }
+    assert "foundation:raw_equities.parquet" in source_asset_names
+    assert "foundation:raw_fx.parquet" in source_asset_names
 
 
 def test_phase2_failure_records_status_not_raise(tmp_path):
@@ -503,9 +509,13 @@ def _write_foundation_manifest(paths) -> Path:
     snapshot_dir = paths.runs_dir / "foundation-run" / "snapshots"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     raw_gold = snapshot_dir / "raw_gold.parquet"
+    raw_equities = snapshot_dir / "raw_equities.parquet"
+    raw_fx = snapshot_dir / "raw_fx.parquet"
     usd_equities = snapshot_dir / "usd_equities.parquet"
     market_snapshots = snapshot_dir / "market_snapshots_usd.parquet"
     raw_gold.write_text("raw gold\n", encoding="utf-8")
+    raw_equities.write_text("raw equities\n", encoding="utf-8")
+    raw_fx.write_text("raw fx\n", encoding="utf-8")
     usd_equities.write_text("usd equities\n", encoding="utf-8")
     market_snapshots.write_text("market snapshots\n", encoding="utf-8")
     paths.latest_foundation_manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -514,6 +524,10 @@ def _write_foundation_manifest(paths) -> Path:
             {
                 "refresh_run_id": "foundation-run",
                 "gold_history_path": raw_gold.relative_to(paths.repo_root).as_posix(),
+                "raw_equities_snapshot_path": (
+                    raw_equities.relative_to(paths.repo_root).as_posix()
+                ),
+                "raw_fx_snapshot_path": raw_fx.relative_to(paths.repo_root).as_posix(),
                 "normalized_equities_snapshot_path": (
                     usd_equities.relative_to(paths.repo_root).as_posix()
                 ),

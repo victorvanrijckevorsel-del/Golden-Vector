@@ -56,6 +56,14 @@ def write_latest_foundation_manifest(
             paths,
             run_context.run_dir / "snapshots" / "raw_gold.parquet",
         ),
+        "raw_equities_snapshot_path": _repo_relative(
+            paths,
+            run_context.run_dir / "snapshots" / "raw_equities.parquet",
+        ),
+        "raw_fx_snapshot_path": _repo_relative(
+            paths,
+            run_context.run_dir / "snapshots" / "raw_fx.parquet",
+        ),
         "normalized_equities_snapshot_path": _repo_relative(
             paths,
             run_context.run_dir / "snapshots" / "usd_equities.parquet",
