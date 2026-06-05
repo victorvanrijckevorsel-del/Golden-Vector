@@ -465,6 +465,8 @@ def _parquet_artifact(
         return alias_artifact
 
     source_ids = _unique_strings(frame, "source_run_id")
+    if not source_ids:
+        source_ids = _frame_attr_strings(frame, "source_run_id")
     immutable_path = _resolve_run_stamped_parquet(
         paths=paths,
         name=name,
@@ -490,11 +492,13 @@ def _parquet_artifact(
             return artifact
     artifact["row_count"] = int(len(frame.index))
     artifact["columns"] = [str(column) for column in frame.columns]
-    artifact["schema_version"] = _clean_string(_first_present(frame, "schema_version"))
-    artifact["snapshot_refresh_run_ids"] = _unique_strings(
-        frame,
-        "snapshot_refresh_run_id",
-    )
+    artifact["schema_version"] = _clean_string(
+        _first_present(frame, "schema_version")
+    ) or _clean_string(frame.attrs.get("schema_version"))
+    snapshot_ids = _unique_strings(frame, "snapshot_refresh_run_id")
+    if not snapshot_ids:
+        snapshot_ids = _frame_attr_strings(frame, "snapshot_refresh_run_id")
+    artifact["snapshot_refresh_run_ids"] = snapshot_ids
     artifact["source_run_ids"] = source_ids
     return artifact
 
@@ -678,6 +682,11 @@ def _first_present(frame: pd.DataFrame, column: str) -> object | None:
 
 def _unique_strings(frame: pd.DataFrame, column: str) -> list[str]:
     return _common_unique_strings(frame, column)
+
+
+def _frame_attr_strings(frame: pd.DataFrame, key: str) -> list[str]:
+    value = _clean_string(frame.attrs.get(key))
+    return [value] if value else []
 
 
 def _clean_string(value: object) -> str | None:

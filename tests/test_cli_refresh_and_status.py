@@ -331,16 +331,29 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
         call_order.append(f"tool-d@{gold_price}")
         return 0
 
+    def fake_option_artifacts(_paths, *, parent_refresh_id):
+        call_order.append("option-artifacts")
+        assert parent_refresh_id is not None
+        return 0
+
     monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
     monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
     monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
     monkeypatch.setattr("golden_vector.cli.run_tool_c", fake_tool_c)
     monkeypatch.setattr("golden_vector.cli.run_tool_d", fake_tool_d)
+    monkeypatch.setattr("golden_vector.cli.run_option_artifacts", fake_option_artifacts)
 
     exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
 
     assert exit_code == 0
-    assert call_order == ["update-data", "tool-a", "tool-b@None", "tool-c", "tool-d@None"]
+    assert call_order == [
+        "update-data",
+        "tool-a",
+        "tool-b@None",
+        "tool-c",
+        "tool-d@None",
+        "option-artifacts",
+    ]
     assert paths.latest_model_state_manifest_path.exists()
     model_state = json.loads(paths.latest_model_state_manifest_path.read_text(encoding="utf-8"))
     assert "-refresh-" in model_state["parent_refresh_id"]
@@ -348,12 +361,14 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     assert "option_candidate_slots" in model_state["artifacts"]
     assert model_state["stage_timings"]["update_data"]["exit_code"] == 0
     assert model_state["stage_timings"]["tool_d"]["exit_code"] == 0
+    assert model_state["stage_timings"]["option_artifacts"]["exit_code"] == 0
     out = capsys.readouterr().out
-    assert "Step 1/5: update-data" in out
-    assert "Step 2/5: tool-a" in out
-    assert "Step 3/5: tool-b" in out
-    assert "Step 4/5: tool-c" in out
-    assert "Step 5/5: tool-d (spot gold)" in out
+    assert "Step 1/6: update-data" in out
+    assert "Step 2/6: tool-a" in out
+    assert "Step 3/6: tool-b" in out
+    assert "Step 4/6: tool-c" in out
+    assert "Step 5/6: tool-d (spot gold)" in out
+    assert "Step 6/6: option-artifacts" in out
     assert "Model state manifest published:" in out
     assert "Refresh complete" in out
 
@@ -425,6 +440,82 @@ def test_refresh_fault_after_tool_b_keeps_previous_manifest_and_readers_intact(
     assert current_manifest["parent_refresh_id"] == "parent-refresh-old"
     assert latest_alias["snapshot_refresh_run_id"].tolist() == ["refresh-new"]
     assert current_tool_b["snapshot_refresh_run_id"].tolist() == ["refresh-old"]
+    assert "Model-state manifest was not published" in out
+
+
+def test_refresh_option_artifact_failure_keeps_previous_manifest(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+    _write_refresh_inputs(paths, refresh_run_id="refresh-old")
+    previous_manifest = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="hash",
+        parent_refresh_id="parent-refresh-old",
+    )
+
+    call_order: list[str] = []
+
+    def fake_foundation(_paths, *, command_name="update-data"):
+        call_order.append("update-data")
+        _write_foundation_and_options(_paths, refresh_run_id="refresh-new")
+        return 0
+
+    def fake_tool_a(_paths):
+        call_order.append("tool-a")
+        _write_tool_a(_paths, refresh_run_id="refresh-new", rank=99)
+        return 0
+
+    def fake_tool_b(_paths, *, gold_price):
+        call_order.append("tool-b")
+        _write_tool_b(_paths, refresh_run_id="refresh-new", rank=99)
+        return 0
+
+    def fake_tool_c(_paths, **_kwargs):
+        call_order.append("tool-c")
+        _write_tool_c(_paths, refresh_run_id="refresh-new")
+        return 0
+
+    def fake_tool_d(_paths, *, gold_price, **_kwargs):
+        call_order.append("tool-d")
+        _write_tool_d(_paths, refresh_run_id="refresh-new")
+        return 0
+
+    def fake_option_artifacts(_paths, *, parent_refresh_id):
+        call_order.append("option-artifacts")
+        assert parent_refresh_id is not None
+        return 7
+
+    monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
+    monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
+    monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
+    monkeypatch.setattr("golden_vector.cli.run_tool_c", fake_tool_c)
+    monkeypatch.setattr("golden_vector.cli.run_tool_d", fake_tool_d)
+    monkeypatch.setattr("golden_vector.cli.run_option_artifacts", fake_option_artifacts)
+
+    exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
+    current_manifest = load_current_model_state_manifest(paths)
+    out = capsys.readouterr().out
+
+    assert exit_code == 7
+    assert call_order == [
+        "update-data",
+        "tool-a",
+        "tool-b",
+        "tool-c",
+        "tool-d",
+        "option-artifacts",
+    ]
+    assert current_manifest == previous_manifest
+    assert "option-artifacts failed" in out
     assert "Model-state manifest was not published" in out
 
 

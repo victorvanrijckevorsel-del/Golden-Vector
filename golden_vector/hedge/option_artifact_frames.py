@@ -183,4 +183,9 @@ def _stamp_frame(
     result["config_hash"] = config_hash
     result["risk_free_rate"] = float(risk_free_rate)
     result["risk_free_rate_is_fallback"] = bool(risk_free_rate_is_fallback)
+    result.attrs["schema_version"] = OPTION_ARTIFACT_SCHEMA_VERSION
+    result.attrs["snapshot_refresh_run_id"] = str(manifest.get("refresh_run_id") or "")
+    result.attrs["source_run_id"] = source_run_id
+    result.attrs["parent_refresh_id"] = parent_refresh_id
+    result.attrs["config_hash"] = config_hash
     return result

@@ -365,3 +365,25 @@ Checks:
 
 - `python -m pytest tests/test_option_artifact_persistence.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py` -> 36 passed.
 - `python -m compileall golden_vector/common/parquet.py golden_vector/hedge/option_artifact_sources.py golden_vector/serve/option_trading_data.py` -> passed.
+
+### I3 refresh-time option artifact build
+
+Built:
+
+- Added `run_option_artifacts(...)` as an internal CLI runner that loads latest options/Tool A/Tool B outputs with `use_model_state=False`, builds artifacts through the shared non-serve builder, persists all six option artifacts, and writes an artifact summary.
+- Inserted option artifact building into full `run_refresh` after Tool D and before `write_current_model_state_manifest`.
+- Updated the full refresh step count from 5 to 6 and recorded `stage_timings["option_artifacts"]`.
+- Added a refresh failure test proving an option-artifact failure leaves the previous model-state manifest intact and returns before publish.
+- Added a direct `run_option_artifacts` smoke test proving its outputs become manifest-addressable optional artifacts.
+
+Self-review finding fixed:
+
+- Empty option artifacts initially could not become immutable because no row carried `source_run_id`. The artifact stamper now records `source_run_id`, `snapshot_refresh_run_id`, schema version, parent refresh id, and config hash in DataFrame attrs; the model-state Parquet artifact reader uses those attrs when row columns are empty. This preserves the writer-recorded run-id mechanism without sha256 reconstruction.
+
+Checks:
+
+- `python -m pytest tests/test_cli_refresh_and_status.py` -> 12 passed.
+- `python -m pytest tests/test_option_artifact_persistence.py tests/test_cli_refresh_and_status.py` -> 16 passed.
+- `python -m pytest tests/test_option_artifact_persistence.py tests/test_model_state.py tests/test_cli_refresh_and_status.py` -> 31 passed.
+- `python -m pytest tests/test_model_state.py tests/test_option_artifact_persistence.py tests/test_cli_refresh_and_status.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py` -> 64 passed.
+- `python -m compileall golden_vector/cli.py tests/test_cli_refresh_and_status.py golden_vector/app/model_state.py golden_vector/hedge/option_artifact_frames.py` -> passed.

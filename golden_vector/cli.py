@@ -39,6 +39,12 @@ from golden_vector.app.run_context import RunContext, to_jsonable
 from golden_vector.features.horizons import parse_requested_horizons
 from golden_vector.features.returns import RETURN_COLUMNS, compute_horizon_returns_for_ticker
 from golden_vector.hedge.comparison import COMPARISON_SORT_COLUMNS
+from golden_vector.hedge.option_artifact_builder import (
+    build_option_artifact_inputs,
+    scan_option_contract_metrics,
+)
+from golden_vector.hedge.option_artifact_frames import build_option_artifact_frames
+from golden_vector.hedge.option_artifact_sources import load_option_artifact_source_inputs
 from golden_vector.hedge.options_liquidity import slot_tier_counts
 from golden_vector.ingestion.foundation import execute_foundation_pipeline
 from golden_vector.ingestion.options_phase import (
@@ -46,6 +52,7 @@ from golden_vector.ingestion.options_phase import (
     skipped_options_phase_summary,
 )
 from golden_vector.ingestion.persist_options import safe_options_file_name
+from golden_vector.ingestion.persist_option_artifacts import persist_option_artifact_frames
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
 from golden_vector.hedge.report import write_hedge_readiness_report
@@ -1381,6 +1388,107 @@ def _is_same_gold_price(left: float, right: float) -> bool:
     return abs(float(left) - float(right)) <= 0.01
 
 
+def run_option_artifacts(
+    paths: ProjectPaths,
+    *,
+    parent_refresh_id: str | None,
+) -> int:
+    run_context: RunContext | None = None
+
+    try:
+        loaded_config = load_app_config(paths)
+        run_context = RunContext.start(
+            paths=paths,
+            command="option-artifacts",
+            parameters={"parent_refresh_id": parent_refresh_id},
+            config_hash=loaded_config.combined_hash,
+        )
+        configure_logging(run_context.log_path)
+
+        sources = load_option_artifact_source_inputs(paths, use_model_state=False)
+        if sources is None:
+            run_context.finalize(
+                status="FAIL",
+                summary={"error": "No latest options manifest is available."},
+                notes=["Option artifacts require the latest options manifest."],
+            )
+            LOGGER.error("Option artifact build stopped because no options manifest exists.")
+            return 1
+
+        built = build_option_artifact_inputs(
+            app_config=loaded_config.app,
+            features=sources.features,
+            tool_a=sources.tool_a,
+            tool_b=sources.tool_b,
+            chains=sources.chains,
+            risk_free_rate=sources.risk_free_rate,
+            risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
+            manifest=sources.manifest,
+        )
+        contract_metrics = scan_option_contract_metrics(
+            app_config=loaded_config.app,
+            features=sources.features,
+            tool_b=sources.tool_b,
+            chains=sources.chains,
+            risk_free_rate=sources.risk_free_rate,
+            manifest=sources.manifest,
+        )
+        frames = build_option_artifact_frames(
+            built=built,
+            contract_metrics=contract_metrics,
+            options_features=sources.features,
+            manifest=sources.manifest,
+            source_run_id=run_context.run_id,
+            parent_refresh_id=parent_refresh_id,
+            config_hash=loaded_config.combined_hash,
+            risk_free_rate=sources.risk_free_rate,
+            risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
+        )
+        persist_option_artifact_frames(
+            paths=paths,
+            run_context=run_context,
+            frames=frames,
+        )
+
+        row_counts = {name: int(len(frame.index)) for name, frame in frames.items()}
+        summary = {
+            "option_artifact_status": "PASS",
+            "options_refresh_run_id": str(sources.manifest.get("refresh_run_id") or ""),
+            "options_as_of_date": str(sources.manifest.get("as_of_date") or ""),
+            "parent_refresh_id": parent_refresh_id,
+            "risk_free_rate": sources.risk_free_rate,
+            "risk_free_rate_is_fallback": sources.risk_free_rate_is_fallback,
+            "artifact_row_counts": row_counts,
+        }
+        run_context.write_json("option_artifact_summary.json", summary)
+        run_context.finalize(
+            status="PASS",
+            summary=summary,
+            notes=[
+                "Option artifacts were built from latest local options, Tool A, and Tool B outputs.",
+                "The model-state manifest is published only after this step succeeds.",
+            ],
+        )
+        LOGGER.info("Option artifact build completed.")
+        return 0
+    except Exception as exc:
+        if run_context is None:
+            run_context = RunContext.start(
+                paths=paths,
+                command="option-artifacts",
+                parameters={"parent_refresh_id": parent_refresh_id},
+                config_hash="UNAVAILABLE",
+            )
+            configure_logging(run_context.log_path)
+        LOGGER.exception("Option artifact build failed.")
+        run_context.finalize(
+            status="FAIL",
+            summary={"error": str(exc)},
+            notes=["Option artifact build failed before completion."],
+        )
+        return 1
+
+
 def run_tool_b(paths: ProjectPaths, *, gold_price: float | None) -> int:
     run_context: RunContext | None = None
 
@@ -2388,7 +2496,7 @@ def run_refresh(
     the individual tool commands.
     """
 
-    total_steps = 5 if not skip_tool_b else 3
+    total_steps = 6 if not skip_tool_b else 3
     stage_timings: dict[str, dict[str, object]] = {}
     parent_refresh_id = _new_parent_refresh_id()
 
@@ -2456,7 +2564,7 @@ def run_refresh(
         )
     else:
         print()
-        print("== Step 3/5: tool-b ==")
+        print("== Step 3/6: tool-b ==")
         started_at = perf_counter()
         tool_b_exit = run_tool_b(paths, gold_price=gold_price_override)
         record_step("tool_b", started_at, tool_b_exit)
@@ -2469,7 +2577,7 @@ def run_refresh(
         if fault_exit is not None:
             return fault_exit
         print()
-        print("== Step 4/5: tool-c ==")
+        print("== Step 4/6: tool-c ==")
         started_at = perf_counter()
         tool_c_exit = run_tool_c(paths, _use_model_state_inputs=False)
         record_step("tool_c", started_at, tool_c_exit)
@@ -2482,7 +2590,7 @@ def run_refresh(
         if fault_exit is not None:
             return fault_exit
         print()
-        print("== Step 5/5: tool-d (spot gold) ==")
+        print("== Step 5/6: tool-d (spot gold) ==")
         started_at = perf_counter()
         tool_d_exit = run_tool_d(
             paths,
@@ -2496,6 +2604,27 @@ def run_refresh(
             run_status(paths)
             return tool_d_exit
         fault_exit = injected_fault_after("tool_d")
+        if fault_exit is not None:
+            return fault_exit
+
+        print()
+        print("== Step 6/6: option-artifacts ==")
+        started_at = perf_counter()
+        option_artifacts_exit = run_option_artifacts(
+            paths,
+            parent_refresh_id=parent_refresh_id,
+        )
+        record_step("option_artifacts", started_at, option_artifacts_exit)
+        if option_artifacts_exit != 0:
+            print()
+            print(
+                "option-artifacts failed (exit code {}). Model-state manifest was not published.".format(
+                    option_artifacts_exit
+                )
+            )
+            run_status(paths)
+            return option_artifacts_exit
+        fault_exit = injected_fault_after("option_artifacts")
         if fault_exit is not None:
             return fault_exit
 

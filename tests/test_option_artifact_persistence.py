@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 import pytest
 
+from golden_vector.app.model_state import write_current_model_state_manifest
 from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.option_artifacts import (
     OPTION_ARTIFACT_NAMES,
@@ -17,6 +20,7 @@ from golden_vector.hedge.option_trading import (
     OptionTradingSourceContext,
 )
 from golden_vector.ingestion.persist_option_artifacts import persist_option_artifact_frames
+from golden_vector.cli import run_option_artifacts
 from tests.helpers import build_test_paths
 
 
@@ -118,6 +122,35 @@ def test_persist_option_artifact_frames_rejects_incomplete_artifact_set(tmp_path
             run_context=run_context,
             frames={},
         )
+
+
+def test_run_option_artifacts_writes_manifest_addressable_outputs(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    paths.latest_options_manifest_path.write_text(
+        json.dumps(
+            {
+                "refresh_run_id": "options-run",
+                "as_of_date": "2026-06-01",
+                "risk_free_rate": 0.04,
+                "snapshots": [],
+                "summary": {"options_phase_status": "PASS"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = run_option_artifacts(paths, parent_refresh_id="parent-refresh")
+    payload = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+        parent_refresh_id="parent-refresh",
+    )
+
+    assert exit_code == 0
+    for artifact_name in OPTION_ARTIFACT_NAMES:
+        assert option_artifact_latest_path(paths, artifact_name).exists()
+        assert payload["artifacts"][artifact_name]["immutable"] is True
 
 
 def _candidate(ticker: str, *, liquidity_tier: str) -> OptionCandidate:
