@@ -17,3 +17,14 @@ data/output/
 data/runs/
 !data/manual/
 !data/manual/**/*.csv
+
+# Never commit sensitive local financial data (overrides the data/manual negation above)
+data/manual/portfolio/
+data/manual/holdings/
+*.sqlite3.bak.*
+
+# Local agent/tooling state and scratch files
+.claude/
+.playwright-mcp/
+_pdf_dump.txt
+body.txt
