@@ -401,6 +401,7 @@ Built:
 Self-review findings fixed:
 
 - Candidate Finder tests still expected mutable latest Tool D aliases and corrupt latest Tool A aliases to control current-state reads. After I2/I3 the manifest is authoritative, so those tests now prove mutable alias changes are ignored when a current manifest selects immutable artifacts.
+- Option Trading route tests still mutated raw chain or Tool A latest aliases after option artifacts were published. The tests now republish option artifacts after raw-chain fixture changes, and create Tool A fixture changes through the writer path before artifact publish, matching the M1/I2 immutability contract.
 - The first persisted reader resolved each option artifact path and then called a helper that resolved it again. It now reads the already-resolved immutable path through `golden_vector.common.parquet.read_optional_parquet`.
 - The first deserializer used broad `Any` typing and a `type: ignore` for reconstructed option slot status. It now validates and casts option type, slot status, and side status explicitly.
 
@@ -410,4 +411,8 @@ Checks:
 - `python -m pytest tests/test_option_trading_data.py -q` -> 18 passed.
 - `python -m pytest tests/test_option_trading_data.py tests/test_candidate_finder_data.py -q` -> 34 passed.
 - `python -m pytest tests/test_model_state.py tests/test_option_artifact_persistence.py tests/test_cli_refresh_and_status.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py -q` -> 65 passed.
+- `python -m pytest tests/test_option_trading_routes.py -q` -> 17 passed.
+- `python -m pytest tests/test_model_state.py tests/test_option_artifact_persistence.py tests/test_cli_refresh_and_status.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py tests/test_option_trading_routes.py -q` -> 82 passed.
+- `python -m compileall golden_vector` -> passed.
+- `python -m pytest -q` -> 725 passed.
 - `python -m ruff check golden_vector/serve/option_trading_data.py golden_vector/hedge/option_artifact_frames.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py` -> not run; `ruff` is not installed in the active Python environment.

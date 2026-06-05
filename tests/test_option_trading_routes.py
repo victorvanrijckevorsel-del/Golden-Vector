@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import io
 
-import pandas as pd
-
 from golden_vector.app.config import load_app_config
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.serve.option_trading_data import clear_option_trading_cache
 from golden_vector.serve.workspace import create_workspace_app
 from tests.helpers import build_test_paths
-from tests.test_option_trading_data import _make_snapshot_untradable, _write_option_inputs
+from tests.test_option_trading_data import (
+    _make_snapshot_untradable,
+    _publish_option_artifacts,
+    _write_option_inputs,
+)
 
 
 def test_workspace_option_trading_route_renders_native_tab(tmp_path):
@@ -50,7 +52,7 @@ def test_workspace_option_trading_route_handles_missing_snapshot(tmp_path):
     response = _call_wsgi_app(app, method="GET", path="/option-trading")
 
     assert response["status"].startswith("200")
-    assert "No options snapshot exists yet." in response["body"]
+    assert "No option artifact snapshot exists yet." in response["body"]
 
 
 def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
@@ -239,10 +241,8 @@ def test_workspace_option_trading_calculator_explains_skipped_scenarios(tmp_path
         paths,
         refresh_run_id="options-run",
         tool_refresh_run_id="tool-run",
+        up_beta_core=0.0,
     )
-    tool_a = pd.read_parquet(paths.latest_tool_a_snapshot_parquet_path)
-    tool_a["up_beta_core"] = 0.0
-    tool_a.to_parquet(paths.latest_tool_a_snapshot_parquet_path, index=False)
 
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
     response = _call_wsgi_app(
@@ -372,8 +372,10 @@ def test_workspace_option_trading_detail_shows_proxy_fallback_not_overview(tmp_p
         refresh_run_id="options-run",
         tool_refresh_run_id="tool-run",
         include_benchmarks=True,
+        publish_artifacts=False,
     )
     _make_snapshot_untradable(paths, refresh_run_id="options-run", ticker="AEM")
+    _publish_option_artifacts(paths)
 
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
     overview_response = _call_wsgi_app(app, method="GET", path="/option-trading")

@@ -551,6 +551,7 @@ def _write_option_inputs(
     risk_free_rate: float | None = 0.04,
     include_benchmarks: bool = False,
     publish_artifacts: bool = True,
+    up_beta_core: float = 1.1,
 ) -> None:
     paths.ensure_runtime_dirs()
     snapshot_dir = paths.runs_dir / refresh_run_id / "snapshots" / "options"
@@ -598,12 +599,21 @@ def _write_option_inputs(
             paths.options_features_dir / f"{safe_options_file_name(ticker)}.parquet",
             index=False,
         )
-    _write_tool_outputs(paths, refresh_run_id=tool_refresh_run_id)
+    _write_tool_outputs(
+        paths,
+        refresh_run_id=tool_refresh_run_id,
+        up_beta_core=up_beta_core,
+    )
     if publish_artifacts:
         _publish_option_artifacts(paths)
 
 
-def _write_tool_outputs(paths, *, refresh_run_id: str) -> None:
+def _write_tool_outputs(
+    paths,
+    *,
+    refresh_run_id: str,
+    up_beta_core: float = 1.1,
+) -> None:
     tool_a_context = RunContext.start(
         paths=paths,
         command="tool-a",
@@ -619,7 +629,7 @@ def _write_tool_outputs(paths, *, refresh_run_id: str) -> None:
                     "ticker": "AEM",
                     "structural_delta_core": 1.3,
                     "down_beta_core": 1.4,
-                    "up_beta_core": 1.1,
+                    "up_beta_core": up_beta_core,
                     "confidence_label": "HIGH",
                     "confidence_score": 0.9,
                     "snapshot_refresh_run_id": refresh_run_id,
