@@ -21,6 +21,7 @@ from golden_vector.common.files import atomic_write_text as _atomic_write_text
 from golden_vector.common.files import repo_relative as _repo_relative
 from golden_vector.common.files import safe_file_fragment as _safe_file_fragment
 from golden_vector.common.files import sha256_file as _sha256_file
+from golden_vector.common.parquet import parquet_context_metadata
 from golden_vector.common.strings import clean_string as _common_clean_string
 from golden_vector.common.strings import unique_strings as _common_unique_strings
 from golden_vector.app.paths import ProjectPaths
@@ -287,6 +288,44 @@ def summarize_model_state_manifest(payload: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+def summarize_model_state_alignment(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return the authoritative refresh-alignment verdict from model state.
+
+    ``None`` means either no model-state manifest exists yet, or the manifest is
+    incomplete but does not carry an alignment warning. In those cases legacy
+    callers may still fall back to their old local checks. Any readable manifest
+    with an explicit alignment warning is treated as authoritative.
+    """
+
+    if payload is None:
+        return None
+
+    if payload.get("manifest_readable") is False:
+        warnings = _manifest_warning_messages(payload)
+        message = warnings[0] if warnings else "Model-state manifest could not be read."
+        return {
+            "status": "UNKNOWN",
+            "message": message,
+            "warnings": tuple(warnings or [message]),
+        }
+
+    alignment = payload.get("alignment")
+    alignment = alignment if isinstance(alignment, dict) else {}
+    raw_status = str(alignment.get("status") or "").strip().upper()
+    status = raw_status if raw_status in {"OK", "WARN"} else "UNKNOWN"
+    alignment_warnings = _message_list(alignment.get("warnings"))
+    if status == "OK" and str(payload.get("state") or "").strip().lower() != "complete":
+        return None
+    messages = _dedupe_messages(alignment_warnings)
+    if status != "OK" and not messages:
+        messages = [f"Model-state manifest reports alignment status {status}."]
+    return {
+        "status": status,
+        "message": messages[0] if messages else None,
+        "warnings": tuple(messages),
+    }
+
+
 def _artifact_map(
     paths: ProjectPaths,
     *,
@@ -466,10 +505,13 @@ def _parquet_artifact(
         alias_artifact["readable"] = False
         alias_artifact["usable"] = False
         return alias_artifact
+    alias_metadata = parquet_context_metadata(path)
 
     source_ids = _unique_strings(frame, "source_run_id")
     if not source_ids:
         source_ids = _frame_attr_strings(frame, "source_run_id")
+    if not source_ids:
+        source_ids = _metadata_strings(alias_metadata, "source_run_id")
     immutable_path = _resolve_run_stamped_parquet(
         paths=paths,
         name=name,
@@ -493,14 +535,19 @@ def _parquet_artifact(
             artifact["readable"] = False
             artifact["usable"] = False
             return artifact
+        alias_metadata = parquet_context_metadata(immutable_path)
     artifact["row_count"] = int(len(frame.index))
     artifact["columns"] = [str(column) for column in frame.columns]
     artifact["schema_version"] = _clean_string(
         _first_present(frame, "schema_version")
-    ) or _clean_string(frame.attrs.get("schema_version"))
+    ) or _clean_string(alias_metadata.get("schema_version")) or _clean_string(
+        frame.attrs.get("schema_version")
+    )
     snapshot_ids = _unique_strings(frame, "snapshot_refresh_run_id")
     if not snapshot_ids:
         snapshot_ids = _frame_attr_strings(frame, "snapshot_refresh_run_id")
+    if not snapshot_ids:
+        snapshot_ids = _metadata_strings(alias_metadata, "snapshot_refresh_run_id")
     artifact["snapshot_refresh_run_ids"] = snapshot_ids
     artifact["source_run_ids"] = source_ids
     return artifact
@@ -526,6 +573,8 @@ def _tool_a_structural_metrics_artifact(paths: ProjectPaths) -> dict[str, Any]:
         return alias_artifact
 
     source_ids = _unique_strings(frame, "source_run_id")
+    if not source_ids:
+        source_ids = _metadata_strings(parquet_context_metadata(path), "source_run_id")
     immutable_path = _resolve_tool_a_structural_metrics_path(
         paths=paths,
         source_run_ids=source_ids,
@@ -679,6 +728,36 @@ def _artifact_health_warnings(artifacts: dict[str, dict[str, Any]]) -> list[str]
     return warnings
 
 
+def _manifest_warning_messages(payload: dict[str, Any]) -> list[str]:
+    messages = _message_list(payload.get("warnings"))
+    read_error = _clean_string(payload.get("read_error"))
+    if read_error:
+        messages.append(read_error)
+    return _dedupe_messages(messages)
+
+
+def _message_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        text
+        for item in value
+        for text in (_clean_string(item),)
+        if text
+    ]
+
+
+def _dedupe_messages(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
+
+
 def _is_required_health_warning(warning: str) -> bool:
     return (
         warning.startswith("Foundation status is not usable:")
@@ -711,6 +790,11 @@ def _unique_strings(frame: pd.DataFrame, column: str) -> list[str]:
 
 def _frame_attr_strings(frame: pd.DataFrame, key: str) -> list[str]:
     value = _clean_string(frame.attrs.get(key))
+    return [value] if value else []
+
+
+def _metadata_strings(metadata: dict[str, str], key: str) -> list[str]:
+    value = _clean_string(metadata.get(key))
     return [value] if value else []
 
 

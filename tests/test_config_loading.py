@@ -8,6 +8,8 @@ def test_load_app_config_reads_repo_yaml():
     assert len(loaded.app.universe.tickers) >= 5
     assert [benchmark.ticker for benchmark in loaded.app.benchmarks.benchmarks] == ["GDX", "GDXJ"]
     assert "benchmarks" in loaded.file_hashes
+    assert loaded.app.market_data.yahoo_throttle_seconds == 0.15
+    assert "market_data" in loaded.file_hashes
     assert loaded.app.hedge_readiness.target_delta == -0.25
     assert "hedge_readiness" in loaded.file_hashes
     assert loaded.app.tool_c.min_events == 8

@@ -12,8 +12,10 @@ from typing import Any
 import pandas as pd
 
 from golden_vector.app.model_state import (
+    load_current_model_state_manifest,
     read_current_model_parquet,
     resolve_current_model_artifact_path,
+    summarize_model_state_alignment,
 )
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.replay_manifest import update_manifest_with_options
@@ -299,6 +301,7 @@ def build_hedge_readiness_sections(
         options_refresh_run_id=refresh_run_id,
         tool_a=tool_a,
         tool_b=tool_b,
+        model_state_manifest=load_current_model_state_manifest(paths),
     )
     optionability_counts = _value_counts(features, "optionability_tier")
     optionable_tickers = _optionable_tickers(features)
@@ -1254,9 +1257,24 @@ def _context_alignment(
     options_refresh_run_id: str,
     tool_a: pd.DataFrame,
     tool_b: pd.DataFrame,
+    model_state_manifest: dict[str, Any] | None = None,
 ) -> ContextAlignment:
     tool_a_refresh_ids = _unique_strings(tool_a, "snapshot_refresh_run_id")
     tool_b_refresh_ids = _unique_strings(tool_b, "snapshot_refresh_run_id")
+    manifest_alignment = summarize_model_state_alignment(model_state_manifest)
+    if manifest_alignment is not None:
+        messages = [
+            str(message).strip().rstrip(".")
+            for message in manifest_alignment.get("warnings", ())
+            if str(message).strip()
+        ]
+        status = str(manifest_alignment.get("status") or "UNKNOWN").upper()
+        return ContextAlignment(
+            status=status,
+            message="; ".join(messages) + "." if messages else None,
+            tool_a_refresh_run_ids=tool_a_refresh_ids,
+            tool_b_refresh_run_ids=tool_b_refresh_ids,
+        )
     if not options_refresh_run_id or options_refresh_run_id == "unknown":
         return ContextAlignment(
             status="UNKNOWN",

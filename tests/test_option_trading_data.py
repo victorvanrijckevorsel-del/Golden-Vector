@@ -133,8 +133,14 @@ def test_load_option_trading_data_uses_composite_cache_key(tmp_path):
     assert first.overview.source_context.tool_a_refresh_run_ids == ("tool-run-a",)
     assert first.overview.source_context.tool_b_refresh_run_ids == ("tool-run-a",)
     assert first.overview.source_context.context_warnings
-    assert "Refresh context is mixed" in first.overview.source_context.context_warnings[0]
-    assert "Tool A uses tool-run-a" in first.overview.source_context.context_warnings[0]
+    assert any(
+        "Refresh context is mixed" in warning
+        for warning in first.overview.source_context.context_warnings
+    )
+    assert any(
+        "Tool A uses tool-run-a" in warning
+        for warning in first.overview.source_context.context_warnings
+    )
 
     _write_tool_outputs(paths, refresh_run_id="tool-run-b")
     _publish_option_artifacts(paths)

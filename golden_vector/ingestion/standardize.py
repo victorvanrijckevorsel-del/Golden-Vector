@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from golden_vector.common.numeric import optional_float as _as_float
 from golden_vector.contracts.data_models import MarketSnapshot
 
 
@@ -178,18 +179,6 @@ def empty_market_snapshot_frame() -> pd.DataFrame:
             "source_run_id",
         ]
     )
-
-
-def _as_float(value: object) -> float | None:
-    if value is None or pd.isna(value):
-        return None
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return None
-    if pd.isna(numeric):
-        return None
-    return numeric
 
 
 def _extract_snapshot_date(ticker: str, row: pd.Series) -> object:

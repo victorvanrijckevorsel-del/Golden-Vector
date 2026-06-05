@@ -9,6 +9,7 @@ from golden_vector.contracts.config_models import (
     GammaThresholds,
     HedgeReadinessConfig,
     HorizonsConfig,
+    MarketDataConfig,
     QaConfig,
     ScoreWeights,
     ScreeningParamsConfig,
@@ -430,6 +431,29 @@ def test_tool_d_config_accepts_defaults():
 def test_tool_d_config_rejects_invalid_settings(override):
     with pytest.raises(ValidationError):
         ToolDConfig.model_validate({"version": 1, **override})
+
+
+def test_market_data_config_accepts_yahoo_retry_and_throttle_defaults():
+    config = MarketDataConfig()
+
+    assert config.yahoo_max_attempts == 3
+    assert config.yahoo_initial_backoff_seconds == 0.5
+    assert config.yahoo_backoff_multiplier == 2.0
+    assert config.yahoo_throttle_seconds == 0.15
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"yahoo_max_attempts": 0},
+        {"yahoo_initial_backoff_seconds": -0.1},
+        {"yahoo_backoff_multiplier": 0.9},
+        {"yahoo_throttle_seconds": -0.1},
+    ],
+)
+def test_market_data_config_rejects_invalid_yahoo_retry_settings(override):
+    with pytest.raises(ValidationError):
+        MarketDataConfig.model_validate({"version": 1, **override})
 
 
 def test_score_weights_must_sum_to_one():

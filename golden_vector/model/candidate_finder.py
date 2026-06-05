@@ -9,6 +9,7 @@ from typing import Any, Literal
 import pandas as pd
 
 from golden_vector.common.eligibility import is_score_eligible, score_eligible_mask
+from golden_vector.common.numeric import optional_float as _optional_float
 from golden_vector.features.percentile_ranks import oriented_percentile
 
 CriterionDirection = Literal["high_good", "low_good"]
@@ -453,12 +454,3 @@ def _row_score_eligible(data: pd.DataFrame, ticker: str) -> bool:
     if "score_eligible" not in data.columns:
         return True
     return is_score_eligible(data.at[ticker, "score_eligible"])
-
-
-def _optional_float(value: object) -> float | None:
-    if value is None or pd.isna(value):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None

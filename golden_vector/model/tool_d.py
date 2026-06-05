@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from golden_vector.common.numeric import optional_float as _optional_float
 from golden_vector.contracts.config_models import AppConfig, ToolDConfig
 from golden_vector.features.percentile_ranks import oriented_percentile
 from golden_vector.screening.manual_data import LoadedManualScreeningData
@@ -371,16 +372,6 @@ def _missing_inputs(
     if forward_ebitda is None:
         missing.append("forward_ebitda_musd_at_g")
     return missing
-
-
-def _optional_float(value: object) -> float | None:
-    if value is None or pd.isna(value):
-        return None
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if pd.notna(parsed) else None
 
 
 def _fmt_pct(value: float | None) -> str:

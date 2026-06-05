@@ -579,3 +579,31 @@ Checks:
 - `python -m compileall golden_vector` -> passed.
 - `python -m pytest tests/test_model_state.py tests/test_replay_manifest.py tests/test_cli_refresh_and_status.py tests/test_options_phase.py tests/test_fetch_options.py tests/test_latest_data.py tests/test_option_trading_routes.py` -> 85 passed.
 - `python -m pytest -q` -> 744 passed in 742.61s.
+
+### I5 foundation cleanup from Claude reviews
+
+Reviewed:
+
+- `reviews/codex/claude_review_foundation_holistic.md`.
+- `reviews/codex/claude_review_i4_gate.md`.
+
+Built:
+
+- Added a shared model-state alignment summary helper and routed Candidate Finder, CLI status, Option Trading source warnings, and the hedge-readiness report through the manifest alignment verdict when a manifest exists.
+- Added `config/market_data.yaml` plus validated Yahoo retry/throttle settings; live foundation/options ingestion now builds `YahooClient` from that config.
+- Added `golden_vector.common.numeric` and removed repeated scalar numeric coercion helpers from the I4 collection/option stats code and several model/screening/UI modules.
+- Added durable Golden Vector metadata to atomic Parquet writes so empty schema-stamped artifacts no longer depend only on pandas `DataFrame.attrs`.
+- Documented the intentional prune-runs behavior that old bulky `*_output_<runid>` archives remain deletion candidates unless a retained model state explicitly references them.
+
+Self-review notes:
+
+- Kept detail-page panel suppression as an additive local safety check because it protects row-level foundation-backed rendering, not broad build freshness.
+- Kept the no-manifest Candidate Finder and CLI paths backward-compatible; legacy partial checkouts still use the old local freshness fallback until a model-state manifest exists.
+
+Checks:
+
+- `python -m compileall golden_vector` -> passed.
+- `python -m pytest tests/test_config_loading.py tests/test_config_models.py tests/test_collection_resilience.py tests/test_parquet_contracts.py tests/test_candidate_finder_data.py tests/test_option_trading_data.py tests/test_cli_refresh_and_status.py tests/test_hedge_report.py tests/test_model_state.py` -> 169 passed.
+- `python -m pytest tests/test_option_artifact_persistence.py tests/test_option_trading_routes.py tests/test_options_phase.py tests/test_run_pruning.py tests/test_replay_manifest.py tests/test_latest_data.py` -> 59 passed.
+- `python main.py status` -> passed.
+- `python -m pytest -q` -> 752 passed in 352.93s.

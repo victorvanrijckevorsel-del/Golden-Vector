@@ -9,6 +9,7 @@ import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
+from golden_vector.common.numeric import strict_optional_float as _optional_float
 from golden_vector.contracts.config_models import AppConfig, ScoringConfig
 from golden_vector.ingestion.persist import (
     persist_tool_a_outputs,
@@ -634,12 +635,6 @@ def _compute_confidence_score(
         + (0.10 * regime_score)
     )
     return round(float(_clamp(confidence)), 4)
-
-
-def _optional_float(value: object) -> float | None:
-    if value is None or pd.isna(value):
-        return None
-    return float(value)
 
 
 def _first_non_empty(values: list[object]) -> str | None:

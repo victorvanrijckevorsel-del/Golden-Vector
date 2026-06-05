@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from golden_vector.common.numeric import optional_float as _numeric
 from golden_vector.contracts.config_models import AppConfig
 
 
@@ -154,15 +155,6 @@ def _target_price_from_yield(
     if share_price_usd is None or actual_yield is None or actual_yield <= 0 or target_yield <= 0:
         return None
     return share_price_usd * (actual_yield / target_yield)
-
-
-def _numeric(value: object) -> float | None:
-    if value is None or pd.isna(value):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _positive(value: object) -> float | None:

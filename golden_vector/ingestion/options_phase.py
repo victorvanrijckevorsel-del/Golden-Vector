@@ -13,12 +13,14 @@ import pandas as pd
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.replay_manifest import update_manifest_with_options
 from golden_vector.app.run_context import RunContext
+from golden_vector.common.numeric import int_or_zero, optional_float
 from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.features.options import (
     compute_options_features,
     rank_options_iv_cross_section,
 )
+from golden_vector.ingestion.collection_resilience import retry_policy_from_config
 from golden_vector.ingestion.fetch_benchmarks import (
     BenchmarkFetchStatus,
     fetch_benchmark_histories,
@@ -77,7 +79,9 @@ def run_options_ingestion_phase(
 ) -> OptionsPhaseResult:
     """Fetch, persist, and feature-engineer the latest option-chain snapshot."""
 
-    client = yahoo_client or YahooClient()
+    client = yahoo_client or YahooClient(
+        retry_policy=retry_policy_from_config(app_config.market_data)
+    )
     targets = _option_fetch_targets(app_config)
     universe_target_count = sum(
         1 for target in targets if target.vehicle_type == "single_stock"
@@ -466,7 +470,7 @@ def _summarize_option_collection_events(
 
     sorted_by_duration = sorted(
         events,
-        key=lambda item: _event_float(item.get("duration_seconds")),
+        key=lambda item: optional_float(item.get("duration_seconds")) or 0.0,
         reverse=True,
     )
     failed = [
@@ -480,15 +484,15 @@ def _summarize_option_collection_events(
         "empty_count": status_counts.get(OPTIONS_STATUS_EMPTY, 0),
         "error_count": status_counts.get(OPTIONS_STATUS_ERROR, 0),
         "expiration_count_available": sum(
-            _event_int(event.get("expiration_count_available"))
+            int_or_zero(event.get("expiration_count_available"))
             for event in events
         ),
         "expiration_count_selected": sum(
-            _event_int(event.get("expiration_count_selected"))
+            int_or_zero(event.get("expiration_count_selected"))
             for event in events
         ),
         "expiration_error_count": sum(
-            _event_int(event.get("expiration_error_count"))
+            int_or_zero(event.get("expiration_error_count"))
             for event in events
         ),
         "failed": failed,
@@ -506,22 +510,8 @@ def _event_summary(event: dict[str, Any]) -> dict[str, Any]:
         "source_symbol": str(event.get("source_symbol") or ""),
         "vehicle_type": str(event.get("vehicle_type") or ""),
         "status": str(event.get("status") or ""),
-        "duration_seconds": _event_float(event.get("duration_seconds")),
-        "expiration_count_selected": _event_int(event.get("expiration_count_selected")),
-        "expiration_error_count": _event_int(event.get("expiration_error_count")),
+        "duration_seconds": optional_float(event.get("duration_seconds")) or 0.0,
+        "expiration_count_selected": int_or_zero(event.get("expiration_count_selected")),
+        "expiration_error_count": int_or_zero(event.get("expiration_error_count")),
         "message": str(event.get("message") or "") or None,
     }
-
-
-def _event_int(value: object) -> int:
-    numeric = pd.to_numeric(value, errors="coerce")
-    if pd.isna(numeric):
-        return 0
-    return int(numeric)
-
-
-def _event_float(value: object) -> float:
-    numeric = pd.to_numeric(value, errors="coerce")
-    if pd.isna(numeric):
-        return 0.0
-    return float(numeric)

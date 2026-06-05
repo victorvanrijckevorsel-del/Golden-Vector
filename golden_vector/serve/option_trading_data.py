@@ -18,6 +18,7 @@ from golden_vector.app.model_state import (
     read_current_model_json,
     read_current_model_parquet,
     resolve_current_model_artifact_path,
+    summarize_model_state_alignment,
 )
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
@@ -400,6 +401,10 @@ def load_option_trading_data(
         risk_free_rate=risk_free_rate,
         risk_free_rate_is_fallback=risk_free_rate_is_fallback,
     )
+    source_context = _with_model_state_alignment_warnings(
+        source_context,
+        model_state=load_current_model_state_manifest(paths),
+    )
     put_slots, call_slots = candidate_slots_from_frame(
         artifact_frames["option_candidate_slots"]
     )
@@ -517,6 +522,39 @@ def _artifact_context_value(frame: pd.DataFrame, key: str) -> object:
     if values.empty:
         return None
     return values.iloc[0]
+
+
+def _with_model_state_alignment_warnings(
+    context: OptionTradingSourceContext,
+    *,
+    model_state: dict[str, Any] | None,
+) -> OptionTradingSourceContext:
+    alignment = summarize_model_state_alignment(model_state)
+    if alignment is None or alignment.get("status") == "OK":
+        return context
+    warnings = _dedupe_context_warnings(
+        [
+            *(
+                str(message)
+                for message in alignment.get("warnings", ())
+                if str(message).strip()
+            ),
+            *context.context_warnings,
+        ]
+    )
+    return replace(context, context_warnings=tuple(warnings))
+
+
+def _dedupe_context_warnings(values: list[str]) -> list[str]:
+    warnings: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        warnings.append(text)
+    return warnings
 
 
 def _cache_key(

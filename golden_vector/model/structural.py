@@ -8,6 +8,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from golden_vector.common.numeric import strict_optional_float as _optional_float
 from golden_vector.contracts.config_models import ScoringConfig
 
 
@@ -665,9 +666,3 @@ def _empty_window_metric(
         "asymmetry_ratio": None,
         "normalization_issue_summary": issue_summary,
     }
-
-
-def _optional_float(value: object) -> float | None:
-    if value is None or pd.isna(value):
-        return None
-    return float(value)

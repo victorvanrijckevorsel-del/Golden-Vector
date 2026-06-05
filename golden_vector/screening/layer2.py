@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from golden_vector.common.numeric import optional_float as _numeric
+
 
 def compute_layer2_metrics(
     row: pd.Series,
@@ -98,15 +100,6 @@ def compute_layer2_metrics(
         "ev_ebitda": ev_ebitda,
         "layer2_incomplete_reasons": None,
     }
-
-
-def _numeric(value: object) -> float | None:
-    if value is None or pd.isna(value):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _positive_float(value: object) -> float | None:

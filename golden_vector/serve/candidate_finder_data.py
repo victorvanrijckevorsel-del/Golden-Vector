@@ -15,6 +15,7 @@ from golden_vector.common.strings import unique_strings as _common_unique_string
 from golden_vector.app.model_state import (
     load_current_model_state_manifest,
     resolve_current_model_artifact_path,
+    summarize_model_state_alignment,
 )
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import (
@@ -165,6 +166,7 @@ def load_candidate_finder_data(
         option_data=option_data,
     )
     alignment = _alignment(
+        model_state_manifest=model_state_manifest,
         tool_a=tool_a,
         tool_b=tool_b,
         tool_c=tool_c,
@@ -534,6 +536,7 @@ def _preset_id(spec: Mapping[str, Any]) -> str:
 
 def _alignment(
     *,
+    model_state_manifest: dict[str, Any] | None,
     tool_a: pd.DataFrame,
     tool_b: pd.DataFrame,
     tool_c: pd.DataFrame,
@@ -564,6 +567,49 @@ def _alignment(
     )
     if manual_warning is not None:
         warnings.append(manual_warning)
+    manifest_alignment = summarize_model_state_alignment(model_state_manifest)
+    if manifest_alignment is not None:
+        manifest_status_raw = str(manifest_alignment.get("status") or "UNKNOWN")
+        if manifest_status_raw == "OK":
+            manifest_status: Literal["OK", "WARN", "UNKNOWN"] = "OK"
+        elif manifest_status_raw == "WARN":
+            manifest_status = "WARN"
+        else:
+            manifest_status = "UNKNOWN"
+        manifest_messages = [
+            str(message)
+            for message in manifest_alignment.get("warnings", ())
+            if str(message).strip()
+        ]
+        combined_warnings = _dedupe_alignment_messages(
+            [*manifest_messages, *warnings]
+        )
+        if combined_warnings:
+            status = "WARN" if manifest_status == "OK" else manifest_status
+            return CandidateFinderAlignment(
+                status=status,
+                message=combined_warnings[0],
+                tool_a_refresh_run_ids=tool_a_ids,
+                tool_b_refresh_run_ids=tool_b_ids,
+                tool_c_refresh_run_ids=tool_c_ids,
+                tool_d_refresh_run_ids=tool_d_ids,
+                options_refresh_run_id=options_id,
+                manual_store_hash=manual_store_hash,
+                manual_store_as_of=manual_store_as_of,
+                messages=tuple(combined_warnings),
+            )
+        return CandidateFinderAlignment(
+            status="OK",
+            message=None,
+            tool_a_refresh_run_ids=tool_a_ids,
+            tool_b_refresh_run_ids=tool_b_ids,
+            tool_c_refresh_run_ids=tool_c_ids,
+            tool_d_refresh_run_ids=tool_d_ids,
+            options_refresh_run_id=options_id,
+            manual_store_hash=manual_store_hash,
+            manual_store_as_of=manual_store_as_of,
+            messages=(),
+        )
     if missing:
         message = "Missing refresh ids for: " + ", ".join(missing) + "."
         return CandidateFinderAlignment(
@@ -623,6 +669,18 @@ def _alignment(
         manual_store_as_of=manual_store_as_of,
         messages=(),
     )
+
+
+def _dedupe_alignment_messages(values: list[str]) -> list[str]:
+    messages: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        messages.append(text)
+    return messages
 
 
 def _options_refresh_run_id(option_data: OptionTradingData) -> str | None:

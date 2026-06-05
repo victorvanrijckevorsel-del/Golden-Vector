@@ -896,9 +896,39 @@ class CandidateFinderConfig(StrictConfigModel):
         return self
 
 
+class MarketDataConfig(StrictConfigModel):
+    version: int = 1
+    yahoo_max_attempts: int = 3
+    yahoo_initial_backoff_seconds: float = 0.5
+    yahoo_backoff_multiplier: float = 2.0
+    yahoo_throttle_seconds: float = 0.15
+
+    @field_validator("yahoo_max_attempts")
+    @classmethod
+    def positive_attempts(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("yahoo_max_attempts must be positive")
+        return int(value)
+
+    @field_validator("yahoo_initial_backoff_seconds", "yahoo_throttle_seconds")
+    @classmethod
+    def non_negative_seconds(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("Yahoo timing values must be non-negative")
+        return float(value)
+
+    @field_validator("yahoo_backoff_multiplier")
+    @classmethod
+    def valid_backoff_multiplier(cls, value: float) -> float:
+        if value < 1:
+            raise ValueError("yahoo_backoff_multiplier must be at least 1")
+        return float(value)
+
+
 class AppConfig(StrictConfigModel):
     universe: UniverseConfig
     benchmarks: BenchmarksConfig
+    market_data: MarketDataConfig = Field(default_factory=MarketDataConfig)
     candidate_finder: CandidateFinderConfig
     hedge_readiness: HedgeReadinessConfig = Field(default_factory=HedgeReadinessConfig)
     tool_c: ToolCConfig = Field(default_factory=ToolCConfig)

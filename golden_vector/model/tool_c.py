@@ -8,6 +8,8 @@ from typing import Iterable
 import pandas as pd
 
 from golden_vector.common.eligibility import is_score_eligible, score_eligible_mask
+from golden_vector.common.numeric import optional_float as _optional_float
+from golden_vector.common.numeric import optional_int as _optional_int
 from golden_vector.contracts.config_models import ToolCConfig
 from golden_vector.features.gold_regime import build_gold_regime_frame
 from golden_vector.features.percentile_ranks import oriented_percentile
@@ -369,21 +371,6 @@ def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
     if column not in frame.columns:
         return pd.Series([pd.NA] * len(frame.index), index=frame.index, dtype="Float64")
     return pd.to_numeric(frame[column], errors="coerce")
-
-
-def _optional_float(value: object) -> float | None:
-    if value is None or pd.isna(value):
-        return None
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if pd.notna(parsed) else None
-
-
-def _optional_int(value: object) -> int | None:
-    parsed = _optional_float(value)
-    return int(parsed) if parsed is not None else None
 
 
 def _join_tags(tags: list[str]) -> str | None:

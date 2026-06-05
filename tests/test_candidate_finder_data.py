@@ -7,7 +7,10 @@ import pandas as pd
 import pytest
 
 from golden_vector.app.config import load_app_config
-from golden_vector.app.model_state import write_current_model_state_manifest
+from golden_vector.app.model_state import (
+    load_current_model_state_manifest,
+    write_current_model_state_manifest,
+)
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.cli import run_candidate_finder, run_option_artifacts
@@ -349,6 +352,33 @@ def test_candidate_finder_data_warns_on_mixed_refreshes(tmp_path):
     assert "Tool A" in data.alignment.message
     assert "Tool B" in data.alignment.message
     assert "Options" in data.alignment.message
+
+
+def test_candidate_finder_alignment_uses_model_state_manifest_when_present(tmp_path):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    payload = load_current_model_state_manifest(paths)
+    assert payload is not None
+    payload["alignment"] = {
+        "status": "WARN",
+        "warnings": [
+            "tool_c references stale-run while foundation is refresh-run.",
+        ],
+    }
+    payload["warnings"] = []
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+    clear_candidate_finder_cache()
+
+    data = load_candidate_finder_data(paths, app_config=app_config)
+
+    assert data.alignment.status == "WARN"
+    assert data.alignment.message is not None
+    assert "tool_c references stale-run" in data.alignment.message
 
 
 def test_candidate_finder_data_warns_when_manual_store_is_newer_than_tool_b(tmp_path):

@@ -9,6 +9,7 @@ from typing import Literal
 
 import pandas as pd
 
+from golden_vector.common.numeric import optional_float as _as_float
 from golden_vector.ingestion.yahoo_client import YahooClient
 
 OPTIONS_STATUS_SUCCESS = "SUCCESS"
@@ -270,13 +271,6 @@ def _midpoint(bid: object, ask: object) -> float | None:
     if bid_value is None or ask_value is None or bid_value <= 0 or ask_value <= 0:
         return None
     return (bid_value + ask_value) / 2.0
-
-
-def _as_float(value: object) -> float | None:
-    numeric = pd.to_numeric(value, errors="coerce")
-    if pd.isna(numeric):
-        return None
-    return float(numeric)
 
 
 def _selected_expirations(

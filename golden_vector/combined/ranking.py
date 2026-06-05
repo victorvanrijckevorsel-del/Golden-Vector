@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from golden_vector.common.numeric import optional_float as _numeric
 from golden_vector.contracts.config_models import CombinedVerdictThresholds
 
 
@@ -90,12 +91,3 @@ def rank_combined_outputs(combined_outputs: pd.DataFrame) -> pd.DataFrame:
         )
 
     return ranked
-
-
-def _numeric(value: object) -> float | None:
-    if value is None or pd.isna(value):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None

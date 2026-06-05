@@ -6,14 +6,13 @@ from typing import Any
 
 import pandas as pd
 
+from golden_vector.common.numeric import optional_float
+
 OPTIONABLE_TIERS = {"directly_hedgeable", "thin"}
 
 
 def as_float(value: object) -> float | None:
-    numeric = pd.to_numeric(value, errors="coerce")
-    if pd.isna(numeric):
-        return None
-    return float(numeric)
+    return optional_float(value)
 
 
 def row_float(row: pd.Series | dict[str, Any] | None, column: str) -> float | None:

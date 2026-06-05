@@ -6,8 +6,21 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from golden_vector.common.files import atomic_write_file
+
+PARQUET_METADATA_PREFIX = "golden_vector."
+PARQUET_CONTEXT_METADATA_KEYS = (
+    "schema_version",
+    "snapshot_refresh_run_id",
+    "source_run_id",
+    "parent_refresh_id",
+    "config_hash",
+    "risk_free_rate",
+    "risk_free_rate_is_fallback",
+)
 
 
 class ParquetSchemaError(ValueError):
@@ -41,12 +54,16 @@ def read_required_parquet(
         frame = pd.read_parquet(path)
     except Exception as exc:
         raise ValueError(f"{label} could not be read: {exc}") from exc
+    metadata = parquet_context_metadata(path)
+    for key, value in metadata.items():
+        frame.attrs.setdefault(key, value)
     validate_parquet_schema(
         frame,
         label=label,
         required_columns=required_columns,
         schema_version=schema_version,
         column_dtypes=column_dtypes,
+        metadata=metadata,
     )
     return frame
 
@@ -58,6 +75,7 @@ def validate_parquet_schema(
     required_columns: Iterable[str] | None = None,
     schema_version: int | str | None = None,
     column_dtypes: Mapping[str, str | Iterable[str]] | None = None,
+    metadata: Mapping[str, str] | None = None,
 ) -> None:
     """Validate a loaded Parquet frame using the shared checked-read contract."""
 
@@ -68,7 +86,7 @@ def validate_parquet_schema(
         errors.append(f"missing columns: {', '.join(missing)}")
 
     if schema_version is not None:
-        actual_schema_versions = _schema_versions(frame)
+        actual_schema_versions = _schema_versions(frame, metadata=metadata)
         if len(actual_schema_versions) > 1:
             errors.append(
                 "schema_version expected "
@@ -110,11 +128,64 @@ def write_parquet_atomic(frame: pd.DataFrame, path: Path, *, index: bool = False
 
     return atomic_write_file(
         path,
-        lambda temporary_path: frame.to_parquet(temporary_path, index=index),
+        lambda temporary_path: _write_parquet_with_metadata(
+            frame,
+            temporary_path,
+            index=index,
+        ),
     )
 
 
-def _schema_versions(frame: pd.DataFrame) -> list[str]:
+def _write_parquet_with_metadata(
+    frame: pd.DataFrame,
+    path: Path,
+    *,
+    index: bool,
+) -> None:
+    metadata = _golden_vector_metadata_from_attrs(frame)
+    if not metadata:
+        frame.to_parquet(path, index=index)
+        return
+    table = pa.Table.from_pandas(frame, preserve_index=index)
+    existing = dict(table.schema.metadata or {})
+    table = table.replace_schema_metadata({**existing, **metadata})
+    pq.write_table(table, path)
+
+
+def _golden_vector_metadata_from_attrs(frame: pd.DataFrame) -> dict[bytes, bytes]:
+    metadata: dict[bytes, bytes] = {}
+    for key in PARQUET_CONTEXT_METADATA_KEYS:
+        value = frame.attrs.get(key)
+        if _is_missing(value):
+            continue
+        metadata[f"{PARQUET_METADATA_PREFIX}{key}".encode("utf-8")] = str(value).encode(
+            "utf-8"
+        )
+    return metadata
+
+
+def parquet_context_metadata(path: Path) -> dict[str, str]:
+    """Return Golden Vector Parquet context metadata."""
+
+    try:
+        raw_metadata = pq.read_metadata(path).metadata or {}
+    except Exception:
+        return {}
+    parsed: dict[str, str] = {}
+    prefix = PARQUET_METADATA_PREFIX.encode("utf-8")
+    for raw_key, raw_value in raw_metadata.items():
+        if not raw_key.startswith(prefix):
+            continue
+        key = raw_key.decode("utf-8")[len(PARQUET_METADATA_PREFIX):]
+        parsed[key] = raw_value.decode("utf-8")
+    return parsed
+
+
+def _schema_versions(
+    frame: pd.DataFrame,
+    *,
+    metadata: Mapping[str, str] | None = None,
+) -> list[str]:
     if "schema_version" in frame.columns:
         values = [
             str(value)
@@ -122,6 +193,10 @@ def _schema_versions(frame: pd.DataFrame) -> list[str]:
         ]
         if values:
             return sorted(values)
+    if metadata:
+        value = metadata.get("schema_version")
+        if not _is_missing(value):
+            return [str(value)]
     value = frame.attrs.get("schema_version")
     if _is_missing(value):
         return []

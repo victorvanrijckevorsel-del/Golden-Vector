@@ -231,6 +231,9 @@ def _prune_candidates(
 
 def _artifact_file_candidates(paths: ProjectPaths) -> list[PruneCandidate]:
     candidates: list[PruneCandidate] = []
+    # The manifest protects immutable *_latest_<runid> artifacts. Older bulky
+    # *_output_<runid> archives are still candidates unless another retained
+    # model state references them explicitly.
     for directory, patterns in (
         (
             paths.output_tool_a_dir,

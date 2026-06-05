@@ -11,7 +11,10 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.contracts.data_models import FetchStatusRecord
-from golden_vector.ingestion.collection_resilience import summarize_fetch_statuses
+from golden_vector.ingestion.collection_resilience import (
+    retry_policy_from_config,
+    summarize_fetch_statuses,
+)
 from golden_vector.ingestion.fetch_equities import fetch_equity_histories
 from golden_vector.ingestion.fetch_fx import fetch_fx_histories
 from golden_vector.ingestion.fetch_gold import fetch_gold_history
@@ -49,7 +52,7 @@ def execute_foundation_pipeline(
     run_context: RunContext,
 ) -> FoundationExecutionResult:
     registry = build_foundation_registry(app_config.universe)
-    client = YahooClient()
+    client = YahooClient(retry_policy=retry_policy_from_config(app_config.market_data))
 
     equity_histories, equity_statuses = fetch_equity_histories(client, registry.equity_targets)
     fx_histories, fx_statuses = fetch_fx_histories(client, registry.fx_targets)

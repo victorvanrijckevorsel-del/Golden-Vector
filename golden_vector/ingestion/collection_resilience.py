@@ -11,6 +11,8 @@ from typing import TypeVar
 
 import pandas as pd
 
+from golden_vector.common.numeric import int_or_zero, is_missing, optional_float
+from golden_vector.contracts.config_models import MarketDataConfig
 from golden_vector.contracts.data_models import FetchStatusRecord
 
 T = TypeVar("T")
@@ -34,6 +36,17 @@ class RetryPolicy:
             raise ValueError("backoff_multiplier must be at least 1")
         if self.throttle_seconds < 0:
             raise ValueError("throttle_seconds must be non-negative")
+
+
+def retry_policy_from_config(config: MarketDataConfig) -> RetryPolicy:
+    """Build the Yahoo retry policy from validated app config."""
+
+    return RetryPolicy(
+        max_attempts=config.yahoo_max_attempts,
+        initial_backoff_seconds=config.yahoo_initial_backoff_seconds,
+        backoff_multiplier=config.yahoo_backoff_multiplier,
+        throttle_seconds=config.yahoo_throttle_seconds,
+    )
 
 
 def call_with_retries(
@@ -173,8 +186,8 @@ def _status_rows(frame: pd.DataFrame, *, max_items: int) -> list[dict[str, objec
                 "entity": _string_value(row.get("entity")),
                 "source_symbol": _string_value(row.get("source_symbol")),
                 "status": _string_value(row.get("status")),
-                "row_count": _int_value(row.get("row_count")),
-                "duration_seconds": _float_value(row.get("duration_seconds")),
+                "row_count": int_or_zero(row.get("row_count")),
+                "duration_seconds": optional_float(row.get("duration_seconds")),
                 "message": _string_value(row.get("message")) or None,
             }
         )
@@ -209,27 +222,5 @@ def _string_value(value: object) -> str:
     return str(value)
 
 
-def _int_value(value: object) -> int:
-    numeric = pd.to_numeric(value, errors="coerce")
-    if pd.isna(numeric):
-        return 0
-    return int(numeric)
-
-
-def _float_value(value: object) -> float | None:
-    numeric = pd.to_numeric(value, errors="coerce")
-    if pd.isna(numeric):
-        return None
-    return float(numeric)
-
-
 def _is_missing(value: object) -> bool:
-    if value is None:
-        return True
-    try:
-        missing = pd.isna(value)
-    except Exception:
-        return False
-    if isinstance(missing, bool):
-        return missing
-    return False
+    return is_missing(value)

@@ -26,6 +26,7 @@ from golden_vector.app.model_state import (
     load_current_model_state_manifest,
     resolve_current_foundation_manifest_path,
     resolve_current_model_artifact_path,
+    summarize_model_state_alignment,
     summarize_model_state_manifest,
     write_current_model_state_manifest,
 )
@@ -2785,7 +2786,8 @@ def _render_status_summary(paths: ProjectPaths) -> str:
     lines: list[str] = []
     lines.append("Golden Vector - operational status")
     lines.append("=" * 60)
-    lines.extend(summarize_model_state_manifest(load_current_model_state_manifest(paths)))
+    model_state_manifest = load_current_model_state_manifest(paths)
+    lines.extend(summarize_model_state_manifest(model_state_manifest))
     lines.append("")
 
     # Foundation manifest
@@ -2954,34 +2956,16 @@ def _render_status_summary(paths: ProjectPaths) -> str:
         except Exception as exc:
             lines.append(f"Tool D latest output: ERROR reading parquet ({exc}).")
 
-    # Refresh-id alignment
-    alignment_messages: list[str] = []
-    if manifest_run_id:
-        if tool_a_run_ids and manifest_run_id not in tool_a_run_ids:
-            alignment_messages.append(
-                f"Tool A={', '.join(sorted(tool_a_run_ids))}"
-            )
-        if tool_b_run_ids and manifest_run_id not in tool_b_run_ids:
-            alignment_messages.append(
-                f"Tool B={', '.join(sorted(tool_b_run_ids))}"
-            )
-        if tool_c_run_ids and manifest_run_id not in tool_c_run_ids:
-            alignment_messages.append(
-                f"Tool C={', '.join(sorted(tool_c_run_ids))}"
-            )
-        if tool_d_run_ids and manifest_run_id not in tool_d_run_ids:
-            alignment_messages.append(
-                f"Tool D={', '.join(sorted(tool_d_run_ids))}"
-            )
-    if not manifest_run_id:
-        lines.append("Refresh alignment:    UNKNOWN  (foundation refresh id missing)")
-    elif alignment_messages:
-        lines.append(
-            "Refresh alignment:    MISMATCH  "
-            f"(manifest={manifest_run_id}; {'; '.join(alignment_messages)})"
+    lines.append(
+        _render_refresh_alignment_line(
+            model_state_manifest=model_state_manifest,
+            manifest_run_id=manifest_run_id,
+            tool_a_run_ids=tool_a_run_ids,
+            tool_b_run_ids=tool_b_run_ids,
+            tool_c_run_ids=tool_c_run_ids,
+            tool_d_run_ids=tool_d_run_ids,
         )
-    else:
-        lines.append("Refresh alignment:    OK")
+    )
 
     # Manual data coverage
     lines.append("")
@@ -3036,3 +3020,46 @@ def _render_status_summary(paths: ProjectPaths) -> str:
     lines.append("")
     lines.append("Next:  `python main.py workspace`  to inspect outputs in the browser.")
     return "\n".join(lines)
+
+
+def _render_refresh_alignment_line(
+    *,
+    model_state_manifest: dict[str, object] | None,
+    manifest_run_id: str | None,
+    tool_a_run_ids: set[str],
+    tool_b_run_ids: set[str],
+    tool_c_run_ids: set[str],
+    tool_d_run_ids: set[str],
+) -> str:
+    alignment = summarize_model_state_alignment(model_state_manifest)
+    if alignment is not None:
+        status = str(alignment.get("status") or "UNKNOWN").upper()
+        messages = [
+            str(message)
+            for message in alignment.get("warnings", ())
+            if str(message).strip()
+        ]
+        if status == "OK":
+            return "Refresh alignment:    OK"
+        display_status = "MISMATCH" if status == "WARN" else "UNKNOWN"
+        detail = messages[0] if messages else f"model-state alignment is {status}"
+        return f"Refresh alignment:    {display_status}  ({detail})"
+
+    alignment_messages: list[str] = []
+    if manifest_run_id:
+        if tool_a_run_ids and manifest_run_id not in tool_a_run_ids:
+            alignment_messages.append(f"Tool A={', '.join(sorted(tool_a_run_ids))}")
+        if tool_b_run_ids and manifest_run_id not in tool_b_run_ids:
+            alignment_messages.append(f"Tool B={', '.join(sorted(tool_b_run_ids))}")
+        if tool_c_run_ids and manifest_run_id not in tool_c_run_ids:
+            alignment_messages.append(f"Tool C={', '.join(sorted(tool_c_run_ids))}")
+        if tool_d_run_ids and manifest_run_id not in tool_d_run_ids:
+            alignment_messages.append(f"Tool D={', '.join(sorted(tool_d_run_ids))}")
+    if not manifest_run_id:
+        return "Refresh alignment:    UNKNOWN  (foundation refresh id missing)"
+    if alignment_messages:
+        return (
+            "Refresh alignment:    MISMATCH  "
+            f"(manifest={manifest_run_id}; {'; '.join(alignment_messages)})"
+        )
+    return "Refresh alignment:    OK"

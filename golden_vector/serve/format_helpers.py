@@ -7,6 +7,8 @@ from typing import Any
 
 import pandas as pd
 
+from golden_vector.common.numeric import optional_float as _optional_float
+
 
 RATE_FIELDS = {"royalty_rate", "tax_rate"}
 
@@ -246,15 +248,3 @@ def _coerce_form_numeric(value: str) -> float | None:
 def _coerce_form_text(value: str) -> str | None:
     text = str(value).strip()
     return text or None
-
-
-def _optional_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return None
-    if pd.isna(numeric):
-        return None
-    return numeric

@@ -47,7 +47,7 @@ def test_foundation_pipeline_skips_normalization_when_raw_qa_fails(tmp_path, mon
     registry = _registry()
 
     monkeypatch.setattr("golden_vector.ingestion.foundation.build_foundation_registry", lambda _: registry)
-    monkeypatch.setattr("golden_vector.ingestion.foundation.YahooClient", lambda: object())
+    monkeypatch.setattr("golden_vector.ingestion.foundation.YahooClient", lambda **_: object())
     monkeypatch.setattr(
         "golden_vector.ingestion.foundation.fetch_equity_histories",
         lambda client, targets: (
@@ -124,7 +124,7 @@ def test_foundation_pipeline_runs_normalization_and_combines_statuses(tmp_path, 
     registry = _registry()
 
     monkeypatch.setattr("golden_vector.ingestion.foundation.build_foundation_registry", lambda _: registry)
-    monkeypatch.setattr("golden_vector.ingestion.foundation.YahooClient", lambda: object())
+    monkeypatch.setattr("golden_vector.ingestion.foundation.YahooClient", lambda **_: object())
     monkeypatch.setattr(
         "golden_vector.ingestion.foundation.fetch_equity_histories",
         lambda client, targets: (

@@ -1,7 +1,12 @@
 import pandas as pd
 import pytest
 
-from golden_vector.common.parquet import ParquetSchemaError, read_required_parquet
+from golden_vector.common.parquet import (
+    ParquetSchemaError,
+    parquet_context_metadata,
+    read_required_parquet,
+    write_parquet_atomic,
+)
 
 
 def test_read_required_parquet_validates_required_columns_and_schema_version(tmp_path):
@@ -66,6 +71,30 @@ def test_read_required_parquet_validates_schema_version_from_attrs_on_empty_fram
             required_columns=("schema_version", "source_run_id"),
             schema_version=1,
         )
+
+
+def test_write_parquet_atomic_persists_schema_version_metadata_for_empty_frame(tmp_path):
+    path = tmp_path / "empty_with_metadata.parquet"
+    frame = pd.DataFrame(
+        {
+            "schema_version": pd.Series(dtype="object"),
+            "source_run_id": pd.Series(dtype="object"),
+        }
+    )
+    frame.attrs["schema_version"] = 1
+    frame.attrs["source_run_id"] = "run-1"
+
+    write_parquet_atomic(frame, path, index=False)
+    loaded = read_required_parquet(
+        path,
+        label="empty artifact",
+        required_columns=("schema_version", "source_run_id"),
+        schema_version=1,
+    )
+
+    assert loaded.empty
+    assert parquet_context_metadata(path)["schema_version"] == "1"
+    assert loaded.attrs["source_run_id"] == "run-1"
 
 
 def test_read_required_parquet_rejects_mixed_schema_versions(tmp_path):
