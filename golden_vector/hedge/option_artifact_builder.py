@@ -28,6 +28,7 @@ from golden_vector.hedge.option_trading import (
     build_option_trading_overview,
 )
 from golden_vector.hedge.options_liquidity import (
+    OptionContractMetrics,
     build_bucket_slots,
     candidate_bucket_ids,
     scan_option_chain,
@@ -292,6 +293,45 @@ def build_option_liquidity_measurements(
             )
         )
     return tuple(measurements)
+
+
+def scan_option_contract_metrics(
+    *,
+    app_config: AppConfig,
+    features: pd.DataFrame,
+    tool_b: pd.DataFrame,
+    chains: dict[str, pd.DataFrame],
+    risk_free_rate: float,
+    manifest: dict[str, Any],
+) -> tuple[OptionContractMetrics, ...]:
+    """Scan all loaded option chains into per-contract liquidity metrics."""
+
+    feature_by_ticker = rows_by_ticker_series(features, strip=True)
+    tool_b_by_ticker = rows_by_ticker_series(tool_b, strip=True)
+    settings = settings_from_config(app_config.hedge_readiness)
+    as_of_date = _manifest_as_of_date(manifest)
+    metrics: list[OptionContractMetrics] = []
+    for ticker, chain in chains.items():
+        feature = feature_by_ticker.get(ticker)
+        if feature is None:
+            continue
+        price = _current_stock_price(
+            feature=feature,
+            tool_b_row=tool_b_by_ticker.get(ticker),
+            chain=chain,
+        )
+        if price is None or price <= 0:
+            continue
+        scan = scan_option_chain(
+            ticker=ticker,
+            chain=chain,
+            underlying_price=price,
+            risk_free_rate=risk_free_rate,
+            settings=settings,
+            as_of_date=as_of_date,
+        )
+        metrics.extend(scan.metrics)
+    return tuple(metrics)
 
 
 def build_option_source_context(

@@ -328,3 +328,21 @@ Checks:
 - `python -m pytest tests/test_option_trading_data.py` -> 17 passed.
 - `python -m pytest tests/test_candidate_finder_data.py tests/test_option_trading_data.py` -> 33 passed.
 - `python -m compileall golden_vector/hedge/option_artifact_builder.py golden_vector/serve/option_trading_data.py` -> passed.
+
+### I3 option artifact serialization and writer
+
+Built:
+
+- Added `golden_vector.hedge.option_artifact_frames` to serialize shared-builder outputs into the six I3 Parquet artifact frames: contract metrics, liquidity measurements, candidate slots, selected candidates, Option Trading overview rows, and Candidate Finder inputs.
+- Added `golden_vector.ingestion.persist_option_artifacts.persist_option_artifact_frames`, which writes one output file, one immutable run-stamped latest file, and one convenience latest alias for each artifact.
+- Added `golden_vector.hedge.option_availability.has_usable_option_slots` and routed Candidate Finder's private compatibility wrapper through it, so persisted Finder inputs and request-time Finder use the same "usable = tradable selected candidate" policy.
+- Added tests for Finder usable serialization, run-stamped/latest artifact writes, and fail-fast missing artifact frames.
+
+Self-review finding fixed:
+
+- The first writer version would have silently written empty fallback frames for missing artifacts. It now rejects incomplete artifact sets and rejects frames missing `source_run_id`, because those artifacts cannot become immutable through the model-state resolver.
+
+Checks:
+
+- `python -m pytest tests/test_option_artifact_persistence.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py` -> 36 passed.
+- `python -m compileall golden_vector/ingestion/persist_option_artifacts.py tests/test_option_artifact_persistence.py` -> passed.

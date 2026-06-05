@@ -29,6 +29,7 @@ from golden_vector.model.candidate_finder import (
     rank_candidates,
 )
 from golden_vector.screening.manual_store import load_store_tables
+from golden_vector.hedge.option_availability import has_usable_option_slots
 from golden_vector.serve.option_trading_data import (
     OptionTradingData,
     load_option_trading_data,
@@ -429,10 +430,7 @@ def _ratio_series(values: pd.Series, denominator: pd.Series) -> pd.Series:
 
 
 def _has_usable_slots(slots: object) -> bool:
-    return any(
-        getattr(getattr(slot, "candidate", None), "liquidity_tier", None) == "tradable"
-        for slot in slots or []
-    )
+    return has_usable_option_slots(slots)
 
 
 def _options_side(
