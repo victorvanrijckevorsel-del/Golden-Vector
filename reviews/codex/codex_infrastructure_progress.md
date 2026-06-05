@@ -233,3 +233,19 @@ Checks:
 - `python -m compileall golden_vector` -> passed.
 - `python -m pytest -q` -> 705 passed.
 - `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in the active Python environment.
+
+### I1/I2 joint-link review
+
+Findings fixed:
+
+- A syntactically valid but wrong-shaped `latest_model_state.json` such as `[]` was not handled like a corrupt manifest. The loader now requires the root JSON value to be an object and returns the same unreadable-manifest payload used for parse failures, so readers fail closed instead of crashing or falling back to mutable aliases.
+- The Tool B override/scenario view still recomputed from the mutable latest foundation alias. That could mix a manifest-selected Tool B baseline with a newer foundation snapshot after a failed refresh. The recompute path now resolves foundation through the current model-state manifest and falls back to the persisted table with a visible error if the manifest cannot provide a usable immutable foundation.
+- The “current foundation” resolution rule had started to duplicate across CLI and UI paths. It is now centralized in `golden_vector.app.model_state.resolve_current_foundation_manifest_path`, with one shared fail-closed behavior for present-but-unusable manifests.
+
+Checks:
+
+- `python -m pytest tests/test_model_state.py tests/test_workspace_app.py tests/test_cli_tool_c.py tests/test_cli_tool_d.py tests/test_cli_refresh_and_status.py -q` -> 89 passed.
+- `python -m pytest tests/test_model_state.py tests/test_latest_data.py tests/test_workspace_app.py tests/test_cli_refresh_and_status.py tests/test_option_refresh.py tests/test_candidate_finder_data.py tests/test_option_trading_data.py tests/test_cli_tool_c.py tests/test_cli_tool_d.py -q` -> 140 passed.
+- `python -m compileall golden_vector` -> passed.
+- `python -m pytest -q` -> 707 passed.
+- `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in the active Python environment.

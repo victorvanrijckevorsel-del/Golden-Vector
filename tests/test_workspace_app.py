@@ -2197,6 +2197,28 @@ def test_workspace_tool_b_view_with_override_shows_scenario_banner(tmp_path):
     assert "Scenario active" in response["body"]
 
 
+def test_workspace_tool_b_override_refuses_latest_foundation_when_model_state_corrupt(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    paths.latest_model_state_manifest_path.write_text("{not-json", encoding="utf-8")
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path="/tool-b?gold_price=4500",
+    )
+
+    assert response["status"].startswith("200")
+    assert "Scenario active" in response["body"]
+    assert "Could not recompute with overrides" in response["body"]
+    assert "does not expose a usable immutable foundation artifact" in response["body"]
+
+
 def test_workspace_combined_alias_routes_match_root(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()

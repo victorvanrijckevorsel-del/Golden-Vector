@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, ClassVar
 
 import pandas as pd
@@ -13,6 +12,7 @@ from golden_vector.app.model_state import (
     load_current_model_state_manifest,
     read_current_model_json,
     read_current_model_parquet,
+    resolve_current_foundation_manifest_path,
     resolve_current_model_artifact_path,
 )
 from golden_vector.app.paths import ProjectPaths
@@ -142,7 +142,10 @@ def _load_tool_a_detail(
     ticker: str,
 ) -> ToolADetailState:
     try:
-        foundation_manifest_path = _current_foundation_manifest_path(paths)
+        foundation_manifest_path = resolve_current_foundation_manifest_path(
+            paths,
+            require_current_manifest=True,
+        )
         foundation_snapshot = load_latest_foundation_snapshot(
             paths=paths,
             app_config=app_config,
@@ -208,20 +211,6 @@ def _load_tool_a_detail(
         structural_history_load=_safe_load_structural_history(paths, ticker),
         foundation_error=None,
     )
-
-
-def _current_foundation_manifest_path(paths: ProjectPaths) -> Path | None:
-    manifest_path = resolve_current_model_artifact_path(
-        paths,
-        "foundation",
-        fallback_path=paths.latest_foundation_manifest_path,
-    )
-    if manifest_path is None and load_current_model_state_manifest(paths) is not None:
-        raise FileNotFoundError(
-            "Current model-state manifest does not expose a usable immutable foundation artifact."
-        )
-    return manifest_path
-
 
 def _load_published_structural_metrics(
     paths: ProjectPaths,

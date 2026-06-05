@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from golden_vector.app.latest_data import load_latest_foundation_snapshot
+from golden_vector.app.model_state import resolve_current_foundation_manifest_path
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.screening.manual_data import load_manual_screening_data
@@ -220,12 +221,17 @@ def _resolve_tool_b_frame(
 
     try:
         overridden_config = apply_overrides(app_config, overrides)
+        foundation_manifest_path = resolve_current_foundation_manifest_path(
+            paths,
+            require_current_manifest=True,
+        )
         foundation_snapshot = load_latest_foundation_snapshot(
             paths=paths,
             app_config=overridden_config,
             include_gold_history=False,
             include_equity_histories=False,
             include_market_snapshots=True,
+            manifest_path=foundation_manifest_path,
         )
         manual_data = load_manual_screening_data(
             paths,

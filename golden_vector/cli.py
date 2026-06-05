@@ -22,6 +22,7 @@ from golden_vector.app.latest_data import (
 from golden_vector.app.logging import configure_logging
 from golden_vector.app.model_state import (
     load_current_model_state_manifest,
+    resolve_current_foundation_manifest_path,
     resolve_current_model_artifact_path,
     summarize_model_state_manifest,
     write_current_model_state_manifest,
@@ -2308,16 +2309,10 @@ def _load_latest_foundation_snapshot(
 ) -> LatestFoundationSnapshot:
     manifest_path = None
     if use_model_state:
-        manifest_path = resolve_current_model_artifact_path(
+        manifest_path = resolve_current_foundation_manifest_path(
             paths,
-            "foundation",
-            fallback_path=paths.latest_foundation_manifest_path,
+            require_current_manifest=True,
         )
-        if manifest_path is None:
-            raise FileNotFoundError(
-                "No current foundation artifact exists in the model-state manifest. "
-                "Run `python main.py refresh` first."
-            )
     snapshot = load_latest_foundation_snapshot(
         paths=paths,
         app_config=app_config,

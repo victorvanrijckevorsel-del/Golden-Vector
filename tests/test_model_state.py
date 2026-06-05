@@ -196,6 +196,39 @@ def test_current_model_reader_does_not_fall_back_when_manifest_is_corrupt(tmp_pa
     assert frame.empty
 
 
+def test_current_model_reader_rejects_non_object_manifest(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    paths.output_tool_a_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "ticker": "STALE",
+                "snapshot_refresh_run_id": "stale-alias",
+            }
+        ]
+    ).to_parquet(paths.latest_tool_a_snapshot_parquet_path, index=False)
+    paths.latest_model_state_manifest_path.write_text("[]", encoding="utf-8")
+
+    payload = load_current_model_state_manifest(paths)
+    resolved = resolve_current_model_artifact_path(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+    frame = read_current_model_parquet(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+
+    assert payload is not None
+    assert payload["manifest_readable"] is False
+    assert "root JSON value is not an object" in payload["warnings"][0]
+    assert resolved is None
+    assert frame.empty
+
+
 def test_current_model_reader_rejects_non_immutable_manifest_artifact(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()

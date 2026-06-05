@@ -21,6 +21,9 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import to_jsonable
 
 MODEL_STATE_MANIFEST_VERSION = 1
+CURRENT_FOUNDATION_UNAVAILABLE_MESSAGE = (
+    "Current model-state manifest does not expose a usable immutable foundation artifact."
+)
 
 REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "foundation",
@@ -99,6 +102,33 @@ def resolve_current_model_artifact_path(
     return path if path.exists() else None
 
 
+def resolve_current_foundation_manifest_path(
+    paths: ProjectPaths,
+    *,
+    require_current_manifest: bool = False,
+) -> Path | None:
+    """Resolve the foundation manifest selected by current model state.
+
+    When ``require_current_manifest`` is true, a present-but-unusable model-state
+    manifest is treated as a hard failure instead of silently dropping to the
+    mutable foundation alias. This is the safe behavior for I2 readers that
+    rebuild panels or scenarios from foundation data.
+    """
+
+    manifest_path = resolve_current_model_artifact_path(
+        paths,
+        "foundation",
+        fallback_path=paths.latest_foundation_manifest_path,
+    )
+    if (
+        manifest_path is None
+        and require_current_manifest
+        and load_current_model_state_manifest(paths) is not None
+    ):
+        raise FileNotFoundError(CURRENT_FOUNDATION_UNAVAILABLE_MESSAGE)
+    return manifest_path
+
+
 def read_current_model_parquet(
     paths: ProjectPaths,
     artifact_name: str,
@@ -149,26 +179,20 @@ def load_current_model_state_manifest(paths: ProjectPaths) -> dict[str, Any] | N
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        return {
-            "manifest_version": MODEL_STATE_MANIFEST_VERSION,
-            "manifest_readable": False,
-            "generated_at_utc": None,
-            "parent_refresh_id": None,
-            "build_kind": "full_model",
-            "state": "incomplete",
-            "publish": {
-                "atomic_pointer": True,
-                "path": _repo_relative(paths, path),
-                "latest_aliases_authoritative": False,
-            },
-            "artifacts": {},
-            "alignment": {"status": "WARN", "warnings": []},
-            "read_error": str(exc),
-            "warnings": [f"Could not read model-state manifest: {exc}"],
-            "stage_timings": {},
-        }
+        return _unreadable_manifest_payload(
+            paths=paths,
+            path=path,
+            error=f"Could not read model-state manifest: {exc}",
+        )
+    if not isinstance(payload, dict):
+        return _unreadable_manifest_payload(
+            paths=paths,
+            path=path,
+            error="Could not read model-state manifest: root JSON value is not an object.",
+        )
+    return payload
 
 
 def build_current_model_state_manifest(
@@ -622,6 +646,32 @@ def _manifest_artifact(
         return None
     artifact = artifacts.get(artifact_name)
     return artifact if isinstance(artifact, dict) else None
+
+
+def _unreadable_manifest_payload(
+    *,
+    paths: ProjectPaths,
+    path: Path,
+    error: str,
+) -> dict[str, Any]:
+    return {
+        "manifest_version": MODEL_STATE_MANIFEST_VERSION,
+        "manifest_readable": False,
+        "generated_at_utc": None,
+        "parent_refresh_id": None,
+        "build_kind": "full_model",
+        "state": "incomplete",
+        "publish": {
+            "atomic_pointer": True,
+            "path": _repo_relative(paths, path),
+            "latest_aliases_authoritative": False,
+        },
+        "artifacts": {},
+        "alignment": {"status": "WARN", "warnings": []},
+        "read_error": error,
+        "warnings": [error],
+        "stage_timings": {},
+    }
 
 
 def _existing_path_or_none(path: Path | None) -> Path | None:
