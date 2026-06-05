@@ -132,3 +132,26 @@ Checks:
 
 - `python -m pytest tests/test_model_state.py tests/test_cli_refresh_and_status.py tests/test_candidate_finder_data.py tests/test_option_trading_data.py tests/test_workspace_app.py -q` -> 107 passed.
 - `python -m compileall golden_vector/app/model_state.py golden_vector/cli.py golden_vector/serve/workspace_state.py golden_vector/serve/candidate_finder_data.py golden_vector/serve/option_trading_data.py tests/test_model_state.py` -> passed.
+
+### Step 2 - Parent refresh id and all-or-nothing manifest publish
+
+Built:
+
+- `python main.py refresh` now mints a parent refresh id at the start of the run and publishes it into `latest_model_state.json` only after Tool D succeeds.
+- Added a hidden test-only fault hook to stop the refresh after a named successful stage without publishing the model-state manifest.
+- Added the fault-injection regression Claude requested:
+  - publish an old complete manifest
+  - overwrite mutable latest aliases during a new refresh
+  - inject failure after Tool B
+  - assert `latest_model_state.json` is unchanged
+  - assert current-model readers still return the old Tool B artifact, not the overwritten alias
+
+Self-review:
+
+- Kept the fault hook private to `run_refresh` callers; it is not exposed as a CLI flag, so users cannot accidentally trigger it.
+- Confirmed the manifest write still happens only in the success path after Tool D.
+
+Checks:
+
+- `python -m pytest tests/test_cli_refresh_and_status.py tests/test_model_state.py -q` -> 18 passed.
+- `python -m compileall golden_vector/cli.py tests/test_cli_refresh_and_status.py` -> passed.

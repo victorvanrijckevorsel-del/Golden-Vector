@@ -13,6 +13,11 @@ from datetime import date
 import pandas as pd
 
 from golden_vector.app.config import load_app_config
+from golden_vector.app.model_state import (
+    load_current_model_state_manifest,
+    read_current_model_parquet,
+    write_current_model_state_manifest,
+)
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.cli import run_refresh, run_status, run_tool_b
@@ -338,7 +343,7 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     assert call_order == ["update-data", "tool-a", "tool-b@None", "tool-c", "tool-d@None"]
     assert paths.latest_model_state_manifest_path.exists()
     model_state = json.loads(paths.latest_model_state_manifest_path.read_text(encoding="utf-8"))
-    assert model_state["parent_refresh_id"] is None
+    assert "-refresh-" in model_state["parent_refresh_id"]
     assert "tool_a" in model_state["artifacts"]
     assert "option_candidate_slots" in model_state["artifacts"]
     assert model_state["stage_timings"]["update_data"]["exit_code"] == 0
@@ -351,6 +356,76 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     assert "Step 5/5: tool-d (spot gold)" in out
     assert "Model state manifest published:" in out
     assert "Refresh complete" in out
+
+
+def test_refresh_fault_after_tool_b_keeps_previous_manifest_and_readers_intact(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+    _write_refresh_inputs(paths, refresh_run_id="refresh-old")
+    previous_manifest = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="hash",
+        parent_refresh_id="parent-refresh-old",
+    )
+
+    call_order: list[str] = []
+
+    def fake_foundation(_paths, *, command_name="update-data"):
+        call_order.append("update-data")
+        _write_foundation_and_options(_paths, refresh_run_id="refresh-new")
+        return 0
+
+    def fake_tool_a(_paths):
+        call_order.append("tool-a")
+        _write_tool_a(_paths, refresh_run_id="refresh-new", rank=99)
+        return 0
+
+    def fake_tool_b(_paths, *, gold_price):
+        call_order.append("tool-b")
+        _write_tool_b(_paths, refresh_run_id="refresh-new", rank=99)
+        return 0
+
+    def fake_tool_c(_paths):
+        raise AssertionError("Tool C must not run after injected Tool B fault.")
+
+    monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
+    monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
+    monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
+    monkeypatch.setattr("golden_vector.cli.run_tool_c", fake_tool_c)
+
+    exit_code = run_refresh(
+        paths,
+        gold_price_override=None,
+        skip_tool_b=False,
+        _fault_after_step="tool_b",
+    )
+
+    latest_alias = pd.read_parquet(paths.latest_tool_b_snapshot_parquet_path)
+    current_tool_b = read_current_model_parquet(
+        paths,
+        "tool_b",
+        fallback_path=paths.latest_tool_b_snapshot_parquet_path,
+    )
+    current_manifest = load_current_model_state_manifest(paths)
+    out = capsys.readouterr().out
+
+    assert exit_code == 97
+    assert call_order == ["update-data", "tool-a", "tool-b"]
+    assert current_manifest == previous_manifest
+    assert current_manifest is not None
+    assert current_manifest["parent_refresh_id"] == "parent-refresh-old"
+    assert latest_alias["snapshot_refresh_run_id"].tolist() == ["refresh-new"]
+    assert current_tool_b["snapshot_refresh_run_id"].tolist() == ["refresh-old"]
+    assert "Model-state manifest was not published" in out
 
 
 def test_refresh_command_stops_after_update_data_failure(tmp_path, monkeypatch, capsys):
@@ -419,3 +494,140 @@ def test_refresh_command_skips_tool_b_when_flag_passed(tmp_path, monkeypatch, ca
     assert call_order == ["update-data", "tool-a"]
     out = capsys.readouterr().out
     assert "tool-b/tool-c/tool-d SKIPPED" in out
+
+
+def _write_refresh_inputs(paths: ProjectPaths, *, refresh_run_id: str) -> None:
+    _write_foundation_and_options(paths, refresh_run_id=refresh_run_id)
+    _write_tool_a(paths, refresh_run_id=refresh_run_id, rank=1)
+    _write_tool_b(paths, refresh_run_id=refresh_run_id, rank=1)
+    _write_tool_c(paths, refresh_run_id=refresh_run_id)
+    _write_tool_d(paths, refresh_run_id=refresh_run_id)
+
+
+def _write_foundation_and_options(paths: ProjectPaths, *, refresh_run_id: str) -> None:
+    paths.latest_foundation_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_foundation_manifest_path.write_text(
+        json.dumps(
+            {
+                "refresh_run_id": refresh_run_id,
+                "snapshot_as_of_date": "2026-06-01",
+                "foundation_status": "PASS",
+                "raw_qa_summary": {"overall_status": "PASS"},
+                "normalization_qa_summary": {"overall_status": "PASS"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    paths.latest_options_manifest_path.write_text(
+        json.dumps(
+            {
+                "refresh_run_id": refresh_run_id,
+                "as_of_date": "2026-06-01",
+                "summary": {"options_phase_status": "PASS"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_tool_a(paths: ProjectPaths, *, refresh_run_id: str, rank: int) -> None:
+    run_context = RunContext.start(
+        paths=paths,
+        command="tool-a",
+        parameters={},
+        config_hash="hash",
+    )
+    persist_tool_a_outputs(
+        paths=paths,
+        run_context=run_context,
+        tool_a_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 6, 1),
+                    "snapshot_refresh_run_id": refresh_run_id,
+                    "source_run_id": run_context.run_id,
+                    "tool_a_rank": rank,
+                    "score_eligible": True,
+                }
+            ]
+        ),
+    )
+
+
+def _write_tool_b(paths: ProjectPaths, *, refresh_run_id: str, rank: int) -> None:
+    run_context = RunContext.start(
+        paths=paths,
+        command="tool-b",
+        parameters={},
+        config_hash="hash",
+    )
+    persist_tool_b_outputs(
+        paths=paths,
+        run_context=run_context,
+        tool_b_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 6, 1),
+                    "snapshot_refresh_run_id": refresh_run_id,
+                    "source_run_id": run_context.run_id,
+                    "tool_b_rank": rank,
+                    "screening_verdict": "PASS",
+                }
+            ]
+        ),
+    )
+
+
+def _write_tool_c(paths: ProjectPaths, *, refresh_run_id: str) -> None:
+    run_context = RunContext.start(
+        paths=paths,
+        command="tool-c",
+        parameters={},
+        config_hash="hash",
+    )
+    persist_tool_c_outputs(
+        paths=paths,
+        run_context=run_context,
+        tool_c_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 6, 1),
+                    "snapshot_refresh_run_id": refresh_run_id,
+                    "source_run_id": run_context.run_id,
+                    "tool_c_downside_rank": 1,
+                    "tool_c_upside_rank": 1,
+                }
+            ]
+        ),
+    )
+
+
+def _write_tool_d(paths: ProjectPaths, *, refresh_run_id: str) -> None:
+    run_context = RunContext.start(
+        paths=paths,
+        command="tool-d",
+        parameters={},
+        config_hash="hash",
+    )
+    persist_tool_d_outputs(
+        paths=paths,
+        run_context=run_context,
+        tool_d_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 6, 1),
+                    "snapshot_refresh_run_id": refresh_run_id,
+                    "source_run_id": run_context.run_id,
+                    "gold_price_used": 4000.0,
+                    "spot_gold_usd": 4000.0,
+                    "spot_gold_date": "2026-06-01",
+                    "tool_d_quality_rank": 1,
+                }
+            ]
+        ),
+        publish_spot_latest_aliases=True,
+    )

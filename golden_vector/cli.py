@@ -5,10 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from time import perf_counter
 from typing import Sequence
+from uuid import uuid4
 
 import pandas as pd
 
@@ -2355,6 +2356,7 @@ def run_refresh(
     *,
     gold_price_override: float | None,
     skip_tool_b: bool,
+    _fault_after_step: str | None = None,
 ) -> int:
     """One-command operational pipeline through the latest ranking tools.
 
@@ -2365,6 +2367,7 @@ def run_refresh(
 
     total_steps = 5 if not skip_tool_b else 3
     stage_timings: dict[str, dict[str, object]] = {}
+    parent_refresh_id = _new_parent_refresh_id()
 
     def record_step(name: str, started_at: float, exit_code: int) -> None:
         stage_timings[name] = {
@@ -2372,6 +2375,19 @@ def run_refresh(
             "exit_code": int(exit_code),
         }
 
+    def injected_fault_after(name: str) -> int | None:
+        if _fault_after_step != name:
+            return None
+        print()
+        print(
+            "Injected refresh fault after {}. Model-state manifest was not published.".format(
+                name
+            )
+        )
+        run_status(paths)
+        return 97
+
+    print(f"Parent refresh id: {parent_refresh_id}")
     print(f"== Step 1/{total_steps}: update-data ==")
     started_at = perf_counter()
     update_exit = run_foundation(paths, command_name="update-data")
@@ -2381,6 +2397,9 @@ def run_refresh(
         print("update-data failed (exit code {}). Skipping the rest of the refresh.".format(update_exit))
         run_status(paths)
         return update_exit
+    fault_exit = injected_fault_after("update_data")
+    if fault_exit is not None:
+        return fault_exit
 
     print()
     print(f"== Step 2/{total_steps}: tool-a ==")
@@ -2392,6 +2411,9 @@ def run_refresh(
         print("tool-a failed (exit code {}). Skipping downstream tools.".format(tool_a_exit))
         run_status(paths)
         return tool_a_exit
+    fault_exit = injected_fault_after("tool_a")
+    if fault_exit is not None:
+        return fault_exit
 
     if skip_tool_b:
         print()
@@ -2407,6 +2429,9 @@ def run_refresh(
             print("tool-b failed (exit code {}). Skipping Tool C and Tool D.".format(tool_b_exit))
             run_status(paths)
             return tool_b_exit
+        fault_exit = injected_fault_after("tool_b")
+        if fault_exit is not None:
+            return fault_exit
         print()
         print("== Step 4/5: tool-c ==")
         started_at = perf_counter()
@@ -2417,6 +2442,9 @@ def run_refresh(
             print("tool-c failed (exit code {}). Skipping Tool D.".format(tool_c_exit))
             run_status(paths)
             return tool_c_exit
+        fault_exit = injected_fault_after("tool_c")
+        if fault_exit is not None:
+            return fault_exit
         print()
         print("== Step 5/5: tool-d (spot gold) ==")
         started_at = perf_counter()
@@ -2427,12 +2455,15 @@ def run_refresh(
             print("tool-d failed (exit code {}).".format(tool_d_exit))
             run_status(paths)
             return tool_d_exit
+        fault_exit = injected_fault_after("tool_d")
+        if fault_exit is not None:
+            return fault_exit
 
         loaded_config = load_app_config(paths)
         model_state = write_current_model_state_manifest(
             paths=paths,
             config_hash=loaded_config.combined_hash,
-            parent_refresh_id=None,
+            parent_refresh_id=parent_refresh_id,
             stage_timings=stage_timings,
         )
         print()
@@ -2445,6 +2476,11 @@ def run_refresh(
     print()
     print("== Refresh complete. Operational status: ==")
     return run_status(paths)
+
+
+def _new_parent_refresh_id() -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{timestamp}-refresh-{uuid4().hex[:8]}"
 
 
 def run_status(paths: ProjectPaths) -> int:
