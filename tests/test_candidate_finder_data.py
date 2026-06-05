@@ -7,9 +7,14 @@ import pandas as pd
 import pytest
 
 from golden_vector.app.config import load_app_config
+from golden_vector.app.model_state import write_current_model_state_manifest
 from golden_vector.app.paths import ProjectPaths
-from golden_vector.cli import run_candidate_finder
+from golden_vector.app.run_context import RunContext
+from golden_vector.cli import run_candidate_finder, run_option_artifacts
+from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_options import safe_options_file_name
+from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
+from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.screening.manual_store import upsert_company_input
 from golden_vector.serve.candidate_finder_data import (
@@ -209,7 +214,7 @@ def test_candidate_finder_data_warns_when_tool_c_or_tool_d_outputs_are_missing(t
     assert data.frame["tool_d_quality_rank"].isna().all()
 
 
-def test_candidate_finder_data_rejects_non_spot_tool_d_latest(tmp_path):
+def test_candidate_finder_data_ignores_non_spot_mutable_tool_d_latest(tmp_path):
     clear_candidate_finder_cache()
     paths = build_test_paths(tmp_path)
     app_config = load_app_config(paths).app
@@ -221,10 +226,11 @@ def test_candidate_finder_data_rejects_non_spot_tool_d_latest(tmp_path):
 
     data = load_candidate_finder_data(paths, app_config=app_config)
 
-    assert data.alignment.status == "WARN"
-    assert data.alignment.message is not None
-    assert "not a spot-gold run" in data.alignment.message
-    assert data.frame["tool_d_quality_rank"].isna().all()
+    frame = data.frame.set_index("ticker")
+    assert data.alignment.status == "OK"
+    assert data.alignment.message is None
+    assert frame.loc["AEM", "tool_d_quality_rank"] == pytest.approx(45.0)
+    assert frame.loc["NEM", "tool_d_quality_rank"] == pytest.approx(80.0)
 
 
 def test_candidate_finder_data_prefers_spot_tool_d_alias_over_scenario_latest(tmp_path):
@@ -249,7 +255,7 @@ def test_candidate_finder_data_prefers_spot_tool_d_alias_over_scenario_latest(tm
     assert frame.loc["NEM", "tool_d_quality_rank"] == pytest.approx(80.0)
 
 
-def test_candidate_finder_data_cache_notices_new_corrupt_latest_file(tmp_path):
+def test_candidate_finder_data_cache_ignores_corrupt_latest_alias_without_manifest(tmp_path):
     clear_candidate_finder_cache()
     paths = build_test_paths(tmp_path)
     app_config = load_app_config(paths).app
@@ -263,7 +269,7 @@ def test_candidate_finder_data_cache_notices_new_corrupt_latest_file(tmp_path):
     assert any("Tool A latest parquet could not be read" in item for item in second.alignment.messages)
 
 
-def test_candidate_finder_data_warns_when_latest_parquet_is_corrupt(tmp_path):
+def test_candidate_finder_data_ignores_corrupt_latest_alias_with_manifest(tmp_path):
     clear_candidate_finder_cache()
     paths = build_test_paths(tmp_path)
     app_config = load_app_config(paths).app
@@ -273,8 +279,8 @@ def test_candidate_finder_data_warns_when_latest_parquet_is_corrupt(tmp_path):
     data = load_candidate_finder_data(paths, app_config=app_config)
     screen = run_candidate_finder_screen(data, spec={"preset": "bearish_put"})
 
-    assert data.alignment.status == "UNKNOWN"
-    assert any("Tool A latest parquet could not be read" in item for item in screen.warnings)
+    assert data.alignment.status == "OK"
+    assert not any("Tool A latest parquet could not be read" in item for item in screen.warnings)
 
 
 def test_candidate_finder_screen_filters_peer_pool_before_ranking(tmp_path):
@@ -430,113 +436,155 @@ def _write_candidate_finder_inputs(
     paths.ensure_runtime_dirs()
     tool_a_run = tool_a_refresh_run_id or refresh_run_id
     tool_b_run = tool_b_refresh_run_id or refresh_run_id
-    paths.output_tool_a_dir.mkdir(parents=True, exist_ok=True)
-    paths.output_tool_b_dir.mkdir(parents=True, exist_ok=True)
-    paths.output_tool_c_dir.mkdir(parents=True, exist_ok=True)
-    paths.output_tool_d_dir.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(
-        [
-            {
-                "ticker": "AEM",
-                "down_beta_core": 1.4,
-                "up_beta_core": 1.2,
-                "structural_delta_core": 1.3,
-                "downside_volatility_52w": 0.35,
-                "confidence_score": 0.9,
-                "score_eligible": True,
-                "snapshot_refresh_run_id": tool_a_run,
-            },
-            {
-                "ticker": "NEM",
-                "down_beta_core": 1.1,
-                "up_beta_core": 0.9,
-                "structural_delta_core": 1.0,
-                "downside_volatility_52w": 0.25,
-                "confidence_score": 0.8,
-                "score_eligible": True,
-                "snapshot_refresh_run_id": tool_a_run,
-            },
-        ]
-    ).to_parquet(paths.latest_tool_a_snapshot_parquet_path, index=False)
-    pd.DataFrame(
-        [
-            {
-                "ticker": "AEM",
-                "market_cap_musd": 1000.0,
-                "share_price_usd": 100.0,
-                "forward_revenue_musd": 1200.0,
-                "forward_ebitda_musd": 500.0,
-                "forward_net_income_musd": 300.0,
-                "forward_pe": 8.0,
-                "ev_ebitda": 2.4,
-                "fcf_yield": 0.18,
-                "leverage": 0.4,
-                "best_upside_pct": 0.30,
-                "snapshot_refresh_run_id": tool_b_run,
-                "source_run_id": tool_b_source_run_id,
-            },
-            {
-                "ticker": "NEM",
-                "market_cap_musd": 2000.0,
-                "share_price_usd": 100.0,
-                "forward_revenue_musd": 1600.0,
-                "forward_ebitda_musd": 600.0,
-                "forward_net_income_musd": 260.0,
-                "forward_pe": 10.0,
-                "ev_ebitda": 3.6,
-                "fcf_yield": 0.12,
-                "leverage": 0.2,
-                "best_upside_pct": 0.20,
-                "snapshot_refresh_run_id": tool_b_run,
-                "source_run_id": tool_b_source_run_id,
-            },
-        ]
-    ).to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)
-    if include_tool_c_d:
-        pd.DataFrame(
-            [
-                {
-                    "ticker": "AEM",
-                    "tool_c_downside_rank": 90.0,
-                    "tool_c_upside_rank": 75.0,
-                    "snapshot_refresh_run_id": refresh_run_id,
-                    "source_run_id": "tool-c-run",
-                },
-                {
-                    "ticker": "NEM",
-                    "tool_c_downside_rank": 60.0,
-                    "tool_c_upside_rank": 55.0,
-                    "snapshot_refresh_run_id": refresh_run_id,
-                    "source_run_id": "tool-c-run",
-                },
-            ]
-        ).to_parquet(paths.latest_tool_c_snapshot_parquet_path, index=False)
-        pd.DataFrame(
-            [
-                {
-                    "ticker": "AEM",
-                    "tool_d_quality_rank": 45.0,
-                    "gold_price_used": 4000.0,
-                    "spot_gold_usd": 4000.0,
-                    "spot_gold_date": "2026-06-01",
-                    "snapshot_refresh_run_id": refresh_run_id,
-                    "source_run_id": "tool-d-run",
-                },
-                {
-                    "ticker": "NEM",
-                    "tool_d_quality_rank": 80.0,
-                    "gold_price_used": 4000.0,
-                    "spot_gold_usd": 4000.0,
-                    "spot_gold_date": "2026-06-01",
-                    "snapshot_refresh_run_id": refresh_run_id,
-                    "source_run_id": "tool-d-run",
-                },
-            ]
-        ).to_parquet(paths.latest_tool_d_snapshot_parquet_path, index=False)
     bootstrap_manual_screening_data(paths, tickers=["AEM", "NEM"])
     upsert_company_input(paths, ticker="AEM", values={"net_debt_musd": 200.0, "aisc_usd_per_oz": 1700.0})
     upsert_company_input(paths, ticker="NEM", values={"net_debt_musd": 100.0, "aisc_usd_per_oz": 1500.0})
+    tool_a_context = RunContext.start(
+        paths=paths,
+        command="tool-a",
+        parameters={},
+        config_hash="hash",
+    )
+    persist_tool_a_outputs(
+        paths=paths,
+        run_context=tool_a_context,
+        tool_a_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "down_beta_core": 1.4,
+                    "up_beta_core": 1.2,
+                    "structural_delta_core": 1.3,
+                    "downside_volatility_52w": 0.35,
+                    "confidence_score": 0.9,
+                    "score_eligible": True,
+                    "snapshot_refresh_run_id": tool_a_run,
+                    "source_run_id": tool_a_context.run_id,
+                },
+                {
+                    "ticker": "NEM",
+                    "down_beta_core": 1.1,
+                    "up_beta_core": 0.9,
+                    "structural_delta_core": 1.0,
+                    "downside_volatility_52w": 0.25,
+                    "confidence_score": 0.8,
+                    "score_eligible": True,
+                    "snapshot_refresh_run_id": tool_a_run,
+                    "source_run_id": tool_a_context.run_id,
+                },
+            ]
+        ),
+    )
+    tool_b_context = RunContext.start(
+        paths=paths,
+        command="tool-b",
+        parameters={},
+        config_hash="hash",
+    )
+    persist_tool_b_outputs(
+        paths=paths,
+        run_context=tool_b_context,
+        tool_b_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "market_cap_musd": 1000.0,
+                    "share_price_usd": 100.0,
+                    "forward_revenue_musd": 1200.0,
+                    "forward_ebitda_musd": 500.0,
+                    "forward_net_income_musd": 300.0,
+                    "forward_pe": 8.0,
+                    "ev_ebitda": 2.4,
+                    "fcf_yield": 0.18,
+                    "leverage": 0.4,
+                    "best_upside_pct": 0.30,
+                    "snapshot_refresh_run_id": tool_b_run,
+                    "source_run_id": tool_b_context.run_id,
+                },
+                {
+                    "ticker": "NEM",
+                    "market_cap_musd": 2000.0,
+                    "share_price_usd": 100.0,
+                    "forward_revenue_musd": 1600.0,
+                    "forward_ebitda_musd": 600.0,
+                    "forward_net_income_musd": 260.0,
+                    "forward_pe": 10.0,
+                    "ev_ebitda": 3.6,
+                    "fcf_yield": 0.12,
+                    "leverage": 0.2,
+                    "best_upside_pct": 0.20,
+                    "snapshot_refresh_run_id": tool_b_run,
+                    "source_run_id": tool_b_context.run_id,
+                },
+            ]
+        ),
+    )
+    if include_tool_c_d:
+        tool_c_context = RunContext.start(
+            paths=paths,
+            command="tool-c",
+            parameters={},
+            config_hash="hash",
+        )
+        persist_tool_c_outputs(
+            paths=paths,
+            run_context=tool_c_context,
+            tool_c_outputs=pd.DataFrame(
+                [
+                    {
+                        "ticker": "AEM",
+                        "tool_c_downside_rank": 90.0,
+                        "tool_c_upside_rank": 75.0,
+                        "snapshot_refresh_run_id": refresh_run_id,
+                        "source_run_id": tool_c_context.run_id,
+                    },
+                    {
+                        "ticker": "NEM",
+                        "tool_c_downside_rank": 60.0,
+                        "tool_c_upside_rank": 55.0,
+                        "snapshot_refresh_run_id": refresh_run_id,
+                        "source_run_id": tool_c_context.run_id,
+                    },
+                ]
+            ),
+        )
+        tool_d_context = RunContext.start(
+            paths=paths,
+            command="tool-d",
+            parameters={},
+            config_hash="hash",
+        )
+        persist_tool_d_outputs(
+            paths=paths,
+            run_context=tool_d_context,
+            tool_d_outputs=pd.DataFrame(
+                [
+                    {
+                        "ticker": "AEM",
+                        "tool_d_quality_rank": 45.0,
+                        "gold_price_used": 4000.0,
+                        "spot_gold_usd": 4000.0,
+                        "spot_gold_date": "2026-06-01",
+                        "snapshot_refresh_run_id": refresh_run_id,
+                        "source_run_id": tool_d_context.run_id,
+                    },
+                    {
+                        "ticker": "NEM",
+                        "tool_d_quality_rank": 80.0,
+                        "gold_price_used": 4000.0,
+                        "spot_gold_usd": 4000.0,
+                        "spot_gold_date": "2026-06-01",
+                        "snapshot_refresh_run_id": refresh_run_id,
+                        "source_run_id": tool_d_context.run_id,
+                    },
+                ]
+            ),
+            publish_spot_latest_aliases=True,
+        )
     _write_options(paths, refresh_run_id=refresh_run_id)
+    _publish_option_artifacts(paths)
+    if tool_b_source_run_id is not None:
+        upsert_company_input(paths, ticker="AEM", values={"net_debt_musd": 201.0})
 
 
 def _write_options(paths, *, refresh_run_id: str) -> None:
@@ -581,6 +629,16 @@ def _write_options(paths, *, refresh_run_id: str) -> None:
             }
         ),
         encoding="utf-8",
+    )
+
+
+def _publish_option_artifacts(paths) -> None:
+    exit_code = run_option_artifacts(paths, parent_refresh_id="parent-refresh")
+    assert exit_code == 0
+    write_current_model_state_manifest(
+        paths=paths,
+        config_hash="hash",
+        parent_refresh_id="parent-refresh",
     )
 
 

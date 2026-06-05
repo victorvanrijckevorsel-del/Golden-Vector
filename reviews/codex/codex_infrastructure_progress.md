@@ -387,3 +387,27 @@ Checks:
 - `python -m pytest tests/test_option_artifact_persistence.py tests/test_model_state.py tests/test_cli_refresh_and_status.py` -> 31 passed.
 - `python -m pytest tests/test_model_state.py tests/test_option_artifact_persistence.py tests/test_cli_refresh_and_status.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py` -> 64 passed.
 - `python -m compileall golden_vector/cli.py tests/test_cli_refresh_and_status.py golden_vector/app/model_state.py golden_vector/hedge/option_artifact_frames.py` -> passed.
+
+### I3 persisted option-artifact readers
+
+Built:
+
+- Flipped `serve.option_trading_data.load_option_trading_data` from request-time raw-chain scanning to manifest-resolved persisted option artifacts.
+- Rebuilt Option Trading rows, selected candidates, candidate slots, liquidity measurements, Candidate Finder option inputs, source context, and risk-free-rate context from the six persisted option artifacts.
+- Kept ticker detail sizing request-time, but it now sizes against persisted selected candidates and persisted slots instead of scanning raw chains.
+- Updated Candidate Finder fixtures to publish real Tool A/B/C/D and option artifacts through the same immutable model-state path used by production readers.
+- Added a parity test that feeds identical cached chains plus identical risk-free-rate context to the shared builder and persisted reader, then compares overview rows, put/call slots, selected candidates, liquidity measurements, usable candidate sets, and GDX/GDXJ proxy fallback.
+
+Self-review findings fixed:
+
+- Candidate Finder tests still expected mutable latest Tool D aliases and corrupt latest Tool A aliases to control current-state reads. After I2/I3 the manifest is authoritative, so those tests now prove mutable alias changes are ignored when a current manifest selects immutable artifacts.
+- The first persisted reader resolved each option artifact path and then called a helper that resolved it again. It now reads the already-resolved immutable path through `golden_vector.common.parquet.read_optional_parquet`.
+- The first deserializer used broad `Any` typing and a `type: ignore` for reconstructed option slot status. It now validates and casts option type, slot status, and side status explicitly.
+
+Checks:
+
+- `python -m pytest tests/test_candidate_finder_data.py -q` -> 16 passed.
+- `python -m pytest tests/test_option_trading_data.py -q` -> 18 passed.
+- `python -m pytest tests/test_option_trading_data.py tests/test_candidate_finder_data.py -q` -> 34 passed.
+- `python -m pytest tests/test_model_state.py tests/test_option_artifact_persistence.py tests/test_cli_refresh_and_status.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py -q` -> 65 passed.
+- `python -m ruff check golden_vector/serve/option_trading_data.py golden_vector/hedge/option_artifact_frames.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py` -> not run; `ruff` is not installed in the active Python environment.

@@ -8,11 +8,24 @@ from typing import Any, cast
 import pandas as pd
 
 from golden_vector.common.files import optional_sha256_file as _file_sha256
+from golden_vector.common.parquet import read_optional_parquet
 from golden_vector.common.strings import unique_strings as _common_unique_strings
+from golden_vector.app.model_state import (
+    read_current_model_json,
+    read_current_model_parquet,
+    resolve_current_model_artifact_path,
+)
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
-from golden_vector.hedge.option_artifact_builder import build_option_artifact_inputs
-from golden_vector.hedge.option_artifact_sources import load_option_artifact_source_inputs
+from golden_vector.contracts.option_artifacts import OPTION_ARTIFACT_NAMES
+from golden_vector.hedge._helpers import as_float
+from golden_vector.hedge.option_artifact_builder import build_option_source_context
+from golden_vector.hedge.option_artifact_frames import (
+    candidate_slots_from_frame,
+    liquidity_measurements_from_frame,
+    overview_rows_from_frame,
+    selected_candidate_grids_from_frame,
+)
 from golden_vector.hedge.candidate_puts import (
     OptionCandidate,
     OptionCandidateSlot,
@@ -321,16 +334,31 @@ def load_option_trading_data(
 ) -> OptionTradingData:
     """Load latest option-trading rows and reuse them until provenance changes."""
 
-    sources = load_option_artifact_source_inputs(paths, use_model_state=True)
-    if sources is None:
+    artifact_frames = _read_option_artifact_frames(paths)
+    tool_a = read_current_model_parquet(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+    tool_b = read_current_model_parquet(
+        paths,
+        "tool_b",
+        fallback_path=paths.latest_tool_b_snapshot_parquet_path,
+    )
+    if artifact_frames is None:
         return _empty_data(
-            tool_a=pd.DataFrame(),
-            tool_b=pd.DataFrame(),
-            reason="No options snapshot exists yet. Run `python main.py update-data` first.",
+            tool_a=tool_a,
+            tool_b=tool_b,
+            reason="No option artifact snapshot exists yet. Run `python main.py refresh` first.",
         )
-    manifest = sources.manifest
-    tool_a = sources.tool_a
-    tool_b = sources.tool_b
+    manifest = (
+        read_current_model_json(
+            paths,
+            "options",
+            fallback_path=paths.latest_options_manifest_path,
+        )
+        or {}
+    )
 
     cache_key = _cache_key(
         manifest=manifest,
@@ -342,28 +370,50 @@ def load_option_trading_data(
     if cached is not None:
         return cached
 
-    built = build_option_artifact_inputs(
-        app_config=app_config,
-        features=sources.features,
+    risk_free_rate = _artifact_context_float(
+        artifact_frames["option_candidate_slots"],
+        "risk_free_rate",
+    )
+    risk_free_rate_is_fallback = _artifact_context_bool(
+        artifact_frames["option_candidate_slots"],
+        "risk_free_rate_is_fallback",
+    )
+    source_context = build_option_source_context(
+        manifest=manifest,
         tool_a=tool_a,
         tool_b=tool_b,
-        chains=sources.chains,
-        risk_free_rate=sources.risk_free_rate,
-        risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
-        manifest=manifest,
+        risk_free_rate=risk_free_rate,
+        risk_free_rate_is_fallback=risk_free_rate_is_fallback,
+    )
+    put_slots, call_slots = candidate_slots_from_frame(
+        artifact_frames["option_candidate_slots"]
+    )
+    put_candidates, call_candidates = selected_candidate_grids_from_frame(
+        artifact_frames["option_selected_candidates"]
+    )
+    liquidity_measurements = liquidity_measurements_from_frame(
+        artifact_frames["option_liquidity_measurements"]
+    )
+    overview_rows = overview_rows_from_frame(artifact_frames["option_trading_overview"])
+    overview = OptionTradingOverviewData(
+        rows=overview_rows,
+        reason=None if overview_rows else "No persisted option trading rows are available.",
+        risk_free_rate_is_fallback=risk_free_rate_is_fallback,
+        source_context=source_context,
+        liquidity_measurements=liquidity_measurements,
     )
     data = OptionTradingData(
-        overview=built.overview,
-        candidate_grids=built.candidate_grids,
-        call_candidate_grids=built.call_candidate_grids,
-        candidate_slots=built.candidate_slots,
-        call_candidate_slots=built.call_candidate_slots,
-        options_features=sources.features,
+        overview=overview,
+        candidate_grids=put_candidates,
+        call_candidate_grids=call_candidates,
+        candidate_slots=put_slots,
+        call_candidate_slots=call_slots,
+        options_features=artifact_frames["candidate_finder_inputs"],
         tool_a=tool_a,
         tool_b=tool_b,
-        raw_options_by_ticker=sources.chains,
-        risk_free_rate=sources.risk_free_rate,
-        risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
+        raw_options_by_ticker={},
+        risk_free_rate=risk_free_rate,
+        risk_free_rate_is_fallback=risk_free_rate_is_fallback,
         cache_key=cache_key,
     )
     _CACHE[cache_key] = data
@@ -390,6 +440,39 @@ def _empty_data(
         risk_free_rate_is_fallback=False,
         cache_key=None,
     )
+
+
+def _read_option_artifact_frames(paths: ProjectPaths) -> dict[str, pd.DataFrame] | None:
+    frames: dict[str, pd.DataFrame] = {}
+    for name in OPTION_ARTIFACT_NAMES:
+        path = resolve_current_model_artifact_path(paths, name)
+        if path is None:
+            return None
+        frames[name] = read_optional_parquet(path)
+    return frames
+
+
+def _artifact_context_float(frame: pd.DataFrame, key: str) -> float:
+    value = _artifact_context_value(frame, key)
+    return as_float(value) or 0.0
+
+
+def _artifact_context_bool(frame: pd.DataFrame, key: str) -> bool:
+    value = _artifact_context_value(frame, key)
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"true", "1", "yes"}
+
+
+def _artifact_context_value(frame: pd.DataFrame, key: str) -> object:
+    if key in frame.attrs:
+        return frame.attrs.get(key)
+    if key not in frame.columns or frame.empty:
+        return None
+    values = frame[key].dropna()
+    if values.empty:
+        return None
+    return values.iloc[0]
 
 
 def _cache_key(

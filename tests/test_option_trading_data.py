@@ -7,18 +7,28 @@ import pandas as pd
 import pytest
 
 from golden_vector.app.config import load_app_config
+from golden_vector.app.model_state import (
+    load_current_model_state_manifest,
+    write_current_model_state_manifest,
+)
+from golden_vector.app.run_context import RunContext
 from golden_vector.hedge.option_trading import (
     OptionSizingRequest,
     build_option_trading_detail,
     build_option_trading_overview,
 )
+from golden_vector.hedge.option_artifact_builder import build_option_artifact_inputs
+from golden_vector.hedge.option_artifact_sources import load_option_artifact_source_inputs
+from golden_vector.hedge.option_availability import has_usable_option_slots
 from golden_vector.ingestion.persist_options import safe_options_file_name
+from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.serve.option_trading_data import (
     build_option_trading_detail_data,
     clear_option_trading_cache,
     load_option_trading_data,
     parse_option_sizing_request,
 )
+from golden_vector.cli import run_option_artifacts
 from tests.helpers import build_test_paths
 
 
@@ -103,7 +113,7 @@ def test_load_option_trading_data_uses_composite_cache_key(tmp_path):
     assert first.cache_key is not None
     assert first.cache_key.options_refresh_run_id == "options-run"
     assert first.cache_key.tool_a_refresh_run_ids == ("tool-run-a",)
-    assert first.cache_key.model_state_manifest_hash is None
+    assert first.cache_key.model_state_manifest_hash is not None
     assert [row.ticker for row in first.overview.rows] == ["AEM"]
     assert app_config.hedge_readiness.target_horizons_days == [60, 90, 120]
     assert app_config.hedge_readiness.display_horizons_days == [60, 90, 120]
@@ -127,6 +137,7 @@ def test_load_option_trading_data_uses_composite_cache_key(tmp_path):
     assert "Tool A uses tool-run-a" in first.overview.source_context.context_warnings[0]
 
     _write_tool_outputs(paths, refresh_run_id="tool-run-b")
+    _publish_option_artifacts(paths)
     changed = load_option_trading_data(paths, app_config=app_config)
 
     assert changed is not first
@@ -221,7 +232,7 @@ def test_load_option_trading_data_handles_missing_manifest(tmp_path):
 
     assert data.overview.rows == ()
     assert data.overview.reason is not None
-    assert "No options snapshot" in data.overview.reason
+    assert "No option artifact snapshot" in data.overview.reason
     assert data.cache_key is None
 
 
@@ -237,7 +248,7 @@ def test_load_option_trading_data_handles_malformed_manifest(tmp_path):
 
     assert data.overview.rows == ()
     assert data.overview.reason is not None
-    assert "No options snapshot" in data.overview.reason
+    assert "No option artifact snapshot" in data.overview.reason
     assert data.cache_key is None
 
 
@@ -363,8 +374,10 @@ def test_option_detail_shows_proxy_fallback_when_single_name_missing(tmp_path):
         refresh_run_id="options-run",
         tool_refresh_run_id="tool-run",
         include_benchmarks=True,
+        publish_artifacts=False,
     )
     _make_snapshot_untradable(paths, refresh_run_id="options-run", ticker="AEM")
+    _publish_option_artifacts(paths)
 
     data = load_option_trading_data(paths, app_config=app_config)
     detail = build_option_trading_detail_data(
@@ -390,8 +403,10 @@ def test_option_detail_hides_proxy_fallback_when_etfs_unmeasured(tmp_path):
         refresh_run_id="options-run",
         tool_refresh_run_id="tool-run",
         include_benchmarks=False,
+        publish_artifacts=False,
     )
     _make_snapshot_untradable(paths, refresh_run_id="options-run", ticker="AEM")
+    _publish_option_artifacts(paths)
 
     data = load_option_trading_data(paths, app_config=app_config)
     detail = build_option_trading_detail_data(
@@ -406,22 +421,94 @@ def test_option_detail_hides_proxy_fallback_when_etfs_unmeasured(tmp_path):
     assert "benchmark ETF option chains are not measured" in detail.proxy_fallback_note
 
 
+def test_option_artifact_reader_matches_shared_builder_for_same_sources(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        include_benchmarks=True,
+        publish_artifacts=False,
+    )
+    _make_snapshot_untradable(paths, refresh_run_id="options-run", ticker="AEM")
+
+    sources = load_option_artifact_source_inputs(paths, use_model_state=False)
+    assert sources is not None
+    direct = build_option_artifact_inputs(
+        app_config=app_config,
+        features=sources.features,
+        tool_a=sources.tool_a,
+        tool_b=sources.tool_b,
+        chains=sources.chains,
+        risk_free_rate=sources.risk_free_rate,
+        risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
+        manifest=sources.manifest,
+    )
+    _publish_option_artifacts(paths)
+
+    persisted = load_option_trading_data(paths, app_config=app_config)
+    detail = build_option_trading_detail_data(
+        persisted,
+        ticker="AEM",
+        app_config=app_config,
+        sizing_request=OptionSizingRequest(side="put", horizon_days=60),
+    )
+
+    assert persisted.risk_free_rate == pytest.approx(sources.risk_free_rate)
+    assert persisted.risk_free_rate_is_fallback is sources.risk_free_rate_is_fallback
+    assert _overview_signatures(persisted.overview.rows) == _overview_signatures(
+        direct.overview.rows
+    )
+    assert _slot_signatures(persisted.candidate_slots) == _slot_signatures(
+        direct.candidate_slots
+    )
+    assert _slot_signatures(persisted.call_candidate_slots) == _slot_signatures(
+        direct.call_candidate_slots
+    )
+    assert _candidate_signatures(persisted.candidate_grids) == _candidate_signatures(
+        direct.candidate_grids
+    )
+    assert _candidate_signatures(
+        persisted.call_candidate_grids
+    ) == _candidate_signatures(direct.call_candidate_grids)
+    assert _measurement_signatures(
+        persisted.overview.liquidity_measurements
+    ) == _measurement_signatures(direct.overview.liquidity_measurements)
+    assert _usable_tickers(persisted.candidate_slots) == _usable_tickers(
+        direct.candidate_slots
+    )
+    assert _usable_tickers(persisted.call_candidate_slots) == _usable_tickers(
+        direct.call_candidate_slots
+    )
+    assert {"GDX", "GDXJ"}.issubset(_usable_tickers(persisted.candidate_slots))
+    assert {fallback.ticker for fallback in detail.proxy_fallbacks} == {"GDX", "GDXJ"}
+
+
 def test_load_option_trading_data_ignores_stale_feature_rows(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
     app_config = load_app_config(paths).app
-    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        publish_artifacts=False,
+    )
     feature_path = paths.options_features_dir / f"{safe_options_file_name('AEM')}.parquet"
     stale = pd.read_parquet(feature_path)
     stale["run_id"] = "older-options-run"
     stale.to_parquet(feature_path, index=False)
+    _publish_option_artifacts(paths)
 
     data = load_option_trading_data(paths, app_config=app_config)
 
     assert data.options_features.empty
     assert data.overview.rows == ()
-    assert "No options feature snapshot" in (data.overview.reason or "")
+    assert "No persisted option trading rows" in (data.overview.reason or "")
 
 
 def test_parse_option_sizing_request_budget_mode_ignores_unused_quantity(tmp_path):
@@ -463,6 +550,7 @@ def _write_option_inputs(
     tool_refresh_run_id: str,
     risk_free_rate: float | None = 0.04,
     include_benchmarks: bool = False,
+    publish_artifacts: bool = True,
 ) -> None:
     paths.ensure_runtime_dirs()
     snapshot_dir = paths.runs_dir / refresh_run_id / "snapshots" / "options"
@@ -511,73 +599,74 @@ def _write_option_inputs(
             index=False,
         )
     _write_tool_outputs(paths, refresh_run_id=tool_refresh_run_id)
+    if publish_artifacts:
+        _publish_option_artifacts(paths)
 
 
 def _write_tool_outputs(paths, *, refresh_run_id: str) -> None:
-    paths.output_tool_a_dir.mkdir(parents=True, exist_ok=True)
-    paths.output_tool_b_dir.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(
-        [
-            {
-                "ticker": "AEM",
-                "structural_delta_core": 1.3,
-                "down_beta_core": 1.4,
-                "up_beta_core": 1.1,
-                "confidence_label": "HIGH",
-                "confidence_score": 0.9,
-                "snapshot_refresh_run_id": refresh_run_id,
-            }
-        ]
-    ).to_parquet(paths.latest_tool_a_snapshot_parquet_path, index=False)
-    pd.DataFrame(
-        [
-            {
-                "ticker": "AEM",
-                "share_price_usd": 50.0,
-                "snapshot_refresh_run_id": refresh_run_id,
-            }
-        ]
-    ).to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)
+    tool_a_context = RunContext.start(
+        paths=paths,
+        command="tool-a",
+        parameters={},
+        config_hash="hash",
+    )
+    persist_tool_a_outputs(
+        paths=paths,
+        run_context=tool_a_context,
+        tool_a_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "structural_delta_core": 1.3,
+                    "down_beta_core": 1.4,
+                    "up_beta_core": 1.1,
+                    "confidence_label": "HIGH",
+                    "confidence_score": 0.9,
+                    "snapshot_refresh_run_id": refresh_run_id,
+                    "source_run_id": tool_a_context.run_id,
+                }
+            ]
+        ),
+    )
+    tool_b_context = RunContext.start(
+        paths=paths,
+        command="tool-b",
+        parameters={},
+        config_hash="hash",
+    )
+    persist_tool_b_outputs(
+        paths=paths,
+        run_context=tool_b_context,
+        tool_b_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "share_price_usd": 50.0,
+                    "snapshot_refresh_run_id": refresh_run_id,
+                    "source_run_id": tool_b_context.run_id,
+                }
+            ]
+        ),
+    )
+
+
+def _publish_option_artifacts(paths) -> None:
+    exit_code = run_option_artifacts(paths, parent_refresh_id="parent-refresh")
+    assert exit_code == 0
+    write_current_model_state_manifest(
+        paths=paths,
+        config_hash="hash",
+        parent_refresh_id="parent-refresh",
+    )
 
 
 def _write_option_trading_model_state_pointer(paths, *, marker: str) -> None:
     paths.latest_model_state_manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    status_path = paths.intermediate_status_dir / f"options_manifest_{marker}.json"
-    tool_a_path = paths.output_tool_a_dir / f"tool_a_latest_{marker}.parquet"
-    tool_b_path = paths.output_tool_b_dir / f"tool_b_latest_{marker}.parquet"
-    status_path.write_bytes(paths.latest_options_manifest_path.read_bytes())
-    tool_a_path.write_bytes(paths.latest_tool_a_snapshot_parquet_path.read_bytes())
-    tool_b_path.write_bytes(paths.latest_tool_b_snapshot_parquet_path.read_bytes())
-
-    def rel(path):
-        return path.relative_to(paths.repo_root).as_posix()
-
+    payload = load_current_model_state_manifest(paths)
+    assert payload is not None
+    payload["marker"] = marker
     paths.latest_model_state_manifest_path.write_text(
-        json.dumps(
-            {
-                "manifest_version": 1,
-                "manifest_readable": True,
-                "state": "incomplete",
-                "artifacts": {
-                    "options": {
-                        "path": rel(status_path),
-                        "usable": True,
-                        "immutable": True,
-                    },
-                    "tool_a": {
-                        "path": rel(tool_a_path),
-                        "usable": True,
-                        "immutable": True,
-                    },
-                    "tool_b": {
-                        "path": rel(tool_b_path),
-                        "usable": True,
-                        "immutable": True,
-                    },
-                },
-                "marker": marker,
-            }
-        ),
+        json.dumps(payload),
         encoding="utf-8",
     )
 
@@ -652,6 +741,132 @@ def _candidate(
         liquidity_tier=liquidity_tier,
         otm_pct=0.10,
     )
+
+
+def _overview_signatures(rows) -> list[tuple[object, ...]]:
+    return sorted(
+        (
+            row.ticker,
+            _round_optional(row.structural_delta_core),
+            _round_optional(row.down_beta_core),
+            _round_optional(row.up_beta_core),
+            row.confidence_label,
+            _round_optional(row.confidence_score),
+            _round_optional(row.iv_percentile_cross_sectional),
+            _round_optional(row.iv_skew_60d),
+            _round_optional(row.iv_rv_ratio_60d),
+            row.optionability_tier,
+            row.put_status,
+            row.call_status,
+            _round_optional(row.pnl_put_at_minus10_60d),
+            _round_optional(row.pnl_call_at_plus10_60d),
+            tuple(row.notes),
+            _round_optional(row.current_stock_price),
+            row.option_vehicle_type,
+        )
+        for row in rows
+    )
+
+
+def _measurement_signatures(measurements) -> list[tuple[object, ...]]:
+    return sorted(
+        (
+            measurement.group_label,
+            measurement.ticker_count,
+            measurement.contract_count,
+            _round_optional(measurement.median_rel_spread),
+            _round_optional(measurement.median_open_interest),
+            _round_optional(measurement.median_volume),
+            _round_optional(measurement.median_near_spot_depth),
+            measurement.tradable_count,
+            measurement.watch_count,
+            measurement.no_trade_count,
+        )
+        for measurement in measurements
+    )
+
+
+def _slot_signatures(slots_by_ticker) -> list[tuple[object, ...]]:
+    return sorted(
+        (
+            slot.ticker,
+            slot.option_type,
+            slot.horizon_days,
+            _round_optional(slot.target_delta),
+            slot.expiration,
+            slot.days_to_expiry,
+            slot.status,
+            slot.reason,
+            _candidate_signature(slot.candidate),
+            _candidate_signature(slot.rejected_candidate),
+            slot.listed_contract_count,
+            slot.tradable_contract_count,
+            slot.bucket,
+            slot.liquidity_tier,
+        )
+        for ticker_slots in slots_by_ticker.values()
+        for slot in ticker_slots
+    )
+
+
+def _candidate_signatures(candidates_by_ticker) -> list[tuple[object, ...]]:
+    return sorted(
+        signature
+        for candidates in candidates_by_ticker.values()
+        for signature in (_candidate_signature(candidate) for candidate in candidates)
+        if signature is not None
+    )
+
+
+def _candidate_signature(candidate) -> tuple[object, ...] | None:
+    if candidate is None:
+        return None
+    return (
+        candidate.ticker,
+        candidate.option_type,
+        candidate.horizon_days,
+        candidate.expiration,
+        candidate.days_to_expiry,
+        _round_optional(candidate.strike),
+        _round_optional(candidate.bid),
+        _round_optional(candidate.ask),
+        _round_optional(candidate.mid),
+        candidate.open_interest,
+        candidate.volume,
+        _round_optional(candidate.implied_volatility),
+        _round_optional(candidate.delta),
+        _round_optional(candidate.delta_gap),
+        _round_optional(candidate.premium_pct_spot),
+        _round_optional(candidate.underlying_price),
+        _round_optional(candidate.last_price),
+        candidate.bucket,
+        candidate.liquidity_tier,
+        _round_optional(candidate.rel_spread),
+        _round_optional(candidate.half_spread_cost_pct),
+        _round_optional(candidate.liquidity_score),
+        _round_optional(candidate.moneyness_pct),
+        _round_optional(candidate.otm_pct),
+        tuple(candidate.quote_flags),
+    )
+
+
+def _usable_tickers(slots_by_ticker) -> set[str]:
+    return {
+        str(ticker)
+        for ticker, slots in slots_by_ticker.items()
+        if has_usable_option_slots(slots)
+    }
+
+
+def _round_optional(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return round(float(value), 8)
 
 
 def _chain(ticker: str) -> pd.DataFrame:
