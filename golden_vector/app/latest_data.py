@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 
 from golden_vector.common.files import repo_relative as _repo_relative
+from golden_vector.common.parquet import read_required_parquet
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.config_models import AppConfig
@@ -102,9 +103,9 @@ def load_latest_foundation_snapshot(
     gold_history = pd.DataFrame()
     if include_gold_history:
         gold_history_path = paths.resolve_repo_relative(str(payload["gold_history_path"]))
-        gold_history = _read_required_parquet(
+        gold_history = read_required_parquet(
             gold_history_path,
-            description="gold history",
+            label="gold history",
         )
 
     normalized_market_snapshots = pd.DataFrame()
@@ -112,9 +113,9 @@ def load_latest_foundation_snapshot(
         normalized_market_snapshots_path = paths.resolve_repo_relative(
             str(payload["normalized_market_snapshots_snapshot_path"])
         )
-        normalized_market_snapshots = _read_required_parquet(
+        normalized_market_snapshots = read_required_parquet(
             normalized_market_snapshots_path,
-            description="normalized market snapshots",
+            label="normalized market snapshots",
         )
 
     normalized_equity_histories: dict[str, pd.DataFrame] = {}
@@ -122,9 +123,9 @@ def load_latest_foundation_snapshot(
         equity_snapshot_path = paths.resolve_repo_relative(
             str(payload["normalized_equities_snapshot_path"])
         )
-        equity_snapshot = _read_required_parquet(
+        equity_snapshot = read_required_parquet(
             equity_snapshot_path,
-            description="normalized equity histories snapshot",
+            label="normalized equity histories snapshot",
         )
         tickers_to_load = requested_tickers or [
             ticker.ticker
@@ -162,14 +163,6 @@ def _snapshot_as_of_date(foundation_result: FoundationExecutionResult) -> str | 
     if not foundation_result.gold_history.empty and "date" in foundation_result.gold_history.columns:
         return str(foundation_result.gold_history["date"].max())
     return None
-
-
-def _read_required_parquet(path: Path, *, description: str) -> pd.DataFrame:
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Latest local snapshot is incomplete because {description} is missing: {path}"
-        )
-    return pd.read_parquet(path)
 
 
 def _foundation_signature(app_config: AppConfig) -> dict[str, object]:

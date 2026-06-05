@@ -18,6 +18,7 @@ from golden_vector.app.model_state import (
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.replay_manifest import update_manifest_with_options
 from golden_vector.app.run_context import RunContext
+from golden_vector.common.parquet import read_optional_parquet
 from golden_vector.common.strings import unique_strings as _common_unique_strings
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge._helpers import (
@@ -988,7 +989,7 @@ def _load_chains(
         if not ticker:
             continue
         snapshot_path = paths.resolve_repo_relative(str(item.get("snapshot_path", "")))
-        chains[ticker] = _read_optional_parquet(snapshot_path)
+        chains[ticker] = read_optional_parquet(snapshot_path)
     return chains
 
 
@@ -1002,7 +1003,7 @@ def _load_features(
     for item in manifest.get("snapshots", []):
         ticker = str(item.get("ticker", ""))
         feature_path = paths.options_features_dir / f"{safe_options_file_name(ticker)}.parquet"
-        frame = _read_optional_parquet(feature_path)
+        frame = read_optional_parquet(feature_path)
         if frame.empty:
             continue
         if "run_id" in frame.columns:
@@ -1239,18 +1240,6 @@ def _read_latest_options_manifest(
 ) -> dict[str, Any]:
     path = manifest_path or _current_options_manifest_path(paths)
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _read_required_parquet(path: Path, description: str) -> pd.DataFrame:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing {description}: {path}")
-    return pd.read_parquet(path)
-
-
-def _read_optional_parquet(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        return pd.DataFrame()
-    return pd.read_parquet(path)
 
 
 def _value_counts(frame: pd.DataFrame, column: str) -> dict[str, int]:

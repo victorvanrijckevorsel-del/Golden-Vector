@@ -21,7 +21,10 @@ from golden_vector.app.model_state import (
 )
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
-from golden_vector.contracts.option_artifacts import OPTION_ARTIFACT_NAMES
+from golden_vector.contracts.option_artifacts import (
+    OPTION_ARTIFACT_NAMES,
+    OPTION_ARTIFACT_SCHEMA_VERSION,
+)
 from golden_vector.hedge._helpers import as_float
 from golden_vector.hedge.option_artifact_builder import build_option_source_context
 from golden_vector.hedge.option_artifact_frames import (
@@ -462,7 +465,12 @@ def _read_option_artifact_frames(paths: ProjectPaths) -> dict[str, pd.DataFrame]
         if path is None:
             return None
         _verify_artifact_sha256(model_state=model_state, name=name, path=path)
-        frames[name] = read_required_parquet(path, label=f"Option artifact {name}")
+        frames[name] = read_required_parquet(
+            path,
+            label=f"Option artifact {name}",
+            required_columns=("schema_version", "source_run_id"),
+            schema_version=OPTION_ARTIFACT_SCHEMA_VERSION,
+        )
     return frames
 
 

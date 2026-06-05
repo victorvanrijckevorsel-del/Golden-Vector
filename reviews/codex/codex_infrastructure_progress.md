@@ -478,3 +478,22 @@ Checks:
 
 - `python -m pytest tests/test_collection_resilience.py tests/test_fetch_options.py tests/test_options_phase.py tests/test_cli_refresh_and_status.py` -> 23 passed.
 - `python -m ruff check ...` -> not run; `ruff` is not installed in the active Python environment.
+
+### I4 Phase 5 schema validation
+
+Built:
+
+- Extended `golden_vector.common.parquet.read_required_parquet(...)` so the existing checked-read path can also enforce required columns, schema version, and optional dtype expectations.
+- Added a single `ParquetSchemaError` shape for Parquet contract drift.
+- Routed option artifact UI reads through the shared checked-read with `OPTION_ARTIFACT_SCHEMA_VERSION`.
+- Replaced local required/optional Parquet helper copies in current foundation/report readers with the shared common helpers.
+
+Self-review findings fixed:
+
+- The first schema validator path was separate from the checked reader; it is now part of `read_required_parquet(...)`.
+- The current foundation and hedge report readers still carried local Parquet helper copies. They now reuse the shared helper.
+
+Checks:
+
+- `python -m pytest tests/test_parquet_contracts.py tests/test_latest_data.py tests/test_hedge_report.py tests/test_option_trading_data.py tests/test_option_trading_routes.py` -> 60 passed.
+- `python -m compileall golden_vector/common/parquet.py golden_vector/app/latest_data.py golden_vector/hedge/report.py golden_vector/serve/option_trading_data.py` -> passed.
