@@ -104,3 +104,31 @@ Checks:
 - `python -m pytest tests/test_model_state.py tests/test_cli_refresh_and_status.py tests/test_workspace_app.py tests/test_option_refresh.py tests/test_candidate_finder_data.py tests/test_candidate_finder_page.py -q` -> 105 passed.
 - `python -m compileall golden_vector/app/model_state.py golden_vector/cli.py golden_vector/serve/model_state_banner.py golden_vector/serve/overview_combined.py golden_vector/serve/overview_tool_a.py golden_vector/serve/overview_tool_b.py golden_vector/serve/overview_option_trading.py golden_vector/serve/candidate_finder_data.py golden_vector/serve/candidate_finder_page.py golden_vector/serve/workspace.py` -> passed.
 - `python -m pytest -q` -> 695 passed.
+
+## I2 - Atomic Publish, Manifest Readers, And Product Refresh
+
+### Step 1 - Immutable model-state artifacts and reader resolver
+
+Built:
+
+- Model-state manifests now record immutable run-id-stamped artifacts for the required build products:
+  - foundation/options JSON manifests are copied to run-id-stamped files in `data/intermediate/status/`
+  - Tool A/B/C/D Parquet artifacts resolve to retained `tool_x_latest_<run_id>.parquet` files instead of mutable `tool_x_latest.parquet` aliases
+  - each artifact records `immutable`, `source_alias_path`, and the immutable file hash/size/mtime
+- Added centralized resolver helpers:
+  - `resolve_current_model_artifact_path`
+  - `read_current_model_parquet`
+  - `read_current_model_json`
+- Workspace, Option Trading, Candidate Finder, and CLI status now resolve current model inputs through the manifest when it contains an artifact entry.
+- Candidate Finder keeps the existing Tool D spot-run rule, but now prefers the manifest's `tool_d_spot` artifact before falling back to `tool_d`.
+
+Self-review:
+
+- Found a transition bug where a missing fallback alias was still returned as a path; this made Candidate Finder choose a nonexistent Tool D spot alias and mark Tool D missing. Fixed the resolver so fallbacks are returned only when the file exists.
+- Found the I1 status text still said `parent_refresh_id: (pending I2)` for null parent ids. Updated it to `(none)` because I2 will populate the value on refresh publishes.
+- Added a regression test proving that after a model-state manifest is published, overwriting mutable aliases does not change what current-model readers load.
+
+Checks:
+
+- `python -m pytest tests/test_model_state.py tests/test_cli_refresh_and_status.py tests/test_candidate_finder_data.py tests/test_option_trading_data.py tests/test_workspace_app.py -q` -> 107 passed.
+- `python -m compileall golden_vector/app/model_state.py golden_vector/cli.py golden_vector/serve/workspace_state.py golden_vector/serve/candidate_finder_data.py golden_vector/serve/option_trading_data.py tests/test_model_state.py` -> passed.

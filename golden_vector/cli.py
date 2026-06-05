@@ -21,6 +21,7 @@ from golden_vector.app.latest_data import (
 from golden_vector.app.logging import configure_logging
 from golden_vector.app.model_state import (
     load_current_model_state_manifest,
+    resolve_current_model_artifact_path,
     summarize_model_state_manifest,
     write_current_model_state_manifest,
 )
@@ -2473,8 +2474,12 @@ def _render_status_summary(paths: ProjectPaths) -> str:
     lines.append("")
 
     # Foundation manifest
-    manifest_path = paths.latest_foundation_manifest_path
-    if not manifest_path.exists():
+    manifest_path = resolve_current_model_artifact_path(
+        paths,
+        "foundation",
+        fallback_path=paths.latest_foundation_manifest_path,
+    )
+    if manifest_path is None or not manifest_path.exists():
         lines.append("Foundation snapshot:  NOT FOUND. Run `python main.py update-data` first.")
         manifest_run_id: str | None = None
     else:
@@ -2496,9 +2501,13 @@ def _render_status_summary(paths: ProjectPaths) -> str:
             manifest_run_id = None
 
     # Tool A latest
-    tool_a_path = paths.latest_tool_a_snapshot_parquet_path
+    tool_a_path = resolve_current_model_artifact_path(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
     tool_a_run_ids: set[str] = set()
-    if not tool_a_path.exists():
+    if tool_a_path is None or not tool_a_path.exists():
         lines.append("Tool A latest output: NOT FOUND. Run `python main.py tool-a`.")
     else:
         try:
@@ -2519,9 +2528,13 @@ def _render_status_summary(paths: ProjectPaths) -> str:
             lines.append(f"Tool A latest output: ERROR reading parquet ({exc}).")
 
     # Tool B latest
-    tool_b_path = paths.latest_tool_b_snapshot_parquet_path
+    tool_b_path = resolve_current_model_artifact_path(
+        paths,
+        "tool_b",
+        fallback_path=paths.latest_tool_b_snapshot_parquet_path,
+    )
     tool_b_run_ids: set[str] = set()
-    if not tool_b_path.exists():
+    if tool_b_path is None or not tool_b_path.exists():
         lines.append("Tool B latest output: NOT FOUND. Run `python main.py tool-b`.")
     else:
         try:
@@ -2556,9 +2569,13 @@ def _render_status_summary(paths: ProjectPaths) -> str:
             lines.append(f"Tool B latest output: ERROR reading parquet ({exc}).")
 
     # Tool C latest
-    tool_c_path = paths.latest_tool_c_snapshot_parquet_path
+    tool_c_path = resolve_current_model_artifact_path(
+        paths,
+        "tool_c",
+        fallback_path=paths.latest_tool_c_snapshot_parquet_path,
+    )
     tool_c_run_ids: set[str] = set()
-    if not tool_c_path.exists():
+    if tool_c_path is None or not tool_c_path.exists():
         lines.append("Tool C latest output: NOT FOUND. Run `python main.py tool-c`.")
     else:
         try:
@@ -2587,9 +2604,13 @@ def _render_status_summary(paths: ProjectPaths) -> str:
             lines.append(f"Tool C latest output: ERROR reading parquet ({exc}).")
 
     # Tool D latest
-    tool_d_path = paths.latest_tool_d_snapshot_parquet_path
+    tool_d_path = resolve_current_model_artifact_path(
+        paths,
+        "tool_d",
+        fallback_path=paths.latest_tool_d_snapshot_parquet_path,
+    )
     tool_d_run_ids: set[str] = set()
-    if not tool_d_path.exists():
+    if tool_d_path is None or not tool_d_path.exists():
         lines.append("Tool D latest output: NOT FOUND. Run `python main.py tool-d`.")
     else:
         try:

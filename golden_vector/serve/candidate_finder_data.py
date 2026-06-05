@@ -11,7 +11,10 @@ from typing import Any, Literal
 import pandas as pd
 import yaml
 
-from golden_vector.app.model_state import load_current_model_state_manifest
+from golden_vector.app.model_state import (
+    load_current_model_state_manifest,
+    resolve_current_model_artifact_path,
+)
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import (
     AppConfig,
@@ -101,25 +104,29 @@ def load_candidate_finder_data(
 ) -> CandidateFinderData:
     """Load the latest joined frame used by Candidate Finder screens."""
 
-    tool_a_load = _read_optional_parquet(
-        paths.latest_tool_a_snapshot_parquet_path,
-        label="Tool A",
+    model_state_manifest = load_current_model_state_manifest(paths)
+    tool_a_path = resolve_current_model_artifact_path(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
     )
-    tool_b_load = _read_optional_parquet(
-        paths.latest_tool_b_snapshot_parquet_path,
-        label="Tool B",
+    tool_b_path = resolve_current_model_artifact_path(
+        paths,
+        "tool_b",
+        fallback_path=paths.latest_tool_b_snapshot_parquet_path,
     )
-    tool_a = tool_a_load.frame
-    tool_b = tool_b_load.frame
-    tool_c_load = _read_optional_parquet(
-        paths.latest_tool_c_snapshot_parquet_path,
-        label="Tool C",
+    tool_c_path = resolve_current_model_artifact_path(
+        paths,
+        "tool_c",
+        fallback_path=paths.latest_tool_c_snapshot_parquet_path,
     )
     tool_d_source_path = _tool_d_finder_source_path(paths)
-    tool_d_load = _read_optional_parquet(
-        tool_d_source_path,
-        label="Tool D",
-    )
+    tool_a_load = _read_optional_parquet(tool_a_path, label="Tool A")
+    tool_b_load = _read_optional_parquet(tool_b_path, label="Tool B")
+    tool_a = tool_a_load.frame
+    tool_b = tool_b_load.frame
+    tool_c_load = _read_optional_parquet(tool_c_path, label="Tool C")
+    tool_d_load = _read_optional_parquet(tool_d_source_path, label="Tool D")
     tool_c = tool_c_load.frame
     tool_d_spot_load = _spot_tool_d_source(tool_d_load.frame)
     tool_d = tool_d_spot_load.frame
@@ -135,9 +142,9 @@ def load_candidate_finder_data(
         tool_d_refresh_run_ids=_unique_strings(tool_d, "snapshot_refresh_run_id"),
         options_refresh_run_id=options_refresh_run_id or "unknown",
         manual_store_hash=manual_hash,
-        tool_a_latest_hash=_file_sha256(paths.latest_tool_a_snapshot_parquet_path),
-        tool_b_latest_hash=_file_sha256(paths.latest_tool_b_snapshot_parquet_path),
-        tool_c_latest_hash=_file_sha256(paths.latest_tool_c_snapshot_parquet_path),
+        tool_a_latest_hash=_file_sha256(tool_a_path),
+        tool_b_latest_hash=_file_sha256(tool_b_path),
+        tool_c_latest_hash=_file_sha256(tool_c_path),
         tool_d_latest_hash=_file_sha256(tool_d_source_path),
         model_state_manifest_hash=_file_sha256(paths.latest_model_state_manifest_path),
     )
@@ -180,7 +187,7 @@ def load_candidate_finder_data(
         criteria_config=app_config.candidate_finder,
         alignment=alignment,
         cache_key=cache_key,
-        model_state_manifest=load_current_model_state_manifest(paths),
+        model_state_manifest=model_state_manifest,
     )
     _CACHE[cache_key] = data
     return data
@@ -689,8 +696,8 @@ def _parse_timestamp(value: object) -> pd.Timestamp | None:
     return parsed
 
 
-def _file_sha256(path: Path) -> str | None:
-    if not path.exists() or not path.is_file():
+def _file_sha256(path: Path | None) -> str | None:
+    if path is None or not path.exists() or not path.is_file():
         return None
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -699,8 +706,8 @@ def _file_sha256(path: Path) -> str | None:
     return digest.hexdigest()
 
 
-def _read_optional_parquet(path: Path, *, label: str) -> CandidateFinderSourceLoad:
-    if not path.exists():
+def _read_optional_parquet(path: Path | None, *, label: str) -> CandidateFinderSourceLoad:
+    if path is None or not path.exists():
         return CandidateFinderSourceLoad(frame=pd.DataFrame())
     try:
         return CandidateFinderSourceLoad(frame=pd.read_parquet(path))
@@ -711,9 +718,19 @@ def _read_optional_parquet(path: Path, *, label: str) -> CandidateFinderSourceLo
         )
 
 
-def _tool_d_finder_source_path(paths: ProjectPaths) -> Path:
-    spot_path = paths.latest_tool_d_spot_snapshot_parquet_path
-    return spot_path if spot_path.exists() else paths.latest_tool_d_snapshot_parquet_path
+def _tool_d_finder_source_path(paths: ProjectPaths) -> Path | None:
+    spot_path = resolve_current_model_artifact_path(
+        paths,
+        "tool_d_spot",
+        fallback_path=paths.latest_tool_d_spot_snapshot_parquet_path,
+    )
+    if spot_path is not None:
+        return spot_path
+    return resolve_current_model_artifact_path(
+        paths,
+        "tool_d",
+        fallback_path=paths.latest_tool_d_snapshot_parquet_path,
+    )
 
 
 def _spot_tool_d_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:

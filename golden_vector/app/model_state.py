@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -63,6 +64,78 @@ def write_current_model_state_manifest(
     )
     tmp_path.replace(target)
     return payload
+
+
+def resolve_current_model_artifact_path(
+    paths: ProjectPaths,
+    artifact_name: str,
+    *,
+    fallback_path: Path | None = None,
+) -> Path | None:
+    """Resolve a current artifact through the model-state manifest.
+
+    The fallback exists only for the transition period before a manifest has
+    been published, or for old tests/fixtures that carry a partial manifest.
+    When a manifest explicitly contains an artifact entry, a missing/unusable
+    entry returns None rather than silently reading a mutable alias.
+    """
+
+    payload = load_current_model_state_manifest(paths)
+    if payload is None:
+        return _existing_path_or_none(fallback_path)
+    artifact = _manifest_artifact(payload, artifact_name)
+    if artifact is None:
+        return _existing_path_or_none(fallback_path)
+    if not artifact.get("usable"):
+        return None
+    raw_path = str(artifact.get("path") or "").strip()
+    if not raw_path:
+        return None
+    path = paths.resolve_repo_relative(raw_path)
+    return path if path.exists() else None
+
+
+def read_current_model_parquet(
+    paths: ProjectPaths,
+    artifact_name: str,
+    *,
+    fallback_path: Path | None = None,
+) -> pd.DataFrame:
+    """Read a current Parquet artifact through the model-state manifest."""
+
+    path = resolve_current_model_artifact_path(
+        paths,
+        artifact_name,
+        fallback_path=fallback_path,
+    )
+    if path is None:
+        return pd.DataFrame()
+    try:
+        return pd.read_parquet(path)
+    except Exception:
+        return pd.DataFrame()
+
+
+def read_current_model_json(
+    paths: ProjectPaths,
+    artifact_name: str,
+    *,
+    fallback_path: Path | None = None,
+) -> dict[str, Any] | None:
+    """Read a current JSON artifact through the model-state manifest."""
+
+    path = resolve_current_model_artifact_path(
+        paths,
+        artifact_name,
+        fallback_path=fallback_path,
+    )
+    if path is None:
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def load_current_model_state_manifest(paths: ProjectPaths) -> dict[str, Any] | None:
@@ -165,7 +238,7 @@ def summarize_model_state_manifest(payload: dict[str, Any] | None) -> list[str]:
     lines = [
         f"Model state manifest: {state}",
         f"  generated_at_utc: {generated}",
-        f"  parent_refresh_id: {parent if parent else '(pending I2)'}",
+        f"  parent_refresh_id: {parent if parent else '(none)'}",
     ]
     alignment = payload.get("alignment") if isinstance(payload.get("alignment"), dict) else {}
     if alignment:
@@ -234,6 +307,13 @@ def _foundation_artifact(paths: ProjectPaths) -> dict[str, Any]:
     )
     payload = artifact.pop("_payload", None)
     if isinstance(payload, dict):
+        _snapshot_json_artifact(
+            paths=paths,
+            artifact=artifact,
+            source_path=paths.latest_foundation_manifest_path,
+            file_prefix="foundation_manifest",
+            stamp=_clean_string(payload.get("refresh_run_id")),
+        )
         artifact.update(
             {
                 "refresh_run_id": _clean_string(payload.get("refresh_run_id")),
@@ -257,6 +337,13 @@ def _options_artifact(paths: ProjectPaths) -> dict[str, Any]:
     )
     payload = artifact.pop("_payload", None)
     if isinstance(payload, dict):
+        _snapshot_json_artifact(
+            paths=paths,
+            artifact=artifact,
+            source_path=paths.latest_options_manifest_path,
+            file_prefix="options_manifest",
+            stamp=_clean_string(payload.get("refresh_run_id")),
+        )
         summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
         artifact.update(
             {
@@ -305,22 +392,49 @@ def _parquet_artifact(
     path: Path,
     required_for_complete: bool,
 ) -> dict[str, Any]:
-    artifact = _file_artifact(
+    alias_artifact = _file_artifact(
         paths=paths,
         name=name,
         path=path,
         kind="parquet",
         required_for_complete=required_for_complete,
     )
-    if not artifact["present"]:
-        return artifact
+    if not alias_artifact["present"]:
+        return alias_artifact
     try:
         frame = pd.read_parquet(path)
     except Exception as exc:
-        artifact["read_error"] = str(exc)
-        artifact["readable"] = False
-        artifact["usable"] = False
-        return artifact
+        alias_artifact["read_error"] = str(exc)
+        alias_artifact["readable"] = False
+        alias_artifact["usable"] = False
+        return alias_artifact
+
+    source_ids = _unique_strings(frame, "source_run_id")
+    immutable_path = _resolve_run_stamped_parquet(
+        paths=paths,
+        name=name,
+        alias_path=path,
+        alias_sha256=_clean_string(alias_artifact.get("sha256")),
+        source_run_ids=source_ids,
+    )
+    artifact = alias_artifact
+    if immutable_path is not None:
+        artifact = _file_artifact(
+            paths=paths,
+            name=name,
+            path=immutable_path,
+            kind="parquet",
+            required_for_complete=required_for_complete,
+        )
+        artifact["source_alias_path"] = _repo_relative(paths, path)
+        artifact["immutable"] = True
+        try:
+            frame = pd.read_parquet(immutable_path)
+        except Exception as exc:
+            artifact["read_error"] = str(exc)
+            artifact["readable"] = False
+            artifact["usable"] = False
+            return artifact
     artifact["row_count"] = int(len(frame.index))
     artifact["columns"] = [str(column) for column in frame.columns]
     artifact["schema_version"] = _clean_string(_first_present(frame, "schema_version"))
@@ -328,7 +442,7 @@ def _parquet_artifact(
         frame,
         "snapshot_refresh_run_id",
     )
-    artifact["source_run_ids"] = _unique_strings(frame, "source_run_id")
+    artifact["source_run_ids"] = source_ids
     return artifact
 
 
@@ -345,6 +459,8 @@ def _file_artifact(
         "name": name,
         "kind": kind,
         "path": _repo_relative(paths, path),
+        "source_alias_path": None,
+        "immutable": False,
         "present": present,
         "readable": False,
         "usable": False,
@@ -423,8 +539,12 @@ def _artifact_health_warnings(artifacts: dict[str, dict[str, Any]]) -> list[str]
         warnings.append("Options phase status is FAIL.")
     for name in ("tool_a", "tool_b", "tool_c", "tool_d"):
         artifact = artifacts[name]
-        if artifact.get("present") and int(artifact.get("row_count") or 0) == 0:
+        if artifact.get("readable") and int(artifact.get("row_count") or 0) == 0:
             warnings.append(f"{name} has zero rows.")
+    for name in REQUIRED_ARTIFACTS:
+        artifact = artifacts[name]
+        if artifact.get("usable") and not artifact.get("immutable"):
+            warnings.append(f"Required artifact is not immutable: {name}.")
     return warnings
 
 
@@ -435,6 +555,7 @@ def _is_required_health_warning(warning: str) -> bool:
         or warning == "Options phase status is missing."
         or warning == "Options phase status is FAIL."
         or warning.endswith(" has zero rows.")
+        or warning.startswith("Required artifact is not immutable:")
     )
 
 
@@ -471,6 +592,121 @@ def _clean_string(value: object) -> str | None:
     if not text or text.lower() == "nan":
         return None
     return text
+
+
+def _manifest_artifact(
+    payload: dict[str, Any],
+    artifact_name: str,
+) -> dict[str, Any] | None:
+    artifacts = payload.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return None
+    artifact = artifacts.get(artifact_name)
+    return artifact if isinstance(artifact, dict) else None
+
+
+def _existing_path_or_none(path: Path | None) -> Path | None:
+    return path if path is not None and path.exists() else None
+
+
+def _snapshot_json_artifact(
+    *,
+    paths: ProjectPaths,
+    artifact: dict[str, Any],
+    source_path: Path,
+    file_prefix: str,
+    stamp: str | None,
+) -> None:
+    if not artifact.get("usable") or not stamp:
+        return
+    target = paths.intermediate_status_dir / f"{file_prefix}_{_safe_file_fragment(stamp)}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        tmp_path = target.with_suffix(target.suffix + ".tmp")
+        tmp_path.write_bytes(source_path.read_bytes())
+        tmp_path.replace(target)
+        artifact["source_alias_path"] = _repo_relative(paths, source_path)
+        artifact["path"] = _repo_relative(paths, target)
+        artifact["immutable"] = True
+        _refresh_file_metadata(artifact, target)
+    except Exception as exc:
+        artifact["read_error"] = str(exc)
+        artifact["usable"] = False
+        artifact["readable"] = False
+
+
+def _resolve_run_stamped_parquet(
+    *,
+    paths: ProjectPaths,
+    name: str,
+    alias_path: Path,
+    alias_sha256: str | None,
+    source_run_ids: list[str],
+) -> Path | None:
+    if not alias_sha256:
+        return None
+    directory, prefix = _tool_latest_directory_and_prefix(paths, name)
+    for run_id in source_run_ids:
+        candidate = directory / f"{prefix}_latest_{run_id}.parquet"
+        if _is_matching_immutable_parquet(candidate, alias_path, alias_sha256, prefix):
+            return candidate
+    matching: list[Path] = []
+    for candidate in directory.glob(f"{prefix}_latest_*.parquet"):
+        if _is_matching_immutable_parquet(candidate, alias_path, alias_sha256, prefix):
+            matching.append(candidate)
+    if not matching:
+        return None
+    return sorted(matching, key=lambda item: item.stat().st_mtime, reverse=True)[0]
+
+
+def _tool_latest_directory_and_prefix(paths: ProjectPaths, name: str) -> tuple[Path, str]:
+    if name == "tool_a":
+        return paths.output_tool_a_dir, "tool_a"
+    if name == "tool_b":
+        return paths.output_tool_b_dir, "tool_b"
+    if name == "tool_c":
+        return paths.output_tool_c_dir, "tool_c"
+    if name in {"tool_d", "tool_d_spot"}:
+        return paths.output_tool_d_dir, "tool_d"
+    raise ValueError(f"Unsupported model artifact for immutable lookup: {name}")
+
+
+def _is_matching_immutable_parquet(
+    candidate: Path,
+    alias_path: Path,
+    alias_sha256: str,
+    prefix: str,
+) -> bool:
+    if candidate == alias_path or not candidate.exists() or not candidate.is_file():
+        return False
+    if not _has_run_stamped_tool_latest_name(candidate.name, prefix):
+        return False
+    try:
+        return _sha256_file(candidate) == alias_sha256
+    except OSError:
+        return False
+
+
+def _has_run_stamped_tool_latest_name(file_name: str, prefix: str) -> bool:
+    pattern = rf"^{re.escape(prefix)}_latest_\d{{8}}T\d{{6}}Z-.+\.parquet$"
+    return re.match(pattern, file_name) is not None
+
+
+def _refresh_file_metadata(artifact: dict[str, Any], path: Path) -> None:
+    stat = path.stat()
+    artifact.update(
+        {
+            "sha256": _sha256_file(path),
+            "modified_at_utc": _mtime_iso(path),
+            "size_bytes": stat.st_size,
+            "readable": True,
+            "usable": True,
+        }
+    )
+
+
+def _safe_file_fragment(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._") or "unknown"
 
 
 def _repo_relative(paths: ProjectPaths, path: Path) -> str:

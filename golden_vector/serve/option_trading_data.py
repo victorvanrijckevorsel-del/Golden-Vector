@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import date
@@ -11,6 +10,10 @@ from typing import Any, Literal, cast
 
 import pandas as pd
 
+from golden_vector.app.model_state import (
+    read_current_model_json,
+    read_current_model_parquet,
+)
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge._helpers import (
@@ -334,8 +337,16 @@ def load_option_trading_data(
     """Load latest option-trading rows and reuse them until provenance changes."""
 
     manifest = _read_options_manifest(paths)
-    tool_a = _read_optional_parquet(paths.latest_tool_a_snapshot_parquet_path)
-    tool_b = _read_optional_parquet(paths.latest_tool_b_snapshot_parquet_path)
+    tool_a = read_current_model_parquet(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+    tool_b = read_current_model_parquet(
+        paths,
+        "tool_b",
+        fallback_path=paths.latest_tool_b_snapshot_parquet_path,
+    )
     if manifest is None:
         return _empty_data(
             tool_a=tool_a,
@@ -445,12 +456,11 @@ def _empty_data(
 
 
 def _read_options_manifest(paths: ProjectPaths) -> dict[str, Any] | None:
-    if not paths.latest_options_manifest_path.exists():
-        return None
-    try:
-        return json.loads(paths.latest_options_manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+    return read_current_model_json(
+        paths,
+        "options",
+        fallback_path=paths.latest_options_manifest_path,
+    )
 
 
 def _read_optional_parquet(path: Path) -> pd.DataFrame:

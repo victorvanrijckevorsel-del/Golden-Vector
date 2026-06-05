@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
@@ -10,7 +9,12 @@ from typing import Any, ClassVar
 import pandas as pd
 
 from golden_vector.app.latest_data import load_latest_foundation_snapshot
-from golden_vector.app.model_state import load_current_model_state_manifest
+from golden_vector.app.model_state import (
+    load_current_model_state_manifest,
+    read_current_model_json,
+    read_current_model_parquet,
+    resolve_current_model_artifact_path,
+)
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.features.horizons import build_core_horizons
@@ -86,12 +90,32 @@ class OverviewFilters:
 
 def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> WorkspaceState:
     loaded = load_manual_screening_data(paths, tickers=tool_b_tickers)
-    foundation_manifest = _load_json_file(paths.latest_foundation_manifest_path)
     model_state_manifest = load_current_model_state_manifest(paths)
-    tool_a_alias_present = paths.latest_tool_a_snapshot_parquet_path.exists()
-    tool_b_alias_present = paths.latest_tool_b_snapshot_parquet_path.exists()
-    latest_tool_a = _read_optional_parquet(paths.latest_tool_a_snapshot_parquet_path)
-    latest_tool_b = _read_optional_parquet(paths.latest_tool_b_snapshot_parquet_path)
+    foundation_manifest = read_current_model_json(
+        paths,
+        "foundation",
+        fallback_path=paths.latest_foundation_manifest_path,
+    )
+    tool_a_path = resolve_current_model_artifact_path(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+    tool_b_path = resolve_current_model_artifact_path(
+        paths,
+        "tool_b",
+        fallback_path=paths.latest_tool_b_snapshot_parquet_path,
+    )
+    latest_tool_a = read_current_model_parquet(
+        paths,
+        "tool_a",
+        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    )
+    latest_tool_b = read_current_model_parquet(
+        paths,
+        "tool_b",
+        fallback_path=paths.latest_tool_b_snapshot_parquet_path,
+    )
     if not latest_tool_a.empty and "ticker" in latest_tool_a.columns:
         latest_tool_a["ticker"] = latest_tool_a["ticker"].astype(str).str.upper()
     if not latest_tool_b.empty and "ticker" in latest_tool_b.columns:
@@ -105,8 +129,8 @@ def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> Wor
         stock_notes=loaded.stock_notes,
         latest_tool_a=latest_tool_a,
         latest_tool_b=latest_tool_b,
-        tool_a_alias_present=tool_a_alias_present,
-        tool_b_alias_present=tool_b_alias_present,
+        tool_a_alias_present=tool_a_path is not None,
+        tool_b_alias_present=tool_b_path is not None,
         model_state_manifest=model_state_manifest,
     )
 
@@ -265,18 +289,6 @@ _STRUCTURAL_WINDOWS: tuple[str, ...] = ("6M", "12M", "3Y")
 # Number of weekly observations per window, used by the scatter-slice
 # and volatility recompute helpers.
 _WINDOW_WEEKS: dict[str, int] = {"6M": 26, "12M": 52, "3Y": 156}
-
-
-def _read_optional_parquet(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        return pd.DataFrame()
-    return pd.read_parquet(path)
-
-
-def _load_json_file(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _load_structural_delta_history(

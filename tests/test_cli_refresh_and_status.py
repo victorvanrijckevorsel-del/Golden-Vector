@@ -222,7 +222,7 @@ def test_status_command_reads_model_state_manifest(tmp_path, monkeypatch, capsys
 
     assert exit_code == 0
     assert "Model state manifest: INCOMPLETE" in captured
-    assert "parent_refresh_id: (pending I2)" in captured
+    assert "parent_refresh_id: (none)" in captured
     assert "Required artifact is missing: tool_c." in captured
     assert "Required artifact is missing: tool_d." in captured
 
