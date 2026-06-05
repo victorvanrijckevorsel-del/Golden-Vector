@@ -307,3 +307,24 @@ Self-review finding fixed:
 Checks:
 
 - `python -m pytest tests/test_model_state.py` -> 15 passed.
+
+### I3 shared non-serve option builder
+
+Built:
+
+- Extracted the current option-selection orchestration out of `golden_vector.serve.option_trading_data` into `golden_vector.hedge.option_artifact_builder`.
+- Added one high-level `build_option_artifact_inputs(...)` entry point that builds put/call candidate slots, accepted candidate grids, liquidity measurements, source context, and Option Trading overview rows from already-loaded chains/features/Tool A/Tool B.
+- Updated the serve loader to call the shared builder, preserving current request-time behavior while giving refresh-time persistence the same engine to call next.
+- Removed the old serve-local candidate-slot, accepted-grid, liquidity-measurement, source-context, and stock-price helper block.
+
+Self-review findings:
+
+- Confirmed normal `serve/option_trading_data.py` no longer contains option candidate-slot or liquidity-scan functions.
+- Confirmed `scan_option_chain(...)` is now referenced only by the non-serve builder among the touched Option Trading path.
+- Reused `common.strings.unique_strings` and existing `hedge._helpers.as_float` instead of carrying over local `_unique_strings` or `_safe_float` copies.
+
+Checks:
+
+- `python -m pytest tests/test_option_trading_data.py` -> 17 passed.
+- `python -m pytest tests/test_candidate_finder_data.py tests/test_option_trading_data.py` -> 33 passed.
+- `python -m compileall golden_vector/hedge/option_artifact_builder.py golden_vector/serve/option_trading_data.py` -> passed.
