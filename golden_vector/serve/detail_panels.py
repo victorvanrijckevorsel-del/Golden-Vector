@@ -211,7 +211,7 @@ def _render_option_trading_panel(
         )
         body.append(
             "<p>No option-trading data is available yet. Run "
-            "<code>python main.py update-data --options</code> to refresh options data.</p>"
+            "<code>python main.py refresh</code> to refresh the model data.</p>"
         )
         body.append("</section>")
         return "".join(body)

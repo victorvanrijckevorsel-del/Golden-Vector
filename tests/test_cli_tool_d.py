@@ -126,6 +126,53 @@ def test_run_tool_d_scenario_does_not_publish_spot_alias(tmp_path, monkeypatch):
     assert not paths.latest_tool_d_spot_snapshot_parquet_path.exists()
 
 
+def test_run_tool_d_scenario_leaves_existing_spot_alias_untouched(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_tool_b_latest(paths)
+    snapshot = _latest_foundation_snapshot(paths)
+
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+    monkeypatch.setattr(
+        "golden_vector.cli.load_latest_foundation_snapshot",
+        lambda **_: snapshot,
+    )
+
+    def fake_compute_tool_d_outputs(**kwargs):
+        inputs = kwargs["inputs"]
+        return pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 6, 1),
+                    "gold_price_used": kwargs["gold_price"],
+                    "spot_gold_usd": inputs.spot_gold_usd,
+                    "spot_gold_date": inputs.spot_gold_date,
+                    "tool_d_quality_rank": 100.0,
+                }
+            ]
+        )
+
+    monkeypatch.setattr(
+        "golden_vector.cli.compute_tool_d_outputs",
+        fake_compute_tool_d_outputs,
+    )
+
+    assert run_tool_d(paths, gold_price=None) == 0
+    spot_before = paths.latest_tool_d_spot_snapshot_parquet_path.read_bytes()
+    assert run_tool_d(paths, gold_price=3500.0) == 0
+
+    latest = pd.read_parquet(paths.latest_tool_d_snapshot_parquet_path)
+    spot_latest = pd.read_parquet(paths.latest_tool_d_spot_snapshot_parquet_path)
+    assert latest["gold_price_used"].iloc[0] == 3500.0
+    assert spot_latest["gold_price_used"].iloc[0] == 4050.0
+    assert paths.latest_tool_d_spot_snapshot_parquet_path.read_bytes() == spot_before
+
+
 def _write_tool_b_latest(paths):
     paths.output_tool_b_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(

@@ -155,3 +155,25 @@ Checks:
 
 - `python -m pytest tests/test_cli_refresh_and_status.py tests/test_model_state.py -q` -> 18 passed.
 - `python -m compileall golden_vector/cli.py tests/test_cli_refresh_and_status.py` -> passed.
+
+### Step 3 - Product refresh button, stage progress, and Tool D spot contract
+
+Built:
+
+- The workspace refresh control now starts `python main.py refresh` instead of `python main.py update-data --options`.
+- The button copy now says "Refresh all model data" to match the actual product operation.
+- Running refresh status reads the latest logged `Step N/5` line from the background log and surfaces it as stage progress.
+- Refresh completion records the latest model-state `parent_refresh_id` instead of the options refresh id.
+- Updated stale fallback copy that still instructed users to run `update-data --options`.
+- Added a Tool D regression proving a scenario run can overwrite generic Tool D latest while leaving the Finder-facing spot alias unchanged.
+
+Self-review:
+
+- Searched for remaining options-only refresh copy and updated the one stale detail-panel fallback.
+- Confirmed the full refresh button is still a single background job and still blocks duplicate starts.
+- Confirmed Tool D's existing spot publish condition was already correct; the new test locks it down.
+
+Checks:
+
+- `python -m pytest tests/test_option_refresh.py tests/test_cli_tool_d.py tests/test_cli_refresh_and_status.py tests/test_candidate_finder_data.py tests/test_option_trading_data.py tests/test_workspace_app.py -q` -> 115 passed.
+- `python -m compileall golden_vector/serve/detail_panels.py golden_vector/serve/option_refresh.py tests/test_option_refresh.py tests/test_cli_tool_d.py` -> passed.

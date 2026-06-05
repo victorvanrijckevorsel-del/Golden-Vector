@@ -39,7 +39,7 @@ def test_option_refresh_status_recovers_stale_running_process(tmp_path):
             job_id="job-1",
             process_id=12345,
             started_at="2026-06-04T10:00:00Z",
-            command=("python", "main.py", "update-data", "--options"),
+            command=("python", "main.py", "refresh"),
         ),
     )
 
@@ -79,8 +79,8 @@ def test_start_options_refresh_spawns_runner_and_records_command(tmp_path):
     assert result.started
     assert result.status.status == "running"
     assert result.status.process_id == 456
-    assert result.status.command[-2:] == ("update-data", "--options")
-    assert str(result.status.command[-3]).endswith("main.py")
+    assert result.status.command[-1] == "refresh"
+    assert str(result.status.command[-2]).endswith("main.py")
     assert calls
     command, kwargs = calls[0]
     assert command[:3] == [
@@ -110,7 +110,7 @@ def test_start_options_refresh_blocks_duplicate_running_job(tmp_path):
     assert result.status.job_id == "job-1"
 
 
-def test_complete_options_refresh_records_latest_options_run_id(tmp_path):
+def test_complete_options_refresh_records_latest_model_refresh_id(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
     write_option_refresh_status(
@@ -120,20 +120,53 @@ def test_complete_options_refresh_records_latest_options_run_id(tmp_path):
             job_id="job-1",
             process_id=456,
             started_at="2026-06-04T10:00:00Z",
-            command=("python", "main.py", "update-data", "--options"),
+            command=("python", "main.py", "refresh"),
         ),
     )
-    paths.latest_options_manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    paths.latest_options_manifest_path.write_text(
-        json.dumps({"refresh_run_id": "options-run"}),
+    paths.latest_model_state_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps({"parent_refresh_id": "model-refresh-run"}),
         encoding="utf-8",
     )
 
     status = complete_options_refresh(paths, job_id="job-1", return_code=0)
 
     assert status.status == "succeeded"
-    assert status.latest_run_id == "options-run"
+    assert status.latest_run_id == "model-refresh-run"
     assert status.error_summary is None
+
+
+def test_running_option_refresh_status_reads_latest_logged_stage(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    log_path = paths.runs_dir / "ui_refresh_logs" / "job-1.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(
+        "\n".join(
+            [
+                "Parent refresh id: 20260605T120000Z-refresh-aaaaaaaa",
+                "== Step 1/5: update-data ==",
+                "== Step 2/5: tool-a ==",
+                "== Step 3/5: tool-b ==",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    write_option_refresh_status(
+        paths,
+        OptionRefreshStatus(
+            status="running",
+            job_id="job-1",
+            process_id=456,
+            started_at="2026-06-04T10:00:00Z",
+            command=("python", "main.py", "refresh"),
+            log_path=log_path.relative_to(paths.repo_root).as_posix(),
+        ),
+    )
+
+    status = read_option_refresh_status(paths, process_exists=lambda _pid: True)
+
+    assert status.stage_detail == "Step 3/5: tool-b"
 
 
 def test_complete_options_refresh_does_not_clobber_newer_job(tmp_path):
@@ -239,8 +272,8 @@ def test_option_trading_overview_shows_refresh_status(tmp_path):
 
     assert response["status"].startswith("200")
     assert "Model build state needs attention" in response["body"]
-    assert "Refresh cached options data" in response["body"]
-    assert "Options refresh running since 2026-06-04T10:00:00Z." in response["body"]
+    assert "Refresh all model data" in response["body"]
+    assert "Full model refresh running since 2026-06-04T10:00:00Z." in response["body"]
 
 
 def _call_wsgi_app(app, *, method: str, path: str, body: str = "") -> dict[str, object]:

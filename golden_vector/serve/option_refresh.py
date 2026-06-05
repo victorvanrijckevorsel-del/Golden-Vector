@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -37,6 +37,7 @@ class OptionRefreshStatus:
     command: tuple[str, ...] = ()
     latest_run_id: str | None = None
     log_path: str | None = None
+    stage_detail: str | None = None
     error_summary: str | None = None
 
     @property
@@ -53,6 +54,7 @@ class OptionRefreshStatus:
             "command": list(self.command),
             "latest_run_id": self.latest_run_id,
             "log_path": self.log_path,
+            "stage_detail": self.stage_detail,
             "error_summary": self.error_summary,
         }
 
@@ -70,6 +72,7 @@ class OptionRefreshStatus:
             command=tuple(str(part) for part in command),
             latest_run_id=_optional_text(payload.get("latest_run_id")),
             log_path=_optional_text(payload.get("log_path")),
+            stage_detail=_optional_text(payload.get("stage_detail")),
             error_summary=_optional_text(payload.get("error_summary")),
         )
 
@@ -124,10 +127,12 @@ def read_option_refresh_status(
                 command=status.command,
                 latest_run_id=status.latest_run_id,
                 log_path=status.log_path,
+                stage_detail=status.stage_detail,
                 error_summary="Refresh process is no longer running.",
             )
             write_option_refresh_status(paths, recovered)
             return recovered
+        return _with_log_stage(paths, status)
     return status
 
 
@@ -215,7 +220,7 @@ def complete_options_refresh(
     current = read_option_refresh_status(paths, process_exists=lambda _pid: True)
     if current.job_id is not None and current.job_id != job_id:
         return current
-    latest_run_id = _latest_options_refresh_run_id(paths)
+    latest_run_id = _latest_model_refresh_id(paths)
     status = OptionRefreshStatus(
         status=REFRESH_STATUS_SUCCEEDED
         if return_code == 0
@@ -227,6 +232,7 @@ def complete_options_refresh(
         command=current.command or tuple(_options_refresh_command(paths)),
         latest_run_id=latest_run_id,
         log_path=current.log_path,
+        stage_detail=_latest_logged_stage(_status_log_path(paths, current)),
         error_summary=error_summary if return_code != 0 else None,
     )
     write_option_refresh_status(paths, status)
@@ -255,7 +261,7 @@ def run_refresh_child(*, job_id: str, log_path: Path) -> int:
     command = _options_refresh_command(paths)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as log_file:
-        log_file.write(f"[{_utc_now()}] Starting option refresh: {' '.join(command)}\n")
+        log_file.write(f"[{_utc_now()}] Starting full model refresh: {' '.join(command)}\n")
         log_file.flush()
         completed = subprocess.run(
             command,
@@ -266,7 +272,7 @@ def run_refresh_child(*, job_id: str, log_path: Path) -> int:
             check=False,
         )
         log_file.write(
-            f"[{_utc_now()}] Option refresh finished with exit code {completed.returncode}.\n"
+            f"[{_utc_now()}] Full model refresh finished with exit code {completed.returncode}.\n"
         )
     complete_options_refresh(
         paths,
@@ -288,7 +294,7 @@ def render_option_refresh_control(
         "<section class=\"option-refresh-control\">"
         "<form method=\"post\" action=\"/option-trading/refresh\" class=\"inline-form\">"
         f"<input type=\"hidden\" name=\"return_to\" value=\"{_html_attr(return_to)}\">"
-        f"<button type=\"submit\"{disabled}>Refresh cached options data</button>"
+        f"<button type=\"submit\"{disabled}>Refresh all model data</button>"
         "</form>"
         f"<p class=\"hint\">{_html_text(status_text)}</p>"
         "</section>"
@@ -318,17 +324,17 @@ def _spawn_runner(
 
 
 def _options_refresh_command(paths: ProjectPaths) -> list[str]:
-    return [sys.executable, str(paths.repo_root / "main.py"), "update-data", "--options"]
+    return [sys.executable, str(paths.repo_root / "main.py"), "refresh"]
 
 
-def _latest_options_refresh_run_id(paths: ProjectPaths) -> str | None:
+def _latest_model_refresh_id(paths: ProjectPaths) -> str | None:
     try:
-        payload = json.loads(paths.latest_options_manifest_path.read_text(encoding="utf-8"))
+        payload = json.loads(paths.latest_model_state_manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return None
     if not isinstance(payload, dict):
         return None
-    run_id = payload.get("refresh_run_id")
+    run_id = payload.get("parent_refresh_id")
     return str(run_id) if run_id else None
 
 
@@ -339,6 +345,34 @@ def _tail_log(path: Path, *, line_count: int = 8) -> str | None:
         return None
     tail = [line.strip() for line in lines[-line_count:] if line.strip()]
     return "\n".join(tail) if tail else None
+
+
+def _with_log_stage(paths: ProjectPaths, status: OptionRefreshStatus) -> OptionRefreshStatus:
+    stage = _latest_logged_stage(_status_log_path(paths, status))
+    if stage == status.stage_detail:
+        return status
+    return replace(status, stage_detail=stage)
+
+
+def _status_log_path(paths: ProjectPaths, status: OptionRefreshStatus) -> Path | None:
+    if not status.log_path:
+        return None
+    path = Path(status.log_path)
+    return path if path.is_absolute() else paths.repo_root / path
+
+
+def _latest_logged_stage(path: Path | None) -> str | None:
+    if path is None or not path.exists():
+        return None
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        stripped = line.strip()
+        if stripped.startswith("== Step ") and stripped.endswith("=="):
+            return stripped.strip("= ").strip()
+    return None
 
 
 def _wait_for_parent_status(
@@ -378,18 +412,20 @@ def _is_windows_process_running(pid: int) -> bool:
 def _refresh_status_text(status: OptionRefreshStatus) -> str:
     if status.status == REFRESH_STATUS_RUNNING:
         started = f" since {status.started_at}" if status.started_at else ""
-        return f"Options refresh running{started}."
+        stage = f" Current logged stage: {status.stage_detail}." if status.stage_detail else ""
+        return f"Full model refresh running{started}.{stage}"
     if status.status == REFRESH_STATUS_SUCCEEDED:
         finished = f" at {status.finished_at}" if status.finished_at else ""
-        run = f" Latest options run: {status.latest_run_id}." if status.latest_run_id else ""
-        return f"Options refresh succeeded{finished}.{run}"
+        run = f" Latest model refresh: {status.latest_run_id}." if status.latest_run_id else ""
+        return f"Full model refresh succeeded{finished}.{run}"
     if status.status == REFRESH_STATUS_FAILED:
         detail = f" {status.error_summary}" if status.error_summary else ""
-        return f"Options refresh failed.{detail}"
+        stage = f" Last logged stage: {status.stage_detail}." if status.stage_detail else ""
+        return f"Full model refresh failed.{stage}{detail}"
     if status.status == REFRESH_STATUS_UNKNOWN:
         detail = f" {status.error_summary}" if status.error_summary else ""
-        return f"Options refresh status unknown.{detail}"
-    return "Options refresh idle."
+        return f"Full model refresh status unknown.{detail}"
+    return "Full model refresh idle."
 
 
 def _repo_relative_or_absolute(paths: ProjectPaths, path: Path) -> str:
