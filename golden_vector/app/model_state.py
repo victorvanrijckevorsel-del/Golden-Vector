@@ -71,7 +71,25 @@ def load_current_model_state_manifest(paths: ProjectPaths) -> dict[str, Any] | N
     path = paths.latest_model_state_manifest_path
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {
+            "manifest_version": MODEL_STATE_MANIFEST_VERSION,
+            "generated_at_utc": None,
+            "parent_refresh_id": None,
+            "build_kind": "full_model",
+            "state": "incomplete",
+            "publish": {
+                "atomic_pointer": True,
+                "path": _repo_relative(paths, path),
+                "latest_aliases_authoritative": False,
+            },
+            "artifacts": {},
+            "alignment": {"status": "WARN", "warnings": []},
+            "warnings": [f"Could not read model-state manifest: {exc}"],
+            "stage_timings": {},
+        }
 
 
 def build_current_model_state_manifest(

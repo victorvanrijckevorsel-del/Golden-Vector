@@ -22,6 +22,7 @@ from golden_vector.serve.format_helpers import (
 from golden_vector.serve.overview_combined import (
     _collect_filter_options,
     _render_filter_bar,
+    _render_model_state_banner,
     _render_provenance_warnings,
     _render_refresh_summary,
 )
@@ -143,6 +144,7 @@ def _render_tool_b_overview_page(
             "Showing the last persisted Tool B snapshot."
             "</div>"
         )
+    body.append(_render_model_state_banner(state))
     body.append(_render_provenance_warnings(state))
     body.append(_render_refresh_summary(state.foundation_manifest))
     if app_config is not None:

@@ -10,6 +10,7 @@ from typing import Any, ClassVar
 import pandas as pd
 
 from golden_vector.app.latest_data import load_latest_foundation_snapshot
+from golden_vector.app.model_state import load_current_model_state_manifest
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.features.horizons import build_core_horizons
@@ -30,6 +31,7 @@ class WorkspaceState:
     latest_tool_b: pd.DataFrame
     tool_a_alias_present: bool
     tool_b_alias_present: bool
+    model_state_manifest: dict[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -85,6 +87,7 @@ class OverviewFilters:
 def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> WorkspaceState:
     loaded = load_manual_screening_data(paths, tickers=tool_b_tickers)
     foundation_manifest = _load_json_file(paths.latest_foundation_manifest_path)
+    model_state_manifest = load_current_model_state_manifest(paths)
     tool_a_alias_present = paths.latest_tool_a_snapshot_parquet_path.exists()
     tool_b_alias_present = paths.latest_tool_b_snapshot_parquet_path.exists()
     latest_tool_a = _read_optional_parquet(paths.latest_tool_a_snapshot_parquet_path)
@@ -104,6 +107,7 @@ def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> Wor
         latest_tool_b=latest_tool_b,
         tool_a_alias_present=tool_a_alias_present,
         tool_b_alias_present=tool_b_alias_present,
+        model_state_manifest=model_state_manifest,
     )
 
 

@@ -95,6 +95,18 @@ def test_model_state_loader_and_summary_handle_missing_manifest(tmp_path):
     ]
 
 
+def test_model_state_loader_reports_corrupt_manifest(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    paths.latest_model_state_manifest_path.write_text("{not-json", encoding="utf-8")
+
+    payload = load_current_model_state_manifest(paths)
+
+    assert payload is not None
+    assert payload["state"] == "incomplete"
+    assert "Could not read model-state manifest" in payload["warnings"][0]
+
+
 def _write_foundation_and_options_manifests(
     paths: ProjectPaths,
     *,

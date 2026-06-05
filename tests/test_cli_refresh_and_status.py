@@ -103,6 +103,7 @@ def test_status_command_runs_cleanly_with_no_artifacts(tmp_path, monkeypatch, ca
     captured = capsys.readouterr().out
 
     assert exit_code == 0
+    assert "Model state manifest: NOT FOUND" in captured
     assert "Foundation snapshot:  NOT FOUND" in captured
     assert "Tool A latest output: NOT FOUND" in captured
     assert "Tool B latest output: NOT FOUND" in captured
@@ -186,6 +187,43 @@ def test_status_command_surfaces_refresh_id_mismatch(tmp_path, monkeypatch, caps
     assert "Refresh alignment:    MISMATCH" in captured
     assert "refresh-A" in captured
     assert "refresh-B" in captured
+
+
+def test_status_command_reads_model_state_manifest(tmp_path, monkeypatch, capsys):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "generated_at_utc": "2026-06-05T10:00:00Z",
+                "parent_refresh_id": None,
+                "state": "incomplete",
+                "alignment": {"status": "WARN"},
+                "warnings": [
+                    "Required artifact is missing: tool_c.",
+                    "Required artifact is missing: tool_d.",
+                ],
+                "artifacts": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+
+    exit_code = run_status(paths)
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Model state manifest: INCOMPLETE" in captured
+    assert "parent_refresh_id: (pending I2)" in captured
+    assert "Required artifact is missing: tool_c." in captured
+    assert "Required artifact is missing: tool_d." in captured
 
 
 def test_status_command_summarizes_tool_c_and_tool_d_outputs(tmp_path, monkeypatch, capsys):
@@ -297,12 +335,20 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
 
     assert exit_code == 0
     assert call_order == ["update-data", "tool-a", "tool-b@None", "tool-c", "tool-d@None"]
+    assert paths.latest_model_state_manifest_path.exists()
+    model_state = json.loads(paths.latest_model_state_manifest_path.read_text(encoding="utf-8"))
+    assert model_state["parent_refresh_id"] is None
+    assert "tool_a" in model_state["artifacts"]
+    assert "option_candidate_slots" in model_state["artifacts"]
+    assert model_state["stage_timings"]["update_data"]["exit_code"] == 0
+    assert model_state["stage_timings"]["tool_d"]["exit_code"] == 0
     out = capsys.readouterr().out
     assert "Step 1/5: update-data" in out
     assert "Step 2/5: tool-a" in out
     assert "Step 3/5: tool-b" in out
     assert "Step 4/5: tool-c" in out
     assert "Step 5/5: tool-d (spot gold)" in out
+    assert "Model state manifest published:" in out
     assert "Refresh complete" in out
 
 

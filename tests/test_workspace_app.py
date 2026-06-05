@@ -45,6 +45,36 @@ def test_workspace_overview_renders_structural_tool_a_and_tool_b_outputs(tmp_pat
     assert "STRONG_CANDIDATE" in response["body"]
 
 
+def test_workspace_overview_shows_model_state_banner(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "generated_at_utc": "2026-06-05T10:00:00Z",
+                "parent_refresh_id": None,
+                "state": "incomplete",
+                "alignment": {"status": "WARN"},
+                "warnings": ["Required artifact is missing: tool_c."],
+                "artifacts": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/")
+
+    assert response["status"].startswith("200")
+    assert "Model build state needs attention" in response["body"]
+    assert "Required artifact is missing: tool_c." in response["body"]
+
+
 def test_workspace_favicon_returns_no_content(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()

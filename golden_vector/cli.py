@@ -7,6 +7,7 @@ import json
 import logging
 from datetime import date
 from pathlib import Path
+from time import perf_counter
 from typing import Sequence
 
 import pandas as pd
@@ -18,6 +19,11 @@ from golden_vector.app.latest_data import (
     write_latest_foundation_manifest,
 )
 from golden_vector.app.logging import configure_logging
+from golden_vector.app.model_state import (
+    load_current_model_state_manifest,
+    summarize_model_state_manifest,
+    write_current_model_state_manifest,
+)
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.replay_manifest import (
     VERDICT_PREDATES_REPLAY_MANIFEST,
@@ -2357,8 +2363,18 @@ def run_refresh(
     """
 
     total_steps = 5 if not skip_tool_b else 3
+    stage_timings: dict[str, dict[str, object]] = {}
+
+    def record_step(name: str, started_at: float, exit_code: int) -> None:
+        stage_timings[name] = {
+            "duration_seconds": round(perf_counter() - started_at, 3),
+            "exit_code": int(exit_code),
+        }
+
     print(f"== Step 1/{total_steps}: update-data ==")
+    started_at = perf_counter()
     update_exit = run_foundation(paths, command_name="update-data")
+    record_step("update_data", started_at, update_exit)
     if update_exit != 0:
         print()
         print("update-data failed (exit code {}). Skipping the rest of the refresh.".format(update_exit))
@@ -2367,7 +2383,9 @@ def run_refresh(
 
     print()
     print(f"== Step 2/{total_steps}: tool-a ==")
+    started_at = perf_counter()
     tool_a_exit = run_tool_a(paths)
+    record_step("tool_a", started_at, tool_a_exit)
     if tool_a_exit != 0:
         print()
         print("tool-a failed (exit code {}). Skipping downstream tools.".format(tool_a_exit))
@@ -2380,7 +2398,9 @@ def run_refresh(
     else:
         print()
         print("== Step 3/5: tool-b ==")
+        started_at = perf_counter()
         tool_b_exit = run_tool_b(paths, gold_price=gold_price_override)
+        record_step("tool_b", started_at, tool_b_exit)
         if tool_b_exit != 0:
             print()
             print("tool-b failed (exit code {}). Skipping Tool C and Tool D.".format(tool_b_exit))
@@ -2388,7 +2408,9 @@ def run_refresh(
             return tool_b_exit
         print()
         print("== Step 4/5: tool-c ==")
+        started_at = perf_counter()
         tool_c_exit = run_tool_c(paths)
+        record_step("tool_c", started_at, tool_c_exit)
         if tool_c_exit != 0:
             print()
             print("tool-c failed (exit code {}). Skipping Tool D.".format(tool_c_exit))
@@ -2396,12 +2418,28 @@ def run_refresh(
             return tool_c_exit
         print()
         print("== Step 5/5: tool-d (spot gold) ==")
+        started_at = perf_counter()
         tool_d_exit = run_tool_d(paths, gold_price=None)
+        record_step("tool_d", started_at, tool_d_exit)
         if tool_d_exit != 0:
             print()
             print("tool-d failed (exit code {}).".format(tool_d_exit))
             run_status(paths)
             return tool_d_exit
+
+        loaded_config = load_app_config(paths)
+        model_state = write_current_model_state_manifest(
+            paths=paths,
+            config_hash=loaded_config.combined_hash,
+            parent_refresh_id=None,
+            stage_timings=stage_timings,
+        )
+        print()
+        print(
+            "Model state manifest published: "
+            f"{paths.latest_model_state_manifest_path.relative_to(paths.repo_root).as_posix()} "
+            f"({str(model_state.get('state')).upper()})"
+        )
 
     print()
     print("== Refresh complete. Operational status: ==")
@@ -2431,6 +2469,8 @@ def _render_status_summary(paths: ProjectPaths) -> str:
     lines: list[str] = []
     lines.append("Golden Vector - operational status")
     lines.append("=" * 60)
+    lines.extend(summarize_model_state_manifest(load_current_model_state_manifest(paths)))
+    lines.append("")
 
     # Foundation manifest
     manifest_path = paths.latest_foundation_manifest_path
@@ -2579,29 +2619,31 @@ def _render_status_summary(paths: ProjectPaths) -> str:
             lines.append(f"Tool D latest output: ERROR reading parquet ({exc}).")
 
     # Refresh-id alignment
-    alignment_msg = "Refresh alignment:    OK"
+    alignment_messages: list[str] = []
     if manifest_run_id:
         if tool_a_run_ids and manifest_run_id not in tool_a_run_ids:
-            alignment_msg = (
-                f"Refresh alignment:    MISMATCH  "
-                f"(manifest={manifest_run_id}, Tool A={sorted(tool_a_run_ids)[0]})"
+            alignment_messages.append(
+                f"Tool A={', '.join(sorted(tool_a_run_ids))}"
             )
-        elif tool_b_run_ids and manifest_run_id not in tool_b_run_ids:
-            alignment_msg = (
-                f"Refresh alignment:    MISMATCH  "
-                f"(manifest={manifest_run_id}, Tool B={sorted(tool_b_run_ids)[0]})"
+        if tool_b_run_ids and manifest_run_id not in tool_b_run_ids:
+            alignment_messages.append(
+                f"Tool B={', '.join(sorted(tool_b_run_ids))}"
             )
-        elif tool_c_run_ids and manifest_run_id not in tool_c_run_ids:
-            alignment_msg = (
-                f"Refresh alignment:    MISMATCH  "
-                f"(manifest={manifest_run_id}, Tool C={sorted(tool_c_run_ids)[0]})"
+        if tool_c_run_ids and manifest_run_id not in tool_c_run_ids:
+            alignment_messages.append(
+                f"Tool C={', '.join(sorted(tool_c_run_ids))}"
             )
-        elif tool_d_run_ids and manifest_run_id not in tool_d_run_ids:
-            alignment_msg = (
-                f"Refresh alignment:    MISMATCH  "
-                f"(manifest={manifest_run_id}, Tool D={sorted(tool_d_run_ids)[0]})"
+        if tool_d_run_ids and manifest_run_id not in tool_d_run_ids:
+            alignment_messages.append(
+                f"Tool D={', '.join(sorted(tool_d_run_ids))}"
             )
-    lines.append(alignment_msg)
+    if alignment_messages:
+        lines.append(
+            "Refresh alignment:    MISMATCH  "
+            f"(manifest={manifest_run_id}; {'; '.join(alignment_messages)})"
+        )
+    else:
+        lines.append("Refresh alignment:    OK")
 
     # Manual data coverage
     lines.append("")
