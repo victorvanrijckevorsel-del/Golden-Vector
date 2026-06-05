@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -36,6 +37,12 @@ def optional_sha256_file(path: Path | None) -> str | None:
         return sha256_file(path)
     except OSError:
         return None
+
+
+def safe_file_fragment(value: object) -> str:
+    """Return a filesystem-safe fragment for run ids and snapshot stamps."""
+
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("._") or "unknown"
 
 
 def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Path:

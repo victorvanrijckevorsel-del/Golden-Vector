@@ -289,3 +289,21 @@ Checks:
 - `python -m pytest -q` -> 718 passed.
 - `python -m compileall golden_vector` -> passed.
 - `python -m ruff check golden_vector tests` -> not run; `ruff` is not installed in the active Python environment.
+
+### I3 artifact-contract commit
+
+Built:
+
+- Updated the merged remediation plan with Claude's I3 clarifications: I3 option artifacts reuse the M1 `source_run_id` immutable artifact mechanism, build inside `run_refresh` before manifest publish, share a non-serve builder, keep sizing request-time on persisted candidates, and test parity with identical chains/risk-free-rate inputs including GDX/GDXJ proxy coverage.
+- Added one shared option artifact contract in `golden_vector.contracts.option_artifacts` for artifact names, latest alias paths, and run-stamped paths.
+- Added `ProjectPaths.output_options_dir`.
+- Registered I3 option/Finder artifacts in the model-state manifest as optional Parquet artifacts, including the previously missing `option_selected_candidates` artifact needed by request-time sizing.
+- Added a resolver test proving an I3 option artifact resolves by writer-recorded `source_run_id` to the immutable run-stamped file even when the mutable latest alias bytes differ.
+
+Self-review finding fixed:
+
+- The first version of the option run-stamped path helper would have used a raw source run id directly. I moved model-state's safe filename fragment helper into `golden_vector.common.files.safe_file_fragment` and reused it from both model-state and the option artifact contract instead of duplicating filename normalization.
+
+Checks:
+
+- `python -m pytest tests/test_model_state.py` -> 15 passed.

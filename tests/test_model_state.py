@@ -16,6 +16,10 @@ from golden_vector.app.model_state import (
 )
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
+from golden_vector.contracts.option_artifacts import (
+    option_artifact_latest_path,
+    option_artifact_run_stamped_path,
+)
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
@@ -328,6 +332,57 @@ def test_manifest_resolves_run_stamped_artifact_by_source_run_id_not_alias_bytes
     assert payload["artifacts"]["tool_a"]["immutable"] is True
     assert payload["artifacts"]["tool_a"]["path"].startswith("data/output/tool_a/tool_a_latest_")
     assert frame["ticker"].tolist() == ["NEM"]
+
+
+def test_manifest_resolves_i3_option_artifacts_by_source_run_id(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(paths, refresh_run_id="refresh-A")
+    source_run_id = "20260601T000000Z-option-artifacts"
+    artifact_name = "option_selected_candidates"
+    run_stamped_path = option_artifact_run_stamped_path(
+        paths,
+        artifact_name,
+        source_run_id,
+    )
+    alias_path = option_artifact_latest_path(paths, artifact_name)
+    run_stamped_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "ticker": "AEM",
+                "option_side": "put",
+                "horizon_days": 60,
+                "bucket": "near_atm",
+                "liquidity_tier": "tradable",
+                "schema_version": 1,
+                "snapshot_refresh_run_id": "refresh-A",
+                "source_run_id": source_run_id,
+                "parent_refresh_id": "parent-refresh-A",
+            }
+        ]
+    ).to_parquet(run_stamped_path, index=False)
+    alias_frame = pd.read_parquet(run_stamped_path)
+    alias_frame.loc[:, "ticker"] = "ALIAS_ONLY"
+    alias_frame.to_parquet(alias_path, index=False)
+
+    payload = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+        parent_refresh_id="parent-refresh-A",
+    )
+    frame = read_current_model_parquet(
+        paths,
+        artifact_name,
+        fallback_path=alias_path,
+    )
+
+    artifact = payload["artifacts"][artifact_name]
+    assert artifact["immutable"] is True
+    assert artifact["path"].startswith("data/output/options/option_selected_candidates_latest_")
+    assert artifact["source_alias_path"] == "data/output/options/option_selected_candidates_latest.parquet"
+    assert artifact["schema_version"] == "1"
+    assert frame["ticker"].tolist() == ["AEM"]
 
 
 def test_manifest_records_tool_a_structural_metrics_immutable_artifact(tmp_path):

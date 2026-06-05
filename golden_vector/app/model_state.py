@@ -19,11 +19,17 @@ import pandas as pd
 from golden_vector.common.files import atomic_write_bytes as _atomic_write_bytes
 from golden_vector.common.files import atomic_write_text as _atomic_write_text
 from golden_vector.common.files import repo_relative as _repo_relative
+from golden_vector.common.files import safe_file_fragment as _safe_file_fragment
 from golden_vector.common.files import sha256_file as _sha256_file
 from golden_vector.common.strings import clean_string as _common_clean_string
 from golden_vector.common.strings import unique_strings as _common_unique_strings
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import to_jsonable
+from golden_vector.contracts.option_artifacts import (
+    OPTION_ARTIFACT_NAMES,
+    OPTION_ARTIFACT_PREFIXES,
+    option_artifact_latest_path,
+)
 
 MODEL_STATE_MANIFEST_VERSION = 1
 CURRENT_FOUNDATION_UNAVAILABLE_MESSAGE = (
@@ -39,13 +45,7 @@ REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "tool_d",
 )
 
-PLANNED_I3_ARTIFACTS: tuple[str, ...] = (
-    "option_contract_metrics",
-    "option_liquidity_measurements",
-    "option_candidate_slots",
-    "option_trading_overview",
-    "candidate_finder_inputs",
-)
+PLANNED_I3_ARTIFACTS: tuple[str, ...] = OPTION_ARTIFACT_NAMES
 
 
 def write_current_model_state_manifest(
@@ -325,17 +325,24 @@ def _artifact_map(
         ),
     }
     for name in PLANNED_I3_ARTIFACTS:
-        artifacts[name] = {
-            "name": name,
-            "kind": "planned",
-            "planned_phase": "I3",
-            "present": False,
-            "readable": False,
-            "usable": False,
-            "required_for_complete": False,
-            "schema_version": None,
-        }
+        artifacts[name] = _optional_i3_parquet_artifact(paths=paths, name=name)
     return artifacts
+
+
+def _optional_i3_parquet_artifact(
+    *,
+    paths: ProjectPaths,
+    name: str,
+) -> dict[str, Any]:
+    artifact = _parquet_artifact(
+        paths=paths,
+        name=name,
+        path=option_artifact_latest_path(paths, name),
+        required_for_complete=False,
+    )
+    if not artifact["present"]:
+        artifact["planned_phase"] = "I3"
+    return artifact
 
 
 def _foundation_artifact(
@@ -780,6 +787,8 @@ def _tool_latest_directory_and_prefix(paths: ProjectPaths, name: str) -> tuple[P
         return paths.output_tool_c_dir, "tool_c"
     if name in {"tool_d", "tool_d_spot"}:
         return paths.output_tool_d_dir, "tool_d"
+    if name in OPTION_ARTIFACT_PREFIXES:
+        return paths.output_options_dir, OPTION_ARTIFACT_PREFIXES[name]
     raise ValueError(f"Unsupported model artifact for immutable lookup: {name}")
 
 
@@ -807,10 +816,6 @@ def _refresh_file_metadata(artifact: dict[str, Any], path: Path) -> None:
             "usable": True,
         }
     )
-
-
-def _safe_file_fragment(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._") or "unknown"
 
 
 def _mtime_iso(path: Path) -> str:

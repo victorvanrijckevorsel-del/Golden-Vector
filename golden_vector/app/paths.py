@@ -74,6 +74,7 @@ class ProjectPaths:
             self.output_tool_b_dir,
             self.output_tool_c_dir,
             self.output_tool_d_dir,
+            self.output_options_dir,
             self.output_combined_dir,
             self.output_hedge_readiness_dir,
             self.manual_holdings_dir,
@@ -248,6 +249,10 @@ class ProjectPaths:
     @property
     def output_tool_d_dir(self) -> Path:
         return self.output_dir / "tool_d"
+
+    @property
+    def output_options_dir(self) -> Path:
+        return self.output_dir / "options"
 
     @property
     def latest_tool_d_snapshot_parquet_path(self) -> Path:
