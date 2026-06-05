@@ -183,8 +183,12 @@ Checks:
 Finding fixed:
 
 - Foundation/options immutable JSON copies were initially stamped with their source refresh ids only. That was safe from mutable aliases, but less clear than stamping them with the parent refresh id when a full model refresh publishes. Updated the manifest builder so a refresh-published model state snapshots foundation/options JSON under the same parent-refresh stamp as the atomic model build.
+- Standalone Tool C and Tool D still read mutable Tool A/B latest aliases as upstream inputs. Full `refresh` must use the just-produced aliases before the new manifest is published, but standalone runs after a failed refresh should resolve through the current manifest. Added an internal input switch: standalone uses model-state artifacts; full refresh uses the just-produced aliases.
 
 Checks:
 
 - `python -m pytest tests/test_model_state.py tests/test_cli_refresh_and_status.py tests/test_option_refresh.py tests/test_cli_tool_d.py tests/test_candidate_finder_data.py tests/test_option_trading_data.py tests/test_workspace_app.py -q` -> 123 passed.
 - `python -m compileall golden_vector/app/model_state.py` -> passed.
+- `python -m pytest tests/test_cli_refresh_and_status.py tests/test_cli_tool_c.py tests/test_cli_tool_d.py tests/test_tool_c.py tests/test_tool_d.py -q` -> 27 passed.
+- `python -m compileall golden_vector/cli.py tests/test_cli_refresh_and_status.py` -> passed.
+- `rg` check for direct `pd.read_parquet(paths.latest_tool_*_snapshot_parquet_path)` in CLI/serve -> no matches.

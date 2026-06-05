@@ -1027,7 +1027,11 @@ def run_tool_a(paths: ProjectPaths) -> int:
         return 1
 
 
-def run_tool_c(paths: ProjectPaths) -> int:
+def run_tool_c(
+    paths: ProjectPaths,
+    *,
+    _use_model_state_inputs: bool = True,
+) -> int:
     run_context: RunContext | None = None
 
     try:
@@ -1074,11 +1078,14 @@ def run_tool_c(paths: ProjectPaths) -> int:
         )
         _capture_foundation_for_replay_manifest(run_context, foundation_snapshot)
 
-        if not paths.latest_tool_a_snapshot_parquet_path.exists():
-            raise FileNotFoundError(
-                "No Tool A latest output exists yet. Run `python main.py tool-a` first."
-            )
-        tool_a_latest = pd.read_parquet(paths.latest_tool_a_snapshot_parquet_path)
+        tool_a_latest_path = _tool_input_path(
+            paths=paths,
+            artifact_name="tool_a",
+            fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+            use_model_state=_use_model_state_inputs,
+            missing_message="No Tool A current output exists yet. Run `python main.py tool-a` first.",
+        )
+        tool_a_latest = pd.read_parquet(tool_a_latest_path)
         benchmark_histories = _load_cached_benchmark_histories(
             paths=paths,
             app_config=loaded_config.app,
@@ -1097,6 +1104,7 @@ def run_tool_c(paths: ProjectPaths) -> int:
             paths=paths,
             foundation_snapshot=foundation_snapshot,
             app_config=loaded_config.app,
+            tool_a_latest_path=tool_a_latest_path,
         )
         persist_tool_c_outputs(
             paths=paths,
@@ -1185,7 +1193,12 @@ def run_tool_c(paths: ProjectPaths) -> int:
         return 1
 
 
-def run_tool_d(paths: ProjectPaths, *, gold_price: float | None) -> int:
+def run_tool_d(
+    paths: ProjectPaths,
+    *,
+    gold_price: float | None,
+    _use_model_state_inputs: bool = True,
+) -> int:
     run_context: RunContext | None = None
 
     try:
@@ -1244,11 +1257,14 @@ def run_tool_d(paths: ProjectPaths, *, gold_price: float | None) -> int:
         if resolved_gold_price <= 0:
             raise ValueError("gold price must be positive")
 
-        if not paths.latest_tool_b_snapshot_parquet_path.exists():
-            raise FileNotFoundError(
-                "No Tool B latest output exists yet. Run `python main.py tool-b` first."
-            )
-        tool_b_latest = pd.read_parquet(paths.latest_tool_b_snapshot_parquet_path)
+        tool_b_latest_path = _tool_input_path(
+            paths=paths,
+            artifact_name="tool_b",
+            fallback_path=paths.latest_tool_b_snapshot_parquet_path,
+            use_model_state=_use_model_state_inputs,
+            missing_message="No Tool B current output exists yet. Run `python main.py tool-b` first.",
+        )
+        tool_b_latest = pd.read_parquet(tool_b_latest_path)
         manual_data = load_manual_screening_data(
             paths,
             tickers=sorted(
@@ -1279,6 +1295,7 @@ def run_tool_d(paths: ProjectPaths, *, gold_price: float | None) -> int:
             source_paths=_tool_d_source_paths(
                 paths=paths,
                 foundation_snapshot=foundation_snapshot,
+                tool_b_latest_path=tool_b_latest_path,
             ),
             provenance_metadata={
                 "gold_price_used": resolved_gold_price,
@@ -2204,9 +2221,10 @@ def _tool_c_source_paths(
     paths: ProjectPaths,
     foundation_snapshot: LatestFoundationSnapshot,
     app_config: object,
+    tool_a_latest_path: Path,
 ) -> dict[str, Path]:
     source_paths: dict[str, Path] = {
-        "tool_a_latest": paths.latest_tool_a_snapshot_parquet_path,
+        "tool_a_latest": tool_a_latest_path,
     }
     try:
         manifest = json.loads(foundation_snapshot.manifest_path.read_text(encoding="utf-8"))
@@ -2235,9 +2253,10 @@ def _tool_d_source_paths(
     *,
     paths: ProjectPaths,
     foundation_snapshot: LatestFoundationSnapshot,
+    tool_b_latest_path: Path,
 ) -> dict[str, Path]:
     source_paths: dict[str, Path] = {
-        "tool_b_latest": paths.latest_tool_b_snapshot_parquet_path,
+        "tool_b_latest": tool_b_latest_path,
         "manual_screening_store": paths.manual_screening_store_path,
     }
     try:
@@ -2348,6 +2367,27 @@ def _combine_statuses(*statuses: str | None) -> str:
     return "PASS"
 
 
+def _tool_input_path(
+    *,
+    paths: ProjectPaths,
+    artifact_name: str,
+    fallback_path: Path,
+    use_model_state: bool,
+    missing_message: str,
+) -> Path:
+    if use_model_state:
+        resolved = resolve_current_model_artifact_path(
+            paths,
+            artifact_name,
+            fallback_path=fallback_path,
+        )
+    else:
+        resolved = fallback_path if fallback_path.exists() else None
+    if resolved is None:
+        raise FileNotFoundError(missing_message)
+    return resolved
+
+
 # -------------------------- operational helpers (refresh + status) --------------------------
 
 
@@ -2435,7 +2475,7 @@ def run_refresh(
         print()
         print("== Step 4/5: tool-c ==")
         started_at = perf_counter()
-        tool_c_exit = run_tool_c(paths)
+        tool_c_exit = run_tool_c(paths, _use_model_state_inputs=False)
         record_step("tool_c", started_at, tool_c_exit)
         if tool_c_exit != 0:
             print()
@@ -2448,7 +2488,11 @@ def run_refresh(
         print()
         print("== Step 5/5: tool-d (spot gold) ==")
         started_at = perf_counter()
-        tool_d_exit = run_tool_d(paths, gold_price=None)
+        tool_d_exit = run_tool_d(
+            paths,
+            gold_price=None,
+            _use_model_state_inputs=False,
+        )
         record_step("tool_d", started_at, tool_d_exit)
         if tool_d_exit != 0:
             print()

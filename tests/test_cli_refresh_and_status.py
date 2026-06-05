@@ -323,11 +323,11 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
         call_order.append(f"tool-b@{gold_price}")
         return 0
 
-    def fake_tool_c(_paths):
+    def fake_tool_c(_paths, **_kwargs):
         call_order.append("tool-c")
         return 0
 
-    def fake_tool_d(_paths, *, gold_price):
+    def fake_tool_d(_paths, *, gold_price, **_kwargs):
         call_order.append(f"tool-d@{gold_price}")
         return 0
 
@@ -394,7 +394,7 @@ def test_refresh_fault_after_tool_b_keeps_previous_manifest_and_readers_intact(
         _write_tool_b(_paths, refresh_run_id="refresh-new", rank=99)
         return 0
 
-    def fake_tool_c(_paths):
+    def fake_tool_c(_paths, **_kwargs):
         raise AssertionError("Tool C must not run after injected Tool B fault.")
 
     monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
