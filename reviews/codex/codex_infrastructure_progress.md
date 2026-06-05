@@ -442,3 +442,17 @@ Checks:
 - `python -m pytest tests/test_cli_refresh_and_status.py tests/test_option_trading_routes.py tests/test_candidate_finder_data.py tests/test_option_trading_data.py tests/test_option_artifact_persistence.py tests/test_model_state.py tests/test_common_helpers.py -q` -> 94 passed.
 - `python -m pytest -q` -> 731 passed.
 - `python -m ruff check ...` -> not run; `ruff` is not installed in the active Python environment.
+
+### I3 gate approval carry-forward
+
+Timing:
+
+- Measured `/option-trading` WSGI cold app-cache route timing on the same controlled cached-options fixture because this checkout does not yet have a real local `data/status/latest_model_state.json` from a full refresh.
+- Pre-reader-flip commit `1148425`: samples `457.34, 276.59, 283.39, 295.43, 344.57, 288.44, 294.32` ms; median `294.32` ms.
+- Current HEAD after I3: samples `66.70, 41.36, 40.95, 46.12, 38.86, 40.64, 52.20` ms; median `41.36` ms.
+- Fixture improvement: about `7.1x` faster by median. Production 60-name timing still needs to be measured after Emanuel runs the full local refresh and publishes a real current model-state manifest.
+
+Carry-forward into I4/I5 per I3 gate approval:
+
+- Consolidate the four alignment/freshness copies by consuming the model-state manifest's `_alignment` output instead of recomputing freshness separately in CLI status, Candidate Finder, Option Trading, and UI banners.
+- Carry Tool D spot/scenario and empty-option/core-option-artifact fault tests into the I4/I5 test plan.

@@ -393,18 +393,25 @@ Work:
 
 1. Move Tool C/D hard-coded analytic thresholds and rank directions into config.
 2. Report both Tool D spot latest and arbitrary scenario Tool D latest in status.
-3. Extract duplicated freshness/alignment helpers from CLI and Candidate Finder into one shared module.
+3. Consolidate the duplicated freshness/alignment logic by consuming the model-state manifest's `_alignment` output instead of recomputing the same answer in CLI status, Candidate Finder, Option Trading, and UI banners.
+   - Treat this as a behavior reconciliation task first: compare all four current copies, decide the intended messages/status precedence, then route readers through the manifest result.
+   - Do not add a fifth alignment helper. If a tiny formatter is needed, it should format the manifest alignment result rather than recomputing freshness.
 4. Extract remaining duplicated generic helpers when low-risk:
    - optional numeric coercion
    - optional Parquet read wrappers
    - ticker normalization
    - UTC timestamp formatting
-5. Keep model functions pure and IO-free.
+5. Carry forward the I3 gate review fault-test gaps:
+   - Tool D spot/scenario artifact fault coverage around the manifest-selected Finder input.
+   - Empty-option/core-option-artifact failure coverage where a build has no usable option artifacts but must not report a healthy current state.
+6. Keep model functions pure and IO-free.
 
 Acceptance:
 
 - Tool C/D parameters follow the same centralized-config rule as Tool A/B.
 - CLI and UI use the same alignment logic.
+- Alignment/freshness consumers read one manifest-derived result instead of keeping separate local reconciliation copies.
+- Tool D spot/scenario and empty-option fault paths are covered by regression tests.
 - No remaining new work depends on mutable latest aliases as the current-state authority.
 - No remaining new work introduces local copies of helpers already available in `golden_vector/common/`.
 
