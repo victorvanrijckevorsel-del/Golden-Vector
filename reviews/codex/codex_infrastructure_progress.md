@@ -416,3 +416,29 @@ Checks:
 - `python -m compileall golden_vector` -> passed.
 - `python -m pytest -q` -> 725 passed.
 - `python -m ruff check golden_vector/serve/option_trading_data.py golden_vector/hedge/option_artifact_frames.py tests/test_option_trading_data.py tests/test_candidate_finder_data.py` -> not run; `ruff` is not installed in the active Python environment.
+
+### I3 deep self-review and Claude review merge
+
+Reviewed:
+
+- Claude's deep I3 review at `reviews/codex/claude_review_i3_deep.md`.
+- The full I3 data path: cached options snapshots/features -> non-serve artifact builder -> persisted option artifacts -> current model-state manifest -> Option Trading and Candidate Finder readers.
+- The shared infrastructure added around I3: immutable run-id artifact resolution, Parquet persistence, strict/optional Parquet readers, ticker normalization, and model-state completeness/alignment.
+
+Findings fixed:
+
+- Option and tool Parquet writes previously wrote directly to target files. Added `atomic_write_file(...)` and `write_parquet_atomic(...)`, then routed the shared persistence helper, options snapshots, options feature rows, and benchmark snapshot writes through atomic temp-file replacement.
+- Core option artifacts were not required for `latest_model_state.json` to report `state: complete`. The manifest now requires `option_candidate_slots`, `option_trading_overview`, and `candidate_finder_inputs`; missing or zero-row required Parquet artifacts make the state incomplete.
+- Model-state alignment did not compare required option artifacts with the options manifest refresh id. It now records `option_artifact_refresh_run_ids` and warns when core option artifacts reference a different options refresh.
+- Build-time option artifact inputs swallowed corrupt chain snapshots. Manifest-listed chains now use strict Parquet reads and verify any recorded options-manifest sha256 before the builder runs.
+- Read-time Option Trading artifact loading swallowed corrupt or tampered current artifacts. The reader now verifies the manifest-recorded sha256 and uses strict Parquet reads; failures surface as a visible option-artifact error instead of an empty table.
+- Candidate Finder option artifact schema was open-ended. It is now pinned to the option fields Candidate Finder uses plus the persisted put/call usability booleans.
+- Ticker normalization in the new option artifact path now uses shared `normalize_ticker(...)` / `normalize_ticker_series(...)` helpers.
+
+Checks:
+
+- `python -m compileall golden_vector` -> passed.
+- `python -m pytest tests/test_common_helpers.py tests/test_model_state.py tests/test_option_artifact_persistence.py tests/test_option_trading_data.py -q` -> 49 passed.
+- `python -m pytest tests/test_cli_refresh_and_status.py tests/test_option_trading_routes.py tests/test_candidate_finder_data.py tests/test_option_trading_data.py tests/test_option_artifact_persistence.py tests/test_model_state.py tests/test_common_helpers.py -q` -> 94 passed.
+- `python -m pytest -q` -> 731 passed.
+- `python -m ruff check ...` -> not run; `ruff` is not installed in the active Python environment.

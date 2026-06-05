@@ -23,6 +23,19 @@ def clean_string(value: object) -> str | None:
     return text
 
 
+def normalize_ticker(value: object) -> str | None:
+    """Return an uppercase ticker symbol, or None for missing/blank values."""
+
+    text = clean_string(value)
+    return text.upper() if text else None
+
+
+def normalize_ticker_series(series: pd.Series) -> pd.Series:
+    """Normalize a pandas Series of ticker symbols to uppercase nullable strings."""
+
+    return series.map(normalize_ticker)
+
+
 def unique_strings(frame: pd.DataFrame, column: str) -> list[str]:
     """Return sorted unique non-empty, non-NaN strings from a DataFrame column."""
 

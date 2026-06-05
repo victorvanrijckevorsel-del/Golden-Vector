@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
 
 from golden_vector.common.files import optional_sha256_file as _file_sha256
-from golden_vector.common.parquet import read_optional_parquet
+from golden_vector.common.files import sha256_file
+from golden_vector.common.parquet import read_required_parquet
+from golden_vector.common.strings import normalize_ticker
 from golden_vector.common.strings import unique_strings as _common_unique_strings
 from golden_vector.app.model_state import (
+    load_current_model_state_manifest,
     read_current_model_json,
     read_current_model_parquet,
     resolve_current_model_artifact_path,
@@ -84,7 +88,7 @@ def build_option_trading_detail_data(
     app_config: AppConfig,
     sizing_request: OptionSizingRequest | None = None,
 ) -> OptionTradingDetailData:
-    normalized = ticker.strip().upper()
+    normalized = normalize_ticker(ticker) or ""
     overview_row = next(
         (row for row in data.overview.rows if row.ticker == normalized),
         None,
@@ -146,9 +150,10 @@ def _with_proxy_fallbacks(
     side = request.side
     horizon_days = request.horizon_days
     benchmark_tickers = tuple(
-        str(ticker).strip().upper()
+        normalized
         for ticker in app_config.hedge_readiness.benchmark_tickers
-        if str(ticker).strip()
+        for normalized in (normalize_ticker(ticker),)
+        if normalized
     )
     if not _benchmark_liquidity_supports_proxy(data.overview.liquidity_measurements):
         note = (
@@ -334,7 +339,6 @@ def load_option_trading_data(
 ) -> OptionTradingData:
     """Load latest option-trading rows and reuse them until provenance changes."""
 
-    artifact_frames = _read_option_artifact_frames(paths)
     tool_a = read_current_model_parquet(
         paths,
         "tool_a",
@@ -345,6 +349,14 @@ def load_option_trading_data(
         "tool_b",
         fallback_path=paths.latest_tool_b_snapshot_parquet_path,
     )
+    try:
+        artifact_frames = _read_option_artifact_frames(paths)
+    except (OSError, ValueError) as exc:
+        return _empty_data(
+            tool_a=tool_a,
+            tool_b=tool_b,
+            reason=f"Option artifact snapshot could not be read: {exc}",
+        )
     if artifact_frames is None:
         return _empty_data(
             tool_a=tool_a,
@@ -443,13 +455,37 @@ def _empty_data(
 
 
 def _read_option_artifact_frames(paths: ProjectPaths) -> dict[str, pd.DataFrame] | None:
+    model_state = load_current_model_state_manifest(paths)
     frames: dict[str, pd.DataFrame] = {}
     for name in OPTION_ARTIFACT_NAMES:
         path = resolve_current_model_artifact_path(paths, name)
         if path is None:
             return None
-        frames[name] = read_optional_parquet(path)
+        _verify_artifact_sha256(model_state=model_state, name=name, path=path)
+        frames[name] = read_required_parquet(path, label=f"Option artifact {name}")
     return frames
+
+
+def _verify_artifact_sha256(
+    *,
+    model_state: dict[str, Any] | None,
+    name: str,
+    path: Path,
+) -> None:
+    artifacts = model_state.get("artifacts") if isinstance(model_state, dict) else None
+    artifact = artifacts.get(name) if isinstance(artifacts, dict) else None
+    if not isinstance(artifact, dict):
+        return
+    expected = str(artifact.get("sha256") or "").strip()
+    if not expected:
+        return
+    actual = sha256_file(path)
+    if actual != expected:
+        display_path = str(artifact.get("path") or path)
+        raise ValueError(
+            f"Option artifact {name} sha256 mismatch at {display_path}: "
+            f"expected {expected}, got {actual}."
+        )
 
 
 def _artifact_context_float(frame: pd.DataFrame, key: str) -> float:

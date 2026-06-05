@@ -12,6 +12,7 @@ import pandas as pd
 
 from golden_vector.common.files import repo_relative as _repo_relative
 from golden_vector.common.files import sha256_file as _sha256_file
+from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext, to_jsonable
 
@@ -63,8 +64,7 @@ def persist_options_snapshot(
         message=message,
     )
     snapshot_path = _options_snapshot_dir(run_context) / f"{safe_options_file_name(ticker)}.parquet"
-    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-    snapshot.to_parquet(snapshot_path, index=False)
+    write_parquet_atomic(snapshot, snapshot_path, index=False)
     run_context.record_artifact(snapshot_path)
     return OptionsSnapshotRecord(
         ticker=ticker,

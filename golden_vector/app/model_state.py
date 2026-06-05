@@ -28,6 +28,7 @@ from golden_vector.app.run_context import to_jsonable
 from golden_vector.contracts.option_artifacts import (
     OPTION_ARTIFACT_NAMES,
     OPTION_ARTIFACT_PREFIXES,
+    REQUIRED_OPTION_ARTIFACT_NAMES,
     option_artifact_latest_path,
 )
 
@@ -43,6 +44,7 @@ REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "tool_b",
     "tool_c",
     "tool_d",
+    *REQUIRED_OPTION_ARTIFACT_NAMES,
 )
 
 PLANNED_I3_ARTIFACTS: tuple[str, ...] = OPTION_ARTIFACT_NAMES
@@ -338,7 +340,7 @@ def _optional_i3_parquet_artifact(
         paths=paths,
         name=name,
         path=option_artifact_latest_path(paths, name),
-        required_for_complete=False,
+        required_for_complete=name in REQUIRED_OPTION_ARTIFACT_NAMES,
     )
     if not artifact["present"]:
         artifact["planned_phase"] = "I3"
@@ -618,6 +620,22 @@ def _alignment(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
             warnings.append(
                 f"{name} references {', '.join(run_ids)} while foundation is {foundation_id}."
             )
+    for name in REQUIRED_OPTION_ARTIFACT_NAMES:
+        artifact = artifacts[name]
+        if not artifact.get("present"):
+            continue
+        run_ids = tuple(artifact.get("snapshot_refresh_run_ids") or ())
+        if not run_ids:
+            warnings.append(f"{name} does not carry snapshot_refresh_run_id.")
+            continue
+        if len(run_ids) > 1:
+            warnings.append(
+                f"{name} carries multiple snapshot_refresh_run_id values: {', '.join(run_ids)}."
+            )
+        if options_id and options_id not in run_ids:
+            warnings.append(
+                f"{name} references {', '.join(run_ids)} while options is {options_id}."
+            )
     status = "OK" if not warnings else "WARN"
     return {
         "status": status,
@@ -626,6 +644,10 @@ def _alignment(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "tool_refresh_run_ids": {
             name: artifacts[name].get("snapshot_refresh_run_ids") or []
             for name in ("tool_a", "tool_b", "tool_c", "tool_d")
+        },
+        "option_artifact_refresh_run_ids": {
+            name: artifacts[name].get("snapshot_refresh_run_ids") or []
+            for name in REQUIRED_OPTION_ARTIFACT_NAMES
         },
         "warnings": warnings,
     }
@@ -643,12 +665,14 @@ def _artifact_health_warnings(artifacts: dict[str, dict[str, Any]]) -> list[str]
         warnings.append("Options phase status is missing.")
     if options_status and options_status == "FAIL":
         warnings.append("Options phase status is FAIL.")
-    for name in ("tool_a", "tool_b", "tool_c", "tool_d"):
-        artifact = artifacts[name]
-        if artifact.get("readable") and int(artifact.get("row_count") or 0) == 0:
-            warnings.append(f"{name} has zero rows.")
     for name in REQUIRED_ARTIFACTS:
         artifact = artifacts[name]
+        if (
+            artifact.get("kind") == "parquet"
+            and artifact.get("readable")
+            and int(artifact.get("row_count") or 0) == 0
+        ):
+            warnings.append(f"{name} has zero rows.")
         if artifact.get("usable") and not artifact.get("immutable"):
             warnings.append(f"Required artifact is not immutable: {name}.")
     return warnings

@@ -3,7 +3,11 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from golden_vector.common.files import atomic_write_bytes, atomic_write_text
+from golden_vector.common.files import (
+    atomic_write_bytes,
+    atomic_write_file,
+    atomic_write_text,
+)
 from golden_vector.common.eligibility import is_score_eligible, score_eligible_mask
 from golden_vector.common.status import combine_statuses
 from golden_vector.common.strings import clean_string, unique_strings
@@ -54,4 +58,19 @@ def test_atomic_write_helpers_replace_existing_files(tmp_path):
 
     assert text_path.read_text(encoding="utf-8") == "new"
     assert bytes_path.read_bytes() == b"newer"
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_atomic_write_file_keeps_existing_file_when_writer_fails(tmp_path):
+    target = tmp_path / "payload.parquet"
+    target.write_text("old", encoding="utf-8")
+
+    def failing_writer(path):
+        path.write_text("partial", encoding="utf-8")
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        atomic_write_file(target, failing_writer)
+
+    assert target.read_text(encoding="utf-8") == "old"
     assert not list(tmp_path.glob("*.tmp"))

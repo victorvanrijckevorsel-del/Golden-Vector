@@ -13,6 +13,7 @@ import pandas as pd
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.replay_manifest import update_manifest_with_options
 from golden_vector.app.run_context import RunContext
+from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.features.options import (
     compute_options_features,
@@ -329,7 +330,7 @@ def _append_feature_rows(
             if run_id and "run_id" in existing.columns:
                 existing = existing[existing["run_id"].astype(str) != run_id]
             frame = pd.concat([existing, frame], ignore_index=True)
-        frame.to_parquet(path, index=False)
+        write_parquet_atomic(frame, path, index=False)
         run_context.record_artifact(path)
         written_paths.append(path)
     return written_paths
@@ -365,8 +366,8 @@ def _fetch_and_persist_benchmarks(
     for ticker, frame in sorted(histories.items()):
         run_path = snapshot_dir / f"{safe_options_file_name(ticker)}.parquet"
         latest_path = paths.benchmarks_dir / f"{safe_options_file_name(ticker)}.parquet"
-        frame.to_parquet(run_path, index=False)
-        frame.to_parquet(latest_path, index=False)
+        write_parquet_atomic(frame, run_path, index=False)
+        write_parquet_atomic(frame, latest_path, index=False)
         run_context.record_artifact(run_path)
         run_context.record_artifact(latest_path)
         written_paths.append(run_path)

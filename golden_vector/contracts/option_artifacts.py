@@ -18,6 +18,12 @@ OPTION_ARTIFACT_NAMES: tuple[str, ...] = (
     "candidate_finder_inputs",
 )
 
+REQUIRED_OPTION_ARTIFACT_NAMES: tuple[str, ...] = (
+    "option_candidate_slots",
+    "option_trading_overview",
+    "candidate_finder_inputs",
+)
+
 OPTION_ARTIFACT_PREFIXES: dict[str, str] = {
     name: name for name in OPTION_ARTIFACT_NAMES
 }

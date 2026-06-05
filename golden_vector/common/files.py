@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -65,6 +66,19 @@ def atomic_write_bytes(path: Path, data: bytes) -> Path:
     tmp_path = _unique_tmp_path(path)
     try:
         tmp_path.write_bytes(data)
+        tmp_path.replace(path)
+    finally:
+        _cleanup_tmp_path(tmp_path)
+    return path
+
+
+def atomic_write_file(path: Path, writer: Callable[[Path], None]) -> Path:
+    """Write a file with a caller-supplied writer, then atomically replace target."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = _unique_tmp_path(path)
+    try:
+        writer(tmp_path)
         tmp_path.replace(path)
     finally:
         _cleanup_tmp_path(tmp_path)

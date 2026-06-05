@@ -252,6 +252,36 @@ def test_load_option_trading_data_handles_malformed_manifest(tmp_path):
     assert data.cache_key is None
 
 
+def test_load_option_trading_data_surfaces_corrupt_manifest_artifact(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+    payload = load_current_model_state_manifest(paths)
+    assert payload is not None
+    artifact_path = paths.resolve_repo_relative(
+        payload["artifacts"]["option_candidate_slots"]["path"]
+    )
+    pd.DataFrame(
+        [
+            {
+                "ticker": "BROKEN",
+                "schema_version": 1,
+                "snapshot_refresh_run_id": "options-run",
+                "source_run_id": "tampered",
+            }
+        ]
+    ).to_parquet(artifact_path, index=False)
+
+    data = load_option_trading_data(paths, app_config=app_config)
+
+    assert data.overview.rows == ()
+    assert data.overview.reason is not None
+    assert "sha256 mismatch" in data.overview.reason
+    assert data.cache_key is None
+
+
 def test_load_option_trading_data_flags_missing_risk_free_rate_fallback(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)

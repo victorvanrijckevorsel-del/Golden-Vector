@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 
 import pandas as pd
 
+from golden_vector.common.strings import normalize_ticker_series
 from golden_vector.contracts.option_artifacts import OPTION_ARTIFACT_SCHEMA_VERSION
 from golden_vector.hedge.candidate_puts import (
     CandidateSlotStatus,
@@ -24,6 +25,21 @@ from golden_vector.hedge.option_trading import (
     SideStatus,
 )
 from golden_vector.hedge.options_liquidity import OptionContractMetrics
+
+CANDIDATE_FINDER_OPTION_COLUMNS: tuple[str, ...] = (
+    "ticker",
+    "as_of_date",
+    "run_id",
+    "optionability_tier",
+    "iv_percentile_cross_sectional",
+    "iv_skew_60d",
+    "iv_rv_ratio_60d",
+    "options_fetch_status",
+    "options_fetch_message",
+    "underlying_price",
+    "option_vehicle_type",
+    "options_source_symbol",
+)
 
 
 def build_option_artifact_frames(
@@ -226,7 +242,11 @@ def _candidate_finder_inputs_frame(
         base = options_features.copy()
     if "ticker" not in base.columns:
         base["ticker"] = pd.Series(dtype="object")
-    base["ticker"] = base["ticker"].astype(str).str.upper().str.strip()
+    for column in CANDIDATE_FINDER_OPTION_COLUMNS:
+        if column not in base.columns:
+            base[column] = pd.NA
+    base = base.loc[:, list(CANDIDATE_FINDER_OPTION_COLUMNS)].copy()
+    base["ticker"] = normalize_ticker_series(base["ticker"])
     base["has_usable_put_candidate"] = base["ticker"].map(
         lambda ticker: has_usable_option_slots(put_slots.get(str(ticker), []))
     )

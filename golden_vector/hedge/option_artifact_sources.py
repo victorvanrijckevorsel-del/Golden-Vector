@@ -14,7 +14,9 @@ from golden_vector.app.model_state import (
     read_current_model_parquet,
 )
 from golden_vector.app.paths import ProjectPaths
-from golden_vector.common.parquet import read_optional_parquet
+from golden_vector.common.files import sha256_file
+from golden_vector.common.parquet import read_optional_parquet, read_required_parquet
+from golden_vector.common.strings import normalize_ticker
 from golden_vector.hedge._helpers import as_float
 from golden_vector.ingestion.persist_options import safe_options_file_name
 
@@ -38,6 +40,8 @@ def load_option_artifact_source_inputs(
     """Load all inputs needed by the shared option artifact builder."""
 
     manifest = _read_options_manifest(paths, use_model_state=use_model_state)
+    if manifest is None:
+        return None
     tool_a = _read_tool_frame(
         paths,
         artifact_name="tool_a",
@@ -50,8 +54,6 @@ def load_option_artifact_source_inputs(
         fallback_path=paths.latest_tool_b_snapshot_parquet_path,
         use_model_state=use_model_state,
     )
-    if manifest is None:
-        return None
     risk_free_rate = as_float(manifest.get("risk_free_rate"))
     return OptionArtifactSourceInputs(
         manifest=manifest,
@@ -71,11 +73,22 @@ def load_options_chains(
 ) -> dict[str, pd.DataFrame]:
     chains: dict[str, pd.DataFrame] = {}
     for item in manifest.get("snapshots", []):
-        ticker = str(item.get("ticker", "")).strip().upper()
+        ticker = normalize_ticker(item.get("ticker"))
         if not ticker:
             continue
         snapshot_path = paths.resolve_repo_relative(str(item.get("snapshot_path", "")))
-        chains[ticker] = read_optional_parquet(snapshot_path)
+        expected_sha256 = str(item.get("sha256") or "").strip()
+        if expected_sha256:
+            actual_sha256 = sha256_file(snapshot_path)
+            if actual_sha256 != expected_sha256:
+                raise ValueError(
+                    f"Options chain snapshot for {ticker} has sha256 {actual_sha256}; "
+                    f"expected {expected_sha256}."
+                )
+        chains[ticker] = read_required_parquet(
+            snapshot_path,
+            label=f"Options chain snapshot for {ticker}",
+        )
     return chains
 
 
@@ -87,13 +100,14 @@ def load_options_features(
     rows: list[pd.Series] = []
     refresh_run_id = str(manifest.get("refresh_run_id") or "")
     for item in manifest.get("snapshots", []):
-        ticker = str(item.get("ticker", "")).strip()
+        ticker = normalize_ticker(item.get("ticker"))
         if not ticker:
             continue
         feature_path = paths.options_features_dir / f"{safe_options_file_name(ticker)}.parquet"
-        frame = read_optional_parquet(feature_path)
-        if frame.empty:
-            continue
+        frame = read_required_parquet(
+            feature_path,
+            label=f"Options feature snapshot for {ticker}",
+        )
         if "run_id" in frame.columns and refresh_run_id:
             matching = frame[frame["run_id"].astype(str) == refresh_run_id]
             if not matching.empty:
@@ -104,7 +118,7 @@ def load_options_features(
         return pd.DataFrame()
     result = pd.DataFrame(rows).reset_index(drop=True)
     if "ticker" in result.columns:
-        result["ticker"] = result["ticker"].astype(str).str.upper()
+        result["ticker"] = result["ticker"].map(normalize_ticker)
     return result
 
 

@@ -17,9 +17,12 @@ from golden_vector.app.model_state import (
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.option_artifacts import (
+    OPTION_ARTIFACT_NAMES,
+    REQUIRED_OPTION_ARTIFACT_NAMES,
     option_artifact_latest_path,
     option_artifact_run_stamped_path,
 )
+from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
@@ -55,8 +58,9 @@ def test_model_state_manifest_records_complete_aligned_build(tmp_path):
     assert payload["artifacts"]["tool_a"]["path"].startswith("data/output/tool_a/tool_a_latest_")
     assert payload["artifacts"]["tool_a"]["path"] != "data/output/tool_a/tool_a_latest.parquet"
     assert payload["artifacts"]["tool_a"]["snapshot_refresh_run_ids"] == ["refresh-A"]
-    assert payload["artifacts"]["option_candidate_slots"]["planned_phase"] == "I3"
-    assert payload["artifacts"]["option_candidate_slots"]["required_for_complete"] is False
+    assert payload["artifacts"]["option_candidate_slots"]["required_for_complete"] is True
+    assert payload["artifacts"]["option_candidate_slots"]["immutable"] is True
+    assert payload["artifacts"]["option_candidate_slots"]["row_count"] == 1
     assert payload["stage_timings"]["tool_a"]["duration_seconds"] == 1.25
 
 
@@ -73,6 +77,83 @@ def test_model_state_manifest_warns_when_tool_c_and_tool_d_are_missing(tmp_path)
     assert payload["state"] == "incomplete"
     assert "Required artifact is missing: tool_c." in payload["warnings"]
     assert "Required artifact is missing: tool_d." in payload["warnings"]
+
+
+def test_model_state_manifest_requires_core_option_artifacts(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(
+        paths,
+        refresh_run_id="refresh-A",
+        include_option_artifacts=False,
+    )
+
+    payload = build_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+    )
+
+    assert payload["state"] == "incomplete"
+    assert "Required artifact is missing: option_candidate_slots." in payload["warnings"]
+    assert "Required artifact is missing: option_trading_overview." in payload["warnings"]
+    assert "Required artifact is missing: candidate_finder_inputs." in payload["warnings"]
+
+
+def test_model_state_manifest_rejects_empty_core_option_artifact(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(paths, refresh_run_id="refresh-A")
+    source_run_id = "20260601T000000Z-option-artifacts"
+    empty = pd.DataFrame(
+        {
+            "schema_version": pd.Series(dtype="object"),
+            "snapshot_refresh_run_id": pd.Series(dtype="object"),
+            "source_run_id": pd.Series(dtype="object"),
+        }
+    )
+    empty.attrs["schema_version"] = 1
+    empty.attrs["snapshot_refresh_run_id"] = "refresh-A"
+    empty.attrs["source_run_id"] = source_run_id
+    artifact_name = "option_trading_overview"
+    write_parquet_atomic(
+        empty,
+        option_artifact_run_stamped_path(paths, artifact_name, source_run_id),
+        index=False,
+    )
+    write_parquet_atomic(
+        empty,
+        option_artifact_latest_path(paths, artifact_name),
+        index=False,
+    )
+
+    payload = build_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+    )
+
+    assert payload["state"] == "incomplete"
+    assert "option_trading_overview has zero rows." in payload["warnings"]
+
+
+def test_model_state_manifest_warns_on_stale_core_option_artifact(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(paths, refresh_run_id="refresh-A")
+    _write_i3_option_artifacts(paths, refresh_run_id="older-options-run")
+
+    payload = build_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+    )
+
+    assert payload["state"] == "incomplete"
+    assert (
+        "option_candidate_slots references older-options-run while options is refresh-A."
+        in payload["warnings"]
+    )
+    assert payload["alignment"]["option_artifact_refresh_run_ids"][
+        "option_candidate_slots"
+    ] == ["older-options-run"]
 
 
 def test_current_model_readers_use_manifest_immutable_paths_after_aliases_change(tmp_path):
@@ -523,6 +604,7 @@ def _write_tool_outputs(
     refresh_run_id: str,
     include_tool_c: bool = True,
     include_tool_d: bool = True,
+    include_option_artifacts: bool = True,
 ) -> None:
     tool_a_context = RunContext.start(
         paths=paths,
@@ -615,3 +697,33 @@ def _write_tool_outputs(
                 ]
             ),
         )
+    if include_option_artifacts:
+        _write_i3_option_artifacts(paths, refresh_run_id=refresh_run_id)
+
+
+def _write_i3_option_artifacts(paths: ProjectPaths, *, refresh_run_id: str) -> None:
+    source_run_id = "20260601T000000Z-option-artifacts"
+    for artifact_name in OPTION_ARTIFACT_NAMES:
+        frame = pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "schema_version": 1,
+                    "snapshot_refresh_run_id": refresh_run_id,
+                    "source_run_id": source_run_id,
+                    "parent_refresh_id": "parent-refresh-A",
+                    "risk_free_rate": 0.04,
+                    "risk_free_rate_is_fallback": False,
+                }
+            ]
+        )
+        if artifact_name not in REQUIRED_OPTION_ARTIFACT_NAMES:
+            frame["diagnostic_artifact"] = True
+        run_stamped_path = option_artifact_run_stamped_path(
+            paths,
+            artifact_name,
+            source_run_id,
+        )
+        latest_path = option_artifact_latest_path(paths, artifact_name)
+        write_parquet_atomic(frame, run_stamped_path, index=False)
+        write_parquet_atomic(frame, latest_path, index=False)

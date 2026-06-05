@@ -8,6 +8,7 @@ import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
+from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.contracts.data_models import FetchStatusRecord, QaCheckResult
 
 
@@ -347,9 +348,7 @@ def persist_combined_outputs(
 
 
 def _write_parquet(frame: pd.DataFrame, path: Path) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(path, index=False)
-    return path
+    return write_parquet_atomic(frame, path, index=False)
 
 
 def _write_csv(frame: pd.DataFrame, path: Path) -> Path:

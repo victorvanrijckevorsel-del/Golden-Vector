@@ -45,8 +45,8 @@ def test_option_artifact_frames_preserve_finder_usable_contract():
         contract_metrics=(),
         options_features=pd.DataFrame(
             [
-                {"ticker": "AEM", "run_id": "options-run"},
-                {"ticker": "NEM", "run_id": "options-run"},
+                {"ticker": "AEM", "run_id": "options-run", "unused_noise": 1},
+                {"ticker": "NEM", "run_id": "options-run", "unused_noise": 2},
             ]
         ),
         manifest={"refresh_run_id": "options-run", "as_of_date": "2026-06-01"},
@@ -62,6 +62,7 @@ def test_option_artifact_frames_preserve_finder_usable_contract():
 
     assert bool(finder.loc["AEM", "has_usable_put_candidate"]) is True
     assert bool(finder.loc["NEM", "has_usable_put_candidate"]) is False
+    assert "unused_noise" not in finder.columns
     assert selected["ticker"].tolist() == ["AEM", "NEM"]
     assert set(selected["liquidity_tier"]) == {"tradable", "watch"}
     assert set(frames) == set(OPTION_ARTIFACT_NAMES)
@@ -151,6 +152,45 @@ def test_run_option_artifacts_writes_manifest_addressable_outputs(tmp_path):
     for artifact_name in OPTION_ARTIFACT_NAMES:
         assert option_artifact_latest_path(paths, artifact_name).exists()
         assert payload["artifacts"][artifact_name]["immutable"] is True
+
+
+def test_run_option_artifacts_fails_on_corrupt_manifest_chain_snapshot(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    snapshot_path = paths.runs_dir / "options-run" / "snapshots" / "options" / "AEM.parquet"
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text("not parquet", encoding="utf-8")
+    paths.options_features_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([{"ticker": "AEM", "run_id": "options-run"}]).to_parquet(
+        paths.options_features_dir / "AEM.parquet",
+        index=False,
+    )
+    paths.latest_options_manifest_path.write_text(
+        json.dumps(
+            {
+                "refresh_run_id": "options-run",
+                "as_of_date": "2026-06-01",
+                "risk_free_rate": 0.04,
+                "snapshots": [
+                    {
+                        "ticker": "AEM",
+                        "options_available": True,
+                        "snapshot_path": snapshot_path.relative_to(
+                            paths.repo_root
+                        ).as_posix(),
+                    }
+                ],
+                "summary": {"options_phase_status": "PASS"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = run_option_artifacts(paths, parent_refresh_id="parent-refresh")
+
+    assert exit_code == 1
+    for artifact_name in OPTION_ARTIFACT_NAMES:
+        assert not option_artifact_latest_path(paths, artifact_name).exists()
 
 
 def _candidate(ticker: str, *, liquidity_tier: str) -> OptionCandidate:
