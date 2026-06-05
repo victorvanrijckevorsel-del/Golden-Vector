@@ -61,6 +61,16 @@ Do this automatically at each milestone — no need to ask.
 ## Fix bugs immediately
 When a bug or code smell is identified, fix it now unless there's a concrete reason to defer. "It works for now" is NOT a valid reason to defer.
 
+## Code cleanliness / avoid duplication
+Be ruthless about duplicated code and duplicated logic.
+
+- Before adding any helper or logic block, search the codebase for an existing implementation and reuse it. Common suspects include numeric coercion (`_optional_float`, `_numeric`, `as_float`), file hashing (`_sha256_file`, `_file_sha256`), parquet-read-with-fallback helpers (`read_optional_parquet`), `_unique_strings`, `_repo_relative`, ticker normalization (`.upper().strip()`), atomic temp-file-to-replace writes, status-combining, and run-id/freshness reconciliation.
+- Put genuinely shared, generic utilities in one common location, such as `golden_vector/common/`, instead of re-growing the same helper in each new module.
+- In plans, name the existing shared primitives the new work will reuse, such as `oriented_percentile`, the atomic-write helper, and the alignment function. Never plan a second implementation of something that exists; extend or generalize the existing one.
+- Treat duplicated logic as a correctness problem, not just tidiness. When the same idea, such as "is everything aligned/fresh?" or "is this score-eligible?", is implemented in several places, the copies drift and give different answers for the same data on different screens.
+- If divergent copies exist, reconcile the intended behavior first, then unify. Do not blind-merge helpers that currently disagree.
+- When duplication appears during other work, flag it and consolidate it if the cleanup is low-risk and in scope. Do not add one more copy.
+
 ## Codex role
 You are an implementation agent. You build features, write code, and review code. You work alongside Claude Code.
 
