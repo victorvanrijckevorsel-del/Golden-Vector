@@ -534,3 +534,24 @@ Checks:
 
 - `python -m pytest tests/test_run_pruning.py tests/test_model_state.py tests/test_cli_refresh_and_status.py` -> 33 passed.
 - `python -m compileall golden_vector/app/run_pruning.py golden_vector/cli.py tests/test_run_pruning.py` -> passed.
+
+### I4 gate self-review
+
+Reviewed:
+
+- Phase 4 Yahoo retry/backoff and collection-stat flow into `stage_timings`.
+- Phase 5 schema validation through `read_required_parquet(...)`.
+- Raw foundation provenance added to replay manifests.
+- Retained model-state snapshot publish order.
+- `prune-runs` destructive boundaries, dry-run default, no-manifest no-op, retained-manifest artifact protection, run-id protection, and option artifact coverage.
+
+Gate checks:
+
+- `python -m compileall golden_vector` -> passed.
+- `python main.py prune-runs --keep-model-states 2` -> dry-run no-op with warning because this checkout has no retained model-state manifest yet.
+- `python -m pytest -q` -> 741 passed in 628.95s.
+
+Remaining carry-forward:
+
+- I5 should still consolidate the four alignment/freshness consumers onto the model-state manifest alignment output.
+- I5 should still carry the Tool D spot/scenario and empty-option/core-option-artifact fault tests noted at the I3 gate.
