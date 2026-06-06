@@ -50,7 +50,7 @@ def test_foundation_pipeline_skips_normalization_when_raw_qa_fails(tmp_path, mon
     monkeypatch.setattr("golden_vector.ingestion.foundation.YahooClient", lambda **_: object())
     monkeypatch.setattr(
         "golden_vector.ingestion.foundation.fetch_equity_histories",
-        lambda client, targets: (
+        lambda client, targets, **_: (
             {"NEM": pd.DataFrame([{"ticker": "NEM", "date": "2026-01-30"}])},
             [_fetch_status("equities", "NEM", "NEM")],
         ),
@@ -65,7 +65,7 @@ def test_foundation_pipeline_skips_normalization_when_raw_qa_fails(tmp_path, mon
     )
     monkeypatch.setattr(
         "golden_vector.ingestion.foundation.fetch_market_snapshots",
-        lambda client, targets, source_run_id: (
+        lambda client, targets, source_run_id, **_: (
             pd.DataFrame([{"ticker": "NEM", "snapshot_date": "2026-02-01"}]),
             [_fetch_status("market_snapshots", "NEM", "NEM")],
         ),
@@ -122,15 +122,27 @@ def test_foundation_pipeline_runs_normalization_and_combines_statuses(tmp_path, 
     app_config = load_app_config(ProjectPaths.discover()).app
     run_context = RunContext.start(paths=paths, command="foundation", parameters={}, config_hash="hash")
     registry = _registry()
+    captured_workers: dict[str, int] = {}
+
+    def fake_fetch_equity_histories(client, targets, **kwargs):
+        captured_workers["equities"] = kwargs.get("max_workers")
+        return (
+            {"NEM": pd.DataFrame([{"ticker": "NEM", "date": "2026-01-30"}])},
+            [_fetch_status("equities", "NEM", "NEM")],
+        )
+
+    def fake_fetch_market_snapshots(client, targets, source_run_id, **kwargs):
+        captured_workers["snapshots"] = kwargs.get("max_workers")
+        return (
+            pd.DataFrame([{"ticker": "NEM", "snapshot_date": "2026-02-01"}]),
+            [_fetch_status("market_snapshots", "NEM", "NEM")],
+        )
 
     monkeypatch.setattr("golden_vector.ingestion.foundation.build_foundation_registry", lambda _: registry)
     monkeypatch.setattr("golden_vector.ingestion.foundation.YahooClient", lambda **_: object())
     monkeypatch.setattr(
         "golden_vector.ingestion.foundation.fetch_equity_histories",
-        lambda client, targets: (
-            {"NEM": pd.DataFrame([{"ticker": "NEM", "date": "2026-01-30"}])},
-            [_fetch_status("equities", "NEM", "NEM")],
-        ),
+        fake_fetch_equity_histories,
     )
     monkeypatch.setattr(
         "golden_vector.ingestion.foundation.fetch_fx_histories",
@@ -142,10 +154,7 @@ def test_foundation_pipeline_runs_normalization_and_combines_statuses(tmp_path, 
     )
     monkeypatch.setattr(
         "golden_vector.ingestion.foundation.fetch_market_snapshots",
-        lambda client, targets, source_run_id: (
-            pd.DataFrame([{"ticker": "NEM", "snapshot_date": "2026-02-01"}]),
-            [_fetch_status("market_snapshots", "NEM", "NEM")],
-        ),
+        fake_fetch_market_snapshots,
     )
     monkeypatch.setattr(
         "golden_vector.ingestion.foundation.evaluate_raw_quality",
@@ -218,5 +227,9 @@ def test_foundation_pipeline_runs_normalization_and_combines_statuses(tmp_path, 
     assert result.summary["normalization_overall_status"] == "WARN"
     assert result.summary["normalized_equity_row_count"] == 1
     assert result.summary["normalized_market_snapshot_row_count"] == 1
+    assert captured_workers == {
+        "equities": app_config.market_data.yahoo_max_workers,
+        "snapshots": app_config.market_data.yahoo_max_workers,
+    }
     assert persisted["foundation"] == 1
     assert persisted["normalization"] == 1

@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from random import random as default_random
 from time import sleep as default_sleep
 from typing import TypeVar
 
@@ -26,12 +27,13 @@ class RetryPolicy:
     initial_backoff_seconds: float = 0.5
     backoff_multiplier: float = 2.0
     throttle_seconds: float = 0.0
+    backoff_jitter_seconds: float = 0.0
 
     def __post_init__(self) -> None:
         if self.max_attempts <= 0:
             raise ValueError("max_attempts must be positive")
-        if self.initial_backoff_seconds < 0:
-            raise ValueError("initial_backoff_seconds must be non-negative")
+        if self.initial_backoff_seconds < 0 or self.backoff_jitter_seconds < 0:
+            raise ValueError("backoff timing values must be non-negative")
         if self.backoff_multiplier < 1:
             raise ValueError("backoff_multiplier must be at least 1")
         if self.throttle_seconds < 0:
@@ -46,7 +48,18 @@ def retry_policy_from_config(config: MarketDataConfig) -> RetryPolicy:
         initial_backoff_seconds=config.yahoo_initial_backoff_seconds,
         backoff_multiplier=config.yahoo_backoff_multiplier,
         throttle_seconds=config.yahoo_throttle_seconds,
+        backoff_jitter_seconds=config.yahoo_backoff_jitter_seconds,
     )
+
+
+def bounded_worker_count(*, max_workers: int, item_count: int) -> int:
+    """Return a safe worker count for a bounded parallel collection step."""
+
+    if max_workers <= 0:
+        raise ValueError("max_workers must be positive")
+    if item_count <= 0:
+        return 0
+    return max(1, min(int(max_workers), item_count))
 
 
 def call_with_retries(
@@ -56,6 +69,8 @@ def call_with_retries(
     policy: RetryPolicy | None = None,
     logger: logging.Logger | None = None,
     sleep_func: Callable[[float], None] = default_sleep,
+    random_func: Callable[[], float] = default_random,
+    before_attempt: Callable[[], None] | None = None,
 ) -> T:
     """Run ``func`` with retry/backoff, preserving the original final exception."""
 
@@ -65,6 +80,8 @@ def call_with_retries(
     last_attempt = retry_policy.max_attempts
     for attempt in range(1, last_attempt + 1):
         try:
+            if before_attempt is not None:
+                before_attempt()
             result = func()
             if retry_policy.throttle_seconds:
                 sleep_func(retry_policy.throttle_seconds)
@@ -80,11 +97,25 @@ def call_with_retries(
                 exc,
                 backoff,
             )
-            if backoff:
-                sleep_func(backoff)
+            sleep_seconds = backoff + _jitter_seconds(
+                retry_policy.backoff_jitter_seconds,
+                random_func=random_func,
+            )
+            if sleep_seconds:
+                sleep_func(sleep_seconds)
             backoff *= retry_policy.backoff_multiplier
 
     raise RuntimeError(f"{operation} retry loop exited unexpectedly")
+
+
+def _jitter_seconds(
+    max_jitter_seconds: float,
+    *,
+    random_func: Callable[[], float],
+) -> float:
+    if max_jitter_seconds <= 0:
+        return 0.0
+    return float(max_jitter_seconds) * max(0.0, min(1.0, float(random_func())))
 
 
 def summarize_fetch_statuses(

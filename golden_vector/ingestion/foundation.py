@@ -54,13 +54,18 @@ def execute_foundation_pipeline(
     registry = build_foundation_registry(app_config.universe)
     client = YahooClient(retry_policy=retry_policy_from_config(app_config.market_data))
 
-    equity_histories, equity_statuses = fetch_equity_histories(client, registry.equity_targets)
+    equity_histories, equity_statuses = fetch_equity_histories(
+        client,
+        registry.equity_targets,
+        max_workers=app_config.market_data.yahoo_max_workers,
+    )
     fx_histories, fx_statuses = fetch_fx_histories(client, registry.fx_targets)
     gold_history, gold_status = fetch_gold_history(client, registry.gold_target)
     market_snapshots, snapshot_statuses = fetch_market_snapshots(
         client,
         registry.market_snapshot_targets,
         source_run_id=run_context.run_id,
+        max_workers=app_config.market_data.yahoo_max_workers,
     )
 
     fetch_statuses: list[FetchStatusRecord] = [

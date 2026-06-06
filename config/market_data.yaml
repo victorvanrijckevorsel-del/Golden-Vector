@@ -3,3 +3,5 @@ yahoo_max_attempts: 3
 yahoo_initial_backoff_seconds: 0.5
 yahoo_backoff_multiplier: 2.0
 yahoo_throttle_seconds: 0.15
+yahoo_backoff_jitter_seconds: 0.1
+yahoo_max_workers: 4

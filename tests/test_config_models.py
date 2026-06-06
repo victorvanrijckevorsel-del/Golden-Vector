@@ -440,6 +440,8 @@ def test_market_data_config_accepts_yahoo_retry_and_throttle_defaults():
     assert config.yahoo_initial_backoff_seconds == 0.5
     assert config.yahoo_backoff_multiplier == 2.0
     assert config.yahoo_throttle_seconds == 0.15
+    assert config.yahoo_backoff_jitter_seconds == 0.1
+    assert config.yahoo_max_workers == 4
 
 
 @pytest.mark.parametrize(
@@ -449,6 +451,8 @@ def test_market_data_config_accepts_yahoo_retry_and_throttle_defaults():
         {"yahoo_initial_backoff_seconds": -0.1},
         {"yahoo_backoff_multiplier": 0.9},
         {"yahoo_throttle_seconds": -0.1},
+        {"yahoo_backoff_jitter_seconds": -0.1},
+        {"yahoo_max_workers": 0},
     ],
 )
 def test_market_data_config_rejects_invalid_yahoo_retry_settings(override):

@@ -902,15 +902,21 @@ class MarketDataConfig(StrictConfigModel):
     yahoo_initial_backoff_seconds: float = 0.5
     yahoo_backoff_multiplier: float = 2.0
     yahoo_throttle_seconds: float = 0.15
+    yahoo_backoff_jitter_seconds: float = 0.1
+    yahoo_max_workers: int = 4
 
-    @field_validator("yahoo_max_attempts")
+    @field_validator("yahoo_max_attempts", "yahoo_max_workers")
     @classmethod
-    def positive_attempts(cls, value: int) -> int:
+    def positive_ints(cls, value: int) -> int:
         if value <= 0:
-            raise ValueError("yahoo_max_attempts must be positive")
+            raise ValueError("Yahoo positive integer settings must be positive")
         return int(value)
 
-    @field_validator("yahoo_initial_backoff_seconds", "yahoo_throttle_seconds")
+    @field_validator(
+        "yahoo_initial_backoff_seconds",
+        "yahoo_throttle_seconds",
+        "yahoo_backoff_jitter_seconds",
+    )
     @classmethod
     def non_negative_seconds(cls, value: float) -> float:
         if value < 0:
