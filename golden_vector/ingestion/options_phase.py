@@ -48,6 +48,7 @@ from golden_vector.ingestion.persist_options import (
 from golden_vector.ingestion.yahoo_client import YahooClient
 
 LOGGER = logging.getLogger(__name__)
+FULL_CHAIN_EXPIRY_FETCH_MODE = "all"
 
 
 @dataclass(frozen=True)
@@ -322,8 +323,8 @@ def _fetch_option_target(
             ticker=target.yahoo_symbol,
             as_of_date=as_of_date,
             yahoo_client=client,
-            expiry_fetch_mode=app_config.hedge_readiness.options_expiry_fetch_mode,
-            target_dte_bands=app_config.hedge_readiness.option_dte_bands,
+            expiry_fetch_mode=FULL_CHAIN_EXPIRY_FETCH_MODE,
+            target_dte_bands=None,
         )
     except Exception as exc:  # noqa: BLE001 - one ticker must not abort the pool.
         result = OptionsChainResult(
@@ -336,7 +337,7 @@ def _fetch_option_target(
                 "ticker": target.yahoo_symbol,
                 "status": OPTIONS_STATUS_ERROR,
                 "duration_seconds": round(perf_counter() - started_at, 3),
-                "expiry_fetch_mode": app_config.hedge_readiness.options_expiry_fetch_mode,
+                "expiry_fetch_mode": FULL_CHAIN_EXPIRY_FETCH_MODE,
                 "expiration_count_available": 0,
                 "expiration_count_selected": 0,
                 "expiration_error_count": 0,

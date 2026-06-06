@@ -66,6 +66,39 @@ def test_fetch_option_targets_uses_bounded_workers_and_preserves_order(tmp_path)
     ]
 
 
+def test_fetch_option_targets_keeps_full_chain_when_config_mentions_targeted(tmp_path):
+    app_config = load_app_config(build_test_paths(tmp_path)).app
+    app_config = app_config.model_copy(
+        update={
+            "hedge_readiness": app_config.hedge_readiness.model_copy(
+                update={
+                    "options_expiry_fetch_mode": "targeted",
+                    "option_dte_bands": {60: [40, 60]},
+                }
+            )
+        }
+    )
+    fixture = pd.read_parquet("tests/fixtures/options/aem_chain_20260529.parquet")
+    client = _TrackingOptionsClient(fixture=fixture)
+    target = _OptionFetchTarget(
+        ticker="AEM",
+        yahoo_symbol="AEM",
+        vehicle_type="single_stock",
+    )
+
+    results = _fetch_option_targets(
+        targets=[target],
+        client=client,
+        app_config=app_config,
+        as_of_date=date(2026, 5, 29),
+        max_workers=1,
+    )
+
+    assert results[0].collection_event["expiry_fetch_mode"] == "all"
+    assert set(results[0].result.frame["expiration"]) == {"2026-06-19", "2026-07-17"}
+    assert client.fetched_expirations == ["2026-06-19", "2026-07-17"]
+
+
 class _TrackingOptionsClient:
     def __init__(
         self,
@@ -78,6 +111,7 @@ class _TrackingOptionsClient:
         self._lock = Lock()
         self._in_flight = 0
         self.max_in_flight = 0
+        self.fetched_expirations: list[str] = []
 
     def fetch_options_expirations(self, symbol: str) -> list[str]:
         with self._lock:
@@ -96,6 +130,7 @@ class _TrackingOptionsClient:
         return {"last_price": 50.0}
 
     def fetch_option_chain(self, symbol: str, expiration: str) -> _OptionChain:
+        self.fetched_expirations.append(expiration)
         rows = self.fixture[self.fixture["expiration"].astype(str) == expiration]
         puts = rows[rows["option_type"] == "P"].drop(columns=["option_type"])
         calls = rows[rows["option_type"] == "C"].drop(columns=["option_type"])
