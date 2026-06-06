@@ -28,8 +28,10 @@ from golden_vector.hedge.option_trading import (
     build_option_trading_overview,
 )
 from golden_vector.hedge.options_liquidity import (
+    OptionChainScan,
     OptionContractMetrics,
     build_bucket_slots,
+    build_bucket_slots_from_scan,
     candidate_bucket_ids,
     scan_option_chain,
     settings_from_config,
@@ -57,9 +59,19 @@ def build_option_artifact_inputs(
     risk_free_rate: float,
     risk_free_rate_is_fallback: bool,
     manifest: dict[str, Any],
+    scans_by_ticker: dict[str, OptionChainScan] | None = None,
 ) -> OptionArtifactBuildResult:
     """Build current option rows from already-loaded model and option-chain inputs."""
 
+    if scans_by_ticker is None:
+        scans_by_ticker = scan_option_chains_for_artifacts(
+            app_config=app_config,
+            features=features,
+            tool_b=tool_b,
+            chains=chains,
+            risk_free_rate=risk_free_rate,
+            manifest=manifest,
+        )
     candidate_slots = build_option_candidate_slots(
         app_config=app_config,
         features=features,
@@ -69,6 +81,7 @@ def build_option_artifact_inputs(
         manifest=manifest,
         option_type="P",
         target_delta=app_config.hedge_readiness.target_delta,
+        scans_by_ticker=scans_by_ticker,
     )
     call_candidate_slots = build_option_candidate_slots(
         app_config=app_config,
@@ -79,6 +92,7 @@ def build_option_artifact_inputs(
         manifest=manifest,
         option_type="C",
         target_delta=abs(app_config.hedge_readiness.target_delta),
+        scans_by_ticker=scans_by_ticker,
     )
     candidate_grids = accepted_candidate_grids(candidate_slots)
     call_candidate_grids = accepted_candidate_grids(call_candidate_slots)
@@ -96,6 +110,7 @@ def build_option_artifact_inputs(
         chains=chains,
         risk_free_rate=risk_free_rate,
         manifest=manifest,
+        scans_by_ticker=scans_by_ticker,
     )
     overview = build_option_trading_overview(
         tool_a=tool_a,
@@ -120,6 +135,42 @@ def build_option_artifact_inputs(
     )
 
 
+def scan_option_chains_for_artifacts(
+    *,
+    app_config: AppConfig,
+    features: pd.DataFrame,
+    tool_b: pd.DataFrame,
+    chains: dict[str, pd.DataFrame],
+    risk_free_rate: float,
+    manifest: dict[str, Any],
+) -> dict[str, OptionChainScan]:
+    """Scan cached option chains once for every ticker with a usable stock price."""
+
+    feature_by_ticker = rows_by_ticker_series(features, strip=True)
+    tool_b_by_ticker = rows_by_ticker_series(tool_b, strip=True)
+    settings = settings_from_config(app_config.hedge_readiness)
+    as_of_date = _manifest_as_of_date(manifest)
+    scans: dict[str, OptionChainScan] = {}
+    for ticker, feature in feature_by_ticker.items():
+        chain = chains.get(ticker, pd.DataFrame())
+        price = _current_stock_price(
+            feature=feature,
+            tool_b_row=tool_b_by_ticker.get(ticker),
+            chain=chain,
+        )
+        if price is None or price <= 0:
+            continue
+        scans[ticker] = scan_option_chain(
+            ticker=ticker,
+            chain=chain,
+            underlying_price=price,
+            risk_free_rate=risk_free_rate,
+            settings=settings,
+            as_of_date=as_of_date,
+        )
+    return scans
+
+
 def build_option_candidate_slots(
     *,
     app_config: AppConfig,
@@ -130,6 +181,7 @@ def build_option_candidate_slots(
     manifest: dict[str, Any],
     option_type: Literal["P", "C"],
     target_delta: float,
+    scans_by_ticker: dict[str, OptionChainScan] | None = None,
 ) -> dict[str, list[OptionCandidateSlot]]:
     feature_by_ticker = rows_by_ticker_series(features, strip=True)
     tool_b_by_ticker = rows_by_ticker_series(tool_b, strip=True)
@@ -165,16 +217,25 @@ def build_option_candidate_slots(
                 for bucket in candidate_bucket_ids()
             ]
             continue
-        slots_by_ticker[ticker] = build_bucket_slots(
-            option_type=option_type,
-            ticker=ticker,
-            chain=chain,
-            underlying_price=price,
-            risk_free_rate=risk_free_rate,
-            target_horizons_days=tuple(app_config.hedge_readiness.display_horizons_days),
-            settings=liquidity_settings,
-            as_of_date=as_of_date,
-        )
+        scan = scans_by_ticker.get(ticker) if scans_by_ticker is not None else None
+        if scan is not None:
+            slots_by_ticker[ticker] = build_bucket_slots_from_scan(
+                option_type=option_type,
+                scan=scan,
+                target_horizons_days=tuple(app_config.hedge_readiness.display_horizons_days),
+                settings=liquidity_settings,
+            )
+        else:
+            slots_by_ticker[ticker] = build_bucket_slots(
+                option_type=option_type,
+                ticker=ticker,
+                chain=chain,
+                underlying_price=price,
+                risk_free_rate=risk_free_rate,
+                target_horizons_days=tuple(app_config.hedge_readiness.display_horizons_days),
+                settings=liquidity_settings,
+                as_of_date=as_of_date,
+            )
     return slots_by_ticker
 
 
@@ -197,6 +258,7 @@ def build_option_liquidity_measurements(
     chains: dict[str, pd.DataFrame],
     risk_free_rate: float,
     manifest: dict[str, Any],
+    scans_by_ticker: dict[str, OptionChainScan] | None = None,
 ) -> tuple[OptionLiquidityMeasurement, ...]:
     feature_by_ticker = rows_by_ticker_series(features, strip=True)
     tool_b_by_ticker = rows_by_ticker_series(tool_b, strip=True)
@@ -226,14 +288,16 @@ def build_option_liquidity_measurements(
         )
         if price is None or price <= 0:
             continue
-        scan = scan_option_chain(
-            ticker=ticker,
-            chain=chain,
-            underlying_price=price,
-            risk_free_rate=risk_free_rate,
-            settings=settings,
-            as_of_date=as_of_date,
-        )
+        scan = scans_by_ticker.get(ticker) if scans_by_ticker is not None else None
+        if scan is None:
+            scan = scan_option_chain(
+                ticker=ticker,
+                chain=chain,
+                underlying_price=price,
+                risk_free_rate=risk_free_rate,
+                settings=settings,
+                as_of_date=as_of_date,
+            )
         metrics = [
             metric
             for metric in scan.metrics
@@ -303,6 +367,7 @@ def scan_option_contract_metrics(
     chains: dict[str, pd.DataFrame],
     risk_free_rate: float,
     manifest: dict[str, Any],
+    scans_by_ticker: dict[str, OptionChainScan] | None = None,
 ) -> tuple[OptionContractMetrics, ...]:
     """Scan all loaded option chains into per-contract liquidity metrics."""
 
@@ -322,14 +387,16 @@ def scan_option_contract_metrics(
         )
         if price is None or price <= 0:
             continue
-        scan = scan_option_chain(
-            ticker=ticker,
-            chain=chain,
-            underlying_price=price,
-            risk_free_rate=risk_free_rate,
-            settings=settings,
-            as_of_date=as_of_date,
-        )
+        scan = scans_by_ticker.get(ticker) if scans_by_ticker is not None else None
+        if scan is None:
+            scan = scan_option_chain(
+                ticker=ticker,
+                chain=chain,
+                underlying_price=price,
+                risk_free_rate=risk_free_rate,
+                settings=settings,
+                as_of_date=as_of_date,
+            )
         metrics.extend(scan.metrics)
     return tuple(metrics)
 

@@ -234,10 +234,27 @@ def build_bucket_slots(
         settings=settings,
         as_of_date=as_of_date,
     )
+    return build_bucket_slots_from_scan(
+        option_type=normalized_type,
+        scan=scan,
+        target_horizons_days=target_horizons_days,
+        settings=settings,
+    )
+
+
+def build_bucket_slots_from_scan(
+    *,
+    option_type: OptionSideType,
+    scan: OptionChainScan,
+    target_horizons_days: tuple[int, ...],
+    settings: OptionLiquiditySettings | None = None,
+) -> list[OptionCandidateSlot]:
+    normalized_type = _normalize_option_type(option_type)
+    settings = settings or OptionLiquiditySettings()
     if not scan.metrics:
         return [
             _empty_bucket_slot(
-                ticker=ticker,
+                ticker=scan.ticker,
                 option_type=normalized_type,
                 horizon_days=horizon,
                 bucket=bucket,
@@ -261,7 +278,7 @@ def build_bucket_slots(
             slots.append(
                 _slot_for_bucket(
                     option_type=normalized_type,
-                    ticker=ticker,
+                    ticker=scan.ticker,
                     horizon_days=horizon,
                     bucket=bucket,
                     metrics=horizon_metrics,

@@ -8,6 +8,7 @@ import pytest
 from golden_vector.hedge.options_liquidity import (
     OptionLiquiditySettings,
     build_bucket_slots,
+    build_bucket_slots_from_scan,
     is_usable_candidate,
     scan_option_chain,
     slot_tier_counts,
@@ -141,6 +142,41 @@ def test_build_bucket_slots_prefers_expiry_closest_to_named_horizon_when_quotes_
     assert near_atm.candidate is not None
     assert near_atm.candidate.days_to_expiry == 55
     assert near_atm.candidate.expiration == "2026-07-23"
+
+
+def test_build_bucket_slots_from_scan_matches_chain_wrapper():
+    chain = pd.DataFrame(
+        [
+            _option("2026-07-23", "P", 96.0, 4.00, 4.40, 500, 20),
+            _option("2026-07-23", "P", 82.0, 2.00, 2.20, 500, 20),
+            _option("2026-07-23", "C", 104.0, 4.00, 4.40, 500, 20),
+        ]
+    )
+    settings = OptionLiquiditySettings(dte_bands={60: (46, 75)})
+    scan = scan_option_chain(
+        ticker="NEM",
+        chain=chain,
+        underlying_price=100.0,
+        risk_free_rate=0.04,
+        settings=settings,
+        as_of_date=date(2026, 5, 29),
+    )
+
+    assert build_bucket_slots_from_scan(
+        option_type="P",
+        scan=scan,
+        target_horizons_days=(60,),
+        settings=settings,
+    ) == build_bucket_slots(
+        option_type="P",
+        ticker="NEM",
+        chain=chain,
+        underlying_price=100.0,
+        risk_free_rate=0.04,
+        target_horizons_days=(60,),
+        settings=settings,
+        as_of_date=date(2026, 5, 29),
+    )
 
 
 def test_build_bucket_slots_requires_side_aware_otm_contracts():

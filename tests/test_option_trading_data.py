@@ -17,7 +17,11 @@ from golden_vector.hedge.option_trading import (
     build_option_trading_detail,
     build_option_trading_overview,
 )
-from golden_vector.hedge.option_artifact_builder import build_option_artifact_inputs
+from golden_vector.hedge.option_artifact_builder import (
+    build_option_artifact_inputs,
+    scan_option_chains_for_artifacts,
+    scan_option_contract_metrics,
+)
 from golden_vector.hedge.option_artifact_sources import load_option_artifact_source_inputs
 from golden_vector.hedge.option_availability import has_usable_option_slots
 from golden_vector.ingestion.persist_options import safe_options_file_name
@@ -483,6 +487,50 @@ def test_option_artifact_reader_matches_shared_builder_for_same_sources(tmp_path
         risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
         manifest=sources.manifest,
     )
+    scans = scan_option_chains_for_artifacts(
+        app_config=app_config,
+        features=sources.features,
+        tool_b=sources.tool_b,
+        chains=sources.chains,
+        risk_free_rate=sources.risk_free_rate,
+        manifest=sources.manifest,
+    )
+    direct_from_scans = build_option_artifact_inputs(
+        app_config=app_config,
+        features=sources.features,
+        tool_a=sources.tool_a,
+        tool_b=sources.tool_b,
+        chains=sources.chains,
+        risk_free_rate=sources.risk_free_rate,
+        risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
+        manifest=sources.manifest,
+        scans_by_ticker=scans,
+    )
+    assert _overview_signatures(direct_from_scans.overview.rows) == _overview_signatures(
+        direct.overview.rows
+    )
+    assert _slot_signatures(direct_from_scans.candidate_slots) == _slot_signatures(
+        direct.candidate_slots
+    )
+    assert _slot_signatures(direct_from_scans.call_candidate_slots) == _slot_signatures(
+        direct.call_candidate_slots
+    )
+    assert scan_option_contract_metrics(
+        app_config=app_config,
+        features=sources.features,
+        tool_b=sources.tool_b,
+        chains=sources.chains,
+        risk_free_rate=sources.risk_free_rate,
+        manifest=sources.manifest,
+        scans_by_ticker=scans,
+    ) == scan_option_contract_metrics(
+        app_config=app_config,
+        features=sources.features,
+        tool_b=sources.tool_b,
+        chains=sources.chains,
+        risk_free_rate=sources.risk_free_rate,
+        manifest=sources.manifest,
+    )
     _publish_option_artifacts(paths)
 
     persisted = load_option_trading_data(paths, app_config=app_config)
@@ -521,6 +569,60 @@ def test_option_artifact_reader_matches_shared_builder_for_same_sources(tmp_path
     )
     assert {"GDX", "GDXJ"}.issubset(_usable_tickers(persisted.candidate_slots))
     assert {fallback.ticker for fallback in detail.proxy_fallbacks} == {"GDX", "GDXJ"}
+
+
+def test_option_artifact_build_reuses_precomputed_chain_scans(tmp_path, monkeypatch):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        include_benchmarks=True,
+        publish_artifacts=False,
+    )
+
+    sources = load_option_artifact_source_inputs(paths, use_model_state=False)
+    assert sources is not None
+    scans = scan_option_chains_for_artifacts(
+        app_config=app_config,
+        features=sources.features,
+        tool_b=sources.tool_b,
+        chains=sources.chains,
+        risk_free_rate=sources.risk_free_rate,
+        manifest=sources.manifest,
+    )
+
+    def fail_rescan(*args, **kwargs):
+        raise AssertionError("precomputed option-chain scans were not reused")
+
+    monkeypatch.setattr(
+        "golden_vector.hedge.option_artifact_builder.scan_option_chain",
+        fail_rescan,
+    )
+
+    build_option_artifact_inputs(
+        app_config=app_config,
+        features=sources.features,
+        tool_a=sources.tool_a,
+        tool_b=sources.tool_b,
+        chains=sources.chains,
+        risk_free_rate=sources.risk_free_rate,
+        risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
+        manifest=sources.manifest,
+        scans_by_ticker=scans,
+    )
+    scan_option_contract_metrics(
+        app_config=app_config,
+        features=sources.features,
+        tool_b=sources.tool_b,
+        chains=sources.chains,
+        risk_free_rate=sources.risk_free_rate,
+        manifest=sources.manifest,
+        scans_by_ticker=scans,
+    )
 
 
 def test_load_option_trading_data_ignores_stale_feature_rows(tmp_path):

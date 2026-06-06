@@ -58,6 +58,7 @@ VALID_NORMALIZATION_STATUSES = {
     "STALE_FX",
     "MISSING_RETURN_BASIS",
 }
+_CENTERED_SUM_FALLBACK_REL_TOL = 1e-12
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,67 @@ class RegressionResult:
     beta: float
     r_squared: float
     residuals: np.ndarray
+
+
+@dataclass(frozen=True)
+class _RegressionPrefixSums:
+    n: np.ndarray
+    x: np.ndarray
+    y: np.ndarray
+    xy: np.ndarray
+    xx: np.ndarray
+    yy: np.ndarray
+
+
+@dataclass(frozen=True)
+class _RegressionWindowSums:
+    n: np.ndarray
+    x: np.ndarray
+    y: np.ndarray
+    xy: np.ndarray
+    xx: np.ndarray
+    yy: np.ndarray
+
+
+@dataclass(frozen=True)
+class _OlsMetric:
+    alpha: float
+    beta: float
+    r_squared: float
+
+
+@dataclass(frozen=True)
+class _VectorizedWindowData:
+    start_idx: np.ndarray
+    end_idx: np.ndarray
+    raw_count: np.ndarray
+    up_count: np.ndarray
+    down_count: np.ndarray
+    full_sums: _RegressionWindowSums
+    up_sums: _RegressionWindowSums
+    down_sums: _RegressionWindowSums
+
+
+@dataclass(frozen=True)
+class _VolatilityWeeklyArrays:
+    as_of_dates: np.ndarray
+    stock_returns: np.ndarray
+    gold_returns: np.ndarray
+
+
+@dataclass(frozen=True)
+class _VolatilityWindow:
+    stock_returns: np.ndarray
+    gold_returns: np.ndarray
+
+
+@dataclass(frozen=True)
+class _VolatilityAnchorRow:
+    ticker: str
+    as_of_date: object
+    anchor_window_id: str | None
+    intercept_alpha: object
+    structural_delta: object
 
 
 def build_structural_ticker_data(
@@ -235,31 +297,430 @@ def compute_structural_window_metrics(
         return pd.DataFrame(columns=STRUCTURAL_WINDOW_COLUMNS)
 
     ticker = str(weekly_series["ticker"].iloc[0]).upper()
-    as_of_dates = list(pd.to_datetime(weekly_series["as_of_date"]).sort_values().unique())
-    rows: list[dict[str, object]] = []
-    for as_of_timestamp in as_of_dates:
-        as_of_date = pd.Timestamp(as_of_timestamp)
-        issue_summary = summarize_normalization_issues(
-            normalization_issues=normalization_issues,
-            as_of_date=as_of_date,
+    series = weekly_series.copy()
+    series["_as_of_timestamp"] = pd.to_datetime(series["as_of_date"])
+    series = series.sort_values("_as_of_timestamp").reset_index(drop=True)
+    as_of_dates = pd.DatetimeIndex(series["_as_of_timestamp"].drop_duplicates().to_numpy())
+    ordered_dates = series["_as_of_timestamp"].to_numpy(dtype="datetime64[ns]")
+    x_values = pd.to_numeric(series["gold_weekly_log_return"], errors="coerce").to_numpy(
+        dtype=float
+    )
+    y_values = pd.to_numeric(series["stock_weekly_log_return"], errors="coerce").to_numpy(
+        dtype=float
+    )
+    full_prefix = _build_regression_prefix_sums(
+        x_values=x_values,
+        y_values=y_values,
+        raw_mask=np.ones(len(series.index), dtype=bool),
+    )
+    up_raw_mask = x_values > 0
+    down_raw_mask = x_values < 0
+    up_count_prefix = _prefix_count(up_raw_mask)
+    down_count_prefix = _prefix_count(down_raw_mask)
+    up_prefix = _build_regression_prefix_sums(
+        x_values=x_values,
+        y_values=y_values,
+        raw_mask=up_raw_mask,
+    )
+    down_prefix = _build_regression_prefix_sums(
+        x_values=x_values,
+        y_values=y_values,
+        raw_mask=down_raw_mask,
+    )
+    window_data_by_id = {
+        window_id: _build_vectorized_window_data(
+            as_of_dates=as_of_dates,
+            ordered_dates=ordered_dates,
+            window_id=window_id,
+            full_prefix=full_prefix,
+            up_prefix=up_prefix,
+            down_prefix=down_prefix,
+            up_count_prefix=up_count_prefix,
+            down_count_prefix=down_count_prefix,
         )
+        for window_id in scoring_config.structural_windows
+    }
+    minimum_observations_by_window = {
+        window_id: scoring_config.confidence_thresholds.minimum_observations_for_window(
+            window_id
+        )
+        for window_id in scoring_config.structural_windows
+    }
+    minimum_regime_observations_by_window = {
+        window_id: scoring_config.confidence_thresholds.minimum_regime_observations_for_window(
+            window_id
+        )
+        for window_id in scoring_config.structural_windows
+    }
+    issue_summaries = _summarize_normalization_issues_by_as_of(
+        normalization_issues=normalization_issues,
+        as_of_dates=as_of_dates,
+    )
+
+    rows: list[dict[str, object]] = []
+    for position, as_of_timestamp in enumerate(as_of_dates):
+        as_of_date = pd.Timestamp(as_of_timestamp)
         for window_id in scoring_config.structural_windows:
-            window_rows = build_trailing_window_rows(
-                weekly_series=weekly_series,
-                as_of_date=as_of_date,
-                window_id=window_id,
-            )
             rows.append(
-                compute_window_metric(
+                _compute_vectorized_window_metric(
                     ticker=ticker,
                     as_of_date=as_of_date,
                     window_id=window_id,
-                    window_rows=window_rows,
-                    issue_summary=issue_summary,
-                    scoring_config=scoring_config,
+                    position=position,
+                    window_data=window_data_by_id[window_id],
+                    x_values=x_values,
+                    y_values=y_values,
+                    up_raw_mask=up_raw_mask,
+                    down_raw_mask=down_raw_mask,
+                    issue_summary=issue_summaries[position],
+                    minimum_observations=minimum_observations_by_window[window_id],
+                    minimum_regime_observations=minimum_regime_observations_by_window[
+                        window_id
+                    ],
                 )
             )
     return pd.DataFrame(rows, columns=STRUCTURAL_WINDOW_COLUMNS)
+
+
+def _compute_vectorized_window_metric(
+    *,
+    ticker: str,
+    as_of_date: pd.Timestamp,
+    window_id: str,
+    position: int,
+    window_data: _VectorizedWindowData,
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    up_raw_mask: np.ndarray,
+    down_raw_mask: np.ndarray,
+    issue_summary: str | None,
+    minimum_observations: int,
+    minimum_regime_observations: int,
+) -> dict[str, object]:
+    week_count = int(window_data.raw_count[position])
+    if week_count < 2:
+        return _empty_window_metric(
+            ticker=ticker,
+            as_of_date=as_of_date,
+            window_id=window_id,
+            week_count=week_count,
+            window_reason="INSUFFICIENT_HISTORY",
+            issue_summary=issue_summary,
+        )
+
+    regression = _ols_metric_at(
+        window_data.full_sums,
+        position,
+        x_values=x_values,
+        y_values=y_values,
+        start_idx=window_data.start_idx,
+        end_idx=window_data.end_idx,
+    )
+    if regression is None:
+        return _empty_window_metric(
+            ticker=ticker,
+            as_of_date=as_of_date,
+            window_id=window_id,
+            week_count=week_count,
+            window_reason="MISSING_GOLD_VARIANCE",
+            issue_summary=issue_summary,
+        )
+
+    up_week_count = int(window_data.up_count[position])
+    down_week_count = int(window_data.down_count[position])
+    up_regression = (
+        _ols_metric_at(
+            window_data.up_sums,
+            position,
+            x_values=x_values,
+            y_values=y_values,
+            start_idx=window_data.start_idx,
+            end_idx=window_data.end_idx,
+            raw_mask=up_raw_mask,
+        )
+        if up_week_count >= minimum_regime_observations
+        else None
+    )
+    down_regression = (
+        _ols_metric_at(
+            window_data.down_sums,
+            position,
+            x_values=x_values,
+            y_values=y_values,
+            start_idx=window_data.start_idx,
+            end_idx=window_data.end_idx,
+            raw_mask=down_raw_mask,
+        )
+        if down_week_count >= minimum_regime_observations
+        else None
+    )
+
+    window_status = "ELIGIBLE" if week_count >= minimum_observations else "LOW_OBSERVATION"
+    window_reason = "OK" if window_status == "ELIGIBLE" else "INSUFFICIENT_OBSERVATIONS"
+    up_beta = None if up_regression is None else up_regression.beta
+    down_beta = None if down_regression is None else down_regression.beta
+    gamma_value = (
+        None
+        if up_beta is None or down_beta is None
+        else float(down_beta - up_beta)
+    )
+    asymmetry_ratio = (
+        None
+        if up_beta is None or down_beta is None or abs(down_beta) < 1e-9
+        else float(up_beta / down_beta)
+    )
+
+    return {
+        "ticker": ticker,
+        "as_of_date": as_of_date.date(),
+        "window_id": window_id,
+        "week_count": week_count,
+        "window_status": window_status,
+        "window_reason": window_reason,
+        "structural_delta": regression.beta,
+        "intercept_alpha": regression.alpha,
+        "r_squared": regression.r_squared,
+        "up_week_count": up_week_count,
+        "down_week_count": down_week_count,
+        "up_beta": up_beta,
+        "down_beta": down_beta,
+        "gamma_value": gamma_value,
+        "asymmetry_ratio": asymmetry_ratio,
+        "normalization_issue_summary": issue_summary,
+    }
+
+
+def _build_vectorized_window_data(
+    *,
+    as_of_dates: pd.DatetimeIndex,
+    ordered_dates: np.ndarray,
+    window_id: str,
+    full_prefix: _RegressionPrefixSums,
+    up_prefix: _RegressionPrefixSums,
+    down_prefix: _RegressionPrefixSums,
+    up_count_prefix: np.ndarray,
+    down_count_prefix: np.ndarray,
+) -> _VectorizedWindowData:
+    start_idx, end_idx = _window_bounds(
+        as_of_dates=as_of_dates,
+        ordered_dates=ordered_dates,
+        window_id=window_id,
+    )
+    return _VectorizedWindowData(
+        start_idx=start_idx,
+        end_idx=end_idx,
+        raw_count=(end_idx - start_idx).astype(np.int64),
+        up_count=_window_prefix_delta(up_count_prefix, start_idx, end_idx).astype(np.int64),
+        down_count=_window_prefix_delta(down_count_prefix, start_idx, end_idx).astype(
+            np.int64
+        ),
+        full_sums=_window_regression_sums(full_prefix, start_idx, end_idx),
+        up_sums=_window_regression_sums(up_prefix, start_idx, end_idx),
+        down_sums=_window_regression_sums(down_prefix, start_idx, end_idx),
+    )
+
+
+def _window_bounds(
+    *,
+    as_of_dates: pd.DatetimeIndex,
+    ordered_dates: np.ndarray,
+    window_id: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    trailing_starts = np.array(
+        [
+            _window_start(pd.Timestamp(as_of_date), window_id).to_datetime64()
+            for as_of_date in as_of_dates
+        ],
+        dtype="datetime64[ns]",
+    )
+    as_of_values = as_of_dates.to_numpy(dtype="datetime64[ns]")
+    start_idx = np.searchsorted(ordered_dates, trailing_starts, side="right")
+    end_idx = np.searchsorted(ordered_dates, as_of_values, side="right")
+    return start_idx.astype(np.int64), end_idx.astype(np.int64)
+
+
+def _build_regression_prefix_sums(
+    *,
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    raw_mask: np.ndarray,
+) -> _RegressionPrefixSums:
+    valid_mask = raw_mask & np.isfinite(x_values) & np.isfinite(y_values)
+    x = np.where(valid_mask, x_values, 0.0)
+    y = np.where(valid_mask, y_values, 0.0)
+    return _RegressionPrefixSums(
+        n=_prefix_count(valid_mask),
+        x=_prefix_sum(x),
+        y=_prefix_sum(y),
+        xy=_prefix_sum(x * y),
+        xx=_prefix_sum(x * x),
+        yy=_prefix_sum(y * y),
+    )
+
+
+def _window_regression_sums(
+    prefix: _RegressionPrefixSums,
+    start_idx: np.ndarray,
+    end_idx: np.ndarray,
+) -> _RegressionWindowSums:
+    return _RegressionWindowSums(
+        n=_window_prefix_delta(prefix.n, start_idx, end_idx),
+        x=_window_prefix_delta(prefix.x, start_idx, end_idx),
+        y=_window_prefix_delta(prefix.y, start_idx, end_idx),
+        xy=_window_prefix_delta(prefix.xy, start_idx, end_idx),
+        xx=_window_prefix_delta(prefix.xx, start_idx, end_idx),
+        yy=_window_prefix_delta(prefix.yy, start_idx, end_idx),
+    )
+
+
+def _window_prefix_delta(
+    prefix: np.ndarray,
+    start_idx: np.ndarray,
+    end_idx: np.ndarray,
+) -> np.ndarray:
+    return prefix[end_idx] - prefix[start_idx]
+
+
+def _prefix_sum(values: np.ndarray) -> np.ndarray:
+    return np.concatenate(([0.0], np.cumsum(values, dtype=float)))
+
+
+def _prefix_count(mask: np.ndarray) -> np.ndarray:
+    return np.concatenate(([0], np.cumsum(mask.astype(np.int64), dtype=np.int64)))
+
+
+def _ols_metric_at(
+    sums: _RegressionWindowSums,
+    position: int,
+    *,
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    start_idx: np.ndarray,
+    end_idx: np.ndarray,
+    raw_mask: np.ndarray | None = None,
+) -> _OlsMetric | None:
+    n = int(sums.n[position])
+    if n < 2:
+        return None
+
+    n_float = float(n)
+    sx = float(sums.x[position])
+    sy = float(sums.y[position])
+    sxy = float(sums.xy[position])
+    sxx = float(sums.xx[position])
+    syy = float(sums.yy[position])
+    sxx_centered = sxx - ((sx * sx) / n_float)
+    sxy_centered = sxy - ((sx * sy) / n_float)
+    syy_centered = syy - ((sy * sy) / n_float)
+    if _needs_centered_window_fallback(
+        centered_xx=sxx_centered,
+        centered_yy=syy_centered,
+        xx=sxx,
+        yy=syy,
+        sx=sx,
+        sy=sy,
+        n=n_float,
+    ):
+        return _ols_metric_from_raw_window(
+            x_values=x_values,
+            y_values=y_values,
+            start_idx=int(start_idx[position]),
+            end_idx=int(end_idx[position]),
+            raw_mask=raw_mask,
+        )
+    if sxx_centered <= 0:
+        return None
+
+    beta = float(sxy_centered / sxx_centered)
+    alpha = float((sy / n_float) - (beta * (sx / n_float)))
+    if syy_centered <= 0:
+        r_squared = 0.0
+    else:
+        residual_sum_squares = syy_centered - (beta * sxy_centered)
+        r_squared = max(
+            0.0,
+            min(1.0, 1.0 - (residual_sum_squares / syy_centered)),
+        )
+    return _OlsMetric(alpha=alpha, beta=beta, r_squared=float(r_squared))
+
+
+def _needs_centered_window_fallback(
+    *,
+    centered_xx: float,
+    centered_yy: float,
+    xx: float,
+    yy: float,
+    sx: float,
+    sy: float,
+    n: float,
+) -> bool:
+    raw_x_scale = max(abs(xx), abs((sx * sx) / n), 1e-300)
+    raw_y_scale = max(abs(yy), abs((sy * sy) / n), 1e-300)
+    return (
+        abs(centered_xx) <= (_CENTERED_SUM_FALLBACK_REL_TOL * raw_x_scale)
+        or abs(centered_yy) <= (_CENTERED_SUM_FALLBACK_REL_TOL * raw_y_scale)
+    )
+
+
+def _ols_metric_from_raw_window(
+    *,
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    start_idx: int,
+    end_idx: int,
+    raw_mask: np.ndarray | None,
+) -> _OlsMetric | None:
+    x_window = x_values[start_idx:end_idx]
+    y_window = y_values[start_idx:end_idx]
+    if raw_mask is not None:
+        mask = raw_mask[start_idx:end_idx]
+        x_window = x_window[mask]
+        y_window = y_window[mask]
+
+    regression = compute_regression(pd.Series(x_window), pd.Series(y_window))
+    if regression is None:
+        return None
+    return _OlsMetric(
+        alpha=regression.alpha,
+        beta=regression.beta,
+        r_squared=regression.r_squared,
+    )
+
+
+def _summarize_normalization_issues_by_as_of(
+    *,
+    normalization_issues: pd.DataFrame,
+    as_of_dates: pd.DatetimeIndex,
+) -> list[str | None]:
+    if normalization_issues.empty:
+        return [None] * len(as_of_dates)
+
+    issues = normalization_issues.copy()
+    issues["date"] = pd.to_datetime(issues["date"])
+    statuses = issues["normalization_status"].astype(str).str.upper()
+    valid_mask = statuses.isin(VALID_NORMALIZATION_STATUSES) & statuses.ne("OK")
+    issues = issues.loc[valid_mask].copy()
+    if issues.empty:
+        return [None] * len(as_of_dates)
+
+    issues["normalization_status"] = statuses.loc[issues.index]
+    issues = issues.sort_values("date").reset_index(drop=True)
+    issue_dates = issues["date"].to_numpy(dtype="datetime64[ns]")
+    issue_statuses = issues["normalization_status"].to_numpy(dtype=str)
+
+    summaries: list[str | None] = []
+    for as_of_date in as_of_dates:
+        as_of_timestamp = pd.Timestamp(as_of_date)
+        trailing_start = (as_of_timestamp - pd.DateOffset(years=3)).to_datetime64()
+        as_of_value = as_of_timestamp.to_datetime64()
+        start_idx = int(np.searchsorted(issue_dates, trailing_start, side="right"))
+        end_idx = int(np.searchsorted(issue_dates, as_of_value, side="right"))
+        if end_idx <= start_idx:
+            summaries.append(None)
+            continue
+        statuses_in_window = sorted(set(issue_statuses[start_idx:end_idx]))
+        summaries.append(",".join(statuses_in_window) if statuses_in_window else None)
+    return summaries
 
 
 def compute_window_metric(
@@ -379,7 +840,7 @@ def compute_volatility_diagnostics(
     weekly = weekly_series.copy()
     weekly["as_of_date"] = pd.to_datetime(weekly["as_of_date"]).dt.date
     grouped_weekly = {
-        str(ticker).upper(): frame.sort_values("as_of_date").reset_index(drop=True)
+        str(ticker).upper(): _prepare_volatility_weekly_arrays(frame)
         for ticker, frame in weekly.groupby("ticker", dropna=False)
     }
 
@@ -389,61 +850,144 @@ def compute_volatility_diagnostics(
     metrics["as_of_date"] = pd.to_datetime(metrics["as_of_date"]).dt.date
 
     rows: list[dict[str, object]] = []
-    for (ticker, as_of_date), metric_frame in metrics.groupby(["ticker", "as_of_date"], dropna=False):
-        normalized_ticker = str(ticker).upper()
-        ordered = grouped_weekly.get(normalized_ticker, pd.DataFrame())
-        if ordered.empty:
+    anchor_rows = _build_volatility_anchor_rows(
+        metrics=metrics,
+        scoring_config=scoring_config,
+    )
+    for anchor_row in anchor_rows:
+        ordered = grouped_weekly.get(anchor_row.ticker)
+        if ordered is None:
             continue
-        as_of_timestamp = pd.Timestamp(as_of_date)
-        trailing = ordered.loc[
-            pd.to_datetime(ordered["as_of_date"]).le(as_of_timestamp)
-        ].tail(52)
-        anchor_window_id = choose_structural_anchor_window(
-            window_metrics=metric_frame,
-            scoring_config=scoring_config,
-            require_eligible=True,
-        ) or choose_structural_anchor_window(
-            window_metrics=metric_frame,
-            scoring_config=scoring_config,
-            require_eligible=False,
+        as_of_timestamp = pd.Timestamp(anchor_row.as_of_date)
+        trailing = _trailing_volatility_window(
+            weekly_arrays=ordered,
+            as_of_date=as_of_timestamp,
         )
-        anchor_metric = (
-            metric_frame.loc[metric_frame["window_id"].astype(str).eq(anchor_window_id)].iloc[0]
-            if anchor_window_id
-            and not metric_frame.loc[metric_frame["window_id"].astype(str).eq(anchor_window_id)].empty
-            else None
-        )
-        total_vol = annualize_weekly_volatility(trailing["stock_weekly_log_return"])
-        downside_vol = annualize_downside_volatility(trailing["stock_weekly_log_return"])
+        total_vol = _annualize_weekly_volatility_array(trailing.stock_returns)
+        downside_vol = _annualize_downside_volatility_array(trailing.stock_returns)
         residual_vol = None
-        if anchor_metric is not None:
-            alpha = _optional_float(anchor_metric.get("intercept_alpha"))
-            beta = _optional_float(anchor_metric.get("structural_delta"))
-            if alpha is not None and beta is not None:
-                x_values = pd.to_numeric(
-                    trailing["gold_weekly_log_return"], errors="coerce"
-                ).to_numpy(dtype=float)
-                y_values = pd.to_numeric(
-                    trailing["stock_weekly_log_return"], errors="coerce"
-                ).to_numpy(dtype=float)
-                valid_mask = np.isfinite(x_values) & np.isfinite(y_values)
-                x_values = x_values[valid_mask]
-                y_values = y_values[valid_mask]
-                if len(x_values) >= 2:
-                    residual_vol = annualize_weekly_volatility(
-                        y_values - (alpha + (beta * x_values))
-                    )
+        alpha = _optional_float(anchor_row.intercept_alpha)
+        beta = _optional_float(anchor_row.structural_delta)
+        if alpha is not None and beta is not None:
+            valid_mask = np.isfinite(trailing.gold_returns) & np.isfinite(
+                trailing.stock_returns
+            )
+            if int(valid_mask.sum()) >= 2:
+                residual_vol = _annualize_weekly_volatility_array(
+                    trailing.stock_returns[valid_mask]
+                    - (alpha + (beta * trailing.gold_returns[valid_mask]))
+                )
         rows.append(
             {
-                "ticker": normalized_ticker,
+                "ticker": anchor_row.ticker,
                 "as_of_date": as_of_timestamp.date(),
-                "volatility_anchor_window_id": anchor_window_id,
+                "volatility_anchor_window_id": anchor_row.anchor_window_id,
                 "total_volatility_52w": total_vol,
                 "residual_volatility_52w": residual_vol,
                 "downside_volatility_52w": downside_vol,
             }
         )
     return pd.DataFrame(rows, columns=VOLATILITY_DIAGNOSTIC_COLUMNS)
+
+
+def _build_volatility_anchor_rows(
+    *,
+    metrics: pd.DataFrame,
+    scoring_config: ScoringConfig,
+) -> list[_VolatilityAnchorRow]:
+    if metrics.empty:
+        return []
+
+    working = metrics.copy()
+    working["ticker_key"] = working["ticker"].astype(str).str.upper()
+    working["window_key"] = working["window_id"].astype(str).str.upper()
+    working["delta_numeric"] = pd.to_numeric(
+        working["structural_delta"],
+        errors="coerce",
+    )
+    key_columns = ["ticker_key", "as_of_date"]
+    keys = (
+        working[key_columns]
+        .drop_duplicates()
+        .sort_values(key_columns)
+        .itertuples(index=False, name=None)
+    )
+    anchor_by_key: dict[tuple[str, object], str] = {}
+    for require_eligible in (True, False):
+        candidates = working.loc[working["delta_numeric"].notna()].copy()
+        if require_eligible:
+            candidates = candidates.loc[
+                candidates["window_status"].astype(str).eq("ELIGIBLE")
+            ].copy()
+        if candidates.empty:
+            continue
+        for window_id in scoring_config.anchor_window_preference():
+            window_rows = candidates.loc[candidates["window_key"].eq(window_id)]
+            for row in window_rows[["ticker_key", "as_of_date"]].itertuples(
+                index=False,
+                name=None,
+            ):
+                anchor_by_key.setdefault((str(row[0]), row[1]), window_id)
+
+    metric_lookup = {
+        (str(row.ticker_key), row.as_of_date, str(row.window_key)): row
+        for row in working.itertuples(index=False)
+    }
+    anchor_rows: list[_VolatilityAnchorRow] = []
+    for ticker, as_of_date in keys:
+        key = (str(ticker), as_of_date)
+        anchor_window_id = anchor_by_key.get(key)
+        anchor_metric = (
+            metric_lookup.get((str(ticker), as_of_date, anchor_window_id))
+            if anchor_window_id
+            else None
+        )
+        anchor_rows.append(
+            _VolatilityAnchorRow(
+                ticker=str(ticker),
+                as_of_date=as_of_date,
+                anchor_window_id=anchor_window_id,
+                intercept_alpha=(
+                    None if anchor_metric is None else anchor_metric.intercept_alpha
+                ),
+                structural_delta=(
+                    None if anchor_metric is None else anchor_metric.structural_delta
+                ),
+            )
+        )
+    return anchor_rows
+
+
+def _prepare_volatility_weekly_arrays(frame: pd.DataFrame) -> _VolatilityWeeklyArrays:
+    ordered = frame.sort_values("as_of_date").reset_index(drop=True)
+    return _VolatilityWeeklyArrays(
+        as_of_dates=pd.to_datetime(ordered["as_of_date"]).to_numpy(dtype="datetime64[ns]"),
+        stock_returns=pd.to_numeric(
+            ordered["stock_weekly_log_return"], errors="coerce"
+        ).to_numpy(dtype=float),
+        gold_returns=pd.to_numeric(
+            ordered["gold_weekly_log_return"], errors="coerce"
+        ).to_numpy(dtype=float),
+    )
+
+
+def _trailing_volatility_window(
+    *,
+    weekly_arrays: _VolatilityWeeklyArrays,
+    as_of_date: pd.Timestamp,
+) -> _VolatilityWindow:
+    end_idx = int(
+        np.searchsorted(
+            weekly_arrays.as_of_dates,
+            as_of_date.to_datetime64(),
+            side="right",
+        )
+    )
+    start_idx = max(0, end_idx - 52)
+    return _VolatilityWindow(
+        stock_returns=weekly_arrays.stock_returns[start_idx:end_idx],
+        gold_returns=weekly_arrays.gold_returns[start_idx:end_idx],
+    )
 
 
 def choose_structural_anchor_window(
@@ -510,18 +1054,34 @@ def summarize_normalization_issues(
 
 
 def annualize_weekly_volatility(values: Iterable[float]) -> float | None:
-    series = pd.to_numeric(pd.Series(list(values)), errors="coerce").dropna()
-    if len(series.index) < 2:
-        return None
-    return float(series.std(ddof=1) * np.sqrt(52.0))
+    values_array = pd.to_numeric(pd.Series(list(values)), errors="coerce").to_numpy(
+        dtype=float
+    )
+    return _annualize_weekly_volatility_array(values_array)
 
 
 def annualize_downside_volatility(values: Iterable[float]) -> float | None:
-    series = pd.to_numeric(pd.Series(list(values)), errors="coerce").dropna()
-    downside = series.loc[series < 0]
-    if len(downside.index) < 2:
+    values_array = pd.to_numeric(pd.Series(list(values)), errors="coerce").to_numpy(
+        dtype=float
+    )
+    return _annualize_downside_volatility_array(values_array)
+
+
+def _annualize_weekly_volatility_array(values: np.ndarray) -> float | None:
+    numeric_values = np.asarray(values, dtype=float)
+    numeric_values = numeric_values[~np.isnan(numeric_values)]
+    if len(numeric_values) < 2:
         return None
-    return float(downside.std(ddof=1) * np.sqrt(52.0))
+    return float(np.std(numeric_values, ddof=1) * np.sqrt(52.0))
+
+
+def _annualize_downside_volatility_array(values: np.ndarray) -> float | None:
+    numeric_values = np.asarray(values, dtype=float)
+    numeric_values = numeric_values[~np.isnan(numeric_values)]
+    downside_values = numeric_values[numeric_values < 0]
+    if len(downside_values) < 2:
+        return None
+    return float(np.std(downside_values, ddof=1) * np.sqrt(52.0))
 
 
 def compute_regression(x: pd.Series, y: pd.Series) -> RegressionResult | None:
