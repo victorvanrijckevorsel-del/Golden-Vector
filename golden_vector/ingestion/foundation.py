@@ -50,9 +50,12 @@ def execute_foundation_pipeline(
     paths: ProjectPaths,
     app_config: AppConfig,
     run_context: RunContext,
+    yahoo_client: YahooClient | None = None,
 ) -> FoundationExecutionResult:
     registry = build_foundation_registry(app_config.universe)
-    client = YahooClient(retry_policy=retry_policy_from_config(app_config.market_data))
+    client = yahoo_client or YahooClient(
+        retry_policy=retry_policy_from_config(app_config.market_data)
+    )
 
     equity_histories, equity_statuses = fetch_equity_histories(
         client,

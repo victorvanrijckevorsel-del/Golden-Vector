@@ -56,7 +56,7 @@ def persist_options_snapshot(
     has to mean either "not optionable" or "forgotten during persistence."
     """
 
-    snapshot = _with_snapshot_identity(
+    snapshot = build_options_snapshot_frame(
         frame=frame,
         ticker=ticker,
         as_of_date=as_of_date,
@@ -64,6 +64,27 @@ def persist_options_snapshot(
         options_available=options_available,
         message=message,
     )
+    return persist_options_snapshot_frame(
+        paths=paths,
+        run_context=run_context,
+        ticker=ticker,
+        snapshot=snapshot,
+        options_available=options_available,
+        message=message,
+    )
+
+
+def persist_options_snapshot_frame(
+    *,
+    paths: ProjectPaths,
+    run_context: RunContext,
+    ticker: str,
+    snapshot: pd.DataFrame,
+    options_available: bool,
+    message: str | None = None,
+) -> OptionsSnapshotRecord:
+    """Write an already identity-stamped options snapshot frame."""
+
     snapshot_path = _options_snapshot_dir(run_context) / f"{safe_options_file_name(ticker)}.parquet"
     write_parquet_atomic(snapshot, snapshot_path, index=False)
     run_context.record_artifact(snapshot_path)
@@ -116,7 +137,7 @@ def write_latest_options_manifest(
     return manifest_path
 
 
-def _with_snapshot_identity(
+def build_options_snapshot_frame(
     *,
     frame: pd.DataFrame,
     ticker: str,

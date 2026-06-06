@@ -114,6 +114,41 @@ def test_run_options_ingestion_phase_continues_after_ticker_pipeline_error(
     assert manifest["options_manifest_status"] == "captured"
 
 
+def test_run_options_ingestion_phase_computes_features_without_snapshot_readback(
+    tmp_path,
+    monkeypatch,
+):
+    paths = build_test_paths(tmp_path)
+    loaded = load_app_config(paths)
+    context = RunContext.start(
+        paths=paths,
+        command="update-data",
+        parameters={"options": True},
+        config_hash="test-config",
+    )
+    client = _OptionsPhaseClient(pd.read_parquet("tests/fixtures/options/aem_chain_20260529.parquet"))
+
+    monkeypatch.setattr(
+        options_phase_module.pd,
+        "read_parquet",
+        lambda *_, **__: (_ for _ in ()).throw(
+            AssertionError("feature computation should use the in-memory snapshot")
+        ),
+    )
+
+    result = run_options_ingestion_phase(
+        paths=paths,
+        run_context=context,
+        app_config=loaded.app,
+        normalized_equity_histories={"AEM": _price_history()},
+        as_of_date=date(2026, 5, 29),
+        yahoo_client=client,
+    )
+
+    assert result.status == "PASS"
+    assert (paths.options_features_dir / "AEM.parquet").exists()
+
+
 def test_append_feature_rows_replaces_existing_row_for_same_run(tmp_path):
     paths = build_test_paths(tmp_path)
     context = RunContext.start(

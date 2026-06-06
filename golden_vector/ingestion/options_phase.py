@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import pandas as pd
@@ -20,7 +21,10 @@ from golden_vector.features.options import (
     compute_options_features,
     rank_options_iv_cross_section,
 )
-from golden_vector.ingestion.collection_resilience import retry_policy_from_config
+from golden_vector.ingestion.collection_resilience import (
+    map_with_bounded_workers,
+    retry_policy_from_config,
+)
 from golden_vector.ingestion.fetch_benchmarks import (
     BenchmarkFetchStatus,
     fetch_benchmark_histories,
@@ -30,12 +34,14 @@ from golden_vector.ingestion.fetch_options import (
     OPTIONS_STATUS_ERROR,
     OPTIONS_STATUS_SUCCESS,
     OptionsChainResult,
+    RAW_OPTIONS_COLUMNS,
     fetch_options_chain,
 )
 from golden_vector.ingestion.fetch_risk_free_rate import fetch_risk_free_rate
 from golden_vector.ingestion.persist_options import (
     OptionsSnapshotRecord,
-    persist_options_snapshot,
+    build_options_snapshot_frame,
+    persist_options_snapshot_frame,
     safe_options_file_name,
     write_latest_options_manifest,
 )
@@ -56,6 +62,13 @@ class _OptionFetchTarget:
     ticker: str
     yahoo_symbol: str
     vehicle_type: str
+
+
+@dataclass(frozen=True)
+class _OptionTargetFetch:
+    target: _OptionFetchTarget
+    result: OptionsChainResult
+    collection_event: dict[str, Any]
 
 
 def skipped_options_phase_summary(*, reason: str) -> dict[str, Any]:
@@ -109,43 +122,45 @@ def run_options_ingestion_phase(
         OPTIONS_STATUS_ERROR: 0,
     }
 
-    for target in targets:
-        try:
-            result = fetch_options_chain(
-                ticker=target.yahoo_symbol,
-                as_of_date=as_of_date,
-                yahoo_client=client,
-                expiry_fetch_mode=app_config.hedge_readiness.options_expiry_fetch_mode,
-                target_dte_bands=app_config.hedge_readiness.option_dte_bands,
-            )
-            collection_events.append(
-                {
-                    **result.collection_stats,
-                    "ticker": target.ticker,
-                    "source_symbol": target.yahoo_symbol,
-                    "vehicle_type": target.vehicle_type,
-                    "message": result.message,
-                }
-            )
-            if result.status == OPTIONS_STATUS_ERROR:
-                LOGGER.warning(
-                    "Options fetch failed for %s (%s): %s",
-                    target.ticker,
-                    target.yahoo_symbol,
-                    result.message,
-                )
+    fetch_results = _fetch_option_targets(
+        targets=targets,
+        client=client,
+        app_config=app_config,
+        as_of_date=as_of_date,
+        max_workers=app_config.market_data.yahoo_max_workers,
+    )
 
-            record = persist_options_snapshot(
+    for fetched in fetch_results:
+        target = fetched.target
+        result = fetched.result
+        collection_events.append(fetched.collection_event)
+        if result.status == OPTIONS_STATUS_ERROR:
+            LOGGER.warning(
+                "Options fetch failed for %s (%s): %s",
+                target.ticker,
+                target.yahoo_symbol,
+                result.message,
+            )
+        try:
+            snapshot_frame = build_options_snapshot_frame(
+                frame=result.frame,
+                ticker=target.ticker,
+                as_of_date=as_of_date,
+                run_id=run_context.run_id,
+                options_available=result.options_available,
+                message=result.message,
+            )
+            record = persist_options_snapshot_frame(
                 paths=paths,
                 run_context=run_context,
                 ticker=target.ticker,
-                frame=result.frame,
-                as_of_date=as_of_date,
+                snapshot=snapshot_frame,
                 options_available=result.options_available,
                 message=result.message,
             )
             feature_row = _compute_feature_row(
                 snapshot_record=record,
+                snapshot_frame=snapshot_frame,
                 options_result=result,
                 paths=paths,
                 ticker=target.ticker,
@@ -274,6 +289,73 @@ def _option_fetch_targets(app_config: AppConfig) -> list[_OptionFetchTarget]:
     return targets
 
 
+def _fetch_option_targets(
+    *,
+    targets: list[_OptionFetchTarget],
+    client: YahooClient,
+    app_config: AppConfig,
+    as_of_date: date,
+    max_workers: int,
+) -> list[_OptionTargetFetch]:
+    return map_with_bounded_workers(
+        targets,
+        max_workers=max_workers,
+        func=lambda target: _fetch_option_target(
+            target=target,
+            client=client,
+            app_config=app_config,
+            as_of_date=as_of_date,
+        ),
+    )
+
+
+def _fetch_option_target(
+    *,
+    target: _OptionFetchTarget,
+    client: YahooClient,
+    app_config: AppConfig,
+    as_of_date: date,
+) -> _OptionTargetFetch:
+    started_at = perf_counter()
+    try:
+        result = fetch_options_chain(
+            ticker=target.yahoo_symbol,
+            as_of_date=as_of_date,
+            yahoo_client=client,
+            expiry_fetch_mode=app_config.hedge_readiness.options_expiry_fetch_mode,
+            target_dte_bands=app_config.hedge_readiness.option_dte_bands,
+        )
+    except Exception as exc:  # noqa: BLE001 - one ticker must not abort the pool.
+        result = OptionsChainResult(
+            ticker=target.yahoo_symbol,
+            as_of_date=as_of_date,
+            status=OPTIONS_STATUS_ERROR,
+            frame=pd.DataFrame(columns=RAW_OPTIONS_COLUMNS),
+            message=str(exc),
+            collection_stats={
+                "ticker": target.yahoo_symbol,
+                "status": OPTIONS_STATUS_ERROR,
+                "duration_seconds": round(perf_counter() - started_at, 3),
+                "expiry_fetch_mode": app_config.hedge_readiness.options_expiry_fetch_mode,
+                "expiration_count_available": 0,
+                "expiration_count_selected": 0,
+                "expiration_error_count": 0,
+                "message": str(exc),
+            },
+        )
+    return _OptionTargetFetch(
+        target=target,
+        result=result,
+        collection_event={
+            **result.collection_stats,
+            "ticker": target.ticker,
+            "source_symbol": target.yahoo_symbol,
+            "vehicle_type": target.vehicle_type,
+            "message": result.message,
+        },
+    )
+
+
 def _price_history_for_target(
     *,
     target: _OptionFetchTarget,
@@ -288,6 +370,7 @@ def _price_history_for_target(
 def _compute_feature_row(
     *,
     snapshot_record: OptionsSnapshotRecord,
+    snapshot_frame: pd.DataFrame | None = None,
     options_result: OptionsChainResult,
     paths: ProjectPaths,
     ticker: str,
@@ -297,7 +380,11 @@ def _compute_feature_row(
     app_config: AppConfig,
     price_history: pd.DataFrame,
 ) -> dict[str, Any]:
-    snapshot = pd.read_parquet(snapshot_record.snapshot_path)
+    snapshot = (
+        snapshot_frame
+        if snapshot_frame is not None
+        else pd.read_parquet(snapshot_record.snapshot_path)
+    )
     underlying_price = _underlying_price(
         snapshot=snapshot,
         options_result=options_result,

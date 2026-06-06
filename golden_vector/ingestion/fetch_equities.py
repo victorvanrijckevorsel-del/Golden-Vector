@@ -69,16 +69,14 @@ def _fetch_equity_history(
         )
     except Exception as exc:
         fetched_at = datetime.now(timezone.utc)
+        empty_frame, message = _failed_equity_history_frame(
+            target=target,
+            fetched_at=fetched_at,
+            original_error=exc,
+        )
         return (
             target,
-            standardize_equity_history(
-                ticker=target.ticker,
-                exchange=target.exchange,
-                currency=target.currency,
-                source_symbol=target.yahoo_symbol,
-                frame=pd.DataFrame(),
-                fetched_at=fetched_at,
-            ),
+            empty_frame,
             FetchStatusRecord(
                 dataset="equities",
                 entity=target.ticker,
@@ -87,6 +85,31 @@ def _fetch_equity_history(
                 row_count=0,
                 started_at_utc=started_at,
                 completed_at_utc=fetched_at,
-                message=str(exc),
+                message=message,
             ),
+        )
+
+
+def _failed_equity_history_frame(
+    *,
+    target: EquityFetchTarget,
+    fetched_at: datetime,
+    original_error: Exception,
+) -> tuple[pd.DataFrame, str]:
+    try:
+        return (
+            standardize_equity_history(
+                ticker=target.ticker,
+                exchange=target.exchange,
+                currency=target.currency,
+                source_symbol=target.yahoo_symbol,
+                frame=pd.DataFrame(),
+                fetched_at=fetched_at,
+            ),
+            str(original_error),
+        )
+    except Exception as fallback_error:  # noqa: BLE001 - never abort the batch.
+        return (
+            pd.DataFrame(),
+            f"{original_error}; empty-frame fallback failed: {fallback_error}",
         )

@@ -5,7 +5,9 @@ import pandas as pd
 
 from golden_vector.app.run_context import RunContext
 from golden_vector.ingestion.persist_options import (
+    build_options_snapshot_frame,
     persist_options_snapshot,
+    persist_options_snapshot_frame,
     write_latest_options_manifest,
 )
 from tests.helpers import build_test_paths
@@ -74,6 +76,30 @@ def test_persist_options_snapshot_writes_empty_chain_marker(tmp_path):
     assert snapshot.loc[0, "ticker"] == "AAUC.TO"
     assert bool(snapshot.loc[0, "options_available"]) is False
     assert snapshot.loc[0, "empty_reason"] == "No listed options returned by Yahoo."
+
+
+def test_persist_options_snapshot_frame_writes_the_supplied_frame(tmp_path):
+    paths = build_test_paths(tmp_path)
+    context = _run_context(paths)
+    snapshot = build_options_snapshot_frame(
+        frame=pd.DataFrame([{"strike": 45.0, "mid": 1.2}]),
+        ticker="AEM",
+        as_of_date=date(2026, 5, 29),
+        run_id=context.run_id,
+        options_available=True,
+        message=None,
+    )
+
+    record = persist_options_snapshot_frame(
+        paths=paths,
+        run_context=context,
+        ticker="AEM",
+        snapshot=snapshot,
+        options_available=True,
+    )
+
+    persisted = pd.read_parquet(record.snapshot_path)
+    pd.testing.assert_frame_equal(persisted, snapshot)
 
 
 def test_write_latest_options_manifest_points_at_run_snapshots(tmp_path):

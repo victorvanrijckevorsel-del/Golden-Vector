@@ -5,6 +5,7 @@ from time import sleep
 
 import pandas as pd
 
+from golden_vector.ingestion import fetch_equities as fetch_equities_module
 from golden_vector.ingestion.fetch_equities import fetch_equity_histories
 from golden_vector.ingestion.fetch_market_snapshot import fetch_market_snapshots
 from golden_vector.ingestion.registry import EquityFetchTarget, MarketSnapshotTarget
@@ -30,6 +31,34 @@ def test_fetch_equity_histories_uses_bounded_workers_and_preserves_order():
     assert list(histories) == ["AAA", "BBB", "CCC", "DDD"]
     assert histories["BBB"].empty
     assert not histories["AAA"].empty
+
+
+def test_fetch_equity_histories_does_not_abort_when_empty_fallback_fails(monkeypatch):
+    client = _TrackingHistoryClient(failing_symbols={"BBB"})
+    target = EquityFetchTarget(
+        ticker="BBB",
+        exchange=None,
+        currency="USD",
+        yahoo_symbol="BBB",
+    )
+    original_standardize = fetch_equities_module.standardize_equity_history
+
+    def fail_empty_standardize(**kwargs):
+        if kwargs["frame"].empty:
+            raise RuntimeError("synthetic empty fallback failure")
+        return original_standardize(**kwargs)
+
+    monkeypatch.setattr(
+        fetch_equities_module,
+        "standardize_equity_history",
+        fail_empty_standardize,
+    )
+
+    histories, statuses = fetch_equity_histories(client, [target], max_workers=1)
+
+    assert histories["BBB"].empty
+    assert statuses[0].status == "FAIL"
+    assert "empty-frame fallback failed" in str(statuses[0].message)
 
 
 def test_fetch_market_snapshots_preserves_order_and_isolates_failures():

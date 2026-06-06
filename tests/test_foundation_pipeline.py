@@ -123,8 +123,11 @@ def test_foundation_pipeline_runs_normalization_and_combines_statuses(tmp_path, 
     run_context = RunContext.start(paths=paths, command="foundation", parameters={}, config_hash="hash")
     registry = _registry()
     captured_workers: dict[str, int] = {}
+    captured_clients: dict[str, object] = {}
+    sentinel_client = object()
 
     def fake_fetch_equity_histories(client, targets, **kwargs):
+        captured_clients["equities"] = client
         captured_workers["equities"] = kwargs.get("max_workers")
         return (
             {"NEM": pd.DataFrame([{"ticker": "NEM", "date": "2026-01-30"}])},
@@ -132,6 +135,7 @@ def test_foundation_pipeline_runs_normalization_and_combines_statuses(tmp_path, 
         )
 
     def fake_fetch_market_snapshots(client, targets, source_run_id, **kwargs):
+        captured_clients["snapshots"] = client
         captured_workers["snapshots"] = kwargs.get("max_workers")
         return (
             pd.DataFrame([{"ticker": "NEM", "snapshot_date": "2026-02-01"}]),
@@ -219,6 +223,7 @@ def test_foundation_pipeline_runs_normalization_and_combines_statuses(tmp_path, 
         paths=paths,
         app_config=app_config,
         run_context=run_context,
+        yahoo_client=sentinel_client,
     )
 
     assert result.overall_status == "WARN"
@@ -230,6 +235,10 @@ def test_foundation_pipeline_runs_normalization_and_combines_statuses(tmp_path, 
     assert captured_workers == {
         "equities": app_config.market_data.yahoo_max_workers,
         "snapshots": app_config.market_data.yahoo_max_workers,
+    }
+    assert captured_clients == {
+        "equities": sentinel_client,
+        "snapshots": sentinel_client,
     }
     assert persisted["foundation"] == 1
     assert persisted["normalization"] == 1

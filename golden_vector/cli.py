@@ -55,7 +55,10 @@ from golden_vector.hedge.option_artifact_frames import build_option_artifact_fra
 from golden_vector.hedge.option_artifact_sources import load_option_artifact_source_inputs
 from golden_vector.hedge.options_liquidity import slot_tier_counts
 from golden_vector.ingestion.foundation import execute_foundation_pipeline
-from golden_vector.ingestion.collection_resilience import summarize_fetch_status_rows
+from golden_vector.ingestion.collection_resilience import (
+    retry_policy_from_config,
+    summarize_fetch_status_rows,
+)
 from golden_vector.ingestion.options_phase import (
     run_options_ingestion_phase,
     skipped_options_phase_summary,
@@ -64,6 +67,7 @@ from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.ingestion.persist_option_artifacts import persist_option_artifact_frames
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
+from golden_vector.ingestion.yahoo_client import YahooClient
 from golden_vector.hedge.report import write_hedge_readiness_report
 from golden_vector.model.pipeline import execute_tool_a_profile_pipeline
 from golden_vector.model.tool_c import ToolCExecutionInputs, compute_tool_c_outputs
@@ -749,10 +753,15 @@ def run_foundation(
         }
         run_context.write_json("config_summary.json", config_summary)
 
+        yahoo_client = YahooClient(
+            retry_policy=retry_policy_from_config(loaded_config.app.market_data)
+        )
+
         result = execute_foundation_pipeline(
             paths=paths,
             app_config=loaded_config.app,
             run_context=run_context,
+            yahoo_client=yahoo_client,
         )
         run_context.write_json("fetch_plan.json", result.registry.summary())
         qa_summary = {
@@ -802,6 +811,7 @@ def run_foundation(
                 app_config=loaded_config.app,
                 normalized_equity_histories=result.normalized_equity_histories,
                 as_of_date=snapshot_date,
+                yahoo_client=yahoo_client,
             )
             options_summary = options_result.summary
             notes.append(
