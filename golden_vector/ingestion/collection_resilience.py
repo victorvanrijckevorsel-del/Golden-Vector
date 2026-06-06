@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from random import random as default_random
@@ -17,6 +18,7 @@ from golden_vector.contracts.config_models import MarketDataConfig
 from golden_vector.contracts.data_models import FetchStatusRecord
 
 T = TypeVar("T")
+U = TypeVar("U")
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,25 @@ def bounded_worker_count(*, max_workers: int, item_count: int) -> int:
     return max(1, min(int(max_workers), item_count))
 
 
+def map_with_bounded_workers(
+    items: Iterable[T],
+    *,
+    max_workers: int,
+    func: Callable[[T], U],
+) -> list[U]:
+    """Apply ``func`` with bounded workers while preserving input order."""
+
+    item_list = list(items)
+    worker_count = bounded_worker_count(
+        max_workers=max_workers,
+        item_count=len(item_list),
+    )
+    if worker_count <= 1:
+        return [func(item) for item in item_list]
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        return list(executor.map(func, item_list))
+
+
 def call_with_retries(
     operation: str,
     func: Callable[[], T],
@@ -89,17 +110,17 @@ def call_with_retries(
         except Exception as exc:
             if attempt >= last_attempt:
                 raise
+            sleep_seconds = backoff + _jitter_seconds(
+                retry_policy.backoff_jitter_seconds,
+                random_func=random_func,
+            )
             active_logger.warning(
                 "%s failed on attempt %s/%s: %s. Retrying in %.2fs.",
                 operation,
                 attempt,
                 last_attempt,
                 exc,
-                backoff,
-            )
-            sleep_seconds = backoff + _jitter_seconds(
-                retry_policy.backoff_jitter_seconds,
-                random_func=random_func,
+                sleep_seconds,
             )
             if sleep_seconds:
                 sleep_func(sleep_seconds)

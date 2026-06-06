@@ -9,6 +9,7 @@ from golden_vector.ingestion.collection_resilience import (
     RetryPolicy,
     bounded_worker_count,
     call_with_retries,
+    map_with_bounded_workers,
     retry_policy_from_config,
     summarize_fetch_status_rows,
     summarize_fetch_statuses,
@@ -99,6 +100,16 @@ def test_bounded_worker_count_caps_to_items_and_requested_workers():
 def test_bounded_worker_count_rejects_invalid_worker_count():
     with pytest.raises(ValueError, match="max_workers must be positive"):
         bounded_worker_count(max_workers=0, item_count=4)
+
+
+def test_map_with_bounded_workers_preserves_order():
+    result = map_with_bounded_workers(
+        [3, 1, 2],
+        max_workers=2,
+        func=lambda value: f"item-{value}",
+    )
+
+    assert result == ["item-3", "item-1", "item-2"]
 
 
 def test_summarize_fetch_statuses_records_failures_and_slowest_rows():

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import pandas as pd
 
 from golden_vector.contracts.data_models import FetchStatusRecord
-from golden_vector.ingestion.collection_resilience import bounded_worker_count
+from golden_vector.ingestion.collection_resilience import map_with_bounded_workers
 from golden_vector.ingestion.registry import MarketSnapshotTarget
 from golden_vector.ingestion.standardize import (
     empty_market_snapshot_frame,
@@ -27,24 +26,11 @@ def fetch_market_snapshots(
     rows: list[dict[str, object]] = []
     statuses: list[FetchStatusRecord] = []
 
-    worker_count = bounded_worker_count(max_workers=max_workers, item_count=len(targets))
-    if worker_count <= 1:
-        results = [
-            _fetch_market_snapshot(client, target, source_run_id)
-            for target in targets
-        ]
-    else:
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            results = list(
-                executor.map(
-                    lambda target: _fetch_market_snapshot(
-                        client,
-                        target,
-                        source_run_id,
-                    ),
-                    targets,
-                )
-            )
+    results = map_with_bounded_workers(
+        targets,
+        max_workers=max_workers,
+        func=lambda target: _fetch_market_snapshot(client, target, source_run_id),
+    )
 
     for row, status in results:
         if row is not None:
