@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -66,6 +67,12 @@ class StructuralTickerData:
     weekly_series: pd.DataFrame
     structural_window_metrics: pd.DataFrame
     normalization_issues: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class StructuralHistoryFrames:
+    weekly_series: pd.DataFrame
+    structural_window_metrics: pd.DataFrame
 
 
 @dataclass(frozen=True)
@@ -156,6 +163,54 @@ def build_structural_ticker_data(
         weekly_series=weekly_series,
         structural_window_metrics=window_metrics,
         normalization_issues=normalization_issues,
+    )
+
+
+def build_structural_history_frames(
+    *,
+    tickers: Iterable[str],
+    normalized_equity_histories: dict[str, pd.DataFrame],
+    gold_history: pd.DataFrame,
+    scoring_config: ScoringConfig,
+    on_ticker_built: (
+        Callable[[str, StructuralTickerData, float | None], None] | None
+    ) = None,
+    timer: Callable[[], float] | None = None,
+) -> StructuralHistoryFrames:
+    """Build Tool A structural and weekly frames for a ticker collection."""
+
+    window_metric_frames: list[pd.DataFrame] = []
+    weekly_series_frames: list[pd.DataFrame] = []
+    for ticker in tickers:
+        started = timer() if timer is not None and on_ticker_built is not None else None
+        ticker_data = build_structural_ticker_data(
+            usd_equity_history=normalized_equity_histories.get(ticker, pd.DataFrame()),
+            gold_history=gold_history,
+            scoring_config=scoring_config,
+        )
+        if on_ticker_built is not None:
+            elapsed = (
+                timer() - started
+                if timer is not None and started is not None
+                else None
+            )
+            on_ticker_built(ticker, ticker_data, elapsed)
+        if not ticker_data.structural_window_metrics.empty:
+            window_metric_frames.append(ticker_data.structural_window_metrics)
+        if not ticker_data.weekly_series.empty:
+            weekly_series_frames.append(ticker_data.weekly_series)
+
+    return StructuralHistoryFrames(
+        weekly_series=(
+            pd.concat(weekly_series_frames, ignore_index=True)
+            if weekly_series_frames
+            else pd.DataFrame()
+        ),
+        structural_window_metrics=(
+            pd.concat(window_metric_frames, ignore_index=True)
+            if window_metric_frames
+            else pd.DataFrame(columns=STRUCTURAL_WINDOW_COLUMNS)
+        ),
     )
 
 
@@ -526,13 +581,7 @@ def _window_bounds(
     ordered_dates: np.ndarray,
     window_id: str,
 ) -> tuple[np.ndarray, np.ndarray]:
-    trailing_starts = np.array(
-        [
-            _window_start(pd.Timestamp(as_of_date), window_id).to_datetime64()
-            for as_of_date in as_of_dates
-        ],
-        dtype="datetime64[ns]",
-    )
+    trailing_starts = _window_start_values(as_of_dates, window_id)
     as_of_values = as_of_dates.to_numpy(dtype="datetime64[ns]")
     start_idx = np.searchsorted(ordered_dates, trailing_starts, side="right")
     end_idx = np.searchsorted(ordered_dates, as_of_values, side="right")
@@ -707,12 +756,12 @@ def _summarize_normalization_issues_by_as_of(
     issues = issues.sort_values("date").reset_index(drop=True)
     issue_dates = issues["date"].to_numpy(dtype="datetime64[ns]")
     issue_statuses = issues["normalization_status"].to_numpy(dtype=str)
+    normalized_as_of_dates = pd.DatetimeIndex(as_of_dates)
+    trailing_starts = _window_start_values(normalized_as_of_dates, "3Y")
+    as_of_values = normalized_as_of_dates.to_numpy(dtype="datetime64[ns]")
 
     summaries: list[str | None] = []
-    for as_of_date in as_of_dates:
-        as_of_timestamp = pd.Timestamp(as_of_date)
-        trailing_start = (as_of_timestamp - pd.DateOffset(years=3)).to_datetime64()
-        as_of_value = as_of_timestamp.to_datetime64()
+    for trailing_start, as_of_value in zip(trailing_starts, as_of_values, strict=True):
         start_idx = int(np.searchsorted(issue_dates, trailing_start, side="right"))
         end_idx = int(np.searchsorted(issue_dates, as_of_value, side="right"))
         if end_idx <= start_idx:
@@ -1191,11 +1240,24 @@ def _last_trading_day_per_week(
 
 
 def _window_start(as_of_date: pd.Timestamp, window_id: str) -> pd.Timestamp:
+    return pd.Timestamp(as_of_date) - _window_offset(window_id)
+
+
+def _window_start_values(
+    as_of_dates: pd.DatetimeIndex,
+    window_id: str,
+) -> np.ndarray:
+    return (
+        pd.DatetimeIndex(as_of_dates) - _window_offset(window_id)
+    ).to_numpy(dtype="datetime64[ns]")
+
+
+def _window_offset(window_id: str) -> pd.DateOffset:
     normalized = str(window_id).strip().upper()
     if normalized.endswith("M"):
-        return as_of_date - pd.DateOffset(months=int(normalized[:-1]))
+        return pd.DateOffset(months=int(normalized[:-1]))
     if normalized.endswith("Y"):
-        return as_of_date - pd.DateOffset(years=int(normalized[:-1]))
+        return pd.DateOffset(years=int(normalized[:-1]))
     raise ValueError(f"Unsupported structural window: {window_id}")
 
 

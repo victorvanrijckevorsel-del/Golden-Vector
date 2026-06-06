@@ -38,8 +38,7 @@ from golden_vector.model.scoring import (
     rank_tool_a_outputs,
 )
 from golden_vector.model.structural import (
-    STRUCTURAL_WINDOW_COLUMNS,
-    build_structural_ticker_data,
+    build_structural_history_frames,
     choose_structural_anchor_window,
     compute_volatility_diagnostics,
     weighted_median,
@@ -132,31 +131,16 @@ def execute_tool_a_profile_pipeline(
         if ticker.active and ticker.tool_a_enabled
     ]
 
-    window_metric_frames: list[pd.DataFrame] = []
-    weekly_series_frames: list[pd.DataFrame] = []
-    for ticker in tool_a_tickers:
-        ticker_data = build_structural_ticker_data(
-            usd_equity_history=normalized_equity_histories.get(ticker, pd.DataFrame()),
-            gold_history=gold_history,
-            scoring_config=app_config.scoring,
-        )
-        if not ticker_data.structural_window_metrics.empty:
-            window_metric_frames.append(ticker_data.structural_window_metrics)
-        if not ticker_data.weekly_series.empty:
-            weekly_series_frames.append(ticker_data.weekly_series)
-
-    structural_window_metrics = (
-        pd.concat(window_metric_frames, ignore_index=True)
-        if window_metric_frames
-        else pd.DataFrame(columns=STRUCTURAL_WINDOW_COLUMNS)
+    structural_frames = build_structural_history_frames(
+        tickers=tool_a_tickers,
+        normalized_equity_histories=normalized_equity_histories,
+        gold_history=gold_history,
+        scoring_config=app_config.scoring,
     )
+    structural_window_metrics = structural_frames.structural_window_metrics
     if not structural_window_metrics.empty:
         structural_window_metrics["source_run_id"] = run_context.run_id
-    weekly_series = (
-        pd.concat(weekly_series_frames, ignore_index=True)
-        if weekly_series_frames
-        else pd.DataFrame()
-    )
+    weekly_series = structural_frames.weekly_series
     persist_tool_a_structural_metrics(
         paths=paths,
         run_context=run_context,

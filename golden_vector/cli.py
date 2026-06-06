@@ -31,6 +31,10 @@ from golden_vector.app.model_state import (
     write_current_model_state_manifest,
 )
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.app.perf_profile import (
+    build_cached_perf_profile,
+    format_cached_perf_profile,
+)
 from golden_vector.app.replay_manifest import (
     VERDICT_PREDATES_REPLAY_MANIFEST,
     VerifyResult,
@@ -176,6 +180,19 @@ def build_parser() -> argparse.ArgumentParser:
             "Print a one-screen operational summary: snapshot date, latest Tool A and "
             "Tool B run state, manual-data coverage per ticker, refresh-id alignment."
         ),
+    )
+
+    perf_parser = subparsers.add_parser(
+        "perf-profile",
+        help=(
+            "Profile expensive local compute paths from cached artifacts only. "
+            "No Yahoo calls and no model artifacts are written."
+        ),
+    )
+    perf_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the cached performance profile as JSON.",
     )
 
     tool_b_parser = subparsers.add_parser(
@@ -495,6 +512,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "status":
         return run_status(paths)
 
+    if args.command == "perf-profile":
+        return run_perf_profile(paths, json_output=args.json)
+
     if args.command == "manual-data":
         return run_manual_data(paths, args)
 
@@ -524,6 +544,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser.error(f"Unsupported command: {args.command}")
     return 2
+
+
+def run_perf_profile(paths: ProjectPaths, *, json_output: bool = False) -> int:
+    try:
+        profile = build_cached_perf_profile(paths)
+    except Exception as exc:
+        print(f"Cached performance profile failed: {exc}")
+        return 1
+    if json_output:
+        print(json.dumps(profile, indent=2, sort_keys=True, default=str))
+    else:
+        print(format_cached_perf_profile(profile))
+    return 0
 
 
 def run_options_liquidity_summary(

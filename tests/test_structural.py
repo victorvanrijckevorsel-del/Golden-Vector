@@ -19,6 +19,8 @@ from golden_vector.model.structural import (
     compute_volatility_diagnostics,
     compute_window_metric,
     summarize_normalization_issues,
+    _window_start,
+    _window_start_values,
 )
 
 
@@ -276,6 +278,84 @@ def test_compute_structural_window_metrics_matches_reference_loop():
     ].iloc[0]
     assert boundary_metric["week_count"] == len(boundary_rows.index)
     assert boundary_metric["normalization_issue_summary"] == "STALE_FX"
+
+
+def test_trailing_window_calendar_boundaries_are_exact():
+    assert _window_start(pd.Timestamp("2024-02-29"), "1Y") == pd.Timestamp(
+        "2023-02-28"
+    )
+    assert _window_start(pd.Timestamp("2025-02-28"), "1Y") == pd.Timestamp(
+        "2024-02-28"
+    )
+    assert _window_start(pd.Timestamp("2026-03-31"), "12M") == pd.Timestamp(
+        "2025-03-31"
+    )
+
+    weekly_series = pd.DataFrame(
+        {
+            "ticker": "NEM",
+            "as_of_date": [
+                date(2024, 2, 28),
+                date(2024, 2, 29),
+                date(2025, 2, 28),
+                date(2025, 3, 31),
+                date(2025, 4, 1),
+                date(2026, 3, 31),
+            ],
+            "stock_week_date": [
+                date(2024, 2, 28),
+                date(2024, 2, 29),
+                date(2025, 2, 28),
+                date(2025, 3, 31),
+                date(2025, 4, 1),
+                date(2026, 3, 31),
+            ],
+            "gold_week_date": [
+                date(2024, 2, 28),
+                date(2024, 2, 29),
+                date(2025, 2, 28),
+                date(2025, 3, 31),
+                date(2025, 4, 1),
+                date(2026, 3, 31),
+            ],
+            "stock_basis_usd": 10.0,
+            "gold_basis_usd": 2000.0,
+            "stock_weekly_log_return": 0.01,
+            "gold_weekly_log_return": 0.01,
+        }
+    )
+
+    leap_rows = build_trailing_window_rows(
+        weekly_series=weekly_series,
+        as_of_date=pd.Timestamp("2025-02-28"),
+        window_id="1Y",
+    )
+    leap_dates = set(pd.to_datetime(leap_rows["as_of_date"]))
+    assert pd.Timestamp("2024-02-28") not in leap_dates
+    assert pd.Timestamp("2024-02-29") in leap_dates
+
+    month_end_rows = build_trailing_window_rows(
+        weekly_series=weekly_series,
+        as_of_date=pd.Timestamp("2026-03-31"),
+        window_id="12M",
+    )
+    month_end_dates = set(pd.to_datetime(month_end_rows["as_of_date"]))
+    assert pd.Timestamp("2025-03-31") not in month_end_dates
+    assert pd.Timestamp("2025-04-01") in month_end_dates
+
+
+def test_vectorized_window_starts_match_scalar_calendar_offsets():
+    as_of_dates = pd.date_range("2014-01-01", "2026-12-31", freq="D")
+    for window_id in ("6M", "12M", "3Y"):
+        vectorized = _window_start_values(as_of_dates, window_id)
+        scalar = np.array(
+            [
+                _window_start(pd.Timestamp(as_of_date), window_id).to_datetime64()
+                for as_of_date in as_of_dates
+            ],
+            dtype="datetime64[ns]",
+        )
+        np.testing.assert_array_equal(vectorized, scalar)
 
 
 def test_compute_structural_window_metrics_keeps_empty_regression_counts_zero():
