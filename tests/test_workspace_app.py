@@ -2048,6 +2048,32 @@ def test_workspace_root_renders_candidate_finder_home(tmp_path):
     assert 'class="nav-tab active" href="/"' in root_response["body"]
 
 
+def test_workspace_stale_tool_b_schema_renders_actionable_refresh_page(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "as_of_date": date(2026, 4, 22),
+                "target_price_peer_pe": 120.0,
+            }
+        ]
+    ).to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/")
+
+    assert response["status"].startswith("503")
+    assert "Your local Corporate Finance data is from the previous version" in response["body"]
+    assert "Run python main.py refresh" in response["body"]
+    assert "The workspace hit an unexpected error" not in response["body"]
+
+
 def test_workspace_combined_route_is_removed(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()

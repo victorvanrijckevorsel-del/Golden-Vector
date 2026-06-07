@@ -16,6 +16,7 @@ from golden_vector.contracts.config_models import AppConfig
 from golden_vector.screening.manual_data import (
     REQUIRED_MANUAL_FIELDS,
 )
+from golden_vector.screening.schema import ToolBStaleSchemaError
 from golden_vector.serve.workspace_state import (
     _load_tool_a_detail,
     _load_workspace_state,
@@ -494,6 +495,18 @@ def create_workspace_app(
                 start_response,
                 _render_error_page("Page not found."),
                 status="404 Not Found",
+            )
+        except ToolBStaleSchemaError as exc:
+            return _html_response(
+                start_response,
+                _render_error_page(
+                    "Your local Corporate Finance data is from the previous version.",
+                    detail=(
+                        "Run python main.py refresh to rebuild Tool B, the option artifacts, "
+                        f"and the current model-state manifest. Details: {exc}"
+                    ),
+                ),
+                status="503 Service Unavailable",
             )
         except Exception as exc:
             return _html_response(

@@ -72,6 +72,8 @@ def compute_layer2_metrics(
         operating_margin_usd_per_oz = gold_price_assumption - cash_cost_usd_per_oz
     else:
         assert aisc_usd_per_oz is not None
+        # If cash cost is missing, estimate cash cost as 70% of AISC so
+        # forward EBITDA remains transparent rather than pretending precision.
         operating_margin_usd_per_oz = gold_price_assumption - (aisc_usd_per_oz * 0.7)
 
     forward_ebitda_musd = (

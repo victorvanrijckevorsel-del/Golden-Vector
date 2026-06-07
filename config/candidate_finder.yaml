@@ -164,6 +164,8 @@ presets:
   - id: bearish_put
     label: Bearish put screen
     options_side: puts
+    # Intentional fragility overrides: for bearish puts, higher AISC and
+    # higher leverage can be useful because they amplify downside stress.
     criteria:
       - id: down_beta
         direction: high_good
