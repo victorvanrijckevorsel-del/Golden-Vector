@@ -23,6 +23,10 @@ from golden_vector.serve.lenses import (
     resolve_lens,
 )
 from golden_vector.serve.model_state_banner import render_model_state_banner
+from golden_vector.serve.option_refresh import (
+    OptionRefreshStatus,
+    render_option_refresh_control,
+)
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.workspace_state import OverviewFilters, WorkspaceState
 
@@ -34,6 +38,7 @@ def _render_overview_page(
     filters: OverviewFilters | None = None,
     lens_id: str = DEFAULT_LENS_ID,
     scoring_config: Any = None,
+    refresh_status: OptionRefreshStatus | None = None,
 ) -> str:
     filters = filters or OverviewFilters()
     lens = resolve_lens(lens_id)
@@ -166,6 +171,12 @@ def _render_overview_page(
     if flash:
         body.append(f"<div class=\"flash\">{escape(flash)}</div>")
     body.append(render_model_state_banner(state.model_state_manifest))
+    body.append(
+        render_option_refresh_control(
+            refresh_status or OptionRefreshStatus(),
+            return_to="/",
+        )
+    )
     body.append(_render_provenance_warnings(state))
     body.append(_render_refresh_summary(state.foundation_manifest))
     body.append(

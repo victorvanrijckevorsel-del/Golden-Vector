@@ -24,6 +24,7 @@ REFRESH_STATUS_RUNNING = "running"
 REFRESH_STATUS_SUCCEEDED = "succeeded"
 REFRESH_STATUS_FAILED = "failed"
 REFRESH_STATUS_UNKNOWN = "unknown"
+REFRESH_JOB_ID_ENV = "GOLDEN_VECTOR_REFRESH_JOB_ID"
 
 _STILL_ACTIVE = 259
 _DETACHED_PROCESS = 0x00000008
@@ -84,6 +85,7 @@ class OptionRefreshStartResult:
     status: OptionRefreshStatus
     started: bool
     already_running: bool = False
+    adopted: bool = False
 
 
 ProcessExists = Callable[[int], bool]
@@ -148,6 +150,39 @@ def write_option_refresh_status(
         json.dumps(status.to_payload(), indent=2, sort_keys=True),
     )
     return status_path
+
+
+def acquire_refresh_lock(
+    paths: ProjectPaths,
+    *,
+    command: Sequence[str],
+    adopted_job_id: str | None = None,
+    process_id: int | None = None,
+    process_exists: ProcessExists | None = None,
+) -> OptionRefreshStartResult:
+    current = read_option_refresh_status(paths, process_exists=process_exists)
+    if (
+        adopted_job_id
+        and current.status == REFRESH_STATUS_RUNNING
+        and current.job_id == adopted_job_id
+    ):
+        return OptionRefreshStartResult(status=current, started=True, adopted=True)
+    if current.status == REFRESH_STATUS_RUNNING:
+        return OptionRefreshStartResult(
+            status=current,
+            started=False,
+            already_running=True,
+        )
+
+    status = OptionRefreshStatus(
+        status=REFRESH_STATUS_RUNNING,
+        job_id=_new_job_id(),
+        process_id=process_id if process_id is not None else os.getpid(),
+        started_at=_utc_now(),
+        command=tuple(command),
+    )
+    write_option_refresh_status(paths, status)
+    return OptionRefreshStartResult(status=status, started=True)
 
 
 def start_options_refresh(
@@ -265,6 +300,7 @@ def run_refresh_child(*, job_id: str, log_path: Path) -> int:
         completed = subprocess.run(
             command,
             cwd=paths.repo_root,
+            env={**os.environ, REFRESH_JOB_ID_ENV: job_id},
             stdout=log_file,
             stderr=subprocess.STDOUT,
             text=True,
@@ -286,12 +322,13 @@ def render_option_refresh_control(
     status: OptionRefreshStatus,
     *,
     return_to: str,
+    action: str = "/refresh",
 ) -> str:
     disabled = " disabled" if status.status == REFRESH_STATUS_RUNNING else ""
     status_text = _refresh_status_text(status)
     return (
         "<section class=\"option-refresh-control\">"
-        "<form method=\"post\" action=\"/option-trading/refresh\" class=\"inline-form\">"
+        f"<form method=\"post\" action=\"{_html_attr(action)}\" class=\"inline-form\">"
         f"<input type=\"hidden\" name=\"return_to\" value=\"{_html_attr(return_to)}\">"
         f"<button type=\"submit\"{disabled}>Refresh all model data</button>"
         "</form>"

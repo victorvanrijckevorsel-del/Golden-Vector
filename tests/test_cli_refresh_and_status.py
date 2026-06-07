@@ -11,6 +11,7 @@ import json
 from datetime import date
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.model_state import (
@@ -25,6 +26,13 @@ from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
+from golden_vector.serve.option_refresh import (
+    REFRESH_JOB_ID_ENV,
+    OptionRefreshStatus,
+    read_option_refresh_status,
+    start_options_refresh,
+    write_option_refresh_status,
+)
 from tests.helpers import build_test_paths
 
 
@@ -362,6 +370,7 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     assert model_state["stage_timings"]["update_data"]["exit_code"] == 0
     assert model_state["stage_timings"]["tool_d"]["exit_code"] == 0
     assert model_state["stage_timings"]["option_artifacts"]["exit_code"] == 0
+    assert read_option_refresh_status(paths).status == "succeeded"
     out = capsys.readouterr().out
     assert "Step 1/6: update-data" in out
     assert "Step 2/6: tool-a" in out
@@ -440,6 +449,7 @@ def test_refresh_fault_after_tool_b_keeps_previous_manifest_and_readers_intact(
     assert current_manifest["parent_refresh_id"] == "parent-refresh-old"
     assert latest_alias["snapshot_refresh_run_id"].tolist() == ["refresh-new"]
     assert current_tool_b["snapshot_refresh_run_id"].tolist() == ["refresh-old"]
+    assert read_option_refresh_status(paths).status == "failed"
     assert "Model-state manifest was not published" in out
 
 
@@ -515,6 +525,7 @@ def test_refresh_option_artifact_failure_keeps_previous_manifest(
         "option-artifacts",
     ]
     assert current_manifest == previous_manifest
+    assert read_option_refresh_status(paths).status == "failed"
     assert "option-artifacts failed" in out
     assert "Model-state manifest was not published" in out
 
@@ -549,6 +560,7 @@ def test_refresh_command_stops_after_update_data_failure(tmp_path, monkeypatch, 
 
     assert exit_code == 1
     assert call_order == ["update-data"]  # tool-a and tool-b never called
+    assert read_option_refresh_status(paths).status == "failed"
     out = capsys.readouterr().out
     assert "update-data failed" in out
 
@@ -583,6 +595,7 @@ def test_refresh_command_skips_tool_b_when_flag_passed(tmp_path, monkeypatch, ca
 
     assert exit_code == 0
     assert call_order == ["update-data", "tool-a"]
+    assert read_option_refresh_status(paths).status == "succeeded"
     out = capsys.readouterr().out
     assert "tool-b/tool-c/tool-d SKIPPED" in out
     assert "Model state manifest published after partial refresh" in out
@@ -641,8 +654,167 @@ def test_refresh_skip_tool_b_publishes_partial_manifest_for_new_tool_a(
     assert current_manifest["stage_timings"]["tool_a"]["tool_a_output_build_keep_ratio"] == 1.0
     assert current_tool_a["snapshot_refresh_run_id"].tolist() == ["refresh-new"]
     assert current_tool_a["tool_a_rank"].tolist() == [99]
+    assert read_option_refresh_status(paths).status == "succeeded"
     out = capsys.readouterr().out
     assert "Model state manifest published after partial refresh" in out
+
+
+def test_refresh_command_refuses_when_website_refresh_is_running(tmp_path, monkeypatch, capsys):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    write_option_refresh_status(
+        paths,
+        OptionRefreshStatus(
+            status="running",
+            job_id="website-job",
+            process_id=12345,
+            started_at="2026-06-07T10:00:00Z",
+            command=("python", "main.py", "refresh"),
+        ),
+    )
+    monkeypatch.setattr(
+        "golden_vector.cli.run_foundation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not run")),
+    )
+
+    exit_code = run_refresh(
+        paths,
+        gold_price_override=None,
+        skip_tool_b=False,
+        _process_exists=lambda _pid: True,
+    )
+    status = read_option_refresh_status(paths, process_exists=lambda _pid: True)
+    out = capsys.readouterr().out
+
+    assert exit_code == 2
+    assert status.status == "running"
+    assert status.job_id == "website-job"
+    assert "already running" in out
+
+
+def test_refresh_command_reclaims_stale_lock_before_running(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+    write_option_refresh_status(
+        paths,
+        OptionRefreshStatus(
+            status="running",
+            job_id="stale-job",
+            process_id=99999,
+            started_at="2026-06-07T10:00:00Z",
+        ),
+    )
+    call_order: list[str] = []
+
+    def fake_foundation(_paths, *, command_name="update-data"):
+        call_order.append(command_name)
+        return 1
+
+    monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
+
+    exit_code = run_refresh(
+        paths,
+        gold_price_override=None,
+        skip_tool_b=False,
+        _process_exists=lambda _pid: False,
+    )
+    status = read_option_refresh_status(paths)
+
+    assert exit_code == 1
+    assert call_order == ["update-data"]
+    assert status.status == "failed"
+    assert status.job_id != "stale-job"
+
+
+def test_refresh_command_adopts_website_runner_lock(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+    write_option_refresh_status(
+        paths,
+        OptionRefreshStatus(
+            status="running",
+            job_id="website-runner-job",
+            process_id=12345,
+            started_at="2026-06-07T10:00:00Z",
+            command=("python", "main.py", "refresh"),
+        ),
+    )
+    monkeypatch.setenv(REFRESH_JOB_ID_ENV, "website-runner-job")
+    call_order: list[str] = []
+
+    def fake_foundation(_paths, *, command_name="update-data"):
+        call_order.append(command_name)
+        return 1
+
+    monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
+
+    exit_code = run_refresh(
+        paths,
+        gold_price_override=None,
+        skip_tool_b=False,
+        _process_exists=lambda _pid: True,
+    )
+    status = read_option_refresh_status(paths, process_exists=lambda _pid: True)
+
+    assert exit_code == 1
+    assert call_order == ["update-data"]
+    assert status.status == "running"
+    assert status.job_id == "website-runner-job"
+
+
+def test_website_refresh_is_refused_while_cli_refresh_holds_lock(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+    )
+    result_holder = {}
+
+    def fake_foundation(_paths, *, command_name="update-data"):
+        result_holder["result"] = start_options_refresh(
+            paths,
+            process_exists=lambda _pid: True,
+            popen_factory=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("must not spawn")
+            ),
+        )
+        return 1
+
+    monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
+
+    exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
+
+    assert exit_code == 1
+    assert result_holder["result"].already_running is True
+
+
+def test_refresh_command_releases_lock_when_step_raises(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+
+    def fake_foundation(_paths, *, command_name="update-data"):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        run_refresh(paths, gold_price_override=None, skip_tool_b=False)
+
+    status = read_option_refresh_status(paths)
+    assert status.status == "failed"
+    assert status.error_summary == "boom"
 
 
 def _write_refresh_inputs(paths: ProjectPaths, *, refresh_run_id: str) -> None:

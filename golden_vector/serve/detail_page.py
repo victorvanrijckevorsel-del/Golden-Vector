@@ -6,7 +6,6 @@ from html import escape
 
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge.option_trading import OptionTradingDetailData
-from golden_vector.serve.option_refresh import OptionRefreshStatus
 from golden_vector.serve.detail_forms import (
     _render_company_form,
     _render_note_section,
@@ -50,7 +49,6 @@ def render_detail_page(
     lens: str = DETAIL_DEFAULT_LENS_ID,
     app_config: AppConfig | None = None,
     option_trading_detail: OptionTradingDetailData | None = None,
-    option_refresh_status: OptionRefreshStatus | None = None,
     show_workspace_panels: bool = True,
     show_manual_sections: bool = True,
 ) -> str:
@@ -101,7 +99,6 @@ def render_detail_page(
     body.append(
         _render_option_trading_panel(
             option_trading_detail,
-            refresh_status=option_refresh_status,
         )
         if option_lens_active
         else _render_option_trading_link_panel(ticker)

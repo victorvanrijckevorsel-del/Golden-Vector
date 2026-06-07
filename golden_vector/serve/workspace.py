@@ -110,12 +110,16 @@ def create_workspace_app(
                     download_name="golden-vector-hedge-readiness-latest.md",
                 )
 
-            if method == "POST" and path == "/option-trading/refresh":
+            if method == "POST" and path in ("/refresh", "/option-trading/refresh"):
                 form_data = _read_form_data(environ)
                 start_options_refresh(paths)
+                default_return_to = "/" if path == "/refresh" else "/option-trading"
                 return _redirect_response(
                     start_response,
-                    _safe_return_to(form_data.get("return_to", ["/option-trading"])[0]),
+                    _safe_return_to(
+                        form_data.get("return_to", [default_return_to])[0],
+                        fallback=default_return_to,
+                    ),
                 )
 
             if method == "GET" and path in ("/", "/combined"):
@@ -138,6 +142,7 @@ def create_workspace_app(
                         filters=overview_filters,
                         lens_id=lens_id,
                         scoring_config=app_config.scoring,
+                        refresh_status=read_option_refresh_status(paths),
                     ),
                 )
 
@@ -191,12 +196,10 @@ def create_workspace_app(
                     paths,
                     app_config=app_config,
                 )
-                refresh_status = read_option_refresh_status(paths)
                 return _html_response(
                     start_response,
                     _render_option_trading_overview_page(
                         option_trading_data.overview,
-                        refresh_status=refresh_status,
                         model_state_manifest=load_current_model_state_manifest(paths),
                     ),
                 )
@@ -260,7 +263,6 @@ def create_workspace_app(
                         query.get("show", [""])[0], active_window,
                     )
                     option_trading_detail = None
-                    option_refresh_status = None
                     if detail_lens == DETAIL_OPTION_TRADING_LENS_ID:
                         option_trading_data = (
                             prefetched_option_trading_data
@@ -269,7 +271,6 @@ def create_workspace_app(
                                 app_config=app_config,
                             )
                         )
-                        option_refresh_status = read_option_refresh_status(paths)
                         option_trading_detail = build_option_trading_detail_data(
                             option_trading_data,
                             ticker=ticker,
@@ -292,7 +293,6 @@ def create_workspace_app(
                             lens=detail_lens,
                             app_config=app_config,
                             option_trading_detail=option_trading_detail,
-                            option_refresh_status=option_refresh_status,
                             show_workspace_panels=not option_vehicle_detail,
                             show_manual_sections=not option_vehicle_detail,
                         ),
@@ -485,10 +485,10 @@ def create_workspace_app(
     return app
 
 
-def _safe_return_to(raw_value: object) -> str:
+def _safe_return_to(raw_value: object, *, fallback: str = "/option-trading") -> str:
     value = str(raw_value or "").strip()
     if not value or not value.startswith("/") or value.startswith("//") or "\\" in value:
-        return "/option-trading"
+        return fallback
     return value
 
 

@@ -18,17 +18,12 @@ from golden_vector.serve.format_helpers import (
     _fmt_text,
 )
 from golden_vector.serve.overview_combined import _collect_filter_options, _render_filter_bar
-from golden_vector.serve.option_refresh import (
-    OptionRefreshStatus,
-    render_option_refresh_control,
-)
 from golden_vector.serve.page_shell import _page_shell
 
 
 def _render_option_trading_overview_page(
     overview: OptionTradingOverviewData,
     *,
-    refresh_status: OptionRefreshStatus | None = None,
     model_state_manifest: dict[str, object] | None = None,
 ) -> str:
     snapshot_date = (
@@ -45,10 +40,6 @@ def _render_option_trading_overview_page(
         "<h1>Option Trading</h1>",
         f"<p class=\"hint\">{snapshot_note}</p>",
         render_model_state_banner(model_state_manifest),
-        render_option_refresh_control(
-            refresh_status or OptionRefreshStatus(),
-            return_to="/option-trading",
-        ),
         _render_context_warnings(overview.source_context),
         "<details class=\"method-disclosure\"><summary>Method</summary>"
         "<p>Contracts are selected from cached Yahoo Finance option-chain data. "

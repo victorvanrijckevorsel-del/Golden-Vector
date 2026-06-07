@@ -44,10 +44,6 @@ from golden_vector.serve.workspace_state import (
     _WINDOW_WEEKS,
     _structural_history_matches_tool_a,
 )
-from golden_vector.serve.option_refresh import (
-    OptionRefreshStatus,
-    render_option_refresh_control,
-)
 
 def _render_window_switcher(
     *,
@@ -198,18 +194,12 @@ def _render_option_trading_link_panel(ticker: str) -> str:
 
 def _render_option_trading_panel(
     detail: OptionTradingDetailData | None,
-    *,
-    refresh_status: OptionRefreshStatus | None = None,
 ) -> str:
     body = [
         "<section id=\"option-trading\" class=\"panel\">",
         "<h2>Option Trading</h2>",
     ]
-    status = refresh_status or OptionRefreshStatus()
     if detail is None:
-        body.append(
-            render_option_refresh_control(status, return_to="/option-trading")
-        )
         body.append(
             "<p>No option-trading data is available yet. Run "
             "<code>python main.py refresh</code> to refresh the model data.</p>"
@@ -217,12 +207,6 @@ def _render_option_trading_panel(
         body.append("</section>")
         return "".join(body)
     if detail.row is None:
-        body.append(
-            render_option_refresh_control(
-                status,
-                return_to=f"/ticker/{quote(detail.ticker, safe='')}?lens=option-trading#option-trading",
-            )
-        )
         reason = detail.reason or "This ticker is not optionable in the latest snapshot."
         body.append(f"<p>{escape(reason)}</p>")
         body.append("</section>")
@@ -258,7 +242,6 @@ def _render_option_trading_panel(
         [
             _render_option_trading_context_table(
                 detail,
-                refresh_status=status,
             ),
             _render_option_liquidity_summary(detail),
         ]
@@ -344,11 +327,7 @@ def _render_option_context_warnings(context: object | None) -> str:
     return f"<div class=\"flash option-context-warning\">{paragraphs}</div>"
 
 
-def _render_option_trading_context_table(
-    detail: OptionTradingDetailData,
-    *,
-    refresh_status: OptionRefreshStatus | None = None,
-) -> str:
+def _render_option_trading_context_table(detail: OptionTradingDetailData) -> str:
     context = detail.source_context
     stock_price = (
         detail.row.current_stock_price if detail.row is not None else None
@@ -370,10 +349,6 @@ def _render_option_trading_context_table(
     )
     snapshot_date = context.as_of_date if context is not None else None
     refresh_run = context.refresh_run_id if context is not None else None
-    refresh_control = render_option_refresh_control(
-        refresh_status or OptionRefreshStatus(),
-        return_to=f"/ticker/{quote(detail.ticker, safe='')}?lens=option-trading#option-trading",
-    )
     return (
         "<table><tbody>"
         "<tr><th>Stock Price</th>"
@@ -384,8 +359,6 @@ def _render_option_trading_context_table(
         f"<td>{escape(source)}</td></tr>"
         "<tr><th>Risk-Free Rate</th>"
         f"<td>{risk_free_label}</td></tr>"
-        "<tr><th>Refresh</th>"
-        f"<td>{refresh_control}</td></tr>"
         "<tr><th>Run</th>"
         f"<td>{_fmt_text(refresh_run)}</td></tr>"
         "</tbody></table>"

@@ -5,10 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 from time import perf_counter
-from typing import Sequence
+from typing import Callable, Sequence
 from uuid import uuid4
 
 import pandas as pd
@@ -94,6 +95,11 @@ from golden_vector.serve.candidate_finder_data import (
     run_candidate_finder_screen,
 )
 from golden_vector.serve.option_trading_data import load_option_trading_data
+from golden_vector.serve.option_refresh import (
+    REFRESH_JOB_ID_ENV,
+    acquire_refresh_lock,
+    complete_options_refresh,
+)
 from golden_vector.serve.workspace import run_workspace_server
 
 LOGGER = logging.getLogger(__name__)
@@ -2617,6 +2623,60 @@ def run_refresh(
     gold_price_override: float | None,
     skip_tool_b: bool,
     _fault_after_step: str | None = None,
+    _process_exists: Callable[[int], bool] | None = None,
+) -> int:
+    command = _refresh_lock_command(
+        gold_price_override=gold_price_override,
+        skip_tool_b=skip_tool_b,
+    )
+    lock = acquire_refresh_lock(
+        paths,
+        command=command,
+        adopted_job_id=os.environ.get(REFRESH_JOB_ID_ENV),
+        process_exists=_process_exists,
+    )
+    if lock.already_running:
+        status = lock.status
+        started = f" started {status.started_at}" if status.started_at else ""
+        pid = f", PID {status.process_id}" if status.process_id is not None else ""
+        print(
+            "A refresh is already running"
+            f"{started}{pid}. Aborting to avoid a conflict."
+        )
+        return 2
+    if not lock.started or lock.status.job_id is None:
+        print("Could not acquire the refresh lock. Aborting to avoid a conflict.")
+        return 2
+
+    exit_code = 1
+    error_summary: str | None = None
+    try:
+        exit_code = _run_refresh_unlocked(
+            paths,
+            gold_price_override=gold_price_override,
+            skip_tool_b=skip_tool_b,
+            _fault_after_step=_fault_after_step,
+        )
+        return exit_code
+    except Exception as exc:
+        error_summary = str(exc)
+        raise
+    finally:
+        if not lock.adopted:
+            complete_options_refresh(
+                paths,
+                job_id=lock.status.job_id,
+                return_code=exit_code,
+                error_summary=error_summary,
+            )
+
+
+def _run_refresh_unlocked(
+    paths: ProjectPaths,
+    *,
+    gold_price_override: float | None,
+    skip_tool_b: bool,
+    _fault_after_step: str | None = None,
 ) -> int:
     """One-command operational pipeline through the latest ranking tools.
 
@@ -2781,6 +2841,19 @@ def run_refresh(
 def _new_parent_refresh_id() -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{timestamp}-refresh-{uuid4().hex[:8]}"
+
+
+def _refresh_lock_command(
+    *,
+    gold_price_override: float | None,
+    skip_tool_b: bool,
+) -> tuple[str, ...]:
+    command = ["python", "main.py", "refresh"]
+    if gold_price_override is not None:
+        command.extend(["--gold-price", str(gold_price_override)])
+    if skip_tool_b:
+        command.append("--skip-tool-b")
+    return tuple(command)
 
 
 def _attach_update_data_collection_stats(

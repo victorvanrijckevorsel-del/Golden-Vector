@@ -6,6 +6,7 @@ import json
 from golden_vector.app.config import load_app_config
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.serve.option_refresh import (
+    REFRESH_JOB_ID_ENV,
     OptionRefreshStatus,
     complete_options_refresh,
     option_refresh_status_path,
@@ -89,6 +90,37 @@ def test_start_options_refresh_spawns_runner_and_records_command(tmp_path):
         "golden_vector.serve.option_refresh",
     ]
     assert kwargs["cwd"] == paths.repo_root
+
+
+def test_refresh_child_passes_job_id_for_cli_lock_adoption(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    captured = {}
+
+    def fake_discover():
+        return paths
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return type("Completed", (), {"returncode": 0})()
+
+    monkeypatch.setattr("golden_vector.serve.option_refresh.ProjectPaths.discover", fake_discover)
+    monkeypatch.setattr("golden_vector.serve.option_refresh.subprocess.run", fake_run)
+    write_option_refresh_status(
+        paths,
+        OptionRefreshStatus(status="running", job_id="job-1", process_id=456),
+    )
+
+    from golden_vector.serve.option_refresh import run_refresh_child
+
+    exit_code = run_refresh_child(
+        job_id="job-1",
+        log_path=paths.runs_dir / "ui_refresh_logs" / "job-1.log",
+    )
+
+    assert exit_code == 0
+    assert captured["kwargs"]["env"][REFRESH_JOB_ID_ENV] == "job-1"
 
 
 def test_start_options_refresh_blocks_duplicate_running_job(tmp_path):
@@ -224,6 +256,58 @@ def test_option_refresh_route_starts_job_and_returns_to_detail(tmp_path, monkeyp
     assert response["headers"]["Location"] == "/ticker/AEM?lens=option-trading#option-trading"
 
 
+def test_general_refresh_route_starts_job_and_returns_to_main_page(tmp_path, monkeypatch):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    calls = []
+
+    def fake_start_options_refresh(received_paths):
+        calls.append(received_paths)
+
+    monkeypatch.setattr(
+        "golden_vector.serve.workspace.start_options_refresh",
+        fake_start_options_refresh,
+    )
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+
+    response = _call_wsgi_app(
+        app,
+        method="POST",
+        path="/refresh",
+        body="return_to=/",
+    )
+
+    assert calls == [paths]
+    assert response["status"].startswith("303")
+    assert response["headers"]["Location"] == "/"
+
+
+def test_general_refresh_route_rejects_external_return_to_main_page(tmp_path, monkeypatch):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    monkeypatch.setattr(
+        "golden_vector.serve.workspace.start_options_refresh",
+        lambda _paths: None,
+    )
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+
+    response = _call_wsgi_app(
+        app,
+        method="POST",
+        path="/refresh",
+        body="return_to=https://example.com",
+    )
+
+    assert response["status"].startswith("303")
+    assert response["headers"]["Location"] == "/"
+
+
 def test_option_refresh_route_rejects_external_return_to(tmp_path, monkeypatch):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
@@ -247,7 +331,37 @@ def test_option_refresh_route_rejects_external_return_to(tmp_path, monkeypatch):
     assert response["headers"]["Location"] == "/option-trading"
 
 
-def test_option_trading_overview_shows_refresh_status(tmp_path):
+def test_main_overview_shows_disabled_refresh_control(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+    )
+    write_option_refresh_status(
+        paths,
+        OptionRefreshStatus(
+            status="running",
+            job_id="job-1",
+            started_at="2026-06-04T10:00:00Z",
+        ),
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(app, method="GET", path="/")
+
+    assert response["status"].startswith("200")
+    assert "action=\"/refresh\"" in response["body"]
+    assert "Refresh all model data" in response["body"]
+    assert "<button type=\"submit\" disabled>" in response["body"]
+    assert "Full model refresh running since 2026-06-04T10:00:00Z." in response["body"]
+
+
+def test_option_trading_overview_does_not_show_refresh_control(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -271,9 +385,8 @@ def test_option_trading_overview_shows_refresh_status(tmp_path):
     response = _call_wsgi_app(app, method="GET", path="/option-trading")
 
     assert response["status"].startswith("200")
-    assert "Model build state needs attention" in response["body"]
-    assert "Refresh all model data" in response["body"]
-    assert "Full model refresh running since 2026-06-04T10:00:00Z." in response["body"]
+    assert "Refresh all model data" not in response["body"]
+    assert "Full model refresh running since" not in response["body"]
 
 
 def _call_wsgi_app(app, *, method: str, path: str, body: str = "") -> dict[str, object]:
