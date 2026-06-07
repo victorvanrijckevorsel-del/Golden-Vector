@@ -233,18 +233,23 @@ def test_compute_tool_b_in_memory_produces_incomplete_when_manual_data_blank():
 
     assert len(result.index) == len(active_tickers)
     assert set(result["screening_verdict"].unique()) == {"INCOMPLETE"}
-    assert result["tool_b_rank"].isna().all()
-    # Four scenario target columns must be present in the schema.
-    for col in [
-        "target_price_peer_pe", "target_price_peak_pe",
-        "target_price_peer_fcf", "target_price_peak_fcf",
-        "upside_peer_pe_pct", "upside_peak_pe_pct",
-        "upside_peer_fcf_pct", "upside_peak_fcf_pct",
-    ]:
-        assert col in result.columns
-    # EV/EBITDA-derived targets are no longer emitted.
-    assert "target_price_peer_evebitda" not in result.columns
-    assert "target_price_peak_evebitda" not in result.columns
+    assert "fundamental_check_rank" in result.columns
+    assert "fundamental_check_summary" in result.columns
+    removed_target_columns = {
+        "target_price_peer_pe",
+        "target_price_peak_pe",
+        "target_price_peer_fcf",
+        "target_price_peak_fcf",
+        "upside_peer_pe_pct",
+        "upside_peak_pe_pct",
+        "upside_peer_fcf_pct",
+        "upside_peak_fcf_pct",
+        "target_price_peer_evebitda",
+        "target_price_peak_evebitda",
+        "best_target_price_usd",
+        "best_upside_pct",
+    }
+    assert not removed_target_columns.intersection(result.columns)
 
 
 def test_compute_tool_b_in_memory_respects_gold_price_override():

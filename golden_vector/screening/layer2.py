@@ -51,6 +51,7 @@ def compute_layer2_metrics(
             "forward_net_income_musd": None,
             "forward_eps": None,
             "forward_pe": None,
+            "enterprise_value_musd": None,
             "ev_ebitda": None,
             "layer2_incomplete_reasons": ";".join(sorted(set(required_missing))),
         }
@@ -85,8 +86,9 @@ def compute_layer2_metrics(
         if forward_eps is not None and forward_eps > 0
         else None
     )
+    enterprise_value_musd = market_cap_musd + net_debt_musd
     ev_ebitda = (
-        (market_cap_musd + net_debt_musd) / forward_ebitda_musd
+        enterprise_value_musd / forward_ebitda_musd
         if forward_ebitda_musd > 0
         else None
     )
@@ -97,6 +99,7 @@ def compute_layer2_metrics(
         "forward_net_income_musd": forward_net_income_musd,
         "forward_eps": forward_eps,
         "forward_pe": forward_pe,
+        "enterprise_value_musd": enterprise_value_musd,
         "ev_ebitda": ev_ebitda,
         "layer2_incomplete_reasons": None,
     }

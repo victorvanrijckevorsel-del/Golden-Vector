@@ -26,7 +26,7 @@ from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
-from tests.helpers import build_test_paths
+from tests.helpers import build_test_paths, tool_b_output_row
 
 
 def test_model_state_manifest_records_complete_aligned_build(tmp_path):
@@ -642,14 +642,13 @@ def _write_tool_outputs(
         run_context=tool_b_context,
         tool_b_outputs=pd.DataFrame(
             [
-                {
-                    "ticker": "NEM",
-                    "as_of_date": date(2026, 6, 1),
-                    "snapshot_refresh_run_id": refresh_run_id,
-                    "source_run_id": tool_b_context.run_id,
-                    "tool_b_rank": 1,
-                    "screening_verdict": "PASS",
-                }
+                tool_b_output_row(
+                    "NEM",
+                    as_of_date=date(2026, 6, 1),
+                    snapshot_refresh_run_id=refresh_run_id,
+                    source_run_id=tool_b_context.run_id,
+                    screening_verdict="WATCHLIST",
+                )
             ]
         ),
     )

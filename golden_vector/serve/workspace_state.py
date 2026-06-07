@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import pandas as pd
 
@@ -22,6 +22,7 @@ from golden_vector.features.horizons import build_core_horizons
 from golden_vector.features.returns import compute_horizon_returns_for_ticker
 from golden_vector.model.structural import build_structural_weekly_series
 from golden_vector.screening.manual_data import load_manual_screening_data
+from golden_vector.screening.schema import validate_tool_b_output_schema
 
 
 @dataclass(frozen=True)
@@ -51,46 +52,6 @@ class ToolADetailState:
     exploratory_horizons: pd.DataFrame
     structural_history_load: "StructuralHistoryLoad"
     foundation_error: str | None = None
-
-
-@dataclass(frozen=True)
-class OverviewFilters:
-    """Phase 1B.4: lightweight overview controls passed via querystring.
-
-    Empty string means "no filter" / "default sort". Only a small allow-list
-    of sort keys is honored so the URL surface stays predictable.
-    """
-
-    search: str = ""
-    profile: str = ""
-    verdict: str = ""
-    confidence: str = ""
-    sort: str = ""
-
-    SORT_OPTIONS: ClassVar[tuple[tuple[str, str], ...]] = (
-        ("ticker", "Ticker (A→Z)"),
-        ("tool_a_rank", "Gold Sensitivity Rank (best first)"),
-        ("tool_b_rank", "Corporate Finance Rank (best first)"),
-        ("tool_a_score", "Gold Sensitivity Score (high→low)"),
-        ("tool_b_score", "Corporate Finance Score (high→low)"),
-    )
-
-    def normalized_search(self) -> str:
-        return str(self.search or "").strip().upper()
-
-    def normalized_profile(self) -> str:
-        return str(self.profile or "").strip().upper()
-
-    def normalized_verdict(self) -> str:
-        return str(self.verdict or "").strip().upper()
-
-    def normalized_confidence(self) -> str:
-        return str(self.confidence or "").strip().upper()
-
-    def normalized_sort(self) -> str:
-        sort = str(self.sort or "").strip().lower()
-        allowed = {key for key, _ in self.SORT_OPTIONS}
-        return sort if sort in allowed else "ticker"
 
 
 def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> WorkspaceState:
@@ -136,6 +97,10 @@ def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> Wor
         paths,
         "tool_b",
         fallback_path=paths.latest_tool_b_snapshot_parquet_path,
+    )
+    latest_tool_b = validate_tool_b_output_schema(
+        latest_tool_b,
+        label="workspace Corporate Finance artifact",
     )
     latest_tool_c = read_current_model_parquet(
         paths,

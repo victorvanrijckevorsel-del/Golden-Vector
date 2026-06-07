@@ -6,10 +6,9 @@ Covers:
   and disallowed extensions all return 404.
 - Python helpers: _fmt_numeric_td, _collect_filter_options, _render_filter_bar
   emit the HTML data-attribute contract workspace-tables.js depends on.
-- View integration: Tool A / Tool B / Combined tables are marked
+- View integration: Tool A / Tool B tables are marked
   `js-datatable`, numeric cells carry `data-order`, filter bars reflect
-  the rendered data, and the extended lens hint appears on non-default
-  lenses.
+  the rendered data.
 """
 
 from __future__ import annotations
@@ -22,12 +21,12 @@ from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.serve.format_helpers import _fmt_numeric_td
-from golden_vector.serve.overview_combined import (
+from golden_vector.serve.overview_helpers import (
     _collect_filter_options,
     _render_filter_bar,
 )
 from golden_vector.serve.workspace import create_workspace_app
-from tests.helpers import build_test_paths
+from tests.helpers import build_test_paths, tool_b_output_row
 
 
 # ---------------------------------------------------------------------------
@@ -279,11 +278,13 @@ def test_tool_b_view_table_has_js_datatable_class_and_id(tmp_path):
 def test_tool_b_view_numeric_columns_marked_data_sort_numeric(tmp_path):
     _, app = _workspace_fixture(tmp_path)
     body = _response_body(app, "/tool-b")
-    # Score/Rank/target-price columns must carry the numeric marker so
+    # Score/Rank/standard finance columns must carry the numeric marker so
     # workspace-tables.js activates numeric sort on them.
     assert '<th data-col-name="score" data-sort-numeric>' in body
     assert '<th data-col-name="rank" data-sort-numeric>' in body
-    assert '<th data-col-name="peer_pe_target" data-sort-numeric>' in body
+    assert '<th data-col-name="forward_pe" data-sort-numeric>' in body
+    assert '<th data-col-name="ev_ebitda" data-sort-numeric>' in body
+    assert '<th data-col-name="fcf_yield" data-sort-numeric>' in body
 
 
 def test_tool_a_view_is_wired_as_a_datatable(tmp_path):
@@ -306,21 +307,6 @@ def test_tool_b_view_filter_bar_lists_only_values_present_in_data(tmp_path):
     body = _response_body(app, "/tool-b")
     # No hard-coded verdict list leaking through
     assert 'data-filter-column="verdict"' in body
-
-
-def test_combined_view_shows_extended_lens_hint_when_lens_is_non_default(tmp_path):
-    _, app = _workspace_fixture(tmp_path)
-    body = _response_body(app, "/?lens=upside_torque")
-    # The extended hint must mention that clicking a column header
-    # re-orders the current view only.
-    assert "Clicking a column header reorders this view only" in body
-    assert "not persisted across reloads" in body
-
-
-def test_combined_view_does_not_show_extended_hint_on_default_lens(tmp_path):
-    _, app = _workspace_fixture(tmp_path)
-    body = _response_body(app, "/")
-    assert "Clicking a column header reorders this view only" not in body
 
 
 def test_tool_b_filter_bar_dropdown_lists_only_verdicts_present_in_data(tmp_path):
@@ -346,16 +332,15 @@ def test_tool_b_filter_bar_dropdown_lists_only_verdicts_present_in_data(tmp_path
     )
     persist_tool_b_outputs(
         paths=paths, run_context=ctx,
-        tool_b_outputs=pd.DataFrame([{
-            "ticker": "NEM",
-            "as_of_date": date(2026, 4, 22),
-            "gold_price_assumption": 4000.0,
-            "tool_b_score": 72.5,
-            "tool_b_rank": 1,
-            "screening_verdict": "WATCHLIST",
-            "confidence": "VERIFIED",
-            "layer1_status": "PASS",
-        }]),
+        tool_b_outputs=pd.DataFrame([
+            tool_b_output_row(
+                "NEM",
+                screening_verdict="WATCHLIST",
+                confidence="VERIFIED",
+                snapshot_refresh_run_id="refresh-run",
+                source_run_id=ctx.run_id,
+            )
+        ]),
     )
 
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
@@ -380,86 +365,6 @@ def test_tool_b_filter_bar_dropdown_lists_only_verdicts_present_in_data(tmp_path
     assert '<option value="PASS">PASS</option>' in bar
     assert 'value="FAIL"' not in bar
     assert 'value="INCOMPLETE"' not in bar
-
-
-def test_combined_filter_bar_includes_volatility_dropdown(tmp_path):
-    """Combined view exposes a Volatility column, so the filter bar
-    must offer a volatility dropdown. Codex flagged this as missing
-    in the first implementation pass."""
-    _, app = _workspace_fixture(tmp_path)
-    body = _response_body(app, "/")
-    import re
-    bar_match = re.search(
-        r'<section[^>]*data-filter-target="#combined-table"[^>]*>(.+?)</section>',
-        body, flags=re.DOTALL,
-    )
-    assert bar_match, "Combined filter bar not found"
-    bar = bar_match.group(1)
-    assert 'data-filter-column="volatility"' in bar
-
-
-def test_combined_filter_bar_derives_options_from_filtered_rows_not_derived(tmp_path):
-    """When a server-side filter narrows the visible rows, the Combined
-    filter-bar dropdowns must only list values that appear in the
-    surviving rows. Codex flagged v1 derived them from `derived_rows`
-    (pre-filter) which broke the live-derivation contract.
-    """
-    from datetime import date
-    from golden_vector.app.run_context import RunContext
-    from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
-
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM", "GOLD"])
-
-    # Two tickers with distinct verdicts. Server-side ?verdict=STRONG_CANDIDATE
-    # should narrow to just NEM; GOLD's SCREEN_OUT should disappear.
-    ctx_a = RunContext.start(paths=paths, command="tool-a", parameters={},
-                              config_hash="hash")
-    persist_tool_a_outputs(
-        paths=paths, run_context=ctx_a,
-        tool_a_outputs=pd.DataFrame([
-            {"ticker": "NEM", "as_of_date": date(2026, 4, 22),
-             "tool_a_rank": 1, "score_eligible": True,
-             "snapshot_refresh_run_id": "r"},
-            {"ticker": "GOLD", "as_of_date": date(2026, 4, 22),
-             "tool_a_rank": 2, "score_eligible": True,
-             "snapshot_refresh_run_id": "r"},
-        ]),
-    )
-    ctx_b = RunContext.start(paths=paths, command="tool-b",
-                              parameters={"gold_price": 4000.0},
-                              config_hash="hash")
-    persist_tool_b_outputs(
-        paths=paths, run_context=ctx_b,
-        tool_b_outputs=pd.DataFrame([
-            {"ticker": "NEM", "as_of_date": date(2026, 4, 22),
-             "gold_price_assumption": 4000.0, "tool_b_rank": 1,
-             "screening_verdict": "STRONG_CANDIDATE"},
-            {"ticker": "GOLD", "as_of_date": date(2026, 4, 22),
-             "gold_price_assumption": 4000.0, "tool_b_rank": 2,
-             "screening_verdict": "SCREEN_OUT"},
-        ]),
-    )
-
-    app = create_workspace_app(
-        paths, app_config=app_config, tool_b_tickers=["NEM", "GOLD"],
-    )
-
-    # Server-side narrow to only STRONG_CANDIDATE rows.
-    body = _response_body(app, "/?verdict=STRONG_CANDIDATE")
-    import re
-    bar_match = re.search(
-        r'<section[^>]*data-filter-target="#combined-table"[^>]*>(.+?)</section>',
-        body, flags=re.DOTALL,
-    )
-    assert bar_match, "Combined filter bar not found"
-    bar = bar_match.group(1)
-    # STRONG_CANDIDATE is in the filtered rows -> dropdown includes it.
-    assert '<option value="STRONG_CANDIDATE">STRONG_CANDIDATE</option>' in bar
-    # SCREEN_OUT was filtered out of the visible rows -> must NOT appear.
-    assert 'value="SCREEN_OUT"' not in bar
 
 
 def test_page_shell_includes_datatables_and_workspace_tables_scripts(tmp_path):

@@ -26,6 +26,7 @@ from golden_vector.contracts.option_artifacts import (
     OPTION_ARTIFACT_NAMES,
     OPTION_ARTIFACT_SCHEMA_VERSION,
 )
+from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.hedge._helpers import as_float
 from golden_vector.hedge.option_artifact_builder import build_option_source_context
 from golden_vector.hedge.option_artifact_frames import (
@@ -352,6 +353,10 @@ def load_option_trading_data(
         paths,
         "tool_b",
         fallback_path=paths.latest_tool_b_snapshot_parquet_path,
+    )
+    tool_b = validate_tool_b_output_schema(
+        tool_b,
+        label="Option Trading Corporate Finance artifact",
     )
     try:
         artifact_frames = _read_option_artifact_frames(paths)

@@ -22,9 +22,13 @@ from golden_vector.serve.candidate_finder_data import (
 )
 from golden_vector.serve.format_helpers import _fmt_number, _fmt_numeric_td, _metric_card
 from golden_vector.serve.model_state_banner import render_model_state_banner
+from golden_vector.serve.option_refresh import (
+    OptionRefreshStatus,
+    render_option_refresh_control,
+)
 from golden_vector.serve.page_shell import _page_shell
 
-_DEFAULT_PRESET_ID = "bearish_put"
+_DEFAULT_PRESET_ID = "strong_corporate_finance"
 _SCORE_TOOLTIP = (
     "Score = your weighted-average percentile across the criteria you chose "
     "(0-100). Higher = better fit. Not a return forecast."
@@ -35,6 +39,8 @@ def render_candidate_finder_page(
     data: CandidateFinderData,
     *,
     query: Mapping[str, Sequence[str]] | None = None,
+    base_path: str = "/candidate-finder",
+    refresh_status: OptionRefreshStatus | None = None,
 ) -> str:
     """Render the Candidate Finder workspace page."""
 
@@ -49,10 +55,14 @@ def render_candidate_finder_page(
             "<h1>Candidate Finder</h1>",
             "<p class=\"lead\">Build a ranked list from model signals and option-market filters.</p>",
             render_model_state_banner(data.model_state_manifest),
-            _render_preset_bar(data, active_preset_id),
+            render_option_refresh_control(
+                refresh_status or OptionRefreshStatus(),
+                return_to=base_path,
+            ),
+            _render_preset_bar(data, active_preset_id, base_path=base_path),
             _render_warning_banner(screen.warnings),
             _render_summary_cards(screen),
-            _render_builder(data, screen, query),
+            _render_builder(data, screen, query, base_path=base_path),
             _render_top_lists(screen),
             _render_ranking_tables(screen),
             "</section>",
@@ -105,10 +115,15 @@ def _screen_spec_from_query(
     return spec
 
 
-def _render_preset_bar(data: CandidateFinderData, active_preset_id: str) -> str:
+def _render_preset_bar(
+    data: CandidateFinderData,
+    active_preset_id: str,
+    *,
+    base_path: str,
+) -> str:
     links: list[str] = []
     for preset in data.criteria_config.presets:
-        href = "/candidate-finder?" + urlencode({"preset": preset.id})
+        href = base_path + "?" + urlencode({"preset": preset.id})
         active = " is-active" if preset.id == active_preset_id else ""
         links.append(
             (
@@ -159,6 +174,8 @@ def _render_builder(
     data: CandidateFinderData,
     screen: CandidateFinderScreen,
     query: Mapping[str, Sequence[str]],
+    *,
+    base_path: str,
 ) -> str:
     selected_by_id = {
         criterion.id: criterion for criterion in screen.ranking.selected_criteria
@@ -190,10 +207,10 @@ def _render_builder(
 <section class="panel candidate-builder-panel">
   <div class="candidate-panel-heading">
     <h2>Screen Builder</h2>
-    <a href="/candidate-finder">Reset</a>
+    <a href="{escape(base_path, quote=True)}">Reset</a>
   </div>
   {custom_note}
-  <form method="get" action="/candidate-finder" class="candidate-finder-form">
+  <form method="get" action="{escape(base_path, quote=True)}" class="candidate-finder-form">
     <input type="hidden" name="custom" value="1">
     <div class="candidate-form-row">
       <label>
@@ -345,7 +362,7 @@ def _render_ranking_tables(screen: CandidateFinderScreen) -> str:
     low_coverage = [row for row in screen.ranking.rows if not _is_ranked(row)]
     return f"""
 <section class="candidate-view-section">
-  <h2>View 2: Combined Fit Ranking</h2>
+  <h2>View 2: Fit Ranking</h2>
   {_render_score_table("Eligible Ranking", eligible, screen.ranking.selected_criteria, "candidate-eligible-ranking")}
   {_render_score_table("Low-Coverage Rows", low_coverage, screen.ranking.selected_criteria, "candidate-low-coverage-ranking")}
 </section>

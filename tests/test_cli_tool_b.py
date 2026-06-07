@@ -14,7 +14,7 @@ from tests.helpers import build_test_paths
 @dataclass(frozen=True)
 class _LoadedConfigStub:
     app: object
-    combined_hash: str
+    config_hash: str
 
 
 def _latest_foundation_snapshot(*, raw_status: str = "PASS", normalization_status: str = "PASS") -> LatestFoundationSnapshot:
@@ -50,7 +50,7 @@ def test_run_tool_b_stops_when_local_snapshot_is_missing(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     monkeypatch.setattr(
         "golden_vector.cli.load_latest_foundation_snapshot",
@@ -78,7 +78,7 @@ def test_run_tool_b_uses_latest_local_snapshot(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     monkeypatch.setattr(
         "golden_vector.cli.load_latest_foundation_snapshot",
@@ -100,7 +100,7 @@ def test_run_tool_b_uses_latest_local_snapshot(tmp_path, monkeypatch):
                             "ticker": "NEM",
                             "as_of_date": date(2026, 2, 1),
                             "gold_price_assumption": 4000.0,
-                            "tool_b_score": 82.0,
+                            "fundamental_check_score": 85.7143,
                         }
                     ]
                 ),
@@ -124,7 +124,7 @@ def test_run_tool_b_completes_when_backbone_and_screening_succeed(tmp_path, monk
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     monkeypatch.setattr(
         "golden_vector.cli.load_latest_foundation_snapshot",
@@ -142,7 +142,7 @@ def test_run_tool_b_completes_when_backbone_and_screening_succeed(tmp_path, monk
                             "ticker": "NEM",
                             "as_of_date": date(2026, 2, 1),
                             "gold_price_assumption": 4000.0,
-                            "tool_b_score": 82.0,
+                            "fundamental_check_score": 85.7143,
                         }
                     ]
                 ),
@@ -163,7 +163,7 @@ def test_run_tool_b_fails_when_manual_store_is_missing(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     called = {"snapshot": False, "tool_b": False}

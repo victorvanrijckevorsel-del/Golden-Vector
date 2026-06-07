@@ -29,6 +29,7 @@ from golden_vector.model.candidate_finder import (
     CriterionSelection,
     rank_candidates,
 )
+from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.screening.manual_store import load_store_tables
 from golden_vector.hedge.option_availability import has_usable_option_slots
 from golden_vector.serve.option_trading_data import (
@@ -338,7 +339,6 @@ def _joined_frame(
     joined["has_usable_call_candidate"] = joined["ticker"].map(
         lambda ticker: _has_usable_slots(option_data.call_candidate_slots.get(str(ticker), []))
     )
-    _add_derived_ratios(joined)
     _ensure_configured_source_fields(joined, app_config.candidate_finder)
     result = joined.sort_values("ticker").reset_index(drop=True)
     warnings = _joined_frame_health_warnings(result, app_config.candidate_finder)
@@ -439,26 +439,6 @@ def _joined_frame_health_warnings(
     return warnings
 
 
-def _add_derived_ratios(frame: pd.DataFrame) -> None:
-    market_cap = _numeric_source_series(frame, "market_cap_musd")
-    frame["debt_to_mktcap"] = _ratio_series(
-        _numeric_source_series(frame, "net_debt_musd"),
-        market_cap,
-    )
-    frame["ebitda_to_mktcap"] = _ratio_series(
-        _numeric_source_series(frame, "forward_ebitda_musd"),
-        market_cap,
-    )
-    frame["revenue_to_mktcap"] = _ratio_series(
-        _numeric_source_series(frame, "forward_revenue_musd"),
-        market_cap,
-    )
-    frame["netincome_to_mktcap"] = _ratio_series(
-        _numeric_source_series(frame, "forward_net_income_musd"),
-        market_cap,
-    )
-
-
 def _ensure_configured_source_fields(
     frame: pd.DataFrame,
     config: CandidateFinderConfig,
@@ -466,18 +446,6 @@ def _ensure_configured_source_fields(
     for criterion in config.criteria:
         if criterion.source_field not in frame.columns:
             frame[criterion.source_field] = pd.NA
-
-
-def _numeric_source_series(frame: pd.DataFrame, column: str) -> pd.Series:
-    if column not in frame.columns:
-        return pd.Series([pd.NA] * len(frame.index), index=frame.index, dtype="Float64")
-    return pd.to_numeric(frame[column], errors="coerce")
-
-
-def _ratio_series(values: pd.Series, denominator: pd.Series) -> pd.Series:
-    result = values / denominator
-    result = result.where(denominator > 0)
-    return result.where(values.notna())
 
 
 def _has_usable_slots(slots: object) -> bool:
@@ -630,14 +598,14 @@ def _alignment(
             for message in manifest_alignment.get("warnings", ())
             if str(message).strip()
         ]
-        combined_warnings = _dedupe_alignment_messages(
+        alignment_warnings = _dedupe_alignment_messages(
             [*manifest_messages, *warnings]
         )
-        if combined_warnings:
+        if alignment_warnings:
             status = "WARN" if manifest_status == "OK" else manifest_status
             return CandidateFinderAlignment(
                 status=status,
-                message=combined_warnings[0],
+                message=alignment_warnings[0],
                 tool_a_refresh_run_ids=tool_a_ids,
                 tool_b_refresh_run_ids=tool_b_ids,
                 tool_c_refresh_run_ids=tool_c_ids,
@@ -645,7 +613,7 @@ def _alignment(
                 options_refresh_run_id=options_id,
                 manual_store_hash=manual_store_hash,
                 manual_store_as_of=manual_store_as_of,
-                messages=tuple(combined_warnings),
+                messages=tuple(alignment_warnings),
             )
         return CandidateFinderAlignment(
             status="OK",
@@ -806,12 +774,18 @@ def _read_optional_parquet(path: Path | None, *, label: str) -> CandidateFinderS
     if path is None or not path.exists():
         return CandidateFinderSourceLoad(frame=pd.DataFrame())
     try:
-        return CandidateFinderSourceLoad(frame=pd.read_parquet(path))
+        frame = pd.read_parquet(path)
     except Exception as exc:
         return CandidateFinderSourceLoad(
             frame=pd.DataFrame(),
             warning=f"{label} latest parquet could not be read: {exc}.",
         )
+    if label == "Corporate Finance":
+        frame = validate_tool_b_output_schema(
+            frame,
+            label="Candidate Finder Corporate Finance artifact",
+        )
+    return CandidateFinderSourceLoad(frame=frame)
 
 
 def _tool_d_finder_source_path(paths: ProjectPaths) -> Path | None:

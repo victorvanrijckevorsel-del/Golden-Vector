@@ -76,7 +76,6 @@ class ProjectPaths:
             self.output_tool_c_dir,
             self.output_tool_d_dir,
             self.output_options_dir,
-            self.output_combined_dir,
             self.output_hedge_readiness_dir,
             self.manual_holdings_dir,
         ):
@@ -274,10 +273,6 @@ class ProjectPaths:
     @property
     def latest_tool_d_spot_snapshot_csv_path(self) -> Path:
         return self.output_tool_d_dir / "tool_d_latest_spot.csv"
-
-    @property
-    def output_combined_dir(self) -> Path:
-        return self.output_dir / "combined"
 
     @property
     def output_hedge_readiness_dir(self) -> Path:

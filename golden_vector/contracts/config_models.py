@@ -623,20 +623,6 @@ class StructuralWindowWeights(StrictConfigModel):
         return normalized
 
 
-class CombinedVerdictThresholds(StrictConfigModel):
-    high_conviction_min_tool_a_score: float = 75.0
-    dual_pass_min_tool_a_score: float = 60.0
-
-    @model_validator(mode="after")
-    def ordered_thresholds(self) -> "CombinedVerdictThresholds":
-        if self.high_conviction_min_tool_a_score < self.dual_pass_min_tool_a_score:
-            raise ValueError(
-                "combined verdict thresholds must satisfy "
-                "high_conviction_min_tool_a_score >= dual_pass_min_tool_a_score"
-            )
-        return self
-
-
 class ScoringConfig(StrictConfigModel):
     version: int = 2
     structural_windows: list[str] = Field(
@@ -664,10 +650,6 @@ class ScoringConfig(StrictConfigModel):
         default_factory=lambda: ["MISSING_RETURN_BASIS", "MISSING_FX", "STALE_FX"]
     )
     weights: ScoreWeights = Field(default_factory=ScoreWeights)
-    combined_verdict_thresholds: CombinedVerdictThresholds = Field(
-        default_factory=CombinedVerdictThresholds
-    )
-
     @field_validator("structural_windows")
     @classmethod
     def valid_structural_windows(cls, values: list[str]) -> list[str]:
@@ -731,15 +713,6 @@ class VerdictThresholds(StrictConfigModel):
     watchlist_forward_pe_max: float = 10.0
 
 
-class PeerBenchmark(StrictConfigModel):
-    pe_2026: float
-    pe_2011_peak: float
-    evebitda_2026: float
-    evebitda_2011: float
-    fcf_yield_2026: float
-    fcf_yield_2011: float
-
-
 class JurisdictionDiscounts(StrictConfigModel):
     tier_1: float = 0.0
     tier_2: float = 0.15
@@ -753,7 +726,6 @@ class ScreeningParamsConfig(StrictConfigModel):
     layer1_thresholds: Layer1Thresholds = Field(default_factory=Layer1Thresholds)
     verdict_thresholds: VerdictThresholds = Field(default_factory=VerdictThresholds)
     jurisdiction_discounts: JurisdictionDiscounts = Field(default_factory=JurisdictionDiscounts)
-    peer_benchmarks: dict[str, PeerBenchmark]
 
     @field_validator("gold_price_scenarios")
     @classmethod
@@ -786,18 +758,9 @@ class ScreeningParamsConfig(StrictConfigModel):
             return float(self.default_gold_price_assumption)
         return float(self.gold_price_scenarios[0])
 
-    @field_validator("peer_benchmarks")
-    @classmethod
-    def required_peer_benchmarks(cls, values: dict[str, PeerBenchmark]) -> dict[str, PeerBenchmark]:
-        required = {"large", "mid", "small", "micro"}
-        missing = sorted(required.difference(values))
-        if missing:
-            raise ValueError(f"peer_benchmarks is missing required buckets: {', '.join(missing)}")
-        return values
-
 
 CandidateCriterionDirection = Literal["high_good", "low_good"]
-CandidateOptionsSide = Literal["puts", "calls", "either"]
+CandidateOptionsSide = Literal["puts", "calls", "either", "none"]
 
 
 class CandidateFinderCriterion(StrictConfigModel):

@@ -309,16 +309,16 @@ def _top_entries(
     percentiles: pd.Series,
     top_n: int,
 ) -> list[CriterionTopEntry]:
-    combined = pd.DataFrame(
+    ranked_values = pd.DataFrame(
         {
             "ticker": values.index.astype(str),
             "raw_value": values,
             "percentile": percentiles,
         }
     ).dropna(subset=["raw_value", "percentile"]).reset_index(drop=True)
-    if combined.empty:
+    if ranked_values.empty:
         return []
-    combined = combined.sort_values(
+    ranked_values = ranked_values.sort_values(
         ["percentile", "ticker"],
         ascending=[False, True],
         kind="mergesort",
@@ -331,7 +331,7 @@ def _top_entries(
             percentile=float(row.percentile),
             rank=index + 1,
         )
-        for index, row in enumerate(combined.itertuples(index=False))
+        for index, row in enumerate(ranked_values.itertuples(index=False))
     ]
 
 

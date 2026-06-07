@@ -88,6 +88,7 @@ from golden_vector.screening.manual_store import (
     upsert_source_verification,
 )
 from golden_vector.screening.pipeline import execute_tool_b_pipeline
+from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.serve.candidate_finder_data import (
     candidate_finder_result_frame,
     load_candidate_finder_data,
@@ -614,7 +615,7 @@ def run_candidate_finder(
             paths=paths,
             command="candidate-finder",
             parameters=parameters,
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
         )
         configure_logging(run_context.log_path)
         spec_file = Path(spec_path)
@@ -727,7 +728,7 @@ def run_foundation(
             paths=paths,
             command=command_name,
             parameters={"options": include_options},
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
         )
         configure_logging(run_context.log_path)
 
@@ -754,7 +755,7 @@ def run_foundation(
             "tool_b_enabled_ticker_count": len(tool_b_enabled),
             "core_horizon_count": len(loaded_config.app.horizons.core_horizons),
             "gold_price_scenarios": loaded_config.app.screening_params.gold_price_scenarios,
-            "combined_config_hash": loaded_config.combined_hash,
+            "config_hash": loaded_config.config_hash,
             "options_phase_requested": include_options,
         }
         run_context.write_json("config_summary.json", config_summary)
@@ -916,7 +917,7 @@ def run_hedge_readiness(
             paths=paths,
             command="hedge-readiness",
             parameters=parameters,
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
         )
         configure_logging(run_context.log_path)
         report = write_hedge_readiness_report(
@@ -991,7 +992,7 @@ def run_tool_a(paths: ProjectPaths) -> int:
             paths=paths,
             command="tool-a",
             parameters={},
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
         )
         configure_logging(run_context.log_path)
 
@@ -1012,7 +1013,7 @@ def run_tool_a(paths: ProjectPaths) -> int:
             "tool_b_enabled_ticker_count": len(tool_b_enabled),
             "exploratory_horizon_count": len(loaded_config.app.horizons.core_horizons),
             "structural_window_count": len(loaded_config.app.scoring.structural_windows),
-            "combined_config_hash": loaded_config.combined_hash,
+            "config_hash": loaded_config.config_hash,
         }
         run_context.write_json("config_summary.json", config_summary)
         if not tool_a_enabled:
@@ -1117,7 +1118,7 @@ def run_tool_c(
             paths=paths,
             command="tool-c",
             parameters={},
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
         )
         configure_logging(run_context.log_path)
 
@@ -1130,7 +1131,7 @@ def run_tool_c(
             "configured_ticker_count": len(configured_tickers),
             "active_ticker_count": len(active_tickers),
             "tool_a_enabled_ticker_count": len(tool_a_enabled),
-            "combined_config_hash": loaded_config.combined_hash,
+            "config_hash": loaded_config.config_hash,
             "tool_c_min_events": loaded_config.app.tool_c.min_events,
             "tool_c_regime_rolling_weeks": loaded_config.app.tool_c.regime_rolling_weeks,
             "tool_c_regime_min_weeks": loaded_config.app.tool_c.regime_min_weeks,
@@ -1285,7 +1286,7 @@ def run_tool_d(
             paths=paths,
             command="tool-d",
             parameters={"gold_price": gold_price},
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
         )
         configure_logging(run_context.log_path)
 
@@ -1298,7 +1299,7 @@ def run_tool_d(
             "configured_ticker_count": len(configured_tickers),
             "active_ticker_count": len(active_tickers),
             "tool_b_enabled_ticker_count": len(tool_b_enabled),
-            "combined_config_hash": loaded_config.combined_hash,
+            "config_hash": loaded_config.config_hash,
         }
         run_context.write_json("config_summary.json", config_summary)
         if not tool_b_enabled:
@@ -1343,7 +1344,10 @@ def run_tool_d(
             use_model_state=_use_model_state_inputs,
             missing_message="No Tool B current output exists yet. Run `python main.py tool-b` first.",
         )
-        tool_b_latest = pd.read_parquet(tool_b_latest_path)
+        tool_b_latest = validate_tool_b_output_schema(
+            pd.read_parquet(tool_b_latest_path),
+            label="Tool D input Corporate Finance artifact",
+        )
         manual_data = load_manual_screening_data(
             paths,
             tickers=sorted(
@@ -1481,7 +1485,7 @@ def run_option_artifacts(
             paths=paths,
             command="option-artifacts",
             parameters={"parent_refresh_id": parent_refresh_id},
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
         )
         configure_logging(run_context.log_path)
 
@@ -1530,7 +1534,7 @@ def run_option_artifacts(
             manifest=sources.manifest,
             source_run_id=run_context.run_id,
             parent_refresh_id=parent_refresh_id,
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
             risk_free_rate=sources.risk_free_rate,
             risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
         )
@@ -1584,7 +1588,7 @@ def run_tool_b(paths: ProjectPaths, *, gold_price: float | None) -> int:
 
     try:
         loaded_config = load_app_config(paths)
-        # Resolve gold price: CLI override → config default → first scenario.
+        # Resolve gold price: CLI override -> config default -> first scenario.
         # This lets `tool-b` (and the new `refresh` command) work without
         # requiring the user to remember the magic number every run.
         resolved_gold_price = loaded_config.app.screening_params.resolve_gold_price(gold_price)
@@ -1596,7 +1600,7 @@ def run_tool_b(paths: ProjectPaths, *, gold_price: float | None) -> int:
             paths=paths,
             command="tool-b",
             parameters={"gold_price": gold_price},
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
         )
         configure_logging(run_context.log_path)
 
@@ -1617,7 +1621,7 @@ def run_tool_b(paths: ProjectPaths, *, gold_price: float | None) -> int:
             "tool_b_enabled_ticker_count": len(tool_b_enabled),
             "gold_price_assumption": gold_price,
             "configured_gold_price_scenarios": loaded_config.app.screening_params.gold_price_scenarios,
-            "combined_config_hash": loaded_config.combined_hash,
+            "config_hash": loaded_config.config_hash,
         }
         run_context.write_json("config_summary.json", config_summary)
         if not tool_b_enabled:
@@ -1737,7 +1741,7 @@ def run_manual_data(paths: ProjectPaths, args: argparse.Namespace) -> int:
             paths=paths,
             command=command_name,
             parameters=parameters,
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
         )
         configure_logging(run_context.log_path)
 
@@ -2019,7 +2023,7 @@ def run_manual_note(paths: ProjectPaths, args: argparse.Namespace) -> int:
             paths=paths,
             command=command_name,
             parameters=parameters,
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
         )
         configure_logging(run_context.log_path)
 
@@ -2293,7 +2297,7 @@ def run_compare_horizons(
                 "horizons": [item.horizon_id for item in requested_horizons],
                 "csv_out": csv_out,
             },
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
         )
         configure_logging(run_context.log_path)
 
@@ -2743,7 +2747,7 @@ def _run_refresh_unlocked(
         loaded_config = load_app_config(paths)
         model_state = write_current_model_state_manifest(
             paths=paths,
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
             parent_refresh_id=parent_refresh_id,
             stage_timings=stage_timings,
         )
@@ -2822,7 +2826,7 @@ def _run_refresh_unlocked(
         loaded_config = load_app_config(paths)
         model_state = write_current_model_state_manifest(
             paths=paths,
-            config_hash=loaded_config.combined_hash,
+            config_hash=loaded_config.config_hash,
             parent_refresh_id=parent_refresh_id,
             stage_timings=stage_timings,
         )
@@ -3025,8 +3029,15 @@ def _render_status_summary(paths: ProjectPaths) -> str:
         lines.append("Tool B latest output: NOT FOUND. Run `python main.py tool-b`.")
     else:
         try:
-            df = pd.read_parquet(tool_b_path)
-            scored = int(df["tool_b_rank"].notna().sum()) if "tool_b_rank" in df.columns else 0
+            df = validate_tool_b_output_schema(
+                pd.read_parquet(tool_b_path),
+                label="status Corporate Finance artifact",
+            )
+            scored = (
+                int(df["fundamental_check_rank"].notna().sum())
+                if "fundamental_check_rank" in df.columns
+                else 0
+            )
             incomplete_tickers = []
             if "screening_verdict" in df.columns and "ticker" in df.columns:
                 incomplete_tickers = sorted(

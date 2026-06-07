@@ -247,7 +247,7 @@ def build_current_model_state_manifest(
             "latest_aliases_authoritative": False,
         },
         "config": {
-            "combined_hash": config_hash,
+            "config_hash": config_hash,
         },
         "manual_data": _file_artifact(
             paths=paths,

@@ -8,9 +8,9 @@ from tests.helpers import build_test_paths
 
 
 class _LoadedConfigStub:
-    def __init__(self, app: object, combined_hash: str) -> None:
+    def __init__(self, app: object, config_hash: str) -> None:
         self.app = app
-        self.combined_hash = combined_hash
+        self.config_hash = config_hash
 
 
 def test_run_workspace_fails_cleanly_when_manual_store_is_missing(tmp_path, monkeypatch, capsys):
@@ -19,7 +19,7 @@ def test_run_workspace_fails_cleanly_when_manual_store_is_missing(tmp_path, monk
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     called = {"server": False}
@@ -49,7 +49,7 @@ def test_run_workspace_starts_when_manual_store_exists(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     tool_b_tickers = [

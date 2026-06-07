@@ -76,40 +76,6 @@ def _app_config() -> AppConfig:
         scoring=ScoringConfig(),
         screening_params=ScreeningParamsConfig(
             gold_price_scenarios=[4000.0],
-            peer_benchmarks={
-                "large": {
-                    "pe_2026": 10.0,
-                    "pe_2011_peak": 14.0,
-                    "evebitda_2026": 7.0,
-                    "evebitda_2011": 10.0,
-                    "fcf_yield_2026": 0.10,
-                    "fcf_yield_2011": 0.06,
-                },
-                "mid": {
-                    "pe_2026": 9.0,
-                    "pe_2011_peak": 13.0,
-                    "evebitda_2026": 6.5,
-                    "evebitda_2011": 9.5,
-                    "fcf_yield_2026": 0.11,
-                    "fcf_yield_2011": 0.065,
-                },
-                "small": {
-                    "pe_2026": 8.0,
-                    "pe_2011_peak": 12.0,
-                    "evebitda_2026": 6.0,
-                    "evebitda_2011": 9.0,
-                    "fcf_yield_2026": 0.12,
-                    "fcf_yield_2011": 0.07,
-                },
-                "micro": {
-                    "pe_2026": 7.0,
-                    "pe_2011_peak": 11.0,
-                    "evebitda_2026": 5.5,
-                    "evebitda_2011": 8.5,
-                    "fcf_yield_2026": 0.13,
-                    "fcf_yield_2011": 0.075,
-                },
-            },
         ),
     )
 

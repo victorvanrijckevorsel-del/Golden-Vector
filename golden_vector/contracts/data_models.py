@@ -239,9 +239,17 @@ class ToolBOutput(StrictDataModel):
     layer2_incomplete_reasons: str | None = None
     screening_verdict: str
     confidence: str
-    size_category: str | None = None
+    jurisdiction_tier: int | None = None
     market_cap_musd: float | None = None
     share_price_usd: float | None = None
+    enterprise_value_musd: float | None = None
+    production_oz: float | None = None
+    aisc_usd_per_oz: float | None = None
+    cash_cost_usd_per_oz: float | None = None
+    net_debt_musd: float | None = None
+    reserve_life_years: float | None = None
+    cash_margin_usd_per_oz: float | None = None
+    margin_pct: float | None = None
     forward_revenue_musd: float | None = None
     forward_ebitda_musd: float | None = None
     forward_net_income_musd: float | None = None
@@ -251,20 +259,11 @@ class ToolBOutput(StrictDataModel):
     sustainable_fcf_musd: float | None = None
     fcf_yield: float | None = None
     leverage: float | None = None
-    adjusted_peer_pe: float | None = None
-    adjusted_peak_pe: float | None = None
-    target_price_peer_pe: float | None = None
-    target_price_peak_pe: float | None = None
-    target_price_peer_fcf: float | None = None
-    target_price_peak_fcf: float | None = None
-    upside_peer_pe_pct: float | None = None
-    upside_peak_pe_pct: float | None = None
-    upside_peer_fcf_pct: float | None = None
-    upside_peak_fcf_pct: float | None = None
-    best_target_price_usd: float | None = None
-    best_upside_pct: float | None = None
-    tool_b_score: float | None = None
-    tool_b_rank: int | None = None
+    fundamental_check_score: float | None = None
+    fundamental_check_rank: int | None = None
+    fundamental_checks_passed: int | None = None
+    fundamental_checks_total: int | None = None
+    fundamental_check_summary: str | None = None
     missing_manual_fields: str | None = None
     next_financial_report_date: date | None = None
     next_production_report_date: date | None = None
@@ -275,31 +274,6 @@ class ToolBOutput(StrictDataModel):
     fx_policy_max_staleness_days: int
     fx_policy_block_on_stale_fx: bool
     source_run_id: str
-
-
-class CombinedOutput(StrictDataModel):
-    ticker: str
-    as_of_date: date
-    gold_price_assumption: float
-    core_delta: float | None = None
-    regime_tag: str | None = None
-    tool_a_score: float | None = None
-    tool_a_rank: int | None = None
-    screening_verdict: str | None = None
-    confidence: str | None = None
-    tool_b_rank: int | None = None
-    tool_b_score: float | None = None
-    best_upside_pct: float | None = None
-    forward_pe: float | None = None
-    fcf_yield: float | None = None
-    combined_score: float | None = None
-    combined_rank: int | None = None
-    combined_verdict: str
-    join_status: str
-    coverage_summary: str
-    tool_a_run_id: str | None = None
-    tool_b_run_id: str | None = None
-    combined_run_id: str
 
 
 class FetchStatusRecord(StrictDataModel):

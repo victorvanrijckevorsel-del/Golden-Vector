@@ -33,7 +33,7 @@ from golden_vector.serve.option_trading_data import (
     parse_option_sizing_request,
 )
 from golden_vector.cli import run_option_artifacts
-from tests.helpers import build_test_paths
+from tests.helpers import build_test_paths, tool_b_output_row
 
 
 def test_build_option_trading_overview_filters_and_sorts_optionable_rows():
@@ -787,12 +787,12 @@ def _write_tool_outputs(
         run_context=tool_b_context,
         tool_b_outputs=pd.DataFrame(
             [
-                {
-                    "ticker": "AEM",
-                    "share_price_usd": 50.0,
-                    "snapshot_refresh_run_id": refresh_run_id,
-                    "source_run_id": tool_b_context.run_id,
-                }
+                tool_b_output_row(
+                    "AEM",
+                    share_price_usd=50.0,
+                    snapshot_refresh_run_id=refresh_run_id,
+                    source_run_id=tool_b_context.run_id,
+                )
             ]
         ),
     )

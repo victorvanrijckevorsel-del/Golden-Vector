@@ -20,7 +20,7 @@ from golden_vector.serve.format_helpers import (
     _frame_index_by_ticker,
     _optional_float,
 )
-from golden_vector.serve.overview_combined import (
+from golden_vector.serve.overview_helpers import (
     _collect_filter_options,
     _render_filter_bar,
     _render_provenance_warnings,
@@ -42,10 +42,11 @@ def _render_tool_b_overview_page(
     overrides: ScreeningOverrides | None = None,
     override_error: str | None = None,
 ) -> str:
-    """Tool B focused overview: ranked by valuation-screening score.
+    """Tool B focused overview: simple fundamentals and gold-price economics.
 
-    Shows verdict, target price, upside, FCF yield, leverage, etc. Tickers
-    marked INCOMPLETE land at the bottom (missing manual data).
+    Shows visible checks, standard ratios, and estimates at the selected
+    gold-price assumption. Tickers marked INCOMPLETE usually have missing
+    manual mining inputs.
 
     When `overrides.has_any()`, the table is recomputed in memory from
     the current snapshot + manual store with the overlaid screening
@@ -78,12 +79,18 @@ def _render_tool_b_overview_page(
         derived.append({
             "ticker": ticker,
             "tool_b_row": tool_b_row,
-            "tool_b_rank": _optional_float(tool_b_row.get("tool_b_rank")),
+            "fundamental_check_rank": _optional_float(
+                tool_b_row.get("fundamental_check_rank")
+            ),
             "note_count": int(note_counts.get(ticker, 0)),
         })
-    derived.sort(key=lambda r: (0 if r["tool_b_rank"] is not None else 1,
-                                 r["tool_b_rank"] if r["tool_b_rank"] is not None else 0.0,
-                                 r["ticker"]))
+    derived.sort(
+        key=lambda r: (
+            0 if r["fundamental_check_rank"] is not None else 1,
+            r["fundamental_check_rank"] if r["fundamental_check_rank"] is not None else 0.0,
+            r["ticker"],
+        )
+    )
 
     rows_html: list[str] = []
     for row in derived:
@@ -92,27 +99,28 @@ def _render_tool_b_overview_page(
             "<tr>"
             f"<td><a href=\"/ticker/{escape(row['ticker'])}\">{escape(row['ticker'])}</a></td>"
             f"<td>{_fmt_text(tb.get('screening_verdict'))}</td>"
-            f"{_fmt_numeric_td(tb.get('tool_b_score'), decimals=1)}"
-            f"{_fmt_numeric_td(row['tool_b_rank'], decimals=0)}"
-            # Four canonical target-price scenarios (matches Excel Top performers).
-            f"{_fmt_numeric_td(tb.get('target_price_peer_pe'), decimals=2)}"
-            f"{_fmt_numeric_td(tb.get('upside_peer_pe_pct'), decimals=1, as_percent=True)}"
-            f"{_fmt_numeric_td(tb.get('target_price_peak_pe'), decimals=2)}"
-            f"{_fmt_numeric_td(tb.get('upside_peak_pe_pct'), decimals=1, as_percent=True)}"
-            f"{_fmt_numeric_td(tb.get('target_price_peer_fcf'), decimals=2)}"
-            f"{_fmt_numeric_td(tb.get('upside_peer_fcf_pct'), decimals=1, as_percent=True)}"
-            f"{_fmt_numeric_td(tb.get('target_price_peak_fcf'), decimals=2)}"
-            f"{_fmt_numeric_td(tb.get('upside_peak_fcf_pct'), decimals=1, as_percent=True)}"
+            f"<td>{_fmt_text(tb.get('fundamental_check_summary'))}</td>"
+            f"{_fmt_numeric_td(tb.get('fundamental_check_score'), decimals=1)}"
+            f"{_fmt_numeric_td(row['fundamental_check_rank'], decimals=0)}"
+            f"{_fmt_numeric_td(tb.get('share_price_usd'), decimals=2)}"
+            f"{_fmt_numeric_td(tb.get('market_cap_musd'), decimals=0)}"
+            f"{_fmt_numeric_td(tb.get('enterprise_value_musd'), decimals=0)}"
+            f"{_fmt_numeric_td(tb.get('aisc_usd_per_oz'), decimals=0)}"
+            f"{_fmt_numeric_td(tb.get('cash_margin_usd_per_oz'), decimals=0)}"
+            f"{_fmt_numeric_td(tb.get('margin_pct'), decimals=1, as_percent=True)}"
+            f"{_fmt_numeric_td(tb.get('forward_ebitda_musd'), decimals=0)}"
             f"{_fmt_numeric_td(tb.get('forward_pe'), decimals=1)}"
+            f"{_fmt_numeric_td(tb.get('ev_ebitda'), decimals=1)}"
             f"{_fmt_numeric_td(tb.get('fcf_yield'), decimals=1, as_percent=True)}"
             f"{_fmt_numeric_td(tb.get('leverage'), decimals=2)}"
+            f"{_fmt_numeric_td(tb.get('reserve_life_years'), decimals=1)}"
             f"<td>{_fmt_text(tb.get('layer1_status'))}</td>"
             f"{_fmt_numeric_td(row['note_count'], decimals=0)}"
             "</tr>"
         )
     if not rows_html:
         rows_html.append(
-            "<tr><td colspan=\"17\" class=\"hint\">No tickers match.</td></tr>"
+            "<tr><td colspan=\"19\" class=\"hint\">No tickers match.</td></tr>"
         )
 
     # Filter-bar options derived from the rendered rows.
@@ -126,11 +134,10 @@ def _render_tool_b_overview_page(
 
     body = ["<h1>Corporate Finance</h1>"]
     body.append(
-        "<p>Ranks the universe by valuation upside at the configured gold-price assumption. "
-        "Lower rank is better. INCOMPLETE rows are missing manual mining inputs (production, AISC, "
-        "FCF, etc.). Four target-price scenarios are shown side by side — read across and decide "
-        "which scenario fits your view: Peer P/E is the most conservative, Peak FCF the most bullish. "
-        "Click a ticker to fill in the manual data form.</p>"
+        "<p>Shows industry-standard corporate finance checks at the configured gold-price "
+        "assumption. The score is the number of visible checks passed, not a model target price. "
+        "Forward EBITDA, P/E, and FCF are transparent estimates at that gold price. "
+        "Click a ticker to edit the manual mining inputs.</p>"
     )
     if flash:
         body.append(f"<div class=\"flash\">{escape(flash)}</div>")
@@ -180,19 +187,21 @@ def _render_tool_b_overview_page(
         "<thead><tr>"
         "<th data-col-name=\"ticker\">Ticker</th>"
         "<th data-col-name=\"verdict\">Verdict</th>"
-        "<th data-col-name=\"score\" data-sort-numeric>Score</th>"
+        "<th data-col-name=\"check_summary\">Checks</th>"
+        "<th data-col-name=\"score\" data-sort-numeric>Checks Passed %</th>"
         "<th data-col-name=\"rank\" data-sort-numeric>Rank</th>"
-        "<th data-col-name=\"peer_pe_target\" data-sort-numeric>Peer P/E Target</th>"
-        "<th data-col-name=\"peer_pe_up\" data-sort-numeric>Peer P/E Up %</th>"
-        "<th data-col-name=\"peak_pe_target\" data-sort-numeric>Peak P/E Target</th>"
-        "<th data-col-name=\"peak_pe_up\" data-sort-numeric>Peak P/E Up %</th>"
-        "<th data-col-name=\"peer_fcf_target\" data-sort-numeric>Peer FCF Target</th>"
-        "<th data-col-name=\"peer_fcf_up\" data-sort-numeric>Peer FCF Up %</th>"
-        "<th data-col-name=\"peak_fcf_target\" data-sort-numeric>Peak FCF Target</th>"
-        "<th data-col-name=\"peak_fcf_up\" data-sort-numeric>Peak FCF Up %</th>"
-        "<th data-col-name=\"fwd_pe\" data-sort-numeric>Fwd P/E</th>"
-        "<th data-col-name=\"fcf_yield\" data-sort-numeric>FCF Yield</th>"
-        "<th data-col-name=\"leverage\" data-sort-numeric>Leverage</th>"
+        "<th data-col-name=\"share_price\" data-sort-numeric>Share Price</th>"
+        "<th data-col-name=\"market_cap\" data-sort-numeric>Market Cap</th>"
+        "<th data-col-name=\"enterprise_value\" data-sort-numeric>Enterprise Value</th>"
+        "<th data-col-name=\"aisc\" data-sort-numeric>AISC</th>"
+        "<th data-col-name=\"cash_margin\" data-sort-numeric>Cash Margin/oz</th>"
+        "<th data-col-name=\"margin_pct\" data-sort-numeric>Margin %</th>"
+        "<th data-col-name=\"forward_ebitda\" data-sort-numeric>Forward EBITDA est.</th>"
+        "<th data-col-name=\"forward_pe\" data-sort-numeric>Forward P/E est.</th>"
+        "<th data-col-name=\"ev_ebitda\" data-sort-numeric>EV/EBITDA est.</th>"
+        "<th data-col-name=\"fcf_yield\" data-sort-numeric>FCF Yield est.</th>"
+        "<th data-col-name=\"leverage\" data-sort-numeric>Net Debt/EBITDA</th>"
+        "<th data-col-name=\"reserve_life\" data-sort-numeric>Reserve Life</th>"
         "<th data-col-name=\"layer1\">Layer 1</th>"
         "<th data-col-name=\"notes\" data-sort-numeric>Notes</th>"
         "</tr></thead>"
@@ -310,17 +319,17 @@ def _render_screening_params_form(
         "<div class=\"screening-params-grid\">"
         f"<label><span>Gold Price ($/oz)</span>"
         f"<input name=\"gold_price\" type=\"number\" step=\"1\" min=\"1\" value=\"{_fmt_form_number(gold_price_value)}\"></label>"
-        f"<label><span>Fwd P/E Target (&lt;)</span>"
+        f"<label><span>Strong P/E cutoff (&lt;)</span>"
         f"<input name=\"pe_target\" type=\"number\" step=\"0.1\" min=\"0.1\" value=\"{_fmt_form_number(pe_target)}\"></label>"
-        f"<label><span>FCF Yield Target (% ≥)</span>"
+        f"<label><span>Minimum FCF yield (%)</span>"
         f"<input name=\"fcf_yield_target\" type=\"number\" step=\"0.5\" min=\"0\" value=\"{_as_percent_display(fcf_yield_target)}\"></label>"
-        f"<label><span>AISC Target ($/oz ≤)</span>"
+        f"<label><span>AISC cutoff ($/oz)</span>"
         f"<input name=\"aisc_target\" type=\"number\" step=\"10\" min=\"1\" value=\"{_fmt_form_number(aisc_target)}\"></label>"
-        f"<label><span>Margin Target (% ≥)</span>"
+        f"<label><span>Minimum margin (%)</span>"
         f"<input name=\"margin_target\" type=\"number\" step=\"1\" min=\"0\" value=\"{_as_percent_display(margin_target)}\"></label>"
-        f"<label><span>Reserve Life (yrs ≥)</span>"
+        f"<label><span>Minimum reserve life (yrs)</span>"
         f"<input name=\"reserve_life_target\" type=\"number\" step=\"0.5\" min=\"0\" value=\"{_fmt_form_number(reserve_life_target)}\"></label>"
-        f"<label><span>Net Debt/EBITDA (≤)</span>"
+        f"<label><span>Net Debt/EBITDA cutoff</span>"
         f"<input name=\"leverage_target\" type=\"number\" step=\"0.1\" min=\"0\" value=\"{_fmt_form_number(leverage_target)}\"></label>"
         f"<label><span>Tier 1 Discount (%)</span>"
         f"<input name=\"tier1_discount\" type=\"number\" step=\"1\" min=\"0\" max=\"100\" value=\"{_as_percent_display(tier1)}\"></label>"

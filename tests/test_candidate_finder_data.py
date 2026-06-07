@@ -32,10 +32,10 @@ from golden_vector.serve.candidate_finder_data import (
     _joined_frame,
 )
 from golden_vector.serve.option_trading_data import OptionTradingData
-from tests.helpers import build_test_paths
+from tests.helpers import build_test_paths, tool_b_output_row
 
 
-def test_candidate_finder_data_joins_sources_and_derives_ratios(tmp_path):
+def test_candidate_finder_data_joins_sources_and_persisted_fundamentals(tmp_path):
     clear_candidate_finder_cache()
     paths = build_test_paths(tmp_path)
     app_config = load_app_config(paths).app
@@ -51,10 +51,10 @@ def test_candidate_finder_data_joins_sources_and_derives_ratios(tmp_path):
     assert bool(frame.loc["AEM", "has_usable_call_candidate"]) is True
     assert bool(frame.loc["NEM", "has_usable_put_candidate"]) is True
     assert bool(frame.loc["NEM", "has_usable_call_candidate"]) is False
-    assert frame.loc["AEM", "debt_to_mktcap"] == pytest.approx(0.20)
-    assert frame.loc["AEM", "ebitda_to_mktcap"] == pytest.approx(0.50)
-    assert frame.loc["AEM", "revenue_to_mktcap"] == pytest.approx(1.20)
-    assert frame.loc["AEM", "netincome_to_mktcap"] == pytest.approx(0.30)
+    assert frame.loc["AEM", "fundamental_check_score"] == pytest.approx(85.7143)
+    assert frame.loc["AEM", "margin_pct"] == pytest.approx(0.575)
+    assert frame.loc["AEM", "ev_ebitda"] == pytest.approx(2.4)
+    assert frame.loc["AEM", "forward_pe"] == pytest.approx(8.0)
     assert frame.loc["AEM", "tool_c_downside_rank"] == pytest.approx(90.0)
     assert frame.loc["AEM", "tool_c_upside_rank"] == pytest.approx(75.0)
     assert frame.loc["AEM", "tool_d_quality_rank"] == pytest.approx(45.0)
@@ -204,7 +204,7 @@ def test_candidate_finder_join_drops_stale_option_duplicate_columns(tmp_path):
     assert frame.loc["AEM", "up_beta_core"] == pytest.approx(1.2)
     assert frame.loc["AEM", "aisc_usd_per_oz"] == pytest.approx(1700.0)
     assert frame.loc["AEM", "market_cap_musd"] == pytest.approx(1000.0)
-    assert frame.loc["AEM", "debt_to_mktcap"] == pytest.approx(0.20)
+    assert frame.loc["AEM", "fundamental_check_score"] == pytest.approx(85.7143)
     for source_field in _PREVIOUSLY_COLLIDED_SOURCE_FIELDS:
         assert data.frame[source_field].notna().any(), source_field
     assert not any("duplicate-suffix columns" in item for item in data.alignment.messages)
@@ -290,8 +290,8 @@ def test_candidate_finder_data_handles_missing_sources(tmp_path):
 
     assert data.alignment.status == "UNKNOWN"
     assert not data.frame.empty
-    assert "debt_to_mktcap" in data.frame.columns
-    assert data.frame["debt_to_mktcap"].isna().all()
+    assert "fundamental_check_score" in data.frame.columns
+    assert data.frame["fundamental_check_score"].isna().all()
     assert data.frame["has_usable_put_candidate"].eq(False).all()
     assert data.frame["has_usable_call_candidate"].eq(False).all()
 
@@ -510,7 +510,7 @@ criteria:
   - id: down_beta
     direction: high_good
     weight: 1
-  - id: debt_to_mktcap
+  - id: leverage
     direction: high_good
     weight: 1
 """,
@@ -530,7 +530,7 @@ criteria:
     assert "Candidate Finder ranked parquet written" in captured
     assert {"AEM", "NEM"}.issubset(set(ranked["ticker"]))
     assert "percentile_down_beta" in ranked.columns
-    assert "percentile_debt_to_mktcap" in ranked.columns
+    assert "percentile_leverage" in ranked.columns
 
 
 def test_candidate_finder_cli_allows_output_outside_repo(tmp_path, capsys):
@@ -615,36 +615,44 @@ def _write_candidate_finder_inputs(
         run_context=tool_b_context,
         tool_b_outputs=pd.DataFrame(
             [
-                {
-                    "ticker": "AEM",
-                    "market_cap_musd": 1000.0,
-                    "share_price_usd": 100.0,
-                    "forward_revenue_musd": 1200.0,
-                    "forward_ebitda_musd": 500.0,
-                    "forward_net_income_musd": 300.0,
-                    "forward_pe": 8.0,
-                    "ev_ebitda": 2.4,
-                    "fcf_yield": 0.18,
-                    "leverage": 0.4,
-                    "best_upside_pct": 0.30,
-                    "snapshot_refresh_run_id": tool_b_run,
-                    "source_run_id": tool_b_context.run_id,
-                },
-                {
-                    "ticker": "NEM",
-                    "market_cap_musd": 2000.0,
-                    "share_price_usd": 100.0,
-                    "forward_revenue_musd": 1600.0,
-                    "forward_ebitda_musd": 600.0,
-                    "forward_net_income_musd": 260.0,
-                    "forward_pe": 10.0,
-                    "ev_ebitda": 3.6,
-                    "fcf_yield": 0.12,
-                    "leverage": 0.2,
-                    "best_upside_pct": 0.20,
-                    "snapshot_refresh_run_id": tool_b_run,
-                    "source_run_id": tool_b_context.run_id,
-                },
+                tool_b_output_row(
+                    "AEM",
+                    market_cap_musd=1000.0,
+                    share_price_usd=100.0,
+                    net_debt_musd=200.0,
+                    aisc_usd_per_oz=1700.0,
+                    enterprise_value_musd=1200.0,
+                    forward_revenue_musd=1200.0,
+                    forward_ebitda_musd=500.0,
+                    forward_net_income_musd=300.0,
+                    forward_pe=8.0,
+                    ev_ebitda=2.4,
+                    fcf_yield=0.18,
+                    leverage=0.4,
+                    fundamental_check_score=85.7143,
+                    fundamental_check_rank=1,
+                    snapshot_refresh_run_id=tool_b_run,
+                    source_run_id=tool_b_context.run_id,
+                ),
+                tool_b_output_row(
+                    "NEM",
+                    market_cap_musd=2000.0,
+                    share_price_usd=100.0,
+                    net_debt_musd=100.0,
+                    aisc_usd_per_oz=1500.0,
+                    enterprise_value_musd=2100.0,
+                    forward_revenue_musd=1600.0,
+                    forward_ebitda_musd=600.0,
+                    forward_net_income_musd=260.0,
+                    forward_pe=10.0,
+                    ev_ebitda=3.5,
+                    fcf_yield=0.12,
+                    leverage=0.2,
+                    fundamental_check_score=71.4286,
+                    fundamental_check_rank=2,
+                    snapshot_refresh_run_id=tool_b_run,
+                    source_run_id=tool_b_context.run_id,
+                ),
             ]
         ),
     )
@@ -722,11 +730,11 @@ _PREVIOUSLY_COLLIDED_SOURCE_FIELDS = (
     "downside_volatility_52w",
     "confidence_score",
     "aisc_usd_per_oz",
-    "debt_to_mktcap",
-    "ebitda_to_mktcap",
-    "revenue_to_mktcap",
+    "leverage",
+    "ev_ebitda",
+    "margin_pct",
     "fcf_yield",
-    "best_upside_pct",
+    "fundamental_check_score",
     "market_cap_musd",
 )
 
@@ -744,7 +752,10 @@ def _add_stale_option_duplicate_columns(paths) -> None:
         "forward_ebitda_musd": -999.0,
         "forward_revenue_musd": -999.0,
         "fcf_yield": -999.0,
-        "best_upside_pct": -999.0,
+        "fundamental_check_score": -999.0,
+        "margin_pct": -999.0,
+        "ev_ebitda": -999.0,
+        "leverage": -999.0,
     }
     for column, value in duplicates.items():
         frame[column] = value

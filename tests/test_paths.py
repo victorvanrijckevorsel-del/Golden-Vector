@@ -27,7 +27,6 @@ def test_runtime_directories_are_created(tmp_path):
     assert paths.intermediate_status_dir.exists()
     assert paths.output_tool_a_dir.exists()
     assert paths.output_tool_b_dir.exists()
-    assert paths.output_combined_dir.exists()
     assert paths.runs_dir.exists()
     assert paths.latest_foundation_manifest_path.parent == paths.intermediate_status_dir
     assert paths.latest_normalized_market_snapshots_path.parent == paths.intermediate_market_snapshots_dir

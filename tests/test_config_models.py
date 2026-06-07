@@ -4,7 +4,7 @@ from pydantic import ValidationError
 from golden_vector.contracts.config_models import (
     AsymmetryThresholds,
     BenchmarksConfig,
-    CombinedVerdictThresholds,
+    CandidateFinderConfig,
     ConfidenceThresholds,
     GammaThresholds,
     HedgeReadinessConfig,
@@ -58,12 +58,12 @@ def test_horizons_config_rejects_invalid_horizon_format():
         )
 
 
-def test_screening_params_require_all_peer_benchmark_buckets():
+def test_screening_params_reject_duplicate_gold_price_scenarios():
     with pytest.raises(ValidationError):
         ScreeningParamsConfig.model_validate(
             {
                 "version": 1,
-                "gold_price_scenarios": [3000, 4000],
+                "gold_price_scenarios": [4000, 4000],
                 "layer1_thresholds": {
                     "aisc_max": 1850,
                     "margin_min": 0.5,
@@ -79,16 +79,6 @@ def test_screening_params_require_all_peer_benchmark_buckets():
                     "tier_1": 0.0,
                     "tier_2": 0.15,
                     "tier_3": 0.3,
-                },
-                "peer_benchmarks": {
-                    "large": {
-                        "pe_2026": 16,
-                        "pe_2011_peak": 28.5,
-                        "evebitda_2026": 8,
-                        "evebitda_2011": 14,
-                        "fcf_yield_2026": 0.05,
-                        "fcf_yield_2011": 0.02,
-                    }
                 },
             }
         )
@@ -525,16 +515,6 @@ def test_volatility_bands_must_be_ordered():
         )
 
 
-def test_combined_verdict_thresholds_must_be_ordered():
-    with pytest.raises(ValidationError):
-        CombinedVerdictThresholds.model_validate(
-            {
-                "high_conviction_min_tool_a_score": 55.0,
-                "dual_pass_min_tool_a_score": 60.0,
-            }
-        )
-
-
 def test_qa_config_rejects_negative_fx_staleness_threshold():
     with pytest.raises(ValidationError):
         QaConfig.model_validate({"max_fx_staleness_days": -1})
@@ -552,3 +532,30 @@ def test_scoring_config_rejects_unsupported_blocked_normalization_status():
                 "blocked_normalization_statuses": ["UNKNOWN_STATUS"],
             }
         )
+
+
+def test_candidate_finder_preset_accepts_no_option_filter():
+    config = CandidateFinderConfig.model_validate(
+        {
+            "criteria": [
+                {
+                    "id": "fundamental_check_score",
+                    "label": "Fundamental checks",
+                    "source_field": "fundamental_check_score",
+                    "group": "Corporate Finance",
+                    "default_direction": "high_good",
+                    "unit": "score",
+                }
+            ],
+            "presets": [
+                {
+                    "id": "strong_corporate_finance",
+                    "label": "Strong Corporate Finance",
+                    "options_side": "none",
+                    "criteria": [{"id": "fundamental_check_score"}],
+                }
+            ],
+        }
+    )
+
+    assert config.presets[0].options_side == "none"

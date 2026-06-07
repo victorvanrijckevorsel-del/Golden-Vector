@@ -44,6 +44,3 @@ weights:
   structural_gamma: 0.25
   asymmetry: 0.15
   confidence: 0.2
-combined_verdict_thresholds:
-  high_conviction_min_tool_a_score: 75.0
-  dual_pass_min_tool_a_score: 60.0

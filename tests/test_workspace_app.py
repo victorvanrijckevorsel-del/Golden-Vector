@@ -19,10 +19,10 @@ from golden_vector.screening.manual_data import (
 from golden_vector.screening.manual_store import add_stock_note
 from golden_vector.serve.workspace import create_workspace_app
 from golden_vector.serve.workspace_state import _load_tool_a_detail
-from tests.helpers import build_test_paths
+from tests.helpers import build_test_paths, tool_b_output_row
 
 
-def test_workspace_overview_renders_structural_tool_a_and_tool_b_outputs(tmp_path):
+def test_workspace_root_renders_candidate_finder_outputs(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
     app_config = _repo_app_config()
@@ -42,10 +42,11 @@ def test_workspace_overview_renders_structural_tool_a_and_tool_b_outputs(tmp_pat
 
     assert response["status"].startswith("200")
     assert "Golden Vector Workspace" in response["body"]
+    assert "Candidate Finder" in response["body"]
+    assert "Strong Corporate Finance" in response["body"]
+    assert "Full model refresh" in response["body"]
     assert "/ticker/NEM" in response["body"]
-    assert "Structural Delta" in response["body"]
-    assert "CONVEX" in response["body"]
-    assert "STRONG_CANDIDATE" in response["body"]
+    assert "Review next production report" not in response["body"]
 
 
 def test_workspace_overview_shows_model_state_banner(tmp_path):
@@ -288,104 +289,6 @@ def test_workspace_note_post_adds_note_and_detail_page_renders_it(tmp_path):
     assert detail_response["status"].startswith("200")
     assert "Check cost guidance" in detail_response["body"]
     assert "Stock Notes" in detail_response["body"]
-
-
-def test_workspace_overview_warns_when_tool_b_latest_alias_is_missing(tmp_path):
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM"])
-    _write_latest_foundation_snapshot(paths)
-    # Only publish Tool A latest, not Tool B, to simulate the "stable alias missing" case.
-    run_context = RunContext.start(
-        paths=paths,
-        command="tool-a",
-        parameters={},
-        config_hash="hash",
-    )
-    persist_tool_a_outputs(
-        paths=paths,
-        run_context=run_context,
-        tool_a_outputs=pd.DataFrame(
-            [
-                {
-                    "ticker": "NEM",
-                    "as_of_date": date(2026, 4, 22),
-                    "snapshot_refresh_run_id": "refresh-run",
-                    "structural_delta_core": 1.9,
-                    "score_eligible": True,
-                    "score_eligibility_reason": "OK",
-                }
-            ]
-        ),
-    )
-
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
-    response = _call_wsgi_app(app, method="GET", path="/")
-
-    assert response["status"].startswith("200")
-    assert "Corporate Finance output is missing" in response["body"]
-
-
-def test_workspace_overview_warns_when_tool_a_and_tool_b_reference_different_refreshes(tmp_path):
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM"])
-    _write_latest_foundation_snapshot(paths)
-
-    tool_a_context = RunContext.start(
-        paths=paths,
-        command="tool-a",
-        parameters={},
-        config_hash="hash",
-    )
-    persist_tool_a_outputs(
-        paths=paths,
-        run_context=tool_a_context,
-        tool_a_outputs=pd.DataFrame(
-            [
-                {
-                    "ticker": "NEM",
-                    "as_of_date": date(2026, 4, 22),
-                    "snapshot_refresh_run_id": "refresh-run",
-                    "structural_delta_core": 1.9,
-                    "score_eligible": True,
-                    "score_eligibility_reason": "OK",
-                }
-            ]
-        ),
-    )
-    tool_b_context = RunContext.start(
-        paths=paths,
-        command="tool-b",
-        parameters={"gold_price": 4000.0},
-        config_hash="hash",
-    )
-    persist_tool_b_outputs(
-        paths=paths,
-        run_context=tool_b_context,
-        tool_b_outputs=pd.DataFrame(
-            [
-                {
-                    "ticker": "NEM",
-                    "as_of_date": date(2026, 4, 22),
-                    "gold_price_assumption": 4000.0,
-                    "tool_b_score": 72.5,
-                    "tool_b_rank": 1,
-                    "screening_verdict": "STRONG_CANDIDATE",
-                    "snapshot_refresh_run_id": "an-older-refresh",
-                }
-            ]
-        ),
-    )
-
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
-    response = _call_wsgi_app(app, method="GET", path="/")
-
-    assert response["status"].startswith("200")
-    assert "an-older-refresh" in response["body"]
-    assert "mix data from different refreshes" in response["body"]
 
 
 def test_workspace_company_post_preserves_unfilled_fields(tmp_path):
@@ -877,30 +780,6 @@ def test_workspace_note_post_rejects_oversized_note_tag(tmp_path):
     assert "note_tag is too long" in response["body"]
 
 
-def test_workspace_overview_sort_dropdown_carries_disabled_attribute_when_lens_active(tmp_path):
-    """Codex P3 follow-up: directly assert the `disabled` attribute on the sort
-    `<select>` when a non-default lens is active. The hint text alone wasn't enough.
-    """
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM"])
-    _write_latest_foundation_snapshot(paths)
-    _write_latest_outputs(paths)
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
-
-    # Default lens (composite) → sort is enabled.
-    response = _call_wsgi_app(app, method="GET", path="/")
-    body = response["body"]
-    assert 'name="sort">' in body  # opening tag with no disabled attribute
-    assert 'name="sort" disabled' not in body
-
-    # Non-default lens → sort is disabled.
-    response = _call_wsgi_app(app, method="GET", path="/?lens=upside_torque")
-    body = response["body"]
-    assert 'name="sort" disabled' in body
-
-
 def test_workspace_detail_chart_sits_above_volatility_in_both_alignment_branches(tmp_path):
     """Codex follow-up to Fix #10: the non-aligned branch was previously rendering the
     chart at the bottom, after volatility + suppressed exploratory. Both branches must
@@ -1158,16 +1037,15 @@ def _write_latest_outputs(paths, tool_a_rows=None) -> None:
         run_context=tool_b_context,
         tool_b_outputs=pd.DataFrame(
             [
-                {
-                    "ticker": "NEM",
-                    "as_of_date": date(2026, 4, 22),
-                    "gold_price_assumption": 4000.0,
-                    "tool_b_score": 72.5,
-                    "tool_b_rank": 1,
-                    "screening_verdict": "STRONG_CANDIDATE",
-                    "confidence": "VERIFIED",
-                    "best_upside_pct": 0.24,
-                }
+                tool_b_output_row(
+                    "NEM",
+                    screening_verdict="STRONG_CANDIDATE",
+                    confidence="VERIFIED",
+                    fundamental_check_score=85.7143,
+                    fundamental_check_rank=1,
+                    snapshot_refresh_run_id="refresh-run",
+                    source_run_id=tool_b_context.run_id,
+                )
             ]
         ),
     )
@@ -1762,94 +1640,6 @@ def test_workspace_detail_chart_distinguishes_corrupt_parquet_from_missing(tmp_p
     assert "Structural history file has not been generated yet" not in body
 
 
-def test_workspace_overview_lens_picker_reorders_table_by_lens_score(tmp_path):
-    """Phase 2A: a non-default lens reorders the overview by lens_score in the lens's
-    direction. Both the default Tool A Score column and the new Lens Score column must
-    remain visible side by side.
-    """
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM", "GOLD", "AEM"])
-    _write_latest_foundation_snapshot(paths)
-    # Three tickers with different upside-torque profiles. Recall:
-    # upside_torque = delta_core × max(up_beta_core - down_beta_core, 0)
-    # NEM:  2.0 × (2.5 - 1.0) = 3.0   (best)
-    # AEM:  1.5 × (1.8 - 1.4) = 0.6   (middle)
-    # GOLD: 1.2 × (1.0 - 1.5) = 0.0   (worst)
-    _write_latest_outputs(
-        paths,
-        tool_a_rows=[
-            _make_tool_a_row("NEM", delta=2.0, up=2.5, down=1.0, score=92.0, rank=1),
-            _make_tool_a_row("AEM", delta=1.5, up=1.8, down=1.4, score=70.0, rank=2),
-            _make_tool_a_row("GOLD", delta=1.2, up=1.0, down=1.5, score=55.0, rank=3),
-        ],
-    )
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM", "GOLD", "AEM"])
-
-    # Default lens (composite) — sort dropdown drives order. Lens Score column
-    # is hidden when lens=composite (it would just duplicate Tool A Score).
-    response = _call_wsgi_app(app, method="GET", path="/?sort=tool_a_score")
-    body = response["body"]
-    assert "Gold Sensitivity Score" in body
-    assert ">Lens Score" not in body  # hidden in composite mode
-    assert "View by lens" in body
-    nem_pos = body.index("/ticker/NEM")
-    aem_pos = body.index("/ticker/AEM")
-    gold_pos = body.index("/ticker/GOLD")
-    assert nem_pos < aem_pos < gold_pos
-
-    # Switch to upside_torque lens — order is determined by the lens score.
-    response = _call_wsgi_app(app, method="GET", path="/?lens=upside_torque")
-    body = response["body"]
-    assert "Lens Score (Upside torque)" in body
-    assert "Sort dropdown is ignored while a non-default lens is active" in body
-    nem_pos = body.index("/ticker/NEM")
-    aem_pos = body.index("/ticker/AEM")
-    gold_pos = body.index("/ticker/GOLD")
-    assert nem_pos < aem_pos < gold_pos
-
-
-def test_workspace_overview_lens_score_column_hidden_when_lens_is_composite(tmp_path):
-    """Both reviewers agreed: when lens=composite, the Lens Score column duplicates the
-    Tool A Score column and should be hidden. Switching to a non-default lens shows it.
-    """
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM"])
-    _write_latest_foundation_snapshot(paths)
-    _write_latest_outputs(paths)
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
-
-    response_default = _call_wsgi_app(app, method="GET", path="/")
-    body_default = response_default["body"]
-    assert ">Lens Score" not in body_default
-
-    response_torque = _call_wsgi_app(app, method="GET", path="/?lens=upside_torque")
-    body_torque = response_torque["body"]
-    assert "Lens Score (Upside torque)" in body_torque
-
-
-def test_workspace_overview_unknown_lens_falls_back_to_composite(tmp_path):
-    """Phase 2A UX invariant: an unknown lens id renders without error and uses the
-    composite lens, keeping the page stable for stale or hand-edited URLs.
-    """
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM"])
-    _write_latest_foundation_snapshot(paths)
-    _write_latest_outputs(paths)
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
-
-    response = _call_wsgi_app(app, method="GET", path="/?lens=not-a-real-lens")
-    body = response["body"]
-    assert response["status"].startswith("200")
-    # Composite lens hint is present (we silently fell back).
-    assert "Composite (Gold Sensitivity score)" in body
-
-
 def _make_tool_a_row(
     ticker: str,
     *,
@@ -1902,97 +1692,6 @@ def _make_tool_a_row(
         "tool_a_summary_explanation": "Test summary.",
         "source_run_id": "tool-a-run",
     }
-
-
-def test_workspace_overview_filters_by_search_profile_verdict_confidence_and_sort(tmp_path):
-    """Phase 1B.4: overview must support search by ticker, filter by profile, Tool B
-    verdict and confidence, and a small sort allow-list. Filter form must be visible
-    on the page.
-    """
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM", "GOLD", "AEM"])
-    _write_latest_foundation_snapshot(paths)
-    # Three Tool A rows with different profiles + verdicts.
-    _write_latest_outputs(
-        paths,
-        tool_a_rows=[
-            {
-                "ticker": "NEM",
-                "as_of_date": date(2026, 4, 17),
-                "profile_label": "CONVEX",
-                "confidence_label": "HIGH",
-                "tool_a_score": 92.0,
-                "tool_a_rank": 1,
-                "score_eligible": True,
-                "score_eligibility_reason": "OK",
-                "snapshot_refresh_run_id": "refresh-run",
-            },
-            {
-                "ticker": "GOLD",
-                "as_of_date": date(2026, 4, 17),
-                "profile_label": "FRAGILE",
-                "confidence_label": "MEDIUM",
-                "tool_a_score": 50.0,
-                "tool_a_rank": 2,
-                "score_eligible": True,
-                "score_eligibility_reason": "OK",
-                "snapshot_refresh_run_id": "refresh-run",
-            },
-            {
-                "ticker": "AEM",
-                "as_of_date": date(2026, 4, 17),
-                "profile_label": "LINEAR",
-                "confidence_label": "HIGH",
-                "tool_a_score": 70.0,
-                "tool_a_rank": 3,
-                "score_eligible": True,
-                "score_eligibility_reason": "OK",
-                "snapshot_refresh_run_id": "refresh-run",
-            },
-        ],
-    )
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM", "GOLD", "AEM"])
-
-    # Default: filter form is present, all three tickers visible.
-    response = _call_wsgi_app(app, method="GET", path="/")
-    body = response["body"]
-    assert "overview-filters" in body
-    assert "Showing 3 of 3 tickers" in body
-    assert ">NEM<" in body and ">GOLD<" in body and ">AEM<" in body
-
-    # Search by ticker substring.
-    response = _call_wsgi_app(app, method="GET", path="/?search=NEM")
-    body = response["body"]
-    assert "Showing 1 of 3 tickers" in body
-    assert ">NEM<" in body
-    assert "/ticker/GOLD" not in body
-
-    # Filter by profile.
-    response = _call_wsgi_app(app, method="GET", path="/?profile=FRAGILE")
-    body = response["body"]
-    assert "Showing 1 of 3 tickers" in body
-    assert "/ticker/GOLD" in body
-    assert "/ticker/NEM" not in body
-
-    # Filter by confidence.
-    response = _call_wsgi_app(app, method="GET", path="/?confidence=HIGH")
-    body = response["body"]
-    assert "Showing 2 of 3 tickers" in body
-
-    # Sort by tool_a_score descending — NEM (92) before AEM (70) before GOLD (50).
-    response = _call_wsgi_app(app, method="GET", path="/?sort=tool_a_score")
-    body = response["body"]
-    nem_pos = body.index("/ticker/NEM")
-    aem_pos = body.index("/ticker/AEM")
-    gold_pos = body.index("/ticker/GOLD")
-    assert nem_pos < aem_pos < gold_pos
-
-    # Empty-state row for impossible filter.
-    response = _call_wsgi_app(app, method="GET", path="/?profile=NOPE")
-    body = response["body"]
-    assert "No tickers match the current filters" in body
 
 
 def test_workspace_notes_section_sorts_open_first_with_status_badges(tmp_path):
@@ -2126,12 +1825,15 @@ def test_workspace_tool_b_view_renders_only_tool_b_columns(tmp_path):
     assert "Corporate Finance" in response["body"]
     # Tool B columns must be present
     assert "Verdict" in response["body"]
-    # Four scenario target columns (matches Excel Top performers AA/AC/AI/AK).
-    assert "Peer P/E Target" in response["body"]
-    assert "Peak P/E Target" in response["body"]
-    assert "Peer FCF Target" in response["body"]
-    assert "Peak FCF Target" in response["body"]
-    # The misleading single "Best Target" headline is gone.
+    assert "Checks Passed %" in response["body"]
+    assert "Forward P/E est." in response["body"]
+    assert "EV/EBITDA est." in response["body"]
+    assert "Net Debt/EBITDA" in response["body"]
+    # Target-price scenarios are intentionally gone.
+    assert "Peer P/E Target" not in response["body"]
+    assert "Peak P/E Target" not in response["body"]
+    assert "Peer FCF Target" not in response["body"]
+    assert "Peak FCF Target" not in response["body"]
     assert "Best Target" not in response["body"]
     # Tool A-specific structural columns must NOT bleed in
     assert "Δ Core" not in response["body"]
@@ -2328,7 +2030,7 @@ def test_workspace_tool_b_override_refuses_latest_foundation_when_model_state_co
     assert "does not expose a usable immutable foundation artifact" in response["body"]
 
 
-def test_workspace_combined_alias_routes_match_root(tmp_path):
+def test_workspace_root_renders_candidate_finder_home(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
     app_config = _repo_app_config()
@@ -2338,12 +2040,21 @@ def test_workspace_combined_alias_routes_match_root(tmp_path):
 
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     root_response = _call_wsgi_app(app, method="GET", path="/")
-    combined_response = _call_wsgi_app(app, method="GET", path="/combined")
 
     assert root_response["status"].startswith("200")
-    assert combined_response["status"].startswith("200")
-    # Both should show the same overview heading and the combined nav active state.
-    assert "Universe Overview" in root_response["body"]
-    assert "Universe Overview" in combined_response["body"]
+    assert "Candidate Finder" in root_response["body"]
+    assert "Strong Corporate Finance" in root_response["body"]
+    assert "Full model refresh" in root_response["body"]
     assert 'class="nav-tab active" href="/"' in root_response["body"]
-    assert 'class="nav-tab active" href="/"' in combined_response["body"]
+
+
+def test_workspace_combined_route_is_removed(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/combined")
+
+    assert response["status"].startswith("404")

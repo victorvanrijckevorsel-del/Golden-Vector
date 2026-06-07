@@ -9,13 +9,13 @@ from golden_vector.app.latest_data import LatestFoundationSnapshot
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.cli import build_parser, run_tool_d
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
-from tests.helpers import build_test_paths
+from tests.helpers import build_test_paths, tool_b_output_row
 
 
 @dataclass(frozen=True)
 class _LoadedConfigStub:
     app: object
-    combined_hash: str
+    config_hash: str
 
 
 def test_tool_d_parser_accepts_optional_gold_price():
@@ -34,7 +34,7 @@ def test_run_tool_d_defaults_gold_price_to_latest_spot(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     monkeypatch.setattr(
         "golden_vector.cli.load_latest_foundation_snapshot",
@@ -91,7 +91,7 @@ def test_run_tool_d_scenario_does_not_publish_spot_alias(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     monkeypatch.setattr(
         "golden_vector.cli.load_latest_foundation_snapshot",
@@ -135,7 +135,7 @@ def test_run_tool_d_scenario_leaves_existing_spot_alias_untouched(tmp_path, monk
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     monkeypatch.setattr(
         "golden_vector.cli.load_latest_foundation_snapshot",
@@ -182,24 +182,22 @@ def test_run_tool_d_standalone_uses_model_state_foundation_and_tool_b(tmp_path, 
     old_tool_b_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
         [
-            {
-                "ticker": "NEM",
-                "as_of_date": date(2026, 6, 1),
-                "source_run_id": "tool-b-old",
-                "snapshot_refresh_run_id": "refresh-old",
-                "tool_b_rank": 1,
-            }
+            tool_b_output_row(
+                "NEM",
+                as_of_date=date(2026, 6, 1),
+                source_run_id="tool-b-old",
+                snapshot_refresh_run_id="refresh-old",
+            )
         ]
     ).to_parquet(old_tool_b_path, index=False)
     pd.DataFrame(
         [
-            {
-                "ticker": "STALE_ALIAS",
-                "as_of_date": date(2026, 6, 2),
-                "source_run_id": "tool-b-new",
-                "snapshot_refresh_run_id": "refresh-new",
-                "tool_b_rank": 1,
-            }
+            tool_b_output_row(
+                "STALE_ALIAS",
+                as_of_date=date(2026, 6, 2),
+                source_run_id="tool-b-new",
+                snapshot_refresh_run_id="refresh-new",
+            )
         ]
     ).to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)
 
@@ -243,7 +241,7 @@ def test_run_tool_d_standalone_uses_model_state_foundation_and_tool_b(tmp_path, 
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     def fake_load_latest_foundation_snapshot(**kwargs):
@@ -285,13 +283,12 @@ def _write_tool_b_latest(paths):
     paths.output_tool_b_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
         [
-            {
-                "ticker": "NEM",
-                "as_of_date": date(2026, 6, 1),
-                "source_run_id": "tool-b-run",
-                "snapshot_refresh_run_id": "refresh-run",
-                "tool_b_rank": 1,
-            }
+            tool_b_output_row(
+                "NEM",
+                as_of_date=date(2026, 6, 1),
+                source_run_id="tool-b-run",
+                snapshot_refresh_run_id="refresh-run",
+            )
         ]
     ).to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)
 

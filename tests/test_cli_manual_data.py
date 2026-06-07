@@ -14,9 +14,9 @@ from tests.helpers import build_test_paths
 
 
 class _LoadedConfigStub:
-    def __init__(self, app: object, combined_hash: str) -> None:
+    def __init__(self, app: object, config_hash: str) -> None:
         self.app = app
-        self.combined_hash = combined_hash
+        self.config_hash = config_hash
 
 
 def test_run_manual_data_set_company_updates_store(tmp_path, monkeypatch):
@@ -25,7 +25,7 @@ def test_run_manual_data_set_company_updates_store(tmp_path, monkeypatch):
     bootstrap_manual_screening_data(paths, tickers=["NEM"])
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     exit_code = run_manual_data(
@@ -60,7 +60,7 @@ def test_run_manual_data_show_fails_cleanly_when_store_is_missing(tmp_path, monk
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     exit_code = run_manual_data(
@@ -81,7 +81,7 @@ def test_run_manual_data_set_company_can_clear_existing_values(tmp_path, monkeyp
     bootstrap_manual_screening_data(paths, tickers=["NEM"])
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     run_manual_data(
@@ -139,7 +139,7 @@ def test_run_manual_note_add_and_list_use_local_store(tmp_path, monkeypatch):
     bootstrap_manual_screening_data(paths, tickers=["NEM"])
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     add_exit_code = run_manual_note(

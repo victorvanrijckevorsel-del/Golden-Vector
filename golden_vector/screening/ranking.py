@@ -10,23 +10,25 @@ def rank_tool_b_outputs(tool_b_outputs: pd.DataFrame) -> pd.DataFrame:
         return tool_b_outputs.copy()
 
     ranked = tool_b_outputs.copy()
-    ranked["tool_b_rank"] = pd.Series([pd.NA] * len(ranked.index), dtype="Int64")
+    ranked["fundamental_check_rank"] = pd.Series(
+        [pd.NA] * len(ranked.index),
+        dtype="Int64",
+    )
 
-    for keys, _ in ranked.groupby(["as_of_date", "gold_price_assumption"], dropna=False):
-        as_of_date, gold_price_assumption = keys
-        eligible_mask = (
-            (ranked["as_of_date"] == as_of_date)
-            & (ranked["gold_price_assumption"] == gold_price_assumption)
-            & ranked["tool_b_score"].notna()
-        )
+    group_columns = ["as_of_date", "gold_price_assumption"]
+    for _, group in ranked.groupby(group_columns, dropna=False):
+        group_index = group.index
+        eligible_mask = ranked.index.isin(group_index) & ranked[
+            "fundamental_check_score"
+        ].notna()
         eligible_scores = pd.to_numeric(
-            ranked.loc[eligible_mask, "tool_b_score"],
+            ranked.loc[eligible_mask, "fundamental_check_score"],
             errors="coerce",
         )
         if eligible_scores.empty:
             continue
 
-        ranked.loc[eligible_mask, "tool_b_rank"] = (
+        ranked.loc[eligible_mask, "fundamental_check_rank"] = (
             eligible_scores.rank(method="dense", ascending=False).astype("Int64")
         )
 

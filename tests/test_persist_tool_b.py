@@ -4,10 +4,10 @@ import pandas as pd
 
 from golden_vector.app.run_context import RunContext
 from golden_vector.ingestion.persist import persist_tool_b_outputs
-from tests.helpers import build_test_paths
+from tests.helpers import build_test_paths, tool_b_output_row
 
 
-def test_persist_tool_b_outputs_writes_latest_snapshot_sorted_by_tool_b_rank(tmp_path):
+def test_persist_tool_b_outputs_writes_latest_snapshot_sorted_by_fundamental_rank(tmp_path):
     paths = build_test_paths(tmp_path)
     run_context = RunContext.start(
         paths=paths,
@@ -17,10 +17,10 @@ def test_persist_tool_b_outputs_writes_latest_snapshot_sorted_by_tool_b_rank(tmp
     )
     tool_b_outputs = pd.DataFrame(
         [
-            {"ticker": "GOLD", "as_of_date": date(2026, 1, 31), "gold_price_assumption": 4000.0, "tool_b_rank": 2},
-            {"ticker": "NEM", "as_of_date": date(2026, 1, 31), "gold_price_assumption": 4000.0, "tool_b_rank": 1},
-            {"ticker": "NEM", "as_of_date": date(2026, 2, 1), "gold_price_assumption": 4000.0, "tool_b_rank": 2},
-            {"ticker": "GOLD", "as_of_date": date(2026, 2, 1), "gold_price_assumption": 4000.0, "tool_b_rank": 1},
+            tool_b_output_row("GOLD", as_of_date=date(2026, 1, 31), fundamental_check_rank=2),
+            tool_b_output_row("NEM", as_of_date=date(2026, 1, 31), fundamental_check_rank=1),
+            tool_b_output_row("NEM", as_of_date=date(2026, 2, 1), fundamental_check_rank=2),
+            tool_b_output_row("GOLD", as_of_date=date(2026, 2, 1), fundamental_check_rank=1),
         ]
     )
 
@@ -52,12 +52,11 @@ def test_persist_tool_b_outputs_can_preserve_previous_stable_latest_alias_on_emp
         run_context=initial_context,
         tool_b_outputs=pd.DataFrame(
             [
-                {
-                    "ticker": "NEM",
-                    "as_of_date": date(2026, 2, 1),
-                    "gold_price_assumption": 4000.0,
-                    "tool_b_rank": 1,
-                }
+                tool_b_output_row(
+                    "NEM",
+                    as_of_date=date(2026, 2, 1),
+                    fundamental_check_rank=1,
+                )
             ]
         ),
     )
@@ -72,7 +71,12 @@ def test_persist_tool_b_outputs_can_preserve_previous_stable_latest_alias_on_emp
         paths=paths,
         run_context=empty_context,
         tool_b_outputs=pd.DataFrame(
-            columns=["ticker", "as_of_date", "gold_price_assumption", "tool_b_rank"]
+            columns=[
+                "ticker",
+                "as_of_date",
+                "gold_price_assumption",
+                "fundamental_check_rank",
+            ]
         ),
         publish_latest_aliases=False,
     )

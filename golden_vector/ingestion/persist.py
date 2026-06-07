@@ -317,36 +317,6 @@ def persist_tool_b_outputs(
     return written_paths
 
 
-def persist_combined_outputs(
-    paths: ProjectPaths,
-    run_context: RunContext,
-    combined_outputs: pd.DataFrame,
-) -> list[Path]:
-    latest_snapshot = _latest_snapshot(combined_outputs)
-    written_paths = [
-        _write_parquet(
-            combined_outputs,
-            paths.output_combined_dir / f"combined_output_{run_context.run_id}.parquet",
-        ),
-        _write_csv(
-            combined_outputs,
-            paths.output_combined_dir / f"combined_output_{run_context.run_id}.csv",
-        ),
-        _write_parquet(
-            latest_snapshot,
-            paths.output_combined_dir / f"combined_latest_{run_context.run_id}.parquet",
-        ),
-        _write_csv(
-            latest_snapshot,
-            paths.output_combined_dir / f"combined_latest_{run_context.run_id}.csv",
-        ),
-    ]
-
-    for path in written_paths:
-        run_context.record_artifact(path)
-    return written_paths
-
-
 def _write_parquet(frame: pd.DataFrame, path: Path) -> Path:
     return write_parquet_atomic(frame, path, index=False)
 
@@ -376,8 +346,8 @@ def _latest_snapshot(frame: pd.DataFrame) -> pd.DataFrame:
 
     Per-ticker latest preserves the full universe; downstream consumers
     can derive "this row is at the global max date vs a week behind" by
-    comparing each row's `as_of_date` to the max. Tool B and Combined
-    are unaffected because all their rows share one `as_of_date`.
+    comparing each row's `as_of_date` to the max. Tool B is unaffected
+    because all its rows share one `as_of_date`.
     """
     if frame.empty or "as_of_date" not in frame.columns:
         return frame.copy()
@@ -387,13 +357,17 @@ def _latest_snapshot(frame: pd.DataFrame) -> pd.DataFrame:
         sorted_frame = frame.sort_values(["ticker", "as_of_date"])
         latest = sorted_frame.drop_duplicates(subset=["ticker"], keep="last").copy()
     else:
-        # No ticker column to group by — fall back to the original
+        # No ticker column to group by - fall back to the original
         # global-max behavior.
         latest_as_of_date = frame["as_of_date"].max()
         latest = frame[frame["as_of_date"] == latest_as_of_date].copy()
     sort_columns = [
         column
-        for column in ("combined_rank", "tool_a_rank", "tool_b_rank", "ticker")
+        for column in (
+            "tool_a_rank",
+            "fundamental_check_rank",
+            "ticker",
+        )
         if column in latest.columns
     ]
     if sort_columns:

@@ -17,7 +17,6 @@ from golden_vector.screening.manual_data import (
     REQUIRED_MANUAL_FIELDS,
 )
 from golden_vector.serve.workspace_state import (
-    OverviewFilters,
     _load_tool_a_detail,
     _load_workspace_state,
     _parse_ticker_route,
@@ -39,11 +38,11 @@ from golden_vector.serve.detail_panels import (
 )
 from golden_vector.serve.detail_forms import COMPANY_FORM_FIELDS
 from golden_vector.serve.detail_page import (
+    DETAIL_DEFAULT_LENS_ID,
     DETAIL_OPTION_TRADING_LENS_ID,
     render_detail_page,
     resolve_detail_lens,
 )
-from golden_vector.serve.lenses import DEFAULT_LENS_ID
 from golden_vector.serve.option_trading_data import (
     build_option_trading_detail_data,
     load_option_trading_data,
@@ -57,7 +56,6 @@ from golden_vector.serve.option_refresh import (
 from golden_vector.serve.candidate_finder_data import load_candidate_finder_data
 from golden_vector.serve.candidate_finder_page import render_candidate_finder_page
 from golden_vector.serve.overview_option_trading import _render_option_trading_overview_page
-from golden_vector.serve.overview_combined import _render_overview_page
 from golden_vector.serve.overview_tool_a import _render_tool_a_overview_page
 from golden_vector.serve.overview_tool_b import _render_tool_b_overview_page
 from golden_vector.serve.overview_tool_c import _render_tool_c_overview_page
@@ -124,26 +122,18 @@ def create_workspace_app(
                     ),
                 )
 
-            if method == "GET" and path in ("/", "/combined"):
-                state = _load_workspace_state(paths, normalized_tickers)
+            if method == "GET" and path == "/":
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
-                flash = _flash_message(query.get("saved", [""])[0])
-                overview_filters = OverviewFilters(
-                    search=query.get("search", [""])[0],
-                    profile=query.get("profile", [""])[0],
-                    verdict=query.get("verdict", [""])[0],
-                    confidence=query.get("confidence", [""])[0],
-                    sort=query.get("sort", [""])[0],
+                candidate_data = load_candidate_finder_data(
+                    paths,
+                    app_config=app_config,
                 )
-                lens_id = query.get("lens", [""])[0] or DEFAULT_LENS_ID
                 return _html_response(
                     start_response,
-                    _render_overview_page(
-                        state,
-                        flash=flash,
-                        filters=overview_filters,
-                        lens_id=lens_id,
-                        scoring_config=app_config.scoring,
+                    render_candidate_finder_page(
+                        candidate_data,
+                        query=query,
+                        base_path="/",
                         refresh_status=read_option_refresh_status(paths),
                     ),
                 )
@@ -240,7 +230,12 @@ def create_workspace_app(
                 )
                 return _html_response(
                     start_response,
-                    render_candidate_finder_page(candidate_data, query=query),
+                    render_candidate_finder_page(
+                        candidate_data,
+                        query=query,
+                        base_path="/candidate-finder",
+                        refresh_status=read_option_refresh_status(paths),
+                    ),
                 )
 
             if path.startswith("/ticker/"):
@@ -249,7 +244,7 @@ def create_workspace_app(
                 detail_lens = (
                     resolve_detail_lens(query.get("lens", [""])[0])
                     if method == "GET" and action is None
-                    else DEFAULT_LENS_ID
+                    else DETAIL_DEFAULT_LENS_ID
                 )
                 option_vehicle_detail = False
                 prefetched_option_trading_data = None

@@ -14,7 +14,7 @@ from tests.helpers import build_test_paths
 @dataclass(frozen=True)
 class _LoadedConfigStub:
     app: object
-    combined_hash: str
+    config_hash: str
 
 
 def test_tool_c_parser_accepts_command():
@@ -31,7 +31,7 @@ def test_run_tool_c_uses_latest_local_inputs(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     monkeypatch.setattr(
         "golden_vector.cli.load_latest_foundation_snapshot",
@@ -142,7 +142,7 @@ def test_run_tool_c_standalone_uses_model_state_foundation_and_tool_a(tmp_path, 
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     def fake_load_latest_foundation_snapshot(**kwargs):

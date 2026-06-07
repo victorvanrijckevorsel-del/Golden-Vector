@@ -114,7 +114,7 @@ def render_detail_page(
         body.append(_render_reporting_form(ticker=ticker, reporting_row=reporting_row))
         body.append(_render_verification_section(ticker=ticker, verification_rows=verification_rows))
         body.append(_render_note_section(ticker=ticker, note_rows=note_rows))
-    active_nav = "option_trading" if option_lens_active else "combined"
+    active_nav = "option_trading" if option_lens_active else "candidate_finder"
     return _page_shell(
         f"Golden Vector Workspace - {ticker}",
         "".join(body),

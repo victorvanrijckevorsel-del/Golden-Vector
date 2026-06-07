@@ -16,16 +16,16 @@ from golden_vector.serve.workspace import create_workspace_app
 from tests.helpers import build_test_paths
 
 
-def test_candidate_finder_page_renders_default_bearish_put_screen():
+def test_candidate_finder_page_renders_default_strong_corporate_finance_screen():
     data = _candidate_finder_data()
 
     html = render_candidate_finder_page(data)
 
     assert "Candidate Finder" in html
-    assert "Bearish put screen" in html
+    assert "Strong Corporate Finance" in html
     assert "candidate-preset is-active" in html
     assert "Options Side" in html
-    assert "Puts" in html
+    assert "No option filter" in html
     assert "Screen Builder" in html
     assert "Gold Sensitivity" in html
     assert "Corporate Finance" in html
@@ -33,15 +33,15 @@ def test_candidate_finder_page_renders_default_bearish_put_screen():
     assert "Corporate Resilience" in html
     assert 'class="candidate-criteria-group" open' in html
     assert "View 1: Top Rows By Criterion" in html
-    assert "View 2: Combined Fit Ranking" in html
+    assert "View 2: Fit Ranking" in html
     assert "Eligible Ranking" in html
     assert "Low-Coverage Rows" in html
     assert "js-datatable candidate-ranking-table" in html
     assert 'data-col-name="score" data-sort-numeric' in html
-    assert 'data-col-name="criterion_down_beta" data-sort-numeric' in html
+    assert 'data-col-name="criterion_fundamental_check_score" data-sort-numeric' in html
     assert "Score = your weighted-average percentile" in html
     assert "Model build state needs attention" in html
-    assert 'aria-label="Use Down-beta"' in html
+    assert 'aria-label="Use Fundamental checks"' in html
     assert "Mixed refreshes in Candidate Finder sources" in html
     assert "/ticker/AEM?lens=option-trading#option-trading" in html
     assert "recommend" not in html.lower()
@@ -123,11 +123,14 @@ def _candidate_finder_data() -> CandidateFinderData:
                 "down_beta_core": 1.5,
                 "up_beta_core": 1.2,
                 "aisc_usd_per_oz": 1450.0,
-                "debt_to_mktcap": 0.18,
+                "leverage": 0.18,
+                "margin_pct": 0.60,
+                "ev_ebitda": 4.2,
+                "forward_pe": 8.0,
                 "iv_percentile_cross_sectional": 30.0,
                 "confidence_score": 0.92,
                 "fcf_yield": 0.05,
-                "best_upside_pct": 0.22,
+                "fundamental_check_score": 85.7143,
                 "tool_c_downside_rank": 95.0,
                 "tool_c_upside_rank": 80.0,
                 "tool_d_quality_rank": 60.0,
@@ -140,11 +143,14 @@ def _candidate_finder_data() -> CandidateFinderData:
                 "down_beta_core": 1.2,
                 "up_beta_core": 1.0,
                 "aisc_usd_per_oz": 1250.0,
-                "debt_to_mktcap": 0.10,
+                "leverage": 0.10,
+                "margin_pct": 0.68,
+                "ev_ebitda": 3.8,
+                "forward_pe": 7.0,
                 "iv_percentile_cross_sectional": 55.0,
                 "confidence_score": 0.84,
                 "fcf_yield": 0.03,
-                "best_upside_pct": 0.15,
+                "fundamental_check_score": 100.0,
                 "tool_c_downside_rank": 70.0,
                 "tool_c_upside_rank": 55.0,
                 "tool_d_quality_rank": 85.0,

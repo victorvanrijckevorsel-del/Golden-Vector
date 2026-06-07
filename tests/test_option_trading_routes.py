@@ -394,7 +394,7 @@ def test_workspace_option_trading_detail_shows_proxy_fallback_not_overview(tmp_p
     assert "not AEM one-for-one" in detail_response["body"]
 
 
-def test_workspace_detail_invalid_lens_falls_back_to_combined_nav(tmp_path):
+def test_workspace_detail_invalid_lens_falls_back_to_candidate_finder_nav(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()

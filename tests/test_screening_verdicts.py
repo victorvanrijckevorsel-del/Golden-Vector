@@ -1,6 +1,9 @@
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
-from golden_vector.screening.verdicts import compute_tool_b_score, determine_screening_verdict
+from golden_vector.screening.verdicts import (
+    compute_fundamental_checks,
+    determine_screening_verdict,
+)
 
 
 def test_determine_screening_verdict_prioritizes_incomplete_inputs():
@@ -43,11 +46,71 @@ def test_determine_screening_verdict_distinguishes_strong_candidate_watchlist_an
     ) == "SCREEN_OUT"
 
 
-def test_compute_tool_b_score_handles_incomplete_and_clips_extreme_upside_values():
-    assert compute_tool_b_score(screening_verdict="INCOMPLETE", best_upside_pct=0.8) is None
+def test_compute_fundamental_checks_counts_visible_passes():
+    thresholds = load_app_config(ProjectPaths.discover()).app.screening_params.verdict_thresholds
 
-    capped_high = compute_tool_b_score(screening_verdict="WATCHLIST", best_upside_pct=3.0)
-    capped_low = compute_tool_b_score(screening_verdict="SCREEN_OUT", best_upside_pct=-5.0)
+    result = compute_fundamental_checks(
+        layer1_check_statuses={
+            "data_complete": "PASS",
+            "aisc": "PASS",
+            "margin": "PASS",
+            "fcf_yield": "PASS",
+            "reserve_life": "FAIL",
+            "leverage": "PASS",
+        },
+        forward_pe=7.0,
+        thresholds=thresholds,
+    )
 
-    assert capped_high == 72.0
-    assert capped_low == 14.0
+    assert result["fundamental_checks_passed"] == 6
+    assert result["fundamental_checks_total"] == 7
+    assert result["fundamental_check_score"] == 85.7143
+    assert result["fundamental_check_summary"].startswith("6/7:")
+    assert "Reserve life FAIL" in result["fundamental_check_summary"]
+
+
+def test_compute_fundamental_checks_marks_missing_forward_pe_as_not_passed():
+    thresholds = load_app_config(ProjectPaths.discover()).app.screening_params.verdict_thresholds
+
+    result = compute_fundamental_checks(
+        layer1_check_statuses={
+            "data_complete": "FAIL",
+            "aisc": "N/A",
+            "margin": "N/A",
+            "fcf_yield": "N/A",
+            "reserve_life": "N/A",
+            "leverage": "N/A",
+        },
+        forward_pe=None,
+        thresholds=thresholds,
+    )
+
+    assert result["fundamental_checks_passed"] == 0
+    assert result["fundamental_check_score"] == 0.0
+    assert "Forward P/E N/A" in result["fundamental_check_summary"]
+
+
+def test_compute_fundamental_checks_uses_strong_pe_cutoff_not_watchlist_cutoff():
+    thresholds = load_app_config(ProjectPaths.discover()).app.screening_params.verdict_thresholds
+
+    result = compute_fundamental_checks(
+        layer1_check_statuses={
+            "data_complete": "PASS",
+            "aisc": "PASS",
+            "margin": "PASS",
+            "fcf_yield": "PASS",
+            "reserve_life": "PASS",
+            "leverage": "PASS",
+        },
+        forward_pe=9.0,
+        thresholds=thresholds,
+    )
+
+    assert determine_screening_verdict(
+        confidence="VERIFIED",
+        layer1_status="FAIL",
+        forward_pe=9.0,
+        thresholds=thresholds,
+    ) == "WATCHLIST"
+    assert result["fundamental_checks_passed"] == 6
+    assert "Forward P/E FAIL" in result["fundamental_check_summary"]

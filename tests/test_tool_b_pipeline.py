@@ -125,9 +125,28 @@ def test_tool_b_pipeline_builds_complete_row_when_manual_inputs_are_present(tmp_
     assert output.loc["NEM", "confidence"] == "VERIFIED"
     assert output.loc["NEM", "screening_verdict"] in {"STRONG_CANDIDATE", "WATCHLIST", "SCREEN_OUT"}
     assert output.loc["NEM", "layer1_status"] in {"PASS", "FAIL"}
-    assert pd.notna(output.loc["NEM", "tool_b_score"])
-    assert pd.notna(output.loc["NEM", "tool_b_rank"])
+    assert pd.notna(output.loc["NEM", "fundamental_check_score"])
+    assert pd.notna(output.loc["NEM", "fundamental_check_rank"])
+    assert "/7:" in output.loc["NEM", "fundamental_check_summary"]
+    assert "AISC PASS" in output.loc["NEM", "fundamental_check_summary"]
     assert pd.isna(output.loc["NEM", "layer2_incomplete_reasons"])
+    removed_target_columns = [
+        "adjusted_peer_pe",
+        "adjusted_peak_pe",
+        "target_price_peer_pe",
+        "target_price_peak_pe",
+        "target_price_peer_fcf",
+        "target_price_peak_fcf",
+        "upside_peer_pe_pct",
+        "upside_peak_pe_pct",
+        "upside_peer_fcf_pct",
+        "upside_peak_fcf_pct",
+        "best_target_price_usd",
+        "best_upside_pct",
+        "tool_b_score",
+        "tool_b_rank",
+    ]
+    assert not set(removed_target_columns).intersection(result.tool_b_outputs.columns)
     assert output.loc["GOLD", "confidence"] == "VERIFIED"
     uncovered_tickers = expected_tickers - {"NEM", "GOLD"}
     assert (output.loc[list(uncovered_tickers), "screening_verdict"] == "INCOMPLETE").all()
@@ -166,7 +185,8 @@ def test_tool_b_pipeline_marks_missing_manual_data_as_incomplete(tmp_path):
     assert row["screening_verdict"] == "INCOMPLETE"
     assert row["confidence"] == "INCOMPLETE"
     assert "aisc_usd_per_oz" in row["missing_manual_fields"]
-    assert pd.isna(row["tool_b_rank"])
+    assert row["fundamental_check_score"] < 100
+    assert "Data complete FAIL" in row["fundamental_check_summary"]
 
 
 def test_tool_b_pipeline_fails_when_manual_store_has_not_been_initialized(tmp_path):
@@ -407,7 +427,7 @@ def test_compute_tool_b_in_memory_matches_execute_tool_b_pipeline(tmp_path):
     )
 
     # Sort both the same way so index alignment doesn't confuse equality.
-    sort_keys = ["as_of_date", "gold_price_assumption", "tool_b_rank", "ticker"]
+    sort_keys = ["as_of_date", "gold_price_assumption", "fundamental_check_rank", "ticker"]
     persistent_sorted = persistent.sort_values(sort_keys, na_position="last").reset_index(drop=True)
     in_memory_sorted = in_memory.sort_values(sort_keys, na_position="last").reset_index(drop=True)
 

@@ -1,10 +1,34 @@
-"""Tool B verdict and score helpers."""
+"""Tool B verdict and fundamental-check helpers."""
 
 from __future__ import annotations
 
 import pandas as pd
 
 from golden_vector.contracts.config_models import VerdictThresholds
+
+LAYER1_CHECK_LABELS = {
+    "data_complete": "Data complete",
+    "aisc": "AISC",
+    "margin": "Margin",
+    "fcf_yield": "FCF yield",
+    "reserve_life": "Reserve life",
+    "leverage": "Net Debt/EBITDA",
+}
+
+FUNDAMENTAL_CHECK_ORDER = (
+    "data_complete",
+    "aisc",
+    "margin",
+    "fcf_yield",
+    "reserve_life",
+    "leverage",
+    "forward_pe",
+)
+
+FUNDAMENTAL_CHECK_LABELS = {
+    **LAYER1_CHECK_LABELS,
+    "forward_pe": "Forward P/E",
+}
 
 
 def determine_screening_verdict(
@@ -16,45 +40,69 @@ def determine_screening_verdict(
 ) -> str:
     if confidence == "INCOMPLETE" or layer1_status == "INCOMPLETE":
         return "INCOMPLETE"
-    if forward_pe is not None and forward_pe > 0 and layer1_status == "PASS" and forward_pe < thresholds.strong_candidate_forward_pe_max:
+    if (
+        forward_pe is not None
+        and forward_pe > 0
+        and layer1_status == "PASS"
+        and forward_pe < thresholds.strong_candidate_forward_pe_max
+    ):
         return "STRONG_CANDIDATE"
-    if forward_pe is not None and forward_pe > 0 and forward_pe < thresholds.watchlist_forward_pe_max:
+    if (
+        forward_pe is not None
+        and forward_pe > 0
+        and forward_pe < thresholds.watchlist_forward_pe_max
+    ):
         return "WATCHLIST"
     return "SCREEN_OUT"
 
 
-def compute_tool_b_score(
+def compute_fundamental_checks(
     *,
-    screening_verdict: str,
-    best_upside_pct: float | None,
-) -> float | None:
-    """Combine the screening verdict with the best-scenario upside into a 0-100 score.
+    layer1_check_statuses: dict[str, str],
+    forward_pe: float | None,
+    thresholds: VerdictThresholds,
+) -> dict[str, object]:
+    """Summarize visible, rule-based Tool B checks.
 
-    Weights: 70% verdict base + 30% normalized upside.
-
-    `best_upside_pct` is the max of the four canonical target-price
-    scenarios (Peer P/E, Peak P/E, Peer FCF, Peak FCF). This pool was
-    historically six (adding two EV/EBITDA-derived targets), but those
-    were dropped to match the friend's Excel which only exposes four.
-    The score formula here is unchanged, but its input is narrower, so
-    tickers whose old max-upside came from an EV/EBITDA scenario will
-    now score slightly lower. This is intended — the EV/EBITDA targets
-    were Python-only additions that inflated the headline.
+    Layer 1 owns the mining threshold checks. This helper only adds the
+    forward-P/E check that already sits next to the Tool B verdict logic.
     """
-    if screening_verdict == "INCOMPLETE":
-        return None
+    statuses = {
+        key: _clean_status(layer1_check_statuses.get(key))
+        for key in LAYER1_CHECK_LABELS
+    }
+    statuses["forward_pe"] = _forward_pe_check(
+        forward_pe,
+        thresholds=thresholds,
+    )
+    passed = sum(1 for status in statuses.values() if status == "PASS")
+    total = len(FUNDAMENTAL_CHECK_ORDER)
+    summary_parts = [
+        f"{FUNDAMENTAL_CHECK_LABELS[key]} {statuses[key]}"
+        for key in FUNDAMENTAL_CHECK_ORDER
+    ]
+    return {
+        "fundamental_check_score": round(100.0 * passed / total, 4),
+        "fundamental_checks_passed": passed,
+        "fundamental_checks_total": total,
+        "fundamental_check_summary": f"{passed}/{total}: " + "; ".join(summary_parts),
+    }
 
-    base = {
-        "STRONG_CANDIDATE": 0.85,
-        "WATCHLIST": 0.60,
-        "SCREEN_OUT": 0.20,
-    }[screening_verdict]
-    upside_score = _normalize_upside(best_upside_pct)
-    return round(100.0 * ((0.7 * base) + (0.3 * upside_score)), 4)
+
+def _forward_pe_check(
+    forward_pe: float | None,
+    *,
+    thresholds: VerdictThresholds,
+) -> str:
+    if forward_pe is None or pd.isna(forward_pe):
+        return "N/A"
+    if forward_pe <= 0:
+        return "FAIL"
+    return "PASS" if forward_pe < thresholds.strong_candidate_forward_pe_max else "FAIL"
 
 
-def _normalize_upside(value: float | None) -> float:
-    if value is None or pd.isna(value):
-        return 0.0
-    clipped = max(-0.5, min(float(value), 1.5))
-    return (clipped + 0.5) / 2.0
+def _clean_status(value: object) -> str:
+    status = str(value or "N/A").upper()
+    if status in {"PASS", "FAIL", "N/A"}:
+        return status
+    return "N/A"

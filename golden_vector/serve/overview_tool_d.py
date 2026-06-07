@@ -6,7 +6,7 @@ from html import escape
 
 from golden_vector.serve.format_helpers import _fmt_numeric_td, _fmt_text
 from golden_vector.serve.model_state_banner import render_model_state_banner
-from golden_vector.serve.overview_combined import (
+from golden_vector.serve.overview_helpers import (
     _render_provenance_warnings,
     _render_refresh_summary,
 )

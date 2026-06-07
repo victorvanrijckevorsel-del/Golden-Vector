@@ -1,7 +1,7 @@
 """Tests for the new operational `refresh` and `status` CLI commands.
 
 These cover the daily-use ergonomics layer: collapsing the three-command
-update-data → tool-a → tool-b sequence into one, and surfacing pipeline state
+update-data -> tool-a -> tool-b sequence into one, and surfacing pipeline state
 without requiring the user to inspect three different files.
 """
 
@@ -33,13 +33,14 @@ from golden_vector.serve.option_refresh import (
     start_options_refresh,
     write_option_refresh_status,
 )
+from tests.helpers import tool_b_output_row
 from tests.helpers import build_test_paths
 
 
 class _LoadedConfigStub:
-    def __init__(self, app: object, combined_hash: str) -> None:
+    def __init__(self, app: object, config_hash: str) -> None:
         self.app = app
-        self.combined_hash = combined_hash
+        self.config_hash = config_hash
 
 
 def test_tool_b_falls_back_to_config_default_gold_price_when_cli_omits_it(tmp_path, monkeypatch):
@@ -52,7 +53,7 @@ def test_tool_b_falls_back_to_config_default_gold_price_when_cli_omits_it(tmp_pa
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     captured: dict[str, object] = {}
@@ -109,7 +110,7 @@ def test_status_command_runs_cleanly_with_no_artifacts(tmp_path, monkeypatch, ca
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     exit_code = run_status(paths)
@@ -135,7 +136,7 @@ def test_status_command_lists_blank_tickers_when_some_have_no_manual_data(tmp_pa
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     # Initialize the store but populate no fields.
@@ -165,10 +166,10 @@ def test_status_command_surfaces_refresh_id_mismatch(tmp_path, monkeypatch, caps
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
-    # Foundation manifest → refresh-A.
+    # Foundation manifest -> refresh-A.
     paths.latest_foundation_manifest_path.parent.mkdir(parents=True, exist_ok=True)
     paths.latest_foundation_manifest_path.write_text(
         json.dumps({
@@ -179,7 +180,7 @@ def test_status_command_surfaces_refresh_id_mismatch(tmp_path, monkeypatch, caps
         encoding="utf-8",
     )
 
-    # Tool A latest → refresh-B (mismatch).
+    # Tool A latest -> refresh-B (mismatch).
     run_context = RunContext.start(
         paths=paths, command="tool-a", parameters={}, config_hash="h",
     )
@@ -209,7 +210,7 @@ def test_status_command_reads_model_state_manifest(tmp_path, monkeypatch, capsys
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     paths.latest_model_state_manifest_path.write_text(
         json.dumps(
@@ -246,7 +247,7 @@ def test_status_command_summarizes_tool_c_and_tool_d_outputs(tmp_path, monkeypat
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     paths.latest_foundation_manifest_path.parent.mkdir(parents=True, exist_ok=True)
     paths.latest_foundation_manifest_path.write_text(
@@ -314,7 +315,7 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     call_order: list[str] = []
@@ -392,7 +393,7 @@ def test_refresh_fault_after_tool_b_keeps_previous_manifest_and_readers_intact(
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     _write_refresh_inputs(paths, refresh_run_id="refresh-old")
     previous_manifest = write_current_model_state_manifest(
@@ -463,7 +464,7 @@ def test_refresh_option_artifact_failure_keeps_previous_manifest(
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     _write_refresh_inputs(paths, refresh_run_id="refresh-old")
     previous_manifest = write_current_model_state_manifest(
@@ -535,7 +536,7 @@ def test_refresh_command_stops_after_update_data_failure(tmp_path, monkeypatch, 
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     call_order: list[str] = []
@@ -570,7 +571,7 @@ def test_refresh_command_skips_tool_b_when_flag_passed(tmp_path, monkeypatch, ca
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
 
     call_order: list[str] = []
@@ -612,7 +613,7 @@ def test_refresh_skip_tool_b_publishes_partial_manifest_for_new_tool_a(
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     _write_refresh_inputs(paths, refresh_run_id="refresh-old")
     previous_manifest = write_current_model_state_manifest(
@@ -698,7 +699,7 @@ def test_refresh_command_reclaims_stale_lock_before_running(tmp_path, monkeypatc
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     write_option_refresh_status(
         paths,
@@ -737,7 +738,7 @@ def test_refresh_command_adopts_website_runner_lock(tmp_path, monkeypatch):
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     write_option_refresh_status(
         paths,
@@ -778,7 +779,7 @@ def test_website_refresh_is_refused_while_cli_refresh_holds_lock(tmp_path, monke
     real_loaded = load_app_config(ProjectPaths.discover()).app
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     result_holder = {}
 
@@ -912,14 +913,14 @@ def _write_tool_b(paths: ProjectPaths, *, refresh_run_id: str, rank: int) -> Non
         run_context=run_context,
         tool_b_outputs=pd.DataFrame(
             [
-                {
-                    "ticker": "NEM",
-                    "as_of_date": date(2026, 6, 1),
-                    "snapshot_refresh_run_id": refresh_run_id,
-                    "source_run_id": run_context.run_id,
-                    "tool_b_rank": rank,
-                    "screening_verdict": "PASS",
-                }
+                tool_b_output_row(
+                    "NEM",
+                    as_of_date=date(2026, 6, 1),
+                    snapshot_refresh_run_id=refresh_run_id,
+                    source_run_id=run_context.run_id,
+                    fundamental_check_rank=rank,
+                    screening_verdict="WATCHLIST",
+                )
             ]
         ),
     )

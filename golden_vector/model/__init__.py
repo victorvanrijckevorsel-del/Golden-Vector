@@ -1,1 +1,1 @@
-"""Tool A and combined modeling layers."""
+"""Modeling layers for Golden Vector analytics."""

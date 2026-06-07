@@ -41,36 +41,15 @@ criteria:
     label: AISC
     source_field: aisc_usd_per_oz
     group: Corporate Finance
-    default_direction: high_good
+    default_direction: low_good
     unit: usd_per_oz
     available_now: true
   - id: leverage
     label: Net Debt / EBITDA
     source_field: leverage
     group: Corporate Finance
-    default_direction: high_good
+    default_direction: low_good
     unit: multiple
-    available_now: true
-  - id: debt_to_mktcap
-    label: Debt / market cap
-    source_field: debt_to_mktcap
-    group: Corporate Finance
-    default_direction: high_good
-    unit: ratio
-    available_now: true
-  - id: ebitda_to_mktcap
-    label: EBITDA / market cap
-    source_field: ebitda_to_mktcap
-    group: Corporate Finance
-    default_direction: high_good
-    unit: ratio
-    available_now: true
-  - id: revenue_to_mktcap
-    label: Revenue / market cap
-    source_field: revenue_to_mktcap
-    group: Corporate Finance
-    default_direction: high_good
-    unit: ratio
     available_now: true
   - id: ev_ebitda
     label: EV/EBITDA
@@ -93,12 +72,26 @@ criteria:
     default_direction: high_good
     unit: percent
     available_now: true
-  - id: best_upside
-    label: Best upside %
-    source_field: best_upside_pct
+  - id: margin_pct
+    label: Margin %
+    source_field: margin_pct
     group: Corporate Finance
     default_direction: high_good
     unit: percent
+    available_now: true
+  - id: fundamental_check_score
+    label: Fundamental checks
+    source_field: fundamental_check_score
+    group: Corporate Finance
+    default_direction: high_good
+    unit: score
+    available_now: true
+  - id: reserve_life
+    label: Reserve life
+    source_field: reserve_life_years
+    group: Corporate Finance
+    default_direction: high_good
+    unit: years
     available_now: true
   - id: market_cap
     label: Market cap
@@ -143,6 +136,31 @@ criteria:
     unit: percentile
     available_now: true
 presets:
+  - id: strong_corporate_finance
+    label: Strong Corporate Finance
+    options_side: none
+    criteria:
+      - id: fundamental_check_score
+        direction: high_good
+        weight: 1.0
+      - id: aisc
+        direction: low_good
+        weight: 1.0
+      - id: leverage
+        direction: low_good
+        weight: 1.0
+      - id: fcf_yield
+        direction: high_good
+        weight: 1.0
+      - id: margin_pct
+        direction: high_good
+        weight: 1.0
+      - id: ev_ebitda
+        direction: low_good
+        weight: 1.0
+      - id: forward_pe
+        direction: low_good
+        weight: 1.0
   - id: bearish_put
     label: Bearish put screen
     options_side: puts
@@ -153,7 +171,7 @@ presets:
       - id: aisc
         direction: high_good
         weight: 1.0
-      - id: debt_to_mktcap
+      - id: leverage
         direction: high_good
         weight: 1.0
       - id: iv_percentile
@@ -181,7 +199,16 @@ presets:
       - id: fcf_yield
         direction: high_good
         weight: 1.0
-      - id: best_upside
+      - id: margin_pct
+        direction: high_good
+        weight: 1.0
+      - id: ev_ebitda
+        direction: low_good
+        weight: 1.0
+      - id: forward_pe
+        direction: low_good
+        weight: 1.0
+      - id: fundamental_check_score
         direction: high_good
         weight: 1.0
       - id: iv_percentile

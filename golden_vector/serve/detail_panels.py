@@ -174,7 +174,7 @@ def _render_latest_panels(
             app_config=app_config,
         )
         + "<div class=\"two-up\">"
-        f"{_render_small_table('Latest Corporate Finance Snapshot', tool_b_row, ['as_of_date', 'gold_price_assumption', 'tool_b_score', 'tool_b_rank', 'screening_verdict', 'confidence', 'best_upside_pct', 'snapshot_refresh_run_id', 'snapshot_as_of_date', 'snapshot_normalization_status', 'fx_staleness_days'])}"
+        f"{_render_small_table('Latest Corporate Finance Snapshot', tool_b_row, ['as_of_date', 'gold_price_assumption', 'fundamental_check_summary', 'fundamental_check_rank', 'screening_verdict', 'confidence', 'share_price_usd', 'market_cap_musd', 'cash_margin_usd_per_oz', 'margin_pct', 'fcf_yield', 'leverage', 'forward_pe', 'ev_ebitda', 'snapshot_refresh_run_id', 'snapshot_as_of_date', 'snapshot_normalization_status', 'fx_staleness_days'])}"
         "</div>"
     )
 

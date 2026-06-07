@@ -130,7 +130,7 @@ def build_cached_perf_profile(paths: ProjectPaths) -> dict[str, Any]:
     profile: dict[str, Any] = {
         "foundation_refresh_run_id": foundation_snapshot.refresh_run_id,
         "foundation_snapshot_as_of_date": foundation_snapshot.snapshot_as_of_date,
-        "config_hash": loaded_config.combined_hash,
+        "config_hash": loaded_config.config_hash,
         "timings": {
             "load_foundation_snapshot_seconds": round(foundation_seconds, 4),
             "tool_a_structural_build_seconds": round(structural_seconds, 4),
@@ -161,7 +161,7 @@ def build_cached_perf_profile(paths: ProjectPaths) -> dict[str, Any]:
     profile["option_artifacts"] = _profile_option_artifacts(
         paths=paths,
         app_config=app_config,
-        config_hash=loaded_config.combined_hash,
+        config_hash=loaded_config.config_hash,
     )
     profile["timings"]["cached_compute_profile_seconds"] = round(
         perf_counter() - profile_started,

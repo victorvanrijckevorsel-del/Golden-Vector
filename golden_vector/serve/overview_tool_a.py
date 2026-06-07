@@ -11,7 +11,7 @@ from golden_vector.serve.format_helpers import (
     _frame_index_by_ticker,
     _optional_float,
 )
-from golden_vector.serve.overview_combined import (
+from golden_vector.serve.overview_helpers import (
     _collect_filter_options,
     _render_filter_bar,
     _render_provenance_warnings,

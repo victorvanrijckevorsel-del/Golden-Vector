@@ -34,7 +34,7 @@ class LoadedConfig:
 
     app: AppConfig
     file_hashes: dict[str, str]
-    combined_hash: str
+    config_hash: str
 
 
 def expected_config_paths(paths: ProjectPaths) -> dict[str, Path]:
@@ -54,10 +54,10 @@ def load_app_config(paths: ProjectPaths) -> LoadedConfig:
         file_hashes[config_name] = hashlib.sha256(raw_bytes).hexdigest()
 
     app_config = AppConfig.model_validate(raw_configs)
-    combined_hash = hashlib.sha256(
+    config_hash = hashlib.sha256(
         json.dumps(file_hashes, sort_keys=True).encode("utf-8")
     ).hexdigest()
-    return LoadedConfig(app=app_config, file_hashes=file_hashes, combined_hash=combined_hash)
+    return LoadedConfig(app=app_config, file_hashes=file_hashes, config_hash=config_hash)
 
 
 def _read_required_bytes(path: Path) -> bytes:

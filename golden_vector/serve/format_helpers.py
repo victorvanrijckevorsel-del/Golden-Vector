@@ -201,7 +201,7 @@ def _fmt_numeric_td(value: Any, *, decimals: int, as_percent: bool = False) -> s
 
 
 def _fmt_value(value: Any, column_name: str) -> str:
-    if column_name in RATE_FIELDS.union({"best_upside_pct"}).union(TOOL_A_PERCENT_FIELDS):
+    if column_name in RATE_FIELDS.union(TOOL_A_PERCENT_FIELDS):
         return _fmt_percent(value)
     if column_name.endswith("_rank"):
         return _fmt_number(value, decimals=0)

@@ -19,67 +19,11 @@ from golden_vector.screening.manual_data import (
     missing_required_manual_fields,
 )
 from golden_vector.screening.ranking import rank_tool_b_outputs
-from golden_vector.screening.targets import compute_target_prices
+from golden_vector.screening.schema import TOOL_B_OUTPUT_COLUMNS
 from golden_vector.screening.verdicts import (
-    compute_tool_b_score,
+    compute_fundamental_checks,
     determine_screening_verdict,
 )
-
-
-TOOL_B_OUTPUT_COLUMNS = [
-    "ticker",
-    "as_of_date",
-    "gold_price_assumption",
-    "layer1_status",
-    "layer1_pass",
-    "layer1_fail_reasons",
-    "layer2_incomplete_reasons",
-    "screening_verdict",
-    "confidence",
-    "size_category",
-    "market_cap_musd",
-    "share_price_usd",
-    "forward_revenue_musd",
-    "forward_ebitda_musd",
-    "forward_net_income_musd",
-    "forward_eps",
-    "forward_pe",
-    "ev_ebitda",
-    "sustainable_fcf_musd",
-    "fcf_yield",
-    "leverage",
-    "adjusted_peer_pe",
-    "adjusted_peak_pe",
-    # The four scenario target prices mirror Excel `Top performers`
-    # columns AA / AC / AI / AK. The analyst reads all four and decides
-    # which scenario to weight. We no longer emit EV/EBITDA-derived
-    # targets (Excel never exposed them).
-    "target_price_peer_pe",
-    "target_price_peak_pe",
-    "target_price_peer_fcf",
-    "target_price_peak_fcf",
-    "upside_peer_pe_pct",
-    "upside_peak_pe_pct",
-    "upside_peer_fcf_pct",
-    "upside_peak_fcf_pct",
-    # best_target_price_usd and best_upside_pct are retained as derived
-    # "max of the four scenarios" helpers that feed compute_tool_b_score.
-    # They are intentionally NOT the headline in the workspace Tool B view.
-    "best_target_price_usd",
-    "best_upside_pct",
-    "tool_b_score",
-    "tool_b_rank",
-    "missing_manual_fields",
-    "next_financial_report_date",
-    "next_production_report_date",
-    "snapshot_refresh_run_id",
-    "snapshot_as_of_date",
-    "snapshot_normalization_status",
-    "fx_staleness_days",
-    "fx_policy_max_staleness_days",
-    "fx_policy_block_on_stale_fx",
-    "source_run_id",
-]
 
 
 @dataclass(frozen=True)
@@ -154,7 +98,7 @@ def execute_tool_b_pipeline(
         "manual_csv_import_count": len(manual_data.imported_csv_files),
         "manual_stock_note_count": len(manual_data.stock_notes.index),
         "missing_market_snapshot_row_count": int(merged["snapshot_date"].isna().sum()),
-        "ranked_row_count": int(tool_b_outputs["tool_b_rank"].notna().sum()) if not tool_b_outputs.empty else 0,
+        "ranked_row_count": int(tool_b_outputs["fundamental_check_rank"].notna().sum()) if not tool_b_outputs.empty else 0,
         "incomplete_row_count": int((tool_b_outputs["screening_verdict"] == "INCOMPLETE").sum()) if not tool_b_outputs.empty else 0,
         "strong_candidate_row_count": int((tool_b_outputs["screening_verdict"] == "STRONG_CANDIDATE").sum()) if not tool_b_outputs.empty else 0,
         "watchlist_row_count": int((tool_b_outputs["screening_verdict"] == "WATCHLIST").sum()) if not tool_b_outputs.empty else 0,
@@ -297,19 +241,16 @@ def _build_tool_b_rows(
             pd.Series({**row.to_dict(), **layer1}),
             gold_price_assumption=gold_price_assumption,
         )
-        targets = compute_target_prices(
-            pd.Series({**row.to_dict(), **layer1, **layer2}),
-            app_config=app_config,
-        )
         verdict = determine_screening_verdict(
             confidence=confidence,
             layer1_status=str(layer1["layer1_status"]),
             forward_pe=layer2["forward_pe"],
             thresholds=app_config.screening_params.verdict_thresholds,
         )
-        tool_b_score = compute_tool_b_score(
-            screening_verdict=verdict,
-            best_upside_pct=targets["best_upside_pct"],
+        fundamental_checks = compute_fundamental_checks(
+            layer1_check_statuses=layer1["layer1_check_statuses"],
+            forward_pe=layer2["forward_pe"],
+            thresholds=app_config.screening_params.verdict_thresholds,
         )
 
         rows.append(
@@ -323,9 +264,17 @@ def _build_tool_b_rows(
                 "layer2_incomplete_reasons": layer2["layer2_incomplete_reasons"],
                 "screening_verdict": verdict,
                 "confidence": confidence,
-                "size_category": targets["size_category"],
+                "jurisdiction_tier": row.get("jurisdiction_tier"),
                 "market_cap_musd": row.get("market_cap_musd"),
                 "share_price_usd": row.get("share_price_usd"),
+                "enterprise_value_musd": layer2["enterprise_value_musd"],
+                "production_oz": row.get("production_oz"),
+                "aisc_usd_per_oz": row.get("aisc_usd_per_oz"),
+                "cash_cost_usd_per_oz": row.get("cash_cost_usd_per_oz"),
+                "net_debt_musd": row.get("net_debt_musd"),
+                "reserve_life_years": row.get("reserve_life_years"),
+                "cash_margin_usd_per_oz": layer1["cash_margin_usd_per_oz"],
+                "margin_pct": layer1["margin_pct"],
                 "forward_revenue_musd": layer2["forward_revenue_musd"],
                 "forward_ebitda_musd": layer2["forward_ebitda_musd"],
                 "forward_net_income_musd": layer2["forward_net_income_musd"],
@@ -335,20 +284,11 @@ def _build_tool_b_rows(
                 "sustainable_fcf_musd": layer1["sustainable_fcf_musd"],
                 "fcf_yield": layer1["fcf_yield"],
                 "leverage": layer1["leverage"],
-                "adjusted_peer_pe": targets["adjusted_peer_pe"],
-                "adjusted_peak_pe": targets["adjusted_peak_pe"],
-                "target_price_peer_pe": targets["target_price_peer_pe"],
-                "target_price_peak_pe": targets["target_price_peak_pe"],
-                "target_price_peer_fcf": targets["target_price_peer_fcf"],
-                "target_price_peak_fcf": targets["target_price_peak_fcf"],
-                "upside_peer_pe_pct": targets["upside_peer_pe_pct"],
-                "upside_peak_pe_pct": targets["upside_peak_pe_pct"],
-                "upside_peer_fcf_pct": targets["upside_peer_fcf_pct"],
-                "upside_peak_fcf_pct": targets["upside_peak_fcf_pct"],
-                "best_target_price_usd": targets["best_target_price_usd"],
-                "best_upside_pct": targets["best_upside_pct"],
-                "tool_b_score": tool_b_score,
-                "tool_b_rank": None,
+                "fundamental_check_score": fundamental_checks["fundamental_check_score"],
+                "fundamental_check_rank": None,
+                "fundamental_checks_passed": fundamental_checks["fundamental_checks_passed"],
+                "fundamental_checks_total": fundamental_checks["fundamental_checks_total"],
+                "fundamental_check_summary": fundamental_checks["fundamental_check_summary"],
                 "missing_manual_fields": None if not missing_fields else ";".join(missing_fields),
                 "next_financial_report_date": row.get("next_financial_report_date"),
                 "next_production_report_date": row.get("next_production_report_date"),
@@ -371,7 +311,7 @@ def _frame_from_rows(rows: list[dict[str, object]]) -> pd.DataFrame:
     if not tool_b_outputs.empty:
         tool_b_outputs = rank_tool_b_outputs(tool_b_outputs)
         tool_b_outputs = tool_b_outputs.sort_values(
-            ["as_of_date", "gold_price_assumption", "tool_b_rank", "ticker"],
+            ["as_of_date", "gold_price_assumption", "fundamental_check_rank", "ticker"],
             ascending=[True, True, True, True],
             na_position="last",
         ).reset_index(drop=True)

@@ -17,7 +17,7 @@ from golden_vector.serve.format_helpers import (
     _fmt_percent,
     _fmt_text,
 )
-from golden_vector.serve.overview_combined import _collect_filter_options, _render_filter_bar
+from golden_vector.serve.overview_helpers import _collect_filter_options, _render_filter_bar
 from golden_vector.serve.page_shell import _page_shell
 
 

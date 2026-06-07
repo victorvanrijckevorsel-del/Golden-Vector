@@ -38,7 +38,7 @@ def _render_error_page(message: str, *, detail: str | None = None) -> str:
     return _page_shell(
         "Golden Vector Workspace Error",
         f"<h1>Workspace Error</h1><div class=\"panel\"><p>{escape(message)}</p>{detail_html}<p><a href=\"/\">Back to workspace</a></p></div>",
-        active_nav="combined",
+        active_nav="candidate_finder",
     )
 
 

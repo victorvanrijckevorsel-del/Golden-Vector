@@ -340,6 +340,5 @@ def _tool_b_row(ticker: str, *, forward_ebitda: float, fcf_yield: float) -> dict
         "screening_verdict": "WATCHLIST",
         "confidence": "VERIFIED",
         "fcf_yield": fcf_yield,
-        "best_upside_pct": 0.5,
         "forward_ebitda_musd": forward_ebitda,
     }

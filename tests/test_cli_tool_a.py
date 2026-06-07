@@ -12,7 +12,7 @@ from tests.helpers import build_test_paths
 @dataclass(frozen=True)
 class _LoadedConfigStub:
     app: object
-    combined_hash: str
+    config_hash: str
 
 
 def _latest_foundation_snapshot(
@@ -62,7 +62,7 @@ def test_run_tool_a_uses_local_snapshot_and_stops_when_it_is_missing(tmp_path, m
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     monkeypatch.setattr(
         "golden_vector.cli.load_latest_foundation_snapshot",
@@ -89,7 +89,7 @@ def test_run_tool_a_uses_latest_local_snapshot_for_structural_phase(tmp_path, mo
 
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, combined_hash="hash"),
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
     )
     snapshot = _latest_foundation_snapshot()
     monkeypatch.setattr(
