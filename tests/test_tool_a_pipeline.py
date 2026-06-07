@@ -6,8 +6,14 @@ import pandas as pd
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
-from golden_vector.model.pipeline import execute_tool_a_profile_pipeline
+from golden_vector.ingestion.persist import _latest_snapshot
+from golden_vector.model.pipeline import _build_tool_a_outputs, execute_tool_a_profile_pipeline
+from golden_vector.model.scoring import rank_tool_a_outputs
 from tests.helpers import build_test_paths
+
+
+class _SyntheticRunContext:
+    run_id = "synthetic-run"
 
 
 def _activate_for_test(app_config, *fixture_tickers: str):
@@ -126,6 +132,13 @@ def test_tool_a_pipeline_ranks_structural_names_and_skips_inverse(tmp_path):
     assert latest_rows.loc["GOLD", "score_eligibility_reason"] == "LOW_LINKAGE_STRUCTURAL_SIGNAL"
     assert pd.isna(latest_rows.loc["GOLD", "tool_a_rank"])
     assert pd.notna(latest_rows.loc["GOLD", "total_volatility_52w"])
+    assert result.summary["tool_a_output_row_count"] == result.summary["latest_snapshot_row_count"]
+    assert result.summary["tool_a_output_candidate_date_count"] == 1
+    assert result.summary["tool_a_output_built_group_count"] == 2
+    assert result.summary["tool_a_output_unrestricted_group_count"] > result.summary[
+        "tool_a_output_built_group_count"
+    ]
+    assert "output_assembly" in result.summary["tool_a_stage_timings"]
 
 
 def test_tool_a_pipeline_marks_short_history_as_ineligible(tmp_path):
@@ -225,3 +238,112 @@ def test_tool_a_pipeline_fails_cleanly_on_empty_inputs(tmp_path):
 
     assert result.overall_status == "FAIL"
     assert result.tool_a_outputs.empty
+
+
+def test_tool_a_output_build_restricts_to_latest_snapshot_candidate_dates():
+    app_config = load_app_config(ProjectPaths.discover()).app
+    metrics = _synthetic_structural_metrics(
+        {
+            "AEM": [date(2026, 1, 2), date(2026, 1, 9), date(2026, 1, 16)],
+            "NEM": [date(2026, 1, 2), date(2026, 1, 9), date(2026, 1, 16), date(2026, 1, 23)],
+            "VAU.AX": [date(2026, 1, 2), date(2026, 1, 9)],
+        }
+    )
+    volatility = _synthetic_volatility_diagnostics(metrics)
+
+    reference = _rank_tool_a_outputs(
+        _build_tool_a_outputs(
+            structural_window_metrics=metrics,
+            volatility_diagnostics=volatility,
+            app_config=app_config,
+            run_context=_SyntheticRunContext(),
+            snapshot_refresh_run_id="foundation-run",
+            restrict_to_latest_snapshot_dates=False,
+        )
+    )
+    optimized = _rank_tool_a_outputs(
+        _build_tool_a_outputs(
+            structural_window_metrics=metrics,
+            volatility_diagnostics=volatility,
+            app_config=app_config,
+            run_context=_SyntheticRunContext(),
+            snapshot_refresh_run_id="foundation-run",
+        )
+    )
+
+    assert len(optimized.index) < len(reference.index)
+    assert set(optimized["as_of_date"].dropna().tolist()) == {
+        date(2026, 1, 9),
+        date(2026, 1, 16),
+        date(2026, 1, 23),
+    }
+    assert optimized.attrs["output_build_stats"]["candidate_date_count"] == 3
+    pd.testing.assert_frame_equal(
+        _latest_by_ticker(reference),
+        _latest_by_ticker(optimized),
+        check_dtype=False,
+        check_exact=False,
+        atol=1e-9,
+        rtol=1e-9,
+    )
+
+
+def _rank_tool_a_outputs(outputs: pd.DataFrame) -> pd.DataFrame:
+    ranked = rank_tool_a_outputs(outputs)
+    return ranked.sort_values(
+        ["as_of_date", "tool_a_rank", "ticker"],
+        ascending=[True, True, True],
+        na_position="last",
+    ).reset_index(drop=True)
+
+
+def _latest_by_ticker(outputs: pd.DataFrame) -> pd.DataFrame:
+    latest = _latest_snapshot(outputs).sort_values("ticker").reset_index(drop=True)
+    return latest[sorted(latest.columns)]
+
+
+def _synthetic_structural_metrics(dates_by_ticker: dict[str, list[date]]) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for ticker_index, (ticker, dates) in enumerate(dates_by_ticker.items()):
+        for date_index, as_of_date in enumerate(dates):
+            base_delta = 1.15 + (0.12 * ticker_index) + (0.03 * date_index)
+            for window_id, weeks, adjustment in (
+                ("6M", 26, 0.02),
+                ("12M", 52, 0.0),
+                ("3Y", 156, -0.03),
+            ):
+                structural_delta = base_delta + adjustment
+                rows.append(
+                    {
+                        "ticker": ticker,
+                        "as_of_date": as_of_date,
+                        "window_id": window_id,
+                        "window_status": "ELIGIBLE",
+                        "structural_delta": structural_delta,
+                        "gamma_value": -0.18 - (0.01 * ticker_index),
+                        "asymmetry_ratio": 1.15 + (0.02 * ticker_index),
+                        "up_beta": structural_delta * 0.9,
+                        "down_beta": structural_delta * 1.1,
+                        "r_squared": 0.92,
+                        "week_count": weeks,
+                        "normalization_issue_summary": None,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def _synthetic_volatility_diagnostics(structural_metrics: pd.DataFrame) -> pd.DataFrame:
+    groups = structural_metrics[["ticker", "as_of_date"]].drop_duplicates()
+    rows = []
+    for index, row in enumerate(groups.itertuples(index=False)):
+        rows.append(
+            {
+                "ticker": row.ticker,
+                "as_of_date": row.as_of_date,
+                "total_volatility_52w": 0.25 + (index * 0.001),
+                "residual_volatility_52w": 0.18 + (index * 0.001),
+                "downside_volatility_52w": 0.2 + (index * 0.001),
+                "volatility_anchor_window_id": "12M",
+            }
+        )
+    return pd.DataFrame(rows)

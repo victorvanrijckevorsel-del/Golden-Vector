@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import perf_counter
 
 import numpy as np
 import pandas as pd
@@ -12,6 +13,7 @@ from golden_vector.app.run_context import RunContext
 from golden_vector.common.numeric import strict_optional_float as _optional_float
 from golden_vector.contracts.config_models import AppConfig, ScoringConfig
 from golden_vector.ingestion.persist import (
+    _latest_snapshot,
     persist_tool_a_outputs,
     persist_tool_a_structural_metrics,
 )
@@ -130,7 +132,9 @@ def execute_tool_a_profile_pipeline(
         for ticker in app_config.universe.tickers
         if ticker.active and ticker.tool_a_enabled
     ]
+    stage_timings: dict[str, dict[str, object]] = {}
 
+    started_at = perf_counter()
     structural_frames = build_structural_history_frames(
         tickers=tool_a_tickers,
         normalized_equity_histories=normalized_equity_histories,
@@ -141,20 +145,46 @@ def execute_tool_a_profile_pipeline(
     if not structural_window_metrics.empty:
         structural_window_metrics["source_run_id"] = run_context.run_id
     weekly_series = structural_frames.weekly_series
-    persist_tool_a_structural_metrics(
+    _record_step_timing(
+        stage_timings,
+        "structural_build",
+        started_at,
+        rows_built=len(structural_window_metrics.index),
+        extra={"weekly_series_rows": len(weekly_series.index)},
+    )
+
+    started_at = perf_counter()
+    structural_paths = persist_tool_a_structural_metrics(
         paths=paths,
         run_context=run_context,
         structural_window_metrics=structural_window_metrics,
         publish_latest_aliases=not structural_window_metrics.empty,
     )
+    _record_step_timing(
+        stage_timings,
+        "persist_structural_metrics",
+        started_at,
+        rows_built=len(structural_window_metrics.index),
+        rows_persisted=len(structural_window_metrics.index),
+        extra={"file_count": len(structural_paths)},
+    )
 
     if structural_window_metrics.empty:
         tool_a_outputs = pd.DataFrame(columns=TOOL_A_OUTPUT_COLUMNS)
-        persist_tool_a_outputs(
+        started_at = perf_counter()
+        output_paths = persist_tool_a_outputs(
             paths=paths,
             run_context=run_context,
             tool_a_outputs=tool_a_outputs,
             publish_latest_aliases=False,
+        )
+        _record_step_timing(
+            stage_timings,
+            "persist_outputs",
+            started_at,
+            rows_built=0,
+            rows_persisted=0,
+            extra={"file_count": len(output_paths)},
         )
         return ToolAProfileExecutionResult(
             tool_a_outputs=tool_a_outputs,
@@ -162,17 +192,28 @@ def execute_tool_a_profile_pipeline(
             overall_status="FAIL",
             summary={
                 "tool_a_output_row_count": 0,
+                "latest_snapshot_row_count": 0,
                 "score_eligible_row_count": 0,
                 "ranked_row_count": 0,
                 "tool_a_output_overall_status": "FAIL",
+                "tool_a_stage_timings": stage_timings,
             },
         )
 
+    started_at = perf_counter()
     volatility_diagnostics = compute_volatility_diagnostics(
         weekly_series=weekly_series,
         structural_window_metrics=structural_window_metrics,
         scoring_config=app_config.scoring,
     )
+    _record_step_timing(
+        stage_timings,
+        "volatility_diagnostics",
+        started_at,
+        rows_built=len(volatility_diagnostics.index),
+    )
+
+    started_at = perf_counter()
     tool_a_outputs = _build_tool_a_outputs(
         structural_window_metrics=structural_window_metrics,
         volatility_diagnostics=volatility_diagnostics,
@@ -180,19 +221,44 @@ def execute_tool_a_profile_pipeline(
         run_context=run_context,
         snapshot_refresh_run_id=snapshot_refresh_run_id,
     )
+    output_build_stats = dict(tool_a_outputs.attrs.get("output_build_stats") or {})
+    _record_step_timing(
+        stage_timings,
+        "output_assembly",
+        started_at,
+        rows_built=len(tool_a_outputs.index),
+        extra=output_build_stats,
+    )
     if not tool_a_outputs.empty:
+        started_at = perf_counter()
         tool_a_outputs = rank_tool_a_outputs(tool_a_outputs)
         tool_a_outputs = tool_a_outputs.sort_values(
             ["as_of_date", "tool_a_rank", "ticker"],
             ascending=[True, True, True],
             na_position="last",
         ).reset_index(drop=True)
+        _record_step_timing(
+            stage_timings,
+            "rank_outputs",
+            started_at,
+            rows_built=len(tool_a_outputs.index),
+        )
 
-    persist_tool_a_outputs(
+    latest_snapshot = _latest_snapshot(tool_a_outputs)
+    started_at = perf_counter()
+    output_paths = persist_tool_a_outputs(
         paths=paths,
         run_context=run_context,
         tool_a_outputs=tool_a_outputs,
         publish_latest_aliases=not tool_a_outputs.empty,
+    )
+    _record_step_timing(
+        stage_timings,
+        "persist_outputs",
+        started_at,
+        rows_built=len(tool_a_outputs.index),
+        rows_persisted=len(latest_snapshot.index),
+        extra={"file_count": len(output_paths)},
     )
 
     score_eligible_count = (
@@ -214,16 +280,35 @@ def execute_tool_a_profile_pipeline(
     summary = {
         "structural_window_metric_row_count": len(structural_window_metrics.index),
         "tool_a_output_row_count": len(tool_a_outputs.index),
+        "latest_snapshot_row_count": len(latest_snapshot.index),
+        "tool_a_output_unrestricted_group_count": int(
+            output_build_stats.get("unrestricted_group_count") or 0
+        ),
+        "tool_a_output_built_group_count": int(
+            output_build_stats.get("built_group_count") or len(tool_a_outputs.index)
+        ),
+        "tool_a_output_candidate_date_count": int(
+            output_build_stats.get("candidate_date_count") or 0
+        ),
+        "tool_a_output_build_keep_ratio": _build_keep_ratio(
+            rows_built=len(tool_a_outputs.index),
+            rows_persisted=len(latest_snapshot.index),
+        ),
         "score_eligible_row_count": score_eligible_count,
         "ranked_row_count": ranked_count,
         "tool_a_output_overall_status": overall_status,
         "official_structural_windows": app_config.scoring.structural_windows,
+        "tool_a_stage_timings": stage_timings,
     }
+    waste_warning = _build_keep_warning(
+        rows_built=len(tool_a_outputs.index),
+        rows_persisted=len(latest_snapshot.index),
+    )
+    if waste_warning:
+        summary["tool_a_output_warnings"] = [waste_warning]
     if not tool_a_outputs.empty:
         latest_as_of_date = tool_a_outputs["as_of_date"].max()
-        latest_rows = tool_a_outputs[tool_a_outputs["as_of_date"] == latest_as_of_date]
         summary["latest_output_as_of_date"] = str(latest_as_of_date)
-        summary["latest_snapshot_row_count"] = len(latest_rows.index)
 
     return ToolAProfileExecutionResult(
         tool_a_outputs=tool_a_outputs,
@@ -240,12 +325,18 @@ def _build_tool_a_outputs(
     app_config: AppConfig,
     run_context: RunContext,
     snapshot_refresh_run_id: str,
+    restrict_to_latest_snapshot_dates: bool = True,
 ) -> pd.DataFrame:
     metrics = structural_window_metrics.copy()
     metrics["as_of_date"] = pd.to_datetime(metrics["as_of_date"]).dt.date
     vol = volatility_diagnostics.copy()
     if not vol.empty:
         vol["as_of_date"] = pd.to_datetime(vol["as_of_date"]).dt.date
+
+    unrestricted_group_count = _output_group_count(metrics)
+    candidate_dates = _latest_snapshot_candidate_dates(metrics)
+    if restrict_to_latest_snapshot_dates and candidate_dates:
+        metrics = metrics.loc[metrics["as_of_date"].isin(candidate_dates)].copy()
 
     weight_map = app_config.scoring.structural_weight_map()
     grouped = metrics.groupby(["ticker", "as_of_date"], dropna=False)
@@ -529,7 +620,70 @@ def _build_tool_a_outputs(
             }
         )
 
-    return pd.DataFrame(rows, columns=TOOL_A_OUTPUT_COLUMNS)
+    output = pd.DataFrame(rows, columns=TOOL_A_OUTPUT_COLUMNS)
+    output.attrs["output_build_stats"] = {
+        "unrestricted_group_count": int(unrestricted_group_count),
+        "built_group_count": int(_output_group_count(metrics)),
+        "candidate_date_count": int(len(candidate_dates)),
+        "candidate_dates": [str(value) for value in sorted(candidate_dates)],
+    }
+    return output
+
+
+def _latest_snapshot_candidate_dates(metrics: pd.DataFrame) -> set[object]:
+    if metrics.empty or "ticker" not in metrics.columns or "as_of_date" not in metrics.columns:
+        return set()
+    latest_by_ticker = metrics.groupby("ticker")["as_of_date"].max()
+    return set(latest_by_ticker.dropna().tolist())
+
+
+def _output_group_count(metrics: pd.DataFrame) -> int:
+    if metrics.empty:
+        return 0
+    return int(metrics[["ticker", "as_of_date"]].drop_duplicates().shape[0])
+
+
+def _record_step_timing(
+    timings: dict[str, dict[str, object]],
+    step: str,
+    started_at: float,
+    *,
+    rows_built: int | None = None,
+    rows_persisted: int | None = None,
+    extra: dict[str, object] | None = None,
+) -> None:
+    entry: dict[str, object] = {
+        "duration_seconds": round(perf_counter() - started_at, 3),
+    }
+    if rows_built is not None:
+        entry["rows_built"] = int(rows_built)
+    if rows_persisted is not None:
+        entry["rows_persisted"] = int(rows_persisted)
+    if extra:
+        entry.update(extra)
+    timings[step] = entry
+
+
+def _build_keep_ratio(*, rows_built: int, rows_persisted: int) -> float | None:
+    if rows_persisted <= 0:
+        return None
+    return round(float(rows_built) / float(rows_persisted), 4)
+
+
+def _build_keep_warning(
+    *,
+    rows_built: int,
+    rows_persisted: int,
+    threshold: float = 5.0,
+) -> str | None:
+    ratio = _build_keep_ratio(rows_built=rows_built, rows_persisted=rows_persisted)
+    if ratio is None or ratio <= threshold:
+        return None
+    return (
+        "Tool A built "
+        f"{rows_built} output rows but persisted {rows_persisted} latest rows "
+        f"({ratio:.1f}x). Check for build-vs-keep waste."
+    )
 
 
 def _window_value_map(

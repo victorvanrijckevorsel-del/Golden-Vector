@@ -2672,6 +2672,7 @@ def run_refresh(
         print("tool-a failed (exit code {}). Skipping downstream tools.".format(tool_a_exit))
         run_status(paths)
         return tool_a_exit
+    _attach_tool_a_stage_details(paths, stage_timings["tool_a"])
     fault_exit = injected_fault_after("tool_a")
     if fault_exit is not None:
         return fault_exit
@@ -2789,6 +2790,48 @@ def _attach_update_data_collection_stats(
     stats = _load_update_data_collection_stats(paths)
     if stats:
         stage_timing["collection_stats"] = stats
+
+
+def _attach_tool_a_stage_details(
+    paths: ProjectPaths,
+    stage_timing: dict[str, object],
+) -> None:
+    summary = _load_latest_tool_a_run_summary(paths)
+    if not summary:
+        return
+    stage_timing["steps"] = summary.get("tool_a_stage_timings") or {}
+    for key in (
+        "structural_window_metric_row_count",
+        "tool_a_output_unrestricted_group_count",
+        "tool_a_output_built_group_count",
+        "tool_a_output_row_count",
+        "latest_snapshot_row_count",
+        "tool_a_output_build_keep_ratio",
+        "tool_a_output_warnings",
+    ):
+        if key in summary:
+            stage_timing[key] = summary[key]
+
+
+def _load_latest_tool_a_run_summary(paths: ProjectPaths) -> dict[str, object] | None:
+    latest = read_optional_parquet(paths.latest_tool_a_snapshot_parquet_path)
+    if latest.empty or "source_run_id" not in latest.columns:
+        return None
+    values = [
+        str(value).strip()
+        for value in latest["source_run_id"].dropna().unique().tolist()
+        if str(value).strip()
+    ]
+    if len(values) != 1:
+        return None
+    summary_path = paths.runs_dir / values[0] / "tool_a_output_summary.json"
+    if not summary_path.exists():
+        return None
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _load_update_data_collection_stats(paths: ProjectPaths) -> dict[str, object]:

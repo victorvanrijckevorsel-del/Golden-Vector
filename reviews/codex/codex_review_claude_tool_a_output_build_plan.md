@@ -1,0 +1,13 @@
+# Codex Review - Tool A Output-Build Plan
+
+Grade: READY WITH MINOR CHANGES
+
+The core optimization is sound if implemented as a cohort filter, not a per-ticker latest-row filter. The safe set is `D = unique(max(as_of_date) per ticker)`, then keep every structural-metric row whose `as_of_date` is in `D`. That preserves the full ranking cohort for each surviving date, including lagging tickers. A naive "one latest row per ticker" implementation would be wrong because `rank_tool_a_outputs` ranks within `as_of_date`; lagging names must be ranked against the full cohort at their lagged date, not in isolation.
+
+The parity claim is mostly correct, with one important edge to test: multiple distinct latest dates. If one ticker lags one week and another lags two weeks, the restricted build must include all rows for all three dates: global max, lag-1, and lag-2. `_latest_snapshot(build_all)` should then equal `_latest_snapshot(build_restricted)` because every persisted row comes from one of those dates. The test should compare the persisted-latest projection, not the raw build frame, because `_latest_snapshot` also sorts by rank/ticker.
+
+Consumer safety looks acceptable for production. The CLI writes the returned `tool_a_outputs` only through `persist_tool_a_outputs`, which immediately derives the latest snapshot, and downstream Combined/Tool C/Finder/UI read persisted current artifacts, not the in-memory historical frame. The only direct consumers I found are tests that inspect `result.tool_a_outputs`; those tests should be updated to reflect the new contract that Tool A output rows are the persisted-output cohort, while full structural history remains in `structural_window_metrics`.
+
+The prevention section is directionally right but should be narrowed. P1 and P3 are the load-bearing fixes: real pipeline timings, `rows_built`, `rows_persisted`, and build-vs-keep warnings in run summaries/model-state timings. P2 should not make the default harness write real artifacts or become another mutable-output path. Keep real run timings as the authority; make the harness clearly diagnostic and only useful if it follows the full code path or reconciles against a recorded real run. P4 is a process rule and belongs in `AGENTS.md`.
+
+Additional implementation constraint: use existing primitives. `stage_timings` already exists in the model-state manifest, `RunContext` already persists run metadata, and `_latest_snapshot` already defines the persisted latest contract. Do not add a second manifest or a separate timing registry. Add a small shared timing/waste helper only if it removes duplication; otherwise keep instrumentation local to Tool A for this fix.

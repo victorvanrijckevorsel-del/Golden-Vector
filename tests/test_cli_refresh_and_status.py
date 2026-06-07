@@ -635,6 +635,10 @@ def test_refresh_skip_tool_b_publishes_partial_manifest_for_new_tool_a(
     assert current_manifest != previous_manifest
     assert current_manifest["parent_refresh_id"] != "parent-refresh-old"
     assert current_manifest["state"] == "incomplete"
+    assert current_manifest["stage_timings"]["tool_a"]["steps"]["output_assembly"][
+        "rows_built"
+    ] == 1
+    assert current_manifest["stage_timings"]["tool_a"]["tool_a_output_build_keep_ratio"] == 1.0
     assert current_tool_a["snapshot_refresh_run_id"].tolist() == ["refresh-new"]
     assert current_tool_a["tool_a_rank"].tolist() == [99]
     out = capsys.readouterr().out
@@ -697,6 +701,30 @@ def _write_tool_a(paths: ProjectPaths, *, refresh_run_id: str, rank: int) -> Non
                 }
             ]
         ),
+    )
+    run_context.write_json(
+        "tool_a_output_summary.json",
+        {
+            "structural_window_metric_row_count": 3,
+            "tool_a_output_unrestricted_group_count": 12,
+            "tool_a_output_built_group_count": 1,
+            "tool_a_output_row_count": 1,
+            "latest_snapshot_row_count": 1,
+            "tool_a_output_build_keep_ratio": 1.0,
+            "tool_a_stage_timings": {
+                "output_assembly": {
+                    "duration_seconds": 0.01,
+                    "rows_built": 1,
+                    "unrestricted_group_count": 12,
+                    "built_group_count": 1,
+                },
+                "persist_outputs": {
+                    "duration_seconds": 0.01,
+                    "rows_built": 1,
+                    "rows_persisted": 1,
+                },
+            },
+        },
     )
 
 

@@ -8,8 +8,11 @@ from typing import Any
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.latest_data import load_latest_foundation_snapshot
+from golden_vector.app.model_state import load_current_model_state_manifest
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.numeric import optional_float as _optional_float
 from golden_vector.contracts.config_models import AppConfig
+from golden_vector.ingestion.persist import _latest_snapshot
 from golden_vector.hedge.option_artifact_builder import (
     build_option_artifact_inputs,
     scan_option_chains_for_artifacts,
@@ -22,6 +25,12 @@ from golden_vector.model.structural import (
     build_structural_history_frames,
     compute_volatility_diagnostics,
 )
+from golden_vector.model.pipeline import _build_tool_a_outputs
+from golden_vector.model.scoring import rank_tool_a_outputs
+
+
+class _PerfRunContext:
+    run_id = "perf-profile"
 
 
 def build_cached_perf_profile(paths: ProjectPaths) -> dict[str, Any]:
@@ -90,6 +99,34 @@ def build_cached_perf_profile(paths: ProjectPaths) -> dict[str, Any]:
     )
     volatility_seconds = perf_counter() - volatility_started
 
+    output_started = perf_counter()
+    tool_a_outputs = _build_tool_a_outputs(
+        structural_window_metrics=structural_window_metrics,
+        volatility_diagnostics=volatility_diagnostics,
+        app_config=app_config,
+        run_context=_PerfRunContext(),
+        snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
+    )
+    output_seconds = perf_counter() - output_started
+
+    rank_started = perf_counter()
+    if not tool_a_outputs.empty:
+        tool_a_outputs = rank_tool_a_outputs(tool_a_outputs)
+        tool_a_outputs = tool_a_outputs.sort_values(
+            ["as_of_date", "tool_a_rank", "ticker"],
+            ascending=[True, True, True],
+            na_position="last",
+        ).reset_index(drop=True)
+    rank_seconds = perf_counter() - rank_started
+    latest_tool_a = _latest_snapshot(tool_a_outputs)
+    tool_a_compute_seconds = (
+        structural_seconds
+        + volatility_seconds
+        + output_seconds
+        + rank_seconds
+    )
+    tool_a_harness_stage_seconds = foundation_seconds + tool_a_compute_seconds
+
     profile: dict[str, Any] = {
         "foundation_refresh_run_id": foundation_snapshot.refresh_run_id,
         "foundation_snapshot_as_of_date": foundation_snapshot.snapshot_as_of_date,
@@ -98,13 +135,18 @@ def build_cached_perf_profile(paths: ProjectPaths) -> dict[str, Any]:
             "load_foundation_snapshot_seconds": round(foundation_seconds, 4),
             "tool_a_structural_build_seconds": round(structural_seconds, 4),
             "tool_a_volatility_seconds": round(volatility_seconds, 4),
-            "tool_a_compute_seconds": round(structural_seconds + volatility_seconds, 4),
+            "tool_a_output_assembly_seconds": round(output_seconds, 4),
+            "tool_a_rank_seconds": round(rank_seconds, 4),
+            "tool_a_compute_seconds": round(tool_a_compute_seconds, 4),
+            "tool_a_harness_stage_seconds": round(tool_a_harness_stage_seconds, 4),
         },
         "row_counts": {
             "tool_a_ticker_count": len(tool_a_tickers),
             "structural_window_rows": int(len(structural_window_metrics.index)),
             "weekly_series_rows": int(len(weekly_series.index)),
             "volatility_rows": int(len(volatility_diagnostics.index)),
+            "tool_a_output_rows": int(len(tool_a_outputs.index)),
+            "tool_a_latest_rows": int(len(latest_tool_a.index)),
         },
         "slowest_tool_a_tickers": sorted(
             per_ticker,
@@ -112,6 +154,10 @@ def build_cached_perf_profile(paths: ProjectPaths) -> dict[str, Any]:
             reverse=True,
         )[:10],
     }
+    profile["real_run_reconciliation"] = _real_tool_a_reconciliation(
+        paths=paths,
+        harness_seconds=tool_a_harness_stage_seconds,
+    )
     profile["option_artifacts"] = _profile_option_artifacts(
         paths=paths,
         app_config=app_config,
@@ -145,6 +191,8 @@ def format_cached_perf_profile(profile: dict[str, Any]) -> str:
         f"  structural rows: {row_counts.get('structural_window_rows', 0)}",
         f"  weekly rows: {row_counts.get('weekly_series_rows', 0)}",
         f"  volatility rows: {row_counts.get('volatility_rows', 0)}",
+        f"  output rows built: {row_counts.get('tool_a_output_rows', 0)}",
+        f"  latest rows kept: {row_counts.get('tool_a_latest_rows', 0)}",
         _format_seconds(
             "  load foundation snapshot",
             timings.get("load_foundation_snapshot_seconds"),
@@ -154,7 +202,10 @@ def format_cached_perf_profile(profile: dict[str, Any]) -> str:
             timings.get("tool_a_structural_build_seconds"),
         ),
         _format_seconds("  volatility diagnostics", timings.get("tool_a_volatility_seconds")),
+        _format_seconds("  output assembly", timings.get("tool_a_output_assembly_seconds")),
+        _format_seconds("  rank outputs", timings.get("tool_a_rank_seconds")),
         _format_seconds("  Tool A compute", timings.get("tool_a_compute_seconds")),
+        _format_seconds("  Tool A cached path", timings.get("tool_a_harness_stage_seconds")),
         "",
         "Slowest Tool A tickers",
     ]
@@ -162,6 +213,25 @@ def format_cached_perf_profile(profile: dict[str, Any]) -> str:
         lines.append(
             "  {ticker}: {duration_seconds:.4f}s "
             "(structural={structural_rows}, weekly={weekly_rows})".format(**row)
+        )
+
+    reconciliation = dict(profile.get("real_run_reconciliation") or {})
+    if reconciliation:
+        lines.extend(
+            [
+                "",
+                "Real-run reconciliation",
+                f"  status: {reconciliation.get('status', '-')}",
+                _format_seconds(
+                    "  latest real Tool A stage",
+                    reconciliation.get("real_stage_seconds"),
+                ),
+                _format_seconds(
+                    "  cached harness Tool A path",
+                    reconciliation.get("harness_seconds"),
+                ),
+                f"  ratio: {reconciliation.get('ratio', '-')}",
+            ]
         )
 
     lines.extend(
@@ -297,6 +367,33 @@ def _profile_option_artifacts(
             "contract_metrics": len(contract_metrics),
             "frames": {name: int(len(frame.index)) for name, frame in frames.items()},
         },
+    }
+
+
+def _real_tool_a_reconciliation(
+    *,
+    paths: ProjectPaths,
+    harness_seconds: float,
+) -> dict[str, object]:
+    manifest = load_current_model_state_manifest(paths)
+    if not manifest:
+        return {"status": "missing_model_state", "harness_seconds": round(harness_seconds, 4)}
+    stage_timings = manifest.get("stage_timings")
+    if not isinstance(stage_timings, dict):
+        return {"status": "missing_stage_timings", "harness_seconds": round(harness_seconds, 4)}
+    tool_a = stage_timings.get("tool_a")
+    if not isinstance(tool_a, dict):
+        return {"status": "missing_tool_a_timing", "harness_seconds": round(harness_seconds, 4)}
+    real_seconds = _optional_float(tool_a.get("duration_seconds"))
+    if real_seconds is None or real_seconds <= 0:
+        return {"status": "missing_tool_a_duration", "harness_seconds": round(harness_seconds, 4)}
+    ratio = round(float(harness_seconds) / real_seconds, 4)
+    status = "ok" if 0.85 <= ratio <= 1.15 else "diverged"
+    return {
+        "status": status,
+        "real_stage_seconds": round(real_seconds, 4),
+        "harness_seconds": round(harness_seconds, 4),
+        "ratio": ratio,
     }
 
 

@@ -103,6 +103,14 @@ Smells that mean this debt is accumulating:
 - Required input code does `except Exception: return empty`.
 - A warning reconciles states that should not be able to diverge.
 
+## Performance diagnostics
+Diagnose performance from the real end-to-end run's recorded stage timings, never from a synthetic, isolated, or profiler-only proxy.
+
+- Every pipeline stage must self-report enough timing and row-count detail into its run metadata or model-state manifest for "where did the time go?" to be answerable without rebuilding a custom profiler. Include per-step seconds, `rows_built`, and `rows_persisted` where those concepts apply.
+- Harnesses are secondary checks, not the source of truth. A performance harness must reproduce the full relevant code path and reconcile against the recorded real stage timing; a harness that omits a step is worse than none because it creates false confidence.
+- Flag build-vs-keep waste whenever a step builds far more rows than it persists or serves. Large `rows_built / rows_persisted` ratios are correctness and architecture smells, not just speed smells.
+- When two measurements disagree, the disagreement is the finding. Trace the mismatch to the real run before optimizing anything.
+
 ## Codex role
 You are an implementation agent. You build features, write code, and review code. You work alongside Claude Code.
 
