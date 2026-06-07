@@ -85,7 +85,7 @@ def _render_window_switcher(
     if active != canonical:
         mismatch_note = (
             f"<p class=\"hint window-mismatch\">Viewing {escape(active)} — canonical anchor for "
-            f"this ticker is {escape(canonical)}. Cross-window aggregates (Confidence, Tool A "
+            f"this ticker is {escape(canonical)}. Cross-window aggregates (Confidence, Gold Sensitivity "
             "Score, Profile) are unchanged.</p>"
         )
     return (
@@ -126,7 +126,7 @@ def _render_detail_alignment_notice(alignment: str) -> str:
         return ""
     messages = {
         DETAIL_ALIGNMENT_FOUNDATION_AHEAD: (
-            "The current foundation snapshot has moved ahead of the published Tool A row. "
+            "The current foundation snapshot has moved ahead of the published Gold Sensitivity row. "
             "Foundation-backed panels below are suppressed to avoid mixing data from different refreshes. "
             "Re-run <code>python main.py tool-a</code> to realign."
         ),
@@ -135,7 +135,7 @@ def _render_detail_alignment_notice(alignment: str) -> str:
             "Run <code>python main.py update-data</code>, then <code>python main.py tool-a</code>."
         ),
         DETAIL_ALIGNMENT_TOOL_A_MISSING_REFRESH: (
-            "The published Tool A row does not carry a snapshot refresh identifier, "
+            "The published Gold Sensitivity row does not carry a snapshot refresh identifier, "
             "so provenance cannot be confirmed. Re-run <code>python main.py tool-a</code>."
         ),
     }
@@ -174,7 +174,7 @@ def _render_latest_panels(
             app_config=app_config,
         )
         + "<div class=\"two-up\">"
-        f"{_render_small_table('Latest Tool B Snapshot', tool_b_row, ['as_of_date', 'gold_price_assumption', 'tool_b_score', 'tool_b_rank', 'screening_verdict', 'confidence', 'best_upside_pct', 'snapshot_refresh_run_id', 'snapshot_as_of_date', 'snapshot_normalization_status', 'fx_staleness_days'])}"
+        f"{_render_small_table('Latest Corporate Finance Snapshot', tool_b_row, ['as_of_date', 'gold_price_assumption', 'tool_b_score', 'tool_b_rank', 'screening_verdict', 'confidence', 'best_upside_pct', 'snapshot_refresh_run_id', 'snapshot_as_of_date', 'snapshot_normalization_status', 'fx_staleness_days'])}"
         "</div>"
     )
 
@@ -393,12 +393,36 @@ def _render_option_liquidity_summary(detail: OptionTradingDetailData) -> str:
 
 
 def _render_option_candidate_matrix(detail: OptionTradingDetailData) -> str:
-    slots = _ordered_candidate_slots(detail)
-    if not slots:
+    put_slots = _ordered_side_slots(detail.put_slots)
+    call_slots = _ordered_side_slots(detail.call_slots)
+    if not put_slots and not call_slots:
         return (
             "<section id=\"option-candidates\" class=\"nested-panel\">"
             "<h3>Option Candidates</h3>"
             "<p>No option candidate slots are available for this ticker.</p>"
+            "</section>"
+        )
+    return (
+        "<section id=\"option-candidates\" class=\"nested-panel\">"
+        "<h3>Option Candidates</h3>"
+        "<p class=\"hint\">Each side shows near-ATM and directional candidates around the configured target horizons.</p>"
+        f"{_render_option_candidate_side_section('Puts', put_slots, ticker=detail.ticker)}"
+        f"{_render_option_candidate_side_section('Calls', call_slots, ticker=detail.ticker)}"
+        "</section>"
+    )
+
+
+def _render_option_candidate_side_section(
+    title: str,
+    slots: list[OptionCandidateSlot],
+    *,
+    ticker: str,
+) -> str:
+    if not slots:
+        return (
+            "<section class=\"option-side-candidates\">"
+            f"<h4>{escape(title)}</h4>"
+            f"<p>No {escape(title.lower())} candidate slots are available.</p>"
             "</section>"
         )
     rows = []
@@ -410,12 +434,10 @@ def _render_option_candidate_matrix(detail: OptionTradingDetailData) -> str:
             "</tr>"
         )
         for slot in grouped[horizon]:
-            rows.append(_render_option_candidate_matrix_row(slot=slot, ticker=detail.ticker))
+            rows.append(_render_option_candidate_matrix_row(slot=slot, ticker=ticker))
     return (
-        "<section id=\"option-candidates\" class=\"nested-panel\">"
-        "<h3>Option Candidates</h3>"
-        "<p class=\"hint\">Each horizon shows up to four OTM candidates: put near-ATM, "
-        "put directional, call near-ATM, and call directional.</p>"
+        "<section class=\"option-side-candidates\">"
+        f"<h4>{escape(title)}</h4>"
         "<table>"
         "<thead><tr>"
         "<th>Candidate</th><th>Expiry / DTE</th><th>Strike</th><th>OTM</th>"
@@ -428,15 +450,12 @@ def _render_option_candidate_matrix(detail: OptionTradingDetailData) -> str:
     )
 
 
-def _ordered_candidate_slots(detail: OptionTradingDetailData) -> list[OptionCandidateSlot]:
-    slots = [*detail.put_slots, *detail.call_slots]
-    side_order = {"P": 0, "C": 1}
+def _ordered_side_slots(slots: tuple[OptionCandidateSlot, ...]) -> list[OptionCandidateSlot]:
     bucket_order = {"near_atm": 0, "directional": 1}
     return sorted(
         slots,
         key=lambda slot: (
             slot.horizon_days,
-            side_order.get(slot.option_type, 9),
             bucket_order.get(str(slot.bucket or ""), 9),
         ),
     )
@@ -758,12 +777,12 @@ def _render_tool_a_panel(
     app_config: AppConfig | None = None,
 ) -> str:
     if not tool_a_row:
-        message = "No latest structural Tool A output is available yet."
+        message = "No latest Gold Sensitivity output is available yet."
         if tool_a_detail.foundation_error:
             message += f" {escape(tool_a_detail.foundation_error)}"
         return (
             "<section class=\"panel\">"
-            "<h2>Structural Tool A</h2>"
+            "<h2>Gold Sensitivity</h2>"
             f"<p>{message}</p>"
             "</section>"
         )
@@ -780,8 +799,8 @@ def _render_tool_a_panel(
 
     body = [
         "<section class=\"panel\">",
-        "<h2>Structural Tool A</h2>",
-        "<p class=\"hint\">Official Tool A uses weekly structural delta, regime-split gamma, explicit asymmetry, "
+        "<h2>Gold Sensitivity</h2>",
+        "<p class=\"hint\">Gold Sensitivity uses weekly structural delta, regime-split gamma, explicit asymmetry, "
         "confidence, and volatility diagnostics. "
         f"{TOOL_A_BETA_FORMULA} The horizon-return ladder below is exploratory only.</p>",
         _render_signal_notice(tool_a_row),
@@ -802,7 +821,7 @@ def _render_tool_a_panel(
         "<h3>Aggregate across all windows</h3>",
         "<div class=\"metric-grid\">",
         _metric_card("Confidence", _fmt_text(tool_a_row.get("confidence_label"))),
-        _metric_card("Tool A Score", _fmt_number(tool_a_row.get("tool_a_score"), decimals=1)),
+        _metric_card("Gold Sensitivity Score", _fmt_number(tool_a_row.get("tool_a_score"), decimals=1)),
         _metric_card("Profile", _fmt_text(tool_a_row.get("profile_label"))),
         _metric_card("Canonical Anchor", _fmt_text(tool_a_row.get("anchor_window_id"))),
         "</div>",
@@ -873,11 +892,11 @@ def _render_signal_notice(tool_a_row: dict[str, Any]) -> str:
     if not score_eligible:
         if score_reason == "UNACCEPTABLE_NORMALIZATION_STATUS":
             notices.append(
-                "Official Tool A score is withheld because trailing FX or return-basis issues block a trustworthy structural read."
+                "Gold Sensitivity score is withheld because trailing FX or return-basis issues block a trustworthy structural read."
             )
         elif score_reason:
             notices.append(
-                f"Official Tool A score is currently withheld: {escape(score_reason.replace('_', ' ').title())}."
+                f"Gold Sensitivity score is currently withheld: {escape(score_reason.replace('_', ' ').title())}."
             )
     if normalization_issue_summary != "-":
         notices.append(f"Observed normalization issues in the trailing sample: {normalization_issue_summary}.")
@@ -1093,15 +1112,15 @@ def _render_visual_panels(
     if alignment != DETAIL_ALIGNMENT_ALIGNED:
         suppression_reasons = {
             DETAIL_ALIGNMENT_FOUNDATION_AHEAD: (
-                "The foundation snapshot on disk differs from the published Tool A row, so this panel is "
+                "The foundation snapshot on disk differs from the published Gold Sensitivity row, so this panel is "
                 "suppressed to avoid mixing data from different refreshes."
             ),
             DETAIL_ALIGNMENT_FOUNDATION_MISSING: (
                 "No validated foundation snapshot is available, so this panel cannot be rebuilt safely "
-                "from the published Tool A row's refresh context."
+                "from the published Gold Sensitivity row's refresh context."
             ),
             DETAIL_ALIGNMENT_TOOL_A_MISSING_REFRESH: (
-                "The published Tool A row does not carry a snapshot refresh identifier, so this panel "
+                "The published Gold Sensitivity row does not carry a snapshot refresh identifier, so this panel "
                 "cannot be matched to a foundation snapshot and is suppressed for safety."
             ),
         }
@@ -1145,7 +1164,7 @@ def _render_visual_panels(
     if tool_a_detail.foundation_error:
         return (
             "<section class=\"panel nested-panel\">"
-            "<h3>Tool A Detail</h3>"
+            "<h3>Gold Sensitivity Detail</h3>"
             f"<p>{escape(tool_a_detail.foundation_error)}</p>"
             "</section>"
         )
@@ -1496,7 +1515,7 @@ def _render_exploratory_horizon_panel(exploratory_horizons: pd.DataFrame) -> str
     return (
         "<section class=\"panel nested-panel\">"
         "<h3>Exploratory Horizon Ladder</h3>"
-        "<p class=\"hint\">This preserves the older horizon-return lens for tactical context only. The ratio below is a single-period return ratio, not a structural beta, and it does not drive the official Tool A score.</p>"
+        "<p class=\"hint\">This preserves the older horizon-return lens for tactical context only. The ratio below is a single-period return ratio, not a structural beta, and it does not drive the Gold Sensitivity score.</p>"
         "<table>"
         "<thead><tr><th>Horizon</th><th>Equity Return</th><th>Gold Return</th><th>Single-Period Ratio</th><th>Status</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
@@ -1608,7 +1627,7 @@ def _render_beta_history_panel(
     if not _structural_history_matches_tool_a(structural_history, tool_a_row):
         return _render_chart_fallback_panel(
             title,
-            "Structural history file is out of sync with the published Tool A row.",
+            "Structural history file is out of sync with the published Gold Sensitivity row.",
             "python main.py tool-a",
         )
 

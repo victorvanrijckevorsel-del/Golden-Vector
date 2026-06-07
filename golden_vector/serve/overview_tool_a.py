@@ -87,7 +87,7 @@ def _render_tool_a_overview_page(
         ],
     )
 
-    body = ["<h1>Tool A — Gold Sensitivity Ranking</h1>"]
+    body = ["<h1>Gold Sensitivity</h1>"]
     body.append(
         "<p>Ranks the universe by structural sensitivity to the gold price. "
         "Lower rank is better. Negative gamma is favorable (up-gold sensitivity exceeds down-gold sensitivity). "
@@ -125,11 +125,11 @@ def _render_tool_a_overview_page(
         "<th data-col-name=\"asymmetry\" data-sort-numeric>Asymmetry</th>"
         "<th data-col-name=\"confidence\">Confidence</th>"
         "<th data-col-name=\"volatility\">Volatility</th>"
-        "<th data-col-name=\"score\" data-sort-numeric>Tool A Score</th>"
+        "<th data-col-name=\"score\" data-sort-numeric>Gold Sensitivity Score</th>"
         "<th data-col-name=\"rank\" data-sort-numeric>Rank</th>"
         "<th data-col-name=\"notes\" data-sort-numeric>Notes</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
         "</table>"
     )
-    return _page_shell("Tool A — Gold Vector Workspace", "".join(body), active_nav="tool_a")
+    return _page_shell("Gold Sensitivity - Golden Vector Workspace", "".join(body), active_nav="tool_a")

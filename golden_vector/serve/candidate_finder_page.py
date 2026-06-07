@@ -172,9 +172,13 @@ def _render_builder(
             ("none", "No option filter"),
         )
     )
-    rows = "\n".join(
-        _render_builder_row(criterion, selected_by_id.get(criterion.id))
-        for criterion in data.criteria_config.criteria
+    groups = "\n".join(
+        _render_builder_group(
+            group_label,
+            criteria,
+            selected_by_id=selected_by_id,
+        )
+        for group_label, criteria in _criteria_groups(data.criteria_config.criteria)
     )
     active_custom = _first(query, "custom") == "1"
     custom_note = (
@@ -202,22 +206,64 @@ def _render_builder(
       </label>
       <button type="submit">Apply Screen</button>
     </div>
-    <div class="table-scroll">
-      <table class="candidate-criteria-table">
-        <thead>
-          <tr>
-            <th>Use</th>
-            <th>Criterion</th>
-            <th>Direction</th>
-            <th>Weight</th>
-            <th>Field</th>
-          </tr>
-        </thead>
-        <tbody>{rows}</tbody>
-      </table>
-    </div>
+    <div class="candidate-criteria-groups">{groups}</div>
   </form>
 </section>
+"""
+
+
+def _criteria_groups(
+    criteria: Sequence[CandidateFinderCriterion],
+) -> list[tuple[str, list[CandidateFinderCriterion]]]:
+    grouped: dict[str, list[CandidateFinderCriterion]] = {}
+    order: list[str] = []
+    for criterion in criteria:
+        label = str(criterion.group or "Other").strip() or "Other"
+        if label not in grouped:
+            grouped[label] = []
+            order.append(label)
+        grouped[label].append(criterion)
+    return [(label, grouped[label]) for label in order]
+
+
+def _render_builder_group(
+    group_label: str,
+    criteria: Sequence[CandidateFinderCriterion],
+    *,
+    selected_by_id: Mapping[str, ResolvedCriterion],
+) -> str:
+    selected_count = sum(1 for criterion in criteria if criterion.id in selected_by_id)
+    open_attr = " open" if selected_count else ""
+    summary_meta = (
+        f"{selected_count}/{len(criteria)} selected"
+        if selected_count
+        else f"{len(criteria)} criteria"
+    )
+    rows = "\n".join(
+        _render_builder_row(criterion, selected_by_id.get(criterion.id))
+        for criterion in criteria
+    )
+    return f"""
+<details class="candidate-criteria-group"{open_attr}>
+  <summary>
+    <span>{escape(group_label)}</span>
+    <span class="hint">{escape(summary_meta)}</span>
+  </summary>
+  <div class="table-scroll">
+    <table class="candidate-criteria-table">
+      <thead>
+        <tr>
+          <th>Use</th>
+          <th>Criterion</th>
+          <th>Direction</th>
+          <th>Weight</th>
+          <th>Field</th>
+        </tr>
+      </thead>
+      <tbody>{rows}</tbody>
+    </table>
+  </div>
+</details>
 """
 
 

@@ -165,8 +165,8 @@ def _render_overview_page(
 
     body = [
         "<h1>Golden Vector Workspace</h1>",
-        "<p>This is the local working view for Tool B manual inputs, notes, and the latest structural Tool A output. "
-        "Tool A is now structural-first, while the old horizon-return view is shown only as exploratory context.</p>",
+        "<p>This is the local working view for Corporate Finance manual inputs, notes, and the latest Gold Sensitivity output. "
+        "Gold Sensitivity is structural-first, while the old horizon-return view is shown only as exploratory context.</p>",
     ]
     if flash:
         body.append(f"<div class=\"flash\">{escape(flash)}</div>")
@@ -218,7 +218,7 @@ def _render_overview_page(
             "profile": "Profile",
             "confidence": "Confidence",
             "volatility": "Volatility",
-            "verdict": "Tool B Verdict",
+            "verdict": "Corporate Finance Verdict",
         },
     ))
     body.append(
@@ -232,11 +232,11 @@ def _render_overview_page(
         "<th data-col-name=\"asymmetry\" data-sort-numeric>Asymmetry</th>"
         "<th data-col-name=\"confidence\">Confidence</th>"
         "<th data-col-name=\"volatility\">Volatility</th>"
-        "<th data-col-name=\"tool_a_score\" data-sort-numeric>Tool A Score</th>"
+        "<th data-col-name=\"tool_a_score\" data-sort-numeric>Gold Sensitivity Score</th>"
         f"{lens_score_header_cell}"
         "<th data-col-name=\"profile\">Profile</th>"
-        "<th data-col-name=\"tool_b_score\" data-sort-numeric>Tool B Score</th>"
-        "<th data-col-name=\"verdict\">Tool B Verdict</th>"
+        "<th data-col-name=\"tool_b_score\" data-sort-numeric>Corporate Finance Score</th>"
+        "<th data-col-name=\"verdict\">Corporate Finance Verdict</th>"
         "<th data-col-name=\"notes\" data-sort-numeric>Notes</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows_html)}{no_match_row}</tbody>"
@@ -244,7 +244,7 @@ def _render_overview_page(
     )
     body.append(
         "<p class=\"hint\">Use <code>python main.py update-data</code> to refresh market data. "
-        "Use the stock links above to edit Tool B inputs and inspect the structural Tool A explanation cards.</p>"
+        "Use the stock links above to edit Corporate Finance inputs and inspect the Gold Sensitivity explanation cards.</p>"
     )
     return _page_shell("Golden Vector Workspace", "".join(body), active_nav="combined")
 
@@ -293,7 +293,7 @@ def _render_overview_filters_form(
         f"<label><span>View by lens</span><select name=\"lens\">{lens_options_html}</select></label>"
         f"<label><span>Search ticker</span><input name=\"search\" type=\"text\" value=\"{escape(filters.search)}\" placeholder=\"NEM\"></label>"
         f"<label><span>Profile</span><select name=\"profile\">{_options(profile_values, filters.normalized_profile())}</select></label>"
-        f"<label><span>Tool B Verdict</span><select name=\"verdict\">{_options(verdict_values, filters.normalized_verdict())}</select></label>"
+        f"<label><span>Corporate Finance Verdict</span><select name=\"verdict\">{_options(verdict_values, filters.normalized_verdict())}</select></label>"
         f"<label><span>Confidence</span><select name=\"confidence\">{_options(confidence_values, filters.normalized_confidence())}</select></label>"
         f"<label><span>Sort by</span><select name=\"sort\"{sort_disabled_attr}>{sort_options_html}</select></label>"
         "<div class=\"overview-filters-actions\">"
@@ -339,11 +339,11 @@ def _render_provenance_warnings(state: WorkspaceState) -> str:
 
     if not state.tool_a_alias_present:
         notices.append(
-            "Tool A latest output is missing. Run <code>python main.py tool-a</code> to publish a current snapshot."
+            "Gold Sensitivity output is missing. Run <code>python main.py tool-a</code> to publish a current snapshot."
         )
     if not state.tool_b_alias_present:
         notices.append(
-            "Tool B latest output is missing. Run <code>python main.py tool-b --gold-price &lt;X&gt;</code> to publish a current snapshot."
+            "Corporate Finance output is missing. Run <code>python main.py tool-b --gold-price &lt;X&gt;</code> to publish a current snapshot."
         )
 
     foundation_run_id = (
@@ -358,15 +358,15 @@ def _render_provenance_warnings(state: WorkspaceState) -> str:
     if foundation_run_id:
         if tool_a_run_ids and foundation_run_id not in tool_a_run_ids:
             mismatched_sources.append(
-                f"Tool A row(s) reference snapshot {sorted(tool_a_run_ids)[0]} while the current foundation manifest is {foundation_run_id}"
+                f"Gold Sensitivity row(s) reference snapshot {sorted(tool_a_run_ids)[0]} while the current foundation manifest is {foundation_run_id}"
             )
         if tool_b_run_ids and foundation_run_id not in tool_b_run_ids:
             mismatched_sources.append(
-                f"Tool B row(s) reference snapshot {sorted(tool_b_run_ids)[0]} while the current foundation manifest is {foundation_run_id}"
+                f"Corporate Finance row(s) reference snapshot {sorted(tool_b_run_ids)[0]} while the current foundation manifest is {foundation_run_id}"
             )
     if tool_a_run_ids and tool_b_run_ids and not tool_a_run_ids.intersection(tool_b_run_ids):
         mismatched_sources.append(
-            "Tool A and Tool B rows reference different snapshot refresh runs"
+            "Gold Sensitivity and Corporate Finance rows reference different snapshot refresh runs"
         )
     for message in mismatched_sources:
         notices.append(

@@ -10,6 +10,8 @@ from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
+from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
+from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
 from golden_vector.screening.manual_data import (
     bootstrap_manual_screening_data,
     load_manual_screening_data,
@@ -101,7 +103,7 @@ def test_workspace_detail_page_renders_explanations_and_exploratory_ladder(tmp_p
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
 
     assert response["status"].startswith("200")
-    assert "Structural Tool A" in response["body"]
+    assert "Gold Sensitivity" in response["body"]
     assert "Exploratory Horizon Ladder" in response["body"]
     # Regression guard: the workspace now regenerates narrative cards live from
     # numeric inputs + band thresholds (single source of truth = model/explanations.py).
@@ -225,7 +227,7 @@ def test_workspace_detail_page_surfaces_withheld_tool_a_notice(tmp_path):
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
 
     assert response["status"].startswith("200")
-    assert "Official Tool A score is withheld" in response["body"]
+    assert "Gold Sensitivity score is withheld" in response["body"]
     assert "STALE_FX" in response["body"]
 
 
@@ -322,7 +324,7 @@ def test_workspace_overview_warns_when_tool_b_latest_alias_is_missing(tmp_path):
     response = _call_wsgi_app(app, method="GET", path="/")
 
     assert response["status"].startswith("200")
-    assert "Tool B latest output is missing" in response["body"]
+    assert "Corporate Finance output is missing" in response["body"]
 
 
 def test_workspace_overview_warns_when_tool_a_and_tool_b_reference_different_refreshes(tmp_path):
@@ -496,7 +498,7 @@ def test_workspace_detail_surfaces_score_withheld_notice(tmp_path):
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
 
     assert response["status"].startswith("200")
-    assert "Official Tool A score is withheld" in response["body"]
+    assert "Gold Sensitivity score is withheld" in response["body"]
     assert "STALE_FX" in response["body"]
 
 
@@ -567,7 +569,7 @@ def test_workspace_detail_suppresses_foundation_backed_panels_when_refresh_is_ou
     assert body.count("Run <code>python main.py tool-a</code>") >= 3
     # Per codex P2: each suppressed card must carry its own reason sentence
     # in addition to the title and CLI suggestion (the v3 fallback bar).
-    expected_reason = "foundation snapshot on disk differs from the published Tool A row"
+    expected_reason = "foundation snapshot on disk differs from the published Gold Sensitivity row"
     assert body.count(expected_reason) >= 3
     # Volatility panel is not foundation-backed and should still render.
     assert "Volatility Diagnostics" in body
@@ -689,7 +691,7 @@ def test_workspace_detail_suppresses_panels_when_tool_a_row_lacks_refresh_id(tmp
     assert "Weekly Return Scatter &mdash; Out of Sync" in body
     assert "Up vs Down Beta &mdash; Out of Sync" in body
     assert "Exploratory Horizon Ladder &mdash; Out of Sync" in body
-    expected_reason = "The published Tool A row does not carry a snapshot refresh identifier"
+    expected_reason = "The published Gold Sensitivity row does not carry a snapshot refresh identifier"
     assert body.count(expected_reason) >= 3
     assert body.count("Run <code>python main.py tool-a</code>") >= 3
     assert "Volatility Diagnostics" in body
@@ -1171,6 +1173,75 @@ def _write_latest_outputs(paths, tool_a_rows=None) -> None:
     )
 
 
+def _write_latest_tool_c_output(paths) -> None:
+    context = RunContext.start(
+        paths=paths,
+        command="tool-c",
+        parameters={},
+        config_hash="hash",
+    )
+    persist_tool_c_outputs(
+        paths=paths,
+        run_context=context,
+        tool_c_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 4, 22),
+                    "tool_c_downside_rank": 82.0,
+                    "tool_c_downside_score": 71.0,
+                    "tool_c_upside_rank": 64.0,
+                    "tool_c_upside_score": 58.0,
+                    "down_beta_core": 1.5,
+                    "up_beta_core": 2.1,
+                    "downside_hit_rate_10pct": 0.42,
+                    "upside_hit_rate_10pct": 0.37,
+                    "tool_c_downside_tags": "downside_sensitive",
+                    "tool_c_upside_tags": "upside_participation",
+                    "snapshot_refresh_run_id": "refresh-run",
+                    "source_run_id": "tool-c-run",
+                }
+            ]
+        ),
+    )
+
+
+def _write_latest_tool_d_output(paths) -> None:
+    context = RunContext.start(
+        paths=paths,
+        command="tool-d",
+        parameters={},
+        config_hash="hash",
+    )
+    persist_tool_d_outputs(
+        paths=paths,
+        run_context=context,
+        tool_d_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 4, 22),
+                    "tool_d_quality_rank": 88.0,
+                    "tool_d_quality_score": 76.0,
+                    "gold_price_used": 4000.0,
+                    "spot_gold_usd": 4000.0,
+                    "spot_gold_date": "2026-06-01",
+                    "headroom_to_breakeven_pct_at_g": 0.62,
+                    "leverage_stressed_at_g": 0.7,
+                    "ev_ebitda_at_g": 4.5,
+                    "margin_per_oz_at_g": 2200.0,
+                    "fcf_yield": 0.12,
+                    "screening_verdict": "STRONG_CANDIDATE",
+                    "tool_d_tags": "strong_headroom",
+                    "snapshot_refresh_run_id": "refresh-run",
+                    "source_run_id": "tool-d-run",
+                }
+            ]
+        ),
+        publish_spot_latest_aliases=True,
+    )
+
+
 def _call_wsgi_app(app, *, method: str, path: str, body: str = "") -> dict[str, object]:
     payload = body.encode("utf-8")
     captured: dict[str, object] = {}
@@ -1545,7 +1616,7 @@ def test_workspace_detail_suppresses_chart_when_structural_source_run_id_mismatc
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
     assert "Rolling Structural Delta &mdash; Out of Sync" in body
-    assert "Structural history file is out of sync with the published Tool A row" in body
+    assert "Structural history file is out of sync with the published Gold Sensitivity row" in body
 
 
 def test_workspace_detail_renders_beta_history_chart_when_aligned(tmp_path):
@@ -1720,7 +1791,7 @@ def test_workspace_overview_lens_picker_reorders_table_by_lens_score(tmp_path):
     # is hidden when lens=composite (it would just duplicate Tool A Score).
     response = _call_wsgi_app(app, method="GET", path="/?sort=tool_a_score")
     body = response["body"]
-    assert "Tool A Score" in body  # original column header preserved
+    assert "Gold Sensitivity Score" in body
     assert ">Lens Score" not in body  # hidden in composite mode
     assert "View by lens" in body
     nem_pos = body.index("/ticker/NEM")
@@ -1776,7 +1847,7 @@ def test_workspace_overview_unknown_lens_falls_back_to_composite(tmp_path):
     body = response["body"]
     assert response["status"].startswith("200")
     # Composite lens hint is present (we silently fell back).
-    assert "Composite (Tool A score)" in body
+    assert "Composite (Gold Sensitivity score)" in body
 
 
 def _make_tool_a_row(
@@ -1988,7 +2059,7 @@ def test_workspace_company_form_shows_readiness_summary_and_per_field_badges(tmp
     assert response["status"].startswith("200")
     body = response["body"]
     # Readiness summary line.
-    assert "Tool B readiness:" in body
+    assert "Corporate Finance readiness:" in body
     assert "2/11 fields populated" in body
     assert "1 verified" in body
     assert "9 missing" in body
@@ -2028,13 +2099,13 @@ def test_workspace_tool_a_view_renders_only_tool_a_columns(tmp_path):
     response = _call_wsgi_app(app, method="GET", path="/tool-a")
 
     assert response["status"].startswith("200")
-    assert "Tool A — Gold Sensitivity Ranking" in response["body"]
+    assert "Gold Sensitivity" in response["body"]
     # Tool A columns must be present
     assert "Δ Core" in response["body"]
     assert "Gamma" in response["body"]
     assert "Asymmetry" in response["body"]
     # Tool B-specific columns must NOT bleed in
-    assert "Tool B Score" not in response["body"]
+    assert "Corporate Finance Score" not in response["body"]
     assert "Verdict" not in response["body"]
     # Nav must mark this tab active
     assert 'class="nav-tab active" href="/tool-a"' in response["body"]
@@ -2052,7 +2123,7 @@ def test_workspace_tool_b_view_renders_only_tool_b_columns(tmp_path):
     response = _call_wsgi_app(app, method="GET", path="/tool-b")
 
     assert response["status"].startswith("200")
-    assert "Tool B — Valuation Screening" in response["body"]
+    assert "Corporate Finance" in response["body"]
     # Tool B columns must be present
     assert "Verdict" in response["body"]
     # Four scenario target columns (matches Excel Top performers AA/AC/AI/AK).
@@ -2067,6 +2138,44 @@ def test_workspace_tool_b_view_renders_only_tool_b_columns(tmp_path):
     assert "Asymmetry" not in response["body"]
     # Nav must mark this tab active
     assert 'class="nav-tab active" href="/tool-b"' in response["body"]
+
+
+def test_workspace_tool_c_view_renders_gold_downside_page(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_latest_tool_c_output(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/tool-c")
+
+    assert response["status"].startswith("200")
+    assert "Gold Downside" in response["body"]
+    assert "tool-c-table" in response["body"]
+    assert "Downside Rank" in response["body"]
+    assert 'class="nav-tab active" href="/tool-c"' in response["body"]
+
+
+def test_workspace_tool_d_view_renders_corporate_resilience_page(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_latest_tool_d_output(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/tool-d")
+
+    assert response["status"].startswith("200")
+    assert "Corporate Resilience" in response["body"]
+    assert "tool-d-table" in response["body"]
+    assert "Quality Rank" in response["body"]
+    assert 'class="nav-tab active" href="/tool-d"' in response["body"]
 
 
 def test_workspace_tool_b_view_renders_screening_parameters_form(tmp_path):

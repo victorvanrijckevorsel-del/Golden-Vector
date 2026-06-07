@@ -27,6 +27,11 @@ def test_candidate_finder_page_renders_default_bearish_put_screen():
     assert "Options Side" in html
     assert "Puts" in html
     assert "Screen Builder" in html
+    assert "Gold Sensitivity" in html
+    assert "Corporate Finance" in html
+    assert "Options" in html
+    assert "Corporate Resilience" in html
+    assert 'class="candidate-criteria-group" open' in html
     assert "View 1: Top Rows By Criterion" in html
     assert "View 2: Combined Fit Ranking" in html
     assert "Eligible Ranking" in html

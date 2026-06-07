@@ -83,7 +83,7 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
     assert "option-trading-table" in html
     assert "Stock Price" in html
     assert "174.96" in html
-    assert "Tool A Confidence" in html
+    assert "Gold Sensitivity Confidence" in html
     assert "IV %ile" in html
     assert "IV Skew 60d" not in html
     assert "IV/RV 60d" not in html

@@ -122,7 +122,7 @@ def _render_company_form(
         "<h2>Company Inputs</h2>"
         f"<p><strong>Last Updated:</strong> {updated_at}</p>"
         f"<p class=\"tool-b-readiness\">"
-        f"<strong>Tool B readiness:</strong> {present_count}/{total_fields} fields populated · "
+        f"<strong>Corporate Finance readiness:</strong> {present_count}/{total_fields} fields populated · "
         f"{verified_count} verified · {estimated_count} estimated · "
         f"{incomplete_verifications} explicitly incomplete · "
         f"{len(missing_fields)} missing. {missing_summary}"
@@ -249,7 +249,7 @@ def _render_verification_section(
         )
 
     hint = (
-        "<p class=\"hint\">One row per required Tool B field. Blank Source Date / URL / Notes are left unchanged on save. "
+        "<p class=\"hint\">One row per required Corporate Finance field. Blank Source Date / URL / Notes are left unchanged on save. "
         "To clear an existing value, tick the <em>Clear</em> checkbox under that field before saving.</p>"
     )
     return (

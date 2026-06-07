@@ -124,7 +124,7 @@ def _render_tool_b_overview_page(
         ],
     )
 
-    body = ["<h1>Tool B — Valuation Screening</h1>"]
+    body = ["<h1>Corporate Finance</h1>"]
     body.append(
         "<p>Ranks the universe by valuation upside at the configured gold-price assumption. "
         "Lower rank is better. INCOMPLETE rows are missing manual mining inputs (production, AISC, "
@@ -142,7 +142,7 @@ def _render_tool_b_overview_page(
         body.append(
             "<div class=\"flash flash-error\">"
             f"Could not recompute with overrides: {escape(override_runtime_error)}. "
-            "Showing the last persisted Tool B snapshot."
+            "Showing the last persisted Corporate Finance snapshot."
             "</div>"
         )
     body.append(render_model_state_banner(state.model_state_manifest))
@@ -199,7 +199,7 @@ def _render_tool_b_overview_page(
         f"<tbody>{''.join(rows_html)}</tbody>"
         "</table>"
     )
-    return _page_shell("Tool B — Gold Vector Workspace", "".join(body), active_nav="tool_b")
+    return _page_shell("Corporate Finance - Golden Vector Workspace", "".join(body), active_nav="tool_b")
 
 
 def _resolve_tool_b_frame(

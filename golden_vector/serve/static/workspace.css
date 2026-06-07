@@ -460,6 +460,26 @@
       margin: 8px 0 0;
       padding-left: 20px;
     }
+    .candidate-criteria-groups {
+      display: grid;
+      gap: 10px;
+    }
+    .candidate-criteria-group {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fffdf8;
+      overflow: hidden;
+    }
+    .candidate-criteria-group summary {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 12px;
+      cursor: pointer;
+      font-weight: 700;
+      background: var(--paper);
+    }
     .candidate-criteria-table input[type="checkbox"] {
       width: auto;
     }
@@ -489,6 +509,12 @@
     }
     .option-sizing-calculator {
       margin-top: 16px;
+    }
+    .option-side-candidates {
+      margin-top: 16px;
+    }
+    .option-side-candidates h4 {
+      margin: 0 0 8px;
     }
     .option-sizing-form {
       display: grid;

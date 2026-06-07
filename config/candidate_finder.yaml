@@ -5,105 +5,105 @@ criteria:
   - id: down_beta
     label: Down-beta
     source_field: down_beta_core
-    group: Sensitivity
+    group: Gold Sensitivity
     default_direction: high_good
     unit: beta
     available_now: true
   - id: up_beta
     label: Up-beta
     source_field: up_beta_core
-    group: Sensitivity
+    group: Gold Sensitivity
     default_direction: high_good
     unit: beta
     available_now: true
   - id: gold_beta_core
     label: Gold beta (core)
     source_field: structural_delta_core
-    group: Sensitivity
+    group: Gold Sensitivity
     default_direction: high_good
     unit: beta
     available_now: true
   - id: downside_volatility
     label: Downside volatility
     source_field: downside_volatility_52w
-    group: Sensitivity
+    group: Gold Sensitivity
     default_direction: high_good
     unit: percent
     available_now: true
   - id: confidence
     label: Confidence
     source_field: confidence_score
-    group: Quality
+    group: Gold Sensitivity
     default_direction: high_good
     unit: score
     available_now: true
   - id: aisc
     label: AISC
     source_field: aisc_usd_per_oz
-    group: Fragility
+    group: Corporate Finance
     default_direction: high_good
     unit: usd_per_oz
     available_now: true
   - id: leverage
     label: Net Debt / EBITDA
     source_field: leverage
-    group: Leverage
+    group: Corporate Finance
     default_direction: high_good
     unit: multiple
     available_now: true
   - id: debt_to_mktcap
     label: Debt / market cap
     source_field: debt_to_mktcap
-    group: Leverage
+    group: Corporate Finance
     default_direction: high_good
     unit: ratio
     available_now: true
   - id: ebitda_to_mktcap
     label: EBITDA / market cap
     source_field: ebitda_to_mktcap
-    group: Valuation
+    group: Corporate Finance
     default_direction: high_good
     unit: ratio
     available_now: true
   - id: revenue_to_mktcap
     label: Revenue / market cap
     source_field: revenue_to_mktcap
-    group: Valuation
+    group: Corporate Finance
     default_direction: high_good
     unit: ratio
     available_now: true
   - id: ev_ebitda
     label: EV/EBITDA
     source_field: ev_ebitda
-    group: Valuation
+    group: Corporate Finance
     default_direction: low_good
     unit: multiple
     available_now: true
   - id: forward_pe
     label: Forward P/E
     source_field: forward_pe
-    group: Valuation
+    group: Corporate Finance
     default_direction: low_good
     unit: multiple
     available_now: true
   - id: fcf_yield
     label: FCF yield
     source_field: fcf_yield
-    group: Valuation
+    group: Corporate Finance
     default_direction: high_good
     unit: percent
     available_now: true
   - id: best_upside
     label: Best upside %
     source_field: best_upside_pct
-    group: Upside
+    group: Corporate Finance
     default_direction: high_good
     unit: percent
     available_now: true
   - id: market_cap
     label: Market cap
     source_field: market_cap_musd
-    group: Size
+    group: Corporate Finance
     default_direction: high_good
     unit: musd
     available_now: true
@@ -122,23 +122,23 @@ criteria:
     unit: percent
     available_now: true
   - id: tool_c_downside_rank
-    label: Tool C downside rank
+    label: Gold Downside downside rank
     source_field: tool_c_downside_rank
-    group: Tool C
+    group: Gold Downside
     default_direction: high_good
     unit: percentile
     available_now: true
   - id: tool_c_upside_rank
-    label: Tool C upside rank
+    label: Gold Downside upside rank
     source_field: tool_c_upside_rank
-    group: Tool C
+    group: Gold Downside
     default_direction: high_good
     unit: percentile
     available_now: true
   - id: tool_d_quality_rank
-    label: Tool D quality rank
+    label: Corporate Resilience quality rank
     source_field: tool_d_quality_rank
-    group: Tool D
+    group: Corporate Resilience
     default_direction: high_good
     unit: percentile
     available_now: true

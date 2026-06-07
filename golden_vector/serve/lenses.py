@@ -141,8 +141,8 @@ def _compute_cleanliness(row: dict[str, Any], scoring_config: ScoringConfig) -> 
 LENS_DEFINITIONS: dict[str, LensSpec] = {
     "composite": LensSpec(
         id="composite",
-        title="Composite (Tool A score)",
-        hint="Overall Tool A rank — delta, gamma, asymmetry, and confidence combined.",
+        title="Composite (Gold Sensitivity score)",
+        hint="Overall Gold Sensitivity rank — delta, gamma, asymmetry, and confidence combined.",
         sort_descending=True,
         compute=_compute_composite,
     ),

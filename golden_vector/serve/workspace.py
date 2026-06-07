@@ -60,6 +60,8 @@ from golden_vector.serve.overview_option_trading import _render_option_trading_o
 from golden_vector.serve.overview_combined import _render_overview_page
 from golden_vector.serve.overview_tool_a import _render_tool_a_overview_page
 from golden_vector.serve.overview_tool_b import _render_tool_b_overview_page
+from golden_vector.serve.overview_tool_c import _render_tool_c_overview_page
+from golden_vector.serve.overview_tool_d import _render_tool_d_overview_page
 from golden_vector.serve.format_helpers import (
     _coerce_form_numeric,
     _coerce_form_text,
@@ -191,6 +193,32 @@ def create_workspace_app(
                     ),
                 )
 
+            if method == "GET" and path == "/tool-c":
+                state = _load_workspace_state(paths, normalized_tickers)
+                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+                flash = _flash_message(query.get("saved", [""])[0])
+                return _html_response(
+                    start_response,
+                    _render_tool_c_overview_page(
+                        state,
+                        flash=flash,
+                        search=query.get("search", [""])[0],
+                    ),
+                )
+
+            if method == "GET" and path == "/tool-d":
+                state = _load_workspace_state(paths, normalized_tickers)
+                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+                flash = _flash_message(query.get("saved", [""])[0])
+                return _html_response(
+                    start_response,
+                    _render_tool_d_overview_page(
+                        state,
+                        flash=flash,
+                        search=query.get("search", [""])[0],
+                    ),
+                )
+
             if method == "GET" and path == "/option-trading":
                 option_trading_data = load_option_trading_data(
                     paths,
@@ -244,7 +272,7 @@ def create_workspace_app(
                     if not option_vehicle_detail:
                         return _html_response(
                             start_response,
-                            _render_error_page(f"{ticker} is not an active Tool B ticker."),
+                            _render_error_page(f"{ticker} is not an active Corporate Finance ticker."),
                             status="404 Not Found",
                         )
 

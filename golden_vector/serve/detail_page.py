@@ -76,7 +76,7 @@ def render_detail_page(
     elif option_lens_active:
         body.append(
             "<p class=\"hint\">Option vehicle page. This ticker is used for listed "
-            "option liquidity and scenarios, not as a Tool A / Tool B mining-company row.</p>"
+            "option liquidity and scenarios, not as a Gold Sensitivity / Corporate Finance mining-company row.</p>"
         )
     if flash:
         body.append(f"<div class=\"flash\">{escape(flash)}</div>")

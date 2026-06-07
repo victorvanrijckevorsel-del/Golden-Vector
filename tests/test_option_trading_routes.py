@@ -74,6 +74,7 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
     body = response["body"]
     assert 'class="nav-tab active" href="/option-trading"' in body
     assert 'id="option-trading"' in body
+    assert body.index("<h4>Puts</h4>") < body.index("<h4>Calls</h4>")
     assert "Option Candidates" in body
     assert "Put Near-ATM" in body
     assert "Call Near-ATM" in body

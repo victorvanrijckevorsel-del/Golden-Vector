@@ -7,8 +7,10 @@ from html import escape
 
 _NAV_LINKS: tuple[tuple[str, str, str], ...] = (
     ("combined", "/", "Combined"),
-    ("tool_a", "/tool-a", "Tool A"),
-    ("tool_b", "/tool-b", "Tool B"),
+    ("tool_a", "/tool-a", "Gold Sensitivity"),
+    ("tool_b", "/tool-b", "Corporate Finance"),
+    ("tool_c", "/tool-c", "Gold Downside"),
+    ("tool_d", "/tool-d", "Corporate Resilience"),
     ("option_trading", "/option-trading", "Option Trading"),
     ("candidate_finder", "/candidate-finder", "Candidate Finder"),
 )

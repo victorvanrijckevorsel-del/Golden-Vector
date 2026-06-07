@@ -34,8 +34,12 @@ class WorkspaceState:
     stock_notes: pd.DataFrame
     latest_tool_a: pd.DataFrame
     latest_tool_b: pd.DataFrame
+    latest_tool_c: pd.DataFrame
+    latest_tool_d: pd.DataFrame
     tool_a_alias_present: bool
     tool_b_alias_present: bool
+    tool_c_alias_present: bool
+    tool_d_alias_present: bool
     model_state_manifest: dict[str, Any] | None
 
 
@@ -65,10 +69,10 @@ class OverviewFilters:
 
     SORT_OPTIONS: ClassVar[tuple[tuple[str, str], ...]] = (
         ("ticker", "Ticker (A→Z)"),
-        ("tool_a_rank", "Tool A Rank (best first)"),
-        ("tool_b_rank", "Tool B Rank (best first)"),
-        ("tool_a_score", "Tool A Score (high→low)"),
-        ("tool_b_score", "Tool B Score (high→low)"),
+        ("tool_a_rank", "Gold Sensitivity Rank (best first)"),
+        ("tool_b_rank", "Corporate Finance Rank (best first)"),
+        ("tool_a_score", "Gold Sensitivity Score (high→low)"),
+        ("tool_b_score", "Corporate Finance Score (high→low)"),
     )
 
     def normalized_search(self) -> str:
@@ -107,6 +111,22 @@ def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> Wor
         "tool_b",
         fallback_path=paths.latest_tool_b_snapshot_parquet_path,
     )
+    tool_c_path = resolve_current_model_artifact_path(
+        paths,
+        "tool_c",
+        fallback_path=paths.latest_tool_c_snapshot_parquet_path,
+    )
+    tool_d_path = resolve_current_model_artifact_path(
+        paths,
+        "tool_d_spot",
+        fallback_path=paths.latest_tool_d_spot_snapshot_parquet_path,
+    )
+    if tool_d_path is None:
+        tool_d_path = resolve_current_model_artifact_path(
+            paths,
+            "tool_d",
+            fallback_path=paths.latest_tool_d_snapshot_parquet_path,
+        )
     latest_tool_a = read_current_model_parquet(
         paths,
         "tool_a",
@@ -117,10 +137,30 @@ def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> Wor
         "tool_b",
         fallback_path=paths.latest_tool_b_snapshot_parquet_path,
     )
+    latest_tool_c = read_current_model_parquet(
+        paths,
+        "tool_c",
+        fallback_path=paths.latest_tool_c_snapshot_parquet_path,
+    )
+    latest_tool_d = read_current_model_parquet(
+        paths,
+        "tool_d_spot",
+        fallback_path=paths.latest_tool_d_spot_snapshot_parquet_path,
+    )
+    if latest_tool_d.empty:
+        latest_tool_d = read_current_model_parquet(
+            paths,
+            "tool_d",
+            fallback_path=paths.latest_tool_d_snapshot_parquet_path,
+        )
     if not latest_tool_a.empty and "ticker" in latest_tool_a.columns:
         latest_tool_a["ticker"] = latest_tool_a["ticker"].astype(str).str.upper()
     if not latest_tool_b.empty and "ticker" in latest_tool_b.columns:
         latest_tool_b["ticker"] = latest_tool_b["ticker"].astype(str).str.upper()
+    if not latest_tool_c.empty and "ticker" in latest_tool_c.columns:
+        latest_tool_c["ticker"] = latest_tool_c["ticker"].astype(str).str.upper()
+    if not latest_tool_d.empty and "ticker" in latest_tool_d.columns:
+        latest_tool_d["ticker"] = latest_tool_d["ticker"].astype(str).str.upper()
     return WorkspaceState(
         tool_b_tickers=tool_b_tickers,
         foundation_manifest=foundation_manifest,
@@ -130,8 +170,12 @@ def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> Wor
         stock_notes=loaded.stock_notes,
         latest_tool_a=latest_tool_a,
         latest_tool_b=latest_tool_b,
+        latest_tool_c=latest_tool_c,
+        latest_tool_d=latest_tool_d,
         tool_a_alias_present=tool_a_path is not None,
         tool_b_alias_present=tool_b_path is not None,
+        tool_c_alias_present=tool_c_path is not None,
+        tool_d_alias_present=tool_d_path is not None,
         model_state_manifest=model_state_manifest,
     )
 

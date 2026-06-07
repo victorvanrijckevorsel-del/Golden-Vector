@@ -124,12 +124,12 @@ def load_candidate_finder_data(
         fallback_path=paths.latest_tool_c_snapshot_parquet_path,
     )
     tool_d_source_path = _tool_d_finder_source_path(paths)
-    tool_a_load = _read_optional_parquet(tool_a_path, label="Tool A")
-    tool_b_load = _read_optional_parquet(tool_b_path, label="Tool B")
+    tool_a_load = _read_optional_parquet(tool_a_path, label="Gold Sensitivity")
+    tool_b_load = _read_optional_parquet(tool_b_path, label="Corporate Finance")
     tool_a = tool_a_load.frame
     tool_b = tool_b_load.frame
-    tool_c_load = _read_optional_parquet(tool_c_path, label="Tool C")
-    tool_d_load = _read_optional_parquet(tool_d_source_path, label="Tool D")
+    tool_c_load = _read_optional_parquet(tool_c_path, label="Gold Downside")
+    tool_d_load = _read_optional_parquet(tool_d_source_path, label="Corporate Resilience")
     tool_c = tool_c_load.frame
     tool_d_spot_load = _spot_tool_d_source(tool_d_load.frame)
     tool_d = tool_d_spot_load.frame
@@ -175,15 +175,18 @@ def load_candidate_finder_data(
         manual_store_hash=manual_hash,
         manual_store_as_of=manual_as_of,
         source_load_warnings=tuple(
-            warning
-            for warning in (
-                tool_a_load.warning,
-                tool_b_load.warning,
-                tool_c_load.warning,
-                tool_d_load.warning,
-                tool_d_spot_load.warning,
-            )
-            if warning is not None
+            [
+                warning
+                for warning in (
+                    tool_a_load.warning,
+                    tool_b_load.warning,
+                    tool_c_load.warning,
+                    tool_d_load.warning,
+                    tool_d_spot_load.warning,
+                )
+                if warning is not None
+            ]
+            + list(_joined_frame_warnings(frame))
         ),
     )
     data = CandidateFinderData(
@@ -305,35 +308,29 @@ def _joined_frame(
         }
     )
     joined = base
-    joined = joined.merge(
+    joined = _merge_source(
+        joined,
         _prepare_source(tool_a, rename=_TOOL_A_RENAMES),
-        how="left",
-        on="ticker",
     )
-    joined = joined.merge(
+    joined = _merge_source(
+        joined,
         _prepare_source(tool_b, rename=_TOOL_B_RENAMES),
-        how="left",
-        on="ticker",
     )
-    joined = joined.merge(
+    joined = _merge_source(
+        joined,
         _prepare_source(tool_c, rename=_TOOL_C_RENAMES),
-        how="left",
-        on="ticker",
     )
-    joined = joined.merge(
+    joined = _merge_source(
+        joined,
         _prepare_source(tool_d, rename=_TOOL_D_RENAMES),
-        how="left",
-        on="ticker",
     )
-    joined = joined.merge(
-        _prepare_source(options, rename=_OPTIONS_RENAMES),
-        how="left",
-        on="ticker",
-    )
-    joined = joined.merge(
+    joined = _merge_source(
+        joined,
         _prepare_source(manual_company, rename=_MANUAL_RENAMES),
-        how="left",
-        on="ticker",
+    )
+    joined = _merge_source(
+        joined,
+        _prepare_source(options, rename=_OPTIONS_RENAMES),
     )
     joined["has_usable_put_candidate"] = joined["ticker"].map(
         lambda ticker: _has_usable_slots(option_data.candidate_slots.get(str(ticker), []))
@@ -343,7 +340,11 @@ def _joined_frame(
     )
     _add_derived_ratios(joined)
     _ensure_configured_source_fields(joined, app_config.candidate_finder)
-    return joined.sort_values("ticker").reset_index(drop=True)
+    result = joined.sort_values("ticker").reset_index(drop=True)
+    warnings = _joined_frame_health_warnings(result, app_config.candidate_finder)
+    if warnings:
+        result.attrs["candidate_finder_join_warnings"] = tuple(warnings)
+    return result
 
 
 _TOOL_A_RENAMES = {
@@ -388,6 +389,54 @@ def _prepare_source(frame: pd.DataFrame, *, rename: dict[str, str]) -> pd.DataFr
     result["ticker"] = result["ticker"].astype(str).str.upper().str.strip()
     result = result[result["ticker"] != ""].drop_duplicates(subset=["ticker"], keep="last")
     return result.rename(columns=rename)
+
+
+def _merge_source(joined: pd.DataFrame, source: pd.DataFrame) -> pd.DataFrame:
+    duplicate_columns = [
+        column
+        for column in source.columns
+        if column != "ticker" and column in joined.columns
+    ]
+    if duplicate_columns:
+        source = source.drop(columns=duplicate_columns)
+    return joined.merge(source, how="left", on="ticker")
+
+
+def _joined_frame_warnings(frame: pd.DataFrame) -> tuple[str, ...]:
+    return tuple(frame.attrs.get("candidate_finder_join_warnings", ()) or ())
+
+
+def _joined_frame_health_warnings(
+    frame: pd.DataFrame,
+    config: CandidateFinderConfig,
+) -> list[str]:
+    warnings: list[str] = []
+    collision_columns = sorted(
+        column
+        for column in frame.columns
+        if column.endswith("_x") or column.endswith("_y")
+    )
+    if collision_columns:
+        warnings.append(
+            "Candidate Finder source join produced duplicate-suffix columns; "
+            "configured fields may be reading the wrong source: "
+            + ", ".join(collision_columns)
+            + "."
+        )
+
+    null_fields = []
+    for criterion in config.criteria:
+        column = criterion.source_field
+        if column in frame.columns and frame[column].isna().all():
+            null_fields.append(column)
+    if null_fields:
+        warnings.append(
+            "Candidate Finder configured source fields are entirely null after "
+            "source join: "
+            + ", ".join(sorted(set(null_fields)))
+            + "."
+        )
+    return warnings
 
 
 def _add_derived_ratios(frame: pd.DataFrame) -> None:
@@ -552,10 +601,10 @@ def _alignment(
     tool_d_ids = _unique_strings(tool_d, "snapshot_refresh_run_id")
     options_id = str(options_refresh_run_id or "").strip() or None
     source_ids: dict[str, tuple[str, ...]] = {
-        "Tool A": tool_a_ids,
-        "Tool B": tool_b_ids,
-        "Tool C": tool_c_ids,
-        "Tool D": tool_d_ids,
+        "Gold Sensitivity": tool_a_ids,
+        "Corporate Finance": tool_b_ids,
+        "Gold Downside": tool_c_ids,
+        "Corporate Resilience": tool_d_ids,
         "Options": (options_id,) if options_id else (),
     }
     missing = [name for name, values in source_ids.items() if not values]
@@ -713,7 +762,7 @@ def _manual_freshness_warning(
     if manual_timestamp <= tool_b_timestamp:
         return None
     return (
-        "Manual store was updated after the latest Tool B run; rerun Tool B "
+        "Manual store was updated after the latest Corporate Finance run; rerun Corporate Finance "
         "before relying on manual-dependent Candidate Finder criteria."
     )
 
@@ -788,8 +837,8 @@ def _spot_tool_d_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:
         return CandidateFinderSourceLoad(
             frame=_blank_tool_d_quality(frame),
             warning=(
-                "Tool D latest parquet does not record spot-gold provenance; "
-                "Candidate Finder treats Tool D quality rank as missing."
+                "Corporate Resilience latest parquet does not record spot-gold provenance; "
+                "Candidate Finder treats Corporate Resilience quality rank as missing."
             ),
         )
     gold_price = pd.to_numeric(frame["gold_price_used"], errors="coerce")
@@ -801,8 +850,8 @@ def _spot_tool_d_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:
     return CandidateFinderSourceLoad(
         frame=_blank_tool_d_quality(frame),
         warning=(
-            "Tool D latest parquet is not a spot-gold run; Candidate Finder "
-            "treats Tool D quality rank as missing until spot Tool D is rerun."
+            "Corporate Resilience latest parquet is not a spot-gold run; Candidate Finder "
+            "treats Corporate Resilience quality rank as missing until spot Corporate Resilience is rerun."
         ),
     )
 

@@ -14,17 +14,24 @@ from golden_vector.app.model_state import (
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.cli import run_candidate_finder, run_option_artifacts
+from golden_vector.contracts.option_artifacts import (
+    option_artifact_latest_path,
+    option_artifact_run_stamped_path,
+)
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
+from golden_vector.hedge.option_trading import OptionTradingOverviewData
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.screening.manual_store import upsert_company_input
 from golden_vector.serve.candidate_finder_data import (
     clear_candidate_finder_cache,
     load_candidate_finder_data,
     run_candidate_finder_screen,
+    _joined_frame,
 )
+from golden_vector.serve.option_trading_data import OptionTradingData
 from tests.helpers import build_test_paths
 
 
@@ -182,6 +189,98 @@ def test_candidate_finder_configured_source_fields_exist_in_joined_frame(tmp_pat
     assert missing == []
 
 
+def test_candidate_finder_join_drops_stale_option_duplicate_columns(tmp_path):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    _add_stale_option_duplicate_columns(paths)
+
+    data = load_candidate_finder_data(paths, app_config=app_config)
+    frame = data.frame.set_index("ticker")
+
+    assert not any(column.endswith(("_x", "_y")) for column in data.frame.columns)
+    assert frame.loc["AEM", "down_beta_core"] == pytest.approx(1.4)
+    assert frame.loc["AEM", "up_beta_core"] == pytest.approx(1.2)
+    assert frame.loc["AEM", "aisc_usd_per_oz"] == pytest.approx(1700.0)
+    assert frame.loc["AEM", "market_cap_musd"] == pytest.approx(1000.0)
+    assert frame.loc["AEM", "debt_to_mktcap"] == pytest.approx(0.20)
+    for source_field in _PREVIOUSLY_COLLIDED_SOURCE_FIELDS:
+        assert data.frame[source_field].notna().any(), source_field
+    assert not any("duplicate-suffix columns" in item for item in data.alignment.messages)
+
+
+def test_candidate_finder_presets_remain_eligible_with_stale_option_duplicates(tmp_path):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    _add_stale_option_duplicate_columns(paths)
+
+    data = load_candidate_finder_data(paths, app_config=app_config)
+    bearish = run_candidate_finder_screen(data, spec={"preset": "bearish_put"})
+    bullish = run_candidate_finder_screen(data, spec={"preset": "bullish_call"})
+    down_beta = run_candidate_finder_screen(
+        data,
+        spec={
+            "options_side": "puts",
+            "criteria": [{"id": "down_beta", "direction": "high_good"}],
+        },
+    )
+    up_beta = run_candidate_finder_screen(
+        data,
+        spec={
+            "options_side": "calls",
+            "criteria": [{"id": "up_beta", "direction": "high_good"}],
+        },
+    )
+
+    assert any(row.rank_eligible for row in bearish.ranking.rows)
+    assert any(row.rank_eligible for row in bullish.ranking.rows)
+    assert [row.ticker for row in down_beta.ranking.rows if row.rank_eligible]
+    assert [row.ticker for row in up_beta.ranking.rows if row.rank_eligible] == ["AEM"]
+
+
+def test_candidate_finder_join_warns_when_configured_field_is_all_null(tmp_path):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+
+    frame = _joined_frame(
+        app_config=app_config,
+        tool_a=pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "down_beta_core": pd.NA,
+                    "up_beta_core": 1.2,
+                }
+            ]
+        ),
+        tool_b=pd.DataFrame(),
+        tool_c=pd.DataFrame(),
+        tool_d=pd.DataFrame(),
+        options=pd.DataFrame({"ticker": ["AEM"]}),
+        manual_company=pd.DataFrame(),
+        option_data=OptionTradingData(
+            overview=OptionTradingOverviewData(rows=()),
+            candidate_grids={},
+            call_candidate_grids={},
+            candidate_slots={},
+            call_candidate_slots={},
+            options_features=pd.DataFrame(),
+            tool_a=pd.DataFrame(),
+            tool_b=pd.DataFrame(),
+            raw_options_by_ticker={},
+            risk_free_rate=0.0,
+            risk_free_rate_is_fallback=False,
+            cache_key=None,
+        ),
+    )
+
+    warnings = tuple(frame.attrs.get("candidate_finder_join_warnings", ()))
+    assert any("down_beta_core" in warning for warning in warnings)
+
+
 def test_candidate_finder_data_handles_missing_sources(tmp_path):
     clear_candidate_finder_cache()
     paths = build_test_paths(tmp_path)
@@ -211,8 +310,8 @@ def test_candidate_finder_data_warns_when_tool_c_or_tool_d_outputs_are_missing(t
 
     assert data.alignment.status == "UNKNOWN"
     assert data.alignment.message is not None
-    assert "Tool C" in data.alignment.message
-    assert "Tool D" in data.alignment.message
+    assert "Gold Downside" in data.alignment.message
+    assert "Corporate Resilience" in data.alignment.message
     assert data.frame["tool_c_downside_rank"].isna().all()
     assert data.frame["tool_d_quality_rank"].isna().all()
 
@@ -269,7 +368,7 @@ def test_candidate_finder_data_cache_ignores_corrupt_latest_alias_without_manife
     second = load_candidate_finder_data(paths, app_config=app_config)
 
     assert first.cache_key != second.cache_key
-    assert any("Tool A latest parquet could not be read" in item for item in second.alignment.messages)
+    assert any("Gold Sensitivity latest parquet could not be read" in item for item in second.alignment.messages)
 
 
 def test_candidate_finder_data_ignores_corrupt_latest_alias_with_manifest(tmp_path):
@@ -283,7 +382,7 @@ def test_candidate_finder_data_ignores_corrupt_latest_alias_with_manifest(tmp_pa
     screen = run_candidate_finder_screen(data, spec={"preset": "bearish_put"})
 
     assert data.alignment.status == "OK"
-    assert not any("Tool A latest parquet could not be read" in item for item in screen.warnings)
+    assert not any("Gold Sensitivity latest parquet could not be read" in item for item in screen.warnings)
 
 
 def test_candidate_finder_screen_filters_peer_pool_before_ranking(tmp_path):
@@ -349,8 +448,8 @@ def test_candidate_finder_data_warns_on_mixed_refreshes(tmp_path):
 
     assert data.alignment.status == "WARN"
     assert data.alignment.message is not None
-    assert "Tool A" in data.alignment.message
-    assert "Tool B" in data.alignment.message
+    assert "Gold Sensitivity" in data.alignment.message
+    assert "Corporate Finance" in data.alignment.message
     assert "Options" in data.alignment.message
 
 
@@ -615,6 +714,54 @@ def _write_candidate_finder_inputs(
     _publish_option_artifacts(paths)
     if tool_b_source_run_id is not None:
         upsert_company_input(paths, ticker="AEM", values={"net_debt_musd": 201.0})
+
+
+_PREVIOUSLY_COLLIDED_SOURCE_FIELDS = (
+    "down_beta_core",
+    "up_beta_core",
+    "downside_volatility_52w",
+    "confidence_score",
+    "aisc_usd_per_oz",
+    "debt_to_mktcap",
+    "ebitda_to_mktcap",
+    "revenue_to_mktcap",
+    "fcf_yield",
+    "best_upside_pct",
+    "market_cap_musd",
+)
+
+
+def _add_stale_option_duplicate_columns(paths) -> None:
+    path = option_artifact_latest_path(paths, "candidate_finder_inputs")
+    frame = pd.read_parquet(path)
+    duplicates = {
+        "down_beta_core": -999.0,
+        "up_beta_core": -999.0,
+        "downside_volatility_52w": -999.0,
+        "confidence_score": -999.0,
+        "aisc_usd_per_oz": -999.0,
+        "market_cap_musd": -999.0,
+        "forward_ebitda_musd": -999.0,
+        "forward_revenue_musd": -999.0,
+        "fcf_yield": -999.0,
+        "best_upside_pct": -999.0,
+    }
+    for column, value in duplicates.items():
+        frame[column] = value
+    source_run_id = str(frame["source_run_id"].dropna().iloc[0])
+    run_stamped_path = option_artifact_run_stamped_path(
+        paths,
+        "candidate_finder_inputs",
+        source_run_id,
+    )
+    frame.to_parquet(path, index=False)
+    frame.to_parquet(run_stamped_path, index=False)
+    write_current_model_state_manifest(
+        paths=paths,
+        config_hash="hash",
+        parent_refresh_id="parent-refresh",
+    )
+    clear_candidate_finder_cache()
 
 
 def _write_options(paths, *, refresh_run_id: str) -> None:

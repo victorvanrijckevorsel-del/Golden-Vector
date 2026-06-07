@@ -82,7 +82,7 @@ def _render_option_trading_overview_page(
             column_labels={
                 "put_status": "Put Candidates",
                 "call_status": "Call Candidates",
-                "confidence": "Tool A Confidence",
+                "confidence": "Gold Sensitivity Confidence",
             },
         )
     )
@@ -96,7 +96,7 @@ def _render_option_trading_overview_page(
         "<th data-col-name=\"stock_price\" data-sort-numeric>Stock Price</th>"
         "<th data-col-name=\"down_beta\" data-sort-numeric>Down Beta</th>"
         "<th data-col-name=\"up_beta\" data-sort-numeric>Up Beta</th>"
-        "<th data-col-name=\"confidence\">Tool A Confidence</th>"
+        "<th data-col-name=\"confidence\">Gold Sensitivity Confidence</th>"
         "<th data-col-name=\"iv\" data-sort-numeric>IV %ile</th>"
         "<th data-col-name=\"put_status\">Put Status</th>"
         "<th data-col-name=\"call_status\">Call Status</th>"
