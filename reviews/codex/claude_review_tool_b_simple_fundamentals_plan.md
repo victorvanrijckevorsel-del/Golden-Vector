@@ -4,7 +4,33 @@
 **Plan:** `reviews/codex/codex_tool_b_simple_fundamentals_plan.md`
 **Grade: READY WITH MINOR CHANGES.**
 
-The product direction is right, the dependency map is **accurate** (I verified the key claims), the approach reuses existing logic (no duplication), and downstream coverage is comprehensive. The "minor changes" are mostly *decisions the plan explicitly defers to me* plus hardening one risk we just got burned by. The spine is sound — build it after the four items below are settled.
+The product direction is right, the dependency map is **accurate** (I verified the key claims), the approach reuses existing logic (no duplication), and downstream coverage is comprehensive. The "minor changes" are mostly *decisions the plan explicitly defers to me* plus hardening one risk we just got burned by. The spine is sound — build it after the items below are settled.
+
+---
+
+## Emanuel's added direction (incorporate into the plan — these are requirements, not options)
+
+### A) Industry-standard ratios only — drop the home-grown ones
+Emanuel's rule: **show ratios the industry actually uses, not ratios we invented.** This sharpens the plan's "keep/persist" list, and it *contradicts* part of the plan:
+- **Drop `debt_to_mktcap`, `ebitda_to_mktcap`, `revenue_to_mktcap`, `netincome_to_mktcap`.** Codex's plan proposes to persist these four, but they are **not standard headline ratios** — they're home-grown "÷ market cap" inventions. Use the recognized equivalents already in the keep list instead: **Net Debt / EBITDA** (the standard leverage metric — `debt_to_mktcap` is not), **EV/EBITDA**, **forward P/E** (the standard earnings multiple — `netincome_to_mktcap` is just its inverse), and **EV/Sales** if a revenue multiple is wanted. Candidate Finder should rank these standard ratios, not the `_to_mktcap` ones.
+- **Forward estimates** (`forward_ebitda_musd`, `forward_net_income_musd`, `sustainable_fcf_musd`) are standard *concepts* computed with simplified in-house formulas. Keep them, but (a) use a transparent, defensible formula, (b) **label them as estimates at the stated gold price** ("EV/EBITDA — estimated at $X/oz"), and (c) prefer reported/trailing figures where the data exists. Never present a home-grown estimate as a precise fact.
+- **Net surviving set should be the metrics a mining analyst recognizes on sight:** AISC, cash margin/oz, margin %, EV/EBITDA, forward P/E, FCF yield, Net Debt/EBITDA, reserve life, jurisdiction tier — plus the raw facts (share price, market cap, production, net debt). That's it.
+
+### B) Remove the Combined tool entirely
+Emanuel: the Combined view is full of internal blended calculations that aren't simple to explain, and the Candidate Finder does the same job more powerfully. **I agree — and the code supports it:**
+- **Combined is a leaf.** Only the `/` home page consumes `combined_score`/`combined_verdict` (`serve/overview_combined.py`). Tool C, Tool D, and the Candidate Finder read the tool outputs directly, **not** Combined. So removal has a small, contained blast radius and can't break the tools you use.
+- It's the opaque `average(Tool A score, Tool B score)` (`combined/ranking.py:compute_combined_score`) — the same composite flagged in #2 below. **Removing Combined resolves the Combined-score question outright** (there's no average left to relabel).
+- The Candidate Finder is a strict superset (all tools, transparent user-controlled weights).
+
+**Removal scope:** delete the `combined/` module (join, pipeline, ranking), `persist_combined_outputs`, the combined pipeline step + parquet + manifest entry, combined contracts, and combined tests. Note: the combined **verdict** uses `screening_verdict` + `tool_a_score` (not `tool_b_score`), so nothing in the tools depends on the removed score.
+
+**Home-page replacement (the one thing Combined offered = a zero-setup default view):** recommend making the **Candidate Finder the home page** (`/`), with a sensible **default preset** so a non-expert gets an instant useful ranking out of the box; move the refresh button + model-state banner there. The **"High Conviction / Dual Pass" verdict** is the only unique thing Combined produced — recommend dropping it unless preserved as a Finder preset (screening_verdict = STRONG + high gold beta).
+
+**Two decisions for Emanuel:** (1) home = the Candidate Finder itself, or a light dashboard that leads into it? (2) keep "Dual Pass / High Conviction" as a Finder preset, or drop it?
+
+*Sequencing note:* Combined removal pairs naturally with this Tool B work (both turn on the opaque-composite question) but is a distinct workstream — suggest it as its own checkpoint so the Tool B migration and the Combined teardown can be tested independently.
+
+---
 
 ## Claims I verified (all true)
 - **`best_upside_pct` is exactly 30% of `tool_b_score`** — `verdicts.py:compute_tool_b_score` = `100*(0.7*base + 0.3*upside)`. The hidden-valuation-drives-ranking concern is real.
@@ -43,4 +69,10 @@ Verified: `aisc` and `leverage` default to `high_good` in `candidate_finder.yaml
 Accurate dependency map; reuse of `evaluate_layer1`; comprehensive downstream coverage (Candidate Finder, Tool D, Combined, contracts, tests); guards-before-delete ordering; config removed last; the size-bucket extraction; and good self-identified risks. The schema/`rg`-contract test that fails if any target field returns is exactly right.
 
 ## Bottom line
-**READY WITH MINOR CHANGES.** Settle the four items before building: (2) lock in the Combined-score decision now — I recommend dropping the average and showing two dimensions; (1) check-score always with its breakdown; (5) fail-loud stale-artifact handling + a mandatory post-migration refresh; (6) make AISC/leverage default to the quality direction with explicit bearish overrides. Everything else is solid and accurate — this is a good plan that genuinely advances Emanuel's "simple, trustworthy numbers" goal, *as long as it doesn't leave an opaque composite behind in the Combined layer.*
+**READY WITH MINOR CHANGES** for the Tool B core, **plus two added requirements** from Emanuel (sections A & B above):
+- **A) Industry-standard ratios only** — drop the home-grown `*_to_mktcap` ratios; keep only metrics a mining analyst recognizes (AISC, cash margin/oz, EV/EBITDA, forward P/E, FCF yield, Net Debt/EBITDA, reserve life), with forward estimates clearly labeled as estimates at the stated gold price.
+- **B) Remove the Combined tool** — it's a leaf (only the home page uses it), it's the opaque blended average, and the Candidate Finder supersedes it. This **resolves** the Combined-score question (#2) outright. Make the Candidate Finder the home page with a sensible default preset.
+
+Then the original items: (1) check-score always shown with its per-check breakdown; (5) fail-loud stale-artifact handling + a mandatory post-migration refresh; (6) AISC/leverage default to the quality direction with explicit bearish overrides.
+
+Everything else is solid and accurate. With A + B folded in, this genuinely delivers Emanuel's goal — simple, explainable, **industry-standard** numbers — and removes the last opaque composite instead of relocating it.
