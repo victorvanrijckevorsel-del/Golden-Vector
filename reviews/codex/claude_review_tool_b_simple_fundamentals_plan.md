@@ -24,9 +24,23 @@ Emanuel: the Combined view is full of internal blended calculations that aren't 
 
 **Removal scope:** delete the `combined/` module (join, pipeline, ranking), `persist_combined_outputs`, the combined pipeline step + parquet + manifest entry, combined contracts, and combined tests. Note: the combined **verdict** uses `screening_verdict` + `tool_a_score` (not `tool_b_score`), so nothing in the tools depends on the removed score.
 
-**Home-page replacement (the one thing Combined offered = a zero-setup default view):** recommend making the **Candidate Finder the home page** (`/`), with a sensible **default preset** so a non-expert gets an instant useful ranking out of the box; move the refresh button + model-state banner there. The **"High Conviction / Dual Pass" verdict** is the only unique thing Combined produced — recommend dropping it unless preserved as a Finder preset (screening_verdict = STRONG + high gold beta).
+**Home-page replacement — DECIDED (Emanuel):** the home page (`/`) **becomes the Candidate Finder**, defaulting to a **"Strong Corporate Finance (good to buy)" preset** — so opening the app immediately surfaces fundamentally strong, reasonably-valued miners that are good to own, with zero setup. Move the refresh button + model-state banner onto this home view.
 
-**Two decisions for Emanuel:** (1) home = the Candidate Finder itself, or a light dashboard that leads into it? (2) keep "Dual Pass / High Conviction" as a Finder preset, or drop it?
+Proposed default preset (all **industry-standard** fields from the Tool B change; `options_side: none` so it ranks the whole universe, not just names with usable options; weights tunable, start roughly equal):
+
+| Criterion | Direction | Why it signals "good to buy" |
+|---|---|---|
+| `fundamental_check_score` | high_good | more of the explicit checks passed |
+| AISC | low_good | lower all-in cost = stronger producer |
+| Net Debt / EBITDA | low_good | less leverage = more resilient |
+| FCF yield | high_good | more cash generation |
+| Margin % | high_good | more profitable at the gold assumption |
+| EV/EBITDA | low_good | better value |
+| Forward P/E | low_good | better value |
+
+Optional add: reserve life (high_good, durability). The user can re-weight/add criteria or switch to a bearish/options view from the same screen. **Depends on the Tool B migration landing first** (these criteria reference the new persisted fundamental fields).
+
+**Still open (decision #2):** keep the "Dual Pass / High Conviction" classification as a separate Finder preset (screening_verdict = STRONG + high gold beta), or drop it? (Not blocking — the home preset above is the priority.)
 
 *Sequencing note:* Combined removal pairs naturally with this Tool B work (both turn on the opaque-composite question) but is a distinct workstream — suggest it as its own checkpoint so the Tool B migration and the Combined teardown can be tested independently.
 
