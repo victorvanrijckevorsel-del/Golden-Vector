@@ -28,3 +28,13 @@ data/manual/holdings/
 .playwright-mcp/
 _pdf_dump.txt
 body.txt
+
+# Never commit sensitive local spreadsheets, source docs, research, or scratch screenshots
+*.xlsx
+*.xlsm
+*.xls
+*.docx
+*.pdf
+*.png
+CODE_REVIEW.md
+SESSION_HANDOFF.md
