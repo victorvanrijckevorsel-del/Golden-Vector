@@ -8,6 +8,20 @@ Corporate Resilience answers "if gold **falls**, who survives and who breaks?" B
 
 Good news: Tool D is **already a function of the gold price** — `compute_tool_d_outputs(gold_price=G)` recomputes Tool B in-memory at G and derives every "at G" figure. We just don't expose G.
 
+## 1b. The distinct angle (Emanuel: NOT a second Corporate Finance tab)
+A gold slider alone is *not* a new angle — it's the same fundamentals at a different price, which makes Tool D a clone of Corporate Finance. The two must answer **different questions**:
+- **Corporate Finance (Tool B):** "Is this a good, well-run, fairly-valued company **right now**?" — a *static fundamentals scorecard* at today's gold.
+- **Corporate Resilience (Tool D):** "**How far can gold fall before this company breaks, and how fast does it deteriorate on the way down?**" — *survival thresholds + gold-sensitivity*, which Tool B structurally cannot express.
+
+**Tool D's identity = survival distance + fragility slope, expressed as gold-price thresholds.** Its headline outputs are things Corporate Finance has no concept of:
+1. **Breakeven gold** = gold where margin = 0 (`= AISC`). "Survives down to $1,130." A *survival threshold*.
+2. **FCF-breakeven gold** = gold where sustainable FCF turns negative (includes sustaining capex) — `AISC + sustaining_capex·1e6/production`. The point they start *burning cash*.
+3. **Debt-stress gold** = gold where Net Debt/EBITDA breaches a danger level (e.g. 4×) or interest cover fails. A *fragility threshold*.
+4. **Cost-curve position** = AISC percentile across the universe. In a gold crash **the high-cost miners die first** — the single best resilience differentiator (relative, not absolute).
+5. **Gold-sensitivity of EBITDA/FCF** = the **slope**: % EBITDA change per % gold change. A high-cost miner's EBITDA collapses far faster — that amplification *is* fragility.
+
+The **Resilience Rank** is built from **survival distance + cost-curve position + deterioration slope + balance-sheet cushion** — none of which is a Corporate Finance metric. The current-state ratios that overlap (EV/EBITDA, FCF yield, current margin) are **demoted to context**; they belong in Corporate Finance.
+
 ## 2. The metrics (and their formulas — now shown in the UI)
 Already added to the overview as hover tooltips; this plan keeps them visible everywhere:
 - **Margin/oz** = `Gold price − AISC`
@@ -16,16 +30,25 @@ Already added to the overview as hover tooltips; this plan keeps them visible ev
 - **Stressed Leverage** = `Net Debt / EBITDA`, EBITDA at G (negative = net cash)
 - **EV/EBITDA at G**, **FCF yield**
 
-## 3. What to ADD
-1. **Gold-price stress control (the headline feature).** A gold-price input + preset scenario buttons — **Spot**, **−15%**, **−25%**, **−35%**, and a historical anchor (**~$1,830 / ~$1,050**) — plus a custom value. Recompute all "at G" figures for the scenario. **Mirror Tool B's override pattern exactly:** recompute in-memory from the snapshot + manual store for the what-if; **leave the persisted daily parquet untouched** (it stays at spot). This is the established, acceptable request-time *scenario* compute — clearly separated from the persisted view.
-2. **Breakeven gold, front and center.** "Survives down to **$1,130** gold" is the single most intuitive resilience number — more so than Headroom %. Promote `breaks_even_at_gold_usd` to a prominent column.
-3. **Spot-vs-stressed, side by side.** For the chosen stress, show each metric at **spot** and **at G** with the change, so the user *sees* resilience erode (we already compute `ebitda_pct_change_vs_spot`). The delta is the point.
-4. **"Who flips" highlight.** Flag names that are fine at spot but turn **margin-negative or over-levered at the stressed gold** — the actual decision: *which names are secretly fragile.* (Reuse the existing tag logic: `margin_negative_at_G`, `thin_margin_at_G`, `leverage_undefined_at_G`.)
+## 3. What to ADD — the survival/sensitivity columns ARE the product
+The page leads with the resilience-unique outputs (§1b), not the fundamentals:
+1. **Breakeven gold** (`= AISC`) and **FCF-breakeven gold** (`AISC + sustaining_capex·1e6/production`) — the two survival lines. "Makes money down to **$1,130**; burns cash below **$1,460**." These are the headline columns.
+2. **Cost-curve position** — AISC percentile across the universe, shown as a visible rank/band (lowest-cost = survives the deepest crash). The primary differentiator.
+3. **Gold-sensitivity (fragility slope)** — % EBITDA (and FCF) change per −10% gold, computed from the model (generalize `ebitda_pct_change_vs_spot` to an elasticity). High = fragile.
+4. **Debt-stress gold** — the gold price where Net Debt/EBITDA crosses a danger band (config threshold) or interest cover fails. "Over-levers below **$2,400**."
+5. **Resilience Rank** — rebuilt transparently from {survival distance to breakeven, cost-curve position, fragility slope, balance-sheet cushion / net-cash}, with its components shown (not a re-blend of EV/EBITDA & FCF yield).
+
+### How you explore it: the gold-price stress control
+A gold-price input + preset buttons — **Spot**, **−15%**, **−25%**, **−35%**, historical anchors (**~$1,830 / ~$1,050**) — + custom. Moving it shows **where each name crosses its thresholds** and recomputes the slope view. **Mirror Tool B's override pattern:** recompute in-memory for the what-if; leave the persisted spot parquet untouched. The slider is the *lens*, the survival thresholds are the *product*.
+- **Spot-vs-stress delta** on the key metrics so the erosion is visible.
+- **"Who flips" map** — names fine at spot but margin-negative / over-levered at the chosen G (the decision: *which names are secretly fragile*). Reuse `margin_negative_at_G`, `thin_margin_at_G`, `leverage_undefined_at_G`.
+- Optional small **survival curve** per name: a metric vs gold from spot down, with the breakeven crossing marked.
 
 ## 4. What to REMOVE / FIX
-1. **Make "Quality Score" transparent.** It's an opaque composite — literally the **average of three percentile ranks** (Headroom, Stressed Leverage, EV/EBITDA, oriented; `_add_quality_scores`). Same pattern we removed from Tool B. **Keep the rank for sorting, but show the three component ranks** (or a "why this rank" breakdown) so the user sees *what drives it*, not just a blended number. Don't present it as a standalone truth.
-2. **Trim Tags** to the resilience-relevant flags (`margin_negative_at_G`, `thin_margin_at_G`, `missing_aisc/production/debt`); drop the noisy `screen_out_context`.
-3. **Formulas everywhere** — the overview now has header tooltips; mirror them on the ticker detail page's Corporate Resilience panel.
+1. **De-duplicate Corporate Finance (the whole point).** Demote the overlapping current-state ratios — **EV/EBITDA, FCF yield, current margin/oz** — to secondary context (or drop from the main table); they're Corporate Finance's job. The Corporate Resilience table should *lead* with the survival/sensitivity columns (§3), so the two tabs read as clearly different tools, not twins.
+2. **Rebuild & expose the rank as a Resilience Rank.** Today's `tool_d_quality_score` is the **average of three percentile ranks (Headroom, Stressed Leverage, EV/EBITDA)** — half of which is a valuation ratio, not resilience. Rebuild it from {breakeven distance, cost-curve position, fragility slope, balance-sheet cushion}, and **show its components** (the Tool B transparency lesson) — never a standalone blended number.
+3. **Trim Tags** to the resilience-relevant flags (`margin_negative_at_G`, `thin_margin_at_G`, `missing_aisc/production/debt`); drop the noisy `screen_out_context`.
+4. **Formulas everywhere** — the overview now has header tooltips; mirror them on the ticker detail page's Corporate Resilience panel.
 
 ## 5. Backend / architecture
 - The gold-stress recompute is the **Tool B scenario-override pattern** (request-time, in-memory, persisted data untouched) — already precedented and accepted; not new request-path crunching of the persisted artifact.
@@ -38,11 +61,14 @@ Already added to the overview as hover tooltips; this plan keeps them visible ev
 - Keep rows compact (the Tool B lesson — no inline essays; use tooltips/click-to-expand).
 
 ## 7. Tests
-- `compute_tool_d_outputs` at several G (spot, −25%, a value below some names' AISC) produces correct Margin/Headroom/Breakeven/Stressed-Leverage and flips the right names to margin-negative.
+- **Breakeven gold == AISC**; **FCF-breakeven gold == AISC + sustaining_capex·1e6/production** (and ≥ breakeven gold).
+- **Cost-curve position** = AISC percentile is correct and orients low-cost = most resilient.
+- **Fragility slope**: a high-AISC name shows a steeper EBITDA/FCF drop per −10% gold than a low-AISC name.
+- **Debt-stress gold**: the gold price where Net Debt/EBITDA crosses the danger band is found correctly (and `N/A` for net-cash names).
+- `compute_tool_d_outputs` at several G (spot, −25%, below some names' AISC) flips the right names to margin-negative / over-levered.
 - The override recompute leaves the persisted parquet unchanged (scenario-only).
-- Quality Score equals the mean of its component percentiles (pin the transparency).
-- Breakeven gold == AISC.
-- Page renders the control + scenario recompute + compact rows.
+- Resilience Rank equals the mean of its (survival/cost/slope/cushion) component percentiles — transparency pinned.
+- Page renders the gold control + scenario recompute + compact rows; the table leads with survival columns, not the Corporate Finance ratios.
 
 ## 8. Self-review
-This makes Corporate Resilience do the one thing it's for — **stress gold down and see who breaks** — by exposing the gold price the model already takes, surfacing the most intuitive number (breakeven gold), showing the spot-vs-stress delta, and flagging who flips. It also applies Emanuel's transparency rule (formulas visible; Quality Score shown by its components, not as a black box), reuses Tool B's accepted override pattern (no new architecture risk), and stays compact. Main judgment call: the default scenario presets and the breakeven/leverage thresholds for the "flips" flag — propose defaults, tune on real data. Build after option-signals Milestone 1 to avoid `config_models.py` collisions.
+The reframe is the point: Corporate Resilience now answers a question Corporate Finance **can't** — *how far can gold fall before this miner breaks, and how fast does it deteriorate* — via survival thresholds (breakeven / FCF-breakeven / debt-stress gold), cost-curve position, and the fragility slope, with the gold slider as the lens. The overlapping current-state ratios are demoted so the two tabs are clearly different tools, not twins. It keeps Emanuel's transparency rule (formulas visible; the rank shown by its components), reuses Tool B's accepted override pattern (no new architecture risk), and stays compact. Judgment calls: the default scenario presets, the debt-danger band, and the slope normalization (per −10% gold) — propose defaults, tune on real data. Build after option-signals Milestone 1 to avoid `config_models.py` collisions.
