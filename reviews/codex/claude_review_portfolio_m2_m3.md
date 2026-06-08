@@ -1,0 +1,33 @@
+# Claude review — Portfolio M2 + M3 (foundation + core analytics)
+
+**Reviewer:** Claude Code (Opus 4.8), first-hand — read every new/changed M2+M3 file (benchmark betas, reconciliation, the hardened valuation, the analytics, the pipeline integration, the history-pence path, the serve rendering) and ran the suite.
+**Scope:** M2 (history-path pence fix, `benchmark_betas`, two-stage reconciliation scaffold, valuation hardening + the M1 `_pct`→`_fraction` schema bump) and M3 (core analytics: what-matters + data-issues panels, composition/coverage, concentration, gold-drop loss + beta-contribution, effective-exposure buckets, resilience overlay).
+**Verdict: APPROVE — excellent, faithful M2+M3.** All four M1 findings (F1–F4) are resolved, the math is correct, the architecture stays backend-computed / serve-reads-only, and the honesty discipline holds. Two minor items below; **neither blocks** M4.
+
+## M1 findings — all resolved
+- **F1 (rename):** `position_weight_pct`→`position_weight_fraction`, `pnl_pct_local`→`pnl_fraction_local`; analytics adds self-describing `*_fraction` columns. Schema bump done before downstream consumers. ✓
+- **F2 (hedge-readiness 403 note):** README now documents `/hedge-readiness` (+ `.md`) return a calm 403 when portfolio is disabled. ✓
+- **F3 (per-edit manifest republish):** kept, now with a comment stating it's intentional (rebuilds from disk, no Tool A/B/C/D recompute, no live data). ✓
+- **F4 (UI currency hint):** the add form shows "M1 records each buy in the selected ticker's configured currency." ✓
+
+## Verified first-hand (M2)
+- **Benchmark betas reuse Tool A, no clone.** `benchmark_betas.py` calls the shared `build_structural_history_frames` + `compute_volatility_diagnostics` + `build_tool_a_outputs_from_metrics` over GDX/GDXJ — the **same estimator + weekly calendar as Tool A** (`method_version="tool_a_structural_weekly_v1"`). Reads **cached** benchmark histories (no new fetch), one row per benchmark, **fail-closed** statuses (`MISSING_HISTORY`/`MISSING_GOLD_HISTORY`/`UNAVAILABLE`/`LOW_CONFIDENCE`/`OK`; OK only for HIGH/MEDIUM), and **does not** add GDX/GDXJ to `universe.yaml`. Persisted + manifest-registered.
+- **History pence fix done right + cheaply.** `fetch_equities` now passes `feed_currency` into `standardize_equity_history`, which applies `price_unit_adjustment` (the shared `price_units.py` helper) to all OHLC and records `feed_currency`/`price_scale_factor`/`minor_unit_adjusted`. To avoid a second Yahoo call per ticker (the cost Codex flagged), `YahooClient.fetch_fast_info` is now **cached** (lock-guarded) — so the snapshot, history, and option paths share one fast-info read. **One source of pence truth**, divided once. Test: `test_standardize_equity_history_converts_lse_pence_to_pounds`.
+- **Valuation boundary hardened.** Split into `value_major_unit_price` (already-normalized; used by the pipeline) vs `value_raw_feed_quote` (raw vendor, requires `feed_currency`). Double pence-adjustment is now prevented **by construction**, not just convention.
+- **Reconciliation is a scaffold, not a half-importer.** A backend `portfolio_reconciliation` artifact with two stages (`broker_totals`, `gv_price_drift`), both `MANUAL_ENTRY_NO_BROKER_*`, `is_hard_gate=False`, recording the future tolerances (max($2, 5bps)). No broker-file parsing. Exactly the M2d shape.
+
+## Verified first-hand (M3)
+- **Gold-drop loss + beta-contribution math is correct.** `pnl = value_usd × down_beta × (−0.10)`, `loss = max(−pnl,0)`; `beta_contribution_fraction = position_loss / total_loss` — the actionable "which names drive the downside" ranking. (`analytics.py:130-136,55-61`)
+- **Honest exposure buckets — no fabricated beta.** Four buckets: **Measured beta** (publishable: beta present + score-eligible + HIGH/MEDIUM confidence), **Low-confidence beta**, **Missing beta**, **Missing price**. The loss is summed over Measured only; the rest are excluded **and surfaced** as data issues, with `tool_a_coverage_fraction` shown next to the loss so a partial number reads as partial. No blanket "default miner beta" is invented (cleaner than the v4 sketch, and honest now that all 11 holdings are in the universe).
+- **Tool D resilience overlay + data-issues collector** present; concentration as `largest_position_weight_fraction` + `top3_…`; equity-weight vs NAV-weight both computed.
+- **Backend-computed, serve-reads-only.** `enrich_portfolio_analytics` runs in the pipeline over persisted Tool A/Tool D artifacts (manifest-resolved) + benchmark/reconciliation frames; the serve page only reads `load_portfolio_data` and renders (Data-issues panel, exposure buckets, what-matters numbers: NAV / modeled −10% loss / beta coverage / largest position; positions table with per-name gold-down P&L, beta-contribution, resilience). No compute in serve.
+
+## Findings (minor — neither blocks)
+**F5 — NOTE: `cash_value = 0.0` is hardcoded (`analytics.py:187`), so NAV currently = invested stock value.** This is the right scaffold for the manual-only phase (M1 has no cash input; real cash arrives with the IBKR import milestone), and the structure is correct (`equity_value_usd`/`cash_value_usd`/`nav_value_usd`/`cash_weight_fraction` columns, equity-vs-NAV weights both computed). But two consequences worth a conscious decision: (a) the "NAV" headline currently **excludes any broker cash** Emanuel actually holds — add a small label/footnote ("NAV = entered stock positions; broker cash added at import") so it isn't read as total account value; (b) with cash=0, `equity_weight_fraction == nav_weight_fraction`, so the distinction is a no-op until cash exists.
+
+**F6 — NIT: redundant weight columns.** `position_weight_fraction` (M1: value/Σvalue) coexists with `nav_weight_fraction`/`equity_weight_fraction` (M3). They're equal while cash=0. Consolidate to one, or document which the UI consumes, to avoid drift later.
+
+## Bottom line
+A careful, faithful M2+M3: benchmark betas reuse the real Tool A estimator (no clone) and fail closed; the pence fix is now end-to-end (snapshot **and** history) through one shared helper, with a fast-info cache so it's free; the valuation API makes double-conversion impossible; the reconciliation scaffold is honest backend-only; and the analytics are correct, honestly bucketed, coverage-aware, and computed in the backend with the serve layer reading only. All M1 findings closed. Address **F5** (a cash/NAV label + a conscious scope note) and **F6** (the nit) when convenient, then proceed to **M4** (the GDX hedge-sizing card consuming the new `benchmark_betas`, correlation + paired-exposures table, the value-over-time chart, reconciliation CSV).
+
+_Full suite: **826 passed** (up from 817 at M1), zero regressions._
