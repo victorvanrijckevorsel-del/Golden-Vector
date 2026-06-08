@@ -73,6 +73,20 @@ def test_normalize_equity_history_converts_non_usd_values():
     assert normalized.loc[0, "normalization_status"] == "OK"
 
 
+def test_normalize_equity_history_carries_price_unit_audit_fields():
+    frame = _equity_frame(ticker="PAF.L", currency="GBP", date="2026-01-03")
+    frame["feed_currency"] = "GBp"
+    frame["price_scale_factor"] = 0.01
+    frame["minor_unit_adjusted"] = True
+    fx_history = _fx_frame(currency="GBP", date="2026-01-03", rate=1.25)
+
+    normalized = normalize_equity_history_to_usd(frame=frame, fx_history=fx_history)
+
+    assert normalized.loc[0, "feed_currency"] == "GBp"
+    assert normalized.loc[0, "price_scale_factor"] == pytest.approx(0.01)
+    assert bool(normalized.loc[0, "minor_unit_adjusted"]) is True
+
+
 def test_normalize_equity_history_falls_back_to_close_when_adj_close_missing():
     frame = _equity_frame(ticker="DPM.TO", currency="CAD", date="2026-01-03")
     frame.loc[0, "adj_close_local"] = None

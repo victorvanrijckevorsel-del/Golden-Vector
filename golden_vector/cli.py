@@ -87,9 +87,11 @@ from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
 from golden_vector.ingestion.yahoo_client import YahooClient
 from golden_vector.hedge.report import write_hedge_readiness_report
+from golden_vector.contracts.config_models import AppConfig
 from golden_vector.model.pipeline import execute_tool_a_profile_pipeline
 from golden_vector.model.tool_c import ToolCExecutionInputs, compute_tool_c_outputs
 from golden_vector.model.tool_d import ToolDExecutionInputs, compute_tool_d_outputs
+from golden_vector.portfolio.pipeline import build_portfolio_artifacts
 from golden_vector.screening.manual_data import (
     bootstrap_manual_screening_data,
     load_manual_screening_data,
@@ -2917,7 +2919,9 @@ def _run_refresh_unlocked(
     the individual tool commands.
     """
 
-    total_steps = 6 if not skip_tool_b else 3
+    loaded_config_for_refresh = load_app_config(paths)
+    portfolio_enabled = loaded_config_for_refresh.app.portfolio.enabled
+    total_steps = (7 if portfolio_enabled else 6) if not skip_tool_b else (4 if portfolio_enabled else 3)
     stage_timings: dict[str, dict[str, object]] = {}
     parent_refresh_id = _new_parent_refresh_id()
 
@@ -2970,12 +2974,30 @@ def _run_refresh_unlocked(
         return fault_exit
 
     if skip_tool_b:
+        if portfolio_enabled:
+            print()
+            print(f"== Step 3/{total_steps}: portfolio ==")
+            started_at = perf_counter()
+            portfolio_exit = _run_portfolio_refresh_step(
+                paths,
+                app_config=loaded_config_for_refresh.app,
+                parent_refresh_id=parent_refresh_id,
+                config_hash=loaded_config_for_refresh.config_hash,
+            )
+            record_step("portfolio", started_at, portfolio_exit)
+            if portfolio_exit != 0:
+                print()
+                print("portfolio failed. Model-state manifest was not published.")
+                run_status(paths)
+                return portfolio_exit
+            fault_exit = injected_fault_after("portfolio")
+            if fault_exit is not None:
+                return fault_exit
         print()
-        print("== Step 3/3: tool-b/tool-c/tool-d SKIPPED (--skip-tool-b) ==")
-        loaded_config = load_app_config(paths)
+        print(f"== Step {total_steps}/{total_steps}: tool-b/tool-c/tool-d SKIPPED (--skip-tool-b) ==")
         model_state = write_current_model_state_manifest(
             paths=paths,
-            config_hash=loaded_config.config_hash,
+            config_hash=loaded_config_for_refresh.config_hash,
             parent_refresh_id=parent_refresh_id,
             stage_timings=stage_timings,
         )
@@ -2987,7 +3009,7 @@ def _run_refresh_unlocked(
         )
     else:
         print()
-        print("== Step 3/6: tool-b ==")
+        print(f"== Step 3/{total_steps}: tool-b ==")
         started_at = perf_counter()
         tool_b_exit = run_tool_b(paths, gold_price=gold_price_override)
         record_step("tool_b", started_at, tool_b_exit)
@@ -3000,7 +3022,7 @@ def _run_refresh_unlocked(
         if fault_exit is not None:
             return fault_exit
         print()
-        print("== Step 4/6: tool-c ==")
+        print(f"== Step 4/{total_steps}: tool-c ==")
         started_at = perf_counter()
         tool_c_exit = run_tool_c(paths, _use_model_state_inputs=False)
         record_step("tool_c", started_at, tool_c_exit)
@@ -3013,7 +3035,7 @@ def _run_refresh_unlocked(
         if fault_exit is not None:
             return fault_exit
         print()
-        print("== Step 5/6: tool-d (spot gold) ==")
+        print(f"== Step 5/{total_steps}: tool-d (spot gold) ==")
         started_at = perf_counter()
         tool_d_exit = run_tool_d(
             paths,
@@ -3031,7 +3053,7 @@ def _run_refresh_unlocked(
             return fault_exit
 
         print()
-        print("== Step 6/6: option-artifacts ==")
+        print(f"== Step 6/{total_steps}: option-artifacts ==")
         started_at = perf_counter()
         option_artifacts_exit = run_option_artifacts(
             paths,
@@ -3051,10 +3073,29 @@ def _run_refresh_unlocked(
         if fault_exit is not None:
             return fault_exit
 
-        loaded_config = load_app_config(paths)
+        if portfolio_enabled:
+            print()
+            print(f"== Step 7/{total_steps}: portfolio ==")
+            started_at = perf_counter()
+            portfolio_exit = _run_portfolio_refresh_step(
+                paths,
+                app_config=loaded_config_for_refresh.app,
+                parent_refresh_id=parent_refresh_id,
+                config_hash=loaded_config_for_refresh.config_hash,
+            )
+            record_step("portfolio", started_at, portfolio_exit)
+            if portfolio_exit != 0:
+                print()
+                print("portfolio failed. Model-state manifest was not published.")
+                run_status(paths)
+                return portfolio_exit
+            fault_exit = injected_fault_after("portfolio")
+            if fault_exit is not None:
+                return fault_exit
+
         model_state = write_current_model_state_manifest(
             paths=paths,
-            config_hash=loaded_config.config_hash,
+            config_hash=loaded_config_for_refresh.config_hash,
             parent_refresh_id=parent_refresh_id,
             stage_timings=stage_timings,
         )
@@ -3073,6 +3114,28 @@ def _run_refresh_unlocked(
 def _new_parent_refresh_id() -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{timestamp}-refresh-{uuid4().hex[:8]}"
+
+
+def _run_portfolio_refresh_step(
+    paths: ProjectPaths,
+    *,
+    app_config: AppConfig,
+    parent_refresh_id: str,
+    config_hash: str,
+) -> int:
+    try:
+        build_portfolio_artifacts(
+            paths=paths,
+            app_config=app_config,
+            parent_refresh_id=parent_refresh_id,
+            publish_model_state=False,
+            config_hash=config_hash,
+            use_model_state_artifacts=False,
+        )
+    except Exception as exc:
+        print(f"portfolio failed: {exc}")
+        return 1
+    return 0
 
 
 def _refresh_lock_command(

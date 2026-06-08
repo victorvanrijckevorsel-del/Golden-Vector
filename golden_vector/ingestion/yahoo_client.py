@@ -75,6 +75,8 @@ class YahooClient:
         )
         self._retry_policy = replace(policy, throttle_seconds=0.0)
         self._sleep_func = sleep_func
+        self._fast_info_cache: dict[str, dict[str, object]] = {}
+        self._fast_info_cache_lock = Lock()
 
     def fetch_history(
         self,
@@ -102,8 +104,13 @@ class YahooClient:
         return frame
 
     def fetch_fast_info(self, symbol: str) -> Mapping[str, object]:
+        cache_key = str(symbol).upper()
+        with self._fast_info_cache_lock:
+            cached = self._fast_info_cache.get(cache_key)
+        if cached is not None:
+            return dict(cached)
         try:
-            return dict(
+            result = dict(
                 call_with_retries(
                     f"Yahoo fast_info {symbol}",
                     lambda: self._yf.Ticker(symbol).fast_info,
@@ -113,6 +120,10 @@ class YahooClient:
                     before_attempt=self._rate_limiter.wait,
                 )
             )
+            if result:
+                with self._fast_info_cache_lock:
+                    self._fast_info_cache[cache_key] = dict(result)
+            return result
         except Exception:
             return {}
 

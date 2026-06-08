@@ -42,6 +42,7 @@ def _fetch_equity_history(
     started_at = datetime.now(timezone.utc)
     try:
         raw_history = client.fetch_history(target.yahoo_symbol, period="max")
+        fast_info = dict(client.fetch_fast_info(target.yahoo_symbol))
         fetched_at = datetime.now(timezone.utc)
         standardized = standardize_equity_history(
             ticker=target.ticker,
@@ -50,6 +51,7 @@ def _fetch_equity_history(
             source_symbol=target.yahoo_symbol,
             frame=raw_history,
             fetched_at=fetched_at,
+            feed_currency=fast_info.get("currency"),
         )
         status = "PASS" if not standardized.empty else "FAIL"
         message = None if status == "PASS" else "No equity history returned."
@@ -105,6 +107,7 @@ def _failed_equity_history_frame(
                 source_symbol=target.yahoo_symbol,
                 frame=pd.DataFrame(),
                 fetched_at=fetched_at,
+                feed_currency=None,
             ),
             str(original_error),
         )

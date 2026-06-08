@@ -77,7 +77,9 @@ class ProjectPaths:
             self.output_tool_d_dir,
             self.output_options_dir,
             self.output_hedge_readiness_dir,
+            self.output_portfolio_dir,
             self.manual_holdings_dir,
+            self.manual_portfolio_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
@@ -135,6 +137,14 @@ class ProjectPaths:
     @property
     def manual_holdings_dir(self) -> Path:
         return self.manual_dir / "holdings"
+
+    @property
+    def manual_portfolio_dir(self) -> Path:
+        return self.manual_dir / "portfolio"
+
+    @property
+    def manual_portfolio_lots_path(self) -> Path:
+        return self.manual_portfolio_dir / "manual_lots.json"
 
     @property
     def holdings_path(self) -> Path:
@@ -277,3 +287,47 @@ class ProjectPaths:
     @property
     def output_hedge_readiness_dir(self) -> Path:
         return self.output_dir / "hedge_readiness"
+
+    @property
+    def output_portfolio_dir(self) -> Path:
+        return self.output_dir / "portfolio"
+
+    @property
+    def latest_portfolio_lines_path(self) -> Path:
+        return self.output_portfolio_dir / "portfolio_lines_latest.parquet"
+
+    @property
+    def latest_portfolio_positions_path(self) -> Path:
+        return self.output_portfolio_dir / "portfolio_positions_latest.parquet"
+
+    @property
+    def latest_portfolio_summary_path(self) -> Path:
+        return self.output_portfolio_dir / "portfolio_summary_latest.parquet"
+
+    @property
+    def latest_benchmark_betas_path(self) -> Path:
+        return self.output_portfolio_dir / "benchmark_betas_latest.parquet"
+
+    @property
+    def latest_portfolio_reconciliation_path(self) -> Path:
+        return self.output_portfolio_dir / "portfolio_reconciliation_latest.parquet"
+
+    @property
+    def latest_portfolio_hedge_sizing_path(self) -> Path:
+        return self.output_portfolio_dir / "portfolio_hedge_sizing_latest.parquet"
+
+    @property
+    def latest_portfolio_correlations_path(self) -> Path:
+        return self.output_portfolio_dir / "portfolio_correlations_latest.parquet"
+
+    @property
+    def latest_portfolio_value_history_path(self) -> Path:
+        return self.output_portfolio_dir / "portfolio_value_history_latest.parquet"
+
+    @property
+    def latest_portfolio_reconciliation_export_path(self) -> Path:
+        return self.output_portfolio_dir / "portfolio_reconciliation_export_latest.parquet"
+
+    @property
+    def latest_portfolio_reconciliation_export_csv_path(self) -> Path:
+        return self.output_portfolio_dir / "portfolio_reconciliation_export_latest.csv"

@@ -38,6 +38,22 @@ def int_or_zero(value: object) -> int:
     return optional_int(value) or 0
 
 
+def sum_optional_floats(values: object) -> float | None:
+    """Sum numeric values, ignoring missing entries; return None if none are numeric."""
+
+    if values is None:
+        return None
+    total = 0.0
+    seen = False
+    for value in values:
+        numeric = optional_float(value)
+        if numeric is None:
+            continue
+        total += numeric
+        seen = True
+    return total if seen else None
+
+
 def is_missing(value: object) -> bool:
     """Scalar-safe missing-value check."""
 

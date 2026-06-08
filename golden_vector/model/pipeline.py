@@ -318,15 +318,45 @@ def execute_tool_a_profile_pipeline(
     )
 
 
+def build_tool_a_outputs_from_metrics(
+    *,
+    structural_window_metrics: pd.DataFrame,
+    volatility_diagnostics: pd.DataFrame,
+    app_config: AppConfig,
+    source_run_id: str,
+    snapshot_refresh_run_id: str,
+    restrict_to_latest_snapshot_dates: bool = True,
+) -> pd.DataFrame:
+    """Build Tool A output rows from precomputed structural metrics.
+
+    This keeps downstream tools, such as portfolio benchmark betas, on the same
+    weighted-median beta and confidence logic as the official Tool A pipeline.
+    """
+
+    return _build_tool_a_outputs(
+        structural_window_metrics=structural_window_metrics,
+        volatility_diagnostics=volatility_diagnostics,
+        app_config=app_config,
+        run_context=None,
+        source_run_id=source_run_id,
+        snapshot_refresh_run_id=snapshot_refresh_run_id,
+        restrict_to_latest_snapshot_dates=restrict_to_latest_snapshot_dates,
+    )
+
+
 def _build_tool_a_outputs(
     *,
     structural_window_metrics: pd.DataFrame,
     volatility_diagnostics: pd.DataFrame,
     app_config: AppConfig,
-    run_context: RunContext,
+    run_context: RunContext | None,
     snapshot_refresh_run_id: str,
+    source_run_id: str | None = None,
     restrict_to_latest_snapshot_dates: bool = True,
 ) -> pd.DataFrame:
+    resolved_source_run_id = source_run_id or (run_context.run_id if run_context else None)
+    if not resolved_source_run_id:
+        raise ValueError("source_run_id is required to build Tool A outputs")
     metrics = structural_window_metrics.copy()
     metrics["as_of_date"] = pd.to_datetime(metrics["as_of_date"]).dt.date
     vol = volatility_diagnostics.copy()
@@ -616,7 +646,7 @@ def _build_tool_a_outputs(
                 "confidence_explanation": confidence_explanation,
                 "interaction_explanation": interaction_explanation,
                 "tool_a_summary_explanation": summary_explanation,
-                "source_run_id": run_context.run_id,
+                "source_run_id": resolved_source_run_id,
             }
         )
 

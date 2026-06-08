@@ -352,6 +352,36 @@
     .hint {
       color: var(--muted);
     }
+    .two-column {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 18px;
+    }
+    .correlation-heatmap th,
+    .correlation-heatmap td {
+      text-align: center;
+      white-space: nowrap;
+    }
+    .corr-very-high { background: #d8eccf; }
+    .corr-high      { background: #e7f0d4; }
+    .corr-medium    { background: #f4e3b6; }
+    .corr-low       { background: #f7f0e2; }
+    .corr-unavailable {
+      background: #efe6d3;
+      color: var(--muted);
+    }
+    .portfolio-line-chart {
+      height: 180px;
+      margin: 12px 0 16px;
+      border: 1px solid var(--line);
+      background: #fffaf0;
+    }
+    .portfolio-line-chart polyline {
+      fill: none;
+      stroke: #1d4b73;
+      stroke-width: 2;
+      vector-effect: non-scaling-stroke;
+    }
     svg {
       width: 100%;
       height: auto;

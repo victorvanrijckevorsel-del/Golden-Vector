@@ -21,6 +21,9 @@ NORMALIZED_MARKET_SNAPSHOT_COLUMNS = [
     "shares_outstanding",
     "source",
     "source_run_id",
+    "feed_currency",
+    "price_scale_factor",
+    "minor_unit_adjusted",
     "normalization_status",
 ]
 
@@ -82,6 +85,7 @@ def normalize_market_snapshots_to_usd(
             normalized,
             max_fx_staleness_days=max_fx_staleness_days,
         )
+        _ensure_price_unit_columns(normalized)
         normalized["snapshot_date"] = pd.to_datetime(normalized["snapshot_date"]).dt.date
         normalized["fx_source_date"] = pd.to_datetime(normalized["fx_source_date"]).dt.date
         normalized_groups.append(normalized[NORMALIZED_MARKET_SNAPSHOT_COLUMNS])
@@ -124,6 +128,15 @@ def _snapshot_statuses(
         & stale_fx_mask
     ] = "STALE_FX"
     return statuses
+
+
+def _ensure_price_unit_columns(frame: pd.DataFrame) -> None:
+    if "feed_currency" not in frame.columns:
+        frame["feed_currency"] = None
+    if "price_scale_factor" not in frame.columns:
+        frame["price_scale_factor"] = 1.0
+    if "minor_unit_adjusted" not in frame.columns:
+        frame["minor_unit_adjusted"] = False
 
 
 def _multiply_if_present(left: pd.Series, right: pd.Series) -> pd.Series:

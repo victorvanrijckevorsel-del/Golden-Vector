@@ -24,6 +24,9 @@ class RawEquityDaily(StrictDataModel):
     exchange: str | None = None
     source: str
     source_symbol: str
+    feed_currency: str | None = None
+    price_scale_factor: float = 1.0
+    minor_unit_adjusted: bool = False
     fetched_at_utc: datetime
 
 
@@ -59,6 +62,9 @@ class MarketSnapshot(StrictDataModel):
     shares_outstanding: float | None = None
     source: str
     source_run_id: str
+    feed_currency: str | None = None
+    price_scale_factor: float = 1.0
+    minor_unit_adjusted: bool = False
 
 
 class UsdEquityDaily(StrictDataModel):
@@ -85,6 +91,9 @@ class UsdEquityDaily(StrictDataModel):
     volume: float | None = None
     source: str
     source_symbol: str
+    feed_currency: str | None = None
+    price_scale_factor: float = 1.0
+    minor_unit_adjusted: bool = False
     fetched_at_utc: datetime
     normalization_status: str
 
@@ -103,6 +112,9 @@ class NormalizedMarketSnapshot(StrictDataModel):
     shares_outstanding: float | None = None
     source: str
     source_run_id: str
+    feed_currency: str | None = None
+    price_scale_factor: float = 1.0
+    minor_unit_adjusted: bool = False
     normalization_status: str
 
 

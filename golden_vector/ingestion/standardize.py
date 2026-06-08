@@ -8,6 +8,7 @@ import pandas as pd
 
 from golden_vector.common.numeric import optional_float as _as_float
 from golden_vector.contracts.data_models import MarketSnapshot
+from golden_vector.normalize.price_units import price_unit_adjustment
 
 
 def fetched_at_utc() -> datetime:
@@ -21,7 +22,9 @@ def standardize_equity_history(
     source_symbol: str,
     frame: pd.DataFrame,
     fetched_at: datetime,
+    feed_currency: object | None = None,
 ) -> pd.DataFrame:
+    price_adjustment = price_unit_adjustment(feed_currency)
     if frame.empty:
         return pd.DataFrame(
             columns=[
@@ -37,6 +40,9 @@ def standardize_equity_history(
                 "exchange",
                 "source",
                 "source_symbol",
+                "feed_currency",
+                "price_scale_factor",
+                "minor_unit_adjusted",
                 "fetched_at_utc",
             ]
         )
@@ -45,16 +51,19 @@ def standardize_equity_history(
         {
             "ticker": ticker,
             "date": pd.to_datetime(frame["Date"]).dt.date,
-            "open_local": frame.get("Open"),
-            "high_local": frame.get("High"),
-            "low_local": frame.get("Low"),
-            "close_local": frame.get("Close"),
-            "adj_close_local": frame.get("Adj Close"),
+            "open_local": _adjust_history_price(frame, "Open", price_adjustment.scale_factor),
+            "high_local": _adjust_history_price(frame, "High", price_adjustment.scale_factor),
+            "low_local": _adjust_history_price(frame, "Low", price_adjustment.scale_factor),
+            "close_local": _adjust_history_price(frame, "Close", price_adjustment.scale_factor),
+            "adj_close_local": _adjust_history_price(frame, "Adj Close", price_adjustment.scale_factor),
             "volume": frame.get("Volume"),
             "currency": currency,
             "exchange": exchange,
             "source": "yfinance",
             "source_symbol": source_symbol,
+            "feed_currency": price_adjustment.feed_currency,
+            "price_scale_factor": price_adjustment.scale_factor,
+            "minor_unit_adjusted": price_adjustment.minor_unit_adjusted,
             "fetched_at_utc": fetched_at,
         }
     )
@@ -141,11 +150,12 @@ def standardize_market_snapshot(
 
     last_row = frame.iloc[-1]
     snapshot_date = _extract_snapshot_date(ticker, last_row)
-    share_price_local = _extract_share_price_local(ticker, last_row, fast_info)
+    raw_share_price_local = _extract_share_price_local(ticker, last_row, fast_info)
     # LSE (and a few other) feeds quote in a currency's minor unit (pence);
     # convert to the major unit so the downstream local->USD step isn't ~100x
     # too large (this silently inflated market_cap_usd for LSE names).
-    share_price_local = _to_major_currency_unit(share_price_local, fast_info)
+    price_adjustment = price_unit_adjustment(fast_info.get("currency"))
+    share_price_local = price_adjustment.apply(raw_share_price_local)
     market_cap = _as_float(fast_info.get("marketCap") or fast_info.get("market_cap"))
     shares = _as_float(
         fast_info.get("shares")
@@ -164,6 +174,9 @@ def standardize_market_snapshot(
         shares_outstanding=shares,
         source="yfinance",
         source_run_id=source_run_id,
+        feed_currency=price_adjustment.feed_currency,
+        price_scale_factor=price_adjustment.scale_factor,
+        minor_unit_adjusted=price_adjustment.minor_unit_adjusted,
     )
     return snapshot.model_dump()
 
@@ -181,6 +194,9 @@ def empty_market_snapshot_frame() -> pd.DataFrame:
             "shares_outstanding",
             "source",
             "source_run_id",
+            "feed_currency",
+            "price_scale_factor",
+            "minor_unit_adjusted",
         ]
     )
 
@@ -215,23 +231,11 @@ def _extract_share_price_local(
     raise ValueError(f"Market snapshot has no valid positive share price for {ticker}")
 
 
-# Yahoo quotes some exchanges in a currency's MINOR unit (1/100 of the major
-# unit): London in pence (GBp/GBX), Johannesburg in cents (ZAc), Tel Aviv in
-# agorot (ILA). Detection is CASE-SENSITIVE on the feed's own currency tag --
-# "GBp" (pence) differs from "GBP" (pounds) only by the lowercase 'p', so a
-# case-insensitive check would wrongly divide genuine pound quotes.
-_MINOR_CURRENCY_UNIT_TAGS = frozenset({"GBp", "GBX", "ZAc", "ZAX", "ILA"})
-
-
-def _to_major_currency_unit(price: float, fast_info: dict[str, object]) -> float:
-    """Divide minor-unit quotes (e.g. LSE pence) down to the major unit.
-
-    Keys off the feed's own currency tag (``fast_info['currency']``), so a name
-    that genuinely quotes in pounds ("GBP") is left unchanged while a pence
-    quote ("GBp") is divided by 100.
-    """
-
-    feed_currency = str(fast_info.get("currency") or "").strip()
-    if feed_currency in _MINOR_CURRENCY_UNIT_TAGS:
-        return price / 100.0
-    return price
+def _adjust_history_price(
+    frame: pd.DataFrame,
+    column: str,
+    scale_factor: float,
+) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(pd.NA, index=frame.index, dtype="Float64")
+    return pd.to_numeric(frame[column], errors="coerce") * float(scale_factor)

@@ -34,6 +34,7 @@ def fetch_benchmark_histories(
             continue
         try:
             raw_history = client.fetch_history(benchmark.yahoo_symbol, period="max")
+            fast_info = dict(client.fetch_fast_info(benchmark.yahoo_symbol))
             fetched_at = datetime.now(timezone.utc)
             standardized = standardize_equity_history(
                 ticker=benchmark.ticker,
@@ -42,6 +43,7 @@ def fetch_benchmark_histories(
                 source_symbol=benchmark.yahoo_symbol,
                 frame=raw_history,
                 fetched_at=fetched_at,
+                feed_currency=fast_info.get("currency"),
             )
             histories[benchmark.ticker] = standardized
             status = "PASS" if not standardized.empty else "FAIL"
@@ -63,6 +65,7 @@ def fetch_benchmark_histories(
                 source_symbol=benchmark.yahoo_symbol,
                 frame=pd.DataFrame(),
                 fetched_at=datetime.now(timezone.utc),
+                feed_currency=None,
             )
             statuses.append(
                 BenchmarkFetchStatus(

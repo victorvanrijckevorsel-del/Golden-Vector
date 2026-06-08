@@ -916,10 +916,16 @@ class MarketDataConfig(StrictConfigModel):
         return float(value)
 
 
+class PortfolioConfig(StrictConfigModel):
+    version: int = 1
+    enabled: bool = False
+
+
 class AppConfig(StrictConfigModel):
     universe: UniverseConfig
     benchmarks: BenchmarksConfig
     market_data: MarketDataConfig = Field(default_factory=MarketDataConfig)
+    portfolio: PortfolioConfig = Field(default_factory=PortfolioConfig)
     candidate_finder: CandidateFinderConfig
     hedge_readiness: HedgeReadinessConfig = Field(default_factory=HedgeReadinessConfig)
     tool_c: ToolCConfig = Field(default_factory=ToolCConfig)

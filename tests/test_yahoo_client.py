@@ -43,6 +43,17 @@ def test_yahoo_client_rate_limits_before_retry_attempts():
     assert sleeps == [0.5]
 
 
+def test_yahoo_client_caches_successful_fast_info():
+    fake_yf = _FakeYFinance()
+    client = YahooClient(yf_module=fake_yf)
+
+    first = client.fetch_fast_info("NEM")
+    second = client.fetch_fast_info("NEM")
+
+    assert first == second
+    assert fake_yf.tickers["NEM"].fast_info_calls == 1
+
+
 class _FakeYFinance:
     def __init__(self, *, fail_first_history: bool = False) -> None:
         self.fail_first_history = fail_first_history
@@ -60,8 +71,14 @@ class _FakeTicker:
     def __init__(self, *, fail_first_history: bool) -> None:
         self.fail_first_history = fail_first_history
         self.history_calls = 0
-        self.fast_info = {"last_price": 50.0}
+        self.fast_info_calls = 0
+        self._fast_info = {"last_price": 50.0, "currency": "USD"}
         self.options = []
+
+    @property
+    def fast_info(self) -> dict[str, object]:
+        self.fast_info_calls += 1
+        return dict(self._fast_info)
 
     def history(self, **_: object) -> pd.DataFrame:
         self.history_calls += 1

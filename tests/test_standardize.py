@@ -41,6 +41,42 @@ def test_standardize_equity_history_maps_price_columns_and_metadata():
     assert row["adj_close_local"] == 10.4
     assert row["exchange"] == "NYSE"
     assert row["source"] == "yfinance"
+    assert row["price_scale_factor"] == 1.0
+    assert bool(row["minor_unit_adjusted"]) is False
+
+
+def test_standardize_equity_history_converts_lse_pence_to_pounds():
+    fetched_at = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    frame = pd.DataFrame(
+        {
+            "Date": ["2026-01-30"],
+            "Open": [38.0],
+            "High": [40.0],
+            "Low": [37.5],
+            "Close": [39.0],
+            "Adj Close": [39.0],
+            "Volume": [1_000_000],
+        }
+    )
+
+    standardized = standardize_equity_history(
+        ticker="PAF.L",
+        exchange="LSE",
+        currency="GBP",
+        source_symbol="PAF.L",
+        frame=frame,
+        fetched_at=fetched_at,
+        feed_currency="GBp",
+    )
+
+    row = standardized.iloc[0]
+    assert row["open_local"] == pytest.approx(0.38)
+    assert row["close_local"] == pytest.approx(0.39)
+    assert row["adj_close_local"] == pytest.approx(0.39)
+    assert row["currency"] == "GBP"
+    assert row["feed_currency"] == "GBp"
+    assert row["price_scale_factor"] == pytest.approx(0.01)
+    assert bool(row["minor_unit_adjusted"]) is True
 
 
 def test_standardize_fx_and_gold_history_map_expected_fields():
@@ -203,4 +239,7 @@ def test_empty_market_snapshot_frame_has_expected_columns():
         "shares_outstanding",
         "source",
         "source_run_id",
+        "feed_currency",
+        "price_scale_factor",
+        "minor_unit_adjusted",
     ]

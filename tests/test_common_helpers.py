@@ -9,6 +9,8 @@ from golden_vector.common.files import (
     atomic_write_text,
 )
 from golden_vector.common.eligibility import is_score_eligible, score_eligible_mask
+from golden_vector.common.frames import latest_records_by_key
+from golden_vector.common.numeric import sum_optional_floats
 from golden_vector.common.status import combine_statuses
 from golden_vector.common.strings import clean_string, unique_strings
 
@@ -27,6 +29,27 @@ def test_score_eligible_mask_uses_shared_policy():
     mask = score_eligible_mask(pd.Series([True, False, None, "0", "yes"]))
 
     assert mask.tolist() == [True, False, True, False, True]
+
+
+def test_latest_records_by_key_normalizes_keys_and_keeps_latest_sort_value():
+    frame = pd.DataFrame(
+        [
+            {"ticker": "nem", "as_of_date": "2026-06-01", "value": 1},
+            {"ticker": "NEM", "as_of_date": "2026-06-08", "value": 2},
+            {"ticker": "AEM", "as_of_date": "2026-06-03", "value": 3},
+        ]
+    )
+
+    records = latest_records_by_key(frame, "ticker", sort_column="as_of_date")
+
+    assert records["NEM"]["value"] == 2
+    assert records["AEM"]["value"] == 3
+
+
+def test_sum_optional_floats_ignores_missing_values_and_reports_no_data():
+    assert sum_optional_floats([1, None, "2.5", pd.NA]) == pytest.approx(3.5)
+    assert sum_optional_floats([None, pd.NA, ""]) is None
+    assert sum_optional_floats(None) is None
 
 
 def test_combine_statuses_uses_fail_warn_pass_precedence_and_skipped_is_neutral():

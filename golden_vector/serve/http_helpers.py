@@ -29,6 +29,7 @@ def _flash_message(saved_token: str) -> str | None:
         "reporting": "Reporting calendar saved.",
         "note": "Stock note added.",
         "verification": "Source verification updated.",
+        "portfolio": "Portfolio updated.",
     }
     return messages.get(saved_token)
 

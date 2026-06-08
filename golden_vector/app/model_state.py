@@ -49,6 +49,17 @@ REQUIRED_ARTIFACTS: tuple[str, ...] = (
 )
 
 PLANNED_I3_ARTIFACTS: tuple[str, ...] = OPTION_ARTIFACT_NAMES
+PORTFOLIO_ARTIFACTS: tuple[str, ...] = (
+    "portfolio_lines",
+    "portfolio_positions",
+    "portfolio_summary",
+    "benchmark_betas",
+    "portfolio_reconciliation",
+    "portfolio_hedge_sizing",
+    "portfolio_correlations",
+    "portfolio_value_history",
+    "portfolio_reconciliation_export",
+)
 
 
 def write_current_model_state_manifest(
@@ -363,6 +374,60 @@ def _artifact_map(
             paths=paths,
             name="tool_d_spot",
             path=paths.latest_tool_d_spot_snapshot_parquet_path,
+            required_for_complete=False,
+        ),
+        "portfolio_lines": _parquet_artifact(
+            paths=paths,
+            name="portfolio_lines",
+            path=paths.latest_portfolio_lines_path,
+            required_for_complete=False,
+        ),
+        "portfolio_positions": _parquet_artifact(
+            paths=paths,
+            name="portfolio_positions",
+            path=paths.latest_portfolio_positions_path,
+            required_for_complete=False,
+        ),
+        "portfolio_summary": _parquet_artifact(
+            paths=paths,
+            name="portfolio_summary",
+            path=paths.latest_portfolio_summary_path,
+            required_for_complete=False,
+        ),
+        "benchmark_betas": _parquet_artifact(
+            paths=paths,
+            name="benchmark_betas",
+            path=paths.latest_benchmark_betas_path,
+            required_for_complete=False,
+        ),
+        "portfolio_reconciliation": _parquet_artifact(
+            paths=paths,
+            name="portfolio_reconciliation",
+            path=paths.latest_portfolio_reconciliation_path,
+            required_for_complete=False,
+        ),
+        "portfolio_hedge_sizing": _parquet_artifact(
+            paths=paths,
+            name="portfolio_hedge_sizing",
+            path=paths.latest_portfolio_hedge_sizing_path,
+            required_for_complete=False,
+        ),
+        "portfolio_correlations": _parquet_artifact(
+            paths=paths,
+            name="portfolio_correlations",
+            path=paths.latest_portfolio_correlations_path,
+            required_for_complete=False,
+        ),
+        "portfolio_value_history": _parquet_artifact(
+            paths=paths,
+            name="portfolio_value_history",
+            path=paths.latest_portfolio_value_history_path,
+            required_for_complete=False,
+        ),
+        "portfolio_reconciliation_export": _parquet_artifact(
+            paths=paths,
+            name="portfolio_reconciliation_export",
+            path=paths.latest_portfolio_reconciliation_export_path,
             required_for_complete=False,
         ),
     }
@@ -907,6 +972,8 @@ def _tool_latest_directory_and_prefix(paths: ProjectPaths, name: str) -> tuple[P
         return paths.output_tool_d_dir, "tool_d"
     if name in OPTION_ARTIFACT_PREFIXES:
         return paths.output_options_dir, OPTION_ARTIFACT_PREFIXES[name]
+    if name in PORTFOLIO_ARTIFACTS:
+        return paths.output_portfolio_dir, name
     raise ValueError(f"Unsupported model artifact for immutable lookup: {name}")
 
 

@@ -27,6 +27,10 @@ EXPECTED_CONFIG_FILES: tuple[tuple[str, str], ...] = (
     ("screening_params", "screening_params.yaml"),
 )
 
+OPTIONAL_CONFIG_FILES: tuple[tuple[str, str], ...] = (
+    ("portfolio", "portfolio.yaml"),
+)
+
 
 @dataclass(frozen=True)
 class LoadedConfig:
@@ -50,6 +54,14 @@ def load_app_config(paths: ProjectPaths) -> LoadedConfig:
 
     for config_name, config_path in expected_config_paths(paths).items():
         raw_bytes = _read_required_bytes(config_path)
+        raw_configs[config_name] = yaml.safe_load(raw_bytes.decode("utf-8")) or {}
+        file_hashes[config_name] = hashlib.sha256(raw_bytes).hexdigest()
+
+    for config_name, file_name in OPTIONAL_CONFIG_FILES:
+        config_path = paths.config_path(file_name)
+        if not config_path.exists():
+            continue
+        raw_bytes = config_path.read_bytes()
         raw_configs[config_name] = yaml.safe_load(raw_bytes.decode("utf-8")) or {}
         file_hashes[config_name] = hashlib.sha256(raw_bytes).hexdigest()
 

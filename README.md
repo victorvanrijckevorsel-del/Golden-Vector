@@ -65,6 +65,7 @@ Runtime model:
 - `tool-a` uses the latest validated local market-data snapshot by default
 - `tool-b` uses the latest validated local market-data snapshot plus local manual inputs by default
 - `hedge-readiness` writes a local markdown report under `data/output/hedge_readiness/` from the latest options snapshot
+- `/hedge-readiness` and `/hedge-readiness/latest.md` are holdings-bearing views; when portfolio tracking is disabled they return a calm 403 instead of serving the report
 - `compare-horizons` uses the latest validated local market-data snapshot by default
 - `workspace` requires the local Tool B store (run `manual-data init` first) and then serves a thin local UI for manual inputs, notes, and latest outputs. It will not silently create or seed the store on start.
 - Combined is no longer part of the active backend and will return later only as a side-by-side compare view

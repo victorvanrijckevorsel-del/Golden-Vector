@@ -1,0 +1,89 @@
+"""Typed portfolio models for manual lots and persisted M1 artifacts."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime
+
+from golden_vector.contracts.config_models import SUPPORTED_CURRENCIES
+
+PORTFOLIO_SCHEMA_VERSION = 4
+PORTFOLIO_STORE_SCHEMA_VERSION = 1
+ALLOWED_PORTFOLIO_CURRENCIES = tuple(sorted(SUPPORTED_CURRENCIES))
+MAX_LOT_NOTE_LENGTH = 500
+
+
+class PortfolioError(ValueError):
+    """Base class for portfolio user-facing validation and data errors."""
+
+
+class PortfolioValidationError(PortfolioError):
+    """Raised when a manual portfolio input is invalid."""
+
+
+class PortfolioStaleSchemaError(PortfolioError):
+    """Raised when a persisted portfolio artifact is from an old schema."""
+
+
+@dataclass(frozen=True)
+class PortfolioLot:
+    id: str
+    ticker: str
+    shares: float
+    buy_price: float
+    buy_currency: str
+    buy_date: date
+    note: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    @property
+    def cost_local(self) -> float:
+        return self.shares * self.buy_price
+
+
+@dataclass(frozen=True)
+class LotInput:
+    ticker: str
+    shares: float
+    buy_price: float
+    buy_currency: str
+    buy_date: date
+    note: str | None = None
+
+
+@dataclass(frozen=True)
+class TickerInfo:
+    ticker: str
+    currency: str
+    company: str | None = None
+    active: bool = True
+
+
+@dataclass(frozen=True)
+class LineValuation:
+    lot: PortfolioLot
+    company: str | None
+    current_price_local: float | None
+    current_price_usd: float | None
+    fx_rate_to_usd: float | None
+    snapshot_date: str | None
+    value_local: float | None
+    value_usd: float | None
+    cost_local: float
+    cost_usd_at_current_fx: float | None
+    pnl_local: float | None
+    pnl_fraction_local: float | None
+    pnl_usd_at_current_fx: float | None
+    status: str
+    status_reason: str | None
+    price_scale_factor: float
+    minor_unit_adjusted: bool
+
+
+@dataclass(frozen=True)
+class PortfolioBuildResult:
+    source_run_id: str
+    lines_count: int
+    positions_count: int
+    summary_status: str

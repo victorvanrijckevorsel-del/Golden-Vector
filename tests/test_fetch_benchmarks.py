@@ -28,6 +28,7 @@ def test_fetch_benchmark_histories_standardizes_active_benchmarks():
     assert statuses[0].row_count == 1
     assert histories["GDX"].loc[0, "ticker"] == "GDX"
     assert histories["GDX"].loc[0, "currency"] == "USD"
+    assert histories["GDX"].loc[0, "feed_currency"] == "USD"
     assert histories["GDX"].loc[0, "exchange"] == "BENCHMARK"
     assert histories["GDX"].loc[0, "source_symbol"] == "GDX"
 
@@ -50,3 +51,7 @@ class _BenchmarkClient:
         assert symbol == "GDX"
         assert period == "max"
         return self.frame
+
+    def fetch_fast_info(self, symbol: str) -> dict[str, object]:
+        assert symbol == "GDX"
+        return {"currency": "USD"}

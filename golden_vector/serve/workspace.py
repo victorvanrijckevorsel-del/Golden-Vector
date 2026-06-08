@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
@@ -62,11 +63,18 @@ from golden_vector.serve.overview_tool_a import _render_tool_a_overview_page
 from golden_vector.serve.overview_tool_b import _render_tool_b_overview_page
 from golden_vector.serve.overview_tool_c import _render_tool_c_overview_page
 from golden_vector.serve.overview_tool_d import _render_tool_d_overview_page
+from golden_vector.serve.portfolio_page import (
+    portfolio_form_payload,
+    render_portfolio_page,
+)
 from golden_vector.serve.format_helpers import (
     _coerce_form_numeric,
     _coerce_form_text,
     _frame_index_by_ticker,
 )
+from golden_vector.portfolio.manual_store import add_lot, delete_lot, edit_lot
+from golden_vector.portfolio.models import PortfolioError, PortfolioStaleSchemaError
+from golden_vector.portfolio.pipeline import build_portfolio_artifacts, build_ticker_info
 from golden_vector.screening.manual_store import (
     add_stock_note,
     upsert_company_input,
@@ -105,12 +113,108 @@ def create_workspace_app(
                 return _redirect_response(start_response, "/option-trading")
 
             if method == "GET" and path == "/hedge-readiness/latest.md":
+                if not app_config.portfolio.enabled:
+                    return _html_response(
+                        start_response,
+                        _render_error_page(
+                            "Portfolio downloads are disabled.",
+                            detail="Enable portfolio.enabled locally before serving holdings-bearing reports.",
+                        ),
+                        status="403 Forbidden",
+                    )
                 return _download_file_response(
                     start_response,
                     paths.output_hedge_readiness_dir / "latest.md",
                     content_type="text/markdown; charset=utf-8",
                     download_name="golden-vector-hedge-readiness-latest.md",
                 )
+
+            if method == "GET" and path == "/portfolio":
+                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+                flash = _flash_message(query.get("saved", [""])[0])
+                return _html_response(
+                    start_response,
+                    render_portfolio_page(
+                        paths=paths,
+                        app_config=app_config,
+                        flash=flash,
+                    ),
+                )
+
+            if method == "GET" and path == "/portfolio/reconciliation.csv":
+                if not app_config.portfolio.enabled:
+                    return _html_response(
+                        start_response,
+                        _render_error_page(
+                            "Portfolio downloads are disabled.",
+                            detail="Enable portfolio.enabled locally before serving holdings-bearing exports.",
+                        ),
+                        status="403 Forbidden",
+                    )
+                return _download_file_response(
+                    start_response,
+                    paths.latest_portfolio_reconciliation_export_csv_path,
+                    content_type="text/csv; charset=utf-8",
+                    download_name="golden-vector-portfolio-reconciliation.csv",
+                )
+
+            if path.startswith("/portfolio/lots"):
+                if not app_config.portfolio.enabled:
+                    return _html_response(
+                        start_response,
+                        _render_error_page(
+                            "Portfolio is disabled.",
+                            detail="Enable portfolio.enabled locally before editing positions.",
+                        ),
+                        status="403 Forbidden",
+                    )
+                if method != "POST":
+                    return _html_response(
+                        start_response,
+                        _render_error_page("Unsupported portfolio route."),
+                        status="404 Not Found",
+                    )
+                try:
+                    form_data = _read_form_data(environ)
+                    ticker_info = build_ticker_info(app_config)
+                    if path == "/portfolio/lots":
+                        add_lot(
+                            paths,
+                            portfolio_form_payload(form_data),
+                            ticker_info=ticker_info,
+                        )
+                    elif path.endswith("/edit"):
+                        lot_id = path.removeprefix("/portfolio/lots/").removesuffix("/edit")
+                        edit_lot(
+                            paths,
+                            lot_id,
+                            portfolio_form_payload(form_data),
+                            ticker_info=ticker_info,
+                        )
+                    elif path.endswith("/delete"):
+                        lot_id = path.removeprefix("/portfolio/lots/").removesuffix("/delete")
+                        delete_lot(paths, lot_id)
+                    else:
+                        return _html_response(
+                            start_response,
+                            _render_error_page("Unsupported portfolio route."),
+                            status="404 Not Found",
+                        )
+                    build_portfolio_artifacts(
+                        paths=paths,
+                        app_config=app_config,
+                    )
+                except (PortfolioError, FileNotFoundError, ValueError) as exc:
+                    return _html_response(
+                        start_response,
+                        render_portfolio_page(
+                            paths=paths,
+                            app_config=app_config,
+                            error=str(exc),
+                        ),
+                        status="400 Bad Request",
+                    )
+                return _redirect_response(start_response, "/portfolio?saved=portfolio")
 
             if method == "POST" and path in ("/refresh", "/option-trading/refresh"):
                 form_data = _read_form_data(environ)
@@ -522,6 +626,18 @@ def create_workspace_app(
                 ),
                 status="503 Service Unavailable",
             )
+        except PortfolioStaleSchemaError as exc:
+            return _html_response(
+                start_response,
+                _render_error_page(
+                    "Your local Portfolio data is from the previous version.",
+                    detail=(
+                        "Run python main.py refresh, or save a portfolio lot again, "
+                        f"to rebuild the portfolio artifacts. Details: {exc}"
+                    ),
+                ),
+                status="503 Service Unavailable",
+            )
         except Exception as exc:
             return _html_response(
                 start_response,
@@ -550,6 +666,10 @@ def run_workspace_server(
     host: str = "127.0.0.1",
     port: int = 8765,
 ) -> int:
+    if app_config.portfolio.enabled and not _is_loopback_host(host):
+        raise ValueError(
+            "Portfolio is enabled, so the workspace must bind to localhost or another loopback address."
+        )
     app = create_workspace_app(
         paths,
         app_config=app_config,
@@ -563,3 +683,13 @@ def run_workspace_server(
         except KeyboardInterrupt:
             print("Golden Vector workspace stopped.")
     return 0
+
+
+def _is_loopback_host(host: str) -> bool:
+    normalized = str(host or "").strip().lower()
+    if normalized in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False

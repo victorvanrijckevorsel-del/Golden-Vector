@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 
 from golden_vector.app.config import load_app_config
+from golden_vector.contracts.config_models import PortfolioConfig
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.serve.option_trading_data import (
     OptionArtifactStaleSchemaError,
@@ -484,7 +485,9 @@ def test_workspace_raw_hedge_report_download_serves_latest_markdown(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
-    app_config = load_app_config(paths).app
+    app_config = load_app_config(paths).app.model_copy(
+        update={"portfolio": PortfolioConfig(enabled=True)}
+    )
     bootstrap_manual_screening_data(paths, tickers=["AEM"])
     paths.output_hedge_readiness_dir.mkdir(parents=True, exist_ok=True)
     (paths.output_hedge_readiness_dir / "latest.md").write_text(

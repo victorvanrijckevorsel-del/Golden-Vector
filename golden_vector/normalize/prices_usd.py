@@ -31,6 +31,9 @@ USD_EQUITY_COLUMNS = [
     "volume",
     "source",
     "source_symbol",
+    "feed_currency",
+    "price_scale_factor",
+    "minor_unit_adjusted",
     "fetched_at_utc",
     "normalization_status",
 ]
@@ -70,6 +73,7 @@ def normalize_equity_history_to_usd(
         return pd.DataFrame(columns=USD_EQUITY_COLUMNS)
 
     normalized = frame.copy()
+    _ensure_price_unit_columns(normalized)
     normalized["date"] = pd.to_datetime(normalized["date"])
     normalized["return_basis_local"] = normalized["adj_close_local"].where(
         normalized["adj_close_local"].notna(),
@@ -143,6 +147,15 @@ def _currency_from_equity_frame(frame: pd.DataFrame) -> str:
             "Equity history frame must contain exactly one currency value."
         )
     return currencies[0]
+
+
+def _ensure_price_unit_columns(frame: pd.DataFrame) -> None:
+    if "feed_currency" not in frame.columns:
+        frame["feed_currency"] = None
+    if "price_scale_factor" not in frame.columns:
+        frame["price_scale_factor"] = 1.0
+    if "minor_unit_adjusted" not in frame.columns:
+        frame["minor_unit_adjusted"] = False
 
 
 def _equity_statuses(
