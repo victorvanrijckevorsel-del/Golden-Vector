@@ -6,7 +6,9 @@ import argparse
 import json
 import logging
 import os
-from datetime import date, datetime, timezone
+import subprocess
+import sys
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 from time import perf_counter
 from typing import Callable, Sequence
@@ -21,6 +23,16 @@ from golden_vector.app.latest_data import (
     LatestFoundationSnapshot,
     load_latest_foundation_snapshot,
     write_latest_foundation_manifest,
+)
+from golden_vector.app.market_hours_refresh import (
+    DEFAULT_LOCAL_TASK_TIMES,
+    DEFAULT_MARKET_END_ET,
+    DEFAULT_MARKET_START_ET,
+    install_windows_task_scheduler_commands,
+    market_hours_refresh_decision,
+    parse_local_task_times,
+    parse_market_time,
+    windows_task_scheduler_commands,
 )
 from golden_vector.app.logging import configure_logging
 from golden_vector.app.model_state import (
@@ -118,6 +130,20 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _market_time_arg(value: str) -> time:
+    try:
+        return parse_market_time(value, default=DEFAULT_MARKET_START_ET)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _local_task_times_arg(value: str) -> tuple[str, ...]:
+    try:
+        return parse_local_task_times(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="golden-vector",
@@ -188,6 +214,71 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Skip the Tool B step. Useful if the manual-data store hasn't been populated yet."
         ),
+    )
+
+    market_refresh_parser = subparsers.add_parser(
+        "market-hours-refresh",
+        help=(
+            "Run the normal refresh only during US equity market hours on US trading days. "
+            "Designed for Windows Task Scheduler."
+        ),
+    )
+    market_refresh_parser.add_argument(
+        "--gold-price",
+        type=float,
+        default=None,
+        help="Forwarded to the refresh command when the guard allows a run.",
+    )
+    market_refresh_parser.add_argument(
+        "--skip-tool-b",
+        action="store_true",
+        help="Forwarded to the refresh command when the guard allows a run.",
+    )
+    market_refresh_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the market-hours decision without running refresh.",
+    )
+    market_refresh_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Run refresh even when the market-hours guard would skip it.",
+    )
+    market_refresh_parser.add_argument(
+        "--start-et",
+        type=_market_time_arg,
+        default=DEFAULT_MARKET_START_ET,
+        help="Earliest Eastern Time allowed for the scheduled refresh guard.",
+    )
+    market_refresh_parser.add_argument(
+        "--end-et",
+        type=_market_time_arg,
+        default=DEFAULT_MARKET_END_ET,
+        help="Latest Eastern Time allowed for the scheduled refresh guard.",
+    )
+
+    schedule_parser = subparsers.add_parser(
+        "install-market-hours-refresh-task",
+        help=(
+            "Print or install Windows Task Scheduler commands for market-hours refresh. "
+            "Defaults to dry-run output."
+        ),
+    )
+    schedule_parser.add_argument(
+        "--task-name",
+        default="Golden Vector Market Refresh",
+        help="Windows Task Scheduler task-name prefix.",
+    )
+    schedule_parser.add_argument(
+        "--times",
+        type=_local_task_times_arg,
+        default=DEFAULT_LOCAL_TASK_TIMES,
+        help="Comma-separated local Windows times in HH:MM format.",
+    )
+    schedule_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually run schtasks. Without this flag, only print the commands.",
     )
 
     status_parser = subparsers.add_parser(
@@ -523,6 +614,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             paths,
             gold_price_override=args.gold_price,
             skip_tool_b=args.skip_tool_b,
+        )
+
+    if args.command == "market-hours-refresh":
+        return run_market_hours_refresh(
+            paths,
+            gold_price_override=args.gold_price,
+            skip_tool_b=args.skip_tool_b,
+            dry_run=args.dry_run,
+            force=args.force,
+            start_et=args.start_et,
+            end_et=args.end_et,
+        )
+
+    if args.command == "install-market-hours-refresh-task":
+        return run_install_market_hours_refresh_task(
+            paths,
+            task_name=args.task_name,
+            local_times=args.times,
+            apply=args.apply,
         )
 
     if args.command == "status":
@@ -2658,6 +2768,78 @@ def _tool_input_path(
 
 
 # -------------------------- operational helpers (refresh + status) --------------------------
+
+
+def run_market_hours_refresh(
+    paths: ProjectPaths,
+    *,
+    gold_price_override: float | None = None,
+    skip_tool_b: bool = False,
+    dry_run: bool = False,
+    force: bool = False,
+    now: datetime | None = None,
+    start_et: time | None = None,
+    end_et: time | None = None,
+) -> int:
+    start = start_et or DEFAULT_MARKET_START_ET
+    end = end_et or DEFAULT_MARKET_END_ET
+    decision = market_hours_refresh_decision(
+        now=now,
+        start_et=start,
+        end_et=end,
+    )
+    print(
+        "Market-hours refresh guard: "
+        f"{'RUN' if decision.should_run else 'SKIP'} - {decision.reason}"
+    )
+    print(
+        "Data timing note: stock/foundation data is daily-close based; "
+        "option signals use the current market-hours option-chain snapshot."
+    )
+    if dry_run:
+        print("Dry run only. No refresh was started.")
+        return 0
+    if not decision.should_run and not force:
+        return 0
+    if force and not decision.should_run:
+        print("Force enabled. Running refresh despite the scheduler guard.")
+    return run_refresh(
+        paths,
+        gold_price_override=gold_price_override,
+        skip_tool_b=skip_tool_b,
+    )
+
+
+def run_install_market_hours_refresh_task(
+    paths: ProjectPaths,
+    *,
+    task_name: str,
+    local_times: tuple[str, ...],
+    apply: bool = False,
+) -> int:
+    commands = windows_task_scheduler_commands(
+        python_executable=sys.executable,
+        main_py=paths.repo_root / "main.py",
+        task_name=task_name,
+        local_times=local_times,
+    )
+    print("Windows Task Scheduler commands:")
+    for command in commands:
+        print(f"  {subprocess.list2cmdline(command)}")
+    print(
+        "These tasks call `python main.py market-hours-refresh`, which checks "
+        "US trading days and Eastern Time market hours before running the full refresh."
+    )
+    print(
+        "Data timing note: stock/foundation data is daily-close based; "
+        "option signals use market-hours option-chain snapshots."
+    )
+    if not apply:
+        print("Dry run only. Re-run with --apply to install these tasks.")
+        return 0
+    install_windows_task_scheduler_commands(commands)
+    print("Windows Task Scheduler tasks installed.")
+    return 0
 
 
 def run_refresh(
