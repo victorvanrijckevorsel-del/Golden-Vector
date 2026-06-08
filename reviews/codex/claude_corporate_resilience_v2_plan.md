@@ -50,10 +50,14 @@ A gold-price input + preset buttons — **Spot**, **−15%**, **−25%**, **−3
 3. **Trim Tags** to the resilience-relevant flags (`margin_negative_at_G`, `thin_margin_at_G`, `missing_aisc/production/debt`); drop the noisy `screen_out_context`.
 4. **Formulas everywhere** — the overview now has header tooltips; mirror them on the ticker detail page's Corporate Resilience panel.
 
-## 5. Backend / architecture
-- The gold-stress recompute is the **Tool B scenario-override pattern** (request-time, in-memory, persisted data untouched) — already precedented and accepted; not new request-path crunching of the persisted artifact.
-- Persisted daily Tool D stays spot-based (one coherent run). The stress view is explicitly a *what-if*, labeled with the chosen G.
-- No new persisted artifact required for v2 (it reuses Tool D's existing compute at a different G). If we later want to persist a few standard stress scenarios for fast scanning, that's a follow-up.
+## 5. Backend / architecture — single source of truth, serve computes nothing (Emanuel's guardrail)
+**All calculus lives in the backend, in exactly one place each, and is never re-implemented in the UI.**
+- **One module owns the resilience formulas.** Breakeven gold, FCF-breakeven gold, debt-stress gold, the fragility slope, and cost-curve position are computed **only** in `model/tool_d.py` (the existing Tool D pipeline). Nothing else implements them.
+- **No duplication of the fundamentals.** Tool D does **not** re-derive EBITDA/FCF/margin — it already reuses `compute_tool_b_in_memory(...)` at the stressed gold (the formulas live once, in Tool B). The stress just calls that same function with a different `gold_price`.
+- **The serve/UI layer computes no formula.** It either (a) reads the **persisted** spot values, or (b) calls the one backend function `compute_tool_d_outputs(gold_price=G)` for the interactive what-if. It never does arithmetic on AISC/EBITDA/debt itself. (Contrast: the pre-existing `detail_panels.py:1453` OLS — we do **not** add that pattern here.)
+- **Daily state is backend-computed + persisted** (spot, one coherent run). The slider is an explicit, labeled *scenario* — the **one** request-time compute, and it's bounded, deterministic, reuses the same backend code (zero duplicate logic), and leaves the persisted parquet untouched. This is exactly Tool B's already-accepted override pattern.
+- **Alternative if you want literally zero request-time compute:** pre-compute a fixed scenario set (spot / −15% / −25% / −35%) **at refresh** and persist them; the UI reads the nearest. Tradeoff: no arbitrary custom gold price. *Recommendation: the Tool B override pattern is fine — it's the same backend function, just invoked for a what-if.*
+- **Guardrail test:** a test asserts the serve layer contains no resilience arithmetic (no AISC/EBITDA/debt math in `serve/overview_tool_d.py`); the formulas are only in `model/tool_d.py`, exercised by both the refresh and the scenario path.
 
 ## 6. UI
 - A gold-price control bar on `/tool-d` (scenario buttons + custom input + "reset to spot"), styled like Tool B's override form.
