@@ -142,6 +142,10 @@ def standardize_market_snapshot(
     last_row = frame.iloc[-1]
     snapshot_date = _extract_snapshot_date(ticker, last_row)
     share_price_local = _extract_share_price_local(ticker, last_row, fast_info)
+    # LSE (and a few other) feeds quote in a currency's minor unit (pence);
+    # convert to the major unit so the downstream local->USD step isn't ~100x
+    # too large (this silently inflated market_cap_usd for LSE names).
+    share_price_local = _to_major_currency_unit(share_price_local, fast_info)
     market_cap = _as_float(fast_info.get("marketCap") or fast_info.get("market_cap"))
     shares = _as_float(
         fast_info.get("shares")
@@ -209,3 +213,25 @@ def _extract_share_price_local(
         if numeric is not None and numeric > 0:
             return numeric
     raise ValueError(f"Market snapshot has no valid positive share price for {ticker}")
+
+
+# Yahoo quotes some exchanges in a currency's MINOR unit (1/100 of the major
+# unit): London in pence (GBp/GBX), Johannesburg in cents (ZAc), Tel Aviv in
+# agorot (ILA). Detection is CASE-SENSITIVE on the feed's own currency tag --
+# "GBp" (pence) differs from "GBP" (pounds) only by the lowercase 'p', so a
+# case-insensitive check would wrongly divide genuine pound quotes.
+_MINOR_CURRENCY_UNIT_TAGS = frozenset({"GBp", "GBX", "ZAc", "ZAX", "ILA"})
+
+
+def _to_major_currency_unit(price: float, fast_info: dict[str, object]) -> float:
+    """Divide minor-unit quotes (e.g. LSE pence) down to the major unit.
+
+    Keys off the feed's own currency tag (``fast_info['currency']``), so a name
+    that genuinely quotes in pounds ("GBP") is left unchanged while a pence
+    quote ("GBp") is divided by 100.
+    """
+
+    feed_currency = str(fast_info.get("currency") or "").strip()
+    if feed_currency in _MINOR_CURRENCY_UNIT_TAGS:
+        return price / 100.0
+    return price

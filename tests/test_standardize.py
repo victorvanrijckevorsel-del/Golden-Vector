@@ -106,6 +106,38 @@ def test_standardize_market_snapshot_leaves_non_usd_conversion_for_later():
     assert snapshot["market_cap_usd"] is None
 
 
+def test_standardize_market_snapshot_converts_lse_pence_to_pounds():
+    # Yahoo serves LSE prices in pence (currency tag "GBp"); they must be /100
+    # to pounds so the later local->USD step isn't ~100x too large.
+    frame = pd.DataFrame({"Date": ["2026-02-01"], "Close": [39.0]})
+
+    snapshot = standardize_market_snapshot(
+        ticker="PAF.L",
+        currency="GBP",
+        frame=frame,
+        fast_info={"currency": "GBp", "sharesOutstanding": 2_000_000_000.0},
+        source_run_id="run-1",
+    )
+
+    assert snapshot["share_price_local"] == pytest.approx(0.39)
+    assert snapshot["currency"] == "GBP"
+
+
+def test_standardize_market_snapshot_keeps_genuine_pound_quote_unchanged():
+    # Case-sensitive: a real GBP (pounds) quote must NOT be divided by 100.
+    frame = pd.DataFrame({"Date": ["2026-02-01"], "Close": [12.5]})
+
+    snapshot = standardize_market_snapshot(
+        ticker="FRES.L",
+        currency="GBP",
+        frame=frame,
+        fast_info={"currency": "GBP", "sharesOutstanding": 700_000_000.0},
+        source_run_id="run-1",
+    )
+
+    assert snapshot["share_price_local"] == 12.5
+
+
 def test_standardize_market_snapshot_falls_back_to_fast_info_price_when_close_is_missing():
     frame = pd.DataFrame({"Date": ["2026-02-01"], "Close": [None], "Adj Close": [None]})
 
