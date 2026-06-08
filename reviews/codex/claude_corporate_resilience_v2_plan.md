@@ -13,14 +13,18 @@ A gold slider alone is *not* a new angle — it's the same fundamentals at a dif
 - **Corporate Finance (Tool B):** "Is this a good, well-run, fairly-valued company **right now**?" — a *static fundamentals scorecard* at today's gold.
 - **Corporate Resilience (Tool D):** "**How far can gold fall before this company breaks, and how fast does it deteriorate on the way down?**" — *survival thresholds + gold-sensitivity*, which Tool B structurally cannot express.
 
-**Tool D's identity = survival distance + fragility slope, expressed as gold-price thresholds.** Its headline outputs are things Corporate Finance has no concept of:
-1. **Breakeven gold** = gold where margin = 0 (`= AISC`). "Survives down to $1,130." A *survival threshold*.
-2. **FCF-breakeven gold** = gold where sustainable FCF turns negative (includes sustaining capex) — `AISC + sustaining_capex·1e6/production`. The point they start *burning cash*.
-3. **Debt-stress gold** = gold where Net Debt/EBITDA breaches a danger level (e.g. 4×) or interest cover fails. A *fragility threshold*.
-4. **Cost-curve position** = AISC percentile across the universe. In a gold crash **the high-cost miners die first** — the single best resilience differentiator (relative, not absolute).
-5. **Gold-sensitivity of EBITDA/FCF** = the **slope**: % EBITDA change per % gold change. A high-cost miner's EBITDA collapses far faster — that amplification *is* fragility.
+**Tool D's identity = survival distance + solvency, expressed as gold-price thresholds.** Its headline outputs are things Corporate Finance has no concept of — a **ladder of survival lines** (each is "the gold price at which X breaks"):
+1. **Breakeven gold** = gold where cash margin = 0 (`= AISC`). "Makes money down to $1,130." The shallowest line.
+2. **FCF-breakeven gold** = gold where sustainable FCF turns negative — `AISC + sustaining_capex·1e6/production`. The point they start *burning cash*.
+3. ⭐ **Interest-cover gold (the default line)** = gold where EBITDA can no longer cover interest payments (`forward_ebitda(G) = interest_expense_musd`). We **have `interest_expense_musd`** and aren't using it — this is the truest "when do they actually default" threshold, distinct from a leverage *ratio*. Add it as a headline survival line.
+4. **Debt-stress gold** = gold where Net Debt/EBITDA breaches a danger band (config threshold). A leverage *fragility* threshold (ratio-based; complements #3 which is cash-based).
+5. **Cost-curve position** = AISC percentile across the universe. In a gold crash **the high-cost miners die first** — the single best *relative* resilience differentiator.
 
-The **Resilience Rank** is built from **survival distance + cost-curve position + deterioration slope + balance-sheet cushion** — none of which is a Corporate Finance metric. The current-state ratios that overlap (EV/EBITDA, FCF yield, current margin) are **demoted to context**; they belong in Corporate Finance.
+These three survival lines (#1–#3) sorted give a literal **"order of failure"** as gold falls — the most decision-useful output.
+
+The **Resilience Rank** is built from **survival distance (to the default line) + cost-curve position + balance-sheet cushion (net-cash vs levered)** — none of which is a Corporate Finance metric. The current-state ratios that overlap (EV/EBITDA, FCF yield, current margin) are **demoted to context**; they belong in Corporate Finance.
+
+> **On the "fragility slope":** % EBITDA change per −10% gold is largely *implied by* the cost-curve position / headroom (high-cost ⇒ small margin base ⇒ steep slope), so showing it as an independent primary column risks **three correlated columns all saying "high cost = fragile."** Keep cost-curve + the survival lines as the cost dimension; show the slope only as detail/context (or drop it). Don't present correlated metrics as independent signals.
 
 ## 2. The metrics (and their formulas — now shown in the UI)
 Already added to the overview as hover tooltips; this plan keeps them visible everywhere:
@@ -64,14 +68,22 @@ A gold-price input + preset buttons — **Spot**, **−15%**, **−25%**, **−3
 - Prominent **Breakeven gold** column; **spot-vs-G** rendering for the key metrics; the "flips under stress" flag; transparent Quality Score breakdown; formula tooltips.
 - Keep rows compact (the Tool B lesson — no inline essays; use tooltips/click-to-expand).
 
+## 6b. Honest limits — what this stress model captures (and what it can't yet)
+A **simple, transparent** stress model (every formula visible), not a full financial model. With the data we have (`aisc`, `cash_cost`, `sustaining_capex`, **`interest_expense`**, `net_debt`, `production`, `reserve_life`, `royalty_rate`, `tax_rate`) it captures the **cost and solvency** dimensions well: where margin, cash flow, and *interest cover* break as gold falls. What it does **not** capture — and we must not imply it does, because we lack the data:
+- **Cash runway / how LONG they survive below a line** — we have *net* debt, not gross cash, so we can't compute "months of cash at $X gold." A survival-line *price* ≠ survival *duration*. (Needs a cash field.)
+- **Debt-maturity wall / refinancing risk** — when debt comes due. (Needs a maturity field.)
+- **Gold hedging** — forward sales that protect at low gold. (Needs a hedge field.)
+Two refinements available with data we *do* have: fold **royalties (on revenue) and tax** into the survival thresholds (we have the rates) for more realistic break points — pre-tax/royalty is fine to ship, after-tax is more accurate. **Label these limits in the UI**, don't overstate.
+
 ## 7. Tests
 - **Breakeven gold == AISC**; **FCF-breakeven gold == AISC + sustaining_capex·1e6/production** (and ≥ breakeven gold).
+- **Interest-cover gold**: the gold price where `forward_ebitda(G) == interest_expense_musd` is found correctly; `N/A` when interest_expense is 0/missing; ordering breakeven ≤ FCF-breakeven and interest-cover sits where the model puts it.
 - **Cost-curve position** = AISC percentile is correct and orients low-cost = most resilient.
-- **Fragility slope**: a high-AISC name shows a steeper EBITDA/FCF drop per −10% gold than a low-AISC name.
 - **Debt-stress gold**: the gold price where Net Debt/EBITDA crosses the danger band is found correctly (and `N/A` for net-cash names).
 - `compute_tool_d_outputs` at several G (spot, −25%, below some names' AISC) flips the right names to margin-negative / over-levered.
 - The override recompute leaves the persisted parquet unchanged (scenario-only).
-- Resilience Rank equals the mean of its (survival/cost/slope/cushion) component percentiles — transparency pinned.
+- Resilience Rank equals the mean of its (survival-distance / cost-curve / cushion) component percentiles — transparency pinned.
+- Names missing AISC/production/interest are flagged `insufficient data for resilience`, not silently ranked.
 - Page renders the gold control + scenario recompute + compact rows; the table leads with survival columns, not the Corporate Finance ratios.
 
 ## 8. Self-review
