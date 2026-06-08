@@ -543,3 +543,14 @@
     .option-sizing-result {
       margin-top: 12px;
     }
+
+/* Tool B "Checks" column: compact by default, click-to-expand breakdown */
+.checks-summary-cell summary { cursor: pointer; white-space: nowrap; }
+.checks-summary-cell .checks-detail {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.85em;
+  color: #555;
+  max-width: 340px;
+  white-space: normal;
+}

@@ -32,6 +32,26 @@ from golden_vector.serve.screening_overrides import ScreeningOverrides, apply_ov
 from golden_vector.serve.workspace_state import WorkspaceState
 
 
+def _checks_detail_cell(tb: dict[str, Any]) -> str:
+    """Compact, click-to-expand checks cell so the table stays readable.
+
+    Shows only the "N/M" count by default; clicking it reveals the full
+    per-check breakdown (Data complete PASS; AISC PASS; ...).
+    """
+    summary = str(tb.get("fundamental_check_summary") or "").strip()
+    if not summary:
+        return "<td>-</td>"
+    label, _, detail = summary.partition(":")
+    label = label.strip() or "checks"
+    detail = detail.strip() or summary
+    return (
+        "<td class=\"checks-summary-cell\">"
+        f"<details><summary>{escape(label)}</summary>"
+        f"<span class=\"checks-detail\">{escape(detail)}</span>"
+        "</details></td>"
+    )
+
+
 def _render_tool_b_overview_page(
     state: WorkspaceState,
     *,
@@ -99,7 +119,6 @@ def _render_tool_b_overview_page(
             "<tr>"
             f"<td><a href=\"/ticker/{escape(row['ticker'])}\">{escape(row['ticker'])}</a></td>"
             f"<td>{_fmt_text(tb.get('screening_verdict'))}</td>"
-            f"<td>{_fmt_text(tb.get('fundamental_check_summary'))}</td>"
             f"{_fmt_numeric_td(tb.get('fundamental_check_score'), decimals=1)}"
             f"{_fmt_numeric_td(row['fundamental_check_rank'], decimals=0)}"
             f"{_fmt_numeric_td(tb.get('share_price_usd'), decimals=2)}"
@@ -116,6 +135,7 @@ def _render_tool_b_overview_page(
             f"{_fmt_numeric_td(tb.get('reserve_life_years'), decimals=1)}"
             f"<td>{_fmt_text(tb.get('layer1_status'))}</td>"
             f"{_fmt_numeric_td(row['note_count'], decimals=0)}"
+            f"{_checks_detail_cell(tb)}"
             "</tr>"
         )
     if not rows_html:
@@ -187,7 +207,6 @@ def _render_tool_b_overview_page(
         "<thead><tr>"
         "<th data-col-name=\"ticker\">Ticker</th>"
         "<th data-col-name=\"verdict\">Verdict</th>"
-        "<th data-col-name=\"check_summary\">Checks</th>"
         "<th data-col-name=\"score\" data-sort-numeric>Checks Passed %</th>"
         "<th data-col-name=\"rank\" data-sort-numeric>Rank</th>"
         "<th data-col-name=\"share_price\" data-sort-numeric>Share Price</th>"
@@ -204,6 +223,7 @@ def _render_tool_b_overview_page(
         "<th data-col-name=\"reserve_life\" data-sort-numeric>Reserve Life</th>"
         "<th data-col-name=\"layer1\">Layer 1</th>"
         "<th data-col-name=\"notes\" data-sort-numeric>Notes</th>"
+        "<th data-col-name=\"check_summary\">Checks</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
         "</table>"
