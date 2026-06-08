@@ -3,6 +3,18 @@ version: 1
 # jurisdiction_tier defaults to 2 (15% discount) for every ticker. Edit per name
 # as you build conviction (1 = no discount, 3 = 30% discount).
 tickers:
+  - ticker: AAR.AX
+    company: Astral Resources NL
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 1
+    # Added 2026-06-08: held in the IBKR portfolio, was missing from the
+    # universe. Small-cap WA gold developer (Mandilla). Likely pre-revenue,
+    # so Tool B/D fundamentals may be sparse; Tool A gold beta works fine
+    # (returns-based). Yahoo data confirmed (AAR.AX, AUD, 1y weekly).
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
   - ticker: AAUC.TO
     company: Allied Gold Corporation
     exchange: TSX
@@ -116,6 +128,21 @@ tickers:
     exchange: US
     currency: USD
     jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: CLA.AX
+    company: Celsius Resources Ltd
+    exchange: ASX
+    currency: AUD
+    jurisdiction_tier: 3
+    # Added 2026-06-08: held in the IBKR portfolio (an ASX line in AUD and a
+    # London line CLA.L in GBp/pence), was missing from the universe.
+    # Micro/nano-cap COPPER-gold/cobalt explorer (MCB Philippines, Opuwo
+    # Namibia) — gold beta will be noisy and fundamentals likely absent
+    # (pre-revenue). Canonical universe listing = CLA.AX (AUD); the portfolio
+    # importer maps both the AUD and GBP holding lines here. Yahoo data
+    # confirmed (CLA.AX, AUD, 1y weekly).
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
