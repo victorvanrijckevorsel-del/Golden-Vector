@@ -2,7 +2,7 @@
 
 **Author:** Claude Code (Opus 4.8), reconciled with Codex's v3 review (`codex_review_claude_portfolio_plan_v3.md`, NEEDS CHANGES — **adopted**).
 **Status:** build spec. The big change vs v3 is architectural: **build a first-class `portfolio/` compute layer**, do NOT lean on the hedge-readiness markdown/report engine.
-**Sequencing:** foundation (§7 order) first, then the tab. After the option-signals validation + the LSE re-run.
+**Sequencing:** **M1 = manual position entry + P&L is built FIRST** (§M1 — folds in the former `claude_portfolio_manual_entry_plan.md`); the foundation + analytics follow as M2–M4 (§7). After the option-signals validation + the LSE re-run.
 
 ---
 
@@ -64,6 +64,20 @@ Every artifact carries `schema_version, parent_refresh_id, snapshot_refresh_run_
 
 ---
 
+## M1 — Manual position entry + P&L (BUILD THIS FIRST)
+
+The first milestone and the dependency for everything below — it gets the real book in by hand. Manual entry of **buy price + date** supplies the cost basis the IBKR export lacks, so **P&L is ENABLED** (no greyed stub). **Locked (Emanuel):** each buy = its own **line** (lots → blended average cost) · **manual entry only** for v1 (IBKR auto-import is later). Full detail was in `claude_portfolio_manual_entry_plan.md`, folded here:
+
+- **Buy line (lot):** `id` (stable, for edit/delete) · `ticker` (universe dropdown; unknown → "add to universe first", never silently accepted) · `shares` (>0) · `buy_price` (>0, in `buy_currency`) · `buy_currency` (default from the ticker's exchange) · `buy_date` (real, not future) · `note?` · `created_at`/`updated_at`. A **position** = lots grouped by ticker (`total_shares`, `avg_cost_local`). This is a `portfolio_lines` row with `source="manual"` + cost-basis fields populated.
+- **Store:** a manual lots store under the gitignored `data/manual/portfolio/` — **stable ids, atomic writes, schema-validated, never logs values**. Reuse the existing manual-store pattern if it fits; keep the legacy `holdings.yaml` (hedge report) untouched.
+- **Write path — the ONE serve-layer write exception, kept clean:** `GET` (table + forms), `POST` add, `POST .../{id}/edit`, `POST .../{id}/delete`. Each write **validates → writes the store (atomic) → runs the portfolio pipeline → redirects to the view**. The recompute reads the **already-persisted** snapshot/FX + the store and **does NOT hit Yahoo** (cheap, instant); **no analytics inline in the handler**; the page then **reads artifacts**. Validation is fail-loud with friendly messages (known ticker; shares & price > 0; valid non-future date; allowed currency); a failed write leaves the prior store intact.
+- **P&L (now on):** per position, **local primary** — `cost_local = Σ(shares×buy_price)`, `value_local = total_shares × current_local_price`, `P&L_local = value_local − cost_local` (and %). Book level: total value + cost in **USD** at current FX + the per-currency split. A single USD P&L blends stock + FX moves — so v1 leads with **local P&L per position** (clean) and an **FX-aware USD P&L is a later refinement**. Current price = the pence-corrected snapshot; show its as-of date.
+- **UI (Positions section):** a grouped positions table (ticker · shares · avg cost · current price · value · **P&L · %**), sortable, each row **expandable to its lots**; add/edit/delete forms (ticker dropdown, shares, price, currency default, date, note); a calm "add your first position" empty state — never a fake number.
+- **Uses from this plan:** the `portfolio/` skeleton (§1a), the shared valuation/pence+FX helper (§1b), the manifest + `portfolio_positions`/`portfolio_summary` artifacts (§1c/§2), the privacy gates (§3 B7). **M1 does NOT need** benchmark betas, the gold scenario, cash modelling, reconciliation, correlation, or the value-over-time chart — those are M2–M4.
+- **M1 tests:** add → stored w/ stable id; multiple lots same ticker → one position, correct blended avg cost + summed shares; edit/delete → values + P&L update / row removed + recompute; validation rejects shares/price ≤ 0, future date, unknown ticker, bad currency (friendly, no partial write); P&L math on known lots + a known price; atomic write (failed write leaves prior store intact); privacy (store stays gitignored, hidden when `portfolio_enabled` false, non-loopback bind refused); read path reads artifacts, no inline store parsing.
+
+---
+
 ## 3. Foundation fixes (the old blockers, now inside the architecture)
 - **B1 pence:** complete the **history path** via the shared helper (snapshot already fixed, commit `9d26270`). Persist the audit fields. Test: a `GBp` quote divided **once** — not zero, not twice.
 - **B2 notional:** the typed valuation boundary (§1a). Stage-1 reconciliation uses **IBKR's own** market value + FX as truth; GV prices feed only drift + analytics.
@@ -85,25 +99,25 @@ Every artifact carries `schema_version, parent_refresh_id, snapshot_refresh_run_
 7. **Effective exposure:** measured / estimated / low-confidence buckets (never blended).
 8. **Resilience overlay** (Tool D slider): "% of covered holdings (= N% of book)."
 9. **GDX/GDXJ hedge card:** "**modeled hedge size**" (not "recommended"); fail-closed if no benchmark beta; IV context + FX note.
-10. **P&L:** greyed "cost basis not imported yet" stub.
+10. **P&L:** real per-position P&L from the M1 manual buys (local primary, USD book total) — greyed only before any positions are entered, never faked.
 11. **Charts:** pie; **concentration ships first**; correlation **coverage-gated + a "largest paired exposures" table beside it**; **value-over-time** (needs the history pence fix; labeled "today's holdings valued backward — not profit/loss").
 12. **Reconciliation CSV export** (raw broker line → canonical position).
 
 ---
 
 ## 5. Decisions — LOCKED (+ Codex refinements)
-USD base **+ a local-currency detail table**. P&L disabled stub. Charts kept but **coverage-gated + precomputed**, concentration first. **Overshoot = informational-only for v1** (no single-name short sizing without borrow/gap data — Codex + Emanuel's gate align). GDX card labeled "modeled," not "recommended."
+USD base **+ a local-currency detail table**. **P&L ENABLED via M1 manual cost basis** (was a disabled stub; reversed once Emanuel chose to enter buys by hand — each buy its own line, manual-only v1). Charts kept but **coverage-gated + precomputed**, concentration first. **Overshoot = informational-only for v1** (no single-name short sizing without borrow/gap data — Codex + Emanuel's gate align). GDX card labeled "modeled," not "recommended."
 
 ## 6. Honesty + hard rules
 v3 §6 carries, plus: equity-weight vs NAV-weight always labeled; "modeled hedge size" never "recommended"; no portfolio score; currency normalization only safe once history + portfolio share the one unit/FX helper; fail loud on broker-import / schema-mismatch / missing benchmark beta / missing price unit / stale artifacts.
 
-## 7. Build order
-1. **Shared unit/FX helper** (`normalize/`) + **complete the history pence fix** + audit fields (+ tests).
-2. **`benchmark_betas` step** + artifact + manifest (Tool A estimator over GDX/GDXJ).
-3. **`portfolio/` package:** `importer` → `valuation` (typed) → broker-line→position **grouping** → **reconciliation** (two-stage).
-4. **`portfolio/pipeline`:** compute summary/positions (+ charts) → persist artifacts → manifest + schema_version.
-5. **`serve/portfolio_page.py`** (reads only) + nav entry + **privacy gates** (incl. `/hedge-readiness`) + **non-loopback bind refusal**.
-6. **Sections:** what-matters + data-issues panels → composition → concentration → beta-contribution → resilience → GDX card → charts → reconciliation CSV.
+## 7. Build order (milestones)
+- **M1 — Manual entry + P&L (§M1, BUILD FIRST):** the `portfolio/` package skeleton (`models`, `manual_store`, `valuation`, `pipeline`, `reader`) + the shared valuation/pence+FX helper (`normalize/`) + `portfolio_positions`/`portfolio_summary` artifacts + manifest + schema_version + the **Positions page** (add/edit/delete + per-position P&L) + the **privacy gates** (incl. `/hedge-readiness`) + **non-loopback bind refusal**. Ships Emanuel's real book with P&L. *(M1 uses the snapshot price, already pence-corrected — it does not block on the history-path fix.)*
+- **M2 — Remaining foundation:** complete the **history-path pence fix** via the shared helper + audit fields; the **`benchmark_betas`** step (Tool A estimator over GDX/GDXJ) + artifact + manifest; harden the typed valuation boundary; the **two-stage reconciliation** scaffold.
+- **M3 — Core analytics:** the **what-matters** + **data-issues** panels, composition/coverage, concentration (equity- and NAV-weight), **gold-drop loss + beta-contribution**, effective-exposure buckets, resilience overlay; **cash in NAV**.
+- **M4 — Hedge + charts:** the **GDX hedge card** (fail-closed on missing benchmark beta), correlation (+ paired-exposures table), the **value-over-time** chart, reconciliation CSV.
+- **Later:** IBKR auto-import, FX-aware USD P&L.
+Tests (§8) land milestone by milestone; M1 ships with its own test set (§M1).
 
 ## 8. Tests required before accept (Codex's list, adopted)
 1. `GBp` snapshot **and** history divided **once**. 2. Duplicate company lines → one canonical position, both raw lines preserved. 3. Cash in NAV + concentration denominator, out of gold shock. 4. Reconciliation: broker totals pass; deliberate mismatch hard-fails analytics; GV drift labels but does not fail. 5. Benchmark beta produced without adding GDX/GDXJ to `universe.yaml`; missing artifact disables hedge sizing. 6. Privacy: disabled hides all portfolio pages/downloads; non-loopback bind refused; `/hedge-readiness/latest.md` can't leak values. 7. Manifest: portfolio artifacts resolve through immutable model-state paths. 8. Serve route reads no raw CSVs / computes no charts. 9. Stale schema → calm "run refresh", not 500.
