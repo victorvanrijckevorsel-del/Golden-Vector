@@ -54,6 +54,11 @@ from golden_vector.hedge.option_artifact_builder import (
 )
 from golden_vector.hedge.option_artifact_frames import build_option_artifact_frames
 from golden_vector.hedge.option_artifact_sources import load_option_artifact_source_inputs
+from golden_vector.hedge.option_signals import (
+    build_option_signal_artifacts,
+    load_option_signal_history,
+    persist_option_signal_history,
+)
 from golden_vector.hedge.options_liquidity import slot_tier_counts
 from golden_vector.ingestion.foundation import execute_foundation_pipeline
 from golden_vector.ingestion.collection_resilience import (
@@ -1527,6 +1532,30 @@ def run_option_artifacts(
             manifest=sources.manifest,
             scans_by_ticker=option_chain_scans,
         )
+        option_signals = build_option_signal_artifacts(
+            app_config=loaded_config.app,
+            options_features=sources.features,
+            contract_metrics=contract_metrics,
+            manifest=sources.manifest,
+            prior_history=load_option_signal_history(paths),
+            prior_contract_metrics=_previous_option_contract_metrics(paths),
+        )
+        if option_signals.publish_blockers:
+            message = "; ".join(option_signals.publish_blockers)
+            run_context.finalize(
+                status="FAIL",
+                summary={
+                    "error": message,
+                    "option_signal_status": "STALE_QUOTES",
+                    "option_signal_publish_blockers": list(option_signals.publish_blockers),
+                },
+                notes=[
+                    "Option signal artifacts were not published because quote freshness failed.",
+                    "Run python main.py refresh during US options market hours.",
+                ],
+            )
+            LOGGER.error("Option signal build stopped: %s", message)
+            return 1
         frames = build_option_artifact_frames(
             built=built,
             contract_metrics=contract_metrics,
@@ -1537,16 +1566,19 @@ def run_option_artifacts(
             config_hash=loaded_config.config_hash,
             risk_free_rate=sources.risk_free_rate,
             risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
+            option_signals=option_signals,
         )
         persist_option_artifact_frames(
             paths=paths,
             run_context=run_context,
             frames=frames,
         )
+        persist_option_signal_history(paths=paths, history=option_signals.next_history)
 
         row_counts = {name: int(len(frame.index)) for name, frame in frames.items()}
         summary = {
             "option_artifact_status": "PASS",
+            "option_signal_status": "PASS",
             "options_refresh_run_id": str(sources.manifest.get("refresh_run_id") or ""),
             "options_as_of_date": str(sources.manifest.get("as_of_date") or ""),
             "parent_refresh_id": parent_refresh_id,
@@ -1581,6 +1613,13 @@ def run_option_artifacts(
             notes=["Option artifact build failed before completion."],
         )
         return 1
+
+
+def _previous_option_contract_metrics(paths: ProjectPaths) -> pd.DataFrame:
+    path = resolve_current_model_artifact_path(paths, "option_contract_metrics")
+    if path is None:
+        return pd.DataFrame()
+    return read_optional_parquet(path)
 
 
 def run_tool_b(paths: ProjectPaths, *, gold_price: float | None) -> int:

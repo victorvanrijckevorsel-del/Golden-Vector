@@ -7,7 +7,7 @@ from typing import Protocol
 
 from golden_vector.common.files import safe_file_fragment
 
-OPTION_ARTIFACT_SCHEMA_VERSION = 1
+OPTION_ARTIFACT_SCHEMA_VERSION = 2
 
 OPTION_ARTIFACT_NAMES: tuple[str, ...] = (
     "option_contract_metrics",
@@ -16,12 +16,17 @@ OPTION_ARTIFACT_NAMES: tuple[str, ...] = (
     "option_selected_candidates",
     "option_trading_overview",
     "candidate_finder_inputs",
+    "option_signal_summary",
+    "option_skew_curve_points",
+    "option_oi_strike_points",
+    "option_signal_history_points",
 )
 
 REQUIRED_OPTION_ARTIFACT_NAMES: tuple[str, ...] = (
     "option_candidate_slots",
     "option_trading_overview",
     "candidate_finder_inputs",
+    "option_signal_summary",
 )
 
 OPTION_ARTIFACT_PREFIXES: dict[str, str] = {

@@ -65,3 +65,8 @@ optionability_tier_min: directly_hedgeable
 speculation_max_tickers_default: 15
 ranking_max_tickers_default: 60
 down_beta_min_for_scenario: 0.10
+option_signal_skew_residual_threshold: 0.03
+option_signal_quote_coverage_min: 0.60
+option_signal_history_min_samples: 20
+option_signal_activity_volume_to_oi_min: 0.10
+option_signal_area_min_contracts: 4

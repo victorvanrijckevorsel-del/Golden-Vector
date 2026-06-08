@@ -5,6 +5,9 @@ from __future__ import annotations
 from html import escape
 from urllib.parse import quote
 
+import pandas as pd
+
+from golden_vector.hedge._helpers import rows_by_ticker_dict
 from golden_vector.hedge.option_trading import (
     OptionLiquidityMeasurement,
     OptionTradingOverviewData,
@@ -19,11 +22,16 @@ from golden_vector.serve.format_helpers import (
 )
 from golden_vector.serve.overview_helpers import _collect_filter_options, _render_filter_bar
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.option_signal_render import (
+    option_signal_skew_display_value,
+    render_option_signal_badge,
+)
 
 
 def _render_option_trading_overview_page(
     overview: OptionTradingOverviewData,
     *,
+    option_signal_summary: pd.DataFrame | None = None,
     model_state_manifest: dict[str, object] | None = None,
 ) -> str:
     snapshot_date = (
@@ -67,19 +75,24 @@ def _render_option_trading_overview_page(
             active_nav="option_trading",
         )
 
-    row_dicts = [_row_filter_dict(row) for row in overview.rows]
+    signals = _signal_by_ticker(option_signal_summary)
+    row_dicts = [_row_filter_dict(row, signal=signals.get(row.ticker)) for row in overview.rows]
     body.append(
         _render_filter_bar(
             target_table_id="option-trading-table",
             options=_collect_filter_options(
                 row_dicts,
                 [
+                    ("direction", "direction_label"),
+                    ("data_quality", "data_quality_label"),
                     ("put_status", "put_status"),
                     ("call_status", "call_status"),
                     ("confidence", "confidence_label"),
                 ],
             ),
             column_labels={
+                "direction": "Option Signal",
+                "data_quality": "Data Quality",
                 "put_status": "Put Candidates",
                 "call_status": "Call Candidates",
                 "confidence": "Gold Sensitivity Confidence",
@@ -87,7 +100,8 @@ def _render_option_trading_overview_page(
         )
     )
     rows_html = "".join(
-        _render_row(row, snapshot_date=snapshot_date) for row in overview.rows
+        _render_row(row, snapshot_date=snapshot_date, signal=signals.get(row.ticker))
+        for row in overview.rows
     )
     body.append(
         "<table id=\"option-trading-table\" class=\"js-datatable\">"
@@ -97,6 +111,11 @@ def _render_option_trading_overview_page(
         "<th data-col-name=\"down_beta\" data-sort-numeric>Down Beta</th>"
         "<th data-col-name=\"up_beta\" data-sort-numeric>Up Beta</th>"
         "<th data-col-name=\"confidence\">Gold Sensitivity Confidence</th>"
+        "<th data-col-name=\"direction\">Signal</th>"
+        "<th data-col-name=\"skew\" data-sort-numeric>Skew Read</th>"
+        "<th data-col-name=\"activity\">Activity</th>"
+        "<th data-col-name=\"cost\">Cost</th>"
+        "<th data-col-name=\"data_quality\">Data Quality</th>"
         "<th data-col-name=\"iv\" data-sort-numeric>IV %ile</th>"
         "<th data-col-name=\"put_status\">Put Status</th>"
         "<th data-col-name=\"call_status\">Call Status</th>"
@@ -160,7 +179,12 @@ def _render_context_warnings(context: object | None) -> str:
     return f"<div class=\"flash option-context-warning\">{paragraphs}</div>"
 
 
-def _render_row(row: OptionTradingRow, *, snapshot_date: str | None) -> str:
+def _render_row(
+    row: OptionTradingRow,
+    *,
+    snapshot_date: str | None,
+    signal: dict[str, object] | None,
+) -> str:
     detail_href = f"/ticker/{quote(row.ticker, safe='')}?lens=option-trading#option-trading"
     return (
         "<tr>"
@@ -169,6 +193,11 @@ def _render_row(row: OptionTradingRow, *, snapshot_date: str | None) -> str:
         f"{_fmt_numeric_td(row.down_beta_core, decimals=2)}"
         f"{_fmt_numeric_td(row.up_beta_core, decimals=2)}"
         f"<td>{_fmt_text(row.confidence_label)}</td>"
+        f"<td>{_signal_badge(signal, 'direction_label')}</td>"
+        f"{_vol_points_td(option_signal_skew_display_value(signal))}"
+        f"<td>{_signal_badge(signal, 'activity_label')}</td>"
+        f"<td>{_signal_badge(signal, 'cost_label')}</td>"
+        f"<td>{_signal_badge(signal, 'data_quality_label')}</td>"
         f"{_fmt_numeric_td(row.iv_percentile_cross_sectional, decimals=1)}"
         f"<td>{_status_label(row.put_status)}</td>"
         f"<td>{_status_label(row.call_status)}</td>"
@@ -178,12 +207,47 @@ def _render_row(row: OptionTradingRow, *, snapshot_date: str | None) -> str:
     )
 
 
-def _row_filter_dict(row: OptionTradingRow) -> dict[str, str]:
+def _row_filter_dict(
+    row: OptionTradingRow,
+    *,
+    signal: dict[str, object] | None,
+) -> dict[str, str]:
     return {
+        "direction_label": str(_signal_value(signal, "direction_label") or ""),
+        "data_quality_label": str(_signal_value(signal, "data_quality_label") or ""),
         "put_status": _status_text(row.put_status),
         "call_status": _status_text(row.call_status),
         "confidence_label": row.confidence_label,
     }
+
+
+def _signal_by_ticker(frame: pd.DataFrame | None) -> dict[str, dict[str, object]]:
+    if frame is None:
+        return {}
+    return rows_by_ticker_dict(frame, strip=True)
+
+
+def _signal_value(signal: dict[str, object] | None, key: str) -> object | None:
+    if not signal:
+        return None
+    return signal.get(key)
+
+
+def _signal_badge(signal: dict[str, object] | None, key: str) -> str:
+    value = _signal_value(signal, key)
+    if value is None:
+        return "-"
+    return render_option_signal_badge(value)
+
+
+def _vol_points_td(value: object | None) -> str:
+    try:
+        numeric = float(value) if value is not None else None
+    except (TypeError, ValueError):
+        numeric = None
+    if numeric is None or pd.isna(numeric):
+        return "<td data-order=\"9000000000000000\">-</td>"
+    return f"<td data-order=\"{numeric:.8f}\">{escape(f'{numeric * 100:.1f} vol pts')}</td>"
 
 
 def _status_label(status: str) -> str:

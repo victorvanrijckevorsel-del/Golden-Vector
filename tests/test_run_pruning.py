@@ -137,6 +137,44 @@ def test_prune_runs_cli_is_dry_run_without_apply(tmp_path, capsys):
     assert option_path.exists()
 
 
+def test_prune_runs_preserves_option_signal_history_store(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    tool_run = "20260601T000000Z-tool-a-current"
+    option_run = "20260601T000001Z-option-artifacts-current"
+    tool_path, option_path = _write_artifacts(
+        paths,
+        tool_run_id=tool_run,
+        option_run_id=option_run,
+    )
+    latest_payload = _write_model_state(
+        paths,
+        name="model_state_current.json",
+        generated_at="2026-06-01T00:00:00Z",
+        tool_path=tool_path,
+        option_path=option_path,
+        run_ids=(tool_run, option_run),
+    )
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(latest_payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    history = paths.output_options_dir / "option_signal_history.parquet"
+    history.write_text("retained option signal history\n", encoding="utf-8")
+    orphan = (
+        paths.output_options_dir
+        / "option_selected_candidates_latest_20260501T000001Z-orphan.parquet"
+    )
+    orphan.write_text("old option artifact\n", encoding="utf-8")
+
+    report = prune_runs(paths, keep_model_states=1, apply=True)
+
+    assert history.exists()
+    assert orphan in report.deleted_paths
+    assert not orphan.exists()
+    assert all(candidate.path != history for candidate in report.candidates)
+
+
 def test_prune_runs_apply_is_noop_without_any_model_state_manifest(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()

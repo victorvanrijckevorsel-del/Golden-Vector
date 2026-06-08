@@ -118,7 +118,7 @@ def test_load_option_trading_data_uses_composite_cache_key(tmp_path):
     assert first.cache_key.options_refresh_run_id == "options-run"
     assert first.cache_key.tool_a_refresh_run_ids == ("tool-run-a",)
     assert first.cache_key.model_state_manifest_hash is not None
-    assert [row.ticker for row in first.overview.rows] == ["AEM"]
+    assert {row.ticker for row in first.overview.rows} == {"AEM", "GDX", "GDXJ"}
     assert app_config.hedge_readiness.target_horizons_days == [60, 90, 120]
     assert app_config.hedge_readiness.display_horizons_days == [60, 90, 120]
     assert sorted({slot.horizon_days for slot in first.candidate_slots["AEM"]}) == [
@@ -190,8 +190,9 @@ def test_build_option_trading_detail_data_reuses_cached_overview_row(tmp_path):
     detail = build_option_trading_detail_data(data, ticker="AEM", app_config=app_config)
 
     assert data.overview.rows
-    assert detail.row is data.overview.rows[0]
-    assert detail.row.pnl_put_at_minus10_60d == data.overview.rows[0].pnl_put_at_minus10_60d
+    aem_row = next(row for row in data.overview.rows if row.ticker == "AEM")
+    assert detail.row is aem_row
+    assert detail.row.pnl_put_at_minus10_60d == aem_row.pnl_put_at_minus10_60d
     assert sorted({slot.horizon_days for slot in detail.put_slots}) == [60, 90, 120]
     assert {slot.bucket for slot in detail.put_slots} == {
         "near_atm",
@@ -323,8 +324,9 @@ def test_load_option_trading_data_builds_call_context_from_up_beta(tmp_path):
 
     assert data.call_candidate_grids["AEM"]
     assert all(candidate.option_type == "C" for candidate in data.call_candidate_grids["AEM"])
-    assert data.overview.rows[0].call_status == "tradable"
-    assert data.overview.rows[0].pnl_call_at_plus10_60d is not None
+    aem_row = next(row for row in data.overview.rows if row.ticker == "AEM")
+    assert aem_row.call_status == "tradable"
+    assert aem_row.pnl_call_at_plus10_60d is not None
     assert detail.call_candidates
     assert detail.call_bundles
     assert detail.call_bundles[0].gold_beta_used == 1.1
@@ -380,28 +382,22 @@ def test_load_option_trading_data_surfaces_benchmark_etf_option_rows(tmp_path):
     )
 
 
-def test_load_option_trading_data_shows_missing_benchmark_etf_measurement(tmp_path):
+def test_option_artifact_publish_refuses_missing_benchmark_etf_measurement(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
-    app_config = load_app_config(paths).app
     _write_option_inputs(
         paths,
         refresh_run_id="options-run",
         tool_refresh_run_id="tool-run",
         include_benchmarks=False,
+        publish_artifacts=False,
     )
 
-    data = load_option_trading_data(paths, app_config=app_config)
-    benchmark_measurement = next(
-        measurement
-        for measurement in data.overview.liquidity_measurements
-        if measurement.group_label == "Benchmark ETFs"
-    )
+    exit_code = run_option_artifacts(paths, parent_refresh_id="parent-refresh")
 
-    assert benchmark_measurement.ticker_count == 0
-    assert benchmark_measurement.contract_count == 0
-    assert benchmark_measurement.tradable_count == 0
+    assert exit_code == 1
+    assert load_current_model_state_manifest(paths) is None
 
 
 def test_option_detail_shows_proxy_fallback_when_single_name_missing(tmp_path):
@@ -433,11 +429,10 @@ def test_option_detail_shows_proxy_fallback_when_single_name_missing(tmp_path):
     assert detail.proxy_fallback_note is None
 
 
-def test_option_detail_hides_proxy_fallback_when_etfs_unmeasured(tmp_path):
+def test_option_artifact_publish_refuses_proxy_state_when_etfs_unmeasured(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
-    app_config = load_app_config(paths).app
     _write_option_inputs(
         paths,
         refresh_run_id="options-run",
@@ -446,19 +441,10 @@ def test_option_detail_hides_proxy_fallback_when_etfs_unmeasured(tmp_path):
         publish_artifacts=False,
     )
     _make_snapshot_untradable(paths, refresh_run_id="options-run", ticker="AEM")
-    _publish_option_artifacts(paths)
+    exit_code = run_option_artifacts(paths, parent_refresh_id="parent-refresh")
 
-    data = load_option_trading_data(paths, app_config=app_config)
-    detail = build_option_trading_detail_data(
-        data,
-        ticker="AEM",
-        app_config=app_config,
-        sizing_request=OptionSizingRequest(side="put", horizon_days=60),
-    )
-
-    assert detail.proxy_fallbacks == ()
-    assert detail.proxy_fallback_note is not None
-    assert "benchmark ETF option chains are not measured" in detail.proxy_fallback_note
+    assert exit_code == 1
+    assert load_current_model_state_manifest(paths) is None
 
 
 def test_option_artifact_reader_matches_shared_builder_for_same_sources(tmp_path):
@@ -644,9 +630,9 @@ def test_load_option_trading_data_ignores_stale_feature_rows(tmp_path):
 
     data = load_option_trading_data(paths, app_config=app_config)
 
-    assert data.options_features.empty
-    assert data.overview.rows == ()
-    assert "No persisted option trading rows" in (data.overview.reason or "")
+    assert "AEM" not in set(data.options_features["ticker"])
+    assert {row.ticker for row in data.overview.rows} == {"GDX", "GDXJ"}
+    assert data.overview.reason is None
 
 
 def test_parse_option_sizing_request_budget_mode_ignores_unused_quantity(tmp_path):
@@ -687,7 +673,7 @@ def _write_option_inputs(
     refresh_run_id: str,
     tool_refresh_run_id: str,
     risk_free_rate: float | None = 0.04,
-    include_benchmarks: bool = False,
+    include_benchmarks: bool = True,
     publish_artifacts: bool = True,
     up_beta_core: float = 1.1,
 ) -> None:

@@ -134,6 +134,10 @@ class OptionTradingDetailData:
     source_context: OptionTradingSourceContext | None = None
     proxy_fallbacks: tuple[OptionProxyFallback, ...] = ()
     proxy_fallback_note: str | None = None
+    signal_row: dict[str, object] | None = None
+    skew_curve_points: tuple[dict[str, object], ...] = ()
+    oi_strike_points: tuple[dict[str, object], ...] = ()
+    signal_history_points: tuple[dict[str, object], ...] = ()
 
 
 def build_option_trading_overview(

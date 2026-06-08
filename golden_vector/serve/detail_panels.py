@@ -33,6 +33,11 @@ from golden_vector.serve.format_helpers import (
     _optional_float,
     _render_small_table,
 )
+from golden_vector.serve.option_signal_render import (
+    format_vol_points,
+    option_signal_skew_display_value,
+    render_option_signal_badge,
+)
 from golden_vector.serve.workspace_state import (
     DETAIL_ALIGNMENT_ALIGNED,
     DETAIL_ALIGNMENT_FOUNDATION_AHEAD,
@@ -224,6 +229,8 @@ def _render_option_trading_panel(
         "</p>"
     )
     body.append(_render_option_context_warnings(detail.source_context))
+    body.append(_render_option_signal_card(detail))
+    body.append(_render_option_skew_overlay(detail))
     body.append(
         "<details class=\"method-disclosure\"><summary>Method</summary>"
         "<p>Contracts are scanned from cached Yahoo Finance option chains. "
@@ -261,6 +268,93 @@ def _render_option_trading_panel(
         body.append(f"<ul class=\"hint\">{notes}</ul>")
     body.append("</section>")
     return "".join(body)
+
+
+def _render_option_signal_card(detail: OptionTradingDetailData) -> str:
+    signal = detail.signal_row or {}
+    if not signal:
+        return (
+            "<section class=\"nested-panel\">"
+            "<h3>Option Signal</h3>"
+            "<p class=\"hint\">No persisted option signal is available yet. Run "
+            "<code>python main.py refresh</code> after the signal migration.</p>"
+            "</section>"
+        )
+    lanes = (
+        (
+            "Direction",
+            signal.get("direction_label"),
+            signal.get("direction_reason"),
+            format_vol_points(option_signal_skew_display_value(signal)),
+        ),
+        (
+            "Activity",
+            signal.get("activity_label"),
+            signal.get("activity_reason"),
+            _activity_text(signal),
+        ),
+        (
+            "Cost",
+            signal.get("cost_label"),
+            signal.get("cost_reason"),
+            _fmt_number(signal.get("iv_rv_ratio"), decimals=2),
+        ),
+        (
+            "Data Quality",
+            signal.get("data_quality_label"),
+            signal.get("data_quality_reason"),
+            _fmt_percent(signal.get("signal_area_quote_coverage"), decimals=0),
+        ),
+    )
+    lane_html = []
+    for title, label, reason, value in lanes:
+        lane_html.append(
+            "<article class=\"option-signal-lane\">"
+            f"<h4>{escape(title)}</h4>"
+            f"<p>{render_option_signal_badge(label)} <strong>{escape(str(value or '-'))}</strong></p>"
+            f"<p class=\"hint\">{_fmt_text(reason)}</p>"
+            "</article>"
+        )
+    headline = _fmt_text(signal.get("headline"))
+    return (
+        "<section class=\"nested-panel option-signal-card\">"
+        "<h3>Option Signal</h3>"
+        f"<p>{headline}</p>"
+        f"<div class=\"option-signal-grid\">{''.join(lane_html)}</div>"
+        "</section>"
+    )
+
+
+def _render_option_skew_overlay(detail: OptionTradingDetailData) -> str:
+    signal = detail.signal_row or {}
+    if not signal:
+        return ""
+    rows = []
+    for horizon in (60, 90, 120):
+        rows.append(
+            "<tr>"
+            f"<td>{horizon}d</td>"
+            f"<td>{format_vol_points(signal.get(f'name_skew_{horizon}d'))}</td>"
+            f"<td>{format_vol_points(signal.get(f'sector_skew_{horizon}d'))}</td>"
+            f"<td>{format_vol_points(signal.get(f'skew_residual_{horizon}d'))}</td>"
+            "</tr>"
+        )
+    benchmark = _fmt_text(signal.get("benchmark_symbol"))
+    return (
+        "<section class=\"nested-panel\">"
+        f"<h3>Name vs Sector 25-Delta Skew ({benchmark})</h3>"
+        "<table><thead><tr><th>Horizon</th><th>Name</th><th>Sector</th><th>Residual</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+        "</section>"
+    )
+
+
+def _activity_text(signal: dict[str, object]) -> str:
+    put_ratio = _optional_float(signal.get("volume_to_oi_put"))
+    call_ratio = _optional_float(signal.get("volume_to_oi_call"))
+    put = "-" if put_ratio is None else f"P {_fmt_percent(put_ratio, decimals=0)}"
+    call = "-" if call_ratio is None else f"C {_fmt_percent(call_ratio, decimals=0)}"
+    return f"{put} / {call}"
 
 
 def _render_option_proxy_fallback(detail: OptionTradingDetailData) -> str:

@@ -25,6 +25,7 @@ from golden_vector.hedge.option_trading import (
     SideStatus,
 )
 from golden_vector.hedge.options_liquidity import OptionContractMetrics
+from golden_vector.hedge.option_signals import OptionSignalArtifacts
 
 CANDIDATE_FINDER_OPTION_COLUMNS: tuple[str, ...] = (
     "ticker",
@@ -53,9 +54,11 @@ def build_option_artifact_frames(
     config_hash: str | None,
     risk_free_rate: float,
     risk_free_rate_is_fallback: bool,
+    option_signals: OptionSignalArtifacts | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Return all persisted option artifact frames for one option-artifact run."""
 
+    signals = option_signals or _empty_option_signal_artifacts()
     frames = {
         "option_contract_metrics": _contract_metrics_frame(contract_metrics),
         "option_liquidity_measurements": _liquidity_measurements_frame(
@@ -75,6 +78,10 @@ def build_option_artifact_frames(
             put_slots=built.candidate_slots,
             call_slots=built.call_candidate_slots,
         ),
+        "option_signal_summary": signals.summary,
+        "option_skew_curve_points": signals.skew_curve_points,
+        "option_oi_strike_points": signals.oi_strike_points,
+        "option_signal_history_points": signals.history_points,
     }
     return {
         name: _stamp_frame(
@@ -315,6 +322,16 @@ def _stamp_frame(
     result.attrs["parent_refresh_id"] = parent_refresh_id
     result.attrs["config_hash"] = config_hash
     return result
+
+
+def _empty_option_signal_artifacts() -> OptionSignalArtifacts:
+    return OptionSignalArtifacts(
+        summary=pd.DataFrame(),
+        skew_curve_points=pd.DataFrame(),
+        oi_strike_points=pd.DataFrame(),
+        history_points=pd.DataFrame(),
+        next_history=pd.DataFrame(),
+    )
 
 
 def _slot_from_record(record: dict[str, Any]) -> OptionCandidateSlot | None:

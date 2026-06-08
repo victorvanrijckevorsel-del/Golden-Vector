@@ -4,7 +4,10 @@ import io
 
 from golden_vector.app.config import load_app_config
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
-from golden_vector.serve.option_trading_data import clear_option_trading_cache
+from golden_vector.serve.option_trading_data import (
+    OptionArtifactStaleSchemaError,
+    clear_option_trading_cache,
+)
 from golden_vector.serve.workspace import create_workspace_app
 from tests.helpers import build_test_paths
 from tests.test_option_trading_data import (
@@ -53,6 +56,30 @@ def test_workspace_option_trading_route_handles_missing_snapshot(tmp_path):
 
     assert response["status"].startswith("200")
     assert "No option artifact snapshot exists yet." in response["body"]
+
+
+def test_workspace_option_trading_route_handles_stale_artifact_schema(tmp_path, monkeypatch):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+
+    def fail_stale_schema(*args, **kwargs):
+        raise OptionArtifactStaleSchemaError("schema_version expected 2, got 1")
+
+    monkeypatch.setattr(
+        "golden_vector.serve.workspace.load_option_trading_data",
+        fail_stale_schema,
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(app, method="GET", path="/option-trading")
+
+    assert response["status"].startswith("503")
+    assert "Your local Option Trading data is from the previous version" in response["body"]
+    assert "Run python main.py refresh" in response["body"]
+    assert "The workspace hit an unexpected error" not in response["body"]
 
 
 def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):

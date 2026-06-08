@@ -19,6 +19,7 @@ from golden_vector.hedge.option_trading import (
     OptionTradingOverviewData,
     OptionTradingSourceContext,
 )
+from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.ingestion.persist_option_artifacts import persist_option_artifact_frames
 from golden_vector.cli import run_option_artifacts
 from tests.helpers import build_test_paths
@@ -128,13 +129,31 @@ def test_persist_option_artifact_frames_rejects_incomplete_artifact_set(tmp_path
 def test_run_option_artifacts_writes_manifest_addressable_outputs(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
+    snapshot_dir = paths.runs_dir / "options-run" / "snapshots" / "options"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_items = []
+    paths.options_features_dir.mkdir(parents=True, exist_ok=True)
+    for ticker in ("GDX", "GDXJ"):
+        snapshot_path = snapshot_dir / f"{safe_options_file_name(ticker)}.parquet"
+        _benchmark_chain(ticker).to_parquet(snapshot_path, index=False)
+        snapshot_items.append(
+            {
+                "ticker": ticker,
+                "options_available": True,
+                "snapshot_path": snapshot_path.relative_to(paths.repo_root).as_posix(),
+            }
+        )
+        _benchmark_feature(ticker).to_parquet(
+            paths.options_features_dir / f"{safe_options_file_name(ticker)}.parquet",
+            index=False,
+        )
     paths.latest_options_manifest_path.write_text(
         json.dumps(
             {
                 "refresh_run_id": "options-run",
                 "as_of_date": "2026-06-01",
                 "risk_free_rate": 0.04,
-                "snapshots": [],
+                "snapshots": snapshot_items,
                 "summary": {"options_phase_status": "PASS"},
             }
         ),
@@ -152,6 +171,27 @@ def test_run_option_artifacts_writes_manifest_addressable_outputs(tmp_path):
     for artifact_name in OPTION_ARTIFACT_NAMES:
         assert option_artifact_latest_path(paths, artifact_name).exists()
         assert payload["artifacts"][artifact_name]["immutable"] is True
+
+
+def test_run_option_artifacts_refuses_empty_benchmark_signal_area(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    paths.latest_options_manifest_path.write_text(
+        json.dumps(
+            {
+                "refresh_run_id": "options-run",
+                "as_of_date": "2026-06-01",
+                "risk_free_rate": 0.04,
+                "snapshots": [],
+                "summary": {"options_phase_status": "PASS"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = run_option_artifacts(paths, parent_refresh_id="parent-refresh")
+
+    assert exit_code == 1
 
 
 def test_run_option_artifacts_fails_on_corrupt_manifest_chain_snapshot(tmp_path):
@@ -230,3 +270,59 @@ def _slot(ticker: str, *, candidate: OptionCandidate) -> OptionCandidateSlot:
         bucket="near_atm",
         liquidity_tier=candidate.liquidity_tier,
     )
+
+
+def _benchmark_feature(ticker: str) -> pd.DataFrame:
+    row: dict[str, object] = {
+        "ticker": ticker,
+        "run_id": "options-run",
+        "as_of_date": "2026-06-01",
+        "optionability_tier": "directly_hedgeable",
+        "iv_percentile_cross_sectional": 50.0,
+        "underlying_price": 100.0,
+        "option_vehicle_type": "benchmark_etf",
+        "options_source_symbol": ticker,
+    }
+    for horizon in (60, 90, 120):
+        row[f"put_iv_25d_{horizon}d"] = 0.45
+        row[f"call_iv_25d_{horizon}d"] = 0.40
+        row[f"iv_skew_{horizon}d"] = 0.05
+        row[f"iv_rv_ratio_{horizon}d"] = 1.2
+    return pd.DataFrame([row])
+
+
+def _benchmark_chain(ticker: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            _option(ticker, "P", 95.0, 4.0, 4.4),
+            _option(ticker, "P", 90.0, 2.0, 2.3),
+            _option(ticker, "C", 105.0, 4.0, 4.4),
+            _option(ticker, "C", 110.0, 2.0, 2.3),
+            _option(ticker, "C", 115.0, 1.3, 1.5),
+        ]
+    )
+
+
+def _option(
+    ticker: str,
+    option_type: str,
+    strike: float,
+    bid: float,
+    ask: float,
+) -> dict[str, object]:
+    return {
+        "ticker": ticker,
+        "expiration": "2026-07-17",
+        "option_type": option_type,
+        "strike": strike,
+        "bid": bid,
+        "ask": ask,
+        "mid": (bid + ask) / 2,
+        "last_price": (bid + ask) / 2,
+        "open_interest": 100,
+        "volume": 20,
+        "implied_volatility": 0.40,
+        "underlying_price": 100.0,
+        "days_to_expiry": 46,
+        "options_available": True,
+    }

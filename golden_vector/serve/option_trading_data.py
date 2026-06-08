@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -10,7 +10,7 @@ import pandas as pd
 
 from golden_vector.common.files import optional_sha256_file as _file_sha256
 from golden_vector.common.files import sha256_file
-from golden_vector.common.parquet import read_required_parquet
+from golden_vector.common.parquet import ParquetSchemaError, read_required_parquet
 from golden_vector.common.strings import normalize_ticker
 from golden_vector.common.strings import unique_strings as _common_unique_strings
 from golden_vector.app.model_state import (
@@ -77,6 +77,14 @@ class OptionTradingData:
     risk_free_rate: float
     risk_free_rate_is_fallback: bool
     cache_key: OptionTradingCacheKey | None
+    option_signal_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
+    option_skew_curve_points: pd.DataFrame = field(default_factory=pd.DataFrame)
+    option_oi_strike_points: pd.DataFrame = field(default_factory=pd.DataFrame)
+    option_signal_history_points: pd.DataFrame = field(default_factory=pd.DataFrame)
+
+
+class OptionArtifactStaleSchemaError(ValueError):
+    """Raised when persisted option artifacts are from an older schema."""
 
 
 _CACHE: dict[OptionTradingCacheKey, OptionTradingData] = {}
@@ -121,6 +129,7 @@ def build_option_trading_detail_data(
         app_config=app_config,
         request=sizing_request or OptionSizingRequest(),
     )
+    detail = _with_option_signal_payloads(data=data, detail=detail)
     if detail.row is not None or not data.overview.reason:
         return detail
     return OptionTradingDetailData(
@@ -138,6 +147,10 @@ def build_option_trading_detail_data(
         source_context=detail.source_context,
         proxy_fallbacks=detail.proxy_fallbacks,
         proxy_fallback_note=detail.proxy_fallback_note,
+        signal_row=detail.signal_row,
+        skew_curve_points=detail.skew_curve_points,
+        oi_strike_points=detail.oi_strike_points,
+        signal_history_points=detail.signal_history_points,
     )
 
 
@@ -199,6 +212,35 @@ def _with_proxy_fallbacks(
             ),
         )
     return replace(detail, proxy_fallbacks=tuple(fallbacks))
+
+
+def _with_option_signal_payloads(
+    *,
+    data: OptionTradingData,
+    detail: OptionTradingDetailData,
+) -> OptionTradingDetailData:
+    ticker = normalize_ticker(detail.ticker) or ""
+    return replace(
+        detail,
+        signal_row=_first_ticker_record(data.option_signal_summary, ticker),
+        skew_curve_points=tuple(_ticker_records(data.option_skew_curve_points, ticker)),
+        oi_strike_points=tuple(_ticker_records(data.option_oi_strike_points, ticker)),
+        signal_history_points=tuple(
+            _ticker_records(data.option_signal_history_points, ticker)
+        ),
+    )
+
+
+def _first_ticker_record(frame: pd.DataFrame, ticker: str) -> dict[str, object] | None:
+    rows = _ticker_records(frame, ticker)
+    return rows[0] if rows else None
+
+
+def _ticker_records(frame: pd.DataFrame, ticker: str) -> list[dict[str, object]]:
+    if frame.empty or "ticker" not in frame.columns or not ticker:
+        return []
+    mask = frame["ticker"].astype(str).str.upper() == ticker.upper()
+    return list(frame[mask].to_dict(orient="records"))
 
 
 def _benchmark_liquidity_supports_proxy(
@@ -360,6 +402,8 @@ def load_option_trading_data(
     )
     try:
         artifact_frames = _read_option_artifact_frames(paths)
+    except OptionArtifactStaleSchemaError:
+        raise
     except (OSError, ValueError) as exc:
         return _empty_data(
             tool_a=tool_a,
@@ -433,6 +477,10 @@ def load_option_trading_data(
         call_candidate_grids=call_candidates,
         candidate_slots=put_slots,
         call_candidate_slots=call_slots,
+        option_signal_summary=artifact_frames["option_signal_summary"],
+        option_skew_curve_points=artifact_frames["option_skew_curve_points"],
+        option_oi_strike_points=artifact_frames["option_oi_strike_points"],
+        option_signal_history_points=artifact_frames["option_signal_history_points"],
         options_features=artifact_frames["candidate_finder_inputs"],
         tool_a=tool_a,
         tool_b=tool_b,
@@ -457,6 +505,10 @@ def _empty_data(
         call_candidate_grids={},
         candidate_slots={},
         call_candidate_slots={},
+        option_signal_summary=pd.DataFrame(),
+        option_skew_curve_points=pd.DataFrame(),
+        option_oi_strike_points=pd.DataFrame(),
+        option_signal_history_points=pd.DataFrame(),
         options_features=pd.DataFrame(),
         tool_a=tool_a,
         tool_b=tool_b,
@@ -475,12 +527,19 @@ def _read_option_artifact_frames(paths: ProjectPaths) -> dict[str, pd.DataFrame]
         if path is None:
             return None
         _verify_artifact_sha256(model_state=model_state, name=name, path=path)
-        frames[name] = read_required_parquet(
-            path,
-            label=f"Option artifact {name}",
-            required_columns=("schema_version", "source_run_id"),
-            schema_version=OPTION_ARTIFACT_SCHEMA_VERSION,
-        )
+        try:
+            frames[name] = read_required_parquet(
+                path,
+                label=f"Option artifact {name}",
+                required_columns=("schema_version", "source_run_id"),
+                schema_version=OPTION_ARTIFACT_SCHEMA_VERSION,
+            )
+        except ParquetSchemaError as exc:
+            raise OptionArtifactStaleSchemaError(
+                "Option Trading data is from the previous version. "
+                "Run python main.py refresh to rebuild the option artifacts. "
+                f"Details: {exc}"
+            ) from exc
     return frames
 
 

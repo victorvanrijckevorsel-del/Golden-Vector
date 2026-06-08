@@ -45,6 +45,7 @@ from golden_vector.serve.detail_page import (
     resolve_detail_lens,
 )
 from golden_vector.serve.option_trading_data import (
+    OptionArtifactStaleSchemaError,
     build_option_trading_detail_data,
     load_option_trading_data,
     parse_option_sizing_request,
@@ -219,6 +220,7 @@ def create_workspace_app(
                     start_response,
                     _render_option_trading_overview_page(
                         option_trading_data.overview,
+                        option_signal_summary=option_trading_data.option_signal_summary,
                         model_state_manifest=load_current_model_state_manifest(paths),
                     ),
                 )
@@ -495,6 +497,18 @@ def create_workspace_app(
                 start_response,
                 _render_error_page("Page not found."),
                 status="404 Not Found",
+            )
+        except OptionArtifactStaleSchemaError as exc:
+            return _html_response(
+                start_response,
+                _render_error_page(
+                    "Your local Option Trading data is from the previous version.",
+                    detail=(
+                        "Run python main.py refresh to rebuild the option artifacts "
+                        f"and the current model-state manifest. Details: {exc}"
+                    ),
+                ),
+                status="503 Service Unavailable",
             )
         except ToolBStaleSchemaError as exc:
             return _html_response(

@@ -779,7 +779,12 @@ def _write_options(paths, *, refresh_run_id: str) -> None:
     snapshot_dir = paths.runs_dir / refresh_run_id / "snapshots" / "options"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     snapshot_items = []
-    for ticker, include_call in (("AEM", True), ("NEM", False)):
+    for ticker, include_call in (
+        ("AEM", True),
+        ("NEM", False),
+        ("GDX", True),
+        ("GDXJ", True),
+    ):
         snapshot_path = snapshot_dir / f"{safe_options_file_name(ticker)}.parquet"
         _chain(ticker, include_call=include_call).to_parquet(snapshot_path, index=False)
         snapshot_items.append(
@@ -797,6 +802,9 @@ def _write_options(paths, *, refresh_run_id: str) -> None:
             "iv_percentile_cross_sectional": 40.0 if ticker == "AEM" else 60.0,
             "iv_skew_60d": 0.05,
             "underlying_price": 100.0,
+            "option_vehicle_type": (
+                "benchmark_etf" if ticker in {"GDX", "GDXJ"} else "single_stock"
+            ),
         }
         for horizon in (60, 90, 120):
             feature[f"put_iv_25d_{horizon}d"] = 0.4
@@ -837,6 +845,8 @@ def _chain(ticker: str, *, include_call: bool) -> pd.DataFrame:
     ]
     if include_call:
         rows.append(_option(ticker, "C", 105.0, 4.0, 4.4))
+        rows.append(_option(ticker, "C", 110.0, 2.0, 2.3))
+        rows.append(_option(ticker, "C", 115.0, 1.3, 1.5))
     return pd.DataFrame(rows)
 
 

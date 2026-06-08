@@ -21,14 +21,26 @@ class UniverseTicker(StrictConfigModel):
     exchange: str | None = None
     currency: str
     jurisdiction_tier: int | None = None
+    option_benchmark_symbol: str | None = None
     active: bool = True
     tool_a_enabled: bool = True
     tool_b_enabled: bool = True
 
     @field_validator("ticker", "currency")
     @classmethod
-    def uppercase_codes(cls, value: str) -> str:
-        return value.upper()
+    def uppercase_required_codes(cls, value: str) -> str:
+        cleaned = str(value).strip().upper()
+        if not cleaned:
+            raise ValueError("ticker and currency must not be blank")
+        return cleaned
+
+    @field_validator("option_benchmark_symbol")
+    @classmethod
+    def uppercase_optional_code(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = str(value).strip().upper()
+        return cleaned or None
 
     @field_validator("jurisdiction_tier")
     @classmethod
@@ -143,6 +155,11 @@ class HedgeReadinessConfig(StrictConfigModel):
     speculation_max_tickers_default: int = 15
     ranking_max_tickers_default: int = 60
     down_beta_min_for_scenario: float = 0.10
+    option_signal_skew_residual_threshold: float = 0.03
+    option_signal_quote_coverage_min: float = 0.60
+    option_signal_history_min_samples: int = 20
+    option_signal_activity_volume_to_oi_min: float = 0.10
+    option_signal_area_min_contracts: int = 4
 
     @field_validator("target_delta")
     @classmethod
@@ -179,6 +196,8 @@ class HedgeReadinessConfig(StrictConfigModel):
         "option_liquidity_target_depth_count",
         "option_liquidity_oi_cap",
         "option_liquidity_volume_cap",
+        "option_signal_history_min_samples",
+        "option_signal_area_min_contracts",
     )
     @classmethod
     def positive_scenario_ints(cls, value: int) -> int:
@@ -210,6 +229,9 @@ class HedgeReadinessConfig(StrictConfigModel):
         "proxy_low_basis_max_beta_diff",
         "proxy_medium_basis_max_beta_diff",
         "down_beta_min_for_scenario",
+        "option_signal_skew_residual_threshold",
+        "option_signal_quote_coverage_min",
+        "option_signal_activity_volume_to_oi_min",
     )
     @classmethod
     def positive_float_thresholds(cls, value: float) -> float:
