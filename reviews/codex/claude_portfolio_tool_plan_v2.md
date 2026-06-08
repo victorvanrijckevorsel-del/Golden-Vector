@@ -104,3 +104,30 @@ Persist the artifact; serve reads only; fail-loud stale guard. Tests: pence 100�
 
 ## 9. Self-review
 v2 is grounded in **verified code**, not aspiration: the hedge engine already does the scenario/totals/proxy/coverage work (`/hedge-readiness`), so this is a Portfolio **tab** that re-presents it + closes the two real gaps (per-position currency/FX, pence guard) behind a reconciliation-to-IBKR gate. Emanuel kept all three charts; they're built to tell the truth about what they show until cost basis exists. Decisions locked in §5; honesty traps in §6 are the acceptance bar. No duplication, backend-computed + persisted, honest about every gap.
+
+---
+
+## 10. Appendix — verified holdings inventory + broker-symbol map (2026-06-08)
+
+Pulled from the IBKR positions export (`U24104004_20260602.csv` / `data/manual/portfolio/ibkr_positions_20260602.csv`). The book is **~11 companies**; only **2 were missing** from the universe (now added — see commit). The broker→universe map below is the override map §3 calls for — **put it in config, not code.**
+
+| IBKR symbol | IBKR ccy | Company | Universe ticker | Notes |
+|---|---|---|---|---|
+| WAF | AUD | West African Resources | WAF.AX | covered |
+| AAZ | GBP | Anglo Asian Mining | AAZ.L | covered; LSE→pence |
+| ALTNl | GBP | AltynGold | ALTN.L | IBKR `l` suffix = LSE |
+| EDVl | GBP | Endeavour Mining | EDV.L | LSE→pence |
+| MTL | GBP | Metals Exploration | MTL.L | LSE→pence |
+| PAFl | GBP | Pan African Resources | PAF.L | LSE→pence |
+| SRB | GBP | Serabi Gold | SRB.L | covered |
+| SBI | CAD | Serabi Gold (TSX line) | **SRB.L** | dual listing → same company; sum both lines for exposure, one universe entry |
+| AAR | AUD | Astral Resources | **AAR.AX** | **added** — WA gold developer, likely pre-revenue (Tool B/D sparse) |
+| CLA | AUD | Celsius Resources (ASX) | **CLA.AX** | **added** — canonical listing |
+| CLA | GBP | Celsius Resources (London) | **CLA.AX** | dual listing → maps to CLA.AX; the GBP line is in pence |
+
+**Importer rules this proves out:**
+- **`l` suffix = LSE** (`ALTNl`→ALTN.L, `EDVl`→EDV.L, `PAFl`→PAF.L); bare LSE symbols (`AAZ`,`MTL`,`SRB`)→`.L`; AUD→`.AX`; the Serabi/Celsius dual listings collapse to one universe entry but **both holding lines must be summed** for exposure/concentration (don't double-count as two companies).
+- **Pence is real and detectable:** Yahoo returns `CLA.L` with `currency='GBp'` (pence), last ~0.39p, while `CLA.AX`='AUD'. So the pence guard can key on the **feed's own currency tag** (`GBp` vs `GBP`) — convert pence→pounds (÷100) before any FX/value math. This bug **does not** affect existing Tool A/B/D (betas are returns-based, scale-invariant); it only bites the new portfolio **valuation**.
+- **Data availability confirmed** for both added names (AAR.AX, CLA.AX: 1y weekly, AUD). If a future micro-cap returns no data, park it `active: false` like NGD so it never blocks the refresh.
+
+**Status:** AAR.AX + CLA.AX added to `config/universe.yaml` (active, data confirmed). Their prices + Tool A gold betas populate on the **next full refresh** (e.g. Codex's market-hours option run, which runs the full pipeline). After that, every holding is covered for exposure/beta — no default-beta estimate needed for the book Emanuel actually holds. **`holdings.yaml` still needs populating with the real book** (currently just AEM + AAUC.TO placeholders) — part of the importer build (§3), carrying each line's currency.
