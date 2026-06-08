@@ -554,3 +554,10 @@
   max-width: 340px;
   white-space: normal;
 }
+
+/* Column headers carrying a formula tooltip: signal they're hoverable */
+.js-datatable thead th[title] {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+}
