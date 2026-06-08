@@ -71,7 +71,7 @@ def us_equity_market_holidays(year: int) -> set[date]:
     guardrail for refresh timing; it is not an exchange calendar package.
     """
 
-    return {
+    holidays = {
         _observed_fixed_holiday(date(year, 1, 1)),
         _nth_weekday(year, 1, 0, 3),  # Martin Luther King Jr. Day
         _nth_weekday(year, 2, 0, 3),  # Presidents' Day
@@ -83,6 +83,10 @@ def us_equity_market_holidays(year: int) -> set[date]:
         _nth_weekday(year, 11, 3, 4),  # Thanksgiving
         _observed_fixed_holiday(date(year, 12, 25)),
     }
+    next_new_year_observed = _observed_fixed_holiday(date(year + 1, 1, 1))
+    if next_new_year_observed.year == year:
+        holidays.add(next_new_year_observed)
+    return holidays
 
 
 def windows_task_scheduler_commands(
@@ -126,12 +130,15 @@ def install_windows_task_scheduler_commands(commands: list[list[str]]) -> None:
         subprocess.run(command, check=True)
 
 
-def parse_local_task_times(raw: str | None) -> tuple[str, ...]:
-    values = tuple(
-        value.strip()
-        for value in str(raw or "").split(",")
-        if value.strip()
-    )
+def parse_local_task_times(raw: str | tuple[str, ...] | None) -> tuple[str, ...]:
+    if isinstance(raw, tuple):
+        values = tuple(value.strip() for value in raw if value.strip())
+    else:
+        values = tuple(
+            value.strip()
+            for value in str(raw or "").split(",")
+            if value.strip()
+        )
     if not values:
         return DEFAULT_LOCAL_TASK_TIMES
     for value in values:
@@ -139,7 +146,9 @@ def parse_local_task_times(raw: str | None) -> tuple[str, ...]:
     return values
 
 
-def parse_market_time(raw: str | None, *, default: time) -> time:
+def parse_market_time(raw: str | time | None, *, default: time) -> time:
+    if isinstance(raw, time):
+        return raw
     if not raw:
         return default
     return _parse_hhmm(raw)
@@ -149,7 +158,7 @@ def _parse_hhmm(raw: str) -> time:
     try:
         hour_raw, minute_raw = raw.split(":", 1)
         return time(int(hour_raw), int(minute_raw))
-    except (TypeError, ValueError) as exc:
+    except (AttributeError, TypeError, ValueError) as exc:
         raise ValueError(f"Expected HH:MM time, got {raw!r}.") from exc
 
 

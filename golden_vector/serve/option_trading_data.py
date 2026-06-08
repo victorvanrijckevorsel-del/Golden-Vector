@@ -525,6 +525,12 @@ def _read_option_artifact_frames(paths: ProjectPaths) -> dict[str, pd.DataFrame]
     for name in OPTION_ARTIFACT_NAMES:
         path = resolve_current_model_artifact_path(paths, name)
         if path is None:
+            if _model_state_has_option_artifacts(model_state):
+                raise OptionArtifactStaleSchemaError(
+                    "Option Trading data is from the previous version. "
+                    "Run python main.py refresh to rebuild the option artifacts. "
+                    f"Details: missing required option artifact {name} in the current model-state manifest."
+                )
             return None
         _verify_artifact_sha256(model_state=model_state, name=name, path=path)
         try:
@@ -541,6 +547,16 @@ def _read_option_artifact_frames(paths: ProjectPaths) -> dict[str, pd.DataFrame]
                 f"Details: {exc}"
             ) from exc
     return frames
+
+
+def _model_state_has_option_artifacts(model_state: dict[str, Any] | None) -> bool:
+    artifacts = model_state.get("artifacts") if isinstance(model_state, dict) else None
+    if not isinstance(artifacts, dict):
+        return False
+    return any(
+        str(name).startswith("option_") or str(name) == "candidate_finder_inputs"
+        for name in artifacts
+    )
 
 
 def _verify_artifact_sha256(

@@ -2783,6 +2783,13 @@ def run_market_hours_refresh(
 ) -> int:
     start = start_et or DEFAULT_MARKET_START_ET
     end = end_et or DEFAULT_MARKET_END_ET
+    if start >= end:
+        print(
+            "Invalid market-hours refresh window: "
+            f"start {start.strftime('%H:%M')} ET must be before "
+            f"end {end.strftime('%H:%M')} ET."
+        )
+        return 2
     decision = market_hours_refresh_decision(
         now=now,
         start_et=start,

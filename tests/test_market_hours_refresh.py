@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 
 from golden_vector.app.market_hours_refresh import (
     is_us_equity_trading_day,
     market_hours_refresh_decision,
+    parse_local_task_times,
+    parse_market_time,
     windows_task_scheduler_commands,
 )
 from golden_vector.cli import (
@@ -19,6 +21,7 @@ def test_us_equity_trading_day_excludes_weekends_and_core_holidays():
     assert not is_us_equity_trading_day(date(2026, 6, 19))
     assert not is_us_equity_trading_day(date(2026, 4, 3))
     assert not is_us_equity_trading_day(date(2026, 7, 3))
+    assert not is_us_equity_trading_day(date(2021, 12, 31))
     assert is_us_equity_trading_day(date(2026, 6, 8))
 
 
@@ -70,6 +73,21 @@ def test_run_market_hours_refresh_skips_outside_guard(tmp_path, monkeypatch, cap
     assert "daily-close based" in output
 
 
+def test_run_market_hours_refresh_rejects_inverted_time_window(tmp_path, capsys):
+    paths = build_test_paths(tmp_path)
+
+    exit_code = run_market_hours_refresh(
+        paths,
+        now=datetime(2026, 6, 8, 15, 0, tzinfo=timezone.utc),
+        start_et=time(16, 0),
+        end_et=time(10, 0),
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 2
+    assert "Invalid market-hours refresh window" in output
+
+
 def test_run_market_hours_refresh_runs_inside_guard(tmp_path, monkeypatch):
     paths = build_test_paths(tmp_path)
     calls: list[tuple[object, bool]] = []
@@ -90,6 +108,15 @@ def test_run_market_hours_refresh_runs_inside_guard(tmp_path, monkeypatch):
 
     assert exit_code == 0
     assert calls == [(2600.0, True)]
+
+
+def test_scheduler_time_parsers_accept_strings_and_parsed_values():
+    parsed = time(16, 0)
+
+    assert parse_market_time("16:00", default=time(10, 0)) == parsed
+    assert parse_market_time(parsed, default=time(10, 0)) == parsed
+    assert parse_local_task_times("16:00, 19:30") == ("16:00", "19:30")
+    assert parse_local_task_times(("16:00", "19:30")) == ("16:00", "19:30")
 
 
 def test_install_market_hours_refresh_task_defaults_to_dry_run(

@@ -27,6 +27,7 @@ from golden_vector.hedge.option_availability import has_usable_option_slots
 from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.serve.option_trading_data import (
+    OptionArtifactStaleSchemaError,
     build_option_trading_detail_data,
     clear_option_trading_cache,
     load_option_trading_data,
@@ -245,6 +246,28 @@ def test_load_option_trading_data_handles_missing_manifest(tmp_path):
     assert data.overview.reason is not None
     assert "No option artifact snapshot" in data.overview.reason
     assert data.cache_key is None
+
+
+def test_load_option_trading_data_raises_stale_schema_when_model_state_lacks_new_artifact(
+    tmp_path,
+):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+    payload = load_current_model_state_manifest(paths)
+    assert payload is not None
+    del payload["artifacts"]["option_signal_summary"]
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        OptionArtifactStaleSchemaError,
+        match="missing required option artifact option_signal_summary",
+    ):
+        load_option_trading_data(paths, app_config=app_config)
 
 
 def test_load_option_trading_data_handles_malformed_manifest(tmp_path):
