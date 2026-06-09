@@ -1,6 +1,8 @@
-version: 1
+version: 2
 max_reasonable_ev_ebitda: 100.0
+debt_stress_leverage_danger_threshold: 3.0
 quality_components:
-  headroom_to_breakeven_pct_at_g: high_good
+  survival_distance_to_interest_cover_pct: high_good
+  cost_curve_aisc_percentile: low_good
+  fragility_ebitda_pct_per_10pct_gold: low_good
   leverage_stressed_at_g: low_good
-  ev_ebitda_at_g: low_good

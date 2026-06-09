@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 
@@ -1876,8 +1877,110 @@ def test_workspace_tool_d_view_renders_corporate_resilience_page(tmp_path):
     assert response["status"].startswith("200")
     assert "Corporate Resilience" in response["body"]
     assert "tool-d-table" in response["body"]
-    assert "Quality Rank" in response["body"]
+    assert "Resilience Rank" in response["body"]
+    assert "Interest-Cover Line" in response["body"]
+    assert "Breakeven Gold" in response["body"]
+    assert "/tool-d?gold_price=3400.00" in response["body"]
     assert 'class="nav-tab active" href="/tool-d"' in response["body"]
+
+
+def test_workspace_tool_d_override_does_not_touch_spot_parquet(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_latest_tool_d_output(paths)
+    spot_path = paths.latest_tool_d_spot_snapshot_parquet_path
+    before = spot_path.read_bytes()
+    scenario_frame = pd.read_parquet(spot_path).copy()
+    scenario_frame["gold_price_used"] = 3000.0
+
+    def fake_compute_scenario_frame(**_kwargs):
+        return scenario_frame
+
+    monkeypatch.setattr(
+        "golden_vector.serve.overview_tool_d._compute_scenario_frame",
+        fake_compute_scenario_frame,
+    )
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/tool-d?gold_price=3000")
+
+    assert response["status"].startswith("200")
+    assert "Scenario recomputed in" in response["body"]
+    assert spot_path.read_bytes() == before
+
+
+def test_workspace_tool_d_override_rejects_nonfinite_gold_price(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_latest_tool_d_output(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/tool-d?gold_price=nan")
+
+    assert response["status"].startswith("200")
+    assert "Gold price must be a finite positive number" in response["body"]
+
+
+def test_workspace_tool_d_flip_section_renders_all_backend_rows(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_latest_tool_d_output(paths)
+    base = pd.read_parquet(paths.latest_tool_d_spot_snapshot_parquet_path).iloc[0].to_dict()
+    scenario_rows = []
+    for index in range(15):
+        row = dict(base)
+        row["ticker"] = f"FLIP{index:02d}"
+        row["gold_price_used"] = 3000.0
+        row["resilience_flip_flags"] = "flips_margin_negative"
+        scenario_rows.append(row)
+
+    def fake_compute_scenario_frame(**_kwargs):
+        return pd.DataFrame(scenario_rows)
+
+    monkeypatch.setattr(
+        "golden_vector.serve.overview_tool_d._compute_scenario_frame",
+        fake_compute_scenario_frame,
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/tool-d?gold_price=3000")
+
+    assert response["status"].startswith("200")
+    assert "FLIP00" in response["body"]
+    assert "FLIP14" in response["body"]
+
+
+def test_workspace_tool_d_serve_layer_has_no_resilience_arithmetic():
+    source = Path("golden_vector/serve/overview_tool_d.py").read_text(encoding="utf-8")
+
+    assert "compute_tool_d_outputs" in source
+    for forbidden in (
+        "aisc_usd_per_oz",
+        "production_oz",
+        "sustaining_capex_musd",
+        "interest_expense_musd",
+        "net_debt_musd /",
+        "forward_ebitda_musd_at_g /",
+        "spot_gold *",
+        "* 0.85",
+        "* 0.75",
+        "* 0.65",
+        "_linear_ebitda_model",
+        "_fcf_breakeven_gold",
+        "_debt_stress_gold",
+    ):
+        assert forbidden not in source
 
 
 def test_workspace_tool_b_view_renders_screening_parameters_form(tmp_path):
@@ -2072,6 +2175,25 @@ def test_workspace_stale_tool_b_schema_renders_actionable_refresh_page(tmp_path)
     assert "Your local Corporate Finance data is from the previous version" in response["body"]
     assert "Run python main.py refresh" in response["body"]
     assert "The workspace hit an unexpected error" not in response["body"]
+
+
+def test_workspace_generic_500_does_not_expose_raw_exception(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+
+    def fail_loader(*args, **kwargs):
+        raise RuntimeError("SECRET INTERNAL TRACE DETAIL")
+
+    monkeypatch.setattr("golden_vector.serve.workspace.load_candidate_finder_data", fail_loader)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/")
+
+    assert response["status"].startswith("500")
+    assert "The workspace hit an unexpected error" in response["body"]
+    assert "SECRET INTERNAL TRACE DETAIL" not in response["body"]
+    assert "Run the command again from a terminal" in response["body"]
 
 
 def test_workspace_combined_route_is_removed(tmp_path):

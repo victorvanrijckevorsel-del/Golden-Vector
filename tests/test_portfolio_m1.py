@@ -13,10 +13,13 @@ from golden_vector.app.latest_data import _foundation_signature
 from golden_vector.app.model_state import (
     load_current_model_state_manifest,
     resolve_current_model_artifact_path,
+    write_current_model_state_manifest,
 )
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.common.parquet import write_parquet_atomic
-from golden_vector.contracts.config_models import PortfolioConfig
+from golden_vector.contracts.config_models import HedgeReadinessConfig, PortfolioConfig
+from golden_vector.hedge.holdings import Holding
+from golden_vector.hedge.portfolio_totals import compute_portfolio_totals
 from golden_vector.ingestion.persist_options import safe_options_file_name
 import golden_vector.portfolio.manual_store as manual_store_module
 from golden_vector.portfolio.manual_store import (
@@ -33,13 +36,14 @@ from golden_vector.portfolio.m4_artifacts import (
 )
 from golden_vector.portfolio.models import PortfolioStaleSchemaError, PortfolioValidationError
 from golden_vector.portfolio.pipeline import build_portfolio_artifacts, build_ticker_info
-from golden_vector.portfolio.reader import load_portfolio_data
+from golden_vector.portfolio.reader import PortfolioData, load_portfolio_data
 from golden_vector.portfolio.valuation import (
     ValuationInput,
     value_major_unit_price,
     value_raw_feed_quote,
 )
 from golden_vector.serve.workspace import create_workspace_app, run_workspace_server
+from golden_vector.serve.portfolio_page import _render_data_issues, _render_hedge_sizing
 from tests.helpers import build_test_paths
 
 
@@ -326,8 +330,8 @@ def test_portfolio_workspace_privacy_and_no_inline_store_read(tmp_path):
     blocked_download = _call_wsgi(disabled_app, method="GET", path="/hedge-readiness/latest.md")
     blocked_csv = _call_wsgi(disabled_app, method="GET", path="/portfolio/reconciliation.csv")
 
-    assert disabled_page["status"].startswith("200")
-    assert "Portfolio tracking is disabled" in disabled_page["body"]
+    assert disabled_page["status"].startswith("403")
+    assert "Portfolio is disabled" in disabled_page["body"]
     assert blocked_download["status"].startswith("403")
     assert blocked_csv["status"].startswith("403")
     assert "SECRET HOLDINGS" not in blocked_download["body"]
@@ -349,6 +353,7 @@ def test_portfolio_workspace_privacy_and_no_inline_store_read(tmp_path):
     assert page["status"].startswith("200")
     assert "Positions" in page["body"]
     assert "selected ticker's configured currency" in page["body"]
+    assert "enter buy prices in pounds" in page["body"]
     assert "USD 60.00" in page["body"]
     with pytest.raises(ValueError, match="loopback"):
         run_workspace_server(
@@ -457,6 +462,86 @@ def test_portfolio_valuation_separates_major_unit_and_raw_feed_quotes():
     assert raw.minor_unit_adjusted is True
 
 
+def test_portfolio_valuation_rejects_nonfinite_or_nonpositive_inputs():
+    with pytest.raises(ValueError, match="quantity"):
+        value_major_unit_price(
+            ValuationInput(
+                quantity=0,
+                price_local=10,
+                price_currency="USD",
+                fx_rate_to_usd=1,
+            )
+        )
+    with pytest.raises(ValueError, match="quantity"):
+        value_major_unit_price(
+            ValuationInput(
+                quantity=float("nan"),
+                price_local=10,
+                price_currency="USD",
+                fx_rate_to_usd=1,
+            )
+        )
+    with pytest.raises(ValueError, match="price_local"):
+        value_major_unit_price(
+            ValuationInput(
+                quantity=1,
+                price_local=float("nan"),
+                price_currency="USD",
+                fx_rate_to_usd=1,
+            )
+        )
+    with pytest.raises(ValueError, match="fx_rate_to_usd"):
+        value_major_unit_price(
+            ValuationInput(
+                quantity=1,
+                price_local=10,
+                price_currency="USD",
+                fx_rate_to_usd=float("inf"),
+            )
+        )
+
+
+def test_portfolio_pipeline_degrades_invalid_stored_lot_instead_of_failing_build(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _portfolio_config()
+    _write_foundation_snapshot(paths, app_config, ticker="NEM", price=60.0, currency="USD")
+    paths.manual_portfolio_lots_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.manual_portfolio_lots_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "lots": [
+                    {
+                        "id": "bad-lot",
+                        "ticker": "NEM",
+                        "shares": float("nan"),
+                        "buy_price": 50.0,
+                        "buy_currency": "USD",
+                        "buy_date": "2026-01-02",
+                        "note": None,
+                        "created_at": "2026-01-02T00:00:00+00:00",
+                        "updated_at": "2026-01-02T00:00:00+00:00",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    build_portfolio_artifacts(
+        paths=paths,
+        app_config=app_config,
+        use_model_state_artifacts=False,
+    )
+    data = load_portfolio_data(paths)
+
+    assert data.lines.iloc[0]["line_status"] == "INVALID_INPUT"
+    assert "quantity" in data.lines.iloc[0]["line_status_reason"]
+    assert data.positions.iloc[0]["position_status"] == "INVALID_INPUT"
+    assert data.summary.iloc[0]["portfolio_status"] == "WARN"
+
+
 def test_portfolio_pipeline_writes_benchmark_betas_without_universe_pollution(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -511,6 +596,7 @@ def test_portfolio_pipeline_enriches_core_analytics_from_tool_artifacts(tmp_path
     summary = data.summary.iloc[0]
 
     assert position["nav_weight_fraction"] == pytest.approx(1.0)
+    assert "position_weight_fraction" not in data.positions.columns
     assert position["down_beta_core"] == pytest.approx(1.5)
     assert position["gold_down_10_pnl_usd"] == pytest.approx(-150.0)
     assert position["gold_down_10_loss_usd"] == pytest.approx(150.0)
@@ -520,6 +606,260 @@ def test_portfolio_pipeline_enriches_core_analytics_from_tool_artifacts(tmp_path
     assert summary["tool_a_coverage_fraction"] == pytest.approx(1.0)
     assert summary["modeled_gold_down_10_loss_usd"] == pytest.approx(150.0)
     assert summary["largest_position_weight_fraction"] == pytest.approx(1.0)
+
+
+def test_portfolio_pipeline_uses_fresh_foundation_during_refresh_not_pinned_manifest(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _portfolio_config()
+    ticker_info = build_ticker_info(app_config)
+    add_lot(
+        paths,
+        {
+            "ticker": "PAF.L",
+            "shares": "200",
+            "buy_price": "0.30",
+            "buy_currency": "GBP",
+            "buy_date": "2026-01-02",
+        },
+        ticker_info=ticker_info,
+    )
+    _write_foundation_snapshot(
+        paths,
+        app_config,
+        ticker="PAF.L",
+        price=0.39,
+        currency="GBP",
+        fx_rate=1.25,
+        feed_currency="GBp",
+        price_scale_factor=0.01,
+        minor_unit_adjusted=True,
+        refresh_run_id="refresh-old",
+    )
+    write_current_model_state_manifest(
+        paths=paths,
+        config_hash="old-hash",
+        parent_refresh_id="parent-old",
+    )
+    model_state_before = load_current_model_state_manifest(paths)
+    _write_foundation_snapshot(
+        paths,
+        app_config,
+        ticker="PAF.L",
+        price=0.42,
+        currency="GBP",
+        fx_rate=1.25,
+        feed_currency="GBp",
+        price_scale_factor=0.01,
+        minor_unit_adjusted=True,
+        refresh_run_id="refresh-new",
+    )
+
+    build_portfolio_artifacts(
+        paths=paths,
+        app_config=app_config,
+        publish_model_state=False,
+        use_model_state_artifacts=False,
+    )
+    fresh_positions = pd.read_parquet(paths.latest_portfolio_positions_path)
+    model_state_after_fresh = load_current_model_state_manifest(paths)
+
+    build_portfolio_artifacts(
+        paths=paths,
+        app_config=app_config,
+        publish_model_state=False,
+        use_model_state_artifacts=True,
+    )
+    pinned_positions = pd.read_parquet(paths.latest_portfolio_positions_path)
+
+    assert fresh_positions.iloc[0]["snapshot_refresh_run_id"] == "refresh-new"
+    assert fresh_positions.iloc[0]["value_local"] == pytest.approx(84.0)
+    assert model_state_after_fresh == model_state_before
+    assert pinned_positions.iloc[0]["snapshot_refresh_run_id"] == "refresh-old"
+    assert pinned_positions.iloc[0]["value_local"] == pytest.approx(78.0)
+
+
+def test_portfolio_pipeline_flags_low_beta_stale_fx_and_currency_mismatch(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _portfolio_config()
+    _write_foundation_snapshots(
+        paths,
+        app_config,
+        rows=[
+            {
+                "ticker": "NEM",
+                "price": 100.0,
+                "currency": "USD",
+                "fx_rate": 1.0,
+                "fx_staleness_days": 30,
+            },
+            {
+                "ticker": "DPM.TO",
+                "price": 20.0,
+                "currency": "USD",
+                "fx_rate": 1.0,
+            },
+            {
+                "ticker": "AEM",
+                "price": 80.0,
+                "currency": "USD",
+                "fx_rate": None,
+            },
+        ],
+    )
+    _write_latest_tool_a_rows(
+        paths,
+        [
+            {"ticker": "NEM", "down_beta": 0.05},
+            {"ticker": "DPM.TO", "down_beta": 1.2},
+            {"ticker": "AEM", "down_beta": 1.2},
+        ],
+    )
+    ticker_info = build_ticker_info(app_config)
+    add_lot(
+        paths,
+        {
+            "ticker": "NEM",
+            "shares": "1",
+            "buy_price": "50",
+            "buy_currency": "USD",
+            "buy_date": "2026-01-02",
+        },
+        ticker_info=ticker_info,
+    )
+    add_lot(
+        paths,
+        {
+            "ticker": "DPM.TO",
+            "shares": "1",
+            "buy_price": "10",
+            "buy_currency": "CAD",
+            "buy_date": "2026-01-02",
+        },
+        ticker_info=ticker_info,
+    )
+    add_lot(
+        paths,
+        {
+            "ticker": "AEM",
+            "shares": "1",
+            "buy_price": "70",
+            "buy_currency": "USD",
+            "buy_date": "2026-01-02",
+        },
+        ticker_info=ticker_info,
+    )
+
+    build_portfolio_artifacts(
+        paths=paths,
+        app_config=app_config,
+        use_model_state_artifacts=False,
+    )
+    data = load_portfolio_data(paths)
+    positions = data.positions.set_index("ticker")
+    issues = json.loads(data.summary.iloc[0]["data_issues_json"])
+    issue_codes = {issue["issue"] for issue in issues}
+
+    assert "STALE_FX" in positions.loc["NEM", "position_status"]
+    assert positions.loc["NEM", "effective_exposure_bucket"] == "Degraded data"
+    assert positions.loc["DPM.TO", "position_status"] == "CURRENCY_MISMATCH"
+    assert positions.loc["AEM", "position_status"] == "MISSING_FX"
+    assert "stale_fx" in issue_codes
+    assert "degraded_position_data" in issue_codes
+    assert "currency_mismatch" in issue_codes
+    assert "missing_fx" in issue_codes
+
+
+def test_portfolio_pipeline_excludes_degraded_value_from_confident_exposure(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _portfolio_config()
+    _write_foundation_snapshot(
+        paths,
+        app_config,
+        ticker="NEM",
+        price=100.0,
+        currency="USD",
+        fx_staleness_days=30,
+    )
+    _write_benchmark_history(paths, "GDX", beta=1.1)
+    _write_benchmark_history(paths, "GDXJ", beta=1.4)
+    _write_latest_tool_a(paths, ticker="NEM", down_beta=1.5)
+    _write_latest_tool_d(paths, ticker="NEM", rank=82.0)
+    ticker_info = build_ticker_info(app_config)
+    add_lot(
+        paths,
+        {
+            "ticker": "NEM",
+            "shares": "10",
+            "buy_price": "50",
+            "buy_currency": "USD",
+            "buy_date": "2026-01-02",
+        },
+        ticker_info=ticker_info,
+    )
+
+    build_portfolio_artifacts(
+        paths=paths,
+        app_config=app_config,
+        use_model_state_artifacts=False,
+    )
+    data = load_portfolio_data(paths)
+    position = data.positions.iloc[0]
+    summary = data.summary.iloc[0]
+    hedge = data.hedge_sizing.set_index("benchmark_ticker").loc["GDX"]
+
+    assert position["position_status"] == "STALE_FX"
+    assert position["value_local"] == pytest.approx(1000.0)
+    assert position["value_usd"] == pytest.approx(1000.0)
+    assert position["down_beta_core"] == pytest.approx(1.5)
+    assert position["effective_exposure_bucket"] == "Degraded data"
+    assert pd.isna(position["gold_down_10_loss_usd"])
+    assert summary["tool_a_coverage_value_usd"] == pytest.approx(0.0)
+    assert summary["tool_a_coverage_fraction"] == pytest.approx(0.0)
+    assert summary["modeled_gold_down_10_loss_usd"] == pytest.approx(0.0)
+    assert hedge["effective_gold_exposure_usd"] == pytest.approx(0.0)
+    assert hedge["hedge_status"] == "NO_MEASURED_EXPOSURE"
+
+
+def test_portfolio_pipeline_uses_configured_gold_beta_gate(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    base_config = _portfolio_config()
+    app_config = base_config.model_copy(
+        update={
+            "hedge_readiness": base_config.hedge_readiness.model_copy(
+                update={"down_beta_min_for_scenario": 2.0}
+            )
+        }
+    )
+    _write_foundation_snapshot(paths, app_config, ticker="NEM", price=100.0, currency="USD")
+    _write_benchmark_history(paths, "GDX", beta=1.1)
+    _write_benchmark_history(paths, "GDXJ", beta=1.4)
+    _write_latest_tool_a(paths, ticker="NEM", down_beta=1.5)
+    ticker_info = build_ticker_info(app_config)
+    add_lot(
+        paths,
+        {
+            "ticker": "NEM",
+            "shares": "10",
+            "buy_price": "50",
+            "buy_currency": "USD",
+            "buy_date": "2026-01-02",
+        },
+        ticker_info=ticker_info,
+    )
+
+    build_portfolio_artifacts(
+        paths=paths,
+        app_config=app_config,
+        use_model_state_artifacts=False,
+    )
+    data = load_portfolio_data(paths)
+
+    assert data.positions.iloc[0]["effective_exposure_bucket"] == "Low/negative beta"
+    assert data.summary.iloc[0]["tool_a_coverage_value_usd"] == pytest.approx(0.0)
 
 
 def test_portfolio_pipeline_writes_m4_artifacts_and_reconciliation_csv(tmp_path):
@@ -612,6 +952,12 @@ def test_portfolio_pipeline_writes_m4_artifacts_and_reconciliation_csv(tmp_path)
     download = _call_wsgi(app, method="GET", path="/portfolio/reconciliation.csv")
     assert page["status"].startswith("200")
     assert "Modeled GDX/GDXJ hedge size" in page["body"]
+    assert "Gold -10% loss is a simple linear beta estimate" in page["body"]
+    assert "Total USD P&L blends stock movement and FX movement" in page["body"]
+    assert "Equity Weight" in page["body"]
+    assert "Linear Loss @ Gold -10%" in page["body"]
+    assert "Show all 1 paired exposures" in page["body"]
+    assert "Corporate resilience coverage" in page["body"]
     assert "Market value of today" in page["body"]
     assert download["status"].startswith("200")
     assert "canonical_value_usd" in download["body"]
@@ -703,6 +1049,192 @@ def test_portfolio_hedge_sizing_math_and_fail_closed_statuses():
     assert rows.loc["MISSING_PRICE", "hedge_status"] == "UNAVAILABLE"
     assert "price" in rows.loc["MISSING_PRICE", "hedge_status_reason"].lower()
 
+    zero_exposure = build_hedge_sizing_frame(
+        positions=pd.DataFrame(
+            [
+                {
+                    "ticker": "LOW_BETA",
+                    "value_usd": 1_000.0,
+                    "down_beta_core": 0.0,
+                    "effective_exposure_bucket": "Low/negative beta",
+                }
+            ]
+        ),
+        benchmark_betas=benchmarks.iloc[[1]],
+        source_run_id="portfolio-run",
+        snapshot_refresh_run_id="refresh-run",
+    )
+    zero_row = zero_exposure.iloc[0]
+    assert zero_row["hedge_status"] == "NO_MEASURED_EXPOSURE"
+    assert zero_row["hedge_status_reason"] == "No measured gold exposure to hedge."
+    assert pd.isna(zero_row["modeled_short_notional_usd"])
+    assert pd.isna(zero_row["modeled_put_contracts"])
+
+
+def test_portfolio_hedge_sizing_zero_exposure_message_renders_in_serve_layer():
+    data = PortfolioData(
+        lines=pd.DataFrame(),
+        positions=pd.DataFrame(),
+        summary=pd.DataFrame(),
+        benchmark_betas=pd.DataFrame(),
+        reconciliation=pd.DataFrame(),
+        hedge_sizing=pd.DataFrame(
+            [
+                {
+                    "benchmark_ticker": "GDX",
+                    "benchmark_label": "VanEck Gold Miners ETF",
+                    "benchmark_status": "OK",
+                    "benchmark_status_reason": None,
+                    "benchmark_price_usd": 50.0,
+                    "benchmark_down_beta": 1.2,
+                    "effective_gold_exposure_usd": 0.0,
+                    "modeled_short_notional_usd": None,
+                    "modeled_put_contracts": None,
+                    "hedge_status": "NO_MEASURED_EXPOSURE",
+                    "hedge_status_reason": "No measured gold exposure to hedge.",
+                    "basis_risk_note": "basis risk note",
+                }
+            ]
+        ),
+        correlations=pd.DataFrame(),
+        value_history=pd.DataFrame(),
+        reconciliation_export=pd.DataFrame(),
+    )
+
+    html = _render_hedge_sizing(data)
+
+    assert "No measured gold exposure to hedge" in html
+    assert "GDX hedge size unavailable" not in html
+
+
+def test_portfolio_hedge_sizing_uses_unclamped_effective_exposure_for_high_beta():
+    benchmarks = pd.DataFrame(
+        [
+            {
+                "benchmark_ticker": "GDX",
+                "benchmark_label": "VanEck Gold Miners ETF",
+                "benchmark_status": "OK",
+                "benchmark_status_reason": None,
+                "benchmark_price_usd": 50.0,
+                "benchmark_price_date": "2026-06-08",
+                "down_beta_core": 1.50,
+            }
+        ]
+    )
+    frame = build_hedge_sizing_frame(
+        positions=pd.DataFrame(
+            [
+                {
+                    "ticker": "EXTREME",
+                    "value_usd": 10_000.0,
+                    "down_beta_core": 15.0,
+                    "effective_exposure_bucket": "Measured beta",
+                }
+            ]
+        ),
+        benchmark_betas=benchmarks,
+        source_run_id="portfolio-run",
+        snapshot_refresh_run_id="refresh-run",
+    )
+    row = frame.iloc[0]
+
+    assert row["effective_gold_exposure_usd"] == pytest.approx(150_000.0)
+    assert row["modeled_short_notional_usd"] == pytest.approx(100_000.0)
+    assert row["modeled_put_contracts"] == 20
+
+
+def test_portfolio_and_hedge_paths_agree_on_negative_and_high_beta_exposure(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _portfolio_config()
+    _write_foundation_snapshots(
+        paths,
+        app_config,
+        rows=[
+            {"ticker": "NEM", "price": 100.0, "currency": "USD", "fx_rate": 1.0},
+            {"ticker": "AEM", "price": 100.0, "currency": "USD", "fx_rate": 1.0},
+        ],
+    )
+    _write_latest_tool_a_rows(
+        paths,
+        [
+            {"ticker": "NEM", "down_beta": 12.0},
+            {"ticker": "AEM", "down_beta": -1.0},
+        ],
+    )
+    ticker_info = build_ticker_info(app_config)
+    for ticker in ("NEM", "AEM"):
+        add_lot(
+            paths,
+            {
+                "ticker": ticker,
+                "shares": "10",
+                "buy_price": "50",
+                "buy_currency": "USD",
+                "buy_date": "2026-01-02",
+            },
+            ticker_info=ticker_info,
+        )
+
+    build_portfolio_artifacts(
+        paths=paths,
+        app_config=app_config,
+        use_model_state_artifacts=False,
+    )
+    portfolio_data = load_portfolio_data(paths)
+    hedge_totals = compute_portfolio_totals(
+        holdings=[
+            Holding(ticker="NEM", dollar_exposure=1_000.0),
+            Holding(ticker="AEM", dollar_exposure=1_000.0),
+        ],
+        tool_a_frame=pd.DataFrame(
+            [
+                {"ticker": "NEM", "down_beta_core": 12.0},
+                {"ticker": "AEM", "down_beta_core": -1.0},
+            ]
+        ),
+        tool_b_frame=pd.DataFrame(),
+        options_features=None,
+        candidate_grids={},
+        config=HedgeReadinessConfig(),
+    )
+    assert hedge_totals is not None
+    hedge_down_10 = next(
+        row
+        for row in hedge_totals.scenario_rows
+        if row.gold_pct_change == pytest.approx(-0.10)
+    )
+
+    assert portfolio_data.positions.set_index("ticker").loc["AEM", "effective_exposure_bucket"] == "Low/negative beta"
+    assert portfolio_data.summary.iloc[0]["modeled_gold_down_10_loss_usd"] == pytest.approx(
+        hedge_down_10.portfolio_loss_dollars
+    )
+    assert hedge_down_10.portfolio_loss_dollars == pytest.approx(1_000.0)
+
+
+def test_portfolio_data_issues_render_all_rows_not_first_twelve():
+    issues = [
+        {"ticker": f"T{index:02d}", "issue": f"issue_{index}", "message": f"message_{index}"}
+        for index in range(13)
+    ]
+    data = PortfolioData(
+        lines=pd.DataFrame(),
+        positions=pd.DataFrame(),
+        summary=pd.DataFrame([{"data_issues_json": json.dumps(issues)}]),
+        benchmark_betas=pd.DataFrame(),
+        reconciliation=pd.DataFrame(),
+        hedge_sizing=pd.DataFrame(),
+        correlations=pd.DataFrame(),
+        value_history=pd.DataFrame(),
+        reconciliation_export=pd.DataFrame(),
+    )
+
+    html = _render_data_issues(data)
+
+    assert "Showing all 13 current data issues" in html
+    assert "issue_12" in html
+    assert "message_12" in html
+
 
 def test_portfolio_correlation_fails_closed_with_insufficient_overlap():
     positions = pd.DataFrame(
@@ -750,6 +1282,43 @@ def test_portfolio_correlation_fails_closed_with_insufficient_overlap():
     assert pair["correlation_status"] == "INSUFFICIENT_HISTORY"
     assert pd.isna(pair["correlation"])
     assert pair["correlation_heat_bucket"] == "unavailable"
+
+
+def test_portfolio_correlation_ranks_all_pairs_not_first_eight():
+    positions = pd.DataFrame(
+        [
+            {
+                "ticker": f"T{index}",
+                "nav_weight_fraction": 0.20,
+                "effective_exposure_bucket": "Measured beta",
+            }
+            for index in range(5)
+        ]
+    )
+    dates = pd.bdate_range("2026-01-01", periods=45)
+    histories = {
+        f"T{index}": pd.DataFrame(
+            {
+                "date": dates.date,
+                "return_basis_usd": [
+                    100.0 + day * (index + 1) + ((day + index) % 5) * 0.1
+                    for day in range(len(dates))
+                ],
+            }
+        )
+        for index in range(5)
+    }
+
+    frame = build_correlation_frame(
+        positions=positions,
+        normalized_equity_histories=histories,
+        source_run_id="portfolio-run",
+        snapshot_refresh_run_id="refresh-run",
+    )
+
+    pair_ranks = pd.to_numeric(frame["pair_rank"], errors="coerce").dropna()
+    assert len(pair_ranks.index) == 10
+    assert int(pair_ranks.max()) == 10
 
 
 def test_portfolio_value_history_reports_only_included_history_coverage():
@@ -837,6 +1406,11 @@ def _write_foundation_snapshot(
     price: float,
     currency: str,
     fx_rate: float = 1.0,
+    fx_staleness_days: int = 0,
+    feed_currency: str | None = None,
+    price_scale_factor: float = 1.0,
+    minor_unit_adjusted: bool = False,
+    refresh_run_id: str = "refresh-run",
 ) -> None:
     _write_foundation_snapshots(
         paths,
@@ -847,8 +1421,13 @@ def _write_foundation_snapshot(
                 "price": price,
                 "currency": currency,
                 "fx_rate": fx_rate,
+                "fx_staleness_days": fx_staleness_days,
+                "feed_currency": feed_currency,
+                "price_scale_factor": price_scale_factor,
+                "minor_unit_adjusted": minor_unit_adjusted,
             }
         ],
+        refresh_run_id=refresh_run_id,
     )
 
 
@@ -857,8 +1436,9 @@ def _write_foundation_snapshots(
     app_config,
     *,
     rows: list[dict[str, object]],
+    refresh_run_id: str = "refresh-run",
 ) -> None:
-    run_dir = paths.ensure_run_dir("foundation-refresh")
+    run_dir = paths.ensure_run_dir(refresh_run_id)
     snapshot_path = run_dir / "market_snapshots_usd.parquet"
     equities_path = run_dir / "usd_equities.parquet"
     gold_path = run_dir / "gold_history.parquet"
@@ -876,16 +1456,24 @@ def _write_foundation_snapshots(
                     if row["currency"] == "USD"
                     else f"{row['currency']}USD"
                 ),
-                "fx_staleness_days": 0,
-                "share_price_usd": float(row["price"]) * float(row["fx_rate"]),
-                "market_cap_usd": 6000.0 * float(row["fx_rate"]),
+                "fx_staleness_days": row.get("fx_staleness_days", 0),
+                "share_price_usd": (
+                    float(row["price"]) * float(row["fx_rate"])
+                    if row["fx_rate"] is not None
+                    else None
+                ),
+                "market_cap_usd": (
+                    6000.0 * float(row["fx_rate"])
+                    if row["fx_rate"] is not None
+                    else None
+                ),
                 "shares_outstanding": 100.0,
                 "source": "test",
                 "source_run_id": "refresh-run",
-                "feed_currency": row["currency"],
-                "price_scale_factor": 1.0,
-                "minor_unit_adjusted": False,
-                "normalization_status": "OK",
+                "feed_currency": row.get("feed_currency") or row["currency"],
+                "price_scale_factor": row.get("price_scale_factor", 1.0),
+                "minor_unit_adjusted": bool(row.get("minor_unit_adjusted", False)),
+                "normalization_status": row.get("normalization_status", "OK"),
             }
             for row in rows
         ]
@@ -896,7 +1484,10 @@ def _write_foundation_snapshots(
                 ticker=str(row["ticker"]),
                 latest_price=float(row["price"]),
                 currency=str(row["currency"]),
-                fx_rate=float(row["fx_rate"]),
+                fx_rate=float(row["fx_rate"] or 1.0),
+                feed_currency=str(row.get("feed_currency") or row["currency"]),
+                price_scale_factor=float(row.get("price_scale_factor", 1.0)),
+                minor_unit_adjusted=bool(row.get("minor_unit_adjusted", False)),
             )
             for row in rows
         ],
@@ -906,7 +1497,7 @@ def _write_foundation_snapshots(
     write_parquet_atomic(equities, equities_path, index=False)
     write_parquet_atomic(_gold_history_frame(), gold_path, index=False)
     payload = {
-        "refresh_run_id": "refresh-run",
+        "refresh_run_id": refresh_run_id,
         "foundation_status": "PASS",
         "foundation_signature": _foundation_signature(app_config),
         "raw_qa_summary": {"overall_status": "PASS"},
@@ -929,6 +1520,9 @@ def _equity_history_frame(
     latest_price: float,
     currency: str,
     fx_rate: float,
+    feed_currency: str | None = None,
+    price_scale_factor: float = 1.0,
+    minor_unit_adjusted: bool = False,
 ) -> pd.DataFrame:
     dates = pd.bdate_range(end="2026-06-08", periods=70)
     raw = pd.Series(
@@ -958,9 +1552,9 @@ def _equity_history_frame(
             "exchange": "TEST",
             "source": "test",
             "source_symbol": ticker,
-            "feed_currency": currency,
-            "price_scale_factor": 1.0,
-            "minor_unit_adjusted": False,
+            "feed_currency": feed_currency or currency,
+            "price_scale_factor": price_scale_factor,
+            "minor_unit_adjusted": minor_unit_adjusted,
             "fx_rate_to_usd": fx_rate,
             "fetched_at_utc": pd.Timestamp("2026-06-08T00:00:00Z"),
         }

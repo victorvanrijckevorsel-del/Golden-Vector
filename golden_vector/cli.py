@@ -90,7 +90,11 @@ from golden_vector.hedge.report import write_hedge_readiness_report
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.model.pipeline import execute_tool_a_profile_pipeline
 from golden_vector.model.tool_c import ToolCExecutionInputs, compute_tool_c_outputs
-from golden_vector.model.tool_d import ToolDExecutionInputs, compute_tool_d_outputs
+from golden_vector.model.tool_d import (
+    ToolDExecutionInputs,
+    compute_tool_d_outputs,
+    latest_gold_price_from_history,
+)
 from golden_vector.portfolio.pipeline import build_portfolio_artifacts
 from golden_vector.screening.manual_data import (
     bootstrap_manual_screening_data,
@@ -2661,26 +2665,7 @@ def _tool_d_source_paths(
 
 
 def _spot_gold_from_history(gold_history: pd.DataFrame) -> tuple[float, str | None]:
-    if gold_history.empty or "date" not in gold_history.columns:
-        raise ValueError("Latest foundation snapshot has no gold history for Tool D spot reference.")
-    working = gold_history.copy()
-    working["date"] = pd.to_datetime(working["date"], errors="coerce")
-    if "adj_close_usd" in working.columns:
-        working["spot_gold_usd"] = pd.to_numeric(working["adj_close_usd"], errors="coerce")
-    else:
-        working["spot_gold_usd"] = pd.NA
-    if "close_usd" in working.columns:
-        working["spot_gold_usd"] = working["spot_gold_usd"].where(
-            working["spot_gold_usd"].notna(),
-            pd.to_numeric(working["close_usd"], errors="coerce"),
-        )
-    working = working.loc[
-        working["date"].notna() & pd.to_numeric(working["spot_gold_usd"], errors="coerce").gt(0)
-    ].copy()
-    if working.empty:
-        raise ValueError("Latest foundation snapshot has no positive gold close for Tool D.")
-    row = working.sort_values("date").iloc[-1]
-    return float(row["spot_gold_usd"]), str(pd.Timestamp(row["date"]).date())
+    return latest_gold_price_from_history(gold_history)
 
 
 def _load_latest_foundation_snapshot(

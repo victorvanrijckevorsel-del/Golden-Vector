@@ -11,9 +11,15 @@ import pandas as pd
 from golden_vector.common.eligibility import is_score_eligible
 from golden_vector.common.frames import latest_records_by_key
 from golden_vector.common.numeric import optional_float, sum_optional_floats
+from golden_vector.model.gold_shock import (
+    DEFAULT_GOLD_DOWN_MIN_BETA,
+    DEFAULT_GOLD_DOWN_SCENARIO_FRACTION,
+    compute_gold_shock_exposure,
+)
 
-GOLD_DOWN_SCENARIO_FRACTION = -0.10
+GOLD_DOWN_SCENARIO_FRACTION = DEFAULT_GOLD_DOWN_SCENARIO_FRACTION
 PUBLISHABLE_TOOL_A_CONFIDENCE = {"HIGH", "MEDIUM"}
+DEGRADED_EXPOSURE_STATUS_TOKENS = frozenset({"STALE_FX", "WARN", "FAIL"})
 
 
 def enrich_portfolio_analytics(
@@ -24,6 +30,7 @@ def enrich_portfolio_analytics(
     tool_d: pd.DataFrame,
     benchmark_betas: pd.DataFrame,
     reconciliation: pd.DataFrame,
+    gold_down_min_beta: float = DEFAULT_GOLD_DOWN_MIN_BETA,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Attach M3 analytics to persisted position and summary artifacts."""
 
@@ -47,7 +54,16 @@ def enrich_portfolio_analytics(
         value_usd = optional_float(row.get("value_usd"))
         tool_a_row = tool_a_by_ticker.get(ticker)
         tool_d_row = tool_d_by_ticker.get(ticker)
-        row.update(_tool_a_exposure_fields(ticker, value_usd, tool_a_row, data_issues))
+        row.update(
+            _tool_a_exposure_fields(
+                ticker,
+                value_usd,
+                tool_a_row,
+                data_issues,
+                position_status=row.get("position_status"),
+                gold_down_min_beta=gold_down_min_beta,
+            )
+        )
         row.update(_tool_d_resilience_fields(ticker, tool_d_row, data_issues))
         rows.append(row)
 
@@ -81,6 +97,9 @@ def _tool_a_exposure_fields(
     value_usd: float | None,
     tool_a_row: dict[str, object] | None,
     data_issues: list[dict[str, object]],
+    *,
+    position_status: object,
+    gold_down_min_beta: float,
 ) -> dict[str, object]:
     if value_usd is None or value_usd <= 0:
         _add_issue(data_issues, ticker, "missing_price", "Position has no usable USD value.")
@@ -92,8 +111,24 @@ def _tool_a_exposure_fields(
             "gold_down_10_loss_usd": None,
             "effective_exposure_bucket": "Missing price",
         }
+    degraded_status = _degraded_position_status(position_status)
     if tool_a_row is None:
         _add_issue(data_issues, ticker, "missing_tool_a", "No current Tool A beta artifact row.")
+        if degraded_status:
+            _add_issue(
+                data_issues,
+                ticker,
+                "degraded_position_data",
+                f"Portfolio valuation status is {degraded_status}.",
+            )
+            return {
+                "down_beta_core": None,
+                "tool_a_confidence_label": None,
+                "tool_a_score_eligible": False,
+                "gold_down_10_pnl_usd": None,
+                "gold_down_10_loss_usd": None,
+                "effective_exposure_bucket": "Degraded data",
+            }
         return {
             "down_beta_core": None,
             "tool_a_confidence_label": None,
@@ -106,6 +141,21 @@ def _tool_a_exposure_fields(
     down_beta = optional_float(tool_a_row.get("down_beta_core"))
     confidence = str(tool_a_row.get("confidence_label") or "").upper() or None
     score_eligible = is_score_eligible(tool_a_row.get("score_eligible"), default=False)
+    if degraded_status:
+        _add_issue(
+            data_issues,
+            ticker,
+            "degraded_position_data",
+            f"Portfolio valuation status is {degraded_status}.",
+        )
+        return {
+            "down_beta_core": down_beta,
+            "tool_a_confidence_label": confidence,
+            "tool_a_score_eligible": score_eligible,
+            "gold_down_10_pnl_usd": None,
+            "gold_down_10_loss_usd": None,
+            "effective_exposure_bucket": "Degraded data",
+        }
     publishable = (
         down_beta is not None
         and score_eligible
@@ -127,15 +177,47 @@ def _tool_a_exposure_fields(
             "effective_exposure_bucket": "Low-confidence beta",
         }
 
-    pnl = value_usd * down_beta * GOLD_DOWN_SCENARIO_FRACTION
+    shock = compute_gold_shock_exposure(
+        value_usd=value_usd,
+        beta=down_beta,
+        shock_fraction=GOLD_DOWN_SCENARIO_FRACTION,
+        min_effective_beta=gold_down_min_beta,
+    )
+    if not shock.modelable:
+        _add_issue(
+            data_issues,
+            ticker,
+            "low_or_negative_gold_beta",
+            shock.reason or "Tool A beta is not usable for modeled gold-down exposure.",
+        )
+        return {
+            "down_beta_core": down_beta,
+            "tool_a_confidence_label": confidence,
+            "tool_a_score_eligible": score_eligible,
+            "gold_down_10_pnl_usd": None,
+            "gold_down_10_loss_usd": None,
+            "effective_exposure_bucket": "Low/negative beta",
+        }
     return {
         "down_beta_core": down_beta,
         "tool_a_confidence_label": confidence,
         "tool_a_score_eligible": score_eligible,
-        "gold_down_10_pnl_usd": pnl,
-        "gold_down_10_loss_usd": max(-pnl, 0.0),
+        "gold_down_10_pnl_usd": shock.pnl_usd,
+        "gold_down_10_loss_usd": shock.loss_usd,
         "effective_exposure_bucket": "Measured beta",
     }
+
+
+def _degraded_position_status(position_status: object) -> str | None:
+    tokens = [
+        token.strip().upper()
+        for token in str(position_status or "").split(";")
+        if token.strip()
+    ]
+    for token in tokens:
+        if token in DEGRADED_EXPOSURE_STATUS_TOKENS:
+            return token
+    return None
 
 
 def _tool_d_resilience_fields(
@@ -200,8 +282,10 @@ def _summary_with_analytics(
     )
 
     issues = list(data_issues)
+    issues.extend(_position_data_issues(positions))
     issues.extend(_benchmark_issues(benchmark_betas))
     issues.extend(_reconciliation_issues(reconciliation))
+    issues = _dedupe_issues(issues)
 
     _set_summary_value(frame, "equity_value_usd", equity_value)
     _set_summary_value(frame, "cash_value_usd", cash_value)
@@ -349,6 +433,57 @@ def _benchmark_issues(frame: pd.DataFrame) -> list[dict[str, object]]:
                 }
             )
     return issues
+
+
+def _position_data_issues(positions: pd.DataFrame) -> list[dict[str, object]]:
+    if positions.empty or "position_status" not in positions.columns:
+        return []
+    issues: list[dict[str, object]] = []
+    for row in positions.to_dict(orient="records"):
+        status = str(row.get("position_status") or "").strip()
+        if not status or status == "OK":
+            continue
+        ticker = str(row.get("ticker") or "").strip().upper() or None
+        for part in [item.strip() for item in status.split(";") if item.strip()]:
+            issues.append(
+                {
+                    "ticker": ticker,
+                    "issue": _position_issue_code(part),
+                    "message": f"Portfolio valuation status is {part}.",
+                }
+            )
+    return issues
+
+
+def _position_issue_code(status: str) -> str:
+    normalized = status.strip().lower().replace(" ", "_")
+    if "missing_price" in normalized:
+        return "missing_price"
+    if "missing_fx" in normalized:
+        return "missing_fx"
+    if "stale_fx" in normalized:
+        return "stale_fx"
+    if "currency_mismatch" in normalized:
+        return "currency_mismatch"
+    if "normalization" in normalized or normalized in {"warn", "fail"}:
+        return "snapshot_not_ok"
+    return f"portfolio_{normalized}"
+
+
+def _dedupe_issues(issues: list[dict[str, object]]) -> list[dict[str, object]]:
+    deduped: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for issue in issues:
+        key = (
+            str(issue.get("ticker") or ""),
+            str(issue.get("issue") or ""),
+            str(issue.get("message") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(issue)
+    return deduped
 
 
 def _reconciliation_issues(frame: pd.DataFrame) -> list[dict[str, object]]:

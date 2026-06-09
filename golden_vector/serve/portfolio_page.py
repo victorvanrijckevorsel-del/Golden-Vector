@@ -81,12 +81,16 @@ def _render_summary(data: PortfolioData) -> str:
     return (
         "<section class=\"metric-grid\">"
         f"{_metric_card('NAV', _fmt_money(summary.get('nav_value_usd'), 'USD'))}"
-        f"{_metric_card('Total P&L', _fmt_money(summary.get('total_pnl_usd_at_current_fx'), 'USD'))}"
-        f"{_metric_card('Modeled loss if gold -10%', _fmt_money(summary.get('modeled_gold_down_10_loss_usd'), 'USD'))}"
+        f"{_metric_card('Total P&L at current FX', _fmt_money(summary.get('total_pnl_usd_at_current_fx'), 'USD'))}"
+        f"{_metric_card('Estimated linear loss if gold -10%', _fmt_money(summary.get('modeled_gold_down_10_loss_usd'), 'USD'))}"
         f"{_metric_card('Beta coverage', _fmt_percent(summary.get('tool_a_coverage_fraction')))}"
-        f"{_metric_card('Largest position', _fmt_percent(summary.get('largest_position_weight_fraction')))}"
+        f"{_metric_card('Resilience coverage', _fmt_percent(summary.get('resilience_coverage_fraction')))}"
+        f"{_metric_card('Largest NAV weight', _fmt_percent(summary.get('largest_position_weight_fraction')))}"
+        f"{_metric_card('Top 3 NAV weight', _fmt_percent(summary.get('top3_position_weight_fraction')))}"
         f"{_metric_card('Price date', _fmt_text(summary.get('as_of_date')))}"
         "<p class=\"hint\">NAV = entered stock positions; broker cash is added at import.</p>"
+        "<p class=\"hint\">Gold -10% loss is a simple linear beta estimate; real selloffs can be worse.</p>"
+        "<p class=\"hint\">Total USD P&L blends stock movement and FX movement; local P&L is shown by position.</p>"
         "</section>"
     )
 
@@ -103,7 +107,7 @@ def _render_data_issues(data: PortfolioData) -> str:
             "</section>"
         )
     rows = []
-    for issue in issues[:12]:
+    for issue in issues:
         rows.append(
             "<tr>"
             f"<td>{_fmt_text(issue.get('ticker'))}</td>"
@@ -114,6 +118,7 @@ def _render_data_issues(data: PortfolioData) -> str:
     return (
         "<section class=\"panel\">"
         "<h2>Data issues to fix</h2>"
+        f"<p class=\"hint\">Showing all {len(issues)} current data issues.</p>"
         "<table><thead><tr><th>Ticker</th><th>Issue</th><th>Why it matters</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
         "</section>"
@@ -147,11 +152,14 @@ def _render_composition(data: PortfolioData) -> str:
     return (
         "<section class=\"panel\">"
         "<h2>Composition and coverage</h2>"
+        "<p class=\"hint\">Corporate resilience coverage shows how much of NAV has a usable Tool D row. "
+        f"Current coverage: {_fmt_percent(summary.get('resilience_coverage_fraction'))}.</p>"
         "<div class=\"two-column\">"
         "<div><h3>Gold-beta exposure</h3>"
         "<table><thead><tr><th>Bucket</th><th>Positions</th><th>Value</th><th>NAV weight</th></tr></thead>"
         f"<tbody>{''.join(exposure_rows)}</tbody></table></div>"
         "<div><h3>Currency split</h3>"
+        "<p class=\"hint\">USD P&L at current FX blends security moves and currency moves.</p>"
         "<table><thead><tr><th>Currency</th><th>Value</th><th>P&L at current FX</th></tr></thead>"
         f"<tbody>{''.join(currency_rows)}</tbody></table></div>"
         "</div>"
@@ -173,14 +181,18 @@ def _render_hedge_sizing(data: PortfolioData) -> str:
     for row in data.hedge_sizing.sort_values("benchmark_ticker").to_dict(orient="records"):
         note = note or row.get("basis_risk_note")
         status = str(row.get("hedge_status") or "")
-        unavailable = status != "OK"
-        size_text = (
-            "GDX hedge size unavailable"
-            if unavailable
-            else _fmt_money(row.get("modeled_short_notional_usd"), "USD")
-        )
-        contracts = "-" if unavailable else _fmt_number(row.get("modeled_put_contracts"), decimals=0)
-        reason = row.get("hedge_status_reason") if unavailable else "Modeled hedge size only."
+        if status == "NO_MEASURED_EXPOSURE":
+            size_text = "No measured gold exposure to hedge"
+            contracts = "-"
+            reason = row.get("hedge_status_reason") or "No measured gold exposure to hedge."
+        elif status != "OK":
+            size_text = "GDX hedge size unavailable"
+            contracts = "-"
+            reason = row.get("hedge_status_reason")
+        else:
+            size_text = _fmt_money(row.get("modeled_short_notional_usd"), "USD")
+            contracts = _fmt_number(row.get("modeled_put_contracts"), decimals=0)
+            reason = "Modeled hedge size only."
         rows.append(
             "<tr>"
             f"<td>{_fmt_text(row.get('benchmark_ticker'))}</td>"
@@ -235,7 +247,7 @@ def _render_correlations(data: PortfolioData) -> str:
             cells.append(f"<td class=\"corr-{bucket}\">{value}</td>")
         heat_rows.append(f"<tr>{''.join(cells)}</tr>")
     pair_rows = []
-    ranked = matrix[matrix["pair_rank"].notna()].sort_values("pair_rank").head(8)
+    ranked = matrix[matrix["pair_rank"].notna()].sort_values("pair_rank")
     for row in ranked.to_dict(orient="records"):
         pair_rows.append(
             "<tr>"
@@ -259,9 +271,11 @@ def _render_correlations(data: PortfolioData) -> str:
         f"{''.join(f'<th>{escape(ticker)}</th>' for ticker in tickers)}</tr></thead>"
         f"<tbody>{''.join(heat_rows)}</tbody></table></div>"
         "<div><h3>Largest paired exposures</h3>"
+        f"<details><summary>Show all {len(ranked.index)} paired exposures</summary>"
         "<table><thead><tr><th>Pair</th><th>Book weight</th><th>Correlation</th>"
         "<th>Overlap days</th><th>Status</th></tr></thead>"
-        f"<tbody>{''.join(pair_rows)}</tbody></table></div>"
+        f"<tbody>{''.join(pair_rows)}</tbody></table>"
+        "</details></div>"
         "</div>"
         "</section>"
     )
@@ -345,9 +359,10 @@ def _render_positions(data: PortfolioData) -> str:
             f"<td>{_fmt_money(row.get('value_local'), row.get('currency'))}</td>"
             f"<td>{_fmt_money(row.get('pnl_local'), row.get('currency'))}</td>"
             f"<td>{_fmt_percent(row.get('pnl_fraction_local'))}</td>"
+            f"<td>{_fmt_percent(row.get('equity_weight_fraction'))}</td>"
             f"<td>{_fmt_percent(row.get('nav_weight_fraction'))}</td>"
             f"<td>{_fmt_number(row.get('down_beta_core'), decimals=2)}</td>"
-            f"<td>{_fmt_money(row.get('gold_down_10_pnl_usd'), 'USD')}</td>"
+            f"<td>{_fmt_money(row.get('gold_down_10_loss_usd'), 'USD')}</td>"
             f"<td>{_fmt_percent(row.get('beta_contribution_fraction'))}</td>"
             f"<td>{_fmt_text(row.get('resilience_bucket'))}</td>"
             f"<td>{_fmt_text(row.get('position_status'))}</td>"
@@ -360,11 +375,12 @@ def _render_positions(data: PortfolioData) -> str:
         "<table class=\"js-datatable\"><thead><tr>"
         "<th>Ticker</th><th>Company</th><th>Shares</th><th>Avg Cost</th>"
         "<th>Current Price</th><th>Value</th><th>P&L</th><th>P&L %</th>"
-        "<th>NAV Weight</th><th>Down Beta</th><th>Gold -10% P&L</th>"
+        "<th>Equity Weight</th><th>NAV Weight</th><th>Down Beta</th><th>Linear Loss @ Gold -10%</th>"
         "<th>Loss Share</th><th>Resilience</th><th>Status</th><th>Lots</th>"
         "</tr></thead><tbody>"
         f"{''.join(rows)}"
         "</tbody></table>"
+        "<p class=\"hint\">Per-position P&L is local-currency. The gold-loss column is a positive USD loss estimate.</p>"
         "</section>"
     )
 
@@ -386,7 +402,8 @@ def _render_lot_forms(data: PortfolioData, *, app_config: AppConfig) -> str:
         "<section class=\"panel\">"
         "<h2>Add Position Lot</h2>"
         "<p class=\"hint\">M1 records each buy in the selected ticker's configured currency. "
-        "Dual-listing broker lines come later.</p>"
+        "Dual-listing broker lines come later. For LSE/GBP tickers, enter buy prices in pounds; "
+        "Yahoo GBp quotes are converted by the data pipeline.</p>"
         "<form method=\"post\" action=\"/portfolio/lots\" class=\"portfolio-lot-form\">"
         f"{_ticker_select(active_tickers, ticker_info=ticker_info, selected=default_ticker)}"
         f"{_number_input('shares', 'Shares')}"
@@ -548,7 +565,9 @@ def _json_list(value: object) -> list[dict[str, Any]]:
         parsed = json.loads(str(value))
     except (TypeError, ValueError, json.JSONDecodeError):
         return []
-    return parsed if isinstance(parsed, list) else []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
 
 
 def _json_object(value: object) -> dict[str, Any]:

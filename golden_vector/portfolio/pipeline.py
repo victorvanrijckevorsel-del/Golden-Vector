@@ -102,9 +102,6 @@ POSITION_COLUMNS = [
     "pnl_local",
     "pnl_fraction_local",
     "pnl_usd_at_current_fx",
-    # M1 legacy equity-weight field. The UI consumes nav_weight_fraction from
-    # M3 so broker cash can enter the denominator when import lands.
-    "position_weight_fraction",
     *ANALYTICS_POSITION_COLUMNS,
     "position_status",
     "lot_count",
@@ -162,9 +159,13 @@ def build_portfolio_artifacts(
     publish_model_state: bool = True,
     config_hash: str | None = None,
     use_model_state_artifacts: bool = True,
+    foundation_manifest_path: Path | None = None,
 ) -> PortfolioBuildResult:
     source_run_id = source_run_id or _new_portfolio_run_id()
-    foundation_manifest_path = resolve_current_foundation_manifest_path(paths)
+    resolved_foundation_manifest_path = foundation_manifest_path or _portfolio_foundation_manifest_path(
+        paths,
+        use_model_state_artifacts=use_model_state_artifacts,
+    )
     lots = load_lots(paths)
     requested_tickers = sorted({lot.ticker for lot in lots})
     foundation = load_latest_foundation_snapshot(
@@ -174,17 +175,18 @@ def build_portfolio_artifacts(
         include_equity_histories=bool(requested_tickers),
         include_market_snapshots=True,
         requested_tickers=requested_tickers,
-        manifest_path=foundation_manifest_path,
+        manifest_path=resolved_foundation_manifest_path,
     )
     ticker_info = build_ticker_info(app_config)
     snapshots_by_ticker = _snapshot_records_by_ticker(foundation.normalized_market_snapshots)
     source_hash = optional_sha256_file(paths.manual_portfolio_lots_path)
     portfolio_source_version = source_hash or "empty"
     valuations = [
-        _value_lot(
+        _safe_value_lot(
             lot,
             ticker_info=ticker_info,
             snapshot=snapshots_by_ticker.get(lot.ticker),
+            max_fx_staleness_days=app_config.qa.max_fx_staleness_days,
         )
         for lot in lots
     ]
@@ -242,6 +244,7 @@ def build_portfolio_artifacts(
         ),
         benchmark_betas=benchmark_betas,
         reconciliation=reconciliation,
+        gold_down_min_beta=app_config.hedge_readiness.down_beta_min_for_scenario,
     )
     positions = apply_position_weights(positions, summary)
     positions = _with_metadata(
@@ -267,6 +270,7 @@ def build_portfolio_artifacts(
         normalized_equity_histories=foundation.normalized_equity_histories,
         source_run_id=source_run_id,
         snapshot_refresh_run_id=foundation.refresh_run_id,
+        gold_down_min_beta=app_config.hedge_readiness.down_beta_min_for_scenario,
     )
 
     write_portfolio_artifact_pair(
@@ -383,11 +387,22 @@ def _read_current_or_latest_artifact(
     return read_optional_parquet(fallback_path)
 
 
+def _portfolio_foundation_manifest_path(
+    paths: ProjectPaths,
+    *,
+    use_model_state_artifacts: bool,
+) -> Path | None:
+    if use_model_state_artifacts:
+        return resolve_current_foundation_manifest_path(paths)
+    return paths.latest_foundation_manifest_path
+
+
 def _value_lot(
     lot: PortfolioLot,
     *,
     ticker_info: dict[str, TickerInfo],
     snapshot: dict[str, object] | None,
+    max_fx_staleness_days: int,
 ) -> LineValuation:
     info = ticker_info.get(lot.ticker)
     company = info.company if info is not None else None
@@ -398,13 +413,41 @@ def _value_lot(
     if price_local is None or price_local <= 0:
         return _missing_value(lot, company=company, reason="Current price is missing.")
     if fx_rate is None or fx_rate <= 0:
-        return _missing_value(lot, company=company, reason="Current FX rate is missing.")
-    snapshot_status = str(snapshot.get("normalization_status") or "OK")
+        return _missing_value(
+            lot,
+            company=company,
+            reason="Current FX rate is missing.",
+            status="MISSING_FX",
+        )
+    snapshot_currency = _optional_string(snapshot.get("currency")) or lot.buy_currency
+    snapshot_currency = snapshot_currency.strip().upper()
+    # Feed-specific minor-unit markers such as GBp are normalized upstream;
+    # portfolio valuation compares major-unit configured currencies only.
+    if snapshot_currency != lot.buy_currency:
+        return _missing_value(
+            lot,
+            company=company,
+            reason=(
+                "Snapshot price currency "
+                f"{snapshot_currency} does not match lot currency {lot.buy_currency}."
+            ),
+            status="CURRENCY_MISMATCH",
+        )
+    snapshot_status = str(snapshot.get("normalization_status") or "OK").strip().upper()
+    fx_staleness_days = optional_float(snapshot.get("fx_staleness_days"))
+    status_parts: list[str] = []
+    reasons: list[str] = []
+    if fx_staleness_days is not None and fx_staleness_days > max_fx_staleness_days:
+        status_parts.append("STALE_FX")
+        reasons.append(f"FX source is {fx_staleness_days:g} days old.")
+    if snapshot_status != "OK":
+        status_parts.append(snapshot_status)
+        reasons.append(f"Snapshot status is {snapshot_status}.")
     valued = value_major_unit_price(
         ValuationInput(
             quantity=lot.shares,
             price_local=price_local,
-            price_currency=lot.buy_currency,
+            price_currency=snapshot_currency,
             fx_rate_to_usd=fx_rate,
         )
     )
@@ -414,7 +457,7 @@ def _value_lot(
     pnl_local = valued.market_value_local - lot.cost_local
     pnl_pct = pnl_local / lot.cost_local if lot.cost_local > 0 else None
     pnl_usd = valued.market_value_usd - cost_usd
-    status = "OK" if snapshot_status == "OK" else snapshot_status
+    status = "; ".join(dict.fromkeys(status_parts)) if status_parts else "OK"
     return LineValuation(
         lot=lot,
         company=company,
@@ -430,13 +473,44 @@ def _value_lot(
         pnl_fraction_local=pnl_pct,
         pnl_usd_at_current_fx=pnl_usd,
         status=status,
-        status_reason=None if status == "OK" else f"Snapshot status is {snapshot_status}.",
+        status_reason=None if status == "OK" else " ".join(reasons),
         price_scale_factor=snapshot_scale_factor or valued.price_scale_factor,
         minor_unit_adjusted=snapshot_minor_adjusted or valued.minor_unit_adjusted,
     )
 
 
-def _missing_value(lot: PortfolioLot, *, company: str | None, reason: str) -> LineValuation:
+def _safe_value_lot(
+    lot: PortfolioLot,
+    *,
+    ticker_info: dict[str, TickerInfo],
+    snapshot: dict[str, object] | None,
+    max_fx_staleness_days: int,
+) -> LineValuation:
+    info = ticker_info.get(lot.ticker)
+    company = info.company if info is not None else None
+    try:
+        return _value_lot(
+            lot,
+            ticker_info=ticker_info,
+            snapshot=snapshot,
+            max_fx_staleness_days=max_fx_staleness_days,
+        )
+    except ValueError as exc:
+        return _missing_value(
+            lot,
+            company=company,
+            reason=f"Portfolio lot could not be valued: {exc}",
+            status="INVALID_INPUT",
+        )
+
+
+def _missing_value(
+    lot: PortfolioLot,
+    *,
+    company: str | None,
+    reason: str,
+    status: str = "MISSING_PRICE",
+) -> LineValuation:
     return LineValuation(
         lot=lot,
         company=company,
@@ -451,7 +525,7 @@ def _missing_value(lot: PortfolioLot, *, company: str | None, reason: str) -> Li
         pnl_local=None,
         pnl_fraction_local=None,
         pnl_usd_at_current_fx=None,
-        status="MISSING_PRICE",
+        status=status,
         status_reason=reason,
         price_scale_factor=1.0,
         minor_unit_adjusted=False,
@@ -515,7 +589,6 @@ def _positions_frame(
     grouped: dict[str, list[LineValuation]] = defaultdict(list)
     for value in valuations:
         grouped[value.lot.ticker].append(value)
-    total_value_usd = sum_optional_floats(value.value_usd for value in valuations) or 0.0
     rows: list[dict[str, object]] = []
     for ticker, values in sorted(grouped.items()):
         total_shares = sum(value.lot.shares for value in values)
@@ -558,11 +631,6 @@ def _positions_frame(
             "pnl_local": pnl_local,
             "pnl_fraction_local": pnl_pct,
             "pnl_usd_at_current_fx": pnl_usd,
-            "position_weight_fraction": (
-                value_usd / total_value_usd
-                if value_usd is not None and total_value_usd > 0
-                else None
-            ),
             "position_status": status,
             "lot_count": len(values),
         })

@@ -130,6 +130,15 @@ def create_workspace_app(
                 )
 
             if method == "GET" and path == "/portfolio":
+                if not app_config.portfolio.enabled:
+                    return _html_response(
+                        start_response,
+                        _render_error_page(
+                            "Portfolio is disabled.",
+                            detail="Enable portfolio.enabled locally before serving holdings-bearing pages.",
+                        ),
+                        status="403 Forbidden",
+                    )
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 flash = _flash_message(query.get("saved", [""])[0])
                 return _html_response(
@@ -311,6 +320,9 @@ def create_workspace_app(
                     _render_tool_d_overview_page(
                         state,
                         flash=flash,
+                        app_config=app_config,
+                        paths=paths,
+                        query=query,
                         search=query.get("search", [""])[0],
                     ),
                 )
@@ -638,12 +650,12 @@ def create_workspace_app(
                 ),
                 status="503 Service Unavailable",
             )
-        except Exception as exc:
+        except Exception:
             return _html_response(
                 start_response,
                 _render_error_page(
                     "The workspace hit an unexpected error.",
-                    detail=str(exc),
+                    detail="Run the command again from a terminal to see the full traceback.",
                 ),
                 status="500 Internal Server Error",
             )

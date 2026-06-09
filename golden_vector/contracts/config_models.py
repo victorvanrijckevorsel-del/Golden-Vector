@@ -390,17 +390,19 @@ class ToolCConfig(StrictConfigModel):
 
 
 class ToolDConfig(StrictConfigModel):
-    version: int = 1
+    version: int = 2
     max_reasonable_ev_ebitda: float = 100.0
+    debt_stress_leverage_danger_threshold: float = 3.0
     quality_components: dict[str, Literal["high_good", "low_good"]] = Field(
         default_factory=lambda: {
-            "headroom_to_breakeven_pct_at_g": "high_good",
+            "survival_distance_to_interest_cover_pct": "high_good",
+            "cost_curve_aisc_percentile": "low_good",
+            "fragility_ebitda_pct_per_10pct_gold": "low_good",
             "leverage_stressed_at_g": "low_good",
-            "ev_ebitda_at_g": "low_good",
         }
     )
 
-    @field_validator("max_reasonable_ev_ebitda")
+    @field_validator("max_reasonable_ev_ebitda", "debt_stress_leverage_danger_threshold")
     @classmethod
     def positive_floats(cls, value: float) -> float:
         if value <= 0:
@@ -410,9 +412,10 @@ class ToolDConfig(StrictConfigModel):
     @model_validator(mode="after")
     def exact_quality_component_set(self) -> "ToolDConfig":
         expected = {
-            "headroom_to_breakeven_pct_at_g",
+            "survival_distance_to_interest_cover_pct",
+            "cost_curve_aisc_percentile",
+            "fragility_ebitda_pct_per_10pct_gold",
             "leverage_stressed_at_g",
-            "ev_ebitda_at_g",
         }
         actual = set(self.quality_components)
         if actual != expected:

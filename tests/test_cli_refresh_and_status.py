@@ -108,9 +108,12 @@ def test_status_command_runs_cleanly_with_no_artifacts(tmp_path, monkeypatch, ca
     """
     paths = build_test_paths(tmp_path)
     real_loaded = load_app_config(ProjectPaths.discover()).app
+    app_with_portfolio = real_loaded.model_copy(
+        update={"portfolio": real_loaded.portfolio.model_copy(update={"enabled": True})}
+    )
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
+        lambda _: _LoadedConfigStub(app=app_with_portfolio, config_hash="hash"),
     )
 
     exit_code = run_status(paths)
@@ -134,9 +137,12 @@ def test_status_command_lists_blank_tickers_when_some_have_no_manual_data(tmp_pa
     """
     paths = build_test_paths(tmp_path)
     real_loaded = load_app_config(ProjectPaths.discover()).app
+    app_with_portfolio = real_loaded.model_copy(
+        update={"portfolio": real_loaded.portfolio.model_copy(update={"enabled": True})}
+    )
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
+        lambda _: _LoadedConfigStub(app=app_with_portfolio, config_hash="hash"),
     )
 
     # Initialize the store but populate no fields.
@@ -313,9 +319,12 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     """
     paths = build_test_paths(tmp_path)
     real_loaded = load_app_config(ProjectPaths.discover()).app
+    app_with_portfolio = real_loaded.model_copy(
+        update={"portfolio": real_loaded.portfolio.model_copy(update={"enabled": True})}
+    )
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
+        lambda _: _LoadedConfigStub(app=app_with_portfolio, config_hash="hash"),
     )
 
     call_order: list[str] = []
@@ -345,12 +354,18 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
         assert parent_refresh_id is not None
         return 0
 
+    def fake_portfolio(_paths, **_kwargs):
+        assert not _paths.latest_model_state_manifest_path.exists()
+        call_order.append("portfolio")
+        return 0
+
     monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
     monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
     monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
     monkeypatch.setattr("golden_vector.cli.run_tool_c", fake_tool_c)
     monkeypatch.setattr("golden_vector.cli.run_tool_d", fake_tool_d)
     monkeypatch.setattr("golden_vector.cli.run_option_artifacts", fake_option_artifacts)
+    monkeypatch.setattr("golden_vector.cli._run_portfolio_refresh_step", fake_portfolio)
 
     exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
 
@@ -362,6 +377,7 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
         "tool-c",
         "tool-d@None",
         "option-artifacts",
+        "portfolio",
     ]
     assert paths.latest_model_state_manifest_path.exists()
     model_state = json.loads(paths.latest_model_state_manifest_path.read_text(encoding="utf-8"))
@@ -371,14 +387,16 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     assert model_state["stage_timings"]["update_data"]["exit_code"] == 0
     assert model_state["stage_timings"]["tool_d"]["exit_code"] == 0
     assert model_state["stage_timings"]["option_artifacts"]["exit_code"] == 0
+    assert model_state["stage_timings"]["portfolio"]["exit_code"] == 0
     assert read_option_refresh_status(paths).status == "succeeded"
     out = capsys.readouterr().out
-    assert "Step 1/6: update-data" in out
-    assert "Step 2/6: tool-a" in out
-    assert "Step 3/6: tool-b" in out
-    assert "Step 4/6: tool-c" in out
-    assert "Step 5/6: tool-d (spot gold)" in out
-    assert "Step 6/6: option-artifacts" in out
+    assert "Step 1/7: update-data" in out
+    assert "Step 2/7: tool-a" in out
+    assert "Step 3/7: tool-b" in out
+    assert "Step 4/7: tool-c" in out
+    assert "Step 5/7: tool-d (spot gold)" in out
+    assert "Step 6/7: option-artifacts" in out
+    assert "Step 7/7: portfolio" in out
     assert "Model state manifest published:" in out
     assert "Refresh complete" in out
 
@@ -534,9 +552,12 @@ def test_refresh_option_artifact_failure_keeps_previous_manifest(
 def test_refresh_command_stops_after_update_data_failure(tmp_path, monkeypatch, capsys):
     paths = build_test_paths(tmp_path)
     real_loaded = load_app_config(ProjectPaths.discover()).app
+    app_with_portfolio = real_loaded.model_copy(
+        update={"portfolio": real_loaded.portfolio.model_copy(update={"enabled": True})}
+    )
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
+        lambda _: _LoadedConfigStub(app=app_with_portfolio, config_hash="hash"),
     )
 
     call_order: list[str] = []
@@ -553,9 +574,14 @@ def test_refresh_command_stops_after_update_data_failure(tmp_path, monkeypatch, 
         call_order.append("tool-b")
         return 0
 
+    def fake_portfolio(_paths, **_kwargs):
+        call_order.append("portfolio")
+        return 0
+
     monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
     monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
     monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
+    monkeypatch.setattr("golden_vector.cli._run_portfolio_refresh_step", fake_portfolio)
 
     exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
 
@@ -569,9 +595,12 @@ def test_refresh_command_stops_after_update_data_failure(tmp_path, monkeypatch, 
 def test_refresh_command_skips_tool_b_when_flag_passed(tmp_path, monkeypatch, capsys):
     paths = build_test_paths(tmp_path)
     real_loaded = load_app_config(ProjectPaths.discover()).app
+    app_with_portfolio = real_loaded.model_copy(
+        update={"portfolio": real_loaded.portfolio.model_copy(update={"enabled": True})}
+    )
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
+        lambda _: _LoadedConfigStub(app=app_with_portfolio, config_hash="hash"),
     )
 
     call_order: list[str] = []
@@ -588,14 +617,19 @@ def test_refresh_command_skips_tool_b_when_flag_passed(tmp_path, monkeypatch, ca
         call_order.append("tool-b")
         return 0
 
+    def fake_portfolio(_paths, **_kwargs):
+        call_order.append("portfolio")
+        return 0
+
     monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
     monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
     monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
+    monkeypatch.setattr("golden_vector.cli._run_portfolio_refresh_step", fake_portfolio)
 
     exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=True)
 
     assert exit_code == 0
-    assert call_order == ["update-data", "tool-a"]
+    assert call_order == ["update-data", "tool-a", "portfolio"]
     assert read_option_refresh_status(paths).status == "succeeded"
     out = capsys.readouterr().out
     assert "tool-b/tool-c/tool-d SKIPPED" in out
@@ -611,9 +645,12 @@ def test_refresh_skip_tool_b_publishes_partial_manifest_for_new_tool_a(
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
     real_loaded = load_app_config(ProjectPaths.discover()).app
+    app_with_portfolio = real_loaded.model_copy(
+        update={"portfolio": real_loaded.portfolio.model_copy(update={"enabled": True})}
+    )
     monkeypatch.setattr(
         "golden_vector.cli.load_app_config",
-        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
+        lambda _: _LoadedConfigStub(app=app_with_portfolio, config_hash="hash"),
     )
     _write_refresh_inputs(paths, refresh_run_id="refresh-old")
     previous_manifest = write_current_model_state_manifest(
@@ -633,9 +670,13 @@ def test_refresh_skip_tool_b_publishes_partial_manifest_for_new_tool_a(
     def fake_tool_b(_paths, *, gold_price):
         raise AssertionError("Tool B must not run with --skip-tool-b.")
 
+    def fake_portfolio(_paths, **_kwargs):
+        return 0
+
     monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
     monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
     monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
+    monkeypatch.setattr("golden_vector.cli._run_portfolio_refresh_step", fake_portfolio)
 
     exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=True)
     current_manifest = json.loads(paths.latest_model_state_manifest_path.read_text(encoding="utf-8"))

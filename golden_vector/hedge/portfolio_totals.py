@@ -15,6 +15,7 @@ from golden_vector.hedge._helpers import (
 )
 from golden_vector.hedge.candidate_puts import CandidatePut
 from golden_vector.hedge.holdings import Holding
+from golden_vector.model.gold_shock import compute_gold_shock_exposure
 
 OPTION_CONTRACT_MULTIPLIER = 100
 
@@ -233,9 +234,15 @@ def _holding_value_at_scenario(
         return 0.0
     if not holding.downside_modelable:
         return holding.current_notional
-    assert holding.down_beta_core is not None
-    factor = max(0.0, 1.0 + holding.down_beta_core * gold_pct_change)
-    return holding.current_notional * factor
+    shock = compute_gold_shock_exposure(
+        value_usd=holding.current_notional,
+        beta=holding.down_beta_core,
+        shock_fraction=gold_pct_change,
+        min_effective_beta=None,
+    )
+    if shock.pnl_usd is None:
+        return holding.current_notional
+    return holding.current_notional + shock.pnl_usd
 
 
 def _hedge_cost_at_level(

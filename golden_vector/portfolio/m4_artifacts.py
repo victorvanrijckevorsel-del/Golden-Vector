@@ -7,6 +7,11 @@ import math
 import pandas as pd
 
 from golden_vector.common.numeric import optional_float, sum_optional_floats
+from golden_vector.model.gold_shock import (
+    DEFAULT_GOLD_DOWN_MIN_BETA,
+    DEFAULT_GOLD_DOWN_SCENARIO_FRACTION,
+    compute_gold_shock_exposure,
+)
 from golden_vector.portfolio.models import PORTFOLIO_SCHEMA_VERSION
 
 OPTION_CONTRACT_MULTIPLIER = 100
@@ -99,12 +104,14 @@ def build_m4_portfolio_artifacts(
     normalized_equity_histories: dict[str, pd.DataFrame],
     source_run_id: str,
     snapshot_refresh_run_id: str,
+    gold_down_min_beta: float = DEFAULT_GOLD_DOWN_MIN_BETA,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     hedge = build_hedge_sizing_frame(
         positions=positions,
         benchmark_betas=benchmark_betas,
         source_run_id=source_run_id,
         snapshot_refresh_run_id=snapshot_refresh_run_id,
+        gold_down_min_beta=gold_down_min_beta,
     )
     correlations = build_correlation_frame(
         positions=positions,
@@ -134,8 +141,12 @@ def build_hedge_sizing_frame(
     benchmark_betas: pd.DataFrame,
     source_run_id: str,
     snapshot_refresh_run_id: str,
+    gold_down_min_beta: float = DEFAULT_GOLD_DOWN_MIN_BETA,
 ) -> pd.DataFrame:
-    effective_exposure = _effective_gold_exposure_usd(positions)
+    effective_exposure = _effective_gold_exposure_usd(
+        positions,
+        gold_down_min_beta=gold_down_min_beta,
+    )
     rows = []
     for row in benchmark_betas.to_dict(orient="records"):
         status = str(row.get("benchmark_status") or "")
@@ -146,7 +157,10 @@ def build_hedge_sizing_frame(
         hedge_reason = None
         notional = None
         contracts = None
-        if status != "OK":
+        if effective_exposure <= 0:
+            hedge_status = "NO_MEASURED_EXPOSURE"
+            hedge_reason = "No measured gold exposure to hedge."
+        elif status != "OK":
             hedge_status = "UNAVAILABLE"
             hedge_reason = reason or f"Benchmark status is {status or 'UNKNOWN'}."
         elif beta is None or beta <= 0:
@@ -156,7 +170,7 @@ def build_hedge_sizing_frame(
             hedge_status = "UNAVAILABLE"
             hedge_reason = "Benchmark price is unavailable."
         else:
-            notional = effective_exposure / beta if effective_exposure > 0 else 0.0
+            notional = effective_exposure / beta
             contracts = math.ceil(notional / (price * OPTION_CONTRACT_MULTIPLIER))
         rows.append(
             {
@@ -357,14 +371,20 @@ def build_reconciliation_export_frame(
     )
 
 
-def _effective_gold_exposure_usd(positions: pd.DataFrame) -> float:
+def _effective_gold_exposure_usd(
+    positions: pd.DataFrame,
+    *,
+    gold_down_min_beta: float,
+) -> float:
     total = 0.0
     for row in _covered_positions(positions).to_dict(orient="records"):
-        value = optional_float(row.get("value_usd"))
-        beta = optional_float(row.get("down_beta_core"))
-        if value is None or beta is None:
-            continue
-        total += value * beta
+        shock = compute_gold_shock_exposure(
+            value_usd=row.get("value_usd"),
+            beta=row.get("down_beta_core"),
+            shock_fraction=DEFAULT_GOLD_DOWN_SCENARIO_FRACTION,
+            min_effective_beta=gold_down_min_beta,
+        )
+        total += shock.effective_exposure_usd or 0.0
     return total
 
 

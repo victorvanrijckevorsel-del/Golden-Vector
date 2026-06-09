@@ -21,6 +21,7 @@ from golden_vector.contracts.config_models import (
     UniverseConfig,
     VolatilityDiagnosticBands,
 )
+from golden_vector.model.gold_shock import DEFAULT_GOLD_DOWN_MIN_BETA
 
 
 def test_universe_config_requires_at_least_one_ticker():
@@ -263,6 +264,7 @@ def test_hedge_readiness_config_accepts_defaults():
     assert config.speculation_max_tickers_default == 15
     assert config.ranking_max_tickers_default == 60
     assert config.down_beta_min_for_scenario == 0.10
+    assert config.down_beta_min_for_scenario == DEFAULT_GOLD_DOWN_MIN_BETA
 
 
 @pytest.mark.parametrize(
@@ -399,10 +401,12 @@ def test_tool_d_config_accepts_defaults():
     config = ToolDConfig()
 
     assert config.max_reasonable_ev_ebitda == 100.0
+    assert config.debt_stress_leverage_danger_threshold == 3.0
     assert config.quality_components == {
-        "headroom_to_breakeven_pct_at_g": "high_good",
+        "survival_distance_to_interest_cover_pct": "high_good",
+        "cost_curve_aisc_percentile": "low_good",
+        "fragility_ebitda_pct_per_10pct_gold": "low_good",
         "leverage_stressed_at_g": "low_good",
-        "ev_ebitda_at_g": "low_good",
     }
 
 
@@ -410,9 +414,10 @@ def test_tool_d_config_accepts_defaults():
     "override",
     [
         {"max_reasonable_ev_ebitda": 0},
+        {"debt_stress_leverage_danger_threshold": 0},
         {
             "quality_components": {
-                "headroom_to_breakeven_pct_at_g": "high_good",
+                "survival_distance_to_interest_cover_pct": "high_good",
                 "leverage_stressed_at_g": "low_good",
             }
         },

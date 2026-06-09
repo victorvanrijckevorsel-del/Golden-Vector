@@ -142,6 +142,31 @@ def test_build_header_context_treats_negative_down_beta_as_zero_modeled_downside
     assert row.verdict == "market > model (heuristic)"
 
 
+def test_build_header_context_clamps_extreme_modeled_downside_at_zero_stock_price(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_manifest_and_histories(paths)
+    features = pd.DataFrame(
+        [
+            {
+                "ticker": "AEM",
+                "optionability_tier": "directly_hedgeable",
+                "implied_move_60d": 0.80,
+            }
+        ]
+    )
+    tool_a = pd.DataFrame([{"ticker": "AEM", "down_beta_core": 15.00}])
+
+    context = build_header_context(
+        paths=paths,
+        options_features=features,
+        tool_a_frame=tool_a,
+    )
+
+    row = context.implied_vs_modeled_rows[0]
+    assert row.modeled_downside_at_minus10 == 1.0
+    assert row.verdict == "model ~= market (heuristic)"
+
+
 def test_build_header_context_accepts_feature_frames_by_ticker(tmp_path):
     paths = build_test_paths(tmp_path)
     _write_manifest_and_histories(paths)

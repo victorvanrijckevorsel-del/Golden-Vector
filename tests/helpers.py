@@ -24,6 +24,7 @@ def build_test_paths(root: Path) -> ProjectPaths:
         ProjectPaths.discover().config_dir,
         paths.config_dir,
         dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("portfolio.local.yaml"),
     )
     return paths
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from golden_vector.hedge.candidate_puts import CandidatePut
 from golden_vector.hedge.holdings import Holding
+from golden_vector.model.gold_shock import compute_gold_shock_exposure
 
 
 @dataclass(frozen=True)
@@ -90,8 +91,14 @@ def _scenario(
             tag="downside_unavailable",
         )
 
-    modeled_stock_down_pct = max(float(down_beta), 0.0) * gold_down_pct
-    modeled_downside = exposure * modeled_stock_down_pct
+    shock = compute_gold_shock_exposure(
+        value_usd=exposure,
+        beta=down_beta,
+        shock_fraction=-float(gold_down_pct),
+        min_effective_beta=None,
+    )
+    modeled_downside = shock.loss_usd or 0.0
+    modeled_stock_down_pct = modeled_downside / exposure if exposure > 0 else 0.0
     hedge_ratio = (
         full_premium / modeled_downside
         if full_premium is not None and modeled_downside > 0

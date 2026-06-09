@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from golden_vector.normalize.price_units import PriceUnitAdjustment, price_unit_adjustment
@@ -63,7 +64,11 @@ def _value_with_adjustment(
     input_value: ValuationInput,
     adjustment: PriceUnitAdjustment,
 ) -> ValuationResult:
+    _require_positive("quantity", input_value.quantity)
+    _require_positive("price_local", input_value.price_local)
+    _require_positive("fx_rate_to_usd", input_value.fx_rate_to_usd)
     price_major = adjustment.apply(input_value.price_local)
+    _require_positive("price_local after unit adjustment", price_major)
     market_value_local = input_value.quantity * price_major
     market_value_usd = market_value_local * input_value.fx_rate_to_usd
     return ValuationResult(
@@ -75,3 +80,9 @@ def _value_with_adjustment(
         price_scale_factor=adjustment.scale_factor,
         minor_unit_adjusted=adjustment.minor_unit_adjusted,
     )
+
+
+def _require_positive(name: str, value: float) -> None:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise ValueError(f"{name} must be positive")

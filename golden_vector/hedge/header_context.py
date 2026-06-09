@@ -16,6 +16,10 @@ from golden_vector.hedge._helpers import (
     is_optionable_tier as _is_optionable_tier,
     rows_by_ticker_dict as _rows_by_ticker,
 )
+from golden_vector.model.gold_shock import (
+    DEFAULT_GOLD_DOWN_SCENARIO_FRACTION,
+    compute_gold_shock_exposure,
+)
 
 MODEL_GREATER_THAN_MARKET_RATIO = 1.5
 MARKET_GREATER_THAN_MODEL_RATIO = 0.67
@@ -171,7 +175,7 @@ def _implied_vs_modeled_rows(
             continue
         implied_move = _as_float(feature.get("implied_move_60d"))
         down_beta = _as_float(tool_a_by_ticker.get(ticker, {}).get("down_beta_core"))
-        modeled_downside = max(down_beta, 0.0) * 0.10 if down_beta is not None else None
+        modeled_downside = _modeled_downside_at_minus10(down_beta)
         rows.append(
             ImpliedVsModeledRow(
                 ticker=ticker,
@@ -184,6 +188,18 @@ def _implied_vs_modeled_rows(
             )
         )
     return sorted(rows, key=lambda row: row.ticker)
+
+
+def _modeled_downside_at_minus10(down_beta: float | None) -> float | None:
+    if down_beta is None:
+        return None
+    shock = compute_gold_shock_exposure(
+        value_usd=1.0,
+        beta=down_beta,
+        shock_fraction=DEFAULT_GOLD_DOWN_SCENARIO_FRACTION,
+        min_effective_beta=None,
+    )
+    return shock.loss_usd
 
 
 def _feature_rows(
