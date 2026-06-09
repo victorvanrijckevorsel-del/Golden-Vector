@@ -98,7 +98,10 @@ def build_option_signal_artifacts(
             metrics_by_ticker=metrics_by_ticker,
             app_config=app_config,
         ),
-        oi_strike_points=_oi_strike_points_frame(metrics_by_ticker),
+        oi_strike_points=_oi_strike_points_frame(
+            metrics_by_ticker,
+            app_config=app_config,
+        ),
         history_points=history_points,
         next_history=next_history,
         publish_blockers=tuple(publish_blockers),
@@ -132,7 +135,7 @@ def _summary_row(
     app_config: AppConfig,
     manifest: dict[str, Any],
 ) -> dict[str, Any]:
-    signal_metrics = _signal_area_metrics(metrics)
+    signal_metrics = _signal_area_metrics(metrics, app_config=app_config)
     raw_coverage = _quote_coverage(metrics)
     signal_coverage = _quote_coverage(signal_metrics)
     history_for_ticker = _history_for_ticker(history, ticker)
@@ -331,14 +334,18 @@ def _default_benchmark(
 
 def _signal_area_metrics(
     metrics: tuple[OptionContractMetrics, ...],
+    *,
+    app_config: AppConfig,
 ) -> tuple[OptionContractMetrics, ...]:
+    min_iv = float(app_config.hedge_readiness.candidate_min_implied_volatility)
+    max_iv = float(app_config.hedge_readiness.candidate_max_implied_volatility)
     result = []
     for metric in metrics:
         if not (SIGNAL_AREA_DTE_MIN <= metric.days_to_expiry <= SIGNAL_AREA_DTE_MAX):
             continue
         if metric.underlying_price <= 0:
             continue
-        if metric.implied_volatility is None or not (0.01 <= metric.implied_volatility <= 3.0):
+        if metric.implied_volatility is None or not (min_iv <= metric.implied_volatility <= max_iv):
             continue
         if metric.delta is None:
             continue
@@ -743,7 +750,7 @@ def _skew_curve_points_frame(
     rows: list[dict[str, Any]] = []
     horizons = tuple(app_config.hedge_readiness.display_horizons_days)
     for ticker, metrics in sorted(metrics_by_ticker.items()):
-        signal_metrics = _signal_area_metrics(metrics)
+        signal_metrics = _signal_area_metrics(metrics, app_config=app_config)
         for horizon in horizons:
             lower, upper = _horizon_band(horizon, app_config)
             horizon_metrics = [
@@ -763,7 +770,8 @@ def _skew_curve_points_frame(
                             "moneyness_bucket": None if selected is None else selected.otm_pct,
                             "side": option_type,
                             "iv": None if selected is None else selected.implied_volatility,
-                            "liquidity_flag": "missing" if selected is None else selected.liquidity_tier,
+                            "liquidity_flag": _chart_liquidity_flag(selected),
+                            "quote_flags": None if selected is None else "|".join(selected.quote_flags),
                         }
                     )
     return pd.DataFrame(rows)
@@ -771,10 +779,12 @@ def _skew_curve_points_frame(
 
 def _oi_strike_points_frame(
     metrics_by_ticker: dict[str, tuple[OptionContractMetrics, ...]],
+    *,
+    app_config: AppConfig,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for ticker, metrics in sorted(metrics_by_ticker.items()):
-        for metric in _signal_area_metrics(metrics):
+        for metric in _signal_area_metrics(metrics, app_config=app_config):
             rows.append(
                 {
                     "ticker": ticker,
@@ -787,9 +797,23 @@ def _oi_strike_points_frame(
                     "oi_change_valid": False,
                     "days_to_expiry": metric.days_to_expiry,
                     "expiration": metric.expiration,
+                    "liquidity_flag": _chart_liquidity_flag(metric),
+                    "quote_flags": "|".join(metric.quote_flags),
                 }
             )
     return pd.DataFrame(rows)
+
+
+def _chart_liquidity_flag(metric: OptionContractMetrics | None) -> str:
+    if metric is None:
+        return "missing"
+    if "unusable_iv" in metric.quote_flags:
+        return "unusable_iv"
+    if "lottery_like" in metric.quote_flags:
+        return "lottery_like"
+    if "extreme_iv" in metric.quote_flags:
+        return "extreme_iv"
+    return metric.liquidity_tier
 
 
 def _horizon_band(horizon: int, app_config: AppConfig) -> tuple[int, int]:

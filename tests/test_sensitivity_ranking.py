@@ -35,7 +35,7 @@ def test_build_sensitivity_ranking_sorts_rankable_rows_by_core_down_beta():
     assert ranking.score_eligible_count == 2
 
 
-def test_build_sensitivity_ranking_sinks_ineligible_and_null_beta_rows():
+def test_build_sensitivity_ranking_ranks_ineligible_beta_rows_with_note():
     ranking = build_sensitivity_ranking(
         tool_a_frame=_tool_a(
             [
@@ -50,10 +50,10 @@ def test_build_sensitivity_ranking_sinks_ineligible_and_null_beta_rows():
         down_beta_min_for_scenario=0.10,
     )
 
-    assert [row.ticker for row in ranking.rows] == ["AEM", "BAD", "NULL"]
+    assert [row.ticker for row in ranking.rows] == ["BAD", "AEM", "NULL"]
     assert ranking.rows[0].rank == 1
-    assert ranking.rows[1].rank is None
-    assert "score ineligible" in ranking.rows[1].notes
+    assert "score withheld; downside beta shown for context" in ranking.rows[0].notes
+    assert ranking.rows[1].rank == 2
     assert ranking.rows[2].rank is None
     assert "down-beta unavailable" in ranking.rows[2].notes
     assert ranking.score_eligible_count == 1

@@ -327,6 +327,7 @@ def build_hedge_readiness_sections(
         paths=paths,
         options_features=features,
         tool_a_frame=tool_a,
+        hedge_config=config,
     )
     sensitivity = build_sensitivity_ranking(
         tool_a_frame=tool_a,

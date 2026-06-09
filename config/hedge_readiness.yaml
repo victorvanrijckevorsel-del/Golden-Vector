@@ -1,4 +1,4 @@
-version: 1
+version: 2
 target_delta: -0.25
 target_horizons_days:
   - 60
@@ -16,7 +16,7 @@ candidate_max_spread_pct: 0.35
 candidate_min_open_interest: 1
 candidate_min_volume: 0
 candidate_min_implied_volatility: 0.01
-candidate_max_implied_volatility: 3.0
+candidate_max_implied_volatility: 10.0
 option_liquidity_tradable_spread_pct: 0.20
 option_liquidity_watch_spread_pct: 0.50
 option_liquidity_min_open_interest: 1
@@ -26,6 +26,30 @@ option_liquidity_target_depth_count: 10
 option_liquidity_oi_cap: 1000
 option_liquidity_volume_cap: 1000
 option_sensible_moneyness_max_pct: 0.35
+option_near_atm_otm_min: 0.0
+option_near_atm_otm_max: 0.05
+option_directional_preferred_otm_min: 0.15
+option_directional_preferred_otm_max: 0.20
+option_directional_allowed_otm_min: 0.12
+option_directional_allowed_otm_max: 0.22
+option_near_atm_strict_max_spread_pct: 0.25
+option_near_atm_strict_min_open_interest: 100
+option_near_atm_strict_min_mid: 0.20
+option_near_atm_watch_max_spread_pct: 0.35
+option_near_atm_watch_min_open_interest: 50
+option_near_atm_watch_min_mid: 0.15
+option_directional_strict_max_spread_pct: 0.35
+option_directional_strict_min_open_interest: 50
+option_directional_strict_min_mid: 0.10
+option_directional_watch_max_spread_pct: 0.45
+option_directional_watch_min_open_interest: 25
+option_directional_watch_min_mid: 0.05
+option_extreme_implied_volatility_threshold: 3.0
+option_lottery_implied_volatility_threshold: 0.75
+option_lottery_abs_delta_max: 0.15
+option_lottery_dte_max: 75
+option_verdict_model_over_market_ratio: 1.5
+option_verdict_market_over_model_ratio: 0.67
 option_dte_bands:
   60:
     - 40

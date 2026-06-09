@@ -182,7 +182,7 @@ def test_benchmarks_config_rejects_duplicate_tickers():
 def test_hedge_readiness_config_accepts_defaults():
     config = HedgeReadinessConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "target_delta": -0.25,
             "target_horizons_days": [30, 60, 90],
             "display_horizons_days": [30, 60, 90, 120],
@@ -194,7 +194,7 @@ def test_hedge_readiness_config_accepts_defaults():
             "candidate_min_open_interest": 1,
             "candidate_min_volume": 0,
             "candidate_min_implied_volatility": 0.01,
-            "candidate_max_implied_volatility": 3.0,
+            "candidate_max_implied_volatility": 10.0,
             "option_liquidity_tradable_spread_pct": 0.20,
             "option_liquidity_watch_spread_pct": 0.50,
             "option_liquidity_min_open_interest": 1,
@@ -204,6 +204,30 @@ def test_hedge_readiness_config_accepts_defaults():
             "option_liquidity_oi_cap": 1000,
             "option_liquidity_volume_cap": 1000,
             "option_sensible_moneyness_max_pct": 0.35,
+            "option_near_atm_otm_min": 0.0,
+            "option_near_atm_otm_max": 0.05,
+            "option_directional_preferred_otm_min": 0.15,
+            "option_directional_preferred_otm_max": 0.20,
+            "option_directional_allowed_otm_min": 0.12,
+            "option_directional_allowed_otm_max": 0.22,
+            "option_near_atm_strict_max_spread_pct": 0.25,
+            "option_near_atm_strict_min_open_interest": 100,
+            "option_near_atm_strict_min_mid": 0.20,
+            "option_near_atm_watch_max_spread_pct": 0.35,
+            "option_near_atm_watch_min_open_interest": 50,
+            "option_near_atm_watch_min_mid": 0.15,
+            "option_directional_strict_max_spread_pct": 0.35,
+            "option_directional_strict_min_open_interest": 50,
+            "option_directional_strict_min_mid": 0.10,
+            "option_directional_watch_max_spread_pct": 0.45,
+            "option_directional_watch_min_open_interest": 25,
+            "option_directional_watch_min_mid": 0.05,
+            "option_extreme_implied_volatility_threshold": 3.0,
+            "option_lottery_implied_volatility_threshold": 0.75,
+            "option_lottery_abs_delta_max": 0.15,
+            "option_lottery_dte_max": 75,
+            "option_verdict_model_over_market_ratio": 1.5,
+            "option_verdict_market_over_model_ratio": 0.67,
             "option_dte_bands": {
                 30: [21, 45],
                 60: [46, 75],
@@ -230,6 +254,7 @@ def test_hedge_readiness_config_accepts_defaults():
         }
     )
 
+    assert config.version == 2
     assert config.target_delta == -0.25
     assert config.target_horizons_days == [30, 60, 90]
     assert config.display_horizons_days == [30, 60, 90, 120]
@@ -238,7 +263,7 @@ def test_hedge_readiness_config_accepts_defaults():
     assert config.candidate_min_open_interest == 1
     assert config.candidate_min_volume == 0
     assert config.candidate_min_implied_volatility == 0.01
-    assert config.candidate_max_implied_volatility == 3.0
+    assert config.candidate_max_implied_volatility == 10.0
     assert config.option_liquidity_tradable_spread_pct == 0.20
     assert config.option_liquidity_watch_spread_pct == 0.50
     assert config.option_liquidity_min_open_interest == 1
@@ -248,6 +273,22 @@ def test_hedge_readiness_config_accepts_defaults():
     assert config.option_liquidity_oi_cap == 1000
     assert config.option_liquidity_volume_cap == 1000
     assert config.option_sensible_moneyness_max_pct == 0.35
+    assert config.option_near_atm_otm_min == 0.0
+    assert config.option_near_atm_otm_max == 0.05
+    assert config.option_directional_preferred_otm_min == 0.15
+    assert config.option_directional_preferred_otm_max == 0.20
+    assert config.option_directional_allowed_otm_min == 0.12
+    assert config.option_directional_allowed_otm_max == 0.22
+    assert config.option_near_atm_strict_min_open_interest == 100
+    assert config.option_near_atm_watch_min_open_interest == 50
+    assert config.option_directional_strict_min_open_interest == 50
+    assert config.option_directional_watch_min_open_interest == 25
+    assert config.option_extreme_implied_volatility_threshold == 3.0
+    assert config.option_lottery_implied_volatility_threshold == 0.75
+    assert config.option_lottery_abs_delta_max == 0.15
+    assert config.option_lottery_dte_max == 75
+    assert config.option_verdict_model_over_market_ratio == 1.5
+    assert config.option_verdict_market_over_model_ratio == 0.67
     assert config.option_dte_bands == {
         30: [21, 45],
         60: [46, 75],
@@ -289,6 +330,14 @@ def test_hedge_readiness_config_accepts_defaults():
         {"candidate_min_implied_volatility": 0.0},
         {"candidate_max_implied_volatility": 0.0},
         {"candidate_min_implied_volatility": 0.5, "candidate_max_implied_volatility": 0.5},
+        {
+            "candidate_max_implied_volatility": 2.0,
+            "option_extreme_implied_volatility_threshold": 3.0,
+        },
+        {
+            "option_lottery_implied_volatility_threshold": 3.5,
+            "option_extreme_implied_volatility_threshold": 3.0,
+        },
         {"option_liquidity_tradable_spread_pct": 0},
         {"option_liquidity_watch_spread_pct": 0},
         {"option_liquidity_tradable_spread_pct": 0.50, "option_liquidity_watch_spread_pct": 0.20},
@@ -299,6 +348,28 @@ def test_hedge_readiness_config_accepts_defaults():
         {"option_liquidity_oi_cap": 0},
         {"option_liquidity_volume_cap": 0},
         {"option_sensible_moneyness_max_pct": 0},
+        {"option_near_atm_otm_min": -0.01},
+        {"option_near_atm_otm_min": 0.05, "option_near_atm_otm_max": 0.05},
+        {
+            "option_directional_allowed_otm_min": 0.20,
+            "option_directional_preferred_otm_min": 0.15,
+        },
+        {
+            "option_near_atm_strict_max_spread_pct": 0.40,
+            "option_near_atm_watch_max_spread_pct": 0.35,
+        },
+        {
+            "option_directional_strict_max_spread_pct": 0.50,
+            "option_directional_watch_max_spread_pct": 0.45,
+        },
+        {"option_lottery_abs_delta_max": 1.2},
+        {"option_lottery_dte_max": 0},
+        {"option_verdict_model_over_market_ratio": 1.0},
+        {"option_verdict_market_over_model_ratio": 1.0},
+        {
+            "option_verdict_model_over_market_ratio": 0.9,
+            "option_verdict_market_over_model_ratio": 0.8,
+        },
         {"option_dte_bands": {30: [45, 21]}},
         {"option_dte_bands": {30: [21]}},
         {"default_scenario_quantity": 0},
@@ -316,7 +387,7 @@ def test_hedge_readiness_config_accepts_defaults():
 )
 def test_hedge_readiness_config_rejects_invalid_thresholds(override):
     payload = {
-        "version": 1,
+        "version": 2,
         "target_delta": -0.25,
         "target_horizons_days": [30, 60, 90],
         "display_horizons_days": [30, 60, 90, 120],
@@ -328,7 +399,7 @@ def test_hedge_readiness_config_rejects_invalid_thresholds(override):
         "candidate_min_open_interest": 1,
         "candidate_min_volume": 0,
         "candidate_min_implied_volatility": 0.01,
-        "candidate_max_implied_volatility": 3.0,
+        "candidate_max_implied_volatility": 10.0,
         "option_liquidity_tradable_spread_pct": 0.20,
         "option_liquidity_watch_spread_pct": 0.50,
         "option_liquidity_min_open_interest": 1,

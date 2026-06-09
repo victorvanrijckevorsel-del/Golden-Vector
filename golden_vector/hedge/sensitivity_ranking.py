@@ -73,7 +73,7 @@ def build_sensitivity_ranking(
         )
         for ticker, tool_a_row in rows_by_ticker_dict(tool_a_frame).items()
     ]
-    rankable = [row for row, is_rankable in built_rows if is_rankable]
+    rankable = [row for row, is_rankable, _score_eligible in built_rows if is_rankable]
     rankable.sort(key=lambda row: (-(row.down_beta_core or 0.0), row.ticker))
     reranked = [
         SensitivityRow(
@@ -94,7 +94,7 @@ def build_sensitivity_ranking(
         for index, row in enumerate(rankable, start=1)
     ]
     unranked = sorted(
-        (row for row, is_rankable in built_rows if not is_rankable),
+        (row for row, is_rankable, _score_eligible in built_rows if not is_rankable),
         key=lambda row: row.ticker,
     )
     ordered = [*reranked, *unranked]
@@ -104,7 +104,11 @@ def build_sensitivity_ranking(
         rows=ordered,
         sort_by=sort_by,
         total_count=len(built_rows),
-        score_eligible_count=len(rankable),
+        score_eligible_count=sum(
+            1
+            for _row, is_rankable, score_eligible in built_rows
+            if is_rankable and score_eligible
+        ),
     )
 
 
@@ -116,12 +120,12 @@ def _build_row(
     candidates: list[CandidatePut],
     risk_free_rate: float | None,
     down_beta_min_for_scenario: float,
-) -> tuple[SensitivityRow, bool]:
+) -> tuple[SensitivityRow, bool, bool]:
     down_beta = as_float(tool_a_row.get("down_beta_core"))
     score_eligible = _as_bool(tool_a_row.get("score_eligible"), default=True)
     notes: list[str] = []
     if not score_eligible:
-        notes.append("score ineligible")
+        notes.append("score withheld; downside beta shown for context")
     if down_beta is None:
         notes.append("down-beta unavailable")
 
@@ -153,7 +157,7 @@ def _build_row(
         elif bundle.rows:
             pnl_at_minus10 = bundle.rows[0].pnl_per_contract_at_expiry
 
-    is_rankable = score_eligible and down_beta is not None
+    is_rankable = down_beta is not None
     return (
         SensitivityRow(
             rank=None,
@@ -179,6 +183,7 @@ def _build_row(
             notes=unique_preserving_order(notes),
         ),
         is_rankable,
+        score_eligible,
     )
 
 

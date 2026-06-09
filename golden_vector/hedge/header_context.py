@@ -11,6 +11,7 @@ import pandas as pd
 
 from golden_vector.app.model_state import resolve_current_model_artifact_path
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.contracts.config_models import HedgeReadinessConfig
 from golden_vector.hedge._helpers import (
     as_float as _as_float,
     is_optionable_tier as _is_optionable_tier,
@@ -20,9 +21,6 @@ from golden_vector.model.gold_shock import (
     DEFAULT_GOLD_DOWN_SCENARIO_FRACTION,
     compute_gold_shock_exposure,
 )
-
-MODEL_GREATER_THAN_MARKET_RATIO = 1.5
-MARKET_GREATER_THAN_MODEL_RATIO = 0.67
 
 
 @dataclass(frozen=True)
@@ -54,9 +52,11 @@ def build_header_context(
     paths: ProjectPaths,
     options_features: pd.DataFrame | dict[str, pd.DataFrame],
     tool_a_frame: pd.DataFrame,
+    hedge_config: HedgeReadinessConfig | None = None,
 ) -> HeaderContext:
     """Compute market context and implied-vs-modeled downside rows."""
 
+    resolved_config = hedge_config or HedgeReadinessConfig()
     manifest, notes = _read_latest_options_manifest(paths)
     gold_history = _load_gold_history(paths=paths, manifest=manifest, notes=notes)
     gdx_history = _load_gdx_history(paths=paths, manifest=manifest, notes=notes)
@@ -66,6 +66,7 @@ def build_header_context(
         implied_vs_modeled_rows=_implied_vs_modeled_rows(
             options_features=options_features,
             tool_a_frame=tool_a_frame,
+            hedge_config=resolved_config,
         ),
         data_notes=notes,
     )
@@ -166,6 +167,7 @@ def _implied_vs_modeled_rows(
     *,
     options_features: pd.DataFrame | dict[str, pd.DataFrame],
     tool_a_frame: pd.DataFrame,
+    hedge_config: HedgeReadinessConfig,
 ) -> list[ImpliedVsModeledRow]:
     tool_a_by_ticker = _rows_by_ticker(tool_a_frame)
     rows: list[ImpliedVsModeledRow] = []
@@ -184,6 +186,7 @@ def _implied_vs_modeled_rows(
                 verdict=_verdict(
                     implied_move_60d=implied_move,
                     modeled_downside_at_minus10=modeled_downside,
+                    hedge_config=hedge_config,
                 ),
             )
         )
@@ -225,6 +228,7 @@ def _verdict(
     *,
     implied_move_60d: float | None,
     modeled_downside_at_minus10: float | None,
+    hedge_config: HedgeReadinessConfig,
 ) -> str:
     if (
         implied_move_60d is None
@@ -232,8 +236,10 @@ def _verdict(
         or modeled_downside_at_minus10 is None
     ):
         return "data unavailable (heuristic)"
-    if modeled_downside_at_minus10 > MODEL_GREATER_THAN_MARKET_RATIO * implied_move_60d:
+    model_over_market = float(hedge_config.option_verdict_model_over_market_ratio)
+    market_over_model = float(hedge_config.option_verdict_market_over_model_ratio)
+    if modeled_downside_at_minus10 > model_over_market * implied_move_60d:
         return "model > market (heuristic)"
-    if modeled_downside_at_minus10 < MARKET_GREATER_THAN_MODEL_RATIO * implied_move_60d:
+    if modeled_downside_at_minus10 < market_over_model * implied_move_60d:
         return "market > model (heuristic)"
     return "model ~= market (heuristic)"

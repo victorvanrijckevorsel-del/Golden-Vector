@@ -97,7 +97,7 @@ def build_candidate_grid(
     min_open_interest: int = 1,
     min_volume: int = 0,
     min_implied_volatility: float = 0.01,
-    max_implied_volatility: float = 3.0,
+    max_implied_volatility: float = 10.0,
     max_delta_gap: float | None = None,
     as_of_date: date | None = None,
 ) -> list[OptionCandidate]:
@@ -138,7 +138,7 @@ def build_candidate_slots(
     min_open_interest: int = 1,
     min_volume: int = 0,
     min_implied_volatility: float = 0.01,
-    max_implied_volatility: float = 3.0,
+    max_implied_volatility: float = 10.0,
     max_delta_gap: float | None = None,
     as_of_date: date | None = None,
 ) -> list[OptionCandidateSlot]:
@@ -341,7 +341,7 @@ def build_candidate_put_grid(
     min_open_interest: int = 1,
     min_volume: int = 0,
     min_implied_volatility: float = 0.01,
-    max_implied_volatility: float = 3.0,
+    max_implied_volatility: float = 10.0,
     max_delta_gap: float | None = None,
     as_of_date: date | None = None,
 ) -> list[CandidatePut]:

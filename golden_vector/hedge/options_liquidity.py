@@ -57,6 +57,28 @@ class OptionLiquidityConfigLike(Protocol):
     option_dte_bands: dict[int, list[int]]
     candidate_min_implied_volatility: float
     candidate_max_implied_volatility: float
+    option_near_atm_otm_min: float
+    option_near_atm_otm_max: float
+    option_directional_preferred_otm_min: float
+    option_directional_preferred_otm_max: float
+    option_directional_allowed_otm_min: float
+    option_directional_allowed_otm_max: float
+    option_near_atm_strict_max_spread_pct: float
+    option_near_atm_strict_min_open_interest: int
+    option_near_atm_strict_min_mid: float
+    option_near_atm_watch_max_spread_pct: float
+    option_near_atm_watch_min_open_interest: int
+    option_near_atm_watch_min_mid: float
+    option_directional_strict_max_spread_pct: float
+    option_directional_strict_min_open_interest: int
+    option_directional_strict_min_mid: float
+    option_directional_watch_max_spread_pct: float
+    option_directional_watch_min_open_interest: int
+    option_directional_watch_min_mid: float
+    option_extreme_implied_volatility_threshold: float
+    option_lottery_implied_volatility_threshold: float
+    option_lottery_abs_delta_max: float
+    option_lottery_dte_max: int
 
 
 @dataclass(frozen=True)
@@ -71,7 +93,7 @@ class OptionLiquiditySettings:
     volume_cap: int = 1000
     sensible_moneyness_max_pct: float = 0.35
     min_implied_volatility: float = 0.01
-    max_implied_volatility: float = 3.0
+    max_implied_volatility: float = 10.0
     dte_bands: dict[int, tuple[int, int]] | None = None
     near_atm_otm_min: float = 0.0
     near_atm_otm_max: float = 0.05
@@ -91,7 +113,8 @@ class OptionLiquiditySettings:
     directional_watch_max_spread_pct: float = 0.45
     directional_watch_min_open_interest: int = 25
     directional_watch_min_mid: float = 0.05
-    lottery_iv_threshold: float = 0.75
+    extreme_implied_volatility_threshold: float = 3.0
+    lottery_implied_volatility_threshold: float = 0.75
     lottery_abs_delta_max: float = 0.15
     lottery_dte_max: int = 75
 
@@ -162,6 +185,32 @@ def settings_from_config(config: OptionLiquidityConfigLike) -> OptionLiquiditySe
         sensible_moneyness_max_pct=float(config.option_sensible_moneyness_max_pct),
         min_implied_volatility=float(config.candidate_min_implied_volatility),
         max_implied_volatility=float(config.candidate_max_implied_volatility),
+        near_atm_otm_min=float(config.option_near_atm_otm_min),
+        near_atm_otm_max=float(config.option_near_atm_otm_max),
+        directional_preferred_otm_min=float(config.option_directional_preferred_otm_min),
+        directional_preferred_otm_max=float(config.option_directional_preferred_otm_max),
+        directional_allowed_otm_min=float(config.option_directional_allowed_otm_min),
+        directional_allowed_otm_max=float(config.option_directional_allowed_otm_max),
+        near_atm_strict_max_spread_pct=float(config.option_near_atm_strict_max_spread_pct),
+        near_atm_strict_min_open_interest=int(config.option_near_atm_strict_min_open_interest),
+        near_atm_strict_min_mid=float(config.option_near_atm_strict_min_mid),
+        near_atm_watch_max_spread_pct=float(config.option_near_atm_watch_max_spread_pct),
+        near_atm_watch_min_open_interest=int(config.option_near_atm_watch_min_open_interest),
+        near_atm_watch_min_mid=float(config.option_near_atm_watch_min_mid),
+        directional_strict_max_spread_pct=float(config.option_directional_strict_max_spread_pct),
+        directional_strict_min_open_interest=int(config.option_directional_strict_min_open_interest),
+        directional_strict_min_mid=float(config.option_directional_strict_min_mid),
+        directional_watch_max_spread_pct=float(config.option_directional_watch_max_spread_pct),
+        directional_watch_min_open_interest=int(config.option_directional_watch_min_open_interest),
+        directional_watch_min_mid=float(config.option_directional_watch_min_mid),
+        extreme_implied_volatility_threshold=float(
+            config.option_extreme_implied_volatility_threshold
+        ),
+        lottery_implied_volatility_threshold=float(
+            config.option_lottery_implied_volatility_threshold
+        ),
+        lottery_abs_delta_max=float(config.option_lottery_abs_delta_max),
+        lottery_dte_max=int(config.option_lottery_dte_max),
         dte_bands={
             int(horizon): (int(band[0]), int(band[1]))
             for horizon, band in config.option_dte_bands.items()
@@ -388,6 +437,8 @@ def _metric_from_row(
         rel_spread=rel_spread,
         open_interest=open_interest,
         implied_volatility=implied_volatility,
+        delta=delta,
+        days_to_expiry=days_to_expiry,
         settings=settings,
     )
     tier = _liquidity_tier(
@@ -532,7 +583,7 @@ def _slot_for_bucket(
         horizon_days=horizon_days,
         bucket=bucket,
         status="no_tradable",
-        reason=_no_candidate_reason(bucket=bucket),
+        reason=_no_candidate_reason(bucket=bucket, settings=settings),
         listed_contract_count=listed_contract_count,
         expiration=_representative_expiration(metrics, horizon_days=horizon_days),
         days_to_expiry=_representative_days_to_expiry(metrics, horizon_days=horizon_days),
@@ -926,6 +977,8 @@ def _quote_flags(
     rel_spread: float | None,
     open_interest: int,
     implied_volatility: float | None,
+    delta: float | None,
+    days_to_expiry: int,
     settings: OptionLiquiditySettings,
 ) -> list[str]:
     flags: list[str] = []
@@ -941,6 +994,16 @@ def _quote_flags(
         flags.append("sub_min_premium")
     if not _iv_value_is_usable(implied_volatility, settings):
         flags.append("unusable_iv")
+        return flags
+    if _iv_value_is_extreme(implied_volatility, settings):
+        flags.append("extreme_iv")
+    if _contract_is_lottery_like(
+        implied_volatility=implied_volatility,
+        delta=delta,
+        days_to_expiry=days_to_expiry,
+        settings=settings,
+    ):
+        flags.append("lottery_like")
     return flags
 
 
@@ -958,6 +1021,32 @@ def _iv_value_is_usable(
     return (
         implied_volatility is not None
         and settings.min_implied_volatility <= implied_volatility <= settings.max_implied_volatility
+    )
+
+
+def _iv_value_is_extreme(
+    implied_volatility: float | None,
+    settings: OptionLiquiditySettings,
+) -> bool:
+    return (
+        implied_volatility is not None
+        and implied_volatility >= settings.extreme_implied_volatility_threshold
+    )
+
+
+def _contract_is_lottery_like(
+    *,
+    implied_volatility: float | None,
+    delta: float | None,
+    days_to_expiry: int,
+    settings: OptionLiquiditySettings,
+) -> bool:
+    return (
+        days_to_expiry <= settings.lottery_dte_max
+        and implied_volatility is not None
+        and implied_volatility >= settings.lottery_implied_volatility_threshold
+        and delta is not None
+        and abs(delta) <= settings.lottery_abs_delta_max
     )
 
 
@@ -996,13 +1085,11 @@ def _is_lottery_like(
     bucket: OptionBucket,
     settings: OptionLiquiditySettings,
 ) -> bool:
-    return (
-        bucket == "directional"
-        and metric.days_to_expiry <= settings.lottery_dte_max
-        and metric.implied_volatility is not None
-        and metric.implied_volatility >= settings.lottery_iv_threshold
-        and metric.delta is not None
-        and abs(metric.delta) <= settings.lottery_abs_delta_max
+    return bucket == "directional" and _contract_is_lottery_like(
+        implied_volatility=metric.implied_volatility,
+        delta=metric.delta,
+        days_to_expiry=metric.days_to_expiry,
+        settings=settings,
     )
 
 
@@ -1022,10 +1109,18 @@ def _watch_reason(metric: OptionContractMetrics, *, bucket: OptionBucket) -> str
     )
 
 
-def _no_candidate_reason(*, bucket: OptionBucket) -> str:
+def _no_candidate_reason(
+    *,
+    bucket: OptionBucket,
+    settings: OptionLiquiditySettings,
+) -> str:
     if bucket == "near_atm":
-        return "No liquid candidate in the 0-5% OTM range passed the cached checks."
-    return "No liquid candidate in the 12-22% OTM range passed the cached checks."
+        lower = _format_percent(settings.near_atm_otm_min)
+        upper = _format_percent(settings.near_atm_otm_max)
+    else:
+        lower = _format_percent(settings.directional_allowed_otm_min)
+        upper = _format_percent(settings.directional_allowed_otm_max)
+    return f"No liquid candidate in the {lower}-{upper} OTM range passed the cached checks."
 
 
 def _target_delta(option_type: OptionSideType, bucket: OptionBucket) -> float:

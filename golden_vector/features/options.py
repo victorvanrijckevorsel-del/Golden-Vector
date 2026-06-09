@@ -40,7 +40,7 @@ def compute_options_features(
     candidate_min_open_interest: int = 1,
     candidate_min_volume: int = 0,
     candidate_min_implied_volatility: float = 0.01,
-    candidate_max_implied_volatility: float = 3.0,
+    candidate_max_implied_volatility: float = 10.0,
 ) -> dict[str, Any]:
     """Compute one long-format options feature row for a ticker/as-of date."""
 

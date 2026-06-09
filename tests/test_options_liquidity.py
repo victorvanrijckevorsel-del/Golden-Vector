@@ -295,6 +295,135 @@ def test_build_bucket_slots_accepts_single_relaxed_watch_candidate():
     assert slot_tier_counts(slots)["watch"] == 1
 
 
+def test_high_iv_contract_is_flagged_not_silently_dropped():
+    settings = OptionLiquiditySettings(
+        dte_bands={60: (46, 75)},
+        max_implied_volatility=10.0,
+        extreme_implied_volatility_threshold=3.0,
+        lottery_abs_delta_max=1.0,
+    )
+    chain = pd.DataFrame(
+        [
+            _option(
+                "2026-07-23",
+                "P",
+                83.0,
+                3.00,
+                3.20,
+                500,
+                20,
+                implied_volatility=4.0,
+            ),
+        ]
+    )
+    scan = scan_option_chain(
+        ticker="NEM",
+        chain=chain,
+        underlying_price=100.0,
+        risk_free_rate=0.04,
+        settings=settings,
+        as_of_date=date(2026, 5, 29),
+    )
+
+    metric = scan.metrics[0]
+    assert "extreme_iv" in metric.quote_flags
+    assert "lottery_like" in metric.quote_flags
+    assert "unusable_iv" not in metric.quote_flags
+
+    slots = build_bucket_slots_from_scan(
+        option_type="P",
+        scan=scan,
+        target_horizons_days=(60,),
+        settings=settings,
+    )
+    directional = next(slot for slot in slots if slot.bucket == "directional")
+
+    assert directional.candidate is not None
+    assert directional.candidate.strike == 83.0
+    assert "extreme_iv" in directional.candidate.quote_flags
+    assert "lottery_like" in directional.candidate.quote_flags
+
+
+def test_lottery_like_uses_lower_warning_threshold_below_extreme_iv():
+    settings = OptionLiquiditySettings(
+        dte_bands={30: (21, 45)},
+        max_implied_volatility=10.0,
+        extreme_implied_volatility_threshold=3.0,
+        lottery_implied_volatility_threshold=0.75,
+    )
+    chain = pd.DataFrame(
+        [
+            _option(
+                "2026-06-26",
+                "P",
+                78.0,
+                1.00,
+                1.10,
+                500,
+                20,
+                implied_volatility=1.0,
+            ),
+        ]
+    )
+    scan = scan_option_chain(
+        ticker="NEM",
+        chain=chain,
+        underlying_price=100.0,
+        risk_free_rate=0.04,
+        settings=settings,
+        as_of_date=date(2026, 5, 29),
+    )
+
+    metric = scan.metrics[0]
+    assert metric.delta is not None
+    assert abs(metric.delta) <= settings.lottery_abs_delta_max
+    assert "lottery_like" in metric.quote_flags
+    assert "extreme_iv" not in metric.quote_flags
+    assert "unusable_iv" not in metric.quote_flags
+
+
+def test_iv_above_hard_bound_is_unusable_not_selected():
+    settings = OptionLiquiditySettings(
+        dte_bands={60: (46, 75)},
+        max_implied_volatility=10.0,
+        extreme_implied_volatility_threshold=3.0,
+    )
+    scan = scan_option_chain(
+        ticker="NEM",
+        chain=pd.DataFrame(
+            [
+                _option(
+                    "2026-07-23",
+                    "P",
+                    83.0,
+                    3.00,
+                    3.20,
+                    500,
+                    20,
+                    implied_volatility=12.0,
+                ),
+            ]
+        ),
+        underlying_price=100.0,
+        risk_free_rate=0.04,
+        settings=settings,
+        as_of_date=date(2026, 5, 29),
+    )
+
+    assert "unusable_iv" in scan.metrics[0].quote_flags
+
+    slots = build_bucket_slots_from_scan(
+        option_type="P",
+        scan=scan,
+        target_horizons_days=(60,),
+        settings=settings,
+    )
+    directional = next(slot for slot in slots if slot.bucket == "directional")
+
+    assert directional.candidate is None
+    assert directional.status == "no_tradable"
+
+
 def _option(
     expiration: str,
     option_type: str,

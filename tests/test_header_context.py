@@ -2,6 +2,7 @@ import json
 
 import pandas as pd
 
+from golden_vector.contracts.config_models import HedgeReadinessConfig
 from golden_vector.hedge.header_context import build_header_context
 from tests.helpers import build_test_paths
 
@@ -226,6 +227,36 @@ def test_implied_vs_modeled_verdict_boundaries_are_inclusive_to_middle_band(tmp_
         "model ~= market (heuristic)",
         "model ~= market (heuristic)",
     ]
+
+
+def test_implied_vs_modeled_verdict_uses_configured_thresholds(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_manifest_and_histories(paths)
+    features = pd.DataFrame(
+        [
+            {
+                "ticker": "AEM",
+                "optionability_tier": "directly_hedgeable",
+                "implied_move_60d": 0.10,
+            }
+        ]
+    )
+    tool_a = pd.DataFrame([{"ticker": "AEM", "down_beta_core": 1.40}])
+
+    default_context = build_header_context(
+        paths=paths,
+        options_features=features,
+        tool_a_frame=tool_a,
+    )
+    stricter_context = build_header_context(
+        paths=paths,
+        options_features=features,
+        tool_a_frame=tool_a,
+        hedge_config=HedgeReadinessConfig(option_verdict_model_over_market_ratio=1.3),
+    )
+
+    assert default_context.implied_vs_modeled_rows[0].verdict == "model ~= market (heuristic)"
+    assert stricter_context.implied_vs_modeled_rows[0].verdict == "model > market (heuristic)"
 
 
 def _write_manifest_and_histories(paths) -> None:

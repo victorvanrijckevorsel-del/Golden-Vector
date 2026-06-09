@@ -101,7 +101,7 @@ class BenchmarksConfig(StrictConfigModel):
 
 
 class HedgeReadinessConfig(StrictConfigModel):
-    version: int = 1
+    version: int = 2
     target_delta: float = -0.25
     target_horizons_days: list[int] = Field(default_factory=lambda: [60, 90, 120], min_length=1)
     display_horizons_days: list[int] = Field(
@@ -116,7 +116,7 @@ class HedgeReadinessConfig(StrictConfigModel):
     candidate_min_open_interest: int = 1
     candidate_min_volume: int = 0
     candidate_min_implied_volatility: float = 0.01
-    candidate_max_implied_volatility: float = 3.0
+    candidate_max_implied_volatility: float = 10.0
     option_liquidity_tradable_spread_pct: float = 0.20
     option_liquidity_watch_spread_pct: float = 0.50
     option_liquidity_min_open_interest: int = 1
@@ -126,6 +126,30 @@ class HedgeReadinessConfig(StrictConfigModel):
     option_liquidity_oi_cap: int = 1000
     option_liquidity_volume_cap: int = 1000
     option_sensible_moneyness_max_pct: float = 0.35
+    option_near_atm_otm_min: float = 0.0
+    option_near_atm_otm_max: float = 0.05
+    option_directional_preferred_otm_min: float = 0.15
+    option_directional_preferred_otm_max: float = 0.20
+    option_directional_allowed_otm_min: float = 0.12
+    option_directional_allowed_otm_max: float = 0.22
+    option_near_atm_strict_max_spread_pct: float = 0.25
+    option_near_atm_strict_min_open_interest: int = 100
+    option_near_atm_strict_min_mid: float = 0.20
+    option_near_atm_watch_max_spread_pct: float = 0.35
+    option_near_atm_watch_min_open_interest: int = 50
+    option_near_atm_watch_min_mid: float = 0.15
+    option_directional_strict_max_spread_pct: float = 0.35
+    option_directional_strict_min_open_interest: int = 50
+    option_directional_strict_min_mid: float = 0.10
+    option_directional_watch_max_spread_pct: float = 0.45
+    option_directional_watch_min_open_interest: int = 25
+    option_directional_watch_min_mid: float = 0.05
+    option_extreme_implied_volatility_threshold: float = 3.0
+    option_lottery_implied_volatility_threshold: float = 0.75
+    option_lottery_abs_delta_max: float = 0.15
+    option_lottery_dte_max: int = 75
+    option_verdict_model_over_market_ratio: float = 1.5
+    option_verdict_market_over_model_ratio: float = 0.67
     options_expiry_fetch_mode: Literal["all", "targeted"] = "all"
     option_dte_bands: dict[int, list[int]] = Field(
         default_factory=lambda: {
@@ -175,6 +199,10 @@ class HedgeReadinessConfig(StrictConfigModel):
         "candidate_min_open_interest",
         "candidate_min_volume",
         "option_liquidity_min_open_interest",
+        "option_near_atm_strict_min_open_interest",
+        "option_near_atm_watch_min_open_interest",
+        "option_directional_strict_min_open_interest",
+        "option_directional_watch_min_open_interest",
     )
     @classmethod
     def non_negative_ints(cls, value: int) -> int:
@@ -198,6 +226,7 @@ class HedgeReadinessConfig(StrictConfigModel):
         "option_liquidity_volume_cap",
         "option_signal_history_min_samples",
         "option_signal_area_min_contracts",
+        "option_lottery_dte_max",
     )
     @classmethod
     def positive_scenario_ints(cls, value: int) -> int:
@@ -224,6 +253,23 @@ class HedgeReadinessConfig(StrictConfigModel):
         "option_liquidity_min_premium",
         "option_liquidity_near_spot_pct",
         "option_sensible_moneyness_max_pct",
+        "option_near_atm_otm_max",
+        "option_directional_preferred_otm_min",
+        "option_directional_preferred_otm_max",
+        "option_directional_allowed_otm_max",
+        "option_near_atm_strict_max_spread_pct",
+        "option_near_atm_strict_min_mid",
+        "option_near_atm_watch_max_spread_pct",
+        "option_near_atm_watch_min_mid",
+        "option_directional_strict_max_spread_pct",
+        "option_directional_strict_min_mid",
+        "option_directional_watch_max_spread_pct",
+        "option_directional_watch_min_mid",
+        "option_extreme_implied_volatility_threshold",
+        "option_lottery_implied_volatility_threshold",
+        "option_lottery_abs_delta_max",
+        "option_verdict_model_over_market_ratio",
+        "option_verdict_market_over_model_ratio",
         "delta_gap_warning_threshold",
         "proxy_max_beta_diff",
         "proxy_low_basis_max_beta_diff",
@@ -237,6 +283,13 @@ class HedgeReadinessConfig(StrictConfigModel):
     def positive_float_thresholds(cls, value: float) -> float:
         if value <= 0:
             raise ValueError("float thresholds must be positive")
+        return float(value)
+
+    @field_validator("option_near_atm_otm_min", "option_directional_allowed_otm_min")
+    @classmethod
+    def non_negative_option_policy_floats(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("option policy lower bounds must be non-negative")
         return float(value)
 
     @field_validator("proxy_low_basis_min_confidence")
@@ -253,6 +306,25 @@ class HedgeReadinessConfig(StrictConfigModel):
                 "candidate_min_implied_volatility must be less than "
                 "candidate_max_implied_volatility"
             )
+        if not (
+            self.candidate_min_implied_volatility
+            <= self.option_extreme_implied_volatility_threshold
+            <= self.candidate_max_implied_volatility
+        ):
+            raise ValueError(
+                "option_extreme_implied_volatility_threshold must sit inside the "
+                "configured candidate IV hard bounds"
+            )
+        if not (
+            self.candidate_min_implied_volatility
+            <= self.option_lottery_implied_volatility_threshold
+            <= self.option_extreme_implied_volatility_threshold
+        ):
+            raise ValueError(
+                "option_lottery_implied_volatility_threshold must sit inside the "
+                "configured candidate IV hard bounds and be <= "
+                "option_extreme_implied_volatility_threshold"
+            )
         return self
 
     @model_validator(mode="after")
@@ -261,6 +333,54 @@ class HedgeReadinessConfig(StrictConfigModel):
             raise ValueError(
                 "option_liquidity_tradable_spread_pct must be less than "
                 "option_liquidity_watch_spread_pct"
+            )
+        if (
+            self.option_near_atm_strict_max_spread_pct
+            > self.option_near_atm_watch_max_spread_pct
+        ):
+            raise ValueError(
+                "option_near_atm_strict_max_spread_pct must be <= "
+                "option_near_atm_watch_max_spread_pct"
+            )
+        if (
+            self.option_directional_strict_max_spread_pct
+            > self.option_directional_watch_max_spread_pct
+        ):
+            raise ValueError(
+                "option_directional_strict_max_spread_pct must be <= "
+                "option_directional_watch_max_spread_pct"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def ordered_option_bucket_policy(self) -> "HedgeReadinessConfig":
+        if self.option_near_atm_otm_min >= self.option_near_atm_otm_max:
+            raise ValueError("near-ATM OTM range must be ordered")
+        if not (
+            self.option_directional_allowed_otm_min
+            <= self.option_directional_preferred_otm_min
+            < self.option_directional_preferred_otm_max
+            <= self.option_directional_allowed_otm_max
+        ):
+            raise ValueError(
+                "directional OTM ranges must satisfy allowed_min <= preferred_min "
+                "< preferred_max <= allowed_max"
+            )
+        if not 0 < self.option_lottery_abs_delta_max <= 1:
+            raise ValueError("option_lottery_abs_delta_max must be between 0 and 1")
+        return self
+
+    @model_validator(mode="after")
+    def ordered_option_verdict_thresholds(self) -> "HedgeReadinessConfig":
+        if not (
+            self.option_verdict_model_over_market_ratio
+            > 1.0
+            > self.option_verdict_market_over_model_ratio
+            > 0.0
+        ):
+            raise ValueError(
+                "option verdict thresholds must satisfy "
+                "model_over_market > 1 > market_over_model > 0"
             )
         return self
 
