@@ -51,7 +51,10 @@ from golden_vector.serve.option_trading_data import (
     load_option_trading_data,
     parse_option_sizing_request,
 )
-from golden_vector.app.model_state import load_current_model_state_manifest
+from golden_vector.app.model_state import (
+    load_current_model_state_manifest,
+    resolve_current_model_artifact_path,
+)
 from golden_vector.serve.option_refresh import (
     read_option_refresh_status,
     start_options_refresh,
@@ -75,6 +78,7 @@ from golden_vector.serve.format_helpers import (
 from golden_vector.portfolio.manual_store import add_lot, delete_lot, edit_lot
 from golden_vector.portfolio.models import PortfolioError, PortfolioStaleSchemaError
 from golden_vector.portfolio.pipeline import build_portfolio_artifacts, build_ticker_info
+from golden_vector.portfolio.reader import load_portfolio_data
 from golden_vector.screening.manual_store import (
     add_stock_note,
     upsert_company_input,
@@ -160,9 +164,10 @@ def create_workspace_app(
                         ),
                         status="403 Forbidden",
                     )
+                reconciliation_csv_path = _portfolio_reconciliation_csv_path(paths)
                 return _download_file_response(
                     start_response,
-                    paths.latest_portfolio_reconciliation_export_csv_path,
+                    reconciliation_csv_path,
                     content_type="text/csv; charset=utf-8",
                     download_name="golden-vector-portfolio-reconciliation.csv",
                 )
@@ -661,6 +666,20 @@ def create_workspace_app(
             )
 
     return app
+
+
+def _portfolio_reconciliation_csv_path(paths: ProjectPaths):
+    load_portfolio_data(paths)
+    path = resolve_current_model_artifact_path(
+        paths,
+        "portfolio_reconciliation_export_csv",
+    )
+    if path is None:
+        raise PortfolioStaleSchemaError(
+            "Portfolio reconciliation CSV is missing from the current model-state manifest. "
+            "Run python main.py refresh, or save a portfolio lot again."
+        )
+    return path
 
 
 def _safe_return_to(raw_value: object, *, fallback: str = "/option-trading") -> str:

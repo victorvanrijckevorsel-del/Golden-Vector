@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.files import sha256_file
 
 
 @dataclass(frozen=True)
@@ -194,6 +195,7 @@ def _protection_sets(
                 "snapshot_refresh_run_ids",
             ):
                 protected_run_ids.update(_run_ids(raw_artifact.get(field_name)))
+    protected_paths.update(_latest_portfolio_protected_paths(paths))
     return protected_paths, protected_run_ids
 
 
@@ -256,6 +258,10 @@ def _artifact_file_candidates(paths: ProjectPaths) -> list[PruneCandidate]:
             ("*_output_*.*", "*_latest_*.*"),
         ),
         (
+            paths.output_portfolio_dir,
+            ("*_latest_*.*",),
+        ),
+        (
             paths.intermediate_status_dir,
             ("foundation_manifest_*.json", "options_manifest_*.json"),
         ),
@@ -316,6 +322,45 @@ def _candidate_protected(
         return True
     run_dir = _run_dir_for_path(paths, candidate.path)
     return run_dir is not None and run_dir.name in protected_run_ids
+
+
+def _latest_portfolio_protected_paths(paths: ProjectPaths) -> set[Path]:
+    protected: set[Path] = {_resolve_path(paths.manual_portfolio_lots_path)}
+    aliases = (
+        paths.latest_portfolio_lines_path,
+        paths.latest_portfolio_positions_path,
+        paths.latest_portfolio_summary_path,
+        paths.latest_benchmark_betas_path,
+        paths.latest_portfolio_reconciliation_path,
+        paths.latest_portfolio_hedge_sizing_path,
+        paths.latest_portfolio_correlations_path,
+        paths.latest_portfolio_value_history_path,
+        paths.latest_portfolio_reconciliation_export_path,
+        paths.latest_portfolio_reconciliation_export_csv_path,
+    )
+    for alias in aliases:
+        protected.add(_resolve_path(alias))
+        protected.update(_matching_run_stamped_alias_files(alias))
+    return protected
+
+
+def _matching_run_stamped_alias_files(alias: Path) -> set[Path]:
+    if not alias.exists() or not alias.is_file():
+        return set()
+    try:
+        alias_hash = sha256_file(alias)
+    except Exception:
+        return set()
+    protected: set[Path] = set()
+    for candidate in alias.parent.glob(f"{alias.stem}_*{alias.suffix}"):
+        if candidate == alias or not candidate.is_file() or not _has_retention_stamp(candidate):
+            continue
+        try:
+            if sha256_file(candidate) == alias_hash:
+                protected.add(_resolve_path(candidate))
+        except Exception:
+            continue
+    return protected
 
 
 def _delete_candidate(paths: ProjectPaths, candidate: PruneCandidate) -> None:

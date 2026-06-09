@@ -175,6 +175,60 @@ def test_prune_runs_preserves_option_signal_history_store(tmp_path):
     assert all(candidate.path != history for candidate in report.candidates)
 
 
+def test_prune_runs_preserves_referenced_and_latest_portfolio_artifacts(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    retained_run = "20260603T000000Z-portfolio-current"
+    orphan_run = "20260601T000000Z-portfolio-orphan"
+    referenced = paths.output_portfolio_dir / f"portfolio_lines_latest_{retained_run}.parquet"
+    latest_unreferenced = (
+        paths.output_portfolio_dir / f"portfolio_positions_latest_{retained_run}.parquet"
+    )
+    orphan = paths.output_portfolio_dir / f"portfolio_lines_latest_{orphan_run}.parquet"
+    referenced.parent.mkdir(parents=True, exist_ok=True)
+    referenced.write_text("current referenced holdings artifact\n", encoding="utf-8")
+    paths.latest_portfolio_lines_path.write_text(
+        referenced.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    latest_unreferenced.write_text("current latest holdings artifact\n", encoding="utf-8")
+    paths.latest_portfolio_positions_path.write_text(
+        latest_unreferenced.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    orphan.write_text("old holdings artifact\n", encoding="utf-8")
+    paths.manual_portfolio_lots_path.write_text("manual source of truth\n", encoding="utf-8")
+    latest_payload = {
+        "generated_at_utc": "2026-06-03T00:00:00Z",
+        "artifacts": {
+            "portfolio_lines": {
+                "path": referenced.relative_to(paths.repo_root).as_posix(),
+                "source_run_ids": [retained_run],
+                "snapshot_refresh_run_ids": [retained_run],
+            }
+        },
+    }
+    paths.model_state_manifests_dir.mkdir(parents=True, exist_ok=True)
+    (paths.model_state_manifests_dir / "model_state_current.json").write_text(
+        json.dumps(latest_payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(latest_payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    report = prune_runs(paths, keep_model_states=1, apply=True)
+
+    assert referenced.exists()
+    assert latest_unreferenced.exists()
+    assert paths.manual_portfolio_lots_path.exists()
+    assert orphan in report.deleted_paths
+    assert not orphan.exists()
+    assert all(candidate.path != referenced for candidate in report.candidates)
+    assert all(candidate.path != latest_unreferenced for candidate in report.candidates)
+
+
 def test_prune_runs_apply_is_noop_without_any_model_state_manifest(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()

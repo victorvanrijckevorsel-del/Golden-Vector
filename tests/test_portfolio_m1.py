@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import re
+import subprocess
 from datetime import date
 from urllib.parse import urlencode
 
@@ -233,6 +235,40 @@ def test_portfolio_pipeline_groups_lots_and_computes_local_pnl(tmp_path):
     assert data.summary.iloc[0]["total_value_usd"] == pytest.approx(180.0)
 
 
+def test_portfolio_pipeline_degrades_missing_snapshot_line_without_aborting(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _portfolio_config()
+    _write_foundation_snapshot(paths, app_config, ticker="AEM", price=60.0, currency="USD")
+    ticker_info = build_ticker_info(app_config)
+    add_lot(
+        paths,
+        {
+            "ticker": "NEM",
+            "shares": "2",
+            "buy_price": "50",
+            "buy_currency": "USD",
+            "buy_date": "2026-01-02",
+        },
+        ticker_info=ticker_info,
+    )
+
+    build_portfolio_artifacts(
+        paths=paths,
+        app_config=app_config,
+        use_model_state_artifacts=False,
+    )
+    data = load_portfolio_data(paths)
+
+    line = data.lines.iloc[0]
+    position = data.positions.iloc[0]
+    assert line["line_status"] == "MISSING_PRICE"
+    assert "No current snapshot price" in line["line_status_reason"]
+    assert pd.isna(line["value_usd"])
+    assert position["position_status"] == "MISSING_PRICE"
+    assert data.summary.iloc[0]["portfolio_status"] == "WARN"
+
+
 def test_portfolio_pipeline_computes_non_usd_book_totals_at_current_fx(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -290,6 +326,12 @@ def test_portfolio_reader_rejects_stale_schema(tmp_path):
 
     with pytest.raises(PortfolioStaleSchemaError, match="schema_version expected"):
         load_portfolio_data(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    page = _call_wsgi(app, method="GET", path="/portfolio")
+    assert page["status"].startswith("503")
+    assert "Your local Portfolio data is from the previous version" in page["body"]
+    assert "Run python main.py refresh" in page["body"]
 
 
 def test_portfolio_reader_fails_loud_on_partial_artifacts(tmp_path):
@@ -370,6 +412,30 @@ def test_portfolio_manual_paths_are_gitignored():
     assert "data/manual/portfolio/" in gitignore
     assert "data/manual/**/ibkr*.csv" in gitignore
     assert "data/manual/**/*portfolio*.csv" in gitignore
+
+
+def test_tracked_files_do_not_contain_broker_account_numbers():
+    repo_root = ProjectPaths.discover().repo_root
+    result = subprocess.run(
+        ["git", "ls-files"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    account_pattern = re.compile(r"\b(?:DU|U)\d{7,}\b")
+    offenders: list[str] = []
+    for relative_path in result.stdout.splitlines():
+        path = repo_root / relative_path
+        if not path.is_file():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if account_pattern.search(content):
+            offenders.append(relative_path)
+    assert offenders == []
 
 
 def test_portfolio_post_adds_lot_recomputes_artifacts_and_redirects(tmp_path):
@@ -946,6 +1012,14 @@ def test_portfolio_pipeline_writes_m4_artifacts_and_reconciliation_csv(tmp_path)
     csv_path = paths.latest_portfolio_reconciliation_export_csv_path
     assert csv_path.exists()
     assert "canonical_value_usd" in csv_path.read_text(encoding="utf-8")
+    resolved_csv = resolve_current_model_artifact_path(
+        paths,
+        "portfolio_reconciliation_export_csv",
+    )
+    assert resolved_csv is not None
+    assert resolved_csv != csv_path
+    assert resolved_csv.name.startswith("portfolio_reconciliation_export_latest_")
+    csv_path.write_text("alias_only\nBROKEN\n", encoding="utf-8")
 
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM", "AEM"])
     page = _call_wsgi(app, method="GET", path="/portfolio")
@@ -961,6 +1035,32 @@ def test_portfolio_pipeline_writes_m4_artifacts_and_reconciliation_csv(tmp_path)
     assert "Market value of today" in page["body"]
     assert download["status"].startswith("200")
     assert "canonical_value_usd" in download["body"]
+    assert "alias_only" not in download["body"]
+
+
+def test_portfolio_empty_book_builds_artifacts_and_renders_clean_empty_state(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _portfolio_config(enabled=True)
+    _write_foundation_snapshot(paths, app_config, ticker="NEM", price=60.0, currency="USD")
+
+    result = build_portfolio_artifacts(
+        paths=paths,
+        app_config=app_config,
+        use_model_state_artifacts=False,
+    )
+    data = load_portfolio_data(paths)
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    page = _call_wsgi(app, method="GET", path="/portfolio")
+    download = _call_wsgi(app, method="GET", path="/portfolio/reconciliation.csv")
+
+    assert result.summary_status == "EMPTY"
+    assert data.summary.iloc[0]["portfolio_status"] == "EMPTY"
+    assert data.positions.empty
+    assert page["status"].startswith("200")
+    assert "Add your first position below" in page["body"]
+    assert download["status"].startswith("200")
+    assert "schema_version" in download["body"]
 
 
 def test_portfolio_hedge_sizing_math_and_fail_closed_statuses():

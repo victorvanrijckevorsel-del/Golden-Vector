@@ -60,6 +60,13 @@ PORTFOLIO_ARTIFACTS: tuple[str, ...] = (
     "portfolio_value_history",
     "portfolio_reconciliation_export",
 )
+PORTFOLIO_ALIGNMENT_ARTIFACTS: tuple[str, ...] = (
+    "portfolio_lines",
+    "portfolio_positions",
+    "portfolio_summary",
+    "benchmark_betas",
+    "portfolio_reconciliation",
+)
 
 
 def write_current_model_state_manifest(
@@ -430,6 +437,12 @@ def _artifact_map(
             path=paths.latest_portfolio_reconciliation_export_path,
             required_for_complete=False,
         ),
+        "portfolio_reconciliation_export_csv": _csv_artifact(
+            paths=paths,
+            name="portfolio_reconciliation_export_csv",
+            path=paths.latest_portfolio_reconciliation_export_csv_path,
+            required_for_complete=False,
+        ),
     }
     for name in PLANNED_I3_ARTIFACTS:
         artifacts[name] = _optional_i3_parquet_artifact(paths=paths, name=name)
@@ -618,6 +631,71 @@ def _parquet_artifact(
     return artifact
 
 
+def _csv_artifact(
+    *,
+    paths: ProjectPaths,
+    name: str,
+    path: Path,
+    required_for_complete: bool,
+) -> dict[str, Any]:
+    alias_artifact = _file_artifact(
+        paths=paths,
+        name=name,
+        path=path,
+        kind="csv",
+        required_for_complete=required_for_complete,
+    )
+    if not alias_artifact["present"]:
+        return alias_artifact
+    try:
+        frame = pd.read_csv(path)
+    except Exception as exc:
+        alias_artifact["read_error"] = str(exc)
+        alias_artifact["readable"] = False
+        alias_artifact["usable"] = False
+        return alias_artifact
+
+    source_ids = _unique_strings(frame, "source_run_id")
+    immutable_path = _resolve_run_stamped_artifact(
+        paths=paths,
+        name=name,
+        source_run_ids=source_ids,
+        suffix=".csv",
+    )
+    if immutable_path is None:
+        immutable_path = _resolve_run_stamped_artifact_by_alias_hash(
+            paths=paths,
+            name=name,
+            alias_path=path,
+            suffix=".csv",
+        )
+    artifact = alias_artifact
+    if immutable_path is not None:
+        artifact = _file_artifact(
+            paths=paths,
+            name=name,
+            path=immutable_path,
+            kind="csv",
+            required_for_complete=required_for_complete,
+        )
+        artifact["source_alias_path"] = _repo_relative(paths, path)
+        artifact["immutable"] = True
+        try:
+            frame = pd.read_csv(immutable_path)
+        except Exception as exc:
+            artifact["read_error"] = str(exc)
+            artifact["readable"] = False
+            artifact["usable"] = False
+            return artifact
+        source_ids = _unique_strings(frame, "source_run_id")
+    artifact["row_count"] = int(len(frame.index))
+    artifact["columns"] = [str(column) for column in frame.columns]
+    artifact["schema_version"] = _clean_string(_first_present(frame, "schema_version"))
+    artifact["snapshot_refresh_run_ids"] = _unique_strings(frame, "snapshot_refresh_run_id")
+    artifact["source_run_ids"] = source_ids
+    return artifact
+
+
 def _tool_a_structural_metrics_artifact(paths: ProjectPaths) -> dict[str, Any]:
     path = paths.latest_tool_a_structural_metrics_path
     alias_artifact = _file_artifact(
@@ -719,53 +797,67 @@ def _alignment(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
         warnings.append(
             f"Foundation refresh {foundation_id} does not match options refresh {options_id}."
         )
-    for name in ("tool_a", "tool_b", "tool_c", "tool_d"):
-        artifact = artifacts[name]
-        if not artifact.get("present"):
-            continue
-        run_ids = tuple(artifact.get("snapshot_refresh_run_ids") or ())
-        if not run_ids:
-            warnings.append(f"{name} does not carry snapshot_refresh_run_id.")
-            continue
-        if len(run_ids) > 1:
-            warnings.append(
-                f"{name} carries multiple snapshot_refresh_run_id values: {', '.join(run_ids)}."
-            )
-        if foundation_id and foundation_id not in run_ids:
-            warnings.append(
-                f"{name} references {', '.join(run_ids)} while foundation is {foundation_id}."
-            )
-    for name in REQUIRED_OPTION_ARTIFACT_NAMES:
-        artifact = artifacts[name]
-        if not artifact.get("present"):
-            continue
-        run_ids = tuple(artifact.get("snapshot_refresh_run_ids") or ())
-        if not run_ids:
-            warnings.append(f"{name} does not carry snapshot_refresh_run_id.")
-            continue
-        if len(run_ids) > 1:
-            warnings.append(
-                f"{name} carries multiple snapshot_refresh_run_id values: {', '.join(run_ids)}."
-            )
-        if options_id and options_id not in run_ids:
-            warnings.append(
-                f"{name} references {', '.join(run_ids)} while options is {options_id}."
-            )
+    tool_ids, tool_warnings = _refresh_alignment(
+        artifacts,
+        names=("tool_a", "tool_b", "tool_c", "tool_d"),
+        expected_run_id=foundation_id,
+        expected_label="foundation",
+    )
+    option_ids, option_warnings = _refresh_alignment(
+        artifacts,
+        names=REQUIRED_OPTION_ARTIFACT_NAMES,
+        expected_run_id=options_id,
+        expected_label="options",
+    )
+    portfolio_ids, portfolio_warnings = _refresh_alignment(
+        artifacts,
+        names=PORTFOLIO_ALIGNMENT_ARTIFACTS,
+        expected_run_id=foundation_id,
+        expected_label="foundation",
+    )
+    warnings.extend(tool_warnings)
+    warnings.extend(option_warnings)
+    warnings.extend(portfolio_warnings)
     status = "OK" if not warnings else "WARN"
     return {
         "status": status,
         "foundation_refresh_run_id": foundation_id,
         "options_refresh_run_id": options_id,
-        "tool_refresh_run_ids": {
-            name: artifacts[name].get("snapshot_refresh_run_ids") or []
-            for name in ("tool_a", "tool_b", "tool_c", "tool_d")
-        },
-        "option_artifact_refresh_run_ids": {
-            name: artifacts[name].get("snapshot_refresh_run_ids") or []
-            for name in REQUIRED_OPTION_ARTIFACT_NAMES
-        },
+        "tool_refresh_run_ids": tool_ids,
+        "option_artifact_refresh_run_ids": option_ids,
+        "portfolio_artifact_refresh_run_ids": portfolio_ids,
         "warnings": warnings,
     }
+
+
+def _refresh_alignment(
+    artifacts: dict[str, dict[str, Any]],
+    *,
+    names: tuple[str, ...],
+    expected_run_id: str | None,
+    expected_label: str,
+) -> tuple[dict[str, list[str]], list[str]]:
+    ids_by_name: dict[str, list[str]] = {}
+    warnings: list[str] = []
+    for name in names:
+        artifact = artifacts[name]
+        run_ids = list(artifact.get("snapshot_refresh_run_ids") or [])
+        ids_by_name[name] = run_ids
+        if not artifact.get("present"):
+            continue
+        if not run_ids:
+            warnings.append(f"{name} does not carry snapshot_refresh_run_id.")
+            continue
+        if len(run_ids) > 1:
+            warnings.append(
+                f"{name} carries multiple snapshot_refresh_run_id values: {', '.join(run_ids)}."
+            )
+        if expected_run_id and expected_run_id not in run_ids:
+            warnings.append(
+                f"{name} references {', '.join(run_ids)} while "
+                f"{expected_label} is {expected_run_id}."
+            )
+    return ids_by_name, warnings
 
 
 def _artifact_health_warnings(artifacts: dict[str, dict[str, Any]]) -> list[str]:
@@ -938,11 +1030,51 @@ def _resolve_run_stamped_parquet(
     name: str,
     source_run_ids: list[str],
 ) -> Path | None:
+    return _resolve_run_stamped_artifact(
+        paths=paths,
+        name=name,
+        source_run_ids=source_run_ids,
+        suffix=".parquet",
+    )
+
+
+def _resolve_run_stamped_artifact(
+    *,
+    paths: ProjectPaths,
+    name: str,
+    source_run_ids: list[str],
+    suffix: str,
+) -> Path | None:
     directory, prefix = _tool_latest_directory_and_prefix(paths, name)
     for run_id in source_run_ids:
-        candidate = directory / f"{prefix}_latest_{_safe_file_fragment(run_id)}.parquet"
-        if _is_run_stamped_tool_latest(candidate, prefix):
+        candidate = directory / f"{prefix}_latest_{_safe_file_fragment(run_id)}{suffix}"
+        if _is_run_stamped_tool_latest(candidate, prefix, suffix=suffix):
             return candidate
+    return None
+
+
+def _resolve_run_stamped_artifact_by_alias_hash(
+    *,
+    paths: ProjectPaths,
+    name: str,
+    alias_path: Path,
+    suffix: str,
+) -> Path | None:
+    if not alias_path.exists() or not alias_path.is_file():
+        return None
+    try:
+        alias_hash = _sha256_file(alias_path)
+    except Exception:
+        return None
+    directory, prefix = _tool_latest_directory_and_prefix(paths, name)
+    for candidate in sorted(directory.glob(f"{prefix}_latest_*{suffix}"), reverse=True):
+        if not _is_run_stamped_tool_latest(candidate, prefix, suffix=suffix):
+            continue
+        try:
+            if _sha256_file(candidate) == alias_hash:
+                return candidate
+        except Exception:
+            continue
     return None
 
 
@@ -974,19 +1106,21 @@ def _tool_latest_directory_and_prefix(paths: ProjectPaths, name: str) -> tuple[P
         return paths.output_options_dir, OPTION_ARTIFACT_PREFIXES[name]
     if name in PORTFOLIO_ARTIFACTS:
         return paths.output_portfolio_dir, name
+    if name == "portfolio_reconciliation_export_csv":
+        return paths.output_portfolio_dir, "portfolio_reconciliation_export"
     raise ValueError(f"Unsupported model artifact for immutable lookup: {name}")
 
 
-def _is_run_stamped_tool_latest(candidate: Path, prefix: str) -> bool:
+def _is_run_stamped_tool_latest(candidate: Path, prefix: str, *, suffix: str) -> bool:
     return (
         candidate.exists()
         and candidate.is_file()
-        and _has_run_stamped_tool_latest_name(candidate.name, prefix)
+        and _has_run_stamped_tool_latest_name(candidate.name, prefix, suffix=suffix)
     )
 
 
-def _has_run_stamped_tool_latest_name(file_name: str, prefix: str) -> bool:
-    pattern = rf"^{re.escape(prefix)}_latest_\d{{8}}T\d{{6}}Z-.+\.parquet$"
+def _has_run_stamped_tool_latest_name(file_name: str, prefix: str, *, suffix: str) -> bool:
+    pattern = rf"^{re.escape(prefix)}_latest_\d{{8}}T\d{{6}}Z-.+{re.escape(suffix)}$"
     return re.match(pattern, file_name) is not None
 
 

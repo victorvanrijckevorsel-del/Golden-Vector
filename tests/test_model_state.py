@@ -159,6 +159,36 @@ def test_model_state_manifest_warns_on_stale_core_option_artifact(tmp_path):
     ] == ["older-options-run"]
 
 
+def test_model_state_manifest_resolves_portfolio_csv_and_warns_on_stale_portfolio(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(paths, refresh_run_id="refresh-A")
+    _write_portfolio_outputs(paths, refresh_run_id="older-foundation-run")
+
+    payload = build_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+    )
+
+    assert payload["state"] == "incomplete"
+    assert (
+        "portfolio_lines references older-foundation-run while foundation is refresh-A."
+        in payload["warnings"]
+    )
+    assert payload["alignment"]["portfolio_artifact_refresh_run_ids"]["portfolio_lines"] == [
+        "older-foundation-run"
+    ]
+    csv_artifact = payload["artifacts"]["portfolio_reconciliation_export_csv"]
+    assert csv_artifact["immutable"] is True
+    assert csv_artifact["kind"] == "csv"
+    assert csv_artifact["path"].startswith(
+        "data/output/portfolio/portfolio_reconciliation_export_latest_"
+    )
+    assert csv_artifact["path"] != (
+        "data/output/portfolio/portfolio_reconciliation_export_latest.csv"
+    )
+
+
 def test_current_model_readers_use_manifest_immutable_paths_after_aliases_change(tmp_path):
     paths = build_test_paths(tmp_path)
     _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
@@ -729,3 +759,38 @@ def _write_i3_option_artifacts(paths: ProjectPaths, *, refresh_run_id: str) -> N
         latest_path = option_artifact_latest_path(paths, artifact_name)
         write_parquet_atomic(frame, run_stamped_path, index=False)
         write_parquet_atomic(frame, latest_path, index=False)
+
+
+def _write_portfolio_outputs(paths: ProjectPaths, *, refresh_run_id: str) -> None:
+    source_run_id = "20260601T000000Z-portfolio"
+    rows = [
+        {
+            "schema_version": 1,
+            "snapshot_refresh_run_id": refresh_run_id,
+            "source_run_id": source_run_id,
+        }
+    ]
+    latest_paths = {
+        "portfolio_lines": paths.latest_portfolio_lines_path,
+        "portfolio_positions": paths.latest_portfolio_positions_path,
+        "portfolio_summary": paths.latest_portfolio_summary_path,
+        "benchmark_betas": paths.latest_benchmark_betas_path,
+        "portfolio_reconciliation": paths.latest_portfolio_reconciliation_path,
+        "portfolio_hedge_sizing": paths.latest_portfolio_hedge_sizing_path,
+        "portfolio_correlations": paths.latest_portfolio_correlations_path,
+        "portfolio_value_history": paths.latest_portfolio_value_history_path,
+        "portfolio_reconciliation_export": paths.latest_portfolio_reconciliation_export_path,
+    }
+    for name, latest_path in latest_paths.items():
+        frame = pd.DataFrame(rows)
+        run_stamped_path = latest_path.parent / f"{name}_latest_{source_run_id}.parquet"
+        write_parquet_atomic(frame, run_stamped_path, index=False)
+        write_parquet_atomic(frame, latest_path, index=False)
+    csv = pd.DataFrame(rows)
+    csv_run_path = (
+        paths.output_portfolio_dir
+        / f"portfolio_reconciliation_export_latest_{source_run_id}.csv"
+    )
+    csv_run_path.parent.mkdir(parents=True, exist_ok=True)
+    csv.to_csv(csv_run_path, index=False)
+    csv.to_csv(paths.latest_portfolio_reconciliation_export_csv_path, index=False)
