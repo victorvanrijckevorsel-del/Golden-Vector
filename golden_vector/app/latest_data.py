@@ -15,7 +15,6 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.ingestion.foundation import FoundationExecutionResult
-from golden_vector.ingestion.registry import build_foundation_registry
 
 
 @dataclass(frozen=True)
@@ -39,7 +38,6 @@ def write_latest_foundation_manifest(
     app_config: AppConfig,
     foundation_result: FoundationExecutionResult,
 ) -> Path:
-    registry = build_foundation_registry(app_config.universe)
     payload = {
         "refresh_run_id": run_context.run_id,
         "command": run_context.command,

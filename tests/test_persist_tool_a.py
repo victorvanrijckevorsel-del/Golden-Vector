@@ -8,7 +8,6 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.ingestion.persist import (
     persist_tool_a_outputs,
-    persist_tool_a_structural_metrics,
 )
 from golden_vector.model.pipeline import execute_tool_a_profile_pipeline
 from tests.helpers import build_test_paths

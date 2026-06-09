@@ -564,8 +564,8 @@ def _foundation_source_assets(
         ),
     )
     assets: list[dict[str, str | None]] = []
-    for name, field in fields:
-        raw_path = str(foundation_manifest.get(field, "")).strip()
+    for name, field_name in fields:
+        raw_path = str(foundation_manifest.get(field_name, "")).strip()
         asset = _source_asset_record(run_dir, name=name, raw_path=raw_path)
         if asset is not None:
             assets.append(asset)

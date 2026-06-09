@@ -19,7 +19,6 @@ from golden_vector.contracts.config_models import (
     AppConfig,
     JurisdictionDiscounts,
     Layer1Thresholds,
-    ScreeningParamsConfig,
     VerdictThresholds,
 )
 

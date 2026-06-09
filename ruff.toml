@@ -1,0 +1,11 @@
+target-version = "py311"
+line-length = 100
+
+extend-exclude = [
+    "data",
+    "reviews",
+    "venv",
+]
+
+[lint]
+select = ["F"]

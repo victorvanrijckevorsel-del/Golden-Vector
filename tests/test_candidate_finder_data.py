@@ -11,7 +11,6 @@ from golden_vector.app.model_state import (
     load_current_model_state_manifest,
     write_current_model_state_manifest,
 )
-from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.cli import run_candidate_finder, run_option_artifacts
 from golden_vector.contracts.option_artifacts import (

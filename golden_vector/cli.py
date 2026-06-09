@@ -287,7 +287,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Actually run schtasks. Without this flag, only print the commands.",
     )
 
-    status_parser = subparsers.add_parser(
+    subparsers.add_parser(
         "status",
         help=(
             "Print a one-screen operational summary: snapshot date, latest Tool A and "

@@ -1764,7 +1764,6 @@ def _render_beta_history_panel(
     # `?show=` URL param).
     if visible_windows is None:
         visible_windows = [active_window]
-    visible_upper = {w.upper() for w in visible_windows}
 
     svg = _build_beta_history_svg(
         series_by_window=series_by_window,

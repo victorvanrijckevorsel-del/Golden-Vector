@@ -147,7 +147,6 @@ def test_manual_store_write_failure_keeps_prior_file(tmp_path, monkeypatch):
 
 
 def test_manual_lot_validation_rejects_unknown_future_and_wrong_currency(tmp_path):
-    paths = build_test_paths(tmp_path)
     app_config = _portfolio_config()
     ticker_info = build_ticker_info(app_config)
 

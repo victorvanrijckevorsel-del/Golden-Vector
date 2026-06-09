@@ -22,7 +22,6 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
-import pytest
 
 from golden_vector.serve.detail_panels import (
     _canonical_anchor_window,
@@ -37,7 +36,6 @@ from tests.test_workspace_app import (
     _repo_app_config,
     _write_latest_foundation_snapshot,
     _write_latest_outputs,
-    _write_structural_history_file,
     bootstrap_manual_screening_data,
 )
 

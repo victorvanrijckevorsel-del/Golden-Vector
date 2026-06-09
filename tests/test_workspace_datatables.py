@@ -317,7 +317,6 @@ def test_tool_b_filter_bar_dropdown_lists_only_verdicts_present_in_data(tmp_path
 
     Guards against a regression to hard-coded option lists.
     """
-    from datetime import date
     from golden_vector.app.run_context import RunContext
     from golden_vector.ingestion.persist import persist_tool_b_outputs
 

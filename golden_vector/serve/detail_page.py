@@ -62,7 +62,7 @@ def render_detail_page(
         visible_windows = [active_window]
 
     option_lens_active = str(lens or "").strip().lower() == DETAIL_OPTION_TRADING_LENS_ID
-    body = [f"<p><a href=\"/\">Back to workspace</a></p>", f"<h1>{escape(ticker)}</h1>"]
+    body = ["<p><a href=\"/\">Back to workspace</a></p>", f"<h1>{escape(ticker)}</h1>"]
     if show_workspace_panels:
         body.append(
             _render_window_switcher(
