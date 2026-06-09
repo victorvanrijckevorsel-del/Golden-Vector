@@ -32,7 +32,9 @@ from golden_vector.serve.format_helpers import (
     _metric_card,
     _optional_float,
     _render_small_table,
+    format_dte_suffix as _dte_suffix,
 )
+from golden_vector.serve.option_signal_charts import render_option_signal_charts
 from golden_vector.serve.option_signal_render import (
     format_vol_points,
     option_signal_skew_display_value,
@@ -232,8 +234,16 @@ def _render_option_trading_panel(
     body.append(_render_option_signal_card(detail))
     body.append(_render_option_skew_overlay(detail))
     body.append(
+        render_option_signal_charts(
+            detail.skew_curve_points,
+            detail.oi_strike_points,
+            detail.signal_history_points,
+        )
+    )
+    body.append(
         "<details class=\"method-disclosure\"><summary>Method</summary>"
-        "<p>Contracts are scanned from cached Yahoo Finance option chains. "
+        "<p>Contracts are selected during refresh from cached Yahoo Finance "
+        "option-chain artifacts. "
         "Tradable rows passed stricter spread and open-interest checks. Watch rows "
         "passed one relaxed check and can be expensive to enter or exit.</p>"
         "<p>Open interest is existing open contracts. Volume is today's trading. "
@@ -253,6 +263,7 @@ def _render_option_trading_panel(
             _render_option_liquidity_summary(detail),
         ]
     )
+    body.append(_render_option_sizing_calculator(detail))
     body.append(_render_option_candidate_matrix(detail))
     body.append(_render_option_proxy_fallback(detail))
     body.append(
@@ -262,7 +273,6 @@ def _render_option_trading_panel(
         "not necessarily executable now. Delta is shown as context, not as the bucket rule.</p>"
         "</details>"
     )
-    body.append(_render_option_sizing_calculator(detail))
     if row.notes:
         notes = "".join(f"<li>{escape(note)}</li>" for note in row.notes)
         body.append(f"<ul class=\"hint\">{notes}</ul>")
@@ -615,12 +625,6 @@ def _candidate_slot_label(slot: OptionCandidateSlot) -> str:
     return f"{side} {bucket_label(slot.bucket)}"
 
 
-def _dte_suffix(days_to_expiry: int | None) -> str:
-    if days_to_expiry is None:
-        return ""
-    return f" ({_fmt_number(days_to_expiry, decimals=0)} DTE)"
-
-
 def _candidate_note(slot: OptionCandidateSlot, candidate: OptionCandidate) -> str:
     if candidate.liquidity_tier == "watch":
         return "Watch: wide spread, midpoint may be optimistic."
@@ -735,7 +739,7 @@ def _render_option_sizing_calculator(detail: OptionTradingDetailData) -> str:
     )
     return (
         "<section id=\"option-sizing\" class=\"nested-panel option-sizing-calculator\">"
-        "<h3>Sizing Calculator</h3>"
+        "<h3>Scenario Table and Sizing Calculator</h3>"
         "<p class=\"hint\">Uses cached per-contract scenarios. Live option quotes may differ.</p>"
         f"<form method=\"get\" action=\"/ticker/{quote(detail.ticker, safe='')}#option-sizing\" class=\"option-sizing-form\">"
         "<input type=\"hidden\" name=\"lens\" value=\"option-trading\">"

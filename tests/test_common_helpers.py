@@ -13,6 +13,7 @@ from golden_vector.common.frames import latest_records_by_key
 from golden_vector.common.numeric import sum_optional_floats
 from golden_vector.common.status import combine_statuses
 from golden_vector.common.strings import clean_string, unique_strings
+from golden_vector.serve.format_helpers import format_dte_suffix
 
 
 def test_score_eligible_policy_defaults_missing_to_eligible():
@@ -50,6 +51,13 @@ def test_sum_optional_floats_ignores_missing_values_and_reports_no_data():
     assert sum_optional_floats([1, None, "2.5", pd.NA]) == pytest.approx(3.5)
     assert sum_optional_floats([None, pd.NA, ""]) is None
     assert sum_optional_floats(None) is None
+
+
+def test_format_dte_suffix_ignores_missing_values():
+    assert format_dte_suffix(46) == " (46 DTE)"
+    assert format_dte_suffix(None) == ""
+    assert format_dte_suffix(pd.NA) == ""
+    assert format_dte_suffix(float("nan")) == ""
 
 
 def test_combine_statuses_uses_fail_warn_pass_precedence_and_skipped_is_neutral():

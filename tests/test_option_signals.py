@@ -295,6 +295,54 @@ def test_option_signal_chart_frames_keep_high_iv_with_flags(tmp_path):
     assert not oi_rows.empty
     assert set(oi_rows["liquidity_flag"]) == {"lottery_like"}
     assert oi_rows["quote_flags"].str.contains("extreme_iv").all()
+    assert not skew_rows["quote_flags"].isna().any()
+
+
+def test_option_signal_chart_frames_expose_renderer_columns_when_empty(tmp_path):
+    app_config = load_app_config(build_test_paths(tmp_path)).app
+    artifacts = build_option_signal_artifacts(
+        app_config=app_config,
+        options_features=pd.DataFrame(),
+        contract_metrics=(),
+        manifest={"refresh_run_id": "options-run", "as_of_date": "2026-06-08"},
+    )
+
+    assert set(
+        [
+            "ticker",
+            "horizon_days",
+            "delta_bucket",
+            "side",
+            "iv",
+            "liquidity_flag",
+            "quote_flags",
+        ]
+    ).issubset(artifacts.skew_curve_points.columns)
+    assert set(
+        [
+            "ticker",
+            "strike",
+            "side",
+            "open_interest",
+            "volume",
+            "days_to_expiry",
+            "expiration",
+            "liquidity_flag",
+            "quote_flags",
+        ]
+    ).issubset(artifacts.oi_strike_points.columns)
+    assert set(
+        [
+            "ticker",
+            "as_of_date",
+            "skew_residual_60d",
+            "atm_iv_60d",
+            "iv_rv_ratio",
+        ]
+    ).issubset(artifacts.history_points.columns)
+    assert artifacts.skew_curve_points.empty
+    assert artifacts.oi_strike_points.empty
+    assert artifacts.history_points.empty
 
 
 def _feature(

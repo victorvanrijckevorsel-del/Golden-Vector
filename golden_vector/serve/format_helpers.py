@@ -163,6 +163,13 @@ def _fmt_percent(value: Any, *, decimals: int = 1) -> str:
     return escape(f"{numeric * 100:,.{decimals}f}%")
 
 
+def format_dte_suffix(days_to_expiry: object) -> str:
+    numeric = _optional_float(days_to_expiry)
+    if numeric is None:
+        return ""
+    return f" ({_fmt_number(numeric, decimals=0)} DTE)"
+
+
 # Sentinel sort key for missing numeric cells. Within JS's safe-integer
 # range (MAX_SAFE_INTEGER ≈ 9.007e15) and well above any realistic Tool B
 # target price or Tool A score, so it reliably sorts last ascending /

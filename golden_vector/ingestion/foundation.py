@@ -12,6 +12,7 @@ from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.contracts.data_models import FetchStatusRecord
 from golden_vector.ingestion.collection_resilience import (
+    failed_fetch_entities,
     retry_policy_from_config,
     summarize_fetch_statuses,
 )
@@ -121,6 +122,10 @@ def execute_foundation_pipeline(
             registry=registry,
             usd_equity_histories=normalized_equity_histories,
             normalized_market_snapshots=normalized_market_snapshots,
+            failed_equity_tickers=failed_fetch_entities(
+                fetch_statuses,
+                dataset="equities",
+            ),
         )
         persist_normalization_outputs(
             paths=paths,

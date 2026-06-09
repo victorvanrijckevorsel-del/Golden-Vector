@@ -4,16 +4,17 @@ This is the shortest useful mental model of the codebase.
 
 ## Product Shape
 
-Golden Vector is one shared data backbone feeding two active engines:
+Golden Vector is one shared data backbone feeding focused product surfaces:
 
 1. Tool A: Golden Vector
-2. Tool B: Screening
-3. Future Combined View
+2. Tool B: Corporate Finance screening
+3. Corporate Resilience, Options, Candidate Finder, and Portfolio views
 
 The rule is simple:
 - Tool A must work on its own
 - Tool B must work on its own
-- Combined is a later compare view, not an active backend engine
+- Candidate Finder is the active comparison and discovery surface
+- The old Combined side-by-side compare backlog is retired
 
 ## End-to-End Flow
 
@@ -32,8 +33,6 @@ flowchart TD
     C --> M["Raw / Intermediate Outputs"]
     J --> N["Tool A Outputs"]
     K --> O["Tool B Outputs"]
-    N --> P["Future Combined View<br/>side-by-side only"]
-    O --> P
 ```
 
 ## Folder Mind Map
@@ -52,7 +51,6 @@ flowchart TD
 | `golden_vector/model/` | Tool A metrics, labels, scoring, ranking | [model](C:/Users/Emanuel/code/Golden-Vector/golden_vector/model) |
 | `golden_vector/screening/` | Tool B manual-data store, valuation, ranking | [screening](C:/Users/Emanuel/code/Golden-Vector/golden_vector/screening) |
 | `golden_vector/hedge/` | Hedge Readiness candidate puts, premium-vs-downside cards, proxy mapping, and markdown report | [hedge](C:/Users/Emanuel/code/Golden-Vector/golden_vector/hedge) |
-| `golden_vector/combined/` | Legacy archived backend code, not active runtime | [combined](C:/Users/Emanuel/code/Golden-Vector/golden_vector/combined) |
 | `golden_vector/serve/` | Thin local presentation layer for the workspace UI | [serve](C:/Users/Emanuel/code/Golden-Vector/golden_vector/serve) |
 | `data/manual/` | Local Tool B manual-data store plus optional CSV import/export support | [data/manual](C:/Users/Emanuel/code/Golden-Vector/data/manual) |
 | `tests/` | Unit + integration safety net | [tests](C:/Users/Emanuel/code/Golden-Vector/tests) |
@@ -78,7 +76,7 @@ flowchart TD
 | Tool A | Built | Computes structural delta, gamma, asymmetry, confidence, and volatility diagnostics from weekly USD-normalized returns, then scores and explains names |
 | Tool B | Built | Uses the local manual-data store plus market snapshots to screen and rank names |
 | Hedge Readiness | Built | Captures latest option chains, computes hedge features, and writes a local markdown report for direct hedges and proxy paths |
-| Combined backend | De-scoped | Old backend preserved as legacy code, but no longer part of the active product |
+| Combined backend | Retired | The old Combined side-by-side compare backlog is closed; Candidate Finder is the comparison surface |
 | Tests | Strong | 282+ passing tests covering core business rules, orchestration, the structural Tool A pipeline, the SQLite manual store, the workspace UI (three views + DataTables sort/filter + Screening Parameters overrides), Tool B scenario math, and provenance/alias safety |
 | Serve / dashboard | Built | Local browser workspace at `/`, `/tool-a`, `/tool-b` with click-sort, per-column filter dropdowns, live search, per-ticker detail pages, and live scenario overrides (gold-price, thresholds, tier discounts) for Tool B |
 
@@ -92,7 +90,6 @@ flowchart TD
 | Tool B | full-history + latest snapshot parquet/csv | `data/output/tool_b/` |
 | Hedge Readiness | run-local options snapshots, derived options features, and markdown reports | `data/runs/<run_id>/snapshots/options/`, `data/intermediate/options_features/`, `data/output/hedge_readiness/` |
 | Workspace | local browser view over latest Tool A / Tool B snapshots plus Tool B manual store | `golden_vector/serve/workspace.py` |
-| Future Combined view | later side-by-side output only | not active yet |
 
 ## Hard Rules In Code
 
@@ -108,7 +105,6 @@ You can see these rules enforced mainly in:
 - [horizon_quality.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/qa/horizon_quality.py)
 - [labels.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/model/labels.py)
 - [screening/pipeline.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/screening/pipeline.py)
-- [golden_vector/combined/README_LEGACY.md](C:/Users/Emanuel/code/Golden-Vector/golden_vector/combined/README_LEGACY.md)
 
 ## What Is Next
 
@@ -124,8 +120,8 @@ You can see these rules enforced mainly in:
 4. Manual Tool B workflow polish
    Keep evolving the new local app data store and workspace so direct editing and notes become the normal Tool B workflow.
 
-5. Future Combined compare view
-   Build a lightweight side-by-side view later, not a third backend engine.
+5. Candidate Finder polish
+   Keep the comparison workflow in Candidate Finder rather than rebuilding the old Combined view.
 
 ## Fastest Reading Order
 
@@ -137,4 +133,4 @@ If you want to understand the code quickly, read in this order:
 4. [features/pipeline.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/features/pipeline.py)
 5. [model/pipeline.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/model/pipeline.py)
 6. [screening/pipeline.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/screening/pipeline.py)
-7. [golden_vector/combined/README_LEGACY.md](C:/Users/Emanuel/code/Golden-Vector/golden_vector/combined/README_LEGACY.md)
+7. [serve/workspace.py](C:/Users/Emanuel/code/Golden-Vector/golden_vector/serve/workspace.py)

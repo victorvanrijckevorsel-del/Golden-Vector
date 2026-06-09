@@ -27,6 +27,40 @@ SIGNAL_AREA_DELTA_MAX = 0.35
 DELTA_BUCKETS: tuple[float, ...] = (0.10, 0.25, 0.35)
 ACTIVITY_DOMINANCE_MULTIPLE = 1.5
 HISTORY_FILE_NAME = "option_signal_history.parquet"
+SKEW_CURVE_POINT_COLUMNS: tuple[str, ...] = (
+    "ticker",
+    "series_ticker",
+    "series_role",
+    "horizon_days",
+    "delta_bucket",
+    "moneyness_bucket",
+    "side",
+    "iv",
+    "liquidity_flag",
+    "quote_flags",
+)
+OI_STRIKE_POINT_COLUMNS: tuple[str, ...] = (
+    "ticker",
+    "strike",
+    "side",
+    "open_interest",
+    "volume",
+    "is_spot",
+    "oi_change",
+    "oi_change_valid",
+    "days_to_expiry",
+    "expiration",
+    "liquidity_flag",
+    "quote_flags",
+)
+SIGNAL_HISTORY_POINT_COLUMNS: tuple[str, ...] = (
+    "ticker",
+    "as_of_date",
+    "skew_residual_60d",
+    "atm_iv_60d",
+    "iv_rank",
+    "iv_rv_ratio",
+)
 
 
 class _OptionSignalPaths(Protocol):
@@ -718,28 +752,10 @@ def _append_history(history: pd.DataFrame, current: pd.DataFrame) -> pd.DataFram
 
 def _history_points_frame(history: pd.DataFrame) -> pd.DataFrame:
     if history.empty:
-        return pd.DataFrame(
-            columns=[
-                "ticker",
-                "as_of_date",
-                "skew_residual_60d",
-                "atm_iv_60d",
-                "iv_rank",
-                "iv_rv_ratio",
-            ]
-        )
+        return pd.DataFrame(columns=SIGNAL_HISTORY_POINT_COLUMNS)
     result = history.copy()
     result["iv_rank"] = None
-    return result[
-        [
-            "ticker",
-            "as_of_date",
-            "skew_residual_60d",
-            "atm_iv_60d",
-            "iv_rank",
-            "iv_rv_ratio",
-        ]
-    ]
+    return result[list(SIGNAL_HISTORY_POINT_COLUMNS)]
 
 
 def _skew_curve_points_frame(
@@ -771,10 +787,10 @@ def _skew_curve_points_frame(
                             "side": option_type,
                             "iv": None if selected is None else selected.implied_volatility,
                             "liquidity_flag": _chart_liquidity_flag(selected),
-                            "quote_flags": None if selected is None else "|".join(selected.quote_flags),
+                            "quote_flags": "" if selected is None else "|".join(selected.quote_flags),
                         }
                     )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=SKEW_CURVE_POINT_COLUMNS)
 
 
 def _oi_strike_points_frame(
@@ -801,7 +817,7 @@ def _oi_strike_points_frame(
                     "quote_flags": "|".join(metric.quote_flags),
                 }
             )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=OI_STRIKE_POINT_COLUMNS)
 
 
 def _chart_liquidity_flag(metric: OptionContractMetrics | None) -> str:

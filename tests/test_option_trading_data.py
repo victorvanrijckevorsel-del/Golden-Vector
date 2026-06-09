@@ -33,6 +33,7 @@ from golden_vector.serve.option_trading_data import (
     load_option_trading_data,
     parse_option_sizing_request,
 )
+from golden_vector.serve.detail_panels import _render_option_trading_panel
 from golden_vector.cli import run_option_artifacts
 from tests.helpers import build_test_paths, tool_b_output_row
 
@@ -200,6 +201,40 @@ def test_build_option_trading_detail_data_reuses_cached_overview_row(tmp_path):
         "directional",
     }
     assert detail.source_context is data.overview.source_context
+
+
+def test_option_trading_detail_renders_persisted_charts_and_scenarios(tmp_path):
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+
+    data = load_option_trading_data(paths, app_config=app_config)
+    detail = build_option_trading_detail_data(
+        data,
+        ticker="AEM",
+        app_config=app_config,
+        sizing_request=OptionSizingRequest(side="put", horizon_days=60),
+    )
+    html = _render_option_trading_panel(detail)
+
+    assert data.raw_options_by_ticker == {}
+    assert detail.skew_curve_points
+    assert detail.oi_strike_points
+    assert detail.signal_history_points
+    assert detail.sizing is not None
+    assert detail.sizing.bundle is not None
+    assert "Option Signal Charts" in html
+    assert "Skew Curve" in html
+    assert "Open Interest by Strike" in html
+    assert "Signal History" in html
+    assert "option-chart-svg" in html
+    assert "IV rank is not available yet" in html
+    assert "Scenario Table and Sizing" in html
+    assert "Gold Move" in html
+    assert "P&amp;L/share Now" in html
+    assert "Net P&amp;L Expiry" in html
 
 
 def test_build_option_trading_detail_does_not_model_watch_candidates():

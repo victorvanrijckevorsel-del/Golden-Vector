@@ -68,7 +68,7 @@ Runtime model:
 - `/hedge-readiness` and `/hedge-readiness/latest.md` are holdings-bearing views; when portfolio tracking is disabled they return a calm 403 instead of serving the report
 - `compare-horizons` uses the latest validated local market-data snapshot by default
 - `workspace` requires the local Tool B store (run `manual-data init` first) and then serves a thin local UI for manual inputs, notes, and latest outputs. It will not silently create or seed the store on start.
-- Combined is no longer part of the active backend and will return later only as a side-by-side compare view
+- The old Combined side-by-side compare backlog is retired. Candidate Finder is now the active comparison and discovery surface.
 
 Tool A notes:
 - official Tool A scoring is now structural-first and uses only `6M`, `12M`, and `3Y`
@@ -92,7 +92,7 @@ Tool B notes:
 - the workspace company form treats blank numeric fields as "leave alone" (no-op). To clear a field, use `python main.py manual-data set-company --ticker <T> --clear-fields <field>`.
 
 Workspace notes (current behaviour):
-- three top-level views: Combined (`/`), Tool A (`/tool-a`), Tool B (`/tool-b`), each with click-to-sort, per-column filter dropdowns, and a live global search (all client-side, powered by vendored DataTables)
+- Candidate Finder is the home view (`/`); Tool A, Tool B, Tool C, Tool D, Option Trading, and Portfolio remain separate focused views. The old Combined compare view is not active.
 - the Tool B view has a "Screening Parameters" panel that lets you override gold price, Forward P/E target, FCF yield target, AISC target, margin target, reserve-life target, leverage target, and the three jurisdiction-tier discounts live via URL params — the table recomputes in memory without touching the persisted parquet
 - Tool B shows four target-price scenarios side by side (Peer P/E, Peak P/E, Peer FCF, Peak FCF) matching the friend's Excel `Top performers` columns; there is no single "best target" headline anymore
 - jurisdiction tiers per ticker are synced from the friend's workbook via `python -m scripts.sync_universe_tiers_from_excel`; manual mining inputs for all active tickers were backfilled from `Gold_Mining_Screening_v10226_EVEB.xlsx` via `python -m scripts.backfill_manual_data_from_excel`

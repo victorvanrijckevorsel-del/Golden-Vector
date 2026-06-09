@@ -129,6 +129,98 @@ def test_raw_quality_warns_on_missing_market_snapshot():
     assert report.overall_status == "WARN"
 
 
+def test_raw_quality_warns_but_continues_on_single_equity_fetch_failure():
+    app_config = _load_test_app_config()
+    registry = build_foundation_registry(app_config.universe)
+    equity_histories, fx_histories, gold_history, market_snapshots, fetch_statuses = (
+        _build_healthy_inputs(registry)
+    )
+    failed_ticker = registry.equity_targets[0].ticker
+    equity_histories[failed_ticker] = pd.DataFrame()
+    fetch_statuses = [
+        (
+            _status("equities", failed_ticker, status.source_symbol, "FAIL", 0)
+            if status.dataset == "equities" and status.entity == failed_ticker
+            else status
+        )
+        for status in fetch_statuses
+    ]
+
+    report = evaluate_raw_quality(
+        app_config=app_config,
+        registry=registry,
+        equity_histories=equity_histories,
+        fx_histories=fx_histories,
+        gold_history=gold_history,
+        market_snapshots=market_snapshots,
+        fetch_statuses=fetch_statuses,
+    )
+
+    outage = _find_result(
+        report.results,
+        check_name="vendor_outage_policy",
+        dataset="market_data",
+        entity="yahoo",
+    )
+    fetch_status = _find_result(
+        report.results,
+        check_name="fetch_status",
+        dataset="equities",
+        entity=failed_ticker,
+    )
+    history_status = _find_result(
+        report.results,
+        check_name="history_presence",
+        dataset="equities",
+        entity=failed_ticker,
+    )
+
+    assert report.overall_status == "WARN"
+    assert outage.status == "WARN"
+    assert fetch_status.status == "WARN"
+    assert history_status.status == "WARN"
+    assert "per-ticker" in outage.message
+
+
+def test_raw_quality_fails_closed_on_full_yahoo_outage():
+    app_config = _load_test_app_config()
+    registry = build_foundation_registry(app_config.universe)
+    equity_histories, fx_histories, gold_history, market_snapshots, fetch_statuses = (
+        _build_healthy_inputs(registry)
+    )
+    failed_statuses = [
+        _status(
+            status.dataset,
+            status.entity,
+            status.source_symbol,
+            "FAIL",
+            0,
+        )
+        for status in fetch_statuses
+    ]
+
+    report = evaluate_raw_quality(
+        app_config=app_config,
+        registry=registry,
+        equity_histories={ticker: pd.DataFrame() for ticker in equity_histories},
+        fx_histories={currency: pd.DataFrame() for currency in fx_histories},
+        gold_history=pd.DataFrame(),
+        market_snapshots=pd.DataFrame(),
+        fetch_statuses=failed_statuses,
+    )
+
+    outage = _find_result(
+        report.results,
+        check_name="vendor_outage_policy",
+        dataset="market_data",
+        entity="yahoo",
+    )
+
+    assert report.overall_status == "FAIL"
+    assert outage.status == "FAIL"
+    assert "full outage" in outage.message
+
+
 def test_raw_quality_fails_on_missing_gold_history():
     app_config = _load_test_app_config()
     registry = build_foundation_registry(app_config.universe)

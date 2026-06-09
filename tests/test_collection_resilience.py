@@ -9,6 +9,7 @@ from golden_vector.ingestion.collection_resilience import (
     RetryPolicy,
     bounded_worker_count,
     call_with_retries,
+    failed_fetch_entities,
     map_with_bounded_workers,
     retry_policy_from_config,
     summarize_fetch_status_rows,
@@ -144,6 +145,41 @@ def test_summarize_fetch_statuses_records_failures_and_slowest_rows():
     assert summary["slow_count"] == 1
     assert summary["failed"][0]["entity"] == "CAD"
     assert summary["slowest"][0]["duration_seconds"] == 12.0
+
+
+def test_failed_fetch_entities_filters_by_dataset_and_status():
+    started = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    records = [
+        FetchStatusRecord(
+            dataset="equities",
+            entity="AEM",
+            source_symbol="AEM",
+            status="FAIL",
+            row_count=0,
+            started_at_utc=started,
+            completed_at_utc=started,
+        ),
+        FetchStatusRecord(
+            dataset="equities",
+            entity="NEM",
+            source_symbol="NEM",
+            status="PASS",
+            row_count=10,
+            started_at_utc=started,
+            completed_at_utc=started,
+        ),
+        FetchStatusRecord(
+            dataset="fx",
+            entity="CAD",
+            source_symbol="CADUSD=X",
+            status="FAIL",
+            row_count=0,
+            started_at_utc=started,
+            completed_at_utc=started,
+        ),
+    ]
+
+    assert failed_fetch_entities(records, dataset="equities") == {"AEM"}
 
 
 def test_summarize_fetch_status_rows_handles_malformed_table_without_status():

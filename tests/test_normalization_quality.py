@@ -78,6 +78,24 @@ def test_normalization_quality_fails_when_ticker_has_no_usable_usd_rows():
     assert report.overall_status == "FAIL"
 
 
+def test_normalization_quality_warns_when_missing_rows_came_from_fetch_failure():
+    app_config = _load_test_app_config()
+    registry = build_foundation_registry(app_config.universe)
+    usd_equities = _build_usd_equities(registry)
+    first_ticker = registry.equity_targets[0].ticker
+    usd_equities[first_ticker] = pd.DataFrame()
+
+    report = evaluate_normalization_quality(
+        app_config=app_config,
+        registry=registry,
+        usd_equity_histories=usd_equities,
+        normalized_market_snapshots=_build_market_snapshots(registry),
+        failed_equity_tickers={first_ticker},
+    )
+
+    assert report.overall_status == "WARN"
+
+
 def test_normalization_quality_warns_on_partial_fx_coverage():
     app_config = _load_test_app_config()
     registry = build_foundation_registry(app_config.universe)

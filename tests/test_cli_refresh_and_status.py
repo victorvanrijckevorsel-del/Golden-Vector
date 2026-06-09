@@ -592,6 +592,44 @@ def test_refresh_command_stops_after_update_data_failure(tmp_path, monkeypatch, 
     assert "update-data failed" in out
 
 
+def test_refresh_full_vendor_outage_keeps_previous_model_state(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
+    )
+    _write_refresh_inputs(paths, refresh_run_id="refresh-old")
+    previous_manifest = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="hash",
+        parent_refresh_id="parent-refresh-old",
+    )
+
+    def fake_foundation(_paths, *, command_name="update-data"):
+        return 1
+
+    def fake_tool_a(_paths):
+        raise AssertionError("Tool A must not run after a full vendor outage.")
+
+    monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
+    monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
+
+    exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
+    current_manifest = load_current_model_state_manifest(paths)
+    out = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert current_manifest == previous_manifest
+    assert read_option_refresh_status(paths).status == "failed"
+    assert "update-data failed" in out
+
+
 def test_refresh_command_skips_tool_b_when_flag_passed(tmp_path, monkeypatch, capsys):
     paths = build_test_paths(tmp_path)
     real_loaded = load_app_config(ProjectPaths.discover()).app

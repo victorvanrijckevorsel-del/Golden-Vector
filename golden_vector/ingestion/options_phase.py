@@ -197,19 +197,13 @@ def run_options_ingestion_phase(
         snapshot_records.append(record)
         feature_rows.append(feature_row)
 
-    feature_frame = pd.DataFrame(feature_rows)
-    if not feature_frame.empty:
-        feature_frame["iv_percentile_cross_sectional"] = rank_options_iv_cross_section(
-            feature_frame,
-        )
-    feature_paths = _append_feature_rows(
-        paths=paths,
-        run_context=run_context,
-        feature_rows=feature_frame.to_dict(orient="records"),
-    )
-
     option_collection_stats = _summarize_option_collection_events(collection_events)
+    vendor_outage_status = _options_vendor_outage_status(
+        target_count=len(targets),
+        error_count=status_counts.get(OPTIONS_STATUS_ERROR, 0),
+    )
     status = _phase_status(
+        vendor_outage_status=vendor_outage_status,
         error_count=status_counts.get(OPTIONS_STATUS_ERROR, 0),
         expiration_error_count=int(
             option_collection_stats.get("expiration_error_count") or 0
@@ -217,6 +211,20 @@ def run_options_ingestion_phase(
         risk_free_message=risk_free_message,
         benchmark_statuses=benchmark_statuses,
     )
+    feature_paths: list[Path] = []
+    feature_row_count = 0
+    if status != "FAIL":
+        feature_frame = pd.DataFrame(feature_rows)
+        if not feature_frame.empty:
+            feature_frame["iv_percentile_cross_sectional"] = rank_options_iv_cross_section(
+                feature_frame,
+            )
+        feature_row_count = len(feature_frame.index)
+        feature_paths = _append_feature_rows(
+            paths=paths,
+            run_context=run_context,
+            feature_rows=feature_frame.to_dict(orient="records"),
+        )
     summary: dict[str, Any] = {
         "options_phase_status": status,
         "options_phase_requested": True,
@@ -227,7 +235,8 @@ def run_options_ingestion_phase(
         "options_success_count": status_counts.get(OPTIONS_STATUS_SUCCESS, 0),
         "options_empty_count": status_counts.get(OPTIONS_STATUS_EMPTY, 0),
         "options_error_count": status_counts.get(OPTIONS_STATUS_ERROR, 0),
-        "options_feature_row_count": len(feature_rows),
+        "options_vendor_outage_status": vendor_outage_status,
+        "options_feature_row_count": feature_row_count,
         "options_feature_file_count": len(feature_paths),
         "risk_free_rate": risk_free_rate,
         "risk_free_rate_message": risk_free_message,
@@ -237,19 +246,21 @@ def run_options_ingestion_phase(
         "benchmark_snapshot_count": len(benchmark_paths),
         "options_collection_stats": option_collection_stats,
     }
-    manifest_path = write_latest_options_manifest(
-        paths=paths,
-        run_context=run_context,
-        as_of_date=as_of_date,
-        snapshot_records=snapshot_records,
-        risk_free_rate=risk_free_rate,
-        benchmark_snapshot_paths=benchmark_paths,
-        summary=summary,
-    )
-    update_manifest_with_options(
-        run_context.run_dir,
-        options_manifest_path=manifest_path,
-    )
+    manifest_path = None
+    if status != "FAIL":
+        manifest_path = write_latest_options_manifest(
+            paths=paths,
+            run_context=run_context,
+            as_of_date=as_of_date,
+            snapshot_records=snapshot_records,
+            risk_free_rate=risk_free_rate,
+            benchmark_snapshot_paths=benchmark_paths,
+            summary=summary,
+        )
+        update_manifest_with_options(
+            run_context.run_dir,
+            options_manifest_path=manifest_path,
+        )
     run_context.write_json("options_phase_summary.json", summary)
     return OptionsPhaseResult(status=status, summary=summary, manifest_path=manifest_path)
 
@@ -515,11 +526,14 @@ def _underlying_price(
 
 def _phase_status(
     *,
+    vendor_outage_status: str,
     error_count: int,
     expiration_error_count: int,
     risk_free_message: str | None,
     benchmark_statuses: list[BenchmarkFetchStatus],
 ) -> str:
+    if vendor_outage_status == "FULL_OUTAGE":
+        return "FAIL"
     if (
         error_count
         or expiration_error_count
@@ -528,6 +542,14 @@ def _phase_status(
     ):
         return "WARN"
     return "PASS"
+
+
+def _options_vendor_outage_status(*, target_count: int, error_count: int) -> str:
+    if target_count > 0 and error_count == target_count:
+        return "FULL_OUTAGE"
+    if error_count:
+        return "PARTIAL_OUTAGE"
+    return "OK"
 
 
 def _summarize_option_collection_events(

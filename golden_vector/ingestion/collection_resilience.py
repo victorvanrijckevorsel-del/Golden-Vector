@@ -169,6 +169,20 @@ def summarize_fetch_statuses(
     )
 
 
+def failed_fetch_entities(
+    statuses: Iterable[FetchStatusRecord],
+    *,
+    dataset: str,
+) -> set[str]:
+    """Return entities whose fetch failed for one dataset."""
+
+    return {
+        status.entity
+        for status in statuses
+        if status.dataset == dataset and str(status.status).upper() == "FAIL"
+    }
+
+
 def summarize_fetch_status_rows(
     frame: pd.DataFrame,
     *,

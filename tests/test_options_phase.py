@@ -114,6 +114,78 @@ def test_run_options_ingestion_phase_continues_after_ticker_pipeline_error(
     assert manifest["options_manifest_status"] == "captured"
 
 
+def test_run_options_ingestion_phase_publishes_visible_per_ticker_outage(tmp_path):
+    paths = build_test_paths(tmp_path)
+    loaded = load_app_config(paths)
+    context = RunContext.start(
+        paths=paths,
+        command="update-data",
+        parameters={"options": True},
+        config_hash="test-config",
+    )
+    fixture = pd.read_parquet("tests/fixtures/options/aem_chain_20260529.parquet")
+    client = _OptionsPhaseClient(fixture, fail_option_symbols=("AEM",))
+
+    result = run_options_ingestion_phase(
+        paths=paths,
+        run_context=context,
+        app_config=loaded.app,
+        normalized_equity_histories={"AEM": _price_history()},
+        as_of_date=date(2026, 5, 29),
+        yahoo_client=client,
+    )
+
+    assert result.status == "WARN"
+    assert result.manifest_path == paths.latest_options_manifest_path
+    assert result.summary["options_vendor_outage_status"] == "PARTIAL_OUTAGE"
+    assert result.summary["options_error_count"] == 1
+    assert paths.latest_options_manifest_path.exists()
+    aem_features = pd.read_parquet(paths.options_features_dir / "AEM.parquet")
+    assert aem_features.loc[0, "options_fetch_status"] == "ERROR"
+    assert "synthetic options outage" in aem_features.loc[0, "options_fetch_message"]
+
+
+def test_run_options_ingestion_phase_full_outage_keeps_latest_manifest(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    old_manifest = {"refresh_run_id": "old-options-run", "snapshots": []}
+    paths.latest_options_manifest_path.write_text(
+        json.dumps(old_manifest),
+        encoding="utf-8",
+    )
+    loaded = load_app_config(paths)
+    context = RunContext.start(
+        paths=paths,
+        command="update-data",
+        parameters={"options": True},
+        config_hash="test-config",
+    )
+    fixture = pd.read_parquet("tests/fixtures/options/aem_chain_20260529.parquet")
+    client = _OptionsPhaseClient(
+        fixture,
+        fail_all_options=True,
+    )
+
+    result = run_options_ingestion_phase(
+        paths=paths,
+        run_context=context,
+        app_config=loaded.app,
+        normalized_equity_histories={"AEM": _price_history()},
+        as_of_date=date(2026, 5, 29),
+        yahoo_client=client,
+    )
+
+    assert result.status == "FAIL"
+    assert result.manifest_path is None
+    assert result.summary["options_vendor_outage_status"] == "FULL_OUTAGE"
+    assert result.summary["options_feature_row_count"] == 0
+    assert result.summary["options_feature_file_count"] == 0
+    assert json.loads(paths.latest_options_manifest_path.read_text(encoding="utf-8")) == old_manifest
+    assert not (paths.options_features_dir / "AEM.parquet").exists()
+    manifest = read_manifest(context.run_dir)
+    assert manifest["options_manifest_status"] == "not-applicable"
+
+
 def test_run_options_ingestion_phase_computes_features_without_snapshot_readback(
     tmp_path,
     monkeypatch,
@@ -196,11 +268,17 @@ class _OptionsPhaseClient:
         fixture: pd.DataFrame,
         *,
         option_symbols: tuple[str, ...] = ("AEM", "GDX", "GDXJ"),
+        fail_option_symbols: tuple[str, ...] = (),
+        fail_all_options: bool = False,
     ) -> None:
         self.fixture = fixture
         self.option_symbols = {symbol.upper() for symbol in option_symbols}
+        self.fail_option_symbols = {symbol.upper() for symbol in fail_option_symbols}
+        self.fail_all_options = fail_all_options
 
     def fetch_options_expirations(self, symbol: str) -> list[str]:
+        if self.fail_all_options or symbol.upper() in self.fail_option_symbols:
+            raise RuntimeError(f"synthetic options outage for {symbol}")
         if symbol.upper() in self.option_symbols:
             return sorted(self.fixture["expiration"].astype(str).unique().tolist())
         return []

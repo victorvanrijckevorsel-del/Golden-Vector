@@ -8,6 +8,7 @@ import pandas as pd
 
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.contracts.data_models import FetchStatusRecord, QaCheckResult
+from golden_vector.ingestion.collection_resilience import failed_fetch_entities
 from golden_vector.ingestion.registry import FoundationRegistry, missing_fx_currencies
 
 
@@ -38,11 +39,34 @@ def evaluate_raw_quality(
     fetch_statuses: list[FetchStatusRecord],
 ) -> RawQaReport:
     results: list[QaCheckResult] = []
+    failed_equity_tickers = failed_fetch_entities(fetch_statuses, dataset="equities")
+    full_vendor_outage = _is_full_vendor_outage(fetch_statuses)
 
     results.append(_currency_map_check(app_config, registry))
-    results.extend(_status_results(fetch_statuses))
+    results.append(_vendor_outage_check(fetch_statuses))
+    results.extend(
+        _status_results(
+            fetch_statuses,
+            full_vendor_outage=full_vendor_outage,
+        )
+    )
 
     for ticker, frame in equity_histories.items():
+        if ticker in failed_equity_tickers and not full_vendor_outage:
+            results.append(
+                QaCheckResult(
+                    check_name="history_presence",
+                    status="WARN",
+                    dataset="equities",
+                    entity=ticker,
+                    message=(
+                        "No rows available because the Yahoo fetch failed for this "
+                        "ticker. The failure is carried as a visible per-ticker "
+                        "data issue; the refresh can continue for other names."
+                    ),
+                )
+            )
+            continue
         results.extend(
             _history_checks(
                 dataset="equities",
@@ -92,11 +116,19 @@ def evaluate_raw_quality(
     return RawQaReport(overall_status=overall_status, results=results)
 
 
-def _status_results(fetch_statuses: list[FetchStatusRecord]) -> list[QaCheckResult]:
+def _status_results(
+    fetch_statuses: list[FetchStatusRecord],
+    *,
+    full_vendor_outage: bool,
+) -> list[QaCheckResult]:
     results: list[QaCheckResult] = []
     for status in fetch_statuses:
         mapped_status = status.status
-        if status.dataset == "market_snapshots" and status.status == "FAIL":
+        if (
+            status.dataset in {"equities", "market_snapshots"}
+            and status.status == "FAIL"
+            and not full_vendor_outage
+        ):
             mapped_status = "WARN"
         message = status.message or f"{status.dataset} fetch returned {status.row_count} rows."
         results.append(
@@ -109,6 +141,57 @@ def _status_results(fetch_statuses: list[FetchStatusRecord]) -> list[QaCheckResu
             )
         )
     return results
+
+
+def _vendor_outage_check(fetch_statuses: list[FetchStatusRecord]) -> QaCheckResult:
+    if not fetch_statuses:
+        return QaCheckResult(
+            check_name="vendor_outage_policy",
+            status="PASS",
+            dataset="market_data",
+            entity="yahoo",
+            message="No Yahoo-backed fetches were requested.",
+        )
+    fail_count = sum(
+        1 for status in fetch_statuses if str(status.status).upper() == "FAIL"
+    )
+    total_count = len(fetch_statuses)
+    if fail_count == total_count:
+        return QaCheckResult(
+            check_name="vendor_outage_policy",
+            status="FAIL",
+            dataset="market_data",
+            entity="yahoo",
+            message=(
+                f"Yahoo full outage: all {total_count} requested fetches failed. "
+                "The latest published state must be left unchanged."
+            ),
+        )
+    if fail_count:
+        return QaCheckResult(
+            check_name="vendor_outage_policy",
+            status="WARN",
+            dataset="market_data",
+            entity="yahoo",
+            message=(
+                f"Yahoo per-ticker outage: {fail_count} of {total_count} fetches "
+                "failed and remain visible as data issues."
+            ),
+        )
+    return QaCheckResult(
+        check_name="vendor_outage_policy",
+        status="PASS",
+        dataset="market_data",
+        entity="yahoo",
+        message=f"Yahoo fetches completed for all {total_count} requested inputs.",
+    )
+
+
+def _is_full_vendor_outage(fetch_statuses: list[FetchStatusRecord]) -> bool:
+    return bool(fetch_statuses) and all(
+        str(status.status).upper() == "FAIL"
+        for status in fetch_statuses
+    )
 
 
 def _currency_map_check(

@@ -32,10 +32,12 @@ def evaluate_normalization_quality(
     registry: FoundationRegistry,
     usd_equity_histories: dict[str, pd.DataFrame],
     normalized_market_snapshots: pd.DataFrame,
+    failed_equity_tickers: set[str] | None = None,
 ) -> NormalizationQaReport:
     results: list[QaCheckResult] = []
     max_fx_staleness_days = getattr(app_config.qa, "max_fx_staleness_days", 5)
     block_on_stale_fx = bool(getattr(app_config.qa, "block_on_stale_fx", False))
+    failed_tickers = failed_equity_tickers or set()
 
     for target in registry.equity_targets:
         frame = usd_equity_histories.get(target.ticker, pd.DataFrame())
@@ -45,6 +47,7 @@ def evaluate_normalization_quality(
                 frame,
                 max_fx_staleness_days=max_fx_staleness_days,
                 block_on_stale_fx=block_on_stale_fx,
+                fetch_failed=target.ticker in failed_tickers,
             )
         )
 
@@ -75,15 +78,21 @@ def _equity_checks(
     *,
     max_fx_staleness_days: int,
     block_on_stale_fx: bool,
+    fetch_failed: bool = False,
 ) -> list[QaCheckResult]:
     if frame.empty:
         return [
             QaCheckResult(
                 check_name="equity_usd_coverage",
-                status="FAIL",
+                status="WARN" if fetch_failed else "FAIL",
                 dataset="usd_equities",
                 entity=ticker,
-                message="No normalized USD rows were produced for this ticker.",
+                message=(
+                    "No normalized USD rows were produced because the source "
+                    "fetch failed for this ticker."
+                    if fetch_failed
+                    else "No normalized USD rows were produced for this ticker."
+                ),
             )
         ]
 
