@@ -14,6 +14,7 @@ from golden_vector.contracts.fundamentals import (
     FETCHED_FUNDAMENTALS_SCHEMA_VERSION,
     FUNDAMENTAL_VALUE_STATUSES,
     FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
+    fetched_fundamentals_latest_path,
     fetched_fundamentals_run_stamped_path,
 )
 from golden_vector.screening.manual_store import FINANCIAL_DUAL_SOURCE_FIELDS
@@ -39,7 +40,7 @@ def write_fetched_fundamentals_artifact_pair(
         source_run_id=source_run_id,
     )
     run_path = fetched_fundamentals_run_stamped_path(paths, source_run_id)
-    latest_path = paths.latest_fetched_fundamentals_path
+    latest_path = fetched_fundamentals_latest_path(paths)
     write_parquet_atomic(normalized, run_path, index=False)
     write_parquet_atomic(normalized, latest_path, index=False)
     return FetchedFundamentalsArtifactWrite(
@@ -55,7 +56,7 @@ def load_official_fundamentals(paths: ProjectPaths) -> pd.DataFrame:
     path = resolve_current_model_artifact_path(
         paths,
         FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
-        fallback_path=paths.latest_fetched_fundamentals_path,
+        fallback_path=fetched_fundamentals_latest_path(paths),
     )
     if path is None:
         return empty_fetched_fundamentals_frame()
@@ -75,15 +76,15 @@ def normalize_fetched_fundamentals_frame(
 ) -> pd.DataFrame:
     """Normalize and validate the canonical official fundamentals frame."""
 
+    source_run_id = str(source_run_id or "").strip()
+    if not source_run_id:
+        raise ValueError("official fundamentals source_run_id is required")
     normalized = frame.copy()
     for column in FETCHED_FUNDAMENTALS_COLUMNS:
         if column not in normalized.columns:
             normalized[column] = pd.NA
     normalized["schema_version"] = FETCHED_FUNDAMENTALS_SCHEMA_VERSION
-    normalized["source_run_id"] = (
-        normalized["source_run_id"].fillna("").astype(str).str.strip()
-    )
-    normalized.loc[normalized["source_run_id"] == "", "source_run_id"] = source_run_id
+    normalized["source_run_id"] = source_run_id
     normalized["ticker"] = normalized["ticker"].fillna("").astype(str).str.upper().str.strip()
     normalized["field_name"] = normalized["field_name"].fillna("").astype(str).str.strip()
     normalized["value"] = pd.to_numeric(normalized["value"], errors="coerce")

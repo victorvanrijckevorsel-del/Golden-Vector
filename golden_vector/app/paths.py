@@ -270,10 +270,6 @@ class ProjectPaths:
         return self.output_dir / "fundamentals"
 
     @property
-    def latest_fetched_fundamentals_path(self) -> Path:
-        return self.output_fundamentals_dir / "fetched_fundamentals_latest.parquet"
-
-    @property
     def output_options_dir(self) -> Path:
         return self.output_dir / "options"
 

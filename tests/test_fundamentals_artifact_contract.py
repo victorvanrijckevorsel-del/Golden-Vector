@@ -12,6 +12,7 @@ from golden_vector.contracts.fundamentals import (
     FETCHED_FUNDAMENTALS_COLUMNS,
     FETCHED_FUNDAMENTALS_SCHEMA_VERSION,
     FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
+    fetched_fundamentals_latest_path,
 )
 from golden_vector.fundamentals.artifacts import (
     empty_fetched_fundamentals_frame,
@@ -124,13 +125,51 @@ def test_official_fundamentals_loader_reads_through_manifest(tmp_path):
         source_run_id=source_run_id,
     )
     write_current_model_state_manifest(paths=paths, config_hash="config-hash")
-    paths.latest_fetched_fundamentals_path.unlink()
+    fetched_fundamentals_latest_path(paths).unlink()
 
     loaded = load_official_fundamentals(paths)
 
     assert loaded[["ticker", "field_name", "value"]].to_dict("records") == [
         {"ticker": "AEM", "field_name": "ebitda_ltm_musd", "value": 900.0}
     ]
+
+
+def test_writer_enforces_one_source_run_id_for_manifest_resolution(tmp_path):
+    paths = build_test_paths(tmp_path)
+    source_run_id = "20260610T120000Z-fetch-fundamentals"
+    write_fetched_fundamentals_artifact_pair(
+        paths=paths,
+        frame=pd.DataFrame(
+            [
+                _official_row(
+                    ticker="AEM",
+                    field_name="net_debt_musd",
+                    value=250.0,
+                    source_run_id="20260609T120000Z-old-fetch",
+                )
+            ]
+        ),
+        source_run_id=source_run_id,
+    )
+
+    payload = write_current_model_state_manifest(paths=paths, config_hash="config-hash")
+
+    artifact = payload["artifacts"][FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME]
+    assert artifact["source_run_ids"] == [source_run_id]
+    assert artifact["immutable"] is True
+
+
+def test_writer_rejects_blank_source_run_id(tmp_path):
+    paths = build_test_paths(tmp_path)
+
+    with pytest.raises(ValueError, match="source_run_id is required"):
+        write_fetched_fundamentals_artifact_pair(
+            paths=paths,
+            frame=pd.DataFrame(
+                [_official_row(ticker="AEM", field_name="net_debt_musd", value=250.0)]
+            ),
+            source_run_id="",
+        )
 
 
 def test_resolution_uses_manual_override_then_official_fallback(tmp_path):
