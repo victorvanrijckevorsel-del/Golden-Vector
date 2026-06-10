@@ -26,6 +26,7 @@ from golden_vector.common.strings import clean_string as _common_clean_string
 from golden_vector.common.strings import unique_strings as _common_unique_strings
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import to_jsonable
+from golden_vector.contracts.fundamentals import FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME
 from golden_vector.contracts.option_artifacts import (
     OPTION_ARTIFACT_NAMES,
     OPTION_ARTIFACT_PREFIXES,
@@ -381,6 +382,12 @@ def _artifact_map(
             paths=paths,
             name="tool_d_spot",
             path=paths.latest_tool_d_spot_snapshot_parquet_path,
+            required_for_complete=False,
+        ),
+        FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME: _parquet_artifact(
+            paths=paths,
+            name=FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
+            path=paths.latest_fetched_fundamentals_path,
             required_for_complete=False,
         ),
         "portfolio_lines": _parquet_artifact(
@@ -1102,6 +1109,8 @@ def _tool_latest_directory_and_prefix(paths: ProjectPaths, name: str) -> tuple[P
         return paths.output_tool_c_dir, "tool_c"
     if name in {"tool_d", "tool_d_spot"}:
         return paths.output_tool_d_dir, "tool_d"
+    if name == FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME:
+        return paths.output_fundamentals_dir, "fetched_fundamentals"
     if name in OPTION_ARTIFACT_PREFIXES:
         return paths.output_options_dir, OPTION_ARTIFACT_PREFIXES[name]
     if name in PORTFOLIO_ARTIFACTS:

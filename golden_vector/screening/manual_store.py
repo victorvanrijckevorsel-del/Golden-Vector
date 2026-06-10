@@ -73,6 +73,27 @@ NUMERIC_COMPANY_FIELDS = [
     "ebitda_ltm_musd",
 ]
 
+OPERATIONAL_SINGLE_SOURCE_FIELDS = frozenset(
+    {
+        "production_oz",
+        "aisc_usd_per_oz",
+        "cash_cost_usd_per_oz",
+        "royalty_rate",
+        "sustaining_capex_musd",
+        "reserve_life_years",
+    }
+)
+
+FINANCIAL_DUAL_SOURCE_FIELDS = frozenset(
+    {
+        "net_debt_musd",
+        "ebitda_ltm_musd",
+        "interest_expense_musd",
+        "da_musd",
+        "tax_rate",
+    }
+)
+
 
 @dataclass(frozen=True)
 class ManualStoreSyncResult:
