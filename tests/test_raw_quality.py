@@ -182,6 +182,50 @@ def test_raw_quality_warns_but_continues_on_single_equity_fetch_failure():
     assert "per-ticker" in outage.message
 
 
+def test_raw_quality_fails_closed_when_all_equity_fetches_fail():
+    app_config = _load_test_app_config()
+    registry = build_foundation_registry(app_config.universe)
+    equity_histories, fx_histories, gold_history, market_snapshots, fetch_statuses = (
+        _build_healthy_inputs(registry)
+    )
+    failed_statuses = [
+        (
+            _status(status.dataset, status.entity, status.source_symbol, "FAIL", 0)
+            if status.dataset == "equities"
+            else status
+        )
+        for status in fetch_statuses
+    ]
+
+    report = evaluate_raw_quality(
+        app_config=app_config,
+        registry=registry,
+        equity_histories={ticker: pd.DataFrame() for ticker in equity_histories},
+        fx_histories=fx_histories,
+        gold_history=gold_history,
+        market_snapshots=market_snapshots,
+        fetch_statuses=failed_statuses,
+    )
+
+    outage = _find_result(
+        report.results,
+        check_name="vendor_outage_policy",
+        dataset="market_data",
+        entity="yahoo",
+    )
+    first_equity_status = _find_result(
+        report.results,
+        check_name="fetch_status",
+        dataset="equities",
+        entity=registry.equity_targets[0].ticker,
+    )
+
+    assert report.overall_status == "FAIL"
+    assert outage.status == "FAIL"
+    assert "equity outage" in outage.message
+    assert first_equity_status.status == "FAIL"
+
+
 def test_raw_quality_fails_closed_on_full_yahoo_outage():
     app_config = _load_test_app_config()
     registry = build_foundation_registry(app_config.universe)

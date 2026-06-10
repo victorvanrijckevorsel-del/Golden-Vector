@@ -183,6 +183,26 @@ def failed_fetch_entities(
     }
 
 
+def fetch_dataset_outage_status(
+    statuses: Iterable[FetchStatusRecord],
+    *,
+    dataset: str,
+) -> str:
+    """Return OK/PARTIAL_OUTAGE/FULL_OUTAGE for one fetched dataset."""
+
+    dataset_statuses = [
+        str(status.status).upper() for status in statuses if status.dataset == dataset
+    ]
+    if not dataset_statuses:
+        return "OK"
+    fail_count = sum(1 for status in dataset_statuses if status == "FAIL")
+    if fail_count == len(dataset_statuses):
+        return "FULL_OUTAGE"
+    if fail_count:
+        return "PARTIAL_OUTAGE"
+    return "OK"
+
+
 def summarize_fetch_status_rows(
     frame: pd.DataFrame,
     *,

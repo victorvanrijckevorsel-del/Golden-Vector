@@ -10,6 +10,7 @@ from golden_vector.ingestion.collection_resilience import (
     bounded_worker_count,
     call_with_retries,
     failed_fetch_entities,
+    fetch_dataset_outage_status,
     map_with_bounded_workers,
     retry_policy_from_config,
     summarize_fetch_status_rows,
@@ -180,6 +181,69 @@ def test_failed_fetch_entities_filters_by_dataset_and_status():
     ]
 
     assert failed_fetch_entities(records, dataset="equities") == {"AEM"}
+
+
+def test_fetch_dataset_outage_status_is_dataset_scoped():
+    started = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    records = [
+        FetchStatusRecord(
+            dataset="equities",
+            entity="AEM",
+            source_symbol="AEM",
+            status="FAIL",
+            row_count=0,
+            started_at_utc=started,
+            completed_at_utc=started,
+        ),
+        FetchStatusRecord(
+            dataset="equities",
+            entity="NEM",
+            source_symbol="NEM",
+            status="FAIL",
+            row_count=0,
+            started_at_utc=started,
+            completed_at_utc=started,
+        ),
+        FetchStatusRecord(
+            dataset="fx",
+            entity="CAD",
+            source_symbol="CADUSD=X",
+            status="PASS",
+            row_count=10,
+            started_at_utc=started,
+            completed_at_utc=started,
+        ),
+    ]
+
+    assert fetch_dataset_outage_status(records, dataset="equities") == "FULL_OUTAGE"
+    assert fetch_dataset_outage_status(records, dataset="fx") == "OK"
+    assert fetch_dataset_outage_status(records, dataset="market_snapshots") == "OK"
+
+
+def test_fetch_dataset_outage_status_reports_partial_when_some_fail():
+    started = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    records = [
+        FetchStatusRecord(
+            dataset="equities",
+            entity="AEM",
+            source_symbol="AEM",
+            status="FAIL",
+            row_count=0,
+            started_at_utc=started,
+            completed_at_utc=started,
+        ),
+        FetchStatusRecord(
+            dataset="equities",
+            entity="NEM",
+            source_symbol="NEM",
+            status="PASS",
+            row_count=10,
+            started_at_utc=started,
+            completed_at_utc=started,
+        ),
+    ]
+
+    assert fetch_dataset_outage_status(records, dataset="equities") == "PARTIAL_OUTAGE"
 
 
 def test_summarize_fetch_status_rows_handles_malformed_table_without_status():

@@ -8,7 +8,10 @@ import pandas as pd
 
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.contracts.data_models import FetchStatusRecord, QaCheckResult
-from golden_vector.ingestion.collection_resilience import failed_fetch_entities
+from golden_vector.ingestion.collection_resilience import (
+    failed_fetch_entities,
+    fetch_dataset_outage_status,
+)
 from golden_vector.ingestion.registry import FoundationRegistry, missing_fx_currencies
 
 
@@ -40,19 +43,19 @@ def evaluate_raw_quality(
 ) -> RawQaReport:
     results: list[QaCheckResult] = []
     failed_equity_tickers = failed_fetch_entities(fetch_statuses, dataset="equities")
-    full_vendor_outage = _is_full_vendor_outage(fetch_statuses)
+    blocking_vendor_outage = _is_blocking_vendor_outage(fetch_statuses)
 
     results.append(_currency_map_check(app_config, registry))
     results.append(_vendor_outage_check(fetch_statuses))
     results.extend(
         _status_results(
             fetch_statuses,
-            full_vendor_outage=full_vendor_outage,
+            blocking_vendor_outage=blocking_vendor_outage,
         )
     )
 
     for ticker, frame in equity_histories.items():
-        if ticker in failed_equity_tickers and not full_vendor_outage:
+        if ticker in failed_equity_tickers and not blocking_vendor_outage:
             results.append(
                 QaCheckResult(
                     check_name="history_presence",
@@ -119,7 +122,7 @@ def evaluate_raw_quality(
 def _status_results(
     fetch_statuses: list[FetchStatusRecord],
     *,
-    full_vendor_outage: bool,
+    blocking_vendor_outage: bool,
 ) -> list[QaCheckResult]:
     results: list[QaCheckResult] = []
     for status in fetch_statuses:
@@ -127,7 +130,7 @@ def _status_results(
         if (
             status.dataset in {"equities", "market_snapshots"}
             and status.status == "FAIL"
-            and not full_vendor_outage
+            and not blocking_vendor_outage
         ):
             mapped_status = "WARN"
         message = status.message or f"{status.dataset} fetch returned {status.row_count} rows."
@@ -167,6 +170,18 @@ def _vendor_outage_check(fetch_statuses: list[FetchStatusRecord]) -> QaCheckResu
                 "The latest published state must be left unchanged."
             ),
         )
+    if fetch_dataset_outage_status(fetch_statuses, dataset="equities") == "FULL_OUTAGE":
+        equity_count = sum(1 for status in fetch_statuses if status.dataset == "equities")
+        return QaCheckResult(
+            check_name="vendor_outage_policy",
+            status="FAIL",
+            dataset="market_data",
+            entity="yahoo",
+            message=(
+                f"Yahoo equity outage: all {equity_count} equity fetches failed. "
+                "The latest published state must be left unchanged."
+            ),
+        )
     if fail_count:
         return QaCheckResult(
             check_name="vendor_outage_policy",
@@ -187,7 +202,9 @@ def _vendor_outage_check(fetch_statuses: list[FetchStatusRecord]) -> QaCheckResu
     )
 
 
-def _is_full_vendor_outage(fetch_statuses: list[FetchStatusRecord]) -> bool:
+def _is_blocking_vendor_outage(fetch_statuses: list[FetchStatusRecord]) -> bool:
+    if fetch_dataset_outage_status(fetch_statuses, dataset="equities") == "FULL_OUTAGE":
+        return True
     return bool(fetch_statuses) and all(
         str(status.status).upper() == "FAIL"
         for status in fetch_statuses
