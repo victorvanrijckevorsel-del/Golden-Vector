@@ -19,6 +19,15 @@ def optional_float(value: object) -> float | None:
     return None if is_missing(numeric) else numeric
 
 
+def optional_finite_float(value: object) -> float | None:
+    """Return a finite float for scalar numeric input, otherwise ``None``."""
+
+    numeric = optional_float(value)
+    if numeric is None or not math.isfinite(numeric):
+        return None
+    return numeric
+
+
 def strict_optional_float(value: object) -> float | None:
     """Return a float or ``None`` for missing values, raising on invalid text."""
 

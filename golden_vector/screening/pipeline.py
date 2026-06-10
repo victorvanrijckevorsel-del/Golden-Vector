@@ -9,6 +9,7 @@ import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
+from golden_vector.common.numeric import optional_finite_float
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.fundamentals.artifacts import (
     empty_fetched_fundamentals_frame,
@@ -502,8 +503,8 @@ def _financial_comparison_summary(
             continue
         if str(resolved.get("our_view_source") or "").strip().lower() != "manual":
             continue
-        official = _finite_float(resolved.get("official_value"))
-        ours = _finite_float(resolved.get("our_view_value"))
+        official = optional_finite_float(resolved.get("official_value"))
+        ours = optional_finite_float(resolved.get("our_view_value"))
         if official is None or ours is None or math.isclose(ours, official, rel_tol=1e-6):
             continue
         divergent_count += 1
@@ -545,8 +546,8 @@ def _difference_label(
 
 
 def _values_differ(left: object, right: object) -> bool:
-    left_float = _finite_float(left)
-    right_float = _finite_float(right)
+    left_float = optional_finite_float(left)
+    right_float = optional_finite_float(right)
     if left_float is None or right_float is None:
         return False
     return not math.isclose(left_float, right_float, rel_tol=1e-6)
@@ -557,16 +558,6 @@ def _clean_status(value: object) -> str:
         return "MISSING"
     text = str(value).upper().strip()
     return text or "MISSING"
-
-
-def _finite_float(value: object) -> float | None:
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return None
-    if math.isnan(numeric) or not math.isfinite(numeric):
-        return None
-    return numeric
 
 
 def _frame_from_rows(rows: list[dict[str, object]]) -> pd.DataFrame:
