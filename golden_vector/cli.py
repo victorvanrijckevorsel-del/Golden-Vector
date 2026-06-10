@@ -777,7 +777,7 @@ def run_candidate_finder(
         )
         print(
             f"Rows: {len(ranked.index)}; peer pool: {len(screen.peer_frame.index)}; "
-            f"options side: {screen.options_side}."
+            f"universe: {screen.options_side}."
         )
         if screen.warnings:
             print("Warnings:")

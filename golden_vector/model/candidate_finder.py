@@ -29,6 +29,7 @@ TOOL_A_SCORE_ELIGIBLE_FIELDS = frozenset(
 class CriterionDefinition:
     id: str
     label: str
+    description: str
     source_field: str
     group: str
     default_direction: CriterionDirection
@@ -46,6 +47,7 @@ class CriterionSelection:
 class ResolvedCriterion:
     id: str
     label: str
+    description: str
     source_field: str
     group: str
     direction: CriterionDirection
@@ -217,6 +219,7 @@ def _resolve_selections(
             ResolvedCriterion(
                 id=criterion.id,
                 label=criterion.label,
+                description=criterion.description,
                 source_field=criterion.source_field,
                 group=criterion.group,
                 direction=direction,
@@ -431,6 +434,7 @@ def _criterion_definition(criterion: Any) -> CriterionDefinition:
     return CriterionDefinition(
         id=_get_text(criterion, "id"),
         label=_get_text(criterion, "label"),
+        description=_get_text(criterion, "description"),
         source_field=_get_text(criterion, "source_field"),
         group=_get_text(criterion, "group"),
         default_direction=_get_text(criterion, "default_direction"),  # type: ignore[arg-type]

@@ -38,6 +38,15 @@ from golden_vector.serve.option_trading_data import (
 )
 
 OptionsSide = Literal["puts", "calls", "either", "none"]
+TOOL_D_FINDER_FIELDS = frozenset(
+    {
+        "tool_d_quality_rank",
+        "interest_cover_gold_usd",
+        "debt_stress_gold_usd",
+        "fcf_breakeven_gold_usd",
+        "cost_curve_aisc_percentile",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -809,10 +818,11 @@ def _spot_tool_d_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:
     required = {"gold_price_used", "spot_gold_usd"}
     if not required.issubset(frame.columns):
         return CandidateFinderSourceLoad(
-            frame=_blank_tool_d_quality(frame),
+            frame=_blank_tool_d_finder_fields(frame),
             warning=(
                 "Corporate Resilience latest parquet does not record spot-gold provenance; "
-                "Candidate Finder treats Corporate Resilience quality rank as missing."
+                "Candidate Finder treats Corporate Resilience criteria as missing "
+                f"for affected tickers: {_ticker_sample(frame)}."
             ),
         )
     gold_price = pd.to_numeric(frame["gold_price_used"], errors="coerce")
@@ -822,19 +832,37 @@ def _spot_tool_d_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:
     if bool(is_spot.all()):
         return CandidateFinderSourceLoad(frame=frame)
     return CandidateFinderSourceLoad(
-        frame=_blank_tool_d_quality(frame),
+        frame=_blank_tool_d_finder_fields(frame),
         warning=(
             "Corporate Resilience latest parquet is not a spot-gold run; Candidate Finder "
-            "treats Corporate Resilience quality rank as missing until spot Corporate Resilience is rerun."
+            "treats Corporate Resilience criteria as missing until spot Corporate Resilience is rerun. "
+            f"Off-spot tickers: {_ticker_sample(frame.loc[~is_spot])}."
         ),
     )
 
 
-def _blank_tool_d_quality(frame: pd.DataFrame) -> pd.DataFrame:
+def _blank_tool_d_finder_fields(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame.copy()
-    if "tool_d_quality_rank" in result.columns:
-        result["tool_d_quality_rank"] = pd.NA
+    for column in TOOL_D_FINDER_FIELDS:
+        if column in result.columns:
+            result[column] = pd.NA
     return result
+
+
+def _ticker_sample(frame: pd.DataFrame, *, limit: int = 5) -> str:
+    if frame.empty or "ticker" not in frame.columns:
+        return "the affected rows"
+    tickers = [
+        str(value).upper().strip()
+        for value in frame["ticker"].dropna().tolist()
+        if str(value).strip()
+    ]
+    if not tickers:
+        return "the affected rows"
+    unique = _common_unique_strings(pd.DataFrame({"ticker": tickers}), "ticker")
+    displayed = unique[:limit]
+    suffix = "" if len(unique) <= limit else f" +{len(unique) - limit} more"
+    return ", ".join(displayed) + suffix
 
 
 def _unique_strings(frame: pd.DataFrame, column: str) -> tuple[str, ...]:

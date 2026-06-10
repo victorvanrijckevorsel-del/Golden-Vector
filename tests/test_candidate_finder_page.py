@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
@@ -16,21 +17,24 @@ from golden_vector.serve.workspace import create_workspace_app
 from tests.helpers import build_test_paths
 
 
-def test_candidate_finder_page_renders_default_strong_corporate_finance_screen():
+def test_candidate_finder_page_renders_default_bull_screen():
     data = _candidate_finder_data()
 
     html = render_candidate_finder_page(data)
 
     assert "Candidate Finder" in html
-    assert "Strong Corporate Finance" in html
+    assert '<a class="candidate-preset is-active" href="/candidate-finder?preset=bull">Bull</a>' in html
+    assert '<a class="candidate-preset" href="/candidate-finder?preset=bear">Bear</a>' in html
+    assert "Cheap, financially solid names to own if gold rises" in html
     assert "candidate-preset is-active" in html
-    assert "Options Side" in html
-    assert "No option filter" in html
+    assert "Universe" in html
+    assert "All stocks" in html
     assert "Screen Builder" in html
     assert "Gold Sensitivity" in html
     assert "Corporate Finance" in html
     assert "Options" in html
     assert "Corporate Resilience" in html
+    assert "Advanced Composites" in html
     assert 'class="candidate-criteria-group" open' in html
     assert "View 1: Top Rows By Criterion" in html
     assert "View 2: Fit Ranking" in html
@@ -38,10 +42,15 @@ def test_candidate_finder_page_renders_default_strong_corporate_finance_screen()
     assert "Low-Coverage Rows" in html
     assert "js-datatable candidate-ranking-table" in html
     assert 'data-col-name="score" data-sort-numeric' in html
-    assert 'data-col-name="criterion_fundamental_check_score" data-sort-numeric' in html
+    assert 'data-col-name="criterion_up_beta" data-sort-numeric' in html
+    assert 'data-col-name="criterion_down_beta" data-sort-numeric' not in html
     assert "Score = your weighted-average percentile" in html
     assert "Model build state needs attention" in html
-    assert 'aria-label="Use Fundamental checks"' in html
+    assert 'aria-label="Use FCF yield"' in html
+    assert "Profit cushion per ounce vs the gold price." in html
+    assert "<th>Meaning</th>" in html
+    assert "<th>Field</th>" not in html
+    assert "<code>aisc_usd_per_oz</code>" not in html
     assert "Mixed refreshes in Candidate Finder sources" in html
     assert "/ticker/AEM?lens=option-trading#option-trading" in html
     assert "recommend" not in html.lower()
@@ -64,11 +73,24 @@ def test_candidate_finder_page_custom_query_preserves_side_direction_and_weight(
     )
 
     assert "Custom criteria are active for this screen." in html
-    assert '<option value="calls" selected>Calls</option>' in html
+    assert '<option value="calls" selected>Only stocks with calls</option>' in html
     assert '<option value="low_good" selected>Low values fit</option>' in html
     assert 'name="weight_up_beta" min="0" max="10" step="0.25" value="2"' in html
     assert "Invalid direction" not in html
     assert "candidate-preset is-active" not in html
+
+
+def test_candidate_finder_page_bear_screen_has_direction_neutral_copy():
+    data = _candidate_finder_data()
+
+    html = render_candidate_finder_page(data, query={"preset": ["bear"]})
+
+    assert '<a class="candidate-preset is-active" href="/candidate-finder?preset=bear">Bear</a>' in html
+    assert "Fragile names likely to fall hardest if gold falls." in html
+    assert "Debt load vs earnings. High values rank higher." in html
+    assert "Lower debt burden. High values rank higher." not in html
+    assert 'data-col-name="criterion_down_beta" data-sort-numeric' in html
+    assert 'data-col-name="criterion_up_beta" data-sort-numeric' not in html
 
 
 def test_candidate_finder_page_invalid_preset_falls_back_to_default():
@@ -76,10 +98,29 @@ def test_candidate_finder_page_invalid_preset_falls_back_to_default():
 
     html = render_candidate_finder_page(data, query={"preset": ["banana"]})
 
-    assert "candidate-preset is-active" in html
-    assert "Bearish put screen" in html
+    assert '<a class="candidate-preset is-active" href="/candidate-finder?preset=bull">Bull</a>' in html
+    assert 'is-active" href="/candidate-finder?preset=bear"' not in html
     assert "Pick at least one criterion" not in html
     assert "Unknown preset ignored" not in html
+
+
+@pytest.mark.parametrize(
+    ("legacy_preset", "active_preset"),
+    [
+        ("bearish_put", "bear"),
+        ("bullish_call", "bull"),
+        ("strong_corporate_finance", "bull"),
+    ],
+)
+def test_candidate_finder_page_maps_retired_preset_urls(legacy_preset, active_preset):
+    data = _candidate_finder_data()
+
+    html = render_candidate_finder_page(data, query={"preset": [legacy_preset]})
+
+    assert (
+        f'<a class="candidate-preset is-active" href="/candidate-finder?preset={active_preset}">'
+        in html
+    )
 
 
 def test_candidate_finder_page_url_encodes_ticker_links():
@@ -130,7 +171,12 @@ def _candidate_finder_data() -> CandidateFinderData:
                 "iv_percentile_cross_sectional": 30.0,
                 "confidence_score": 0.92,
                 "fcf_yield": 0.05,
+                "reserve_life_years": 12.0,
                 "fundamental_check_score": 85.7143,
+                "interest_cover_gold_usd": 1500.0,
+                "debt_stress_gold_usd": 1300.0,
+                "fcf_breakeven_gold_usd": 1700.0,
+                "cost_curve_aisc_percentile": 40.0,
                 "tool_c_downside_rank": 95.0,
                 "tool_c_upside_rank": 80.0,
                 "tool_d_quality_rank": 60.0,
@@ -150,7 +196,12 @@ def _candidate_finder_data() -> CandidateFinderData:
                 "iv_percentile_cross_sectional": 55.0,
                 "confidence_score": 0.84,
                 "fcf_yield": 0.03,
+                "reserve_life_years": 18.0,
                 "fundamental_check_score": 100.0,
+                "interest_cover_gold_usd": 1200.0,
+                "debt_stress_gold_usd": 1100.0,
+                "fcf_breakeven_gold_usd": 1400.0,
+                "cost_curve_aisc_percentile": 20.0,
                 "tool_c_downside_rank": 70.0,
                 "tool_c_upside_rank": 55.0,
                 "tool_d_quality_rank": 85.0,

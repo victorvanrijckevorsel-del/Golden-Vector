@@ -61,6 +61,7 @@ def _app_config() -> AppConfig:
                 {
                     "id": "down_beta",
                     "label": "Down-beta",
+                    "description": "Gold downside sensitivity.",
                     "source_field": "down_beta_core",
                     "group": "Sensitivity",
                     "default_direction": "high_good",

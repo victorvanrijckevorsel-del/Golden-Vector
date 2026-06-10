@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from golden_vector.app.config import load_app_config
+from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.model_state import (
     load_current_model_state_manifest,
     write_current_model_state_manifest,
@@ -22,9 +23,12 @@ from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
 from golden_vector.hedge.option_trading import OptionTradingOverviewData
+from golden_vector.model.tool_d import TOOL_D_OUTPUT_COLUMNS
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.screening.manual_store import upsert_company_input
+from golden_vector.screening.schema import TOOL_B_OUTPUT_COLUMNS
 from golden_vector.serve.candidate_finder_data import (
+    TOOL_D_FINDER_FIELDS,
     clear_candidate_finder_cache,
     load_candidate_finder_data,
     run_candidate_finder_screen,
@@ -217,8 +221,8 @@ def test_candidate_finder_presets_remain_eligible_with_stale_option_duplicates(t
     _add_stale_option_duplicate_columns(paths)
 
     data = load_candidate_finder_data(paths, app_config=app_config)
-    bearish = run_candidate_finder_screen(data, spec={"preset": "bearish_put"})
-    bullish = run_candidate_finder_screen(data, spec={"preset": "bullish_call"})
+    bearish = run_candidate_finder_screen(data, spec={"preset": "bear"})
+    bullish = run_candidate_finder_screen(data, spec={"preset": "bull"})
     down_beta = run_candidate_finder_screen(
         data,
         spec={
@@ -289,8 +293,8 @@ def test_candidate_finder_data_handles_missing_sources(tmp_path):
 
     assert data.alignment.status == "UNKNOWN"
     assert not data.frame.empty
-    assert "fundamental_check_score" in data.frame.columns
-    assert data.frame["fundamental_check_score"].isna().all()
+    assert "aisc_usd_per_oz" in data.frame.columns
+    assert data.frame["aisc_usd_per_oz"].isna().all()
     assert data.frame["has_usable_put_candidate"].eq(False).all()
     assert data.frame["has_usable_call_candidate"].eq(False).all()
 
@@ -313,6 +317,19 @@ def test_candidate_finder_data_warns_when_tool_c_or_tool_d_outputs_are_missing(t
     assert "Corporate Resilience" in data.alignment.message
     assert data.frame["tool_c_downside_rank"].isna().all()
     assert data.frame["tool_d_quality_rank"].isna().all()
+    assert data.frame["interest_cover_gold_usd"].isna().all()
+
+
+def test_candidate_finder_tool_d_guard_fields_match_configured_tool_d_only_fields():
+    app_config = load_app_config(ProjectPaths.discover()).app
+    tool_d_only_fields = set(TOOL_D_OUTPUT_COLUMNS) - set(TOOL_B_OUTPUT_COLUMNS)
+    configured_tool_d_fields = {
+        criterion.source_field
+        for criterion in app_config.candidate_finder.criteria
+        if criterion.source_field in tool_d_only_fields
+    }
+
+    assert TOOL_D_FINDER_FIELDS == configured_tool_d_fields
 
 
 def test_candidate_finder_data_ignores_non_spot_mutable_tool_d_latest(tmp_path):
@@ -332,6 +349,29 @@ def test_candidate_finder_data_ignores_non_spot_mutable_tool_d_latest(tmp_path):
     assert data.alignment.message is None
     assert frame.loc["AEM", "tool_d_quality_rank"] == pytest.approx(45.0)
     assert frame.loc["NEM", "tool_d_quality_rank"] == pytest.approx(80.0)
+    assert frame.loc["AEM", "interest_cover_gold_usd"] == pytest.approx(1500.0)
+
+
+def test_candidate_finder_data_blanks_non_spot_tool_d_finder_fields_without_spot_alias(
+    tmp_path,
+):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    paths.latest_model_state_manifest_path.unlink()
+    paths.latest_tool_d_spot_snapshot_parquet_path.unlink()
+    non_spot = pd.read_parquet(paths.latest_tool_d_snapshot_parquet_path)
+    non_spot["gold_price_used"] = 3500.0
+    non_spot["spot_gold_usd"] = 4000.0
+    non_spot.to_parquet(paths.latest_tool_d_snapshot_parquet_path, index=False)
+
+    data = load_candidate_finder_data(paths, app_config=app_config)
+
+    assert data.alignment.status in {"WARN", "UNKNOWN"}
+    assert any("Corporate Resilience criteria as missing" in item for item in data.alignment.messages)
+    for column in TOOL_D_FINDER_FIELDS:
+        assert data.frame[column].isna().all(), column
 
 
 def test_candidate_finder_data_prefers_spot_tool_d_alias_over_scenario_latest(tmp_path):
@@ -346,6 +386,7 @@ def test_candidate_finder_data_prefers_spot_tool_d_alias_over_scenario_latest(tm
     scenario["gold_price_used"] = 3500.0
     scenario["spot_gold_usd"] = 4000.0
     scenario["tool_d_quality_rank"] = 1.0
+    scenario["interest_cover_gold_usd"] = 9999.0
     scenario.to_parquet(paths.latest_tool_d_snapshot_parquet_path, index=False)
 
     data = load_candidate_finder_data(paths, app_config=app_config)
@@ -354,6 +395,7 @@ def test_candidate_finder_data_prefers_spot_tool_d_alias_over_scenario_latest(tm
     assert data.alignment.status == "OK"
     assert frame.loc["AEM", "tool_d_quality_rank"] == pytest.approx(45.0)
     assert frame.loc["NEM", "tool_d_quality_rank"] == pytest.approx(80.0)
+    assert frame.loc["AEM", "interest_cover_gold_usd"] == pytest.approx(1500.0)
 
 
 def test_candidate_finder_data_cache_ignores_corrupt_latest_alias_without_manifest(tmp_path):
@@ -378,7 +420,7 @@ def test_candidate_finder_data_ignores_corrupt_latest_alias_with_manifest(tmp_pa
     paths.latest_tool_a_snapshot_parquet_path.write_text("not parquet", encoding="utf-8")
 
     data = load_candidate_finder_data(paths, app_config=app_config)
-    screen = run_candidate_finder_screen(data, spec={"preset": "bearish_put"})
+    screen = run_candidate_finder_screen(data, spec={"preset": "bear"})
 
     assert data.alignment.status == "OK"
     assert not any("Gold Sensitivity latest parquet could not be read" in item for item in screen.warnings)
@@ -538,7 +580,7 @@ def test_candidate_finder_cli_allows_output_outside_repo(tmp_path, capsys):
     _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
     spec_path = tmp_path / "screen.yaml"
     output_path = tmp_path.parent / "candidate_finder_external.parquet"
-    spec_path.write_text("preset: bearish_put\noptions_side: puts\n", encoding="utf-8")
+    spec_path.write_text("preset: bear\noptions_side: puts\n", encoding="utf-8")
 
     exit_code = run_candidate_finder(
         paths,
@@ -698,6 +740,10 @@ def _write_candidate_finder_inputs(
                     {
                         "ticker": "AEM",
                         "tool_d_quality_rank": 45.0,
+                        "interest_cover_gold_usd": 1500.0,
+                        "debt_stress_gold_usd": 1300.0,
+                        "fcf_breakeven_gold_usd": 1700.0,
+                        "cost_curve_aisc_percentile": 40.0,
                         "gold_price_used": 4000.0,
                         "spot_gold_usd": 4000.0,
                         "spot_gold_date": "2026-06-01",
@@ -707,6 +753,10 @@ def _write_candidate_finder_inputs(
                     {
                         "ticker": "NEM",
                         "tool_d_quality_rank": 80.0,
+                        "interest_cover_gold_usd": 1200.0,
+                        "debt_stress_gold_usd": 1100.0,
+                        "fcf_breakeven_gold_usd": 1400.0,
+                        "cost_curve_aisc_percentile": 20.0,
                         "gold_price_used": 4000.0,
                         "spot_gold_usd": 4000.0,
                         "spot_gold_date": "2026-06-01",

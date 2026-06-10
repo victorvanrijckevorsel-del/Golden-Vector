@@ -617,6 +617,7 @@ def test_candidate_finder_preset_accepts_no_option_filter():
                 {
                     "id": "fundamental_check_score",
                     "label": "Fundamental checks",
+                    "description": "Pass/fail count across core finance checks.",
                     "source_field": "fundamental_check_score",
                     "group": "Corporate Finance",
                     "default_direction": "high_good",
@@ -625,8 +626,8 @@ def test_candidate_finder_preset_accepts_no_option_filter():
             ],
             "presets": [
                 {
-                    "id": "strong_corporate_finance",
-                    "label": "Strong Corporate Finance",
+                    "id": "bull",
+                    "label": "Bull",
                     "options_side": "none",
                     "criteria": [{"id": "fundamental_check_score"}],
                 }

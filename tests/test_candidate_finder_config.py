@@ -19,6 +19,21 @@ def test_candidate_finder_config_loads_and_is_hashed():
         criterion.id == "iv_percentile"
         for criterion in loaded.app.candidate_finder.criteria
     )
+    direction_words = (
+        "lower",
+        "higher",
+        "more",
+        "less",
+        "cheaper",
+        "bigger",
+        "stronger",
+        "larger",
+    )
+    assert not [
+        criterion.id
+        for criterion in loaded.app.candidate_finder.criteria
+        if criterion.description.lower().startswith(direction_words)
+    ]
 
 
 def test_candidate_finder_config_rejects_duplicate_criteria():
@@ -53,7 +68,8 @@ def _payload() -> dict:
         "criteria": [
             {
                 "id": "down_beta",
-                "label": "Down-beta",
+                "label": "Down beta",
+                "description": "Gold downside sensitivity.",
                 "source_field": "down_beta_core",
                 "group": "Sensitivity",
                 "default_direction": "high_good",
@@ -62,9 +78,10 @@ def _payload() -> dict:
         ],
         "presets": [
             {
-                "id": "bearish_put",
-                "label": "Bearish put screen",
-                "options_side": "puts",
+                "id": "bear",
+                "label": "Bear",
+                "description": "Fragile names likely to fall hardest if gold falls.",
+                "options_side": "none",
                 "criteria": [{"id": "down_beta", "weight": 1.0}],
             }
         ],

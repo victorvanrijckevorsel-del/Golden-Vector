@@ -3,21 +3,24 @@ default_top_n: 10
 min_criteria_fraction: 0.67
 criteria:
   - id: down_beta
-    label: Down-beta
+    label: Down beta
+    description: Gold downside sensitivity.
     source_field: down_beta_core
     group: Gold Sensitivity
     default_direction: high_good
     unit: beta
     available_now: true
   - id: up_beta
-    label: Up-beta
+    label: Up beta
+    description: Gold upside sensitivity.
     source_field: up_beta_core
     group: Gold Sensitivity
     default_direction: high_good
     unit: beta
     available_now: true
   - id: gold_beta_core
-    label: Gold beta (core)
+    label: Gold beta
+    description: Overall gold-linked movement.
     source_field: structural_delta_core
     group: Gold Sensitivity
     default_direction: high_good
@@ -25,13 +28,15 @@ criteria:
     available_now: true
   - id: downside_volatility
     label: Downside volatility
+    description: Drawdown size in weak periods.
     source_field: downside_volatility_52w
     group: Gold Sensitivity
     default_direction: high_good
     unit: percent
     available_now: true
   - id: confidence
-    label: Confidence
+    label: Model confidence
+    description: Historical model fit.
     source_field: confidence_score
     group: Gold Sensitivity
     default_direction: high_good
@@ -39,6 +44,7 @@ criteria:
     available_now: true
   - id: aisc
     label: AISC
+    description: All-in cost to mine one ounce.
     source_field: aisc_usd_per_oz
     group: Corporate Finance
     default_direction: low_good
@@ -46,6 +52,7 @@ criteria:
     available_now: true
   - id: leverage
     label: Net Debt / EBITDA
+    description: Debt load vs earnings.
     source_field: leverage
     group: Corporate Finance
     default_direction: low_good
@@ -53,6 +60,7 @@ criteria:
     available_now: true
   - id: ev_ebitda
     label: EV/EBITDA
+    description: Price vs forward earnings power.
     source_field: ev_ebitda
     group: Corporate Finance
     default_direction: low_good
@@ -60,6 +68,7 @@ criteria:
     available_now: true
   - id: forward_pe
     label: Forward P/E
+    description: Price vs estimated profit.
     source_field: forward_pe
     group: Corporate Finance
     default_direction: low_good
@@ -67,6 +76,7 @@ criteria:
     available_now: true
   - id: fcf_yield
     label: FCF yield
+    description: Cash flow generated per dollar of share price.
     source_field: fcf_yield
     group: Corporate Finance
     default_direction: high_good
@@ -74,20 +84,15 @@ criteria:
     available_now: true
   - id: margin_pct
     label: Margin %
+    description: Profit cushion per ounce vs the gold price.
     source_field: margin_pct
     group: Corporate Finance
     default_direction: high_good
     unit: percent
     available_now: true
-  - id: fundamental_check_score
-    label: Fundamental checks
-    source_field: fundamental_check_score
-    group: Corporate Finance
-    default_direction: high_good
-    unit: score
-    available_now: true
   - id: reserve_life
     label: Reserve life
+    description: Years of mine life remaining.
     source_field: reserve_life_years
     group: Corporate Finance
     default_direction: high_good
@@ -95,13 +100,47 @@ criteria:
     available_now: true
   - id: market_cap
     label: Market cap
+    description: Company size by equity value.
     source_field: market_cap_musd
     group: Corporate Finance
     default_direction: high_good
     unit: musd
     available_now: true
+  - id: interest_cover_gold
+    label: Interest-cover gold
+    description: Gold price where profit only just covers interest payments; missing can mean no material debt.
+    source_field: interest_cover_gold_usd
+    group: Corporate Resilience
+    default_direction: low_good
+    unit: usd_per_oz
+    available_now: true
+  - id: debt_stress_gold
+    label: Debt-stress gold
+    description: Gold price where debt becomes heavy vs earnings; missing can mean no material debt.
+    source_field: debt_stress_gold_usd
+    group: Corporate Resilience
+    default_direction: low_good
+    unit: usd_per_oz
+    available_now: true
+  - id: fcf_breakeven_gold
+    label: FCF breakeven gold
+    description: Gold price where cash flow hits zero.
+    source_field: fcf_breakeven_gold_usd
+    group: Corporate Resilience
+    default_direction: low_good
+    unit: usd_per_oz
+    available_now: true
+  - id: cost_curve
+    label: Cost curve percentile
+    description: Cost position vs peers (same ranking as AISC).
+    source_field: cost_curve_aisc_percentile
+    group: Corporate Resilience
+    default_direction: low_good
+    unit: percentile
+    available_now: true
   - id: iv_percentile
     label: IV percentile
+    description: Option price level vs peers.
     source_field: iv_percentile_cross_sectional
     group: Options
     default_direction: low_good
@@ -109,38 +148,43 @@ criteria:
     available_now: true
   - id: iv_skew
     label: IV skew
+    description: Extra downside fear priced into puts (makes puts cost more).
     source_field: iv_skew_60d
     group: Options
     default_direction: high_good
     unit: percent
     available_now: true
   - id: tool_c_downside_rank
-    label: Gold Downside downside rank
+    label: Downside composite rank
+    description: Advanced selloff behavior score.
     source_field: tool_c_downside_rank
-    group: Gold Downside
+    group: Advanced Composites
     default_direction: high_good
     unit: percentile
     available_now: true
   - id: tool_c_upside_rank
-    label: Gold Downside upside rank
+    label: Upside composite rank
+    description: Advanced rally behavior score.
     source_field: tool_c_upside_rank
-    group: Gold Downside
+    group: Advanced Composites
     default_direction: high_good
     unit: percentile
     available_now: true
   - id: tool_d_quality_rank
-    label: Corporate Resilience quality rank
+    label: Resilience composite rank
+    description: Advanced survival blend.
     source_field: tool_d_quality_rank
-    group: Corporate Resilience
+    group: Advanced Composites
     default_direction: high_good
     unit: percentile
     available_now: true
 presets:
-  - id: strong_corporate_finance
-    label: Strong Corporate Finance
+  - id: bull
+    label: Bull
+    description: Cheap, financially solid names to own if gold rises; ranks quality first, not rally torque.
     options_side: none
     criteria:
-      - id: fundamental_check_score
+      - id: fcf_yield
         direction: high_good
         weight: 1.0
       - id: aisc
@@ -149,23 +193,24 @@ presets:
       - id: leverage
         direction: low_good
         weight: 1.0
-      - id: fcf_yield
-        direction: high_good
-        weight: 1.0
-      - id: margin_pct
-        direction: high_good
-        weight: 1.0
       - id: ev_ebitda
         direction: low_good
         weight: 1.0
       - id: forward_pe
         direction: low_good
         weight: 1.0
-  - id: bearish_put
-    label: Bearish put screen
-    options_side: puts
-    # Intentional fragility overrides: for bearish puts, higher AISC and
-    # higher leverage can be useful because they amplify downside stress.
+      - id: reserve_life
+        direction: high_good
+        weight: 1.0
+      - id: up_beta
+        direction: high_good
+        weight: 0.5
+  - id: bear
+    label: Bear
+    description: Fragile names likely to fall hardest if gold falls.
+    options_side: none
+    # Intentional fragility overrides: for Bear, higher cost, higher debt,
+    # and lower cash-flow strength can identify names with more downside stress.
     criteria:
       - id: down_beta
         direction: high_good
@@ -176,49 +221,21 @@ presets:
       - id: leverage
         direction: high_good
         weight: 1.0
-      - id: iv_percentile
+      - id: fcf_yield
         direction: low_good
         weight: 1.0
+      - id: reserve_life
+        direction: low_good
+        weight: 1.0
+      - id: interest_cover_gold
+        direction: high_good
+        weight: 1.0
+      - id: debt_stress_gold
+        direction: high_good
+        weight: 1.0
+      - id: iv_percentile
+        direction: low_good
+        weight: 0.5
       - id: confidence
         direction: high_good
-        weight: 1.0
-      - id: tool_c_downside_rank
-        direction: high_good
-        weight: 1.0
-      - id: tool_d_quality_rank
-        direction: low_good
-        weight: 1.0
-  - id: bullish_call
-    label: Bullish call screen
-    options_side: calls
-    criteria:
-      - id: up_beta
-        direction: high_good
-        weight: 1.0
-      - id: aisc
-        direction: low_good
-        weight: 1.0
-      - id: fcf_yield
-        direction: high_good
-        weight: 1.0
-      - id: margin_pct
-        direction: high_good
-        weight: 1.0
-      - id: ev_ebitda
-        direction: low_good
-        weight: 1.0
-      - id: forward_pe
-        direction: low_good
-        weight: 1.0
-      - id: fundamental_check_score
-        direction: high_good
-        weight: 1.0
-      - id: iv_percentile
-        direction: low_good
-        weight: 1.0
-      - id: tool_c_upside_rank
-        direction: high_good
-        weight: 1.0
-      - id: tool_d_quality_rank
-        direction: high_good
-        weight: 1.0
+        weight: 0.5

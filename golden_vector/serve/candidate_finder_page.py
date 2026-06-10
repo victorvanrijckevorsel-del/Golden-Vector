@@ -28,7 +28,12 @@ from golden_vector.serve.option_refresh import (
 )
 from golden_vector.serve.page_shell import _page_shell
 
-_DEFAULT_PRESET_ID = "strong_corporate_finance"
+_DEFAULT_PRESET_ID = "bull"
+_PRESET_ALIASES = {
+    "bearish_put": "bear",
+    "bullish_call": "bull",
+    "strong_corporate_finance": "bull",
+}
 _SCORE_TOOLTIP = (
     "Score = your weighted-average percentile across the criteria you chose "
     "(0-100). Higher = better fit. Not a return forecast."
@@ -53,13 +58,14 @@ def render_candidate_finder_page(
         (
             "<section class=\"workspace-section\">",
             "<h1>Candidate Finder</h1>",
-            "<p class=\"lead\">Build a ranked list from model signals and option-market filters.</p>",
+            "<p class=\"lead\">Choose a lens, then decide whether to scan every stock or only optionable names.</p>",
             render_model_state_banner(data.model_state_manifest),
             render_option_refresh_control(
                 refresh_status or OptionRefreshStatus(),
                 return_to=base_path,
             ),
             _render_preset_bar(data, active_preset_id, base_path=base_path),
+            _render_active_preset_description(data, active_preset_id),
             _render_warning_banner(screen.warnings),
             _render_summary_cards(screen),
             _render_builder(data, screen, query, base_path=base_path),
@@ -138,6 +144,18 @@ def _render_preset_bar(
     )
 
 
+def _render_active_preset_description(
+    data: CandidateFinderData,
+    active_preset_id: str,
+) -> str:
+    if not active_preset_id:
+        return ""
+    for preset in data.criteria_config.presets:
+        if preset.id == active_preset_id and preset.description:
+            return f"<p class=\"hint candidate-preset-description\">{escape(preset.description)}</p>"
+    return ""
+
+
 def _render_warning_banner(warnings: Sequence[str]) -> str:
     if not warnings:
         return ""
@@ -160,7 +178,7 @@ def _render_summary_cards(screen: CandidateFinderScreen) -> str:
     selected = len(screen.ranking.selected_criteria)
     cards = "\n".join(
         (
-            _metric_card("Options Side", _side_label(screen.options_side)),
+            _metric_card("Universe", _side_label(screen.options_side)),
             _metric_card("Selected Criteria", str(selected)),
             _metric_card("Eligible Rows", str(eligible)),
             _metric_card("Low Coverage Rows", str(low_coverage)),
@@ -183,10 +201,10 @@ def _render_builder(
     options = "\n".join(
         _option_tag(value, label, value == screen.options_side)
         for value, label in (
-            ("puts", "Puts"),
-            ("calls", "Calls"),
-            ("either", "Puts or calls"),
-            ("none", "No option filter"),
+            ("none", "All stocks"),
+            ("either", "Only stocks with puts or calls"),
+            ("puts", "Only stocks with puts"),
+            ("calls", "Only stocks with calls"),
         )
     )
     groups = "\n".join(
@@ -214,7 +232,7 @@ def _render_builder(
     <input type="hidden" name="custom" value="1">
     <div class="candidate-form-row">
       <label>
-        Options side
+        Universe
         <select name="options_side">{options}</select>
       </label>
       <label>
@@ -274,7 +292,7 @@ def _render_builder_group(
           <th>Criterion</th>
           <th>Direction</th>
           <th>Weight</th>
-          <th>Field</th>
+          <th>Meaning</th>
         </tr>
       </thead>
       <tbody>{rows}</tbody>
@@ -306,7 +324,7 @@ def _render_builder_row(
     </select>
   </td>
   <td><input type="number" name="{weight_name}" min="0" max="10" step="0.25" value="{_fmt_weight(weight)}"></td>
-  <td><code>{escape(criterion.source_field)}</code></td>
+  <td>{escape(criterion.description)}</td>
 </tr>
 """
 
@@ -346,7 +364,7 @@ def _render_top_list_card(
     return f"""
 <article class="nested-panel candidate-top-list-card">
   <h3>{escape(criterion.label)}</h3>
-  <p class="hint">{direction} values rank higher. Weight {_fmt_weight(criterion.weight)}.</p>
+  <p class="hint">{escape(criterion.description)} {direction} values rank higher. Weight {_fmt_weight(criterion.weight)}.</p>
   <table>
     <thead>
       <tr><th>Ticker</th><th>Value</th><th>Percentile</th></tr>
@@ -452,10 +470,10 @@ def _option_tag(value: str, label: str, selected: bool) -> str:
 
 def _side_label(side: str) -> str:
     return {
-        "puts": "Puts",
-        "calls": "Calls",
-        "either": "Puts or calls",
-        "none": "No option filter",
+        "puts": "Only stocks with puts",
+        "calls": "Only stocks with calls",
+        "either": "Only stocks with puts or calls",
+        "none": "All stocks",
     }.get(side, side)
 
 
@@ -487,6 +505,8 @@ def _active_preset_id(
 
 
 def _valid_preset_id(raw_preset_id: str, config: CandidateFinderConfig) -> str:
+    raw_preset_id = str(raw_preset_id or "").strip().lower()
+    raw_preset_id = _PRESET_ALIASES.get(raw_preset_id, raw_preset_id)
     preset_ids = {preset.id for preset in config.presets}
     if raw_preset_id in preset_ids:
         return raw_preset_id
