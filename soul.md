@@ -35,3 +35,20 @@ A 27-minute Tool A stage hid through three rounds of perf work because every mea
 - **Flag build-vs-keep waste:** when a stage builds far more rows than it persists (here 60,000 built / 60 kept), that ratio is a screaming signal of wasted work — log it.
 - **When two measurements disagree, the disagreement is the finding** — trace it to the real run before optimizing anything. Don't pick the convenient number.
 - Optimise what's actually slow on real data, not what the harness happens to measure (Goodhart). Links to [[feedback-measure-the-real-stage]].
+
+## 5. Backend computes, serve renders — and a guardrail test enforces the boundary
+The serve layer (pages/templates) never does arithmetic, ratio math, coalesce/fallback resolution ("official unless missing, then ours"), or rank-basis selection. The model layer emits resolved, display-ready columns (including any `*_official` / `*_our_view` pairs and the rank column); serve formats them and sorts on ONE backend-provided rank column.
+
+**Why a test, not just a rule:** comparison and fallback logic naturally wants to be written next to the rendering that displays it — where it is untested and forks the math. The boundary only holds if a static-scan guardrail test locks it (clone the Tool-D serve-arithmetic test in `tests/test_workspace_app.py`; extend its forbidden-token list when new logic classes appear, e.g. coalesce tokens). A new serve surface without its guardrail test is not done.
+
+## 6. Degraded data is excluded, not just flagged; thresholds live once
+- Any value from a stale, missing, or unreliable source is **EXCLUDED** from rankings and confident headlines — routed to an explicit degraded state (NA rank, sorts last, visible tag) — never silently ranked as if solid. Flag-only shipped once (Phase 1 stale-FX) and became that review's only HIGH (H1). Exclusion must reuse the existing `.where(status == OK)` gate pattern (Tool D), not a parallel codepath.
+- Failures degrade **per item, never per build** (M3): one bad ticker marks that ticker and continues.
+- Every threshold is **config-single-sourced** (M1): a hardcoded twin of a config value WILL drift — the min-beta gate did.
+
+## 7. Tests must prove the behavior, not pass for the wrong reason
+- An exclusion test uses an **otherwise-healthy subject** (so it is excluded for the *right* reason) plus a **healthy control row** that remains included (so a blank-everything bug fails the test).
+- A determinism/ordering test includes **deliberate ties and NA values** — without them the tie-break and exclusion ordering are never exercised and the test is a no-op.
+- User-facing strings (labels, badges, warnings) are asserted at the **serve-render level**, not only on the data frame.
+
+**Why:** Phase 1's stale-FX test passed only because the test line *also* had a sub-floor beta — the exclusion was happening for the wrong reason and the test couldn't tell. A test that *can* pass for the wrong reason eventually does.
