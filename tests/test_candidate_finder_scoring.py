@@ -252,6 +252,7 @@ def _criteria() -> list[CriterionDefinition]:
         CriterionDefinition(
             id="down_beta",
             label="Down-beta",
+            description="Gold downside sensitivity.",
             source_field="down_beta_core",
             group="Sensitivity",
             default_direction="high_good",
@@ -260,6 +261,7 @@ def _criteria() -> list[CriterionDefinition]:
         CriterionDefinition(
             id="aisc",
             label="AISC",
+            description="All-in cost to mine one ounce.",
             source_field="aisc_usd_per_oz",
             group="Fragility",
             default_direction="high_good",
@@ -268,6 +270,7 @@ def _criteria() -> list[CriterionDefinition]:
         CriterionDefinition(
             id="iv",
             label="IV percentile",
+            description="Option price level vs peers.",
             source_field="iv",
             group="Options",
             default_direction="low_good",
@@ -276,6 +279,7 @@ def _criteria() -> list[CriterionDefinition]:
         CriterionDefinition(
             id="confidence",
             label="Confidence",
+            description="Historical model fit.",
             source_field="confidence_score",
             group="Quality",
             default_direction="high_good",

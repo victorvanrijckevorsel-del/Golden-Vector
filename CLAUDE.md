@@ -86,6 +86,29 @@ Claude Code and Codex are both implementation agents:
 - When both agents review the same code, merge findings into a comparison table, then fix
 - Only exception to "don't change code while reviewing": code literally crashes the app
 
+## Senior engineer coding rules (always apply — Claude AND Codex; both read this file)
+Compact canon. Full rationale + war stories live in `soul.md` and `ARCHITECTURE_FOUNDATIONS.md` — read those before any major feature.
+
+### Where code lives
+- **Backend computes, serve renders.** No arithmetic, ratio math, coalesce/fallback resolution ("official unless missing"), or rank-basis decisions in `serve/` or templates. The model layer emits resolved, display-ready columns; pages only format, and sort on ONE backend-provided rank column. Every new serve surface gets a static-scan guardrail test (clone the Tool-D serve-arithmetic test in `tests/test_workspace_app.py`).
+- **Compute once → persist → serve reads.** Nothing computes in a request path. Stage = read inputs → compute → persisted artifact. Readers resolve through the model-state manifest; outputs are immutable run-stamped files + a `latest` alias; publish is all-or-nothing (a failed build leaves the last good state intact).
+- **One copy of everything.** Grep before writing any helper — check `golden_vector/common/` first. Never fork logic; extend or generalize the existing implementation. Duplicated logic is a latent correctness bug: copies drift and the same data gives different answers on different screens.
+
+### Data integrity
+- **Fail loud on required data; degrade per item on optional data.** Never `except: return empty` on a required input. One bad ticker marks that ticker and continues — it never aborts the build.
+- **Degraded/stale data is EXCLUDED from rankings and confident headlines, not just flagged.** Route it to an explicit degraded state (NA rank, sorts last). Flag-only shipped once and became a review's only HIGH finding — never again.
+- **Every threshold lives once, in config.** No hardcoded constant that duplicates a config value — twins drift.
+- **One normalize boundary** for currency / pence / units / scale. Never an ad-hoc conversion at a call site.
+- **Label every number with its basis.** Gold/price-dependent values carry provenance (`gold_price_used`, basis, date) as real columns. An unlabeled assumption is how the EV/EBITDA confusion happened.
+
+### Quality bar
+- **Tests prove behavior — never pass by accident.** Exclusion tests use an otherwise-healthy subject plus a healthy control row; determinism tests include deliberate ties and NA values; user-facing strings are asserted at render level.
+- **Verify before acting.** Read the current code first; trust no prior review (own or the other agent's) over what the tree says now.
+- **Measure the real run**, never a proxy or harness alone; pipeline stages self-report per-step seconds + row counts.
+- **Simplest design that could work, written first.** Propose it before anything bigger; match rigor to risk.
+- **Industry-standard metrics only** (EV/EBITDA, P/E, FCF yield, Net Debt/EBITDA, AISC) — no invented or opaque composite scores.
+- **Fix bugs and smells now** — "it works for now" is not a deferral reason.
+
 ## Golden Vector hard rules (from the spec)
 1. Do not implement analytics on mixed currencies without explicit normalization
 2. Do not add new horizons ad hoc — modify only through centralized config

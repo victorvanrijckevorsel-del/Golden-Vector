@@ -1,0 +1,30 @@
+# Claude review — Corporate Resilience (Tool D) v2
+
+**Reviewer:** Claude Code (Opus 4.8), first-hand — read the survival-line math in `model/tool_d.py`, the rank rebuild, the live-override path, the serve rendering, and the tests; ran the suite.
+**Scope:** the Corporate Resilience v2 implementation (`model/tool_d.py` +446, `serve/overview_tool_d.py` +315, `config/tool_d.yaml`, `cli.py`, `contracts/config_models.py`, `tests/test_tool_d.py` +151) against `claude_corporate_resilience_v2_plan.md`.
+**Verdict: APPROVE — excellent, faithful implementation.** It does exactly what the plan asked: real gold-stress survival thresholds, a rebuilt resilience rank, a live gold-price lens, and the architecture guardrail honored. Two should-level findings + a couple of nits; none block.
+
+## Verified first-hand
+- **Survival lines correct.** `_threshold_gold` solves `EBITDA(G)=target` from a linear `(slope,intercept)` model. **Interest-cover gold** (⭐ the default line) = `_threshold_gold(target=interest_expense_musd)` — the truest "when do they default" threshold, now used (it was dead data before). **FCF-breakeven** = `AISC + sustaining_capex·1e6/production` with a `max(aisc, …)` floor so it's ≥ breakeven. **Debt-stress gold** = where Net Debt/EBITDA hits the config danger band (N/A for net-cash). **Cost-curve** = AISC percentile. (`tool_d.py:594-637`)
+- **EBITDA model reuses Tool B — no duplication.** The `(slope,intercept)` line is a 2-point fit from `compute_tool_b_in_memory(...)` at spot and an anchor (spot×0.90); the stress just calls the same function at G. The fundamentals live once, in Tool B. (`tool_d.py:104-130,307`)
+- **Resilience Rank rebuilt from resilience components only.** `TOOL_D_RANK_COMPONENTS = {survival_distance_to_interest_cover, cost_curve_aisc_percentile, fragility_ebitda_pct_per_10pct_gold, leverage_stressed_at_g}` — **no EV/EBITDA, no FCF-yield.** The score is a transparent **mean of the component percentiles**, set null unless **all** components are present, and the components are shown as their own columns. (`tool_d.py:70-75,415-426`)
+- **Table leads with survival columns; valuation ratios demoted.** Column order: Rank → Interest-Cover Line → Distance → FCF Breakeven → Debt-Stress → Cost-Curve %ile → Fragility → Leverage@G → Failure Ladder → Flags → Data Status → [the 4 components] → **EV/EBITDA Context, FCF Yield Context** (last, labeled "Context"). Exactly the §3/§4 reframe.
+- **Live override, no pre-compute.** `compute_tool_d_outputs(gold_price=G)` recomputes in-memory and does **not** write parquet (scenario-only; persisted spot untouched); presets are backend-owned (`tool_d_stress_scenario_presets`). The **recompute time is instrumented and shown** ("Scenario recomputed in X.XXs") — the measure-don't-assume rule honored. (`tool_d.py:89-135`, `overview_tool_d.py:62`)
+- **Architecture guardrail honored.** `serve/overview_tool_d.py` does **no** resilience arithmetic (no AISC/EBITDA/debt math) — it reads persisted values or calls `compute_tool_d_outputs`. Confirmed by grep.
+- **Honest limits labeled** ("Simple transparent model. It does not model cash-runway duration, …") — the §6b honesty.
+- **Downstream preserved.** `tool_d_quality_rank/score/tags` are still produced, so the Candidate Finder and the new portfolio analytics (which read those) won't break. (`tool_d.py:63-65,258,425`)
+- **Insufficient-data flagged**, not silently ranked (`_resilience_data_status`: INSUFFICIENT_DATA / _INTEREST_DATA / _EBITDA_MODEL). Strong tests: rank-uses-survival-components, survival-lines-and-order-are-backend, missing-interest-insufficient, ebitda-nonpositive edges, all-missing-leaves-null, reuse-spot-Tool-B, decoy-leverage-ignored. **93 Tool D/config tests pass.**
+
+## Findings
+**F1 — SHOULD: the "Failure Ladder" is ordered backwards for its framing.** `_survival_order_ladder` sorts the lines **ascending** by gold price → "Breakeven $1,130 → FCF $1,460 → Interest cover $2,400". But "order of failure **as gold falls**" (the plan's headline framing, and the column is literally labeled "Failure Ladder") means the **highest** threshold breaks **first**: as gold drops from spot you cross interest-cover ($2,400) first, then FCF, then breakeven. So the displayed order is the reverse of the failure order. **Fix:** sort **descending** (first-to-break first), or relabel to "Survival lines (low→high gold)". (`tool_d.py:733`)
+
+**F2 — SHOULD: the guardrail TEST the plan required is missing.** §5/§7 explicitly called for "a test that asserts the serve layer contains no resilience arithmetic." The guardrail is honored in the code today, but nothing locks it — a future edit could reintroduce AISC/EBITDA math in `serve/` with no test catching it. **Fix:** add the asserting test (e.g., static-scan `serve/overview_tool_d.py` for the formula tokens, or assert the page renders only from `compute_tool_d_outputs`).
+
+**F3 — NIT: Breakeven gold (=AISC) isn't its own headline column.** The plan wanted breakeven *and* FCF-breakeven as headline columns; breakeven currently appears only inside the Failure Ladder string. Consider surfacing it as a column.
+
+**F4 — NIT: no explicit "override doesn't persist the parquet" test.** It's structurally guaranteed (`compute_tool_d_outputs` never writes), but the plan's §7 listed it; a one-line assertion would pin it.
+
+## Bottom line
+A faithful, well-built v2: the survival lines are correct and reuse Tool B (no duplicated fundamentals), interest-cover gold is finally used as the default line, the rank is rebuilt transparently from resilience-only components with valuation ratios demoted to context, the gold-price lens is a live no-precompute override with instrumented timing, the serve layer does zero arithmetic, the honest limits are stated, and downstream consumers are preserved. Fix **F1** (the ladder order — it currently reads backwards) and add **F2** (the guardrail test); **F3/F4** are nits.
+
+_Full suite: **837 passed**, zero failures — the rank rebuild did not break the downstream Candidate Finder or portfolio analytics consumers._

@@ -911,13 +911,14 @@ CandidateOptionsSide = Literal["puts", "calls", "either", "none"]
 class CandidateFinderCriterion(StrictConfigModel):
     id: str = Field(min_length=1)
     label: str = Field(min_length=1)
+    description: str = Field(min_length=1)
     source_field: str = Field(min_length=1)
     group: str = Field(min_length=1)
     default_direction: CandidateCriterionDirection
     unit: str = Field(min_length=1)
     available_now: bool = True
 
-    @field_validator("id", "label", "source_field", "group", "unit")
+    @field_validator("id", "label", "description", "source_field", "group", "unit")
     @classmethod
     def strip_required_text(cls, value: str) -> str:
         cleaned = str(value).strip()
@@ -950,12 +951,15 @@ class CandidateFinderPresetCriterion(StrictConfigModel):
 class CandidateFinderPreset(StrictConfigModel):
     id: str = Field(min_length=1)
     label: str = Field(min_length=1)
+    description: str | None = None
     options_side: CandidateOptionsSide = "either"
     criteria: list[CandidateFinderPresetCriterion] = Field(min_length=1)
 
-    @field_validator("id", "label")
+    @field_validator("id", "label", "description")
     @classmethod
-    def strip_required_text(cls, value: str) -> str:
+    def strip_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         cleaned = str(value).strip()
         if not cleaned:
             raise ValueError("candidate finder preset text fields must not be blank")

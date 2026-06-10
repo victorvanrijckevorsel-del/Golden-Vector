@@ -44,7 +44,8 @@ def test_workspace_root_renders_candidate_finder_outputs(tmp_path):
     assert response["status"].startswith("200")
     assert "Golden Vector Workspace" in response["body"]
     assert "Candidate Finder" in response["body"]
-    assert "Strong Corporate Finance" in response["body"]
+    assert ">Bull</a>" in response["body"]
+    assert ">Bear</a>" in response["body"]
     assert "Full model refresh" in response["body"]
     assert "/ticker/NEM" in response["body"]
     assert "Review next production report" not in response["body"]
@@ -2265,7 +2266,8 @@ def test_workspace_root_renders_candidate_finder_home(tmp_path):
 
     assert root_response["status"].startswith("200")
     assert "Candidate Finder" in root_response["body"]
-    assert "Strong Corporate Finance" in root_response["body"]
+    assert ">Bull</a>" in root_response["body"]
+    assert ">Bear</a>" in root_response["body"]
     assert "Full model refresh" in root_response["body"]
     assert 'class="nav-tab active" href="/"' in root_response["body"]
 
