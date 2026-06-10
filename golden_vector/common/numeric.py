@@ -42,8 +42,11 @@ def require_finite_number(name: str, value: object) -> float:
 def require_finite_positive(name: str, value: object) -> float:
     """Return a finite positive float, raising a clear error otherwise."""
 
-    numeric = require_finite_number(name, value)
-    if numeric <= 0:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be numeric") from exc
+    if not math.isfinite(numeric) or numeric <= 0:
         raise ValueError(f"{name} must be a finite positive number")
     return numeric
 

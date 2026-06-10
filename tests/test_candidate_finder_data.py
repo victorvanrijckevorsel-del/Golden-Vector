@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -28,9 +29,13 @@ from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.screening.manual_store import upsert_company_input
 from golden_vector.screening.schema import TOOL_B_OUTPUT_COLUMNS
 from golden_vector.serve.candidate_finder_data import (
+    CandidateFinderScenario,
+    CandidateFinderScenarioError,
     TOOL_D_FINDER_FIELDS,
+    candidate_finder_result_frame,
     clear_candidate_finder_cache,
     load_candidate_finder_data,
+    parse_candidate_finder_scenario,
     run_candidate_finder_screen,
     _joined_frame,
 )
@@ -374,6 +379,30 @@ def test_candidate_finder_data_blanks_non_spot_tool_d_finder_fields_without_spot
         assert data.frame[column].isna().all(), column
 
 
+def test_candidate_finder_data_blanks_non_spot_tool_b_gold_fields_without_manifest(
+    tmp_path,
+):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    paths.latest_model_state_manifest_path.unlink()
+    non_spot = pd.read_parquet(paths.latest_tool_b_snapshot_parquet_path)
+    non_spot["gold_price_used"] = 3500.0
+    non_spot["spot_gold_usd"] = 4000.0
+    non_spot["gold_price_basis"] = "custom_scenario"
+    non_spot.to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)
+
+    data = load_candidate_finder_data(paths, app_config=app_config)
+
+    assert data.alignment.status in {"WARN", "UNKNOWN"}
+    assert any("Corporate Finance criteria as missing" in item for item in data.alignment.messages)
+    for column in ("ev_ebitda", "forward_pe", "fcf_yield", "margin_pct"):
+        assert data.frame[column].isna().all(), column
+    assert data.frame["aisc_usd_per_oz"].notna().any()
+    assert data.frame["leverage"].notna().any()
+
+
 def test_candidate_finder_data_prefers_spot_tool_d_alias_over_scenario_latest(tmp_path):
     clear_candidate_finder_cache()
     paths = build_test_paths(tmp_path)
@@ -396,6 +425,245 @@ def test_candidate_finder_data_prefers_spot_tool_d_alias_over_scenario_latest(tm
     assert frame.loc["AEM", "tool_d_quality_rank"] == pytest.approx(45.0)
     assert frame.loc["NEM", "tool_d_quality_rank"] == pytest.approx(80.0)
     assert frame.loc["AEM", "interest_cover_gold_usd"] == pytest.approx(1500.0)
+
+
+def test_candidate_finder_scenario_injects_in_memory_tool_b_and_tool_d_without_writes(
+    tmp_path,
+    monkeypatch,
+):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    persisted_tool_b = pd.read_parquet(paths.latest_tool_b_snapshot_parquet_path)
+    persisted_tool_d = pd.read_parquet(paths.latest_tool_d_spot_snapshot_parquet_path)
+
+    def fake_foundation_snapshot(**_kwargs):
+        return SimpleNamespace(
+            gold_history=pd.DataFrame(
+                [{"date": "2026-06-01", "close_usd": 4000.0}]
+            ),
+            normalized_market_snapshots=pd.DataFrame(),
+            refresh_run_id="fresh-foundation",
+            snapshot_as_of_date="2026-06-01",
+        )
+
+    def fake_manual_data(_paths, *, tickers):
+        return SimpleNamespace(company_inputs=pd.DataFrame({"ticker": list(tickers)}))
+
+    def fake_tool_b(**kwargs):
+        gold_price = float(kwargs["gold_price_assumption"])
+        basis = str(kwargs["gold_price_basis"])
+        return pd.DataFrame(
+            [
+                tool_b_output_row(
+                    "AEM",
+                    gold_price_assumption=gold_price,
+                    gold_price_used=gold_price,
+                    spot_gold_usd=4000.0,
+                    spot_gold_date="2026-06-01",
+                    gold_price_basis=basis,
+                    ev_ebitda=9.9,
+                    forward_pe=18.0,
+                    fcf_yield=0.02,
+                    margin_pct=0.42,
+                    snapshot_refresh_run_id="fresh-foundation",
+                    source_run_id="candidate-finder-scenario",
+                ),
+                tool_b_output_row(
+                    "NEM",
+                    gold_price_assumption=gold_price,
+                    gold_price_used=gold_price,
+                    spot_gold_usd=4000.0,
+                    spot_gold_date="2026-06-01",
+                    gold_price_basis=basis,
+                    ev_ebitda=7.7,
+                    forward_pe=16.0,
+                    fcf_yield=0.03,
+                    margin_pct=0.44,
+                    snapshot_refresh_run_id="fresh-foundation",
+                    source_run_id="candidate-finder-scenario",
+                ),
+            ]
+        )
+
+    def fake_tool_d(**kwargs):
+        gold_price = float(kwargs["gold_price"])
+        return pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "tool_d_quality_rank": 12.0,
+                    "interest_cover_gold_usd": 2100.0,
+                    "debt_stress_gold_usd": 2050.0,
+                    "fcf_breakeven_gold_usd": 2200.0,
+                    "cost_curve_aisc_percentile": 55.0,
+                    "gold_price_used": gold_price,
+                    "spot_gold_usd": 4000.0,
+                    "spot_gold_date": "2026-06-01",
+                    "snapshot_refresh_run_id": "fresh-foundation",
+                    "source_run_id": "candidate-finder-scenario",
+                },
+                {
+                    "ticker": "NEM",
+                    "tool_d_quality_rank": 34.0,
+                    "interest_cover_gold_usd": 1900.0,
+                    "debt_stress_gold_usd": 1850.0,
+                    "fcf_breakeven_gold_usd": 2000.0,
+                    "cost_curve_aisc_percentile": 35.0,
+                    "gold_price_used": gold_price,
+                    "spot_gold_usd": 4000.0,
+                    "spot_gold_date": "2026-06-01",
+                    "snapshot_refresh_run_id": "fresh-foundation",
+                    "source_run_id": "candidate-finder-scenario",
+                },
+            ]
+        )
+
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.load_latest_foundation_snapshot",
+        fake_foundation_snapshot,
+    )
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.resolve_current_foundation_manifest_path",
+        lambda _paths, *, require_current_manifest: None,
+    )
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.load_manual_screening_data",
+        fake_manual_data,
+    )
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.compute_tool_b_in_memory",
+        fake_tool_b,
+    )
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.compute_tool_d_outputs",
+        fake_tool_d,
+    )
+
+    data = load_candidate_finder_data(
+        paths,
+        app_config=app_config,
+        scenario=CandidateFinderScenario.from_value(3500.0),
+    )
+    frame = data.frame.set_index("ticker")
+    screen = run_candidate_finder_screen(data, spec={"preset": "bull"})
+    result = candidate_finder_result_frame(screen)
+
+    assert data.scenario_active is True
+    assert data.gold_price_used == pytest.approx(3500.0)
+    assert data.spot_gold_usd == pytest.approx(4000.0)
+    assert data.source_basis == "custom_scenario"
+    assert data.rank_basis == "custom_gold_scenario"
+    assert frame.loc["AEM", "ev_ebitda"] == pytest.approx(9.9)
+    assert frame.loc["AEM", "tool_d_quality_rank"] == pytest.approx(12.0)
+    assert result["gold_price_used"].dropna().eq(3500.0).all()
+    assert result["rank_basis"].dropna().eq("custom_gold_scenario").all()
+    pd.testing.assert_frame_equal(
+        pd.read_parquet(paths.latest_tool_b_snapshot_parquet_path),
+        persisted_tool_b,
+    )
+    pd.testing.assert_frame_equal(
+        pd.read_parquet(paths.latest_tool_d_spot_snapshot_parquet_path),
+        persisted_tool_d,
+    )
+
+
+def test_candidate_finder_scenario_cache_is_keyed_by_gold_price(tmp_path, monkeypatch):
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    calls = {"tool_b": 0, "tool_d": 0}
+
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.load_latest_foundation_snapshot",
+        lambda **_kwargs: SimpleNamespace(
+            gold_history=pd.DataFrame([{"date": "2026-06-01", "close_usd": 4000.0}]),
+            normalized_market_snapshots=pd.DataFrame(),
+            refresh_run_id="fresh-foundation",
+            snapshot_as_of_date="2026-06-01",
+        ),
+    )
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.resolve_current_foundation_manifest_path",
+        lambda _paths, *, require_current_manifest: None,
+    )
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.load_manual_screening_data",
+        lambda _paths, *, tickers: SimpleNamespace(
+            company_inputs=pd.DataFrame({"ticker": list(tickers)})
+        ),
+    )
+
+    def fake_tool_b(**kwargs):
+        calls["tool_b"] += 1
+        return pd.DataFrame(
+            [
+                tool_b_output_row(
+                    "AEM",
+                    gold_price_assumption=float(kwargs["gold_price_assumption"]),
+                    gold_price_used=float(kwargs["gold_price_assumption"]),
+                    spot_gold_usd=4000.0,
+                    gold_price_basis=str(kwargs["gold_price_basis"]),
+                    snapshot_refresh_run_id="fresh-foundation",
+                    source_run_id="candidate-finder-scenario",
+                )
+            ]
+        )
+
+    def fake_tool_d(**kwargs):
+        calls["tool_d"] += 1
+        return pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "tool_d_quality_rank": 20.0,
+                    "interest_cover_gold_usd": 1500.0,
+                    "debt_stress_gold_usd": 1300.0,
+                    "fcf_breakeven_gold_usd": 1700.0,
+                    "cost_curve_aisc_percentile": 40.0,
+                    "gold_price_used": float(kwargs["gold_price"]),
+                    "spot_gold_usd": 4000.0,
+                    "snapshot_refresh_run_id": "fresh-foundation",
+                    "source_run_id": "candidate-finder-scenario",
+                }
+            ]
+        )
+
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.compute_tool_b_in_memory",
+        fake_tool_b,
+    )
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.compute_tool_d_outputs",
+        fake_tool_d,
+    )
+
+    first = load_candidate_finder_data(
+        paths,
+        app_config=app_config,
+        scenario=CandidateFinderScenario.from_value(3500.0),
+    )
+    second = load_candidate_finder_data(
+        paths,
+        app_config=app_config,
+        scenario=CandidateFinderScenario.from_value(3500.0),
+    )
+    third = load_candidate_finder_data(
+        paths,
+        app_config=app_config,
+        scenario=CandidateFinderScenario.from_value(3600.0),
+    )
+
+    assert first is second
+    assert third is not first
+    assert calls == {"tool_b": 2, "tool_d": 2}
+
+
+def test_parse_candidate_finder_scenario_rejects_nonfinite_gold_price():
+    with pytest.raises(CandidateFinderScenarioError):
+        parse_candidate_finder_scenario({"gold_price": ["nan"]})
 
 
 def test_candidate_finder_data_cache_ignores_corrupt_latest_alias_without_manifest(tmp_path):

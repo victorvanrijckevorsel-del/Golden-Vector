@@ -59,7 +59,12 @@ from golden_vector.serve.option_refresh import (
     read_option_refresh_status,
     start_options_refresh,
 )
-from golden_vector.serve.candidate_finder_data import load_candidate_finder_data
+from golden_vector.serve.candidate_finder_data import (
+    CandidateFinderData,
+    CandidateFinderScenarioError,
+    load_candidate_finder_data,
+    parse_candidate_finder_scenario,
+)
 from golden_vector.serve.candidate_finder_page import render_candidate_finder_page
 from golden_vector.serve.overview_option_trading import _render_option_trading_overview_page
 from golden_vector.serve.overview_tool_a import _render_tool_a_overview_page
@@ -101,6 +106,18 @@ def create_workspace_app(
         }
     )
     allowed_tickers = set(normalized_tickers)
+
+    def _candidate_finder_data_for_query(
+        query: dict[str, list[str]],
+    ) -> CandidateFinderData:
+        scenario = parse_candidate_finder_scenario(query)
+        if scenario is None:
+            return load_candidate_finder_data(paths, app_config=app_config)
+        return load_candidate_finder_data(
+            paths,
+            app_config=app_config,
+            scenario=scenario,
+        )
 
     def app(environ: dict[str, Any], start_response: Callable[..., Any]) -> Iterable[bytes]:
         method = str(environ.get("REQUEST_METHOD", "GET")).upper()
@@ -244,10 +261,14 @@ def create_workspace_app(
 
             if method == "GET" and path == "/":
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
-                candidate_data = load_candidate_finder_data(
-                    paths,
-                    app_config=app_config,
-                )
+                try:
+                    candidate_data = _candidate_finder_data_for_query(query)
+                except CandidateFinderScenarioError as exc:
+                    return _html_response(
+                        start_response,
+                        _render_error_page(str(exc)),
+                        status="400 Bad Request",
+                    )
                 return _html_response(
                     start_response,
                     render_candidate_finder_page(
@@ -348,10 +369,14 @@ def create_workspace_app(
 
             if method == "GET" and path == "/candidate-finder":
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
-                candidate_data = load_candidate_finder_data(
-                    paths,
-                    app_config=app_config,
-                )
+                try:
+                    candidate_data = _candidate_finder_data_for_query(query)
+                except CandidateFinderScenarioError as exc:
+                    return _html_response(
+                        start_response,
+                        _render_error_page(str(exc)),
+                        status="400 Bad Request",
+                    )
                 return _html_response(
                     start_response,
                     render_candidate_finder_page(

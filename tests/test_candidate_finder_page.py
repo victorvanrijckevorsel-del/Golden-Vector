@@ -30,6 +30,8 @@ def test_candidate_finder_page_renders_default_bull_screen():
     assert "Universe" in html
     assert "All stocks" in html
     assert "Screen Builder" in html
+    assert "Gold price for ranking" in html
+    assert "Apply Gold Scenario" in html
     assert "Gold Sensitivity" in html
     assert "Corporate Finance" in html
     assert "Options" in html
@@ -78,6 +80,35 @@ def test_candidate_finder_page_custom_query_preserves_side_direction_and_weight(
     assert 'name="weight_up_beta" min="0" max="10" step="0.25" value="2"' in html
     assert "Invalid direction" not in html
     assert "candidate-preset is-active" not in html
+
+
+def test_candidate_finder_page_renders_scenario_status_and_preserves_query():
+    data = _candidate_finder_data()
+    data = CandidateFinderData(
+        frame=data.frame,
+        criteria_config=data.criteria_config,
+        alignment=data.alignment,
+        cache_key=data.cache_key,
+        model_state_manifest=data.model_state_manifest,
+        gold_price_used=3500.0,
+        spot_gold_usd=4000.0,
+        spot_gold_date="2026-06-01",
+        source_basis="custom_scenario",
+        rank_basis="custom_gold_scenario",
+        scenario_requested_gold_price=3500.0,
+        scenario_active=True,
+    )
+
+    html = render_candidate_finder_page(
+        data,
+        query={"preset": ["bear"], "gold_price": ["3500"], "options_side": ["puts"]},
+    )
+
+    assert "Scenario ranks gold-dependent fundamentals at $3,500/oz" in html
+    assert 'name="preset" value="bear"' in html
+    assert 'name="options_side" value="puts"' in html
+    assert 'name="gold_price" min="1" step="1" value="3500"' in html
+    assert "/candidate-finder?preset=bear&amp;options_side=puts" in html
 
 
 def test_candidate_finder_page_bear_screen_has_direction_neutral_copy():
@@ -152,6 +183,22 @@ def test_candidate_finder_route_is_reachable(monkeypatch, tmp_path):
     assert response["status"].startswith("200")
     assert "Candidate Finder" in response["body"]
     assert "Candidate Finder</a>" in response["body"]
+
+
+def test_candidate_finder_route_rejects_nonfinite_gold_price(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path="/candidate-finder?gold_price=inf",
+    )
+
+    assert response["status"].startswith("400")
+    assert "gold_price must be a finite positive number" in response["body"]
 
 
 def _candidate_finder_data() -> CandidateFinderData:
