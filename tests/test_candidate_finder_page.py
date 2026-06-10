@@ -105,6 +105,8 @@ def test_candidate_finder_page_renders_scenario_status_and_preserves_query():
     )
 
     assert "Scenario ranks gold-dependent fundamentals at $3,500/oz" in html
+    assert "/candidate-finder?preset=bull&amp;gold_price=3500" in html
+    assert "/candidate-finder?preset=bear&amp;gold_price=3500" in html
     assert 'name="preset" value="bear"' in html
     assert 'name="options_side" value="puts"' in html
     assert 'name="gold_price" min="1" step="1" value="3500"' in html

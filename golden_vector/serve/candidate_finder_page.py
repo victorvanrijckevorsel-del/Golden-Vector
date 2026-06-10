@@ -65,7 +65,12 @@ def render_candidate_finder_page(
                 return_to=base_path,
             ),
             _render_gold_scenario_control(data, query, base_path=base_path),
-            _render_preset_bar(data, active_preset_id, base_path=base_path),
+            _render_preset_bar(
+                data,
+                active_preset_id,
+                query=query,
+                base_path=base_path,
+            ),
             _render_active_preset_description(data, active_preset_id),
             _render_warning_banner(screen.warnings),
             _render_summary_cards(screen),
@@ -126,11 +131,16 @@ def _render_preset_bar(
     data: CandidateFinderData,
     active_preset_id: str,
     *,
+    query: Mapping[str, Sequence[str]],
     base_path: str,
 ) -> str:
     links: list[str] = []
     for preset in data.criteria_config.presets:
-        href = base_path + "?" + urlencode({"preset": preset.id})
+        href = _preset_href(
+            base_path=base_path,
+            preset_id=preset.id,
+            query=query,
+        )
         active = " is-active" if preset.id == active_preset_id else ""
         links.append(
             (
@@ -143,6 +153,19 @@ def _render_preset_bar(
         + "".join(links)
         + "</div>"
     )
+
+
+def _preset_href(
+    *,
+    base_path: str,
+    preset_id: str,
+    query: Mapping[str, Sequence[str]],
+) -> str:
+    params: list[tuple[str, str]] = [("preset", preset_id)]
+    gold_price = _first(query, "gold_price")
+    if gold_price:
+        params.append(("gold_price", gold_price))
+    return base_path + "?" + urlencode(params)
 
 
 def _render_gold_scenario_control(

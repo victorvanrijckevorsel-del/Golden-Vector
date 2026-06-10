@@ -90,6 +90,7 @@ class CandidateFinderCacheKey:
     tool_d_latest_hash: str | None
     model_state_manifest_hash: str | None = None
     scenario_gold_price: float | None = None
+    scenario_foundation_manifest_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -220,6 +221,16 @@ def load_candidate_finder_data(
     manual_hash = _file_sha256(paths.manual_screening_store_path)
     manual_as_of = _manual_as_of(manual_company)
     options_refresh_run_id = _options_refresh_run_id(option_data)
+    scenario_foundation_manifest_path: Path | None = None
+    scenario_foundation_error: Exception | None = None
+    if scenario is not None:
+        try:
+            scenario_foundation_manifest_path = resolve_current_foundation_manifest_path(
+                paths,
+                require_current_manifest=True,
+            )
+        except Exception as exc:
+            scenario_foundation_error = exc
     cache_key = CandidateFinderCacheKey(
         tool_a_refresh_run_ids=_unique_strings(tool_a, "snapshot_refresh_run_id"),
         tool_b_refresh_run_ids=_unique_strings(tool_b, "snapshot_refresh_run_id"),
@@ -233,6 +244,7 @@ def load_candidate_finder_data(
         tool_d_latest_hash=_file_sha256(tool_d_source_path),
         model_state_manifest_hash=_file_sha256(paths.latest_model_state_manifest_path),
         scenario_gold_price=_cache_gold_price(scenario),
+        scenario_foundation_manifest_hash=_file_sha256(scenario_foundation_manifest_path),
     )
     cached = _cache_get(cache_key)
     if cached is not None:
@@ -242,10 +254,13 @@ def load_candidate_finder_data(
     scenario_requested_gold_price = scenario.gold_price if scenario is not None else None
     if scenario is not None:
         try:
+            if scenario_foundation_error is not None:
+                raise scenario_foundation_error
             scenario_sources = _compute_scenario_sources(
                 paths=paths,
                 app_config=app_config,
                 scenario=scenario,
+                foundation_manifest_path=scenario_foundation_manifest_path,
             )
             tool_b_load = scenario_sources.tool_b
             tool_b = tool_b_load.frame
@@ -937,6 +952,7 @@ def _compute_scenario_sources(
     paths: ProjectPaths,
     app_config: AppConfig,
     scenario: CandidateFinderScenario,
+    foundation_manifest_path: Path | None,
 ) -> _CandidateFinderScenarioSources:
     foundation_snapshot = load_latest_foundation_snapshot(
         paths=paths,
@@ -944,10 +960,7 @@ def _compute_scenario_sources(
         include_gold_history=True,
         include_equity_histories=False,
         include_market_snapshots=True,
-        manifest_path=resolve_current_foundation_manifest_path(
-            paths,
-            require_current_manifest=True,
-        ),
+        manifest_path=foundation_manifest_path,
     )
     spot_gold_usd, spot_gold_date = latest_gold_price_from_history(
         foundation_snapshot.gold_history

@@ -575,6 +575,8 @@ def test_candidate_finder_scenario_cache_is_keyed_by_gold_price(tmp_path, monkey
     app_config = load_app_config(paths).app
     _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
     calls = {"tool_b": 0, "tool_d": 0}
+    foundation_manifest = tmp_path / "foundation-manifest.json"
+    foundation_manifest.write_text("v1", encoding="utf-8")
 
     monkeypatch.setattr(
         "golden_vector.serve.candidate_finder_data.load_latest_foundation_snapshot",
@@ -587,7 +589,7 @@ def test_candidate_finder_scenario_cache_is_keyed_by_gold_price(tmp_path, monkey
     )
     monkeypatch.setattr(
         "golden_vector.serve.candidate_finder_data.resolve_current_foundation_manifest_path",
-        lambda _paths, *, require_current_manifest: None,
+        lambda _paths, *, require_current_manifest: foundation_manifest,
     )
     monkeypatch.setattr(
         "golden_vector.serve.candidate_finder_data.load_manual_screening_data",
@@ -650,7 +652,13 @@ def test_candidate_finder_scenario_cache_is_keyed_by_gold_price(tmp_path, monkey
         app_config=app_config,
         scenario=CandidateFinderScenario.from_value(3500.0),
     )
+    foundation_manifest.write_text("v2", encoding="utf-8")
     third = load_candidate_finder_data(
+        paths,
+        app_config=app_config,
+        scenario=CandidateFinderScenario.from_value(3500.0),
+    )
+    fourth = load_candidate_finder_data(
         paths,
         app_config=app_config,
         scenario=CandidateFinderScenario.from_value(3600.0),
@@ -658,7 +666,8 @@ def test_candidate_finder_scenario_cache_is_keyed_by_gold_price(tmp_path, monkey
 
     assert first is second
     assert third is not first
-    assert calls == {"tool_b": 2, "tool_d": 2}
+    assert fourth is not third
+    assert calls == {"tool_b": 3, "tool_d": 3}
 
 
 def test_parse_candidate_finder_scenario_rejects_nonfinite_gold_price():
