@@ -46,6 +46,7 @@ def fetch_and_publish_fundamentals(
     run_context: RunContext,
     yahoo_client: YahooClient,
     tickers: list[str] | None = None,
+    publish_current: bool = True,
 ) -> FundamentalsFetchResult:
     """Fetch, store, map, and publish official fundamentals artifacts."""
 
@@ -79,11 +80,12 @@ def fetch_and_publish_fundamentals(
         paths=paths,
         frame=raw_frame,
         source_run_id=source_run_id,
+        publish_latest_alias=publish_current,
     )
     raw_run_path = Path(raw_write.run_path)
-    raw_latest_path = Path(raw_write.latest_path)
     run_context.record_artifact(raw_run_path)
-    run_context.record_artifact(raw_latest_path)
+    if raw_write.latest_path is not None:
+        run_context.record_artifact(Path(raw_write.latest_path))
     timings["raw_write_seconds"] = round(perf_counter() - started_at, 3)
     timings["raw_rows"] = raw_write.row_count
 
@@ -106,13 +108,23 @@ def fetch_and_publish_fundamentals(
         paths=paths,
         frame=official,
         source_run_id=source_run_id,
+        publish_latest_alias=publish_current,
     )
     official_run_path = Path(official_write.run_path)
-    official_latest_path = Path(official_write.latest_path)
     run_context.record_artifact(official_run_path)
-    run_context.record_artifact(official_latest_path)
+    if official_write.latest_path is not None:
+        run_context.record_artifact(Path(official_write.latest_path))
     timings["official_write_seconds"] = round(perf_counter() - started_at, 3)
 
+    official_artifact: dict[str, object] = {
+        "path": repo_relative(paths, official_run_path),
+        "row_count": official_write.row_count,
+    }
+    if official_write.latest_path is not None:
+        official_artifact["latest_alias_path"] = repo_relative(
+            paths,
+            Path(official_write.latest_path),
+        )
     manifest = write_fundamentals_fetch_manifest(
         paths=paths,
         source_run_id=source_run_id,
@@ -121,16 +133,14 @@ def fetch_and_publish_fundamentals(
         raw_latest_path=raw_write.latest_path,
         ticker_statuses=ticker_statuses,
         timings=timings,
-        official_artifact={
-            "path": repo_relative(paths, official_run_path),
-            "latest_alias_path": repo_relative(paths, official_latest_path),
-            "row_count": official_write.row_count,
-        },
+        official_artifact=official_artifact,
+        publish_latest_alias=publish_current,
     )
     run_context.record_artifact(
         fundamentals_fetch_manifest_run_stamped_path(paths, source_run_id)
     )
-    run_context.record_artifact(paths.latest_fundamentals_fetch_manifest_path)
+    if publish_current:
+        run_context.record_artifact(paths.latest_fundamentals_fetch_manifest_path)
 
     return FundamentalsFetchResult(
         source_run_id=source_run_id,
@@ -168,14 +178,24 @@ def _fetch_one(
     source_run_id: str,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     ticker = ticker_config.ticker
-    payload = yahoo_client.fetch_financial_statements(ticker)
-    frame = raw_statement_payload_to_frame(
-        ticker=ticker,
-        yahoo_symbol=ticker,
-        payload=payload,
-        fetched_at_utc=fetched_at_utc,
-        source_run_id=source_run_id,
-    )
+    try:
+        payload = yahoo_client.fetch_financial_statements(ticker)
+        frame = raw_statement_payload_to_frame(
+            ticker=ticker,
+            yahoo_symbol=ticker,
+            payload=payload,
+            fetched_at_utc=fetched_at_utc,
+            source_run_id=source_run_id,
+        )
+    except Exception as exc:
+        frame = raw_statement_payload_to_frame(
+            ticker=ticker,
+            yahoo_symbol=ticker,
+            payload={},
+            fetched_at_utc=fetched_at_utc,
+            source_run_id=source_run_id,
+            error_message=f"Yahoo statement fetch failed: {exc}",
+        )
     status = _ticker_status(frame)
     return frame, {
         "ticker": ticker,

@@ -11,6 +11,8 @@ from golden_vector.app.run_pruning import prune_runs
 from golden_vector.contracts.fundamentals import (
     FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
     RAW_FUNDAMENTALS_STATEMENTS_COLUMNS,
+    fetched_fundamentals_latest_path,
+    fundamentals_fetch_manifest_run_stamped_path,
     raw_fundamentals_statements_latest_path,
 )
 from golden_vector.fundamentals.artifacts import load_official_fundamentals
@@ -178,6 +180,72 @@ def test_fetch_stage_persists_raw_then_maps_from_storage(tmp_path):
     }
 
 
+def test_fetch_stage_isolates_per_ticker_statement_exception(tmp_path):
+    paths = build_test_paths(tmp_path)
+    loaded_config = load_app_config(paths)
+    run_context = RunContext.start(
+        paths=paths,
+        command="fetch-fundamentals",
+        parameters={"tickers": ["AEM", "NEM"]},
+        config_hash=loaded_config.config_hash,
+    )
+    fake_client = _FakeYahooClient(
+        {"AEM": _payload(currency="USD")},
+        raised_symbols={"NEM"},
+    )
+
+    result = fetch_and_publish_fundamentals(
+        paths=paths,
+        app_config=loaded_config.app,
+        run_context=run_context,
+        yahoo_client=fake_client,
+        tickers=["AEM", "NEM"],
+    )
+
+    raw = load_raw_fundamentals_statements(paths, source_run_id=result.source_run_id)
+    official = load_official_fundamentals(paths)
+    failed_raw = raw[raw["ticker"].eq("NEM")].iloc[0]
+    assert result.manifest["summary"]["pass_count"] == 1
+    assert result.manifest["summary"]["fail_count"] == 1
+    assert failed_raw["fetch_status"] == "FAIL"
+    assert "Yahoo statement fetch failed" in failed_raw["error_message"]
+    assert set(official["ticker"]) == {"AEM", "NEM"}
+    failed_official = official[official["ticker"].eq("NEM")]
+    assert set(failed_official["value_status"]) == {"MISSING"}
+
+
+def test_partial_fetch_writes_run_stamped_artifacts_without_current_aliases(tmp_path):
+    paths = build_test_paths(tmp_path)
+    loaded_config = load_app_config(paths)
+    run_context = RunContext.start(
+        paths=paths,
+        command="fetch-fundamentals",
+        parameters={"tickers": ["AEM"]},
+        config_hash=loaded_config.config_hash,
+    )
+    fake_client = _FakeYahooClient({"AEM": _payload(currency="USD")})
+
+    result = fetch_and_publish_fundamentals(
+        paths=paths,
+        app_config=loaded_config.app,
+        run_context=run_context,
+        yahoo_client=fake_client,
+        tickers=["AEM"],
+        publish_current=False,
+    )
+
+    raw_path = paths.resolve_repo_relative(result.manifest["raw_statements"]["path"])
+    official_path = paths.resolve_repo_relative(result.manifest["official_artifact"]["path"])
+    assert raw_path.exists()
+    assert official_path.exists()
+    assert fundamentals_fetch_manifest_run_stamped_path(paths, result.source_run_id).exists()
+    assert result.manifest["raw_statements"]["latest_alias_path"] is None
+    assert "latest_alias_path" not in result.manifest["official_artifact"]
+    assert not raw_fundamentals_statements_latest_path(paths).exists()
+    assert not fetched_fundamentals_latest_path(paths).exists()
+    assert not paths.latest_fundamentals_fetch_manifest_path.exists()
+
+
 def test_yahoo_client_fetch_financial_statements_uses_properties_and_returns_currency():
     fake_yf = _FakeYFinance()
     client = YahooClient(yf_module=fake_yf)
@@ -255,10 +323,18 @@ def _payload(*, currency: str) -> dict[str, object]:
 
 
 class _FakeYahooClient:
-    def __init__(self, payloads: dict[str, dict[str, object]]) -> None:
+    def __init__(
+        self,
+        payloads: dict[str, dict[str, object]],
+        *,
+        raised_symbols: set[str] | None = None,
+    ) -> None:
         self._payloads = payloads
+        self._raised_symbols = raised_symbols or set()
 
     def fetch_financial_statements(self, symbol: str) -> dict[str, object]:
+        if symbol in self._raised_symbols:
+            raise RuntimeError(f"boom for {symbol}")
         return self._payloads.get(symbol, {})
 
 

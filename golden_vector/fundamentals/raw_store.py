@@ -30,7 +30,7 @@ RAW_FETCH_STATUS_EMPTY = "EMPTY"
 @dataclass(frozen=True)
 class RawFundamentalsArtifactWrite:
     run_path: str
-    latest_path: str
+    latest_path: str | None
     row_count: int
 
 
@@ -93,6 +93,7 @@ def write_raw_fundamentals_artifact_pair(
     paths: ProjectPaths,
     frame: pd.DataFrame,
     source_run_id: str,
+    publish_latest_alias: bool = True,
 ) -> RawFundamentalsArtifactWrite:
     """Write immutable + latest raw Yahoo fundamentals artifacts."""
 
@@ -100,10 +101,11 @@ def write_raw_fundamentals_artifact_pair(
     run_path = raw_fundamentals_statements_run_stamped_path(paths, source_run_id)
     latest_path = raw_fundamentals_statements_latest_path(paths)
     write_parquet_atomic(normalized, run_path, index=False)
-    write_parquet_atomic(normalized, latest_path, index=False)
+    if publish_latest_alias:
+        write_parquet_atomic(normalized, latest_path, index=False)
     return RawFundamentalsArtifactWrite(
         run_path=run_path.as_posix(),
-        latest_path=latest_path.as_posix(),
+        latest_path=latest_path.as_posix() if publish_latest_alias else None,
         row_count=int(len(normalized.index)),
     )
 
@@ -142,26 +144,31 @@ def write_fundamentals_fetch_manifest(
     source_run_id: str,
     fetched_at_utc: str,
     raw_run_path: str,
-    raw_latest_path: str,
+    raw_latest_path: str | None,
     ticker_statuses: list[dict[str, object]],
     timings: dict[str, object],
     official_artifact: dict[str, object] | None = None,
+    publish_latest_alias: bool = True,
 ) -> dict[str, object]:
     """Write latest + run-stamped fetch manifests for the raw fundamentals stage."""
 
     source_run_id = _require_source_run_id(source_run_id)
     raw_path = paths.resolve_repo_relative(raw_run_path)
-    latest_path = paths.resolve_repo_relative(raw_latest_path)
+    latest_path = paths.resolve_repo_relative(raw_latest_path) if raw_latest_path else None
     payload: dict[str, object] = {
         "manifest_version": FUNDAMENTALS_FETCH_MANIFEST_VERSION,
         "source_run_id": source_run_id,
         "fetched_at_utc": fetched_at_utc,
         "raw_statements": {
             "path": repo_relative(paths, raw_path),
-            "latest_alias_path": repo_relative(paths, latest_path),
+            "latest_alias_path": (
+                repo_relative(paths, latest_path) if latest_path is not None else None
+            ),
             "sha256": sha256_file(raw_path) if raw_path.exists() else None,
             "latest_alias_sha256": (
-                sha256_file(latest_path) if latest_path.exists() else None
+                sha256_file(latest_path)
+                if latest_path is not None and latest_path.exists()
+                else None
             ),
         },
         "official_artifact": official_artifact or {},
@@ -173,7 +180,8 @@ def write_fundamentals_fetch_manifest(
     run_manifest_path = fundamentals_fetch_manifest_run_stamped_path(paths, source_run_id)
     latest_manifest_path = paths.latest_fundamentals_fetch_manifest_path
     atomic_write_text(run_manifest_path, serialized)
-    atomic_write_text(latest_manifest_path, serialized)
+    if publish_latest_alias:
+        atomic_write_text(latest_manifest_path, serialized)
     return payload
 
 

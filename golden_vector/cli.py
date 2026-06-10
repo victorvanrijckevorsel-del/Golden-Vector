@@ -747,6 +747,7 @@ def run_fetch_fundamentals(
     tickers: list[str] | None = None,
 ) -> int:
     loaded_config = load_app_config(paths)
+    publish_current = not tickers
     run_context = RunContext.start(
         paths=paths,
         command="fetch-fundamentals",
@@ -763,24 +764,30 @@ def run_fetch_fundamentals(
             run_context=run_context,
             yahoo_client=yahoo_client,
             tickers=tickers,
+            publish_current=publish_current,
         )
-        model_state = write_current_model_state_manifest(
-            paths=paths,
-            config_hash=loaded_config.config_hash,
-            stage_timings={
-                "fetch_fundamentals": result.manifest.get("stage_timings", {})
-            },
-        )
-        run_context.record_artifact(paths.latest_model_state_manifest_path)
         summary = dict(result.manifest.get("summary") or {})
         summary.update(
             {
                 "source_run_id": result.source_run_id,
                 "raw_row_count": result.raw_row_count,
                 "official_row_count": result.official_row_count,
-                "model_state": model_state.get("state"),
+                "published_current": publish_current,
             }
         )
+        model_state: dict[str, object] | None = None
+        if publish_current:
+            model_state = write_current_model_state_manifest(
+                paths=paths,
+                config_hash=loaded_config.config_hash,
+                stage_timings={
+                    "fetch_fundamentals": result.manifest.get("stage_timings", {})
+                },
+            )
+            run_context.record_artifact(paths.latest_model_state_manifest_path)
+            summary["model_state"] = model_state.get("state")
+        else:
+            summary["model_state"] = "unchanged"
         status = "SUCCESS" if int(summary.get("fail_count") or 0) == 0 else "WARN"
         run_context.finalize(status, summary=summary)
         print(
@@ -791,11 +798,17 @@ def run_fetch_fundamentals(
         )
         print(f"Raw rows: {result.raw_row_count}")
         print(f"Official rows: {result.official_row_count}")
-        print(
-            "Model-state manifest updated: "
-            f"{paths.latest_model_state_manifest_path.relative_to(paths.repo_root).as_posix()} "
-            f"({str(model_state.get('state')).upper()})"
-        )
+        if model_state is not None:
+            print(
+                "Model-state manifest updated: "
+                f"{paths.latest_model_state_manifest_path.relative_to(paths.repo_root).as_posix()} "
+                f"({str(model_state.get('state')).upper()})"
+            )
+        else:
+            print(
+                "Partial fundamentals fetch wrote run-stamped artifacts only; "
+                "current model state was not changed."
+            )
         return 0
     except Exception as exc:
         run_context.finalize("FAIL", summary={"error": str(exc)})

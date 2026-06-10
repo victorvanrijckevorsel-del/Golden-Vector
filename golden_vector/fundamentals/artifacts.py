@@ -23,7 +23,7 @@ from golden_vector.screening.manual_store import FINANCIAL_DUAL_SOURCE_FIELDS
 @dataclass(frozen=True)
 class FetchedFundamentalsArtifactWrite:
     run_path: str
-    latest_path: str
+    latest_path: str | None
     row_count: int
 
 
@@ -32,6 +32,7 @@ def write_fetched_fundamentals_artifact_pair(
     paths: ProjectPaths,
     frame: pd.DataFrame,
     source_run_id: str,
+    publish_latest_alias: bool = True,
 ) -> FetchedFundamentalsArtifactWrite:
     """Write immutable + latest official fundamentals artifacts."""
 
@@ -42,10 +43,11 @@ def write_fetched_fundamentals_artifact_pair(
     run_path = fetched_fundamentals_run_stamped_path(paths, source_run_id)
     latest_path = fetched_fundamentals_latest_path(paths)
     write_parquet_atomic(normalized, run_path, index=False)
-    write_parquet_atomic(normalized, latest_path, index=False)
+    if publish_latest_alias:
+        write_parquet_atomic(normalized, latest_path, index=False)
     return FetchedFundamentalsArtifactWrite(
         run_path=run_path.as_posix(),
-        latest_path=latest_path.as_posix(),
+        latest_path=latest_path.as_posix() if publish_latest_alias else None,
         row_count=int(len(normalized.index)),
     )
 
