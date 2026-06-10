@@ -43,9 +43,10 @@ class _LoadedConfigStub:
         self.config_hash = config_hash
 
 
-def test_tool_b_falls_back_to_config_default_gold_price_when_cli_omits_it(tmp_path, monkeypatch):
-    """The headline ergonomic fix: `python main.py tool-b` (no --gold-price) should
-    pick up the config's `default_gold_price_assumption` instead of erroring out.
+def test_tool_b_prices_at_spot_gold_close_when_cli_omits_gold_price(tmp_path, monkeypatch):
+    """Gold dial M1: `python main.py tool-b` (no --gold-price) prices at the
+    latest daily gold close from the foundation — the config default is no
+    longer consulted for the canonical run.
     """
     paths = build_test_paths(tmp_path)
     real_loaded = load_app_config(ProjectPaths.discover()).app
@@ -59,8 +60,12 @@ def test_tool_b_falls_back_to_config_default_gold_price_when_cli_omits_it(tmp_pa
     captured: dict[str, object] = {}
 
     def fake_pipeline(*, paths, app_config, run_context, normalized_market_snapshots,
-                     gold_price_assumption, snapshot_refresh_run_id, snapshot_as_of_date):
+                     gold_price_assumption, snapshot_refresh_run_id, snapshot_as_of_date,
+                     spot_gold_usd, spot_gold_date, gold_price_basis,
+                     publish_latest_aliases):
         captured["gold_price"] = gold_price_assumption
+        captured["gold_price_basis"] = gold_price_basis
+        captured["publish_latest_aliases"] = publish_latest_aliases
         return type(
             "ToolBResultStub",
             (),
@@ -90,6 +95,9 @@ def test_tool_b_falls_back_to_config_default_gold_price_when_cli_omits_it(tmp_pa
             "normalization_qa_summary": {"overall_status": "PASS"},
             "summary": {},
             "normalized_market_snapshots": pd.DataFrame(),
+            "gold_history": pd.DataFrame(
+                [{"date": "2026-06-09", "close_usd": 4321.5}]
+            ),
         })()
 
     monkeypatch.setattr("golden_vector.cli.load_latest_foundation_snapshot", fake_snapshot)
@@ -97,9 +105,11 @@ def test_tool_b_falls_back_to_config_default_gold_price_when_cli_omits_it(tmp_pa
     exit_code = run_tool_b(paths, gold_price=None)
 
     assert exit_code == 0
-    # Default in shipped config is 4000.
-    assert captured["gold_price"] == real_loaded.screening_params.resolve_gold_price(None)
-    assert captured["gold_price"] == 4000.0
+    assert captured["gold_price"] == 4321.5
+    assert captured["gold_price_basis"] == "latest_daily_gold_close"
+    assert captured["publish_latest_aliases"] is True
+    # The config constant (4000) must no longer leak into the canonical run.
+    assert captured["gold_price"] != real_loaded.screening_params.resolve_gold_price(None)
 
 
 def test_status_command_runs_cleanly_with_no_artifacts(tmp_path, monkeypatch, capsys):

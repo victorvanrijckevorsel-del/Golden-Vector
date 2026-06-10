@@ -59,6 +59,10 @@ def tool_b_output_row(
     sustainable_fcf_musd: float = 180.0,
     fcf_yield: float = 0.18,
     leverage: float = 0.4,
+    gold_price_used: float | None = None,
+    spot_gold_usd: float | None = None,
+    spot_gold_date: str | None = "2026-04-22",
+    gold_price_basis: str = "latest_daily_gold_close",
 ) -> dict[str, object]:
     passed = round((fundamental_check_score / 100.0) * 7)
     total = 7
@@ -90,10 +94,18 @@ def tool_b_output_row(
         if margin_pct is None
         else margin_pct
     )
+    if gold_price_used is None:
+        gold_price_used = gold_price_assumption
+    if spot_gold_usd is None:
+        spot_gold_usd = gold_price_assumption
     return {
         "ticker": ticker,
         "as_of_date": as_of_date,
         "gold_price_assumption": gold_price_assumption,
+        "gold_price_used": gold_price_used,
+        "spot_gold_usd": spot_gold_usd,
+        "spot_gold_date": spot_gold_date,
+        "gold_price_basis": gold_price_basis,
         "layer1_status": "PASS",
         "layer1_pass": True,
         "layer1_fail_reasons": None,

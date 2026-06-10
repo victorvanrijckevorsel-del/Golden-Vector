@@ -36,12 +36,22 @@ REQUIRED_TOOL_B_FUNDAMENTAL_COLUMNS = {
     "fundamental_checks_passed",
     "fundamental_checks_total",
     "fundamental_check_summary",
+    # Spot-gold provenance (Gold dial M1): readers must always know which
+    # gold price a row was computed at and how far that is from spot.
+    "gold_price_used",
+    "spot_gold_usd",
+    "spot_gold_date",
+    "gold_price_basis",
 }
 
 TOOL_B_OUTPUT_COLUMNS = [
     "ticker",
     "as_of_date",
     "gold_price_assumption",
+    "gold_price_used",
+    "spot_gold_usd",
+    "spot_gold_date",
+    "gold_price_basis",
     "layer1_status",
     "layer1_pass",
     "layer1_fail_reasons",

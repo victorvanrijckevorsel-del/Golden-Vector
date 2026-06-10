@@ -489,3 +489,160 @@ def test_compute_tool_b_in_memory_accepts_arbitrary_gold_price_without_persisten
     assert high_nem["gold_price_assumption"] == 4000
     assert high_nem["forward_ebitda_musd"] > low_nem["forward_ebitda_musd"]
     assert not paths.latest_tool_b_snapshot_parquet_path.exists()
+
+
+def test_tool_b_pipeline_persists_spot_gold_provenance(tmp_path):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(ProjectPaths.discover()).app
+    run_context = RunContext.start(
+        paths=paths,
+        command="tool-b",
+        parameters={"gold_price": None},
+        config_hash="hash",
+    )
+    _populate_manual_store(
+        paths,
+        {
+            "NEM": {
+                "production_oz": 6_000_000,
+                "aisc_usd_per_oz": 1300,
+                "cash_cost_usd_per_oz": 900,
+                "royalty_rate": 0.03,
+                "sustaining_capex_musd": 900,
+                "da_musd": 500,
+                "interest_expense_musd": 100,
+                "tax_rate": 0.30,
+                "reserve_life_years": 12,
+                "net_debt_musd": 2000,
+                "ebitda_ltm_musd": 5000,
+            },
+        },
+    )
+
+    execute_tool_b_pipeline(
+        paths=paths,
+        app_config=app_config,
+        run_context=run_context,
+        normalized_market_snapshots=_market_snapshots(),
+        gold_price_assumption=4321.5,
+        snapshot_refresh_run_id="refresh-run",
+        snapshot_as_of_date=date(2026, 6, 9),
+        spot_gold_usd=4321.5,
+        spot_gold_date="2026-06-09",
+        gold_price_basis="latest_daily_gold_close",
+    )
+
+    persisted = pd.read_parquet(paths.latest_tool_b_snapshot_parquet_path)
+    nem = persisted.set_index("ticker").loc["NEM"]
+    assert nem["gold_price_used"] == 4321.5
+    assert nem["spot_gold_usd"] == 4321.5
+    assert nem["spot_gold_date"] == "2026-06-09"
+    assert nem["gold_price_basis"] == "latest_daily_gold_close"
+    # The dial's invariant: the canonical persisted run IS the spot run.
+    assert nem["gold_price_used"] == nem["spot_gold_usd"]
+
+
+def test_tool_b_pipeline_scenario_run_does_not_publish_latest_alias(tmp_path):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(ProjectPaths.discover()).app
+    _populate_manual_store(
+        paths,
+        {
+            "NEM": {
+                "production_oz": 6_000_000,
+                "aisc_usd_per_oz": 1300,
+                "cash_cost_usd_per_oz": 900,
+                "royalty_rate": 0.03,
+                "sustaining_capex_musd": 900,
+                "da_musd": 500,
+                "interest_expense_musd": 100,
+                "tax_rate": 0.30,
+                "reserve_life_years": 12,
+                "net_debt_musd": 2000,
+                "ebitda_ltm_musd": 5000,
+            },
+        },
+    )
+
+    spot_context = RunContext.start(
+        paths=paths, command="tool-b", parameters={"gold_price": None}, config_hash="hash"
+    )
+    execute_tool_b_pipeline(
+        paths=paths,
+        app_config=app_config,
+        run_context=spot_context,
+        normalized_market_snapshots=_market_snapshots(),
+        gold_price_assumption=4321.5,
+        spot_gold_usd=4321.5,
+        spot_gold_date="2026-06-09",
+        gold_price_basis="latest_daily_gold_close",
+    )
+    latest_before = paths.latest_tool_b_snapshot_parquet_path.read_bytes()
+
+    scenario_context = RunContext.start(
+        paths=paths, command="tool-b", parameters={"gold_price": 3000}, config_hash="hash"
+    )
+    execute_tool_b_pipeline(
+        paths=paths,
+        app_config=app_config,
+        run_context=scenario_context,
+        normalized_market_snapshots=_market_snapshots(),
+        gold_price_assumption=3000.0,
+        spot_gold_usd=4321.5,
+        spot_gold_date="2026-06-09",
+        gold_price_basis="custom_scenario",
+        publish_latest_aliases=False,
+    )
+
+    # The latest alias the workspace/Finder read is byte-identical: the
+    # scenario run wrote only run-stamped artifacts.
+    assert paths.latest_tool_b_snapshot_parquet_path.read_bytes() == latest_before
+    scenario_files = list(
+        paths.output_tool_b_dir.glob(f"tool_b_output_{scenario_context.run_id}.parquet")
+    )
+    assert len(scenario_files) == 1
+    scenario_frame = pd.read_parquet(scenario_files[0])
+    assert (scenario_frame["gold_price_basis"] == "custom_scenario").all()
+    assert (scenario_frame["gold_price_used"] == 3000.0).all()
+
+
+def test_compute_tool_b_in_memory_defaults_to_custom_scenario_basis(tmp_path):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(ProjectPaths.discover()).app
+    from golden_vector.screening.manual_data import load_manual_screening_data
+    from golden_vector.screening.pipeline import compute_tool_b_in_memory
+
+    _populate_manual_store(
+        paths,
+        {
+            "NEM": {
+                "production_oz": 6_000_000,
+                "aisc_usd_per_oz": 1300,
+                "cash_cost_usd_per_oz": 900,
+                "royalty_rate": 0.03,
+                "sustaining_capex_musd": 900,
+                "da_musd": 500,
+                "interest_expense_musd": 100,
+                "tax_rate": 0.30,
+                "reserve_life_years": 12,
+                "net_debt_musd": 2000,
+                "ebitda_ltm_musd": 5000,
+            },
+        },
+    )
+    manual_data = load_manual_screening_data(paths, tickers=["NEM"])
+
+    frame = compute_tool_b_in_memory(
+        app_config=app_config,
+        manual_data=manual_data,
+        normalized_market_snapshots=_market_snapshots(),
+        gold_price_assumption=3333.0,
+    )
+
+    nem = frame.set_index("ticker").loc["NEM"]
+    # An in-memory recompute that doesn't say otherwise is a scenario,
+    # never mistakable for the persisted spot run.
+    assert nem["gold_price_basis"] == "custom_scenario"
+    assert nem["gold_price_used"] == 3333.0
+    assert pd.isna(nem["spot_gold_usd"])
+    assert pd.isna(nem["spot_gold_date"])

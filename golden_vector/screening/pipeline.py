@@ -43,6 +43,10 @@ def execute_tool_b_pipeline(
     gold_price_assumption: float,
     snapshot_refresh_run_id: str | None = None,
     snapshot_as_of_date: object = None,
+    spot_gold_usd: float | None = None,
+    spot_gold_date: str | None = None,
+    gold_price_basis: str = "custom_scenario",
+    publish_latest_aliases: bool = True,
 ) -> ToolBExecutionResult:
     tool_b_tickers = _active_tool_b_tickers(app_config)
     manual_data = load_manual_screening_data(
@@ -65,6 +69,9 @@ def execute_tool_b_pipeline(
         snapshot_anchor_date=snapshot_anchor_date,
         snapshot_refresh_run_id=snapshot_refresh_run_id,
         source_run_id=run_context.run_id,
+        spot_gold_usd=spot_gold_usd,
+        spot_gold_date=spot_gold_date,
+        gold_price_basis=gold_price_basis,
     )
 
     tool_b_outputs = _frame_from_rows(rows)
@@ -72,7 +79,7 @@ def execute_tool_b_pipeline(
         paths=paths,
         run_context=run_context,
         tool_b_outputs=tool_b_outputs,
-        publish_latest_aliases=not tool_b_outputs.empty,
+        publish_latest_aliases=publish_latest_aliases and not tool_b_outputs.empty,
     )
 
     verdict_counts = (
@@ -127,6 +134,9 @@ def compute_tool_b_in_memory(
     snapshot_refresh_run_id: str | None = None,
     snapshot_as_of_date: object = None,
     source_run_id: str = "in-memory",
+    spot_gold_usd: float | None = None,
+    spot_gold_date: str | None = None,
+    gold_price_basis: str = "custom_scenario",
 ) -> pd.DataFrame:
     """Run the Tool B math without any persistence.
 
@@ -155,6 +165,9 @@ def compute_tool_b_in_memory(
         snapshot_anchor_date=snapshot_anchor_date,
         snapshot_refresh_run_id=snapshot_refresh_run_id,
         source_run_id=source_run_id,
+        spot_gold_usd=spot_gold_usd,
+        spot_gold_date=spot_gold_date,
+        gold_price_basis=gold_price_basis,
     )
     return _frame_from_rows(rows)
 
@@ -222,6 +235,9 @@ def _build_tool_b_rows(
     snapshot_anchor_date: object,
     snapshot_refresh_run_id: str | None,
     source_run_id: str,
+    spot_gold_usd: float | None = None,
+    spot_gold_date: str | None = None,
+    gold_price_basis: str = "custom_scenario",
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for _, row in merged.iterrows():
@@ -258,6 +274,10 @@ def _build_tool_b_rows(
                 "ticker": ticker,
                 "as_of_date": row["as_of_date"],
                 "gold_price_assumption": gold_price_assumption,
+                "gold_price_used": float(gold_price_assumption),
+                "spot_gold_usd": spot_gold_usd,
+                "spot_gold_date": spot_gold_date,
+                "gold_price_basis": gold_price_basis,
                 "layer1_status": layer1["layer1_status"],
                 "layer1_pass": bool(layer1["layer1_pass"]),
                 "layer1_fail_reasons": layer1["layer1_fail_reasons"],
