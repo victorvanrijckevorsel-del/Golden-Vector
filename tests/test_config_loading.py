@@ -25,6 +25,9 @@ def test_load_app_config_reads_repo_yaml(monkeypatch):
     assert loaded.app.tool_d.version == 2
     assert loaded.app.tool_d.quality_components["leverage_stressed_at_g"] == "low_good"
     assert "tool_d" in loaded.file_hashes
+    assert loaded.app.fundamentals.max_statement_age_days == 540
+    assert loaded.app.fundamentals.ebitda_reconciliation_max_pct == 0.25
+    assert "fundamentals" in loaded.file_hashes
     assert loaded.app.horizons.core_horizons[0] == "5D"
     assert loaded.app.qa.near_zero_gold_return_threshold == 0.005
     assert 4000 in loaded.app.screening_params.gold_price_scenarios

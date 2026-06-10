@@ -59,6 +59,7 @@ from golden_vector.app.run_pruning import PruneReport, prune_runs
 from golden_vector.app.run_context import RunContext, to_jsonable
 from golden_vector.features.horizons import parse_requested_horizons
 from golden_vector.features.returns import RETURN_COLUMNS, compute_horizon_returns_for_ticker
+from golden_vector.fundamentals.fetch import fetch_and_publish_fundamentals
 from golden_vector.hedge.comparison import COMPARISON_SORT_COLUMNS
 from golden_vector.hedge.option_artifact_builder import (
     build_option_artifact_inputs,
@@ -197,6 +198,20 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Gold price G in USD per oz. Defaults to the latest spot gold close.",
+    )
+    fetch_fundamentals_parser = subparsers.add_parser(
+        "fetch-fundamentals",
+        help=(
+            "Fetch Yahoo financial statements into the durable fundamentals store "
+            "and publish the official fundamentals artifact."
+        ),
+    )
+    fetch_fundamentals_parser.add_argument(
+        "--ticker",
+        dest="tickers",
+        action="append",
+        default=None,
+        help="Limit the fetch to one ticker. Can be passed more than once.",
     )
 
     refresh_parser = subparsers.add_parser(
@@ -597,6 +612,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "tool-d":
         return run_tool_d(paths, gold_price=args.gold_price)
 
+    if args.command == "fetch-fundamentals":
+        return run_fetch_fundamentals(paths, tickers=args.tickers)
+
     if args.command == "tool-b":
         return run_tool_b(paths, gold_price=args.gold_price)
 
@@ -721,6 +739,68 @@ def run_options_liquidity_summary(
             f"{call_counts['tradable']} | {call_counts['watch']} | {call_counts['no_trade']}"
         )
     return 0
+
+
+def run_fetch_fundamentals(
+    paths: ProjectPaths,
+    *,
+    tickers: list[str] | None = None,
+) -> int:
+    loaded_config = load_app_config(paths)
+    run_context = RunContext.start(
+        paths=paths,
+        command="fetch-fundamentals",
+        parameters={"tickers": tickers or []},
+        config_hash=loaded_config.config_hash,
+    )
+    try:
+        yahoo_client = YahooClient(
+            retry_policy=retry_policy_from_config(loaded_config.app.market_data)
+        )
+        result = fetch_and_publish_fundamentals(
+            paths=paths,
+            app_config=loaded_config.app,
+            run_context=run_context,
+            yahoo_client=yahoo_client,
+            tickers=tickers,
+        )
+        model_state = write_current_model_state_manifest(
+            paths=paths,
+            config_hash=loaded_config.config_hash,
+            stage_timings={
+                "fetch_fundamentals": result.manifest.get("stage_timings", {})
+            },
+        )
+        run_context.record_artifact(paths.latest_model_state_manifest_path)
+        summary = dict(result.manifest.get("summary") or {})
+        summary.update(
+            {
+                "source_run_id": result.source_run_id,
+                "raw_row_count": result.raw_row_count,
+                "official_row_count": result.official_row_count,
+                "model_state": model_state.get("state"),
+            }
+        )
+        status = "SUCCESS" if int(summary.get("fail_count") or 0) == 0 else "WARN"
+        run_context.finalize(status, summary=summary)
+        print(
+            "Fetched fundamentals: "
+            f"{summary.get('pass_count', 0)} pass, "
+            f"{summary.get('empty_count', 0)} empty, "
+            f"{summary.get('fail_count', 0)} fail."
+        )
+        print(f"Raw rows: {result.raw_row_count}")
+        print(f"Official rows: {result.official_row_count}")
+        print(
+            "Model-state manifest updated: "
+            f"{paths.latest_model_state_manifest_path.relative_to(paths.repo_root).as_posix()} "
+            f"({str(model_state.get('state')).upper()})"
+        )
+        return 0
+    except Exception as exc:
+        run_context.finalize("FAIL", summary={"error": str(exc)})
+        print(f"fetch-fundamentals failed: {exc}")
+        return 1
 
 
 def run_candidate_finder(

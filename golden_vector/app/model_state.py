@@ -639,6 +639,13 @@ def _parquet_artifact(
         snapshot_ids = _metadata_strings(alias_metadata, "snapshot_refresh_run_id")
     artifact["snapshot_refresh_run_ids"] = snapshot_ids
     artifact["source_run_ids"] = source_ids
+    if name == FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME:
+        artifact["fetched_at_utc"] = _clean_string(
+            _first_present(frame, "fetched_at_utc")
+        )
+        value_statuses = _unique_strings(frame, "value_status")
+        if value_statuses:
+            artifact["value_statuses"] = value_statuses
     return artifact
 
 
@@ -883,6 +890,11 @@ def _artifact_health_warnings(artifacts: dict[str, dict[str, Any]]) -> list[str]
         warnings.append("Options phase status is missing.")
     if options_status and options_status == "FAIL":
         warnings.append("Options phase status is FAIL.")
+    fundamentals = artifacts.get(FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME)
+    if isinstance(fundamentals, dict) and fundamentals.get("usable"):
+        statuses = set(fundamentals.get("value_statuses") or [])
+        if "STALE" in statuses:
+            warnings.append("Official fundamentals include stale statement fields.")
     for name in REQUIRED_ARTIFACTS:
         artifact = artifacts[name]
         if (

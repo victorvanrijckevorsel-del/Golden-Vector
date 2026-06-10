@@ -1,0 +1,7 @@
+version: 1
+# Official fundamentals are pulled from Yahoo statements. The pull date is not
+# enough; a fresh fetch can still return an old annual statement.
+max_statement_age_days: 540
+# When Yahoo reports EBITDA and our clean operating-income-plus-D&A estimate is
+# too different, mark the field contaminated instead of ranking on it.
+ebitda_reconciliation_max_pct: 0.25

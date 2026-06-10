@@ -84,6 +84,8 @@ def test_fetched_fundamentals_artifact_is_manifest_resolved_as_optional_immutabl
     assert artifact["required_for_complete"] is False
     assert artifact["immutable"] is True
     assert artifact["schema_version"] == str(FETCHED_FUNDAMENTALS_SCHEMA_VERSION)
+    assert artifact["fetched_at_utc"] == "2026-06-10T12:00:00Z"
+    assert artifact["value_statuses"] == ["OK"]
     assert artifact["source_alias_path"] == "data/output/fundamentals/fetched_fundamentals_latest.parquet"
     assert artifact["path"].startswith(
         "data/output/fundamentals/fetched_fundamentals_latest_"
@@ -105,6 +107,30 @@ def test_missing_official_fundamentals_are_optional_and_load_empty(tmp_path):
     loaded = load_official_fundamentals(paths)
     assert list(loaded.columns) == list(FETCHED_FUNDAMENTALS_COLUMNS)
     assert loaded.empty
+
+
+def test_model_state_warns_when_official_fundamentals_have_stale_fields(tmp_path):
+    paths = build_test_paths(tmp_path)
+    source_run_id = "20260610T120000Z-fetch-fundamentals"
+    write_fetched_fundamentals_artifact_pair(
+        paths=paths,
+        frame=pd.DataFrame(
+            [
+                _official_row(
+                    ticker="AEM",
+                    field_name="net_debt_musd",
+                    value=250.0,
+                    source_run_id=source_run_id,
+                    value_status="STALE",
+                )
+            ]
+        ),
+        source_run_id=source_run_id,
+    )
+
+    payload = write_current_model_state_manifest(paths=paths, config_hash="config-hash")
+
+    assert "Official fundamentals include stale statement fields." in payload["warnings"]
 
 
 def test_official_fundamentals_loader_reads_through_manifest(tmp_path):

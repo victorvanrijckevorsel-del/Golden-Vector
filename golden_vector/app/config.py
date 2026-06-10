@@ -22,6 +22,7 @@ EXPECTED_CONFIG_FILES: tuple[tuple[str, str], ...] = (
     ("hedge_readiness", "hedge_readiness.yaml"),
     ("tool_c", "tool_c.yaml"),
     ("tool_d", "tool_d.yaml"),
+    ("fundamentals", "fundamentals.yaml"),
     ("horizons", "horizons.yaml"),
     ("qa", "qa.yaml"),
     ("scoring", "scoring.yaml"),
