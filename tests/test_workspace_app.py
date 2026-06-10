@@ -2041,6 +2041,65 @@ def test_workspace_tool_b_dial_recompute_shows_timing_and_scenario_basis(tmp_pat
     assert 'name="gold_price" type="number" min="1" step="1" value="3000"' in body
 
 
+def test_workspace_tool_b_market_ours_controls_render_from_backend_columns(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM", "GOLD"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    context = RunContext.start(
+        paths=paths,
+        command="tool-b",
+        parameters={"gold_price": 4000.0},
+        config_hash="hash",
+    )
+    persist_tool_b_outputs(
+        paths=paths,
+        run_context=context,
+        tool_b_outputs=pd.DataFrame(
+            [
+                tool_b_output_row(
+                    "GOLD",
+                    fundamental_check_score=90.0,
+                    fundamental_check_rank=1,
+                    divergent_field_count=0,
+                ),
+                tool_b_output_row(
+                    "NEM",
+                    fundamental_check_score=80.0,
+                    fundamental_check_rank=2,
+                    ev_ebitda=2.4,
+                    ev_ebitda_official=3.2,
+                    ev_ebitda_differs=True,
+                    leverage=0.4,
+                    leverage_official=0.25,
+                    leverage_differs=True,
+                    financial_data_status="OK",
+                    divergent_field_count=2,
+                    max_divergence_pct=1.0,
+                ),
+            ]
+        ),
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["GOLD", "NEM"])
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path="/tool-b?rank_by=official&differences_only=1",
+    )
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "Differences only" in body
+    assert 'value="official" selected>Market</option>' in body
+    assert "Ours 2.4" in body
+    assert "Market 3.2" in body
+    assert "/ticker/NEM" in body
+    assert "/ticker/GOLD" not in body
+
+
 def test_workspace_tool_b_view_renders_screening_parameters_form(tmp_path):
     """The /tool-b view now carries a Screening Parameters panel with 10
     yellow-cell-equivalent inputs so the user can tune scenarios without

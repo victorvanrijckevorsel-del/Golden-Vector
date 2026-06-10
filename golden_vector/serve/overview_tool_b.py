@@ -14,11 +14,13 @@ from golden_vector.app.latest_data import load_latest_foundation_snapshot
 from golden_vector.app.model_state import resolve_current_foundation_manifest_path
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
+from golden_vector.fundamentals.artifacts import load_official_fundamentals
 from golden_vector.model.tool_d import latest_gold_price_from_history
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.pipeline import compute_tool_b_in_memory
 from golden_vector.screening.schema import ToolBStaleSchemaError
 from golden_vector.serve.format_helpers import (
+    _MISSING_SORT_SENTINEL,
     _first_frame_number,
     _first_frame_text,
     _fmt_form_number,
@@ -59,6 +61,48 @@ def _checks_detail_cell(tb: dict[str, Any]) -> str:
     )
 
 
+def _comparison_numeric_td(
+    tb: dict[str, Any],
+    metric_name: str,
+    *,
+    decimals: int,
+) -> str:
+    ours = _optional_float(tb.get(f"{metric_name}_our_view"))
+    if ours is None:
+        ours = _optional_float(tb.get(metric_name))
+    official = _optional_float(tb.get(f"{metric_name}_official"))
+    order_value = _MISSING_SORT_SENTINEL if ours is None else f"{ours}"
+    if _truthy(tb.get(f"{metric_name}_differs")) and official is not None and ours is not None:
+        display = (
+            "<span class=\"market-ours-pair\">"
+            f"<span>Ours {_number_text(ours, decimals=decimals)}</span>"
+            f"<span>Market {_number_text(official, decimals=decimals)}</span>"
+            "</span>"
+        )
+    else:
+        display = _number_text(ours, decimals=decimals)
+    return f"<td data-order=\"{escape(order_value)}\">{display}</td>"
+
+
+def _number_text(value: float | None, *, decimals: int) -> str:
+    if value is None:
+        return "-"
+    return escape(f"{value:,.{decimals}f}")
+
+
+def _truthy(value: object) -> bool:
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return bool(value)
+
+
 def _render_tool_b_overview_page(
     state: WorkspaceState,
     *,
@@ -68,6 +112,8 @@ def _render_tool_b_overview_page(
     paths: ProjectPaths | None = None,
     overrides: ScreeningOverrides | None = None,
     override_error: str | None = None,
+    rank_by: str = "our_view",
+    differences_only: bool = False,
 ) -> str:
     """Tool B focused overview: simple fundamentals and gold-price economics.
 
@@ -78,7 +124,7 @@ def _render_tool_b_overview_page(
     When `overrides.has_any()`, the table is recomputed in memory from
     the current snapshot + manual store with the overlaid screening
     parameters (gold price, thresholds, tier discounts). The persisted
-    parquet is left untouched — overrides are scenario tools.
+    parquet is left untouched; overrides are scenario tools.
     """
     overrides = overrides or ScreeningOverrides()
     note_counts = (
@@ -107,27 +153,48 @@ def _render_tool_b_overview_page(
     gold_price_basis = _first_frame_text(tool_b_frame, "gold_price_basis")
     tool_b_index = _frame_index_by_ticker(tool_b_frame)
     search_term = str(search or "").strip().upper()
+    rank_by = _normalize_rank_by(rank_by)
 
     derived: list[dict[str, Any]] = []
     for ticker in state.tool_b_tickers:
         if search_term and search_term not in ticker:
             continue
         tool_b_row = tool_b_index.get(ticker, {})
+        if differences_only and _optional_float(
+            tool_b_row.get("divergent_field_count")
+        ) in (None, 0.0):
+            continue
+        rank_column = (
+            "fundamental_check_rank_official"
+            if rank_by == "official"
+            else "fundamental_check_rank"
+        )
         derived.append({
             "ticker": ticker,
             "tool_b_row": tool_b_row,
-            "fundamental_check_rank": _optional_float(
-                tool_b_row.get("fundamental_check_rank")
+            "rank_value": _optional_float(tool_b_row.get(rank_column)),
+            "max_divergence_pct": _optional_float(tool_b_row.get("max_divergence_pct")),
+            "divergent_field_count": _optional_float(
+                tool_b_row.get("divergent_field_count")
             ),
             "note_count": int(note_counts.get(ticker, 0)),
         })
-    derived.sort(
-        key=lambda r: (
-            0 if r["fundamental_check_rank"] is not None else 1,
-            r["fundamental_check_rank"] if r["fundamental_check_rank"] is not None else 0.0,
-            r["ticker"],
+    if differences_only:
+        derived.sort(
+            key=lambda r: (
+                0 if r["max_divergence_pct"] is not None else 1,
+                -(r["max_divergence_pct"] or 0.0),
+                r["ticker"],
+            )
         )
-    )
+    else:
+        derived.sort(
+            key=lambda r: (
+                0 if r["rank_value"] is not None else 1,
+                r["rank_value"] if r["rank_value"] is not None else 0.0,
+                r["ticker"],
+            )
+        )
 
     rows_html: list[str] = []
     for row in derived:
@@ -137,7 +204,7 @@ def _render_tool_b_overview_page(
             f"<td><a href=\"/ticker/{escape(row['ticker'])}\">{escape(row['ticker'])}</a></td>"
             f"<td>{_fmt_text(tb.get('screening_verdict'))}</td>"
             f"{_fmt_numeric_td(tb.get('fundamental_check_score'), decimals=1)}"
-            f"{_fmt_numeric_td(row['fundamental_check_rank'], decimals=0)}"
+            f"{_fmt_numeric_td(row['rank_value'], decimals=0)}"
             f"{_fmt_numeric_td(tb.get('share_price_usd'), decimals=2)}"
             f"{_fmt_numeric_td(tb.get('market_cap_musd'), decimals=0)}"
             f"{_fmt_numeric_td(tb.get('enterprise_value_musd'), decimals=0)}"
@@ -146,10 +213,12 @@ def _render_tool_b_overview_page(
             f"{_fmt_numeric_td(tb.get('margin_pct'), decimals=1, as_percent=True)}"
             f"{_fmt_numeric_td(tb.get('forward_ebitda_musd'), decimals=0)}"
             f"{_fmt_numeric_td(tb.get('forward_pe'), decimals=1)}"
-            f"{_fmt_numeric_td(tb.get('ev_ebitda'), decimals=1)}"
+            f"{_comparison_numeric_td(tb, 'ev_ebitda', decimals=1)}"
             f"{_fmt_numeric_td(tb.get('fcf_yield'), decimals=1, as_percent=True)}"
-            f"{_fmt_numeric_td(tb.get('leverage'), decimals=2)}"
+            f"{_comparison_numeric_td(tb, 'leverage', decimals=2)}"
             f"{_fmt_numeric_td(tb.get('reserve_life_years'), decimals=1)}"
+            f"<td>{_fmt_text(tb.get('financial_data_status'))}</td>"
+            f"{_fmt_numeric_td(tb.get('divergent_field_count'), decimals=0)}"
             f"<td>{_fmt_text(tb.get('layer1_status'))}</td>"
             f"{_fmt_numeric_td(row['note_count'], decimals=0)}"
             f"{_checks_detail_cell(tb)}"
@@ -157,7 +226,7 @@ def _render_tool_b_overview_page(
         )
     if not rows_html:
         rows_html.append(
-            "<tr><td colspan=\"19\" class=\"hint\">No tickers match.</td></tr>"
+            "<tr><td colspan=\"21\" class=\"hint\">No tickers match.</td></tr>"
         )
 
     # Filter-bar options derived from the rendered rows.
@@ -170,9 +239,15 @@ def _render_tool_b_overview_page(
     )
 
     body = ["<h1>Corporate Finance</h1>"]
+    gold_basis = _gold_basis_sentence(
+        active_gold=active_gold,
+        spot_gold=spot_gold,
+        spot_gold_date=spot_gold_date,
+        gold_price_basis=gold_price_basis,
+    )
     body.append(
         "<p>Industry-standard corporate finance checks. "
-        f"{_gold_basis_sentence(active_gold=active_gold, spot_gold=spot_gold, spot_gold_date=spot_gold_date, gold_price_basis=gold_price_basis)} "
+        f"{gold_basis} "
         "The score is the number of visible checks passed, not a model target price. "
         "Click a ticker to edit the manual mining inputs.</p>"
     )
@@ -210,6 +285,8 @@ def _render_tool_b_overview_page(
             app_config=app_config,
             overrides=overrides,
             search=search,
+            rank_by=rank_by,
+            differences_only=differences_only,
             active_gold=active_gold,
             spot_gold=spot_gold,
             spot_gold_date=spot_gold_date,
@@ -218,15 +295,29 @@ def _render_tool_b_overview_page(
             app_config=app_config,
             overrides=overrides,
             search=search,
+            rank_by=rank_by,
+            differences_only=differences_only,
         ))
     # Filter form carries hidden override fields so submitting it doesn't
     # silently clear the active scenario. The "Reset" link still drops
     # everything by linking to bare /tool-b.
+    hidden_overrides = _render_overrides_as_hidden_inputs(
+        overrides,
+        rank_by=rank_by,
+        differences_only=differences_only,
+    )
+    search_input = _text_input_label(
+        "Search ticker",
+        name="search",
+        value=search,
+        placeholder="NEM",
+    )
     body.append(
         "<section class=\"panel\">"
         "<form method=\"get\" action=\"/tool-b\" class=\"overview-filters-form\">"
-        f"{_render_overrides_as_hidden_inputs(overrides)}"
-        f"<label><span>Search ticker</span><input name=\"search\" type=\"text\" value=\"{escape(search)}\" placeholder=\"NEM\"></label>"
+        f"{hidden_overrides}"
+        f"{search_input}"
+        f"{_render_rank_controls(rank_by=rank_by, differences_only=differences_only)}"
         "<div class=\"overview-filters-actions\">"
         f"<span class=\"hint\">{len(derived)} tickers shown.</span>"
         "<button type=\"submit\">Apply</button>"
@@ -259,6 +350,8 @@ def _render_tool_b_overview_page(
         "<th data-col-name=\"fcf_yield\" data-sort-numeric>FCF Yield est.</th>"
         "<th data-col-name=\"leverage\" data-sort-numeric>Net Debt/EBITDA</th>"
         "<th data-col-name=\"reserve_life\" data-sort-numeric>Reserve Life</th>"
+        "<th data-col-name=\"financial_data\">Market Data</th>"
+        "<th data-col-name=\"differences\" data-sort-numeric>Differences</th>"
         "<th data-col-name=\"layer1\">Layer 1</th>"
         "<th data-col-name=\"notes\" data-sort-numeric>Notes</th>"
         "<th data-col-name=\"check_summary\">Checks</th>"
@@ -294,7 +387,7 @@ def _resolve_tool_b_frame(
     to spot from the fresh foundation when only thresholds were changed.
     On recompute failure the page falls back to the persisted parquet,
     but `recompute_active` stays False so the UI never claims a live
-    scenario it didn't compute — the dial snaps back to what is shown.
+    scenario it didn't compute; the dial snaps back to what is shown.
     """
     if not overrides.has_any() or app_config is None or paths is None:
         return _ToolBFrameResolution(frame=state.latest_tool_b)
@@ -321,6 +414,7 @@ def _resolve_tool_b_frame(
             paths,
             tickers=state.tool_b_tickers,
         )
+        official_fundamentals = load_official_fundamentals(paths)
         load_seconds = perf_counter() - load_start
         gold_price = (
             float(overrides.gold_price)
@@ -344,6 +438,7 @@ def _resolve_tool_b_frame(
             spot_gold_usd=float(spot_gold_usd),
             spot_gold_date=spot_gold_date,
             gold_price_basis=gold_price_basis,
+            official_fundamentals=official_fundamentals,
         )
         compute_seconds = perf_counter() - compute_start
         if not recomputed.empty and "ticker" in recomputed.columns:
@@ -380,7 +475,7 @@ def _gold_basis_sentence(
             f"${active_gold:,.0f}/oz{dated}."
         )
     spot_part = (
-        f" — spot is ${spot_gold:,.0f}/oz{dated}" if spot_gold is not None else ""
+        f"; spot is ${spot_gold:,.0f}/oz{dated}" if spot_gold is not None else ""
     )
     return (
         f"All gold-dependent estimates are at scenario gold "
@@ -393,6 +488,8 @@ def _render_gold_dial(
     app_config: AppConfig,
     overrides: ScreeningOverrides,
     search: str,
+    rank_by: str,
+    differences_only: bool,
     active_gold: float | None,
     spot_gold: float | None,
     spot_gold_date: str | None,
@@ -406,6 +503,7 @@ def _render_gold_dial(
     carried = _override_query_params(overrides, include_gold=False)
     if search:
         carried["search"] = search
+    _add_view_params(carried, rank_by=rank_by, differences_only=differences_only)
 
     def _href(gold_value: float | None) -> str:
         params = dict(carried)
@@ -465,6 +563,8 @@ def _render_screening_params_form(
     app_config: AppConfig,
     overrides: ScreeningOverrides,
     search: str,
+    rank_by: str,
+    differences_only: bool,
 ) -> str:
     """Render the "Advanced screening assumptions" panel for the Tool B view.
 
@@ -503,7 +603,77 @@ def _render_screening_params_form(
         f"<input type=\"hidden\" name=\"gold_price\" value=\"{_fmt_form_number(overrides.gold_price)}\">"
         if overrides.gold_price is not None else ""
     )
+    view_hidden = _render_view_hidden_inputs(
+        rank_by=rank_by,
+        differences_only=differences_only,
+    )
     open_attr = " open" if overrides.has_non_gold() else ""
+    pe_input = _number_input_label(
+        "Strong P/E cutoff (<)",
+        name="pe_target",
+        value=_fmt_form_number(pe_target),
+        step="0.1",
+        minimum="0.1",
+    )
+    fcf_input = _number_input_label(
+        "Minimum FCF yield (%)",
+        name="fcf_yield_target",
+        value=_as_percent_display(fcf_yield_target),
+        step="0.5",
+        minimum="0",
+    )
+    aisc_input = _number_input_label(
+        "AISC cutoff ($/oz)",
+        name="aisc_target",
+        value=_fmt_form_number(aisc_target),
+        step="10",
+        minimum="1",
+    )
+    margin_input = _number_input_label(
+        "Minimum margin (%)",
+        name="margin_target",
+        value=_as_percent_display(margin_target),
+        step="1",
+        minimum="0",
+    )
+    reserve_input = _number_input_label(
+        "Minimum reserve life (yrs)",
+        name="reserve_life_target",
+        value=_fmt_form_number(reserve_life_target),
+        step="0.5",
+        minimum="0",
+    )
+    leverage_input = _number_input_label(
+        "Net Debt/EBITDA cutoff",
+        name="leverage_target",
+        value=_fmt_form_number(leverage_target),
+        step="0.1",
+        minimum="0",
+    )
+    tier1_input = _number_input_label(
+        "Tier 1 Discount (%)",
+        name="tier1_discount",
+        value=_as_percent_display(tier1),
+        step="1",
+        minimum="0",
+        maximum="100",
+    )
+    tier2_input = _number_input_label(
+        "Tier 2 Discount (%)",
+        name="tier2_discount",
+        value=_as_percent_display(tier2),
+        step="1",
+        minimum="0",
+        maximum="100",
+    )
+    tier3_input = _number_input_label(
+        "Tier 3 Discount (%)",
+        name="tier3_discount",
+        value=_as_percent_display(tier3),
+        step="1",
+        minimum="0",
+        maximum="100",
+    )
 
     return (
         f"<details class=\"panel screening-params advanced-assumptions\"{open_attr}>"
@@ -511,25 +681,17 @@ def _render_screening_params_form(
         "<form method=\"get\" action=\"/tool-b\" class=\"screening-params-form\">"
         f"{search_hidden}"
         f"{gold_hidden}"
+        f"{view_hidden}"
         "<div class=\"screening-params-grid\">"
-        f"<label><span>Strong P/E cutoff (&lt;)</span>"
-        f"<input name=\"pe_target\" type=\"number\" step=\"0.1\" min=\"0.1\" value=\"{_fmt_form_number(pe_target)}\"></label>"
-        f"<label><span>Minimum FCF yield (%)</span>"
-        f"<input name=\"fcf_yield_target\" type=\"number\" step=\"0.5\" min=\"0\" value=\"{_as_percent_display(fcf_yield_target)}\"></label>"
-        f"<label><span>AISC cutoff ($/oz)</span>"
-        f"<input name=\"aisc_target\" type=\"number\" step=\"10\" min=\"1\" value=\"{_fmt_form_number(aisc_target)}\"></label>"
-        f"<label><span>Minimum margin (%)</span>"
-        f"<input name=\"margin_target\" type=\"number\" step=\"1\" min=\"0\" value=\"{_as_percent_display(margin_target)}\"></label>"
-        f"<label><span>Minimum reserve life (yrs)</span>"
-        f"<input name=\"reserve_life_target\" type=\"number\" step=\"0.5\" min=\"0\" value=\"{_fmt_form_number(reserve_life_target)}\"></label>"
-        f"<label><span>Net Debt/EBITDA cutoff</span>"
-        f"<input name=\"leverage_target\" type=\"number\" step=\"0.1\" min=\"0\" value=\"{_fmt_form_number(leverage_target)}\"></label>"
-        f"<label><span>Tier 1 Discount (%)</span>"
-        f"<input name=\"tier1_discount\" type=\"number\" step=\"1\" min=\"0\" max=\"100\" value=\"{_as_percent_display(tier1)}\"></label>"
-        f"<label><span>Tier 2 Discount (%)</span>"
-        f"<input name=\"tier2_discount\" type=\"number\" step=\"1\" min=\"0\" max=\"100\" value=\"{_as_percent_display(tier2)}\"></label>"
-        f"<label><span>Tier 3 Discount (%)</span>"
-        f"<input name=\"tier3_discount\" type=\"number\" step=\"1\" min=\"0\" max=\"100\" value=\"{_as_percent_display(tier3)}\"></label>"
+        f"{pe_input}"
+        f"{fcf_input}"
+        f"{aisc_input}"
+        f"{margin_input}"
+        f"{reserve_input}"
+        f"{leverage_input}"
+        f"{tier1_input}"
+        f"{tier2_input}"
+        f"{tier3_input}"
         "</div>"
         "<div class=\"screening-params-actions\">"
         "<button type=\"submit\">Apply assumptions</button>"
@@ -567,7 +729,7 @@ def _override_query_params(
     The single source for both hidden form inputs and dial preset links,
     so neither surface can silently drop the other's state. Percent-style
     fields are emitted in typed-percent form (15 not 0.15) to match how
-    the form inputs render them — the override parser accepts either.
+    the form inputs render them; the override parser accepts either.
     """
     params: dict[str, str] = {}
     if include_gold and overrides.gold_price is not None:
@@ -581,13 +743,98 @@ def _override_query_params(
     return params
 
 
-def _render_overrides_as_hidden_inputs(overrides: ScreeningOverrides) -> str:
+def _render_overrides_as_hidden_inputs(
+    overrides: ScreeningOverrides,
+    *,
+    rank_by: str,
+    differences_only: bool,
+) -> str:
     """Hidden form fields for every active override.
 
     Used by the search/filter form so submitting it doesn't silently
     clear the screening scenario.
     """
+    params = _override_query_params(overrides)
+    _add_view_params(params, rank_by=rank_by, differences_only=differences_only)
     return "".join(
         f"<input type=\"hidden\" name=\"{escape(name)}\" value=\"{escape(value)}\">"
-        for name, value in _override_query_params(overrides).items()
+        for name, value in params.items()
     )
+
+
+def _render_view_hidden_inputs(*, rank_by: str, differences_only: bool) -> str:
+    params: dict[str, str] = {}
+    _add_view_params(params, rank_by=rank_by, differences_only=differences_only)
+    return "".join(
+        f"<input type=\"hidden\" name=\"{escape(name)}\" value=\"{escape(value)}\">"
+        for name, value in params.items()
+    )
+
+
+def _add_view_params(
+    params: dict[str, str],
+    *,
+    rank_by: str,
+    differences_only: bool,
+) -> None:
+    if rank_by == "official":
+        params["rank_by"] = "official"
+    if differences_only:
+        params["differences_only"] = "1"
+
+
+def _text_input_label(
+    label: str,
+    *,
+    name: str,
+    value: str,
+    placeholder: str = "",
+) -> str:
+    placeholder_attr = (
+        f" placeholder=\"{escape(placeholder)}\"" if placeholder else ""
+    )
+    return (
+        f"<label><span>{escape(label)}</span>"
+        f"<input name=\"{escape(name)}\" type=\"text\" "
+        f"value=\"{escape(value)}\"{placeholder_attr}></label>"
+    )
+
+
+def _number_input_label(
+    label: str,
+    *,
+    name: str,
+    value: str,
+    step: str,
+    minimum: str,
+    maximum: str | None = None,
+) -> str:
+    max_attr = f" max=\"{escape(maximum)}\"" if maximum is not None else ""
+    return (
+        f"<label><span>{escape(label)}</span>"
+        f"<input name=\"{escape(name)}\" type=\"number\" "
+        f"step=\"{escape(step)}\" min=\"{escape(minimum)}\"{max_attr} "
+        f"value=\"{escape(value)}\"></label>"
+    )
+
+
+def _render_rank_controls(*, rank_by: str, differences_only: bool) -> str:
+    official_selected = " selected" if rank_by == "official" else ""
+    our_selected = " selected" if rank_by != "official" else ""
+    checked = " checked" if differences_only else ""
+    return (
+        "<label><span>Rank by</span>"
+        "<select name=\"rank_by\">"
+        f"<option value=\"our_view\"{our_selected}>Our view</option>"
+        f"<option value=\"official\"{official_selected}>Market</option>"
+        "</select></label>"
+        "<label class=\"checkbox-label\">"
+        f"<input type=\"checkbox\" name=\"differences_only\" value=\"1\"{checked}>"
+        "<span>Differences only</span>"
+        "</label>"
+    )
+
+
+def _normalize_rank_by(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return "official" if text in {"official", "market"} else "our_view"

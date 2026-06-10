@@ -5,6 +5,7 @@ import pandas as pd
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
+from golden_vector.fundamentals.artifacts import normalize_fetched_fundamentals_frame
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.screening.manual_store import (
     upsert_company_input,
@@ -59,6 +60,35 @@ def _market_snapshots() -> pd.DataFrame:
                 "shares_outstanding": 1_300_000_000.0,
             },
         ]
+    )
+
+
+def _official_fundamentals_frame(
+    fields_by_ticker: dict[str, dict[str, tuple[float | None, str]]],
+) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for ticker, fields in fields_by_ticker.items():
+        for field_name, (value, status) in fields.items():
+            rows.append(
+                {
+                    "schema_version": 1,
+                    "ticker": ticker,
+                    "field_name": field_name,
+                    "value": value,
+                    "source": "YAHOO",
+                    "source_run_id": "official-run",
+                    "fetched_at_utc": "2026-06-10T12:00:00Z",
+                    "statement_period": "FY2025",
+                    "period_end": date(2025, 12, 31),
+                    "period_type": "ANNUAL",
+                    "statement_currency": "USD",
+                    "statement_scale": "absolute_to_usd_millions",
+                    "value_status": status,
+                }
+            )
+    return normalize_fetched_fundamentals_frame(
+        pd.DataFrame(rows),
+        source_run_id="official-run",
     )
 
 
@@ -395,7 +425,7 @@ def test_compute_tool_b_in_memory_matches_execute_tool_b_pipeline(tmp_path):
 
     snapshots = _market_snapshots()
 
-    # Persistent path — writes parquet but returns the DataFrame.
+    # Persistent path: writes parquet but returns the DataFrame.
     persistent = execute_tool_b_pipeline(
         paths=paths,
         app_config=app_config,
@@ -406,7 +436,7 @@ def test_compute_tool_b_in_memory_matches_execute_tool_b_pipeline(tmp_path):
         snapshot_as_of_date="2026-02-01",
     ).tool_b_outputs
 
-    # In-memory path — no persistence. Must receive identical inputs
+    # In-memory path: no persistence. Must receive identical inputs
     # and use the same source_run_id so the compared DataFrames match
     # on every cell.
     manual_data = load_manual_screening_data(
@@ -432,6 +462,119 @@ def test_compute_tool_b_in_memory_matches_execute_tool_b_pipeline(tmp_path):
     in_memory_sorted = in_memory.sort_values(sort_keys, na_position="last").reset_index(drop=True)
 
     pd.testing.assert_frame_equal(persistent_sorted, in_memory_sorted, check_like=True)
+
+
+def test_compute_tool_b_in_memory_emits_market_vs_ours_comparison(tmp_path):
+    from golden_vector.screening.manual_data import load_manual_screening_data
+    from golden_vector.screening.pipeline import compute_tool_b_in_memory
+
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(ProjectPaths.discover()).app
+    _populate_manual_store(
+        paths,
+        {
+            "NEM": {
+                "production_oz": 6_000_000,
+                "aisc_usd_per_oz": 1300,
+                "cash_cost_usd_per_oz": 900,
+                "royalty_rate": 0.03,
+                "sustaining_capex_musd": 900,
+                "da_musd": 500,
+                "interest_expense_musd": 100,
+                "tax_rate": 0.30,
+                "reserve_life_years": 12,
+                "net_debt_musd": 2000,
+                "ebitda_ltm_musd": 5000,
+            },
+        },
+    )
+    manual_data = load_manual_screening_data(paths, tickers=["NEM"])
+    official = _official_fundamentals_frame(
+        {
+            "NEM": {
+                "net_debt_musd": (1000.0, "OK"),
+                "ebitda_ltm_musd": (4000.0, "OK"),
+                "da_musd": (500.0, "OK"),
+                "interest_expense_musd": (100.0, "OK"),
+            }
+        }
+    )
+
+    frame = compute_tool_b_in_memory(
+        app_config=app_config,
+        manual_data=manual_data,
+        normalized_market_snapshots=_market_snapshots(),
+        gold_price_assumption=4000.0,
+        official_fundamentals=official,
+    )
+
+    nem = frame.set_index("ticker").loc["NEM"]
+    assert nem["leverage_our_view"] == 0.4
+    assert nem["leverage_official"] == 0.25
+    assert bool(nem["leverage_differs"]) is True
+    assert bool(nem["ev_ebitda_differs"]) is True
+    assert nem["financial_data_status"] == "OK"
+    assert nem["divergent_field_count"] == 2
+    assert nem["max_divergence_pct"] == 1.0
+    assert "net_debt_musd" in nem["financial_difference_summary"]
+    assert pd.notna(nem["fundamental_check_score_official"])
+    assert pd.notna(nem["fundamental_check_rank_official"])
+    # Existing columns remain the Our-view aliases for downstream consumers.
+    assert nem["leverage"] == nem["leverage_our_view"]
+    assert nem["ev_ebitda"] == nem["ev_ebitda_our_view"]
+
+
+def test_compute_tool_b_official_rank_excludes_degraded_official_data(tmp_path):
+    from golden_vector.screening.manual_data import load_manual_screening_data
+    from golden_vector.screening.pipeline import compute_tool_b_in_memory
+
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(ProjectPaths.discover()).app
+    _populate_manual_store(
+        paths,
+        {
+            "NEM": {
+                "production_oz": 6_000_000,
+                "aisc_usd_per_oz": 1300,
+                "cash_cost_usd_per_oz": 900,
+                "royalty_rate": 0.03,
+                "sustaining_capex_musd": 900,
+                "da_musd": 500,
+                "interest_expense_musd": 100,
+                "tax_rate": 0.30,
+                "reserve_life_years": 12,
+                "net_debt_musd": 2000,
+                "ebitda_ltm_musd": 5000,
+            },
+        },
+    )
+    manual_data = load_manual_screening_data(paths, tickers=["NEM"])
+    official = _official_fundamentals_frame(
+        {
+            "NEM": {
+                "net_debt_musd": (1000.0, "STALE"),
+                "ebitda_ltm_musd": (4000.0, "OK"),
+                "da_musd": (500.0, "OK"),
+                "interest_expense_musd": (100.0, "OK"),
+            }
+        }
+    )
+
+    frame = compute_tool_b_in_memory(
+        app_config=app_config,
+        manual_data=manual_data,
+        normalized_market_snapshots=_market_snapshots(),
+        gold_price_assumption=4000.0,
+        official_fundamentals=official,
+    )
+
+    nem = frame.set_index("ticker").loc["NEM"]
+    assert nem["financial_data_status"] == "STALE"
+    assert pd.isna(nem["leverage_official"])
+    assert pd.isna(nem["fundamental_check_score_official"])
+    assert pd.isna(nem["fundamental_check_rank_official"])
+    assert nem["divergent_field_count"] == 1
+    assert "net_debt_musd" not in str(nem["financial_difference_summary"])
 
 
 def test_compute_tool_b_in_memory_accepts_arbitrary_gold_price_without_persistence(tmp_path):
@@ -651,7 +794,7 @@ def test_compute_tool_b_in_memory_defaults_to_custom_scenario_basis(tmp_path):
 def test_compute_tool_b_in_memory_dial_moves_only_forward_metrics(tmp_path):
     """The gold dial recomputes forward economics; gold-FIXED columns must
     not move. leverage = net_debt / trailing EBITDA is the root of the
-    'EV/EBITDA vs Leverage' confusion — lock its invariance, and lock that
+    'EV/EBITDA vs Leverage' confusion; lock its invariance, and lock that
     repeated recompute at one price is deterministic (no rank jitter)."""
     paths = build_test_paths(tmp_path)
     app_config = load_app_config(ProjectPaths.discover()).app

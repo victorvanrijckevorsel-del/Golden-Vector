@@ -275,6 +275,34 @@ def test_resolution_keeps_operational_fields_single_source(tmp_path):
     assert row["our_view_source"] == "manual_single_source"
 
 
+def test_resolution_treats_nullable_official_status_as_missing(tmp_path):
+    paths = build_test_paths(tmp_path)
+    manual = bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    official = pd.DataFrame(
+        [
+            _official_row(
+                ticker="AEM",
+                field_name="net_debt_musd",
+                value=250.0,
+                value_status=pd.NA,
+            )
+        ]
+    )
+
+    resolved = resolve_fundamental_layers(
+        company_inputs=manual.company_inputs,
+        official_fundamentals=official,
+    )
+
+    row = resolved[
+        resolved["ticker"].eq("AEM") & resolved["field_name"].eq("net_debt_musd")
+    ].iloc[0]
+    assert row["official_status"] == "MISSING"
+    assert row["our_view_value"] == 250.0
+    assert row["our_view_status"] == "MISSING"
+    assert row["our_view_source"] == "official"
+
+
 def test_official_artifact_write_does_not_touch_manual_store(tmp_path):
     paths = build_test_paths(tmp_path)
     bootstrap_manual_screening_data(paths, tickers=["AEM"])

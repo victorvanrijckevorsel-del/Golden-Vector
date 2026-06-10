@@ -10,6 +10,8 @@ from golden_vector.screening.manual_store import (
     OPERATIONAL_SINGLE_SOURCE_FIELDS,
 )
 
+MANUAL_ONLY_FINANCIAL_FIELDS = frozenset({"tax_rate"})
+
 RESOLVED_FUNDAMENTALS_COLUMNS: tuple[str, ...] = (
     "ticker",
     "field_name",
@@ -60,9 +62,15 @@ def resolve_fundamental_layers(
             )
         for field_name in sorted(FINANCIAL_DUAL_SOURCE_FIELDS):
             official_row = official_lookup.get((ticker, field_name))
-            official_value = _official_value(official_row)
-            official_status = _official_status(official_row)
             manual_value = _manual_value(company_row, field_name)
+            if field_name in MANUAL_ONLY_FINANCIAL_FIELDS:
+                official_value = manual_value
+                official_status = "OK" if pd.notna(manual_value) else "MISSING"
+                official_source = "manual_single_source"
+            else:
+                official_value = _official_value(official_row)
+                official_status = _official_status(official_row)
+                official_source = "official"
             if pd.notna(manual_value):
                 our_value = manual_value
                 our_status = "OK"
@@ -77,7 +85,7 @@ def resolve_fundamental_layers(
                     "field_name": field_name,
                     "official_value": official_value,
                     "official_status": official_status,
-                    "official_source": "official",
+                    "official_source": official_source,
                     "our_view_value": our_value,
                     "our_view_status": our_status,
                     "our_view_source": our_source,
@@ -111,5 +119,8 @@ def _official_value(row: object | None) -> object:
 def _official_status(row: object | None) -> str:
     if row is None:
         return "MISSING"
-    value = str(getattr(row, "value_status", "MISSING") or "MISSING").upper().strip()
+    raw_value = getattr(row, "value_status", "MISSING")
+    if pd.isna(raw_value):
+        return "MISSING"
+    value = str(raw_value).upper().strip()
     return value or "MISSING"

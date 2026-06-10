@@ -296,6 +296,8 @@ def create_workspace_app(
                 state = _load_workspace_state(paths, normalized_tickers)
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 flash = _flash_message(query.get("saved", [""])[0])
+                rank_by = query.get("rank_by", ["our_view"])[0]
+                differences_only = _query_flag(query, "differences_only")
                 try:
                     overrides = parse_query_overrides(query)
                 except ScreeningOverrideError as exc:
@@ -309,6 +311,8 @@ def create_workspace_app(
                             paths=paths,
                             overrides=ScreeningOverrides(),
                             override_error=str(exc),
+                            rank_by=rank_by,
+                            differences_only=differences_only,
                         ),
                         status="400 Bad Request",
                     )
@@ -321,6 +325,8 @@ def create_workspace_app(
                         app_config=app_config,
                         paths=paths,
                         overrides=overrides,
+                        rank_by=rank_by,
+                        differences_only=differences_only,
                     ),
                 )
 
@@ -561,7 +567,7 @@ def create_workspace_app(
                                 form_data.get("verification_status", [""])[0]
                             ).strip().upper()
                             # Only include optional fields when the user actually typed
-                            # something — matches the null-on-blank guard used for the
+                            # something; matches the null-on-blank guard used for the
                             # company and reporting forms.
                             verification_values: dict[str, object] = {}
                             for optional_field in ("source_date", "source_url", "notes"):
@@ -712,6 +718,13 @@ def _safe_return_to(raw_value: object, *, fallback: str = "/option-trading") -> 
     if not value or not value.startswith("/") or value.startswith("//") or "\\" in value:
         return fallback
     return value
+
+
+def _query_flag(query: dict[str, list[str]], name: str) -> bool:
+    values = query.get(name, [])
+    if not values:
+        return False
+    return str(values[0]).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def run_workspace_server(

@@ -107,6 +107,20 @@ def compute_layer2_metrics(
     }
 
 
+def compute_trailing_ev_ebitda(
+    *,
+    enterprise_value_musd: object,
+    ebitda_ltm_musd: object,
+) -> float | None:
+    """Return EV / trailing EBITDA using the same numeric boundary as Layer 2."""
+
+    enterprise_value = _numeric(enterprise_value_musd)
+    ebitda = _numeric(ebitda_ltm_musd)
+    if enterprise_value is None or ebitda is None or ebitda <= 0:
+        return None
+    return enterprise_value / ebitda
+
+
 def _positive_float(value: object) -> float | None:
     numeric = _numeric(value)
     if numeric is None or numeric <= 0:
