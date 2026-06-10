@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from html import escape
+from time import perf_counter
 from typing import Any
+from urllib.parse import urlencode
 
 import pandas as pd
 
@@ -11,9 +14,13 @@ from golden_vector.app.latest_data import load_latest_foundation_snapshot
 from golden_vector.app.model_state import resolve_current_foundation_manifest_path
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
+from golden_vector.model.tool_d import latest_gold_price_from_history
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.pipeline import compute_tool_b_in_memory
+from golden_vector.screening.schema import ToolBStaleSchemaError
 from golden_vector.serve.format_helpers import (
+    _first_frame_number,
+    _first_frame_text,
     _fmt_form_number,
     _fmt_numeric_td,
     _fmt_text,
@@ -82,12 +89,22 @@ def _render_tool_b_overview_page(
 
     # Either use the latest persisted parquet, or recompute in memory if
     # the user passed any URL-param overrides.
-    tool_b_frame, override_runtime_error = _resolve_tool_b_frame(
+    resolution = _resolve_tool_b_frame(
         state=state,
         overrides=overrides,
         app_config=app_config,
         paths=paths,
     )
+    tool_b_frame = resolution.frame
+    override_runtime_error = resolution.runtime_error
+    # The FRAME is the source of truth for what gold price is on screen.
+    # On a failed recompute this self-corrects: the persisted fallback
+    # carries spot, so the dial snaps back instead of showing a price the
+    # table does not reflect.
+    active_gold = _first_frame_number(tool_b_frame, "gold_price_used")
+    spot_gold = _first_frame_number(tool_b_frame, "spot_gold_usd")
+    spot_gold_date = _first_frame_text(tool_b_frame, "spot_gold_date")
+    gold_price_basis = _first_frame_text(tool_b_frame, "gold_price_basis")
     tool_b_index = _frame_index_by_ticker(tool_b_frame)
     search_term = str(search or "").strip().upper()
 
@@ -154,9 +171,9 @@ def _render_tool_b_overview_page(
 
     body = ["<h1>Corporate Finance</h1>"]
     body.append(
-        "<p>Shows industry-standard corporate finance checks at the configured gold-price "
-        "assumption. The score is the number of visible checks passed, not a model target price. "
-        "Forward EBITDA, P/E, and FCF are transparent estimates at that gold price. "
+        "<p>Industry-standard corporate finance checks. "
+        f"{_gold_basis_sentence(active_gold=active_gold, spot_gold=spot_gold, spot_gold_date=spot_gold_date, gold_price_basis=gold_price_basis)} "
+        "The score is the number of visible checks passed, not a model target price. "
         "Click a ticker to edit the manual mining inputs.</p>"
     )
     if flash:
@@ -169,13 +186,34 @@ def _render_tool_b_overview_page(
         body.append(
             "<div class=\"flash flash-error\">"
             f"Could not recompute with overrides: {escape(override_runtime_error)}. "
-            "Showing the last persisted Corporate Finance snapshot."
+            "Showing the last persisted Corporate Finance snapshot at its own gold price."
             "</div>"
+        )
+    if resolution.recompute_active:
+        timing = (
+            f"Scenario recomputed in {resolution.compute_seconds:.2f}s "
+            f"(inputs loaded in {resolution.load_seconds:.2f}s). "
+            if resolution.compute_seconds is not None and resolution.load_seconds is not None
+            else ""
+        )
+        body.append(
+            "<div class=\"flash\"><strong>Scenario active:</strong> "
+            f"{timing}"
+            "Recomputed live from manual data + latest snapshot; the persisted "
+            "spot output was not changed. <a href=\"/tool-b\">Reset to spot</a>.</div>"
         )
     body.append(render_model_state_banner(state.model_state_manifest))
     body.append(_render_provenance_warnings(state))
     body.append(_render_refresh_summary(state.foundation_manifest))
     if app_config is not None:
+        body.append(_render_gold_dial(
+            app_config=app_config,
+            overrides=overrides,
+            search=search,
+            active_gold=active_gold,
+            spot_gold=spot_gold,
+            spot_gold_date=spot_gold_date,
+        ))
         body.append(_render_screening_params_form(
             app_config=app_config,
             overrides=overrides,
@@ -231,24 +269,38 @@ def _render_tool_b_overview_page(
     return _page_shell("Corporate Finance - Golden Vector Workspace", "".join(body), active_nav="tool_b")
 
 
+@dataclass(frozen=True)
+class _ToolBFrameResolution:
+    """What the page renders, plus the honest story of how it got it."""
+
+    frame: pd.DataFrame
+    runtime_error: str | None = None
+    recompute_active: bool = False
+    load_seconds: float | None = None
+    compute_seconds: float | None = None
+
+
 def _resolve_tool_b_frame(
     *,
     state: WorkspaceState,
     overrides: ScreeningOverrides,
     app_config: AppConfig | None,
     paths: ProjectPaths | None,
-) -> tuple[pd.DataFrame, str | None]:
-    """Return (frame, runtime_error_message).
+) -> _ToolBFrameResolution:
+    """Resolve the frame for the Tool B view.
 
-    If no overrides are active, use `state.latest_tool_b` (the persisted
-    parquet). Otherwise, recompute in memory with the overlaid config.
-    On unexpected recompute failure, fall back to the persisted parquet
-    and surface the error message so the user sees what went wrong.
+    No overrides -> the persisted parquet (the canonical spot run).
+    Overrides -> recompute in memory at the dialed gold price, defaulting
+    to spot from the fresh foundation when only thresholds were changed.
+    On recompute failure the page falls back to the persisted parquet,
+    but `recompute_active` stays False so the UI never claims a live
+    scenario it didn't compute — the dial snaps back to what is shown.
     """
     if not overrides.has_any() or app_config is None or paths is None:
-        return state.latest_tool_b, None
+        return _ToolBFrameResolution(frame=state.latest_tool_b)
 
     try:
+        load_start = perf_counter()
         overridden_config = apply_overrides(app_config, overrides)
         foundation_manifest_path = resolve_current_foundation_manifest_path(
             paths,
@@ -257,16 +309,30 @@ def _resolve_tool_b_frame(
         foundation_snapshot = load_latest_foundation_snapshot(
             paths=paths,
             app_config=overridden_config,
-            include_gold_history=False,
+            include_gold_history=True,
             include_equity_histories=False,
             include_market_snapshots=True,
             manifest_path=foundation_manifest_path,
+        )
+        spot_gold_usd, spot_gold_date = latest_gold_price_from_history(
+            foundation_snapshot.gold_history
         )
         manual_data = load_manual_screening_data(
             paths,
             tickers=state.tool_b_tickers,
         )
-        gold_price = overridden_config.screening_params.resolve_gold_price(overrides.gold_price)
+        load_seconds = perf_counter() - load_start
+        gold_price = (
+            float(overrides.gold_price)
+            if overrides.gold_price is not None
+            else float(spot_gold_usd)
+        )
+        gold_price_basis = (
+            "latest_daily_gold_close"
+            if abs(gold_price - float(spot_gold_usd)) <= 0.01
+            else "custom_scenario"
+        )
+        compute_start = perf_counter()
         recomputed = compute_tool_b_in_memory(
             app_config=overridden_config,
             manual_data=manual_data,
@@ -275,12 +341,123 @@ def _resolve_tool_b_frame(
             snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
             snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
             source_run_id="workspace-in-memory",
+            spot_gold_usd=float(spot_gold_usd),
+            spot_gold_date=spot_gold_date,
+            gold_price_basis=gold_price_basis,
         )
+        compute_seconds = perf_counter() - compute_start
         if not recomputed.empty and "ticker" in recomputed.columns:
             recomputed["ticker"] = recomputed["ticker"].astype(str).str.upper()
-        return recomputed, None
-    except Exception as exc:  # broad catch: fall back to persisted parquet
-        return state.latest_tool_b, str(exc)
+        return _ToolBFrameResolution(
+            frame=recomputed,
+            recompute_active=True,
+            load_seconds=load_seconds,
+            compute_seconds=compute_seconds,
+        )
+    except ToolBStaleSchemaError:
+        # Nothing in this path reads a Tool B parquet today, but mirror
+        # the Tool D rule: a stale-schema signal must surface the calm
+        # refresh page, never be swallowed into a silent fallback.
+        raise
+    except Exception as exc:  # broad catch: fall back to persisted parquet, honestly labeled
+        return _ToolBFrameResolution(frame=state.latest_tool_b, runtime_error=str(exc))
+
+
+def _gold_basis_sentence(
+    *,
+    active_gold: float | None,
+    spot_gold: float | None,
+    spot_gold_date: str | None,
+    gold_price_basis: str | None,
+) -> str:
+    """One plain sentence stating which gold price the table is showing."""
+    if active_gold is None:
+        return "Gold-dependent estimates use the gold price recorded in the last run."
+    dated = f" (close {escape(spot_gold_date)})" if spot_gold_date else ""
+    if gold_price_basis == "latest_daily_gold_close":
+        return (
+            f"All gold-dependent estimates are at spot gold "
+            f"${active_gold:,.0f}/oz{dated}."
+        )
+    spot_part = (
+        f" — spot is ${spot_gold:,.0f}/oz{dated}" if spot_gold is not None else ""
+    )
+    return (
+        f"All gold-dependent estimates are at scenario gold "
+        f"${active_gold:,.0f}/oz{spot_part}."
+    )
+
+
+def _render_gold_dial(
+    *,
+    app_config: AppConfig,
+    overrides: ScreeningOverrides,
+    search: str,
+    active_gold: float | None,
+    spot_gold: float | None,
+    spot_gold_date: str | None,
+) -> str:
+    """The page's primary control: one gold price for the whole table.
+
+    Presets = Spot (dated) + the configured scenario ladder. Preset links
+    carry the active search and any advanced-assumption overrides so
+    moving the dial never silently resets them.
+    """
+    carried = _override_query_params(overrides, include_gold=False)
+    if search:
+        carried["search"] = search
+
+    def _href(gold_value: float | None) -> str:
+        params = dict(carried)
+        if gold_value is not None:
+            params["gold_price"] = f"{gold_value:g}"
+        return "/tool-b" + (f"?{urlencode(params)}" if params else "")
+
+    links: list[str] = []
+    if spot_gold is not None:
+        dated = f" (close {spot_gold_date})" if spot_gold_date else ""
+        spot_active = (
+            " active"
+            if active_gold is not None and abs(active_gold - spot_gold) <= 0.01
+            else ""
+        )
+        links.append(
+            f"<a class=\"button-like{spot_active}\" href=\"{escape(_href(None))}\">"
+            f"Spot ${spot_gold:,.0f}{escape(dated)}</a>"
+        )
+    for scenario in app_config.screening_params.gold_price_scenarios:
+        preset_active = (
+            " active"
+            if active_gold is not None and abs(active_gold - float(scenario)) <= 0.01
+            else ""
+        )
+        links.append(
+            f"<a class=\"button-like{preset_active}\" href=\"{escape(_href(float(scenario)))}\">"
+            f"${scenario:,.0f}</a>"
+        )
+
+    custom_value = "" if active_gold is None else f"{active_gold:.0f}"
+    carried_hidden = "".join(
+        f"<input type=\"hidden\" name=\"{escape(name)}\" value=\"{escape(value)}\">"
+        for name, value in carried.items()
+    )
+    return (
+        "<section class=\"panel gold-dial\">"
+        "<h2>Gold price</h2>"
+        "<form method=\"get\" action=\"/tool-b\" class=\"gold-dial-form\">"
+        f"{carried_hidden}"
+        f"<label><span>Custom gold price ($/oz)</span>"
+        f"<input name=\"gold_price\" type=\"number\" min=\"1\" step=\"1\" value=\"{escape(custom_value)}\"></label>"
+        "<div class=\"overview-filters-actions\">"
+        f"{''.join(links)}"
+        "<button type=\"submit\">Apply</button>"
+        f"<a class=\"hint\" href=\"{escape(_href(None))}\">Reset to spot</a>"
+        "</div>"
+        "</form>"
+        "<p class=\"hint\">Moving the dial recomputes and re-ranks the whole table live. "
+        "Nothing is saved; the nightly run always prices at spot.</p>"
+        "</section>"
+    )
 
 
 def _render_screening_params_form(
@@ -289,17 +466,17 @@ def _render_screening_params_form(
     overrides: ScreeningOverrides,
     search: str,
 ) -> str:
-    """Render the "Screening Parameters" form panel for the Tool B view.
+    """Render the "Advanced screening assumptions" panel for the Tool B view.
 
     Mirrors the yellow-highlighted cells of the friend's Excel
-    `Summary & Parameters` sheet: gold price, six Layer 1 thresholds and
-    the three jurisdiction tier discounts. Values pre-fill from either
-    the active overrides (if any) or the YAML defaults.
+    `Summary & Parameters` sheet: six Layer 1 thresholds and the three
+    jurisdiction tier discounts. The gold price moved to the primary
+    dial panel; this panel stays collapsed unless a threshold override
+    is active. Values pre-fill from either the active overrides (if
+    any) or the YAML defaults.
     """
     sp = app_config.screening_params
-    current_gold = sp.resolve_gold_price(None)
 
-    gold_price_value = overrides.gold_price if overrides.gold_price is not None else current_gold
     pe_target = overrides.verdict.get("strong_candidate_forward_pe_max",
                                        sp.verdict_thresholds.strong_candidate_forward_pe_max)
     fcf_yield_target = overrides.layer1.get("fcf_yield_min", sp.layer1_thresholds.fcf_yield_min)
@@ -311,34 +488,30 @@ def _render_screening_params_form(
     tier2 = overrides.jurisdiction.get("tier_2", sp.jurisdiction_discounts.tier_2)
     tier3 = overrides.jurisdiction.get("tier_3", sp.jurisdiction_discounts.tier_3)
 
-    active_banner = ""
-    if overrides.has_any():
-        active_banner = (
-            "<p class=\"hint\"><strong>Scenario active:</strong> recomputing live from manual "
-            "data + latest snapshot. YAML defaults and persisted parquet are unchanged. "
-            "<a href=\"/tool-b\">Clear overrides</a>.</p>"
-        )
-
     # Percent-valued fields display the typed percent (15 for 15%) rather
     # than the fraction (0.15). The override parser accepts either.
     def _as_percent_display(fraction: float) -> str:
         return f"{fraction * 100:g}"
 
-    # Carry the search term through the form so the user doesn't lose it.
+    # Carry the search term and the active dial price through the form so
+    # applying a threshold doesn't silently reset either.
     search_hidden = (
         f"<input type=\"hidden\" name=\"search\" value=\"{escape(search)}\">"
         if search else ""
     )
+    gold_hidden = (
+        f"<input type=\"hidden\" name=\"gold_price\" value=\"{_fmt_form_number(overrides.gold_price)}\">"
+        if overrides.gold_price is not None else ""
+    )
+    open_attr = " open" if overrides.has_non_gold() else ""
 
     return (
-        "<section class=\"panel screening-params\">"
-        "<h2>Screening Parameters</h2>"
-        f"{active_banner}"
+        f"<details class=\"panel screening-params advanced-assumptions\"{open_attr}>"
+        "<summary><h2>Advanced screening assumptions</h2></summary>"
         "<form method=\"get\" action=\"/tool-b\" class=\"screening-params-form\">"
         f"{search_hidden}"
+        f"{gold_hidden}"
         "<div class=\"screening-params-grid\">"
-        f"<label><span>Gold Price ($/oz)</span>"
-        f"<input name=\"gold_price\" type=\"number\" step=\"1\" min=\"1\" value=\"{_fmt_form_number(gold_price_value)}\"></label>"
         f"<label><span>Strong P/E cutoff (&lt;)</span>"
         f"<input name=\"pe_target\" type=\"number\" step=\"0.1\" min=\"0.1\" value=\"{_fmt_form_number(pe_target)}\"></label>"
         f"<label><span>Minimum FCF yield (%)</span>"
@@ -359,11 +532,11 @@ def _render_screening_params_form(
         f"<input name=\"tier3_discount\" type=\"number\" step=\"1\" min=\"0\" max=\"100\" value=\"{_as_percent_display(tier3)}\"></label>"
         "</div>"
         "<div class=\"screening-params-actions\">"
-        "<button type=\"submit\">Apply scenario</button>"
+        "<button type=\"submit\">Apply assumptions</button>"
         "<a class=\"hint\" href=\"/tool-b\">Reset all</a>"
         "</div>"
         "</form>"
-        "</section>"
+        "</details>"
     )
 
 
@@ -384,27 +557,37 @@ _OVERRIDE_PARAM_NAMES: tuple[tuple[str, str, str, bool], ...] = (
 )
 
 
-def _render_overrides_as_hidden_inputs(overrides: ScreeningOverrides) -> str:
-    """Hidden form fields for every active override.
+def _override_query_params(
+    overrides: ScreeningOverrides,
+    *,
+    include_gold: bool = True,
+) -> dict[str, str]:
+    """Active overrides as URL-param name -> display value.
 
-    Used by the search/filter form so submitting it doesn't silently
-    clear the screening scenario. Percent-style fields are emitted in
-    typed-percent form (15 not 0.15) to match how the form input renders
-    them — the override parser accepts either, but keeping the form
-    round-trip consistent makes the URL state visible to the user.
+    The single source for both hidden form inputs and dial preset links,
+    so neither surface can silently drop the other's state. Percent-style
+    fields are emitted in typed-percent form (15 not 0.15) to match how
+    the form inputs render them — the override parser accepts either.
     """
-    parts: list[str] = []
-    if overrides.gold_price is not None:
-        parts.append(
-            f"<input type=\"hidden\" name=\"gold_price\" value=\"{_fmt_form_number(overrides.gold_price)}\">"
-        )
+    params: dict[str, str] = {}
+    if include_gold and overrides.gold_price is not None:
+        params["gold_price"] = _fmt_form_number(overrides.gold_price)
     for attr_name, dict_key, param_name, is_percent in _OVERRIDE_PARAM_NAMES:
         bucket = getattr(overrides, attr_name)
         if dict_key not in bucket:
             continue
         value = bucket[dict_key]
-        display = f"{value * 100:g}" if is_percent else _fmt_form_number(value)
-        parts.append(
-            f"<input type=\"hidden\" name=\"{escape(param_name)}\" value=\"{escape(display)}\">"
-        )
-    return "".join(parts)
+        params[param_name] = f"{value * 100:g}" if is_percent else _fmt_form_number(value)
+    return params
+
+
+def _render_overrides_as_hidden_inputs(overrides: ScreeningOverrides) -> str:
+    """Hidden form fields for every active override.
+
+    Used by the search/filter form so submitting it doesn't silently
+    clear the screening scenario.
+    """
+    return "".join(
+        f"<input type=\"hidden\" name=\"{escape(name)}\" value=\"{escape(value)}\">"
+        for name, value in _override_query_params(overrides).items()
+    )

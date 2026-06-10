@@ -57,6 +57,14 @@ class ScreeningOverrides:
             or bool(self.jurisdiction)
         )
 
+    def has_non_gold(self) -> bool:
+        """True when any threshold/jurisdiction override is active.
+
+        The gold dial is the page's primary control; the advanced
+        assumptions panel only auto-opens for these.
+        """
+        return bool(self.layer1) or bool(self.verdict) or bool(self.jurisdiction)
+
 
 class ScreeningOverrideError(ValueError):
     """Raised when a URL param fails validation."""

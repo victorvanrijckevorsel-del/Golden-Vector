@@ -255,3 +255,32 @@ def _coerce_form_numeric(value: str) -> float | None:
 def _coerce_form_text(value: str) -> str | None:
     text = str(value).strip()
     return text or None
+
+
+def _first_frame_number(frame: pd.DataFrame, column: str) -> float | None:
+    """First non-null numeric value of a column, or None.
+
+    Shared by the Tool B and Tool D overview pages to derive the
+    displayed gold price from the rendered frame's provenance columns —
+    the frame, not the request, is the source of truth for what is shown.
+    """
+    if frame.empty or column not in frame.columns:
+        return None
+    series = frame[column].dropna()
+    if series.empty:
+        return None
+    try:
+        return float(series.iloc[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_frame_text(frame: pd.DataFrame, column: str) -> str | None:
+    """First non-null value of a column as text, or None."""
+    if frame.empty or column not in frame.columns:
+        return None
+    series = frame[column].dropna()
+    if series.empty:
+        return None
+    text = str(series.iloc[0]).strip()
+    return text or None

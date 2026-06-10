@@ -1983,6 +1983,63 @@ def test_workspace_tool_d_serve_layer_has_no_resilience_arithmetic():
         assert forbidden not in source
 
 
+def test_workspace_tool_b_serve_layer_has_no_financial_arithmetic():
+    """The Tool B page renders backend-resolved columns only. No ratio
+    math, no coalesce/fallback resolution, and no config-gold fallback may
+    creep into serve — the gold dial's correctness depends on the page
+    showing exactly what the one Tool B model computed (gold-dial plan,
+    Codex MEDIUM 4)."""
+    source = Path("golden_vector/serve/overview_tool_b.py").read_text(encoding="utf-8")
+
+    # The page must call the ONE Tool B model and the shared spot resolver.
+    assert "compute_tool_b_in_memory" in source
+    assert "latest_gold_price_from_history" in source
+    for forbidden in (
+        # Config-gold fallback: the dial prices at spot or an explicit
+        # request, never the config constant.
+        "resolve_gold_price",
+        # Formula tokens: any of these in serve means forked Tool B math.
+        "production_oz *",
+        "* production_oz",
+        "- aisc_usd_per_oz",
+        "aisc_usd_per_oz -",
+        "net_debt_musd /",
+        "+ net_debt_musd",
+        "market_cap_musd +",
+        "/ forward_ebitda_musd",
+        "/ ebitda",
+        # Coalesce/fallback resolution belongs in the backend bundle.
+        ".fillna(",
+        ".combine_first(",
+    ):
+        assert forbidden not in source, forbidden
+
+
+def test_workspace_tool_b_dial_recompute_shows_timing_and_scenario_basis(tmp_path):
+    """Moving the dial recomputes live: the page must show the instrumented
+    timing message and state the scenario basis with spot alongside."""
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/tool-b?gold_price=3000")
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "Scenario active" in body
+    assert "Scenario recomputed in" in body
+    assert "inputs loaded in" in body
+    assert "are at scenario gold $3,000/oz" in body
+    # Spot preset stays visible (dated) so the user can always get back.
+    assert "Reset to spot" in body
+    # The dial input reflects the active scenario price.
+    assert 'name="gold_price" type="number" min="1" step="1" value="3000"' in body
+
+
 def test_workspace_tool_b_view_renders_screening_parameters_form(tmp_path):
     """The /tool-b view now carries a Screening Parameters panel with 10
     yellow-cell-equivalent inputs so the user can tune scenarios without
@@ -1999,8 +2056,13 @@ def test_workspace_tool_b_view_renders_screening_parameters_form(tmp_path):
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert "Screening Parameters" in body
-    # All ten inputs must be present in the form.
+    # The gold dial is the primary control; thresholds live in a collapsed
+    # advanced panel (gold dial M1).
+    assert "Gold price" in body
+    assert "Advanced screening assumptions" in body
+    assert '<details class="panel screening-params advanced-assumptions">' in body
+    assert '<details class="panel screening-params advanced-assumptions" open>' not in body
+    # All ten inputs must be present on the page (gold in the dial panel).
     for param in [
         "gold_price", "pe_target", "fcf_yield_target", "aisc_target",
         "margin_target", "reserve_life_target", "leverage_target",
@@ -2128,9 +2190,47 @@ def test_workspace_tool_b_override_refuses_latest_foundation_when_model_state_co
     )
 
     assert response["status"].startswith("200")
-    assert "Scenario active" in response["body"]
-    assert "Could not recompute with overrides" in response["body"]
-    assert "does not expose a usable immutable foundation artifact" in response["body"]
+    body = response["body"]
+    # Fail closed and say so honestly: the page must NOT claim a live
+    # scenario it could not compute. With the model state corrupt there is
+    # no trusted persisted basis either, so the dial input stays empty
+    # rather than echoing the requested (uncomputed) 4500.
+    assert "Scenario active" not in body
+    assert "Could not recompute with overrides" in body
+    assert "does not expose a usable immutable foundation artifact" in body
+    assert 'name="gold_price" type="number" min="1" step="1" value=""' in body
+
+
+def test_workspace_tool_b_failed_recompute_snaps_dial_back_to_persisted_spot(tmp_path):
+    """When the recompute fails but the persisted spot frame is intact, the
+    dial must snap back to the gold price of the frame actually shown
+    (4000 in fixtures) — never display the requested-but-uncomputed price
+    over spot rows. This is the fail-closed contract from the gold-dial
+    plan (Codex MEDIUM 3)."""
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    # Break ONLY the foundation snapshot the recompute needs; the
+    # persisted Tool B parquet and model state stay healthy.
+    market_snapshot_path = (
+        paths.runs_dir / "refresh-run" / "snapshots" / "market_snapshots_usd.parquet"
+    )
+    market_snapshot_path.write_text("not parquet", encoding="utf-8")
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/tool-b?gold_price=4500")
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "Scenario active" not in body
+    assert "Could not recompute with overrides" in body
+    # The dial reflects the persisted frame (spot 4000), not the request.
+    assert 'name="gold_price" type="number" min="1" step="1" value="4000"' in body
+    # And the page states the basis it is actually showing.
+    assert "All gold-dependent estimates are at spot gold $4,000/oz (close 2026-04-22)." in body
 
 
 def test_workspace_root_renders_candidate_finder_home(tmp_path):

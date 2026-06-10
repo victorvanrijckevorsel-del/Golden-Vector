@@ -646,3 +646,69 @@ def test_compute_tool_b_in_memory_defaults_to_custom_scenario_basis(tmp_path):
     assert nem["gold_price_used"] == 3333.0
     assert pd.isna(nem["spot_gold_usd"])
     assert pd.isna(nem["spot_gold_date"])
+
+
+def test_compute_tool_b_in_memory_dial_moves_only_forward_metrics(tmp_path):
+    """The gold dial recomputes forward economics; gold-FIXED columns must
+    not move. leverage = net_debt / trailing EBITDA is the root of the
+    'EV/EBITDA vs Leverage' confusion — lock its invariance, and lock that
+    repeated recompute at one price is deterministic (no rank jitter)."""
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(ProjectPaths.discover()).app
+    from golden_vector.screening.manual_data import load_manual_screening_data
+    from golden_vector.screening.pipeline import compute_tool_b_in_memory
+
+    _populate_manual_store(
+        paths,
+        {
+            "NEM": {
+                "production_oz": 6_000_000,
+                "aisc_usd_per_oz": 1300,
+                "cash_cost_usd_per_oz": 900,
+                "royalty_rate": 0.03,
+                "sustaining_capex_musd": 900,
+                "da_musd": 500,
+                "interest_expense_musd": 100,
+                "tax_rate": 0.30,
+                "reserve_life_years": 12,
+                "net_debt_musd": 2000,
+                "ebitda_ltm_musd": 5000,
+            },
+            "GOLD": {
+                "production_oz": 4_000_000,
+                "aisc_usd_per_oz": 1500,
+                "cash_cost_usd_per_oz": 1000,
+                "royalty_rate": 0.02,
+                "sustaining_capex_musd": 650,
+                "da_musd": 350,
+                "interest_expense_musd": 80,
+                "tax_rate": 0.28,
+                "reserve_life_years": 10,
+                "net_debt_musd": 1500,
+                "ebitda_ltm_musd": 4200,
+            },
+        },
+    )
+    manual_data = load_manual_screening_data(paths, tickers=["GOLD", "NEM"])
+
+    def _run(gold: float) -> pd.DataFrame:
+        return compute_tool_b_in_memory(
+            app_config=app_config,
+            manual_data=manual_data,
+            normalized_market_snapshots=_market_snapshots(),
+            gold_price_assumption=gold,
+        )
+
+    low, high = _run(3000.0), _run(4500.0)
+    low_nem = low.set_index("ticker").loc["NEM"]
+    high_nem = high.set_index("ticker").loc["NEM"]
+
+    # Gold-FIXED: trailing leverage and EV never move with the dial.
+    assert low_nem["leverage"] == high_nem["leverage"]
+    assert low_nem["enterprise_value_musd"] == high_nem["enterprise_value_musd"]
+    # Gold-MOVING: forward economics must move.
+    assert high_nem["forward_ebitda_musd"] > low_nem["forward_ebitda_musd"]
+    assert high_nem["ev_ebitda"] < low_nem["ev_ebitda"]
+
+    # Determinism: same price twice -> byte-identical frame (no jitter).
+    pd.testing.assert_frame_equal(_run(3000.0), low)
