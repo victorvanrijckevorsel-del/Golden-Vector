@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 
@@ -23,6 +25,27 @@ def strict_optional_float(value: object) -> float | None:
     if is_missing(value):
         return None
     return float(value)
+
+
+def require_finite_number(name: str, value: object) -> float:
+    """Return a finite float, raising a clear error otherwise."""
+
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be numeric") from exc
+    if not math.isfinite(numeric):
+        raise ValueError(f"{name} must be a finite number")
+    return numeric
+
+
+def require_finite_positive(name: str, value: object) -> float:
+    """Return a finite positive float, raising a clear error otherwise."""
+
+    numeric = require_finite_number(name, value)
+    if numeric <= 0:
+        raise ValueError(f"{name} must be a finite positive number")
+    return numeric
 
 
 def optional_int(value: object) -> int | None:

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import date
+import math
 
 import pandas as pd
 import pytest
@@ -318,6 +319,34 @@ def test_run_tool_b_custom_gold_price_is_isolated_scenario_run(tmp_path, monkeyp
     # Spot provenance still stamped so the delta-vs-spot is auditable.
     assert captured["spot_gold_usd"] == pytest.approx(4321.5)
     assert captured["spot_gold_date"] == "2026-06-09"
+
+
+def test_run_tool_b_rejects_nonfinite_gold_price_before_pipeline(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
+    )
+    called = {"snapshot": False, "tool_b": False}
+
+    def _unexpected_snapshot(**kwargs):
+        called["snapshot"] = True
+        raise AssertionError("Tool B should reject non-finite gold before loading snapshots.")
+
+    def _unexpected_tool_b(**kwargs):
+        called["tool_b"] = True
+        raise AssertionError("Tool B should reject non-finite gold before running the pipeline.")
+
+    monkeypatch.setattr("golden_vector.cli.load_latest_foundation_snapshot", _unexpected_snapshot)
+    monkeypatch.setattr("golden_vector.cli.execute_tool_b_pipeline", _unexpected_tool_b)
+
+    exit_code = run_tool_b(paths, gold_price=math.nan)
+
+    assert exit_code == 1
+    assert called == {"snapshot": False, "tool_b": False}
 
 
 def test_run_refresh_refuses_gold_price_override(tmp_path, capsys):

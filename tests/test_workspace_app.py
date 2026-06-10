@@ -2091,6 +2091,25 @@ def test_workspace_tool_b_view_rejects_invalid_override_with_400(tmp_path):
     assert "gold_price" in response["body"]
 
 
+def test_workspace_tool_b_view_rejects_nonfinite_gold_price_with_400(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(
+        app, method="GET", path="/tool-b?gold_price=nan",
+    )
+
+    assert response["status"].startswith("400")
+    assert "Invalid override" in response["body"]
+    assert "finite" in response["body"]
+    assert "Scenario active" not in response["body"]
+
+
 def test_workspace_tool_b_view_no_overrides_uses_persisted_parquet(tmp_path):
     """Bare /tool-b (no URL params) must not trigger an in-memory recompute;
     it should render the persisted parquet verbatim, so verdicts/ranks

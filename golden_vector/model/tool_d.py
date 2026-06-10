@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 import pandas as pd
 
 from golden_vector.common.numeric import optional_float as _optional_float
+from golden_vector.common.numeric import require_finite_positive as _require_finite_positive
 from golden_vector.contracts.config_models import AppConfig, ToolDConfig
 from golden_vector.features.percentile_ranks import oriented_percentile
 from golden_vector.screening.manual_data import LoadedManualScreeningData
@@ -738,7 +738,3 @@ def _fmt_usd(value: float | None) -> str:
     return "n/a" if value is None else f"${value:,.0f}/oz"
 
 
-def _require_finite_positive(name: str, value: float) -> None:
-    numeric = float(value)
-    if not math.isfinite(numeric) or numeric <= 0:
-        raise ValueError(f"{name} must be a finite positive number")

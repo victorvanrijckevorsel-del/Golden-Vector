@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import pandas as pd
 
+from golden_vector.common.numeric import require_finite_positive
 from golden_vector.common.status import combine_statuses as _combine_statuses
 from golden_vector.common.parquet import read_optional_parquet
 from golden_vector.app.config import load_app_config
@@ -210,8 +211,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help=(
-            "Override the gold price assumption for the Tool B step. Defaults to "
-            "screening_params.default_gold_price_assumption."
+            "Deprecated for refresh: canonical Tool B always prices at the latest "
+            "daily gold close. Use tool-b --gold-price for a run-stamped scenario."
         ),
     )
     refresh_parser.add_argument(
@@ -318,8 +319,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Gold price assumption in USD per oz. "
-            "Defaults to screening_params.default_gold_price_assumption (or the first "
-            "configured scenario if no default is set)."
+            "Omit for the canonical latest daily gold close; pass a value for a "
+            "run-stamped scenario that does not publish latest aliases."
         ),
     )
 
@@ -1754,8 +1755,8 @@ def run_tool_b(
         # scenario run: it persists run-stamped artifacts only and never
         # becomes the published latest state. The config default is no
         # longer consulted here — a missing gold close fails the run.
-        if gold_price is not None and float(gold_price) <= 0:
-            raise ValueError("gold price must be positive")
+        if gold_price is not None:
+            gold_price = require_finite_positive("gold price", gold_price)
 
         run_context = RunContext.start(
             paths=paths,
