@@ -22,6 +22,8 @@ def render_option_signal_charts(
     skew_curve_points: Sequence[OptionSignalPoint],
     oi_strike_points: Sequence[OptionSignalPoint],
     signal_history_points: Sequence[OptionSignalPoint],
+    *,
+    signal_horizon_days: int | None = None,
 ) -> str:
     """Render persisted option-signal frames; no chain scans or analytics here."""
 
@@ -38,7 +40,7 @@ def render_option_signal_charts(
         "<h3>Option Signal Charts</h3>"
         f"{_render_skew_curve_chart(skew_curve_points)}"
         f"{_render_oi_strike_chart(oi_strike_points)}"
-        f"{_render_signal_history_chart(signal_history_points)}"
+        f"{_render_signal_history_chart(signal_history_points, signal_horizon_days=signal_horizon_days)}"
         "<p class=\"hint\">IV rank is not available yet; the history store needs "
         "more market-hours snapshots before that label is useful.</p>"
         "</section>"
@@ -141,7 +143,11 @@ def _signal_history_horizon(points: Sequence[OptionSignalPoint]) -> int | None:
     return horizons[0] if horizons else None
 
 
-def _render_signal_history_chart(points: Sequence[OptionSignalPoint]) -> str:
+def _render_signal_history_chart(
+    points: Sequence[OptionSignalPoint],
+    *,
+    signal_horizon_days: int | None = None,
+) -> str:
     if not points:
         return (
             "<section class=\"option-chart-block\">"
@@ -149,7 +155,9 @@ def _render_signal_history_chart(points: Sequence[OptionSignalPoint]) -> str:
             "<p class=\"hint\">No persisted signal history exists for this ticker yet.</p>"
             "</section>"
         )
-    horizon = _signal_history_horizon(points)
+    # Follow the row's actual signal horizon; min-of-points is only a
+    # fallback for points predating the horizon column.
+    horizon = signal_horizon_days or _signal_history_horizon(points)
     if horizon is not None:
         points = [
             point

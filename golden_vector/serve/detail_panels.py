@@ -41,6 +41,7 @@ from golden_vector.serve.option_signal_render import (
     format_vol_points,
     option_signal_skew_display_value,
     render_option_signal_badge,
+    signal_horizon_from_row,
 )
 from golden_vector.serve.workspace_state import (
     DETAIL_ALIGNMENT_ALIGNED,
@@ -243,6 +244,7 @@ def _render_option_trading_panel(
             detail.skew_curve_points,
             detail.oi_strike_points,
             detail.signal_history_points,
+            signal_horizon_days=signal_horizon_from_row(detail.signal_row),
         )
     )
     body.append(

@@ -112,8 +112,16 @@ def _signal_quality_thresholds(config: AppConfig) -> str:
 def _skew_thresholds(config: AppConfig) -> str:
     hedge = config.hedge_readiness
     return (
+        f"Measured at the {hedge.option_signal_horizon_days}d signal window. "
         "A direction signal needs the difference to exceed "
         f"{hedge.option_signal_skew_residual_threshold * 100:g} vol pts."
+    )
+
+
+def _iv_percentile_thresholds(config: AppConfig) -> str:
+    hedge = config.hedge_readiness
+    return (
+        f"Uses the {hedge.option_signal_horizon_days}d ATM implied volatility."
     )
 
 
@@ -174,8 +182,8 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "the baseline."
         ),
         calculation=(
-            "Skew = 25-delta put IV minus 25-delta call IV (60d window). "
-            "Single stocks show their skew minus the benchmark's skew."
+            "Skew = 25-delta put IV minus 25-delta call IV at the signal "
+            "window. Single stocks show their skew minus the benchmark's skew."
         ),
         thresholds=_skew_thresholds,
         direction="Positive means puts are priced richer than calls. Context, not a forecast.",
@@ -209,7 +217,10 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "Where this name's at-the-money implied volatility sits versus the other "
             "names in the same snapshot (0-100)."
         ),
-        calculation="Cross-sectional percentile of 60d ATM IV across the universe.",
+        calculation=(
+            "Cross-sectional percentile of signal-window ATM IV across the universe."
+        ),
+        thresholds=_iv_percentile_thresholds,
         direction="Higher means options are expensive relative to peers.",
     ),
 }
