@@ -243,6 +243,85 @@ def test_blocked_refresh_with_tampered_previous_artifact_is_unavailable(tmp_path
     assert "sha256" in domain["reason"]
 
 
+def test_blocked_refresh_with_mixed_snapshot_ids_is_unavailable(tmp_path):
+    """Codex review finding 1: a stitched carried set must be refused.
+
+    All ten artifacts verify (one source run, valid sha256, current schema,
+    non-empty required frames) but one chart artifact references a different
+    options snapshot id. Carrying that forward would mix chain snapshots, so
+    carry-forward is refused and the manifest is truthfully incomplete.
+    """
+
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(
+        paths,
+        refresh_run_id="refresh-A",
+        include_option_artifacts=False,
+    )
+    _write_option_artifacts(paths, refresh_run_id="refresh-A")
+    mixed = pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "as_of_date": DAY1_AS_OF,
+                "schema_version": OPTION_ARTIFACT_SCHEMA_VERSION,
+                "snapshot_refresh_run_id": "refresh-OTHER",
+                "source_run_id": DAY1_SOURCE_RUN_ID,
+            }
+        ]
+    )
+    mixed_name = "option_skew_curve_points"
+    write_parquet_atomic(
+        mixed,
+        option_artifact_run_stamped_path(paths, mixed_name, DAY1_SOURCE_RUN_ID),
+        index=False,
+    )
+    write_parquet_atomic(
+        mixed,
+        option_artifact_latest_path(paths, mixed_name),
+        index=False,
+    )
+    previous = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+        parent_refresh_id="parent-A",
+    )
+    # The donor looks healthy: the mixed artifact is a chart frame outside the
+    # required alignment set, so the previous manifest still published clean.
+    assert previous["state"] == "complete"
+    _write_day2_core(paths, refresh_run_id="refresh-B")
+
+    payload = _blocked_publish(paths, parent_refresh_id="parent-B")
+
+    domain = payload["freshness_domains"]["option_artifacts"]
+    assert domain["status"] == "UNAVAILABLE"
+    assert "single options snapshot id" in domain["reason"]
+    assert payload["state"] == "incomplete"
+
+
+def test_option_overview_page_shows_carried_forward_message(tmp_path):
+    """Codex review finding 2: the user-facing page states the carry-forward."""
+
+    from golden_vector.hedge.option_trading import OptionTradingOverviewData
+    from golden_vector.serve.overview_option_trading import (
+        _render_option_trading_overview_page,
+    )
+
+    paths = build_test_paths(tmp_path)
+    _publish_good_manifest(paths)
+    _write_day2_core(paths, refresh_run_id="refresh-B")
+    carried = _blocked_publish(paths, parent_refresh_id="parent-B")
+
+    html = _render_option_trading_overview_page(
+        OptionTradingOverviewData(rows=(), liquidity_measurements=()),
+        model_state_manifest=carried,
+    )
+
+    assert "Option prices are from the latest stored snapshot: 2026-06-10" in html
+    assert "Stored option snapshot" in html
+
+
 def test_blocked_refresh_with_stale_schema_previous_artifacts_is_unavailable(tmp_path):
     paths = build_test_paths(tmp_path)
     _publish_good_manifest(paths, schema_version=OPTION_ARTIFACT_SCHEMA_VERSION - 1)

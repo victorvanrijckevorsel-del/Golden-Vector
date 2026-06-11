@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -98,10 +98,9 @@ class OptionPublishBlock:
 class _OptionCarryForward:
     entries: dict[str, dict[str, Any]]
     source_run_id: str
-    snapshot_refresh_run_id: str | None
+    snapshot_refresh_run_id: str
     as_of_date: str | None
     carried_from_parent_refresh_id: str | None = None
-    warnings: tuple[str, ...] = field(default=())
 
 
 def write_current_model_state_manifest(
@@ -304,8 +303,6 @@ def build_current_model_state_manifest(
         options_carried_forward=carry is not None,
     )
     warnings = list(alignment["warnings"])
-    if carry is not None:
-        warnings.extend(carry.warnings)
     missing_required = [
         name
         for name in REQUIRED_ARTIFACTS
@@ -1079,22 +1076,20 @@ def _resolve_option_carry_forward(
             + ", ".join(sorted(source_run_ids))
             + "."
         )
-
-    warnings: list[str] = []
-    snapshot_refresh_run_id: str | None = None
-    if len(snapshot_run_ids) == 1:
-        snapshot_refresh_run_id = next(iter(snapshot_run_ids))
-    elif snapshot_run_ids:
-        warnings.append(
-            "Carried option artifacts do not share a single options snapshot id: "
-            + ", ".join(sorted(snapshot_run_ids))
+    # A carried set must be one coherent chain snapshot. Mixed (or missing)
+    # snapshot ids would stitch candidates/charts/signals from different
+    # underlying chains, so that set is refused outright, never carried.
+    if len(snapshot_run_ids) != 1:
+        return None, (
+            "Previous option artifacts do not share a single options snapshot id: "
+            + (", ".join(sorted(snapshot_run_ids)) if snapshot_run_ids else "(none)")
             + "."
         )
 
     carry = _OptionCarryForward(
         entries=entries,
         source_run_id=next(iter(source_run_ids)),
-        snapshot_refresh_run_id=snapshot_refresh_run_id,
+        snapshot_refresh_run_id=next(iter(snapshot_run_ids)),
         as_of_date=_carried_option_as_of_date(
             paths=paths,
             entries=entries,
@@ -1103,7 +1098,6 @@ def _resolve_option_carry_forward(
         carried_from_parent_refresh_id=_clean_string(
             previous_manifest.get("parent_refresh_id")
         ),
-        warnings=tuple(warnings),
     )
     return carry, None
 
