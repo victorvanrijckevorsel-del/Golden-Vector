@@ -39,6 +39,8 @@ from golden_vector.model.tool_d import (
     compute_tool_d_outputs,
     latest_gold_price_from_history,
 )
+from golden_vector.fundamentals.artifacts import load_official_fundamentals
+from golden_vector.contracts.fundamentals import fetched_fundamentals_latest_path
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.screening.manual_store import load_store_tables
@@ -91,6 +93,7 @@ class CandidateFinderCacheKey:
     model_state_manifest_hash: str | None = None
     scenario_gold_price: float | None = None
     scenario_foundation_manifest_hash: str | None = None
+    scenario_fundamentals_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -245,6 +248,11 @@ def load_candidate_finder_data(
         model_state_manifest_hash=_file_sha256(paths.latest_model_state_manifest_path),
         scenario_gold_price=_cache_gold_price(scenario),
         scenario_foundation_manifest_hash=_file_sha256(scenario_foundation_manifest_path),
+        scenario_fundamentals_hash=(
+            _file_sha256(fetched_fundamentals_latest_path(paths))
+            if scenario is not None
+            else None
+        ),
     )
     cached = _cache_get(cache_key)
     if cached is not None:
@@ -333,6 +341,7 @@ def load_candidate_finder_data(
             ]
             + list(_joined_frame_warnings(frame))
         ),
+        scenario_active=scenario_active,
     )
     data = CandidateFinderData(
         frame=frame,
@@ -721,6 +730,7 @@ def _alignment(
     manual_store_hash: str | None,
     manual_store_as_of: str | None,
     source_load_warnings: tuple[str, ...] = (),
+    scenario_active: bool = False,
 ) -> CandidateFinderAlignment:
     tool_a_ids = _unique_strings(tool_a, "snapshot_refresh_run_id")
     tool_b_ids = _unique_strings(tool_b, "snapshot_refresh_run_id")
@@ -737,12 +747,16 @@ def _alignment(
     missing = [name for name, values in source_ids.items() if not values]
     seen = {value for values in source_ids.values() for value in values}
     warnings = list(source_load_warnings)
-    manual_warning = _manual_freshness_warning(
-        tool_b=tool_b,
-        manual_store_as_of=manual_store_as_of,
-    )
-    if manual_warning is not None:
-        warnings.append(manual_warning)
+    if not scenario_active:
+        # Scenario Tool B/Tool D are always recomputed from the live manual
+        # store, so the "manual store updated after the latest run" warning
+        # would be misleading there.
+        manual_warning = _manual_freshness_warning(
+            tool_b=tool_b,
+            manual_store_as_of=manual_store_as_of,
+        )
+        if manual_warning is not None:
+            warnings.append(manual_warning)
     manifest_alignment = summarize_model_state_alignment(model_state_manifest)
     if manifest_alignment is not None:
         manifest_status_raw = str(manifest_alignment.get("status") or "UNKNOWN")
@@ -978,6 +992,11 @@ def _compute_scenario_sources(
             if ticker.active and ticker.tool_b_enabled
         ),
     )
+    # The scenario recompute must use the SAME fundamentals inputs as the
+    # persisted Tool B pipeline and the Tool B gold dial, or a scenario at
+    # spot silently disagrees with the default screen for any ticker whose
+    # net debt / EBITDA / D&A / interest exist only in the official store.
+    official_fundamentals = load_official_fundamentals(paths)
     tool_b = validate_tool_b_output_schema(
         compute_tool_b_in_memory(
             app_config=app_config,
@@ -990,6 +1009,7 @@ def _compute_scenario_sources(
             spot_gold_usd=spot_gold_usd,
             spot_gold_date=spot_gold_date,
             gold_price_basis=gold_price_basis,
+            official_fundamentals=official_fundamentals,
         ),
         label="Candidate Finder scenario Corporate Finance frame",
     )

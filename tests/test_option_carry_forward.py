@@ -544,6 +544,78 @@ def test_detail_panel_shows_freshness_box_even_without_detail_data(tmp_path):
     assert "2026-06-10" in html
 
 
+def test_non_option_publisher_inherits_carried_forward_domain(tmp_path):
+    """Merge-verification HIGH: portfolio edits / fetch-fundamentals republish
+    the manifest WITHOUT an option block; during a carried window that must
+    not flip the option domain back to OK (the aliases still hold the old
+    snapshot) nor break the calm-consumers guarantee."""
+
+    paths = build_test_paths(tmp_path)
+    _publish_good_manifest(paths)
+    _write_day2_core(paths, refresh_run_id="refresh-B")
+    carried = _blocked_publish(paths, parent_refresh_id="parent-B")
+
+    # Simulate a portfolio lot edit: republish with NO option block.
+    payload = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+        parent_refresh_id="parent-C",
+    )
+
+    domain = payload["freshness_domains"]["option_artifacts"]
+    carried_domain = carried["freshness_domains"]["option_artifacts"]
+    assert domain["status"] == "CARRIED_FORWARD"
+    assert domain["source_run_id"] == carried_domain["source_run_id"]
+    assert domain["as_of_date"] == carried_domain["as_of_date"]
+    assert domain["market_session"] == carried_domain["market_session"]
+    assert payload["state"] == "complete"
+    assert payload["alignment"]["status"] == "OK"
+    verdict = summarize_model_state_alignment(payload)
+    assert verdict is not None and verdict["status"] == "OK" and verdict["warnings"] == ()
+
+
+def test_non_option_publisher_returns_to_ok_after_fresh_option_build(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _publish_good_manifest(paths)
+    _write_day2_core(paths, refresh_run_id="refresh-B")
+    _blocked_publish(paths, parent_refresh_id="parent-B")
+
+    # A fresh successful option build aligned with the CURRENT options
+    # ingestion manifest lands on disk (e.g. standalone option-artifacts run).
+    _write_option_artifacts(
+        paths,
+        refresh_run_id="refresh-B",
+        source_run_id="20260611T160000Z-option-artifacts",
+        as_of_date="2026-06-11",
+    )
+
+    payload = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+        parent_refresh_id="parent-C",
+    )
+
+    domain = payload["freshness_domains"]["option_artifacts"]
+    assert domain["status"] == "OK"
+    assert domain["source_run_id"] == "20260611T160000Z-option-artifacts"
+
+
+def test_non_option_publisher_inherits_unavailable_domain(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_day2_core(paths, refresh_run_id="refresh-B")
+    _write_option_artifacts(paths, refresh_run_id="refresh-OLD")
+    _blocked_publish(paths, parent_refresh_id="parent-B")
+
+    payload = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+        parent_refresh_id="parent-C",
+    )
+
+    assert payload["freshness_domains"]["option_artifacts"]["status"] == "UNAVAILABLE"
+    assert payload["state"] == "incomplete"
+
+
 def test_unavailable_manifest_yields_calm_empty_frames_not_schema_error(tmp_path):
     paths = build_test_paths(tmp_path)
     _write_day2_core(paths, refresh_run_id="refresh-B")

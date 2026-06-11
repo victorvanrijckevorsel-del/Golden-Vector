@@ -1193,3 +1193,97 @@ def _option(ticker: str, option_type: str, strike: float, bid: float, ask: float
         "days_to_expiry": 49,
         "options_available": True,
     }
+
+
+def test_candidate_finder_scenario_threads_official_fundamentals(tmp_path, monkeypatch):
+    """Merge-verification HIGH: the scenario recompute must use the same
+    official-fundamentals inputs as the persisted Tool B pipeline and the
+    Tool B gold dial, or a scenario at spot silently disagrees with the
+    default screen for official-only tickers."""
+
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    sentinel_officials = pd.DataFrame(
+        [{"ticker": "AEM", "net_debt_musd": 123.0, "value_status": "OK"}]
+    )
+    captured: dict[str, object] = {}
+
+    def fake_foundation_snapshot(**_kwargs):
+        return SimpleNamespace(
+            gold_history=pd.DataFrame([{"date": "2026-06-01", "close_usd": 4000.0}]),
+            normalized_market_snapshots=pd.DataFrame(),
+            refresh_run_id="fresh-foundation",
+            snapshot_as_of_date="2026-06-01",
+        )
+
+    def fake_tool_b(**kwargs):
+        captured["official_fundamentals"] = kwargs.get("official_fundamentals")
+        gold_price = float(kwargs["gold_price_assumption"])
+        return pd.DataFrame(
+            [
+                tool_b_output_row(
+                    "AEM",
+                    gold_price_assumption=gold_price,
+                    gold_price_used=gold_price,
+                    spot_gold_usd=4000.0,
+                    spot_gold_date="2026-06-01",
+                    gold_price_basis=str(kwargs["gold_price_basis"]),
+                    snapshot_refresh_run_id="fresh-foundation",
+                    source_run_id="candidate-finder-scenario",
+                )
+            ]
+        )
+
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.load_latest_foundation_snapshot",
+        fake_foundation_snapshot,
+    )
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.resolve_current_foundation_manifest_path",
+        lambda _paths, *, require_current_manifest: None,
+    )
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.load_manual_screening_data",
+        lambda _paths, *, tickers: SimpleNamespace(
+            company_inputs=pd.DataFrame({"ticker": list(tickers)})
+        ),
+    )
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.load_official_fundamentals",
+        lambda _paths: sentinel_officials,
+    )
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.compute_tool_b_in_memory",
+        fake_tool_b,
+    )
+    monkeypatch.setattr(
+        "golden_vector.serve.candidate_finder_data.compute_tool_d_outputs",
+        lambda **kwargs: pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "tool_d_quality_rank": 12.0,
+                    "gold_price_used": float(kwargs["gold_price"]),
+                    "spot_gold_usd": 4000.0,
+                    "spot_gold_date": "2026-06-01",
+                    "snapshot_refresh_run_id": "fresh-foundation",
+                    "source_run_id": "candidate-finder-scenario",
+                }
+            ]
+        ),
+    )
+
+    data = load_candidate_finder_data(
+        paths,
+        app_config=app_config,
+        scenario=CandidateFinderScenario.from_value(3500.0),
+    )
+
+    assert data.scenario_active is True
+    passed = captured.get("official_fundamentals")
+    assert passed is not None, (
+        "scenario compute_tool_b_in_memory must receive official_fundamentals"
+    )
+    pd.testing.assert_frame_equal(passed, sentinel_officials)

@@ -173,3 +173,20 @@ def test_liquidity_table_headers_have_config_sourced_tooltips():
     assert f"{spread * 100:g}%" in html
     # Tooltip text is sourced from the registry, not duplicated in the template.
     assert "valid bid/ask/mid" in html
+
+
+def test_every_thresholds_callable_resolves_against_real_config():
+    """Guard against silent tooltip degradation: a renamed config field would
+    make a thresholds callable raise and the sentence silently drop."""
+
+    from golden_vector.serve.column_help import COLUMN_HELP
+
+    config = _app_config()
+    checked = 0
+    for key, spec in COLUMN_HELP.items():
+        if spec.thresholds is None:
+            continue
+        text = spec.thresholds(config)
+        assert isinstance(text, str) and text.strip(), f"empty thresholds for {key}"
+        checked += 1
+    assert checked >= 5

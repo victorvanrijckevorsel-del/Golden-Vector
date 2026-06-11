@@ -281,17 +281,21 @@ def build_current_model_state_manifest(
 
     generated_at = _utc_now_iso()
 
+    previous_manifest = load_current_model_state_manifest(paths)
+    artifacts = _artifact_map(paths, artifact_stamp=parent_refresh_id)
+    if option_publish_block is None:
+        option_publish_block = _inherited_option_publish_block(
+            previous_manifest=previous_manifest,
+            artifacts=artifacts,
+        )
+
     carry: _OptionCarryForward | None = None
     carry_failure: str | None = None
     if option_publish_block is not None:
-        previous_manifest = load_current_model_state_manifest(paths)
         carry, carry_failure = _resolve_option_carry_forward(
             paths=paths,
             previous_manifest=previous_manifest,
         )
-
-    artifacts = _artifact_map(paths, artifact_stamp=parent_refresh_id)
-    if option_publish_block is not None:
         if carry is not None:
             artifacts.update(carry.entries)
         else:
@@ -1011,6 +1015,46 @@ def _alignment(
         result["options_carried_forward"] = True
         result["carried_options_refresh_run_id"] = carried_options_run_id
     return result
+
+
+def _inherited_option_publish_block(
+    *,
+    previous_manifest: dict[str, Any] | None,
+    artifacts: dict[str, dict[str, Any]],
+) -> OptionPublishBlock | None:
+    """Preserve a carried/unavailable option domain across non-option publishes.
+
+    Publishers that never ran the option-artifacts step (portfolio lot edits,
+    fetch-fundamentals, partial refreshes) must not silently flip a
+    CARRIED_FORWARD/UNAVAILABLE option domain back to OK: the on-disk aliases
+    still hold the old snapshot, and claiming OK would both lie about
+    freshness and re-trigger run-id mismatch warnings. Inherit the previous
+    block unless a fresh option build aligned with the current options
+    ingestion manifest has happened since.
+    """
+
+    if not isinstance(previous_manifest, dict):
+        return None
+    domains = previous_manifest.get("freshness_domains")
+    domain = domains.get("option_artifacts") if isinstance(domains, dict) else None
+    if not isinstance(domain, dict):
+        return None
+    status = str(domain.get("status") or "").strip().upper()
+    if status not in {OPTION_FRESHNESS_CARRIED_FORWARD, OPTION_FRESHNESS_UNAVAILABLE}:
+        return None
+    options_id = _clean_string(artifacts.get("options", {}).get("refresh_run_id"))
+    if options_id and all(
+        options_id in (artifacts.get(name, {}).get("snapshot_refresh_run_ids") or [])
+        for name in REQUIRED_OPTION_ARTIFACT_NAMES
+    ):
+        # A fresh option build aligned with the current options snapshot is on
+        # disk (e.g. a successful standalone option-artifacts run); OK is the
+        # truthful domain now.
+        return None
+    return OptionPublishBlock(
+        blockers=tuple(_message_list(domain.get("blockers"))),
+        market_session=_clean_string(domain.get("market_session")) or "UNKNOWN",
+    )
 
 
 def _resolve_option_carry_forward(
