@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
-from statistics import median
 from typing import Any, Literal
 
 import pandas as pd
@@ -30,6 +28,7 @@ from golden_vector.hedge.option_trading import (
 from golden_vector.hedge.options_liquidity import (
     OptionChainScan,
     OptionContractMetrics,
+    aggregate_tradable_liquidity,
     build_bucket_slots,
     build_bucket_slots_from_scan,
     candidate_bucket_ids,
@@ -268,7 +267,7 @@ def build_option_liquidity_measurements(
     }
     settings = settings_from_config(app_config.hedge_readiness)
     as_of_date = _manifest_as_of_date(manifest)
-    grouped: dict[str, list[dict[str, float | str]]] = {
+    grouped: dict[str, list[OptionContractMetrics]] = {
         "Benchmark ETFs": [],
         "Single-stock miners": [],
     }
@@ -314,21 +313,12 @@ def build_option_liquidity_measurements(
             else "Single-stock miners"
         )
         seen_tickers[group].add(ticker)
-        grouped[group].extend(
-            {
-                "rel_spread": float(metric.rel_spread),
-                "open_interest": float(metric.open_interest),
-                "volume": float(metric.volume),
-                "near_spot_depth": float(metric.near_spot_depth_count),
-                "liquidity_tier": metric.liquidity_tier,
-            }
-            for metric in metrics
-        )
+        grouped[group].extend(metrics)
 
     measurements: list[OptionLiquidityMeasurement] = []
     for group in ("Benchmark ETFs", "Single-stock miners"):
-        rows = grouped[group]
-        if not rows:
+        group_metrics = grouped[group]
+        if not group_metrics:
             if group == "Benchmark ETFs" and benchmark_tickers:
                 measurements.append(
                     OptionLiquidityMeasurement(
@@ -342,18 +332,21 @@ def build_option_liquidity_measurements(
                     )
                 )
             continue
+        # Counts cover every measured contract; medians cover the tradable
+        # tier only (a watch/no-trade blend would misstate real liquidity).
+        aggregate = aggregate_tradable_liquidity(group_metrics)
         measurements.append(
             OptionLiquidityMeasurement(
                 group_label=group,
                 ticker_count=len(seen_tickers[group]),
-                contract_count=len(rows),
-                median_rel_spread=_median(row["rel_spread"] for row in rows),
-                median_open_interest=_median(row["open_interest"] for row in rows),
-                median_volume=_median(row["volume"] for row in rows),
-                median_near_spot_depth=_median(row["near_spot_depth"] for row in rows),
-                tradable_count=_tier_count(rows, "tradable"),
-                watch_count=_tier_count(rows, "watch"),
-                no_trade_count=_tier_count(rows, "no_trade"),
+                contract_count=aggregate.measured_count,
+                median_rel_spread=aggregate.median_tradable_rel_spread,
+                median_open_interest=aggregate.median_tradable_open_interest,
+                median_volume=aggregate.median_tradable_volume,
+                median_near_spot_depth=aggregate.median_tradable_near_spot_depth,
+                tradable_count=aggregate.tradable_count,
+                watch_count=aggregate.watch_count,
+                no_trade_count=aggregate.no_trade_count,
             )
         )
     return tuple(measurements)
@@ -443,15 +436,6 @@ def _unique_candidates(candidates: list[OptionCandidate]) -> list[OptionCandidat
         seen.add(key)
         unique.append(candidate)
     return unique
-
-
-def _tier_count(rows: list[dict[str, float | str]], tier: str) -> int:
-    return sum(1 for row in rows if row.get("liquidity_tier") == tier)
-
-
-def _median(values: Iterable[float | str]) -> float | None:
-    numeric = [value for value in (as_float(value) for value in values) if value is not None]
-    return float(median(numeric)) if numeric else None
 
 
 def _context_warnings(

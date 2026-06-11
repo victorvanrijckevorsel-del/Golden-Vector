@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import statistics
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
@@ -163,6 +164,73 @@ class OptionChainScan:
 
     def by_type(self, option_type: OptionSideType) -> tuple[OptionContractMetrics, ...]:
         return tuple(metric for metric in self.metrics if metric.option_type == option_type)
+
+
+@dataclass(frozen=True)
+class TradableLiquidityAggregate:
+    """Tradable-only liquidity medians with all-row tier counts.
+
+    The tier counts describe every measured contract (Tradable / Watch /
+    No-trade coverage), while the medians describe ONLY the tradable tier —
+    the contracts a user could actually trade. Mixing watch/no-trade rows into
+    the medians would misstate practical liquidity. Shared by the Cached
+    Liquidity Check (Milestone B) and the future most-liquid expiry selector
+    (Milestone C3) so the two never diverge.
+    """
+
+    measured_count: int
+    tradable_count: int
+    watch_count: int
+    no_trade_count: int
+    median_tradable_rel_spread: float | None
+    median_tradable_open_interest: float | None
+    median_tradable_volume: float | None
+    median_tradable_near_spot_depth: float | None
+
+
+def aggregate_tradable_liquidity(
+    metrics: Iterable[OptionContractMetrics],
+) -> TradableLiquidityAggregate:
+    """Summarize measurable contracts: all-row counts, tradable-only medians.
+
+    A contract is measurable when it carries a usable two-sided quote
+    (rel_spread present, positive mid). With zero tradable contracts the
+    medians are None — render as a dash, never as a watch/no-trade blend.
+    """
+
+    measured = [
+        metric
+        for metric in metrics
+        if metric.rel_spread is not None
+        and metric.mid is not None
+        and metric.mid > 0
+    ]
+    tradable = [metric for metric in measured if metric.liquidity_tier == "tradable"]
+    return TradableLiquidityAggregate(
+        measured_count=len(measured),
+        tradable_count=len(tradable),
+        watch_count=sum(1 for metric in measured if metric.liquidity_tier == "watch"),
+        no_trade_count=sum(
+            1 for metric in measured if metric.liquidity_tier == "no_trade"
+        ),
+        median_tradable_rel_spread=_median_or_none(
+            metric.rel_spread for metric in tradable
+        ),
+        median_tradable_open_interest=_median_or_none(
+            float(metric.open_interest) for metric in tradable
+        ),
+        median_tradable_volume=_median_or_none(
+            float(metric.volume) for metric in tradable
+        ),
+        median_tradable_near_spot_depth=_median_or_none(
+            float(metric.near_spot_depth_count) for metric in tradable
+        ),
+    )
+
+
+def _median_or_none(values: Iterable[float | None]) -> float | None:
+    numeric = [float(value) for value in values if value is not None]
+    return float(statistics.median(numeric)) if numeric else None
 
     def tier_count(self, option_type: OptionSideType, tier: OptionLiquidityTier) -> int:
         return sum(
