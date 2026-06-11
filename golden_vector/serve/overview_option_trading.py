@@ -13,7 +13,10 @@ from golden_vector.hedge.option_trading import (
     OptionTradingOverviewData,
     OptionTradingRow,
 )
-from golden_vector.serve.model_state_banner import render_model_state_banner
+from golden_vector.serve.model_state_banner import (
+    render_model_state_banner,
+    render_option_freshness_box,
+)
 from golden_vector.serve.format_helpers import (
     _fmt_number,
     _fmt_numeric_td,
@@ -48,6 +51,7 @@ def _render_option_trading_overview_page(
         "<h1>Option Trading</h1>",
         f"<p class=\"hint\">{snapshot_note}</p>",
         render_model_state_banner(model_state_manifest),
+        render_option_freshness_box(model_state_manifest),
         _render_context_warnings(overview.source_context),
         "<details class=\"method-disclosure\"><summary>Method</summary>"
         "<p>Contracts are selected from cached Yahoo Finance option-chain data. "

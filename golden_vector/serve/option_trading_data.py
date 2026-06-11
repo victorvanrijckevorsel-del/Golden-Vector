@@ -19,6 +19,7 @@ from golden_vector.app.model_state import (
     read_current_model_parquet,
     resolve_current_model_artifact_path,
     summarize_model_state_alignment,
+    summarize_option_freshness,
 )
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
@@ -411,11 +412,13 @@ def load_option_trading_data(
             reason=f"Option artifact snapshot could not be read: {exc}",
         )
     if artifact_frames is None:
-        return _empty_data(
-            tool_a=tool_a,
-            tool_b=tool_b,
-            reason="No option artifact snapshot exists yet. Run `python main.py refresh` first.",
+        freshness = summarize_option_freshness(load_current_model_state_manifest(paths))
+        reason = (
+            str(freshness["message"])
+            if freshness is not None and freshness["status"] == "UNAVAILABLE"
+            else "No option artifact snapshot exists yet. Run `python main.py refresh` first."
         )
+        return _empty_data(tool_a=tool_a, tool_b=tool_b, reason=reason)
     manifest = (
         read_current_model_json(
             paths,
@@ -521,6 +524,12 @@ def _empty_data(
 
 def _read_option_artifact_frames(paths: ProjectPaths) -> dict[str, pd.DataFrame] | None:
     model_state = load_current_model_state_manifest(paths)
+    freshness = summarize_option_freshness(model_state)
+    if freshness is not None and freshness["status"] == "UNAVAILABLE":
+        # The manifest explicitly declared the option domain unavailable (no
+        # verified prior snapshot). That is a calm empty state, not the
+        # stale-schema error path below.
+        return None
     frames: dict[str, pd.DataFrame] = {}
     for name in OPTION_ARTIFACT_NAMES:
         path = resolve_current_model_artifact_path(paths, name)

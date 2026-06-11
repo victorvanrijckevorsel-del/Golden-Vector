@@ -21,7 +21,7 @@ from golden_vector.app.model_state import (
 )
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
-from golden_vector.cli import run_refresh, run_status, run_tool_b
+from golden_vector.cli import OptionArtifactsOutcome, run_refresh, run_status, run_tool_b
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
@@ -352,7 +352,7 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     def fake_option_artifacts(_paths, *, parent_refresh_id):
         call_order.append("option-artifacts")
         assert parent_refresh_id is not None
-        return 0
+        return OptionArtifactsOutcome(status="OK")
 
     def fake_portfolio(_paths, **_kwargs):
         assert not _paths.latest_model_state_manifest_path.exists()
@@ -364,7 +364,7 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
     monkeypatch.setattr("golden_vector.cli.run_tool_c", fake_tool_c)
     monkeypatch.setattr("golden_vector.cli.run_tool_d", fake_tool_d)
-    monkeypatch.setattr("golden_vector.cli.run_option_artifacts", fake_option_artifacts)
+    monkeypatch.setattr("golden_vector.cli.run_option_artifacts_outcome", fake_option_artifacts)
     monkeypatch.setattr("golden_vector.cli._run_portfolio_refresh_step", fake_portfolio)
 
     exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
@@ -521,20 +521,20 @@ def test_refresh_option_artifact_failure_keeps_previous_manifest(
     def fake_option_artifacts(_paths, *, parent_refresh_id):
         call_order.append("option-artifacts")
         assert parent_refresh_id is not None
-        return 7
+        return OptionArtifactsOutcome(status="FAILED")
 
     monkeypatch.setattr("golden_vector.cli.run_foundation", fake_foundation)
     monkeypatch.setattr("golden_vector.cli.run_tool_a", fake_tool_a)
     monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
     monkeypatch.setattr("golden_vector.cli.run_tool_c", fake_tool_c)
     monkeypatch.setattr("golden_vector.cli.run_tool_d", fake_tool_d)
-    monkeypatch.setattr("golden_vector.cli.run_option_artifacts", fake_option_artifacts)
+    monkeypatch.setattr("golden_vector.cli.run_option_artifacts_outcome", fake_option_artifacts)
 
     exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
     current_manifest = load_current_model_state_manifest(paths)
     out = capsys.readouterr().out
 
-    assert exit_code == 7
+    assert exit_code == 1
     assert call_order == [
         "update-data",
         "tool-a",

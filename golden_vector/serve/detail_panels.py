@@ -34,6 +34,7 @@ from golden_vector.serve.format_helpers import (
     _render_small_table,
     format_dte_suffix as _dte_suffix,
 )
+from golden_vector.serve.model_state_banner import render_option_freshness_box
 from golden_vector.serve.option_signal_charts import render_option_signal_charts
 from golden_vector.serve.option_signal_render import (
     format_vol_points,
@@ -201,10 +202,13 @@ def _render_option_trading_link_panel(ticker: str) -> str:
 
 def _render_option_trading_panel(
     detail: OptionTradingDetailData | None,
+    *,
+    model_state_manifest: dict[str, object] | None = None,
 ) -> str:
     body = [
         "<section id=\"option-trading\" class=\"panel\">",
         "<h2>Option Trading</h2>",
+        render_option_freshness_box(model_state_manifest),
     ]
     if detail is None:
         body.append(

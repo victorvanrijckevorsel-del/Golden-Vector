@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from golden_vector.app.run_context import to_jsonable
 from golden_vector.contracts.option_artifacts import (
     OPTION_ARTIFACT_NAMES,
     OPTION_ARTIFACT_PREFIXES,
+    OPTION_ARTIFACT_SCHEMA_VERSION,
     REQUIRED_OPTION_ARTIFACT_NAMES,
     option_artifact_latest_path,
 )
@@ -68,6 +70,39 @@ PORTFOLIO_ALIGNMENT_ARTIFACTS: tuple[str, ...] = (
     "portfolio_reconciliation",
 )
 
+OPTION_FRESHNESS_OK = "OK"
+OPTION_FRESHNESS_CARRIED_FORWARD = "CARRIED_FORWARD"
+OPTION_FRESHNESS_UNAVAILABLE = "UNAVAILABLE"
+OPTION_FRESHNESS_STATUSES = (
+    OPTION_FRESHNESS_OK,
+    OPTION_FRESHNESS_CARRIED_FORWARD,
+    OPTION_FRESHNESS_UNAVAILABLE,
+)
+
+
+@dataclass(frozen=True)
+class OptionPublishBlock:
+    """Refresh-time signal that fresh option artifacts were not publishable.
+
+    Built by the refresh orchestrator when the option-artifact step finished
+    but its publish gates blocked (data-quality verdicts such as SPARSE or
+    LOW_LIQUIDITY). Hard build failures never produce this object — they keep
+    aborting the publish entirely.
+    """
+
+    blockers: tuple[str, ...] = ()
+    market_session: str = "UNKNOWN"  # OPEN | CLOSED | UNKNOWN
+
+
+@dataclass(frozen=True)
+class _OptionCarryForward:
+    entries: dict[str, dict[str, Any]]
+    source_run_id: str
+    snapshot_refresh_run_id: str | None
+    as_of_date: str | None
+    carried_from_parent_refresh_id: str | None = None
+    warnings: tuple[str, ...] = field(default=())
+
 
 def write_current_model_state_manifest(
     *,
@@ -75,6 +110,7 @@ def write_current_model_state_manifest(
     config_hash: str | None,
     parent_refresh_id: str | None = None,
     stage_timings: dict[str, Any] | None = None,
+    option_publish_block: OptionPublishBlock | None = None,
 ) -> dict[str, Any]:
     """Build and atomically publish the current model-state manifest."""
 
@@ -83,6 +119,7 @@ def write_current_model_state_manifest(
         config_hash=config_hash,
         parent_refresh_id=parent_refresh_id,
         stage_timings=stage_timings,
+        option_publish_block=option_publish_block,
     )
     snapshot_path = _model_state_snapshot_path(paths, payload)
     payload["publish"]["retention_snapshot_path"] = _repo_relative(paths, snapshot_path)
@@ -227,13 +264,48 @@ def build_current_model_state_manifest(
     config_hash: str | None,
     parent_refresh_id: str | None = None,
     stage_timings: dict[str, Any] | None = None,
+    option_publish_block: OptionPublishBlock | None = None,
 ) -> dict[str, Any]:
-    """Inspect current published artifacts and return a coherent-state manifest."""
+    """Inspect current published artifacts and return a coherent-state manifest.
+
+    When ``option_publish_block`` is given, the refresh could not publish fresh
+    option artifacts (data-quality blockers). The manifest then carries forward
+    the previous manifest's verified option artifact set instead of trusting
+    the on-disk aliases, or marks the option domain UNAVAILABLE when no prior
+    set verifies.
+    """
 
     generated_at = _utc_now_iso()
+
+    carry: _OptionCarryForward | None = None
+    carry_failure: str | None = None
+    if option_publish_block is not None:
+        previous_manifest = load_current_model_state_manifest(paths)
+        carry, carry_failure = _resolve_option_carry_forward(
+            paths=paths,
+            previous_manifest=previous_manifest,
+        )
+
     artifacts = _artifact_map(paths, artifact_stamp=parent_refresh_id)
-    alignment = _alignment(artifacts)
+    if option_publish_block is not None:
+        if carry is not None:
+            artifacts.update(carry.entries)
+        else:
+            for name in OPTION_ARTIFACT_NAMES:
+                artifacts[name] = _unavailable_option_artifact_entry(
+                    name=name,
+                    reason=carry_failure
+                    or "No verified prior option artifact set is available.",
+                )
+
+    alignment = _alignment(
+        artifacts,
+        carried_options_run_id=(carry.snapshot_refresh_run_id if carry else None),
+        options_carried_forward=carry is not None,
+    )
     warnings = list(alignment["warnings"])
+    if carry is not None:
+        warnings.extend(carry.warnings)
     missing_required = [
         name
         for name in REQUIRED_ARTIFACTS
@@ -245,6 +317,25 @@ def build_current_model_state_manifest(
         else:
             warnings.append(f"Required artifact is missing: {name}.")
     warnings.extend(_artifact_health_warnings(artifacts))
+
+    freshness_domains = _freshness_domains(
+        paths=paths,
+        artifacts=artifacts,
+        option_publish_block=option_publish_block,
+        carry=carry,
+        carry_failure=carry_failure,
+    )
+    option_domain = freshness_domains.get("option_artifacts", {})
+    if option_domain.get("status") == OPTION_FRESHNESS_CARRIED_FORWARD:
+        warnings.append(_carried_forward_info_warning(option_domain))
+    elif (
+        option_publish_block is not None
+        and option_domain.get("status") == OPTION_FRESHNESS_UNAVAILABLE
+    ):
+        warnings.append(
+            "Option artifacts are unavailable this refresh; option pages show "
+            "an unavailable notice instead of stale data."
+        )
 
     state = "complete"
     if missing_required or alignment["status"] != "OK":
@@ -276,6 +367,7 @@ def build_current_model_state_manifest(
         ),
         "artifacts": artifacts,
         "alignment": alignment,
+        "freshness_domains": freshness_domains,
         "warnings": warnings,
         "stage_timings": stage_timings or {},
     }
@@ -342,6 +434,63 @@ def summarize_model_state_alignment(payload: dict[str, Any] | None) -> dict[str,
         "message": messages[0] if messages else None,
         "warnings": tuple(messages),
     }
+
+
+def summarize_option_freshness(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return the option-artifact freshness verdict recorded in the manifest.
+
+    ``None`` means the manifest is absent or predates freshness domains; readers
+    then keep their legacy behavior. The returned dict carries ``status``
+    (OK | CARRIED_FORWARD | UNAVAILABLE), the snapshot date, and a ready-to-render
+    plain-English ``message`` so every surface shows the same wording.
+    """
+
+    if not isinstance(payload, dict):
+        return None
+    domains = payload.get("freshness_domains")
+    if not isinstance(domains, dict):
+        return None
+    domain = domains.get("option_artifacts")
+    if not isinstance(domain, dict):
+        return None
+    status = str(domain.get("status") or "").strip().upper()
+    if status not in OPTION_FRESHNESS_STATUSES:
+        return None
+    freshness: dict[str, Any] = {
+        "status": status,
+        "as_of_date": _clean_string(domain.get("as_of_date")),
+        "source_run_id": _clean_string(domain.get("source_run_id")),
+        "market_session": _clean_string(domain.get("market_session")) or "UNKNOWN",
+        "reason": _clean_string(domain.get("reason")),
+        "blockers": tuple(_message_list(domain.get("blockers"))),
+    }
+    freshness["message"] = format_option_freshness_message(freshness)
+    return freshness
+
+
+def format_option_freshness_message(freshness: dict[str, Any]) -> str:
+    """One shared plain-English freshness message for all option surfaces."""
+
+    status = str(freshness.get("status") or "").strip().upper()
+    as_of = _clean_string(freshness.get("as_of_date"))
+    if status == OPTION_FRESHNESS_OK:
+        if as_of:
+            return f"Option data is from the market snapshot of {as_of}."
+        return "Option data is from the latest refresh snapshot."
+    if status == OPTION_FRESHNESS_CARRIED_FORWARD:
+        snapshot = (
+            f"Option prices are from the latest stored snapshot: {as_of}."
+            if as_of
+            else "Option prices are from the latest stored snapshot."
+        )
+        reason = _clean_string(freshness.get("reason"))
+        if not reason:
+            reason = "The latest refresh could not publish fresh option quotes."
+        return f"{snapshot} {reason}"
+    return (
+        "Option data is not available yet. "
+        "Run python main.py refresh during US options market hours."
+    )
 
 
 def _artifact_map(
@@ -785,7 +934,12 @@ def _file_artifact(
     return artifact
 
 
-def _alignment(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _alignment(
+    artifacts: dict[str, dict[str, Any]],
+    *,
+    carried_options_run_id: str | None = None,
+    options_carried_forward: bool = False,
+) -> dict[str, Any]:
     warnings: list[str] = []
     foundation_id = _clean_string(artifacts["foundation"].get("refresh_run_id"))
     options_id = _clean_string(artifacts["options"].get("refresh_run_id"))
@@ -803,11 +957,21 @@ def _alignment(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
         expected_run_id=foundation_id,
         expected_label="foundation",
     )
+    # Carried-forward option artifacts intentionally reference an older options
+    # snapshot. Validating them against today's options ingestion run would mark
+    # every carried publish WARN/incomplete, so they are validated against their
+    # own carried snapshot id instead (self-consistency still checked).
+    option_expected_run_id = (
+        carried_options_run_id if options_carried_forward else options_id
+    )
+    option_expected_label = (
+        "the carried options snapshot" if options_carried_forward else "options"
+    )
     option_ids, option_warnings = _refresh_alignment(
         artifacts,
         names=REQUIRED_OPTION_ARTIFACT_NAMES,
-        expected_run_id=options_id,
-        expected_label="options",
+        expected_run_id=option_expected_run_id,
+        expected_label=option_expected_label,
     )
     portfolio_ids, portfolio_warnings = _refresh_alignment(
         artifacts,
@@ -819,7 +983,7 @@ def _alignment(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
     warnings.extend(option_warnings)
     warnings.extend(portfolio_warnings)
     status = "OK" if not warnings else "WARN"
-    return {
+    result = {
         "status": status,
         "foundation_refresh_run_id": foundation_id,
         "options_refresh_run_id": options_id,
@@ -828,6 +992,299 @@ def _alignment(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "portfolio_artifact_refresh_run_ids": portfolio_ids,
         "warnings": warnings,
     }
+    if options_carried_forward:
+        result["options_carried_forward"] = True
+        result["carried_options_refresh_run_id"] = carried_options_run_id
+    return result
+
+
+def _resolve_option_carry_forward(
+    *,
+    paths: ProjectPaths,
+    previous_manifest: dict[str, Any] | None,
+) -> tuple[_OptionCarryForward | None, str | None]:
+    """Re-verify the previous manifest's option artifact set for carry-forward.
+
+    The previous manifest is the source of truth (never the mutable latest
+    aliases): every entry must still exist at its immutable path, hash to the
+    recorded sha256, and carry the current schema version. All ten artifacts
+    must come from one source run; the four required ones must be non-empty.
+    Anything less returns ``(None, reason)`` — never a partial carry.
+    """
+
+    if previous_manifest is None:
+        return None, "No model-state manifest exists yet."
+    if previous_manifest.get("manifest_readable") is False:
+        return None, "The previous model-state manifest could not be read."
+    previous_artifacts = previous_manifest.get("artifacts")
+    if not isinstance(previous_artifacts, dict):
+        return None, "The previous model-state manifest has no artifacts map."
+
+    entries: dict[str, dict[str, Any]] = {}
+    source_run_ids: set[str] = set()
+    snapshot_run_ids: set[str] = set()
+    for name in OPTION_ARTIFACT_NAMES:
+        entry = previous_artifacts.get(name)
+        if not isinstance(entry, dict):
+            return None, f"Previous manifest lacks option artifact {name}."
+        if not entry.get("usable") or entry.get("immutable") is not True:
+            return None, f"Previous option artifact {name} is not usable/immutable."
+        raw_path = str(entry.get("path") or "").strip()
+        if not raw_path:
+            return None, f"Previous option artifact {name} has no recorded path."
+        path = paths.resolve_repo_relative(raw_path)
+        if not path.exists() or not path.is_file():
+            return None, f"Previous option artifact file is missing: {raw_path}."
+        expected_sha = str(entry.get("sha256") or "").strip()
+        if not expected_sha:
+            return None, f"Previous option artifact {name} has no recorded sha256."
+        try:
+            actual_sha = _sha256_file(path)
+        except Exception as exc:
+            return None, f"Could not hash previous option artifact {name}: {exc}."
+        if actual_sha != expected_sha:
+            return None, f"Previous option artifact {name} failed sha256 verification."
+        if not _schema_version_matches(entry.get("schema_version")):
+            return None, (
+                f"Previous option artifact {name} has schema version "
+                f"{entry.get('schema_version')!r}; current is "
+                f"{OPTION_ARTIFACT_SCHEMA_VERSION}."
+            )
+        if (
+            name in REQUIRED_OPTION_ARTIFACT_NAMES
+            and int(entry.get("row_count") or 0) <= 0
+        ):
+            return None, f"Previous option artifact {name} is empty."
+        entry_source_ids = [
+            value for value in (entry.get("source_run_ids") or []) if _clean_string(value)
+        ]
+        if not entry_source_ids:
+            return None, f"Previous option artifact {name} has no source_run_id."
+        source_run_ids.update(str(value) for value in entry_source_ids)
+        snapshot_run_ids.update(
+            str(value)
+            for value in (entry.get("snapshot_refresh_run_ids") or [])
+            if _clean_string(value)
+        )
+        carried = dict(entry)
+        carried["carried_forward"] = True
+        carried["carried_from_parent_refresh_id"] = _clean_string(
+            previous_manifest.get("parent_refresh_id")
+        )
+        entries[name] = carried
+
+    if len(source_run_ids) != 1:
+        return None, (
+            "Previous option artifacts do not share a single source run: "
+            + ", ".join(sorted(source_run_ids))
+            + "."
+        )
+
+    warnings: list[str] = []
+    snapshot_refresh_run_id: str | None = None
+    if len(snapshot_run_ids) == 1:
+        snapshot_refresh_run_id = next(iter(snapshot_run_ids))
+    elif snapshot_run_ids:
+        warnings.append(
+            "Carried option artifacts do not share a single options snapshot id: "
+            + ", ".join(sorted(snapshot_run_ids))
+            + "."
+        )
+
+    carry = _OptionCarryForward(
+        entries=entries,
+        source_run_id=next(iter(source_run_ids)),
+        snapshot_refresh_run_id=snapshot_refresh_run_id,
+        as_of_date=_carried_option_as_of_date(
+            paths=paths,
+            entries=entries,
+            previous_manifest=previous_manifest,
+        ),
+        carried_from_parent_refresh_id=_clean_string(
+            previous_manifest.get("parent_refresh_id")
+        ),
+        warnings=tuple(warnings),
+    )
+    return carry, None
+
+
+def _schema_version_matches(value: object) -> bool:
+    text = _clean_string(value)
+    if not text:
+        return False
+    try:
+        return int(float(text)) == int(OPTION_ARTIFACT_SCHEMA_VERSION)
+    except (TypeError, ValueError):
+        return False
+
+
+def _carried_option_as_of_date(
+    *,
+    paths: ProjectPaths,
+    entries: dict[str, dict[str, Any]],
+    previous_manifest: dict[str, Any],
+) -> str | None:
+    """Read the snapshot date from the carried artifacts themselves.
+
+    The artifacts are the source of truth so a multi-day chain keeps the
+    original date instead of drifting. Falls back to the previous manifest's
+    freshness domain, then its options ingestion entry.
+    """
+
+    entry = entries.get("option_signal_summary")
+    raw_path = str((entry or {}).get("path") or "").strip()
+    if raw_path:
+        path = paths.resolve_repo_relative(raw_path)
+        try:
+            frame = pd.read_parquet(path, columns=["as_of_date"])
+            values = frame["as_of_date"].dropna()
+            if not values.empty:
+                value = _clean_string(values.iloc[0])
+                if value:
+                    return value
+        except Exception:
+            pass
+    domains = previous_manifest.get("freshness_domains")
+    if isinstance(domains, dict):
+        domain = domains.get("option_artifacts")
+        if isinstance(domain, dict):
+            value = _clean_string(domain.get("as_of_date"))
+            if value:
+                return value
+    previous_artifacts = previous_manifest.get("artifacts")
+    if isinstance(previous_artifacts, dict):
+        options_entry = previous_artifacts.get("options")
+        if isinstance(options_entry, dict):
+            return _clean_string(options_entry.get("as_of_date"))
+    return None
+
+
+def _unavailable_option_artifact_entry(*, name: str, reason: str) -> dict[str, Any]:
+    """Manifest entry for an option artifact the manifest refuses to reference.
+
+    ``present`` is False on purpose: the entry must read as absent so readers
+    resolve nothing and alignment skips it — even if stale files still sit on
+    disk. The mutable aliases are never an authority for carry-forward.
+    """
+
+    return {
+        "name": name,
+        "kind": "parquet",
+        "path": None,
+        "source_alias_path": None,
+        "immutable": False,
+        "present": False,
+        "readable": False,
+        "usable": False,
+        "required_for_complete": name in REQUIRED_OPTION_ARTIFACT_NAMES,
+        "schema_version": None,
+        "unavailable_reason": reason,
+    }
+
+
+def _freshness_domains(
+    *,
+    paths: ProjectPaths,
+    artifacts: dict[str, dict[str, Any]],
+    option_publish_block: OptionPublishBlock | None,
+    carry: _OptionCarryForward | None,
+    carry_failure: str | None,
+) -> dict[str, dict[str, Any]]:
+    core: dict[str, Any] = {
+        "status": (
+            OPTION_FRESHNESS_OK
+            if artifacts["foundation"].get("usable")
+            else OPTION_FRESHNESS_UNAVAILABLE
+        ),
+        "as_of_date": _clean_string(artifacts["foundation"].get("snapshot_as_of_date")),
+    }
+
+    option_domain: dict[str, Any]
+    if option_publish_block is None:
+        required_usable = all(
+            artifacts[name].get("usable") for name in REQUIRED_OPTION_ARTIFACT_NAMES
+        )
+        if required_usable:
+            option_domain = {
+                "status": OPTION_FRESHNESS_OK,
+                "source_run_id": _first_option_source_run_id(artifacts),
+                "as_of_date": _option_artifact_as_of_date(paths=paths, artifacts=artifacts)
+                or _clean_string(artifacts["options"].get("as_of_date")),
+            }
+        else:
+            option_domain = {
+                "status": OPTION_FRESHNESS_UNAVAILABLE,
+                "reason": "Required option artifacts are missing or not usable.",
+            }
+    elif carry is not None:
+        option_domain = {
+            "status": OPTION_FRESHNESS_CARRIED_FORWARD,
+            "source_run_id": carry.source_run_id,
+            "as_of_date": carry.as_of_date,
+            "reason": _blocked_reason(option_publish_block),
+            "market_session": option_publish_block.market_session,
+            "blockers": list(option_publish_block.blockers),
+            "carried_from_parent_refresh_id": carry.carried_from_parent_refresh_id,
+        }
+    else:
+        option_domain = {
+            "status": OPTION_FRESHNESS_UNAVAILABLE,
+            "reason": carry_failure
+            or "No verified prior option artifact set is available.",
+            "market_session": option_publish_block.market_session,
+            "blockers": list(option_publish_block.blockers),
+        }
+    return {"core": core, "option_artifacts": option_domain}
+
+
+def _blocked_reason(block: OptionPublishBlock) -> str:
+    if str(block.market_session).upper() == "CLOSED":
+        return (
+            "US options were closed at refresh time, so live option quotes "
+            "were not refreshed."
+        )
+    return "Option benchmark quotes were not publishable at refresh time."
+
+
+def _carried_forward_info_warning(option_domain: dict[str, Any]) -> str:
+    as_of = _clean_string(option_domain.get("as_of_date")) or "an earlier snapshot"
+    source = _clean_string(option_domain.get("source_run_id")) or "unknown"
+    return (
+        f"Option artifacts were carried forward from the stored snapshot of "
+        f"{as_of} (source run {source}); fresh option quotes were not "
+        "publishable this refresh."
+    )
+
+
+def _first_option_source_run_id(artifacts: dict[str, dict[str, Any]]) -> str | None:
+    for name in REQUIRED_OPTION_ARTIFACT_NAMES:
+        for value in artifacts.get(name, {}).get("source_run_ids") or []:
+            cleaned = _clean_string(value)
+            if cleaned:
+                return cleaned
+    return None
+
+
+def _option_artifact_as_of_date(
+    *,
+    paths: ProjectPaths,
+    artifacts: dict[str, dict[str, Any]],
+) -> str | None:
+    entry = artifacts.get("option_signal_summary") or {}
+    if not entry.get("usable"):
+        return None
+    raw_path = str(entry.get("path") or "").strip()
+    if not raw_path:
+        return None
+    path = paths.resolve_repo_relative(raw_path)
+    try:
+        frame = pd.read_parquet(path, columns=["as_of_date"])
+        values = frame["as_of_date"].dropna()
+        if values.empty:
+            return None
+        return _clean_string(values.iloc[0])
+    except Exception:
+        return None
 
 
 def _refresh_alignment(

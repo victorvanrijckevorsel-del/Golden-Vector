@@ -8,6 +8,7 @@ import logging
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from pathlib import Path
 from time import perf_counter
@@ -36,11 +37,13 @@ from golden_vector.app.market_hours_refresh import (
 )
 from golden_vector.app.logging import configure_logging
 from golden_vector.app.model_state import (
+    OptionPublishBlock,
     load_current_model_state_manifest,
     resolve_current_foundation_manifest_path,
     resolve_current_model_artifact_path,
     summarize_model_state_alignment,
     summarize_model_state_manifest,
+    summarize_option_freshness,
     write_current_model_state_manifest,
 )
 from golden_vector.app.paths import ProjectPaths
@@ -1593,11 +1596,93 @@ def _is_same_gold_price(left: float, right: float) -> bool:
     return abs(float(left) - float(right)) <= 0.01
 
 
+US_OPTIONS_SESSION_START_ET = time(9, 30)
+US_OPTIONS_SESSION_END_ET = time(16, 0)
+
+
+@dataclass(frozen=True)
+class OptionArtifactsOutcome:
+    """Structured result of the option-artifact refresh step.
+
+    ``BLOCKED`` means the build itself succeeded but the data-quality publish
+    gates refused fresh signals (SPARSE/LOW_LIQUIDITY/STALE_QUOTES/...): the
+    refresh may carry forward the previous good option snapshot. ``FAILED`` is
+    a hard error (missing inputs, exceptions, corruption) that must keep
+    blocking the manifest publish entirely.
+    """
+
+    status: str  # OK | BLOCKED | FAILED
+    blockers: tuple[str, ...] = ()
+    market_session: str = "UNKNOWN"  # OPEN | CLOSED | UNKNOWN
+
+
+def _market_session_now() -> str:
+    """US options session label at this moment, for freshness context only."""
+
+    try:
+        decision = market_hours_refresh_decision(
+            start_et=US_OPTIONS_SESSION_START_ET,
+            end_et=US_OPTIONS_SESSION_END_ET,
+        )
+    except Exception:
+        return "UNKNOWN"
+    return "OPEN" if decision.should_run else "CLOSED"
+
+
+def _benchmark_signal_diagnostics(
+    *,
+    summary: pd.DataFrame,
+    app_config: AppConfig,
+) -> list[dict[str, object]]:
+    """Per-benchmark quality rows recorded when the publish gates block."""
+
+    if summary.empty or "ticker" not in summary.columns:
+        return []
+    benchmark_tickers = {
+        str(ticker).upper()
+        for ticker in app_config.hedge_readiness.benchmark_tickers
+    }
+    ticker_series = summary["ticker"].astype(str).str.upper()
+    mask = ticker_series.isin(benchmark_tickers)
+    vehicle = summary.get("option_vehicle_type")
+    if vehicle is not None:
+        mask = mask | (vehicle.astype(str) == "benchmark_etf")
+    fields = (
+        "ticker",
+        "data_quality_label",
+        "data_quality_reason",
+        "signal_area_contract_count",
+        "signal_area_quote_coverage",
+        "raw_chain_contract_count",
+        "liquidity_tier",
+    )
+    return [
+        {key: to_jsonable(record.get(key)) for key in fields if key in record}
+        for record in summary[mask].to_dict(orient="records")
+    ]
+
+
 def run_option_artifacts(
     paths: ProjectPaths,
     *,
     parent_refresh_id: str | None,
 ) -> int:
+    """Exit-code wrapper for direct CLI/test callers.
+
+    BLOCKED maps to a non-zero exit on purpose: a standalone run publishes no
+    manifest, so there is nothing to carry forward here — the previous state
+    simply stays current.
+    """
+
+    outcome = run_option_artifacts_outcome(paths, parent_refresh_id=parent_refresh_id)
+    return 0 if outcome.status == "OK" else 1
+
+
+def run_option_artifacts_outcome(
+    paths: ProjectPaths,
+    *,
+    parent_refresh_id: str | None,
+) -> OptionArtifactsOutcome:
     run_context: RunContext | None = None
 
     try:
@@ -1618,7 +1703,7 @@ def run_option_artifacts(
                 notes=["Option artifacts require the latest options manifest."],
             )
             LOGGER.error("Option artifact build stopped because no options manifest exists.")
-            return 1
+            return OptionArtifactsOutcome(status="FAILED")
 
         option_chain_scans = scan_option_chains_for_artifacts(
             app_config=loaded_config.app,
@@ -1658,20 +1743,31 @@ def run_option_artifacts(
         )
         if option_signals.publish_blockers:
             message = "; ".join(option_signals.publish_blockers)
+            market_session = _market_session_now()
             run_context.finalize(
-                status="FAIL",
+                status="BLOCKED",
                 summary={
                     "error": message,
-                    "option_signal_status": "STALE_QUOTES",
+                    "option_signal_status": "BLOCKED",
                     "option_signal_publish_blockers": list(option_signals.publish_blockers),
+                    "market_session": market_session,
+                    "benchmark_signal_diagnostics": _benchmark_signal_diagnostics(
+                        summary=option_signals.summary,
+                        app_config=loaded_config.app,
+                    ),
                 },
                 notes=[
                     "Option signal artifacts were not published because quote freshness failed.",
-                    "Run python main.py refresh during US options market hours.",
+                    "A refresh carries forward the previous good option snapshot when one exists.",
+                    "Run python main.py refresh during US options market hours for fresh signals.",
                 ],
             )
-            LOGGER.error("Option signal build stopped: %s", message)
-            return 1
+            LOGGER.error("Option signal build blocked: %s", message)
+            return OptionArtifactsOutcome(
+                status="BLOCKED",
+                blockers=tuple(option_signals.publish_blockers),
+                market_session=market_session,
+            )
         frames = build_option_artifact_frames(
             built=built,
             contract_metrics=contract_metrics,
@@ -1712,7 +1808,7 @@ def run_option_artifacts(
             ],
         )
         LOGGER.info("Option artifact build completed.")
-        return 0
+        return OptionArtifactsOutcome(status="OK")
     except Exception as exc:
         if run_context is None:
             run_context = RunContext.start(
@@ -1728,7 +1824,7 @@ def run_option_artifacts(
             summary={"error": str(exc)},
             notes=["Option artifact build failed before completion."],
         )
-        return 1
+        return OptionArtifactsOutcome(status="FAILED")
 
 
 def _previous_option_contract_metrics(paths: ProjectPaths) -> pd.DataFrame:
@@ -3040,20 +3136,38 @@ def _run_refresh_unlocked(
         print()
         print(f"== Step 6/{total_steps}: option-artifacts ==")
         started_at = perf_counter()
-        option_artifacts_exit = run_option_artifacts(
+        option_outcome = run_option_artifacts_outcome(
             paths,
             parent_refresh_id=parent_refresh_id,
         )
-        record_step("option_artifacts", started_at, option_artifacts_exit)
-        if option_artifacts_exit != 0:
+        record_step(
+            "option_artifacts",
+            started_at,
+            0 if option_outcome.status in {"OK", "BLOCKED"} else 1,
+        )
+        if option_outcome.status == "FAILED":
             print()
             print(
-                "option-artifacts failed (exit code {}). Model-state manifest was not published.".format(
-                    option_artifacts_exit
-                )
+                "option-artifacts failed (exit code 1). Model-state manifest was not published."
             )
             run_status(paths)
-            return option_artifacts_exit
+            return 1
+        option_publish_block: OptionPublishBlock | None = None
+        if option_outcome.status == "BLOCKED":
+            stage_timings["option_artifacts"]["status"] = "BLOCKED"
+            stage_timings["option_artifacts"]["publish_blockers"] = list(
+                option_outcome.blockers
+            )
+            option_publish_block = OptionPublishBlock(
+                blockers=option_outcome.blockers,
+                market_session=option_outcome.market_session,
+            )
+            print()
+            print(
+                "option-artifacts could not publish fresh option signals "
+                "(quote-quality gates). The refresh continues; the previous good "
+                "option snapshot is carried forward if one exists."
+            )
         fault_exit = injected_fault_after("option_artifacts")
         if fault_exit is not None:
             return fault_exit
@@ -3083,6 +3197,7 @@ def _run_refresh_unlocked(
             config_hash=loaded_config_for_refresh.config_hash,
             parent_refresh_id=parent_refresh_id,
             stage_timings=stage_timings,
+            option_publish_block=option_publish_block,
         )
         print()
         print(
@@ -3090,6 +3205,9 @@ def _run_refresh_unlocked(
             f"{paths.latest_model_state_manifest_path.relative_to(paths.repo_root).as_posix()} "
             f"({str(model_state.get('state')).upper()})"
         )
+        option_freshness = summarize_option_freshness(model_state)
+        if option_freshness is not None and option_freshness["status"] != "OK":
+            print(f"Option data: {option_freshness['status']} - {option_freshness['message']}")
 
     print()
     print("== Refresh complete. Operational status: ==")
@@ -3238,6 +3356,12 @@ def _render_status_summary(paths: ProjectPaths) -> str:
     lines.append("=" * 60)
     model_state_manifest = load_current_model_state_manifest(paths)
     lines.extend(summarize_model_state_manifest(model_state_manifest))
+    option_freshness = summarize_option_freshness(model_state_manifest)
+    if option_freshness is not None:
+        lines.append(f"Option data freshness: {option_freshness['status']}")
+        freshness_message = option_freshness.get("message")
+        if freshness_message:
+            lines.append(f"  {freshness_message}")
     lines.append("")
 
     # Foundation manifest

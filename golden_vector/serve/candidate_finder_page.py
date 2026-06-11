@@ -21,7 +21,10 @@ from golden_vector.serve.candidate_finder_data import (
     run_candidate_finder_screen,
 )
 from golden_vector.serve.format_helpers import _fmt_number, _fmt_numeric_td, _metric_card
-from golden_vector.serve.model_state_banner import render_model_state_banner
+from golden_vector.serve.model_state_banner import (
+    render_model_state_banner,
+    render_option_freshness_box,
+)
 from golden_vector.serve.option_refresh import (
     OptionRefreshStatus,
     render_option_refresh_control,
@@ -60,6 +63,7 @@ def render_candidate_finder_page(
             "<h1>Candidate Finder</h1>",
             "<p class=\"lead\">Choose a lens, then decide whether to scan every stock or only optionable names.</p>",
             render_model_state_banner(data.model_state_manifest),
+            render_option_freshness_box(data.model_state_manifest, only_when_stale=True),
             render_option_refresh_control(
                 refresh_status or OptionRefreshStatus(),
                 return_to=base_path,

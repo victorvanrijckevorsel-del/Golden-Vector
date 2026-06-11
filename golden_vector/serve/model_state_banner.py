@@ -4,7 +4,47 @@ from __future__ import annotations
 
 from html import escape
 
-from golden_vector.app.model_state import summarize_model_state_manifest
+from golden_vector.app.model_state import (
+    summarize_model_state_manifest,
+    summarize_option_freshness,
+)
+
+
+def render_option_freshness_box(
+    payload: dict[str, object] | None,
+    *,
+    only_when_stale: bool = False,
+) -> str:
+    """Render the option-data freshness box from the model-state manifest.
+
+    The backend (manifest freshness domain) owns the status and the message;
+    this renderer never computes market hours or freshness itself. One renderer
+    serves the Option Trading overview, the ticker option lens, and Candidate
+    Finder so the wording can never diverge.
+    """
+
+    freshness = summarize_option_freshness(payload)
+    if freshness is None:
+        return ""
+    status = str(freshness["status"])
+    if only_when_stale and status == "OK":
+        return ""
+    message = str(freshness.get("message") or "")
+    if status == "OK":
+        return (
+            "<p class=\"hint option-freshness option-freshness-ok\">"
+            f"{escape(message)}</p>"
+        )
+    label = (
+        "Stored option snapshot"
+        if status == "CARRIED_FORWARD"
+        else "Option data unavailable"
+    )
+    return (
+        "<div class=\"flash option-freshness option-freshness-stale\">"
+        f"<p><strong>{escape(label)}.</strong> {escape(message)}</p>"
+        "</div>"
+    )
 
 
 def render_model_state_banner(payload: dict[str, object] | None) -> str:

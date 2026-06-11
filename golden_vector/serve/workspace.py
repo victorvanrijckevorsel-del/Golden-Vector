@@ -442,6 +442,11 @@ def create_workspace_app(
                             option_trading_detail=option_trading_detail,
                             show_workspace_panels=not option_vehicle_detail,
                             show_manual_sections=not option_vehicle_detail,
+                            model_state_manifest=(
+                                load_current_model_state_manifest(paths)
+                                if detail_lens == DETAIL_OPTION_TRADING_LENS_ID
+                                else None
+                            ),
                         ),
                     )
 

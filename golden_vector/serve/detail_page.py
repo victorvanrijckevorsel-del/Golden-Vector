@@ -51,6 +51,7 @@ def render_detail_page(
     option_trading_detail: OptionTradingDetailData | None = None,
     show_workspace_panels: bool = True,
     show_manual_sections: bool = True,
+    model_state_manifest: dict[str, object] | None = None,
 ) -> str:
     company_row = _frame_index_by_ticker(state.company_inputs).get(ticker, {})
     reporting_row = _frame_index_by_ticker(state.reporting_calendar).get(ticker, {})
@@ -99,6 +100,7 @@ def render_detail_page(
     body.append(
         _render_option_trading_panel(
             option_trading_detail,
+            model_state_manifest=model_state_manifest,
         )
         if option_lens_active
         else _render_option_trading_link_panel(ticker)
