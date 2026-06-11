@@ -56,6 +56,7 @@ def _render_option_trading_overview_page(
         f"<p class=\"hint\">{snapshot_note}</p>",
         render_model_state_banner(model_state_manifest),
         render_option_freshness_box(model_state_manifest),
+        _render_most_liquid_indicator(overview),
         _render_context_warnings(overview.source_context),
         "<details class=\"method-disclosure\"><summary>Method</summary>"
         "<p>Contracts are selected from cached Yahoo Finance option-chain data. "
@@ -221,6 +222,31 @@ def _render_liquidity_measurements(
         + "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
         "</section>"
+    )
+
+
+def _render_most_liquid_indicator(overview: OptionTradingOverviewData) -> str:
+    """Show the backend-selected most-liquid windows for the miners group.
+
+    The values are stamped on the persisted overview artifact at build time
+    (per-ticker vote, benchmarks excluded); serve only renders them. Ticker
+    detail pages open on each name's own side-aware most-liquid expiry.
+    """
+
+    put_default = overview.group_default_put_horizon_days
+    call_default = overview.group_default_call_horizon_days
+    if put_default is None and call_default is None:
+        return ""
+    parts = []
+    if put_default is not None:
+        parts.append(f"puts ~{put_default}d")
+    if call_default is not None:
+        parts.append(f"calls ~{call_default}d")
+    return (
+        "<p class=\"hint most-liquid-indicator\">"
+        f"Most liquid windows right now (miners, backend-selected): {' · '.join(parts)}. "
+        "Ticker pages open on each name's own most-liquid expiry."
+        "</p>"
     )
 
 

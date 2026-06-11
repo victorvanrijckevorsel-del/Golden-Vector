@@ -289,3 +289,77 @@ def test_detail_uses_stamped_most_liquid_default_when_horizon_not_explicit():
     )
     assert call_side.sizing is not None
     assert call_side.sizing.request.horizon_days == 180
+
+
+def test_serve_detail_path_never_scans_raw_chains(monkeypatch):
+    """C5 guardrail: the serve detail build operates on persisted candidates
+    only — any raw chain scan in the request path is a contract violation."""
+
+    import golden_vector.hedge.options_liquidity as options_liquidity
+    from golden_vector.hedge.option_trading import (
+        OptionSizingRequest,
+        OptionTradingOverviewData,
+    )
+    from golden_vector.serve.option_trading_data import (
+        OptionTradingData,
+        build_option_trading_detail_data,
+    )
+    from golden_vector.app.config import load_app_config
+    from golden_vector.app.paths import ProjectPaths
+    import pandas as pd
+
+    def _forbidden_scan(*_args, **_kwargs):
+        raise AssertionError("serve detail path must not scan raw option chains")
+
+    monkeypatch.setattr(options_liquidity, "scan_option_chain", _forbidden_scan)
+    monkeypatch.setattr(options_liquidity, "normalize_options_chain", _forbidden_scan)
+
+    data = OptionTradingData(
+        overview=OptionTradingOverviewData(rows=(), liquidity_measurements=()),
+        candidate_grids={},
+        call_candidate_grids={},
+        candidate_slots={},
+        call_candidate_slots={},
+        options_features=pd.DataFrame(),
+        tool_a=pd.DataFrame(),
+        tool_b=pd.DataFrame(),
+        raw_options_by_ticker={},
+        risk_free_rate=0.04,
+        risk_free_rate_is_fallback=False,
+        cache_key=None,
+    )
+    app_config = load_app_config(ProjectPaths.discover()).app
+
+    detail = build_option_trading_detail_data(
+        data,
+        ticker="NEM",
+        app_config=app_config,
+        sizing_request=OptionSizingRequest(side="put", horizon_days=90),
+    )
+
+    assert detail.ticker == "NEM"
+
+
+def test_overview_renders_group_most_liquid_indicator():
+    """C4: the overview shows the backend-selected group defaults."""
+
+    from golden_vector.hedge.option_trading import OptionTradingOverviewData
+    from golden_vector.serve.overview_option_trading import (
+        _render_most_liquid_indicator,
+    )
+
+    overview = OptionTradingOverviewData(
+        rows=(),
+        liquidity_measurements=(),
+        group_default_put_horizon_days=230,
+        group_default_call_horizon_days=180,
+    )
+
+    html = _render_most_liquid_indicator(overview)
+
+    assert "puts ~230d" in html
+    assert "calls ~180d" in html
+    assert "backend-selected" in html
+    assert _render_most_liquid_indicator(
+        OptionTradingOverviewData(rows=(), liquidity_measurements=())
+    ) == ""

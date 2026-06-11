@@ -121,6 +121,10 @@ class OptionTradingOverviewData:
     risk_free_rate_is_fallback: bool = False
     source_context: OptionTradingSourceContext | None = None
     liquidity_measurements: tuple[OptionLiquidityMeasurement, ...] = ()
+    # Backend-selected group defaults (C3/C4): per-ticker vote over miners,
+    # stamped on the persisted overview artifact; serve only renders them.
+    group_default_put_horizon_days: int | None = None
+    group_default_call_horizon_days: int | None = None
 
 
 @dataclass(frozen=True)

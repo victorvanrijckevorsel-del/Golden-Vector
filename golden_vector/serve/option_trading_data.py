@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from time import perf_counter
 from typing import Any, cast
 
 import pandas as pd
+
+LOGGER = logging.getLogger(__name__)
 
 from golden_vector.common.files import optional_sha256_file as _file_sha256
 from golden_vector.common.files import sha256_file
@@ -122,6 +126,10 @@ def build_option_trading_detail_data(
         )
         if stamped is not None:
             sizing_request = replace(sizing_request, horizon_days=int(stamped))
+    # C5 bounded acceptance: the detail build recomputes scenario bundles for
+    # ONE selected candidate from persisted data (no raw chain scans — a
+    # guardrail test pins this). Timed so growth past "bounded" is visible.
+    detail_started_at = perf_counter()
     detail = build_option_trading_detail(
         ticker=normalized,
         tool_a=data.tool_a,
@@ -138,6 +146,12 @@ def build_option_trading_detail_data(
         down_beta_min_for_scenario=(
             app_config.hedge_readiness.down_beta_min_for_scenario
         ),
+    )
+    LOGGER.debug(
+        "option detail build for %s took %.3fs (request-time scenario compute "
+        "is bounded to the selected candidate)",
+        normalized,
+        perf_counter() - detail_started_at,
     )
     detail = _with_proxy_fallbacks(
         data=data,
@@ -486,13 +500,20 @@ def load_option_trading_data(
     liquidity_measurements = liquidity_measurements_from_frame(
         artifact_frames["option_liquidity_measurements"]
     )
-    overview_rows = overview_rows_from_frame(artifact_frames["option_trading_overview"])
+    overview_frame = artifact_frames["option_trading_overview"]
+    overview_rows = overview_rows_from_frame(overview_frame)
     overview = OptionTradingOverviewData(
         rows=overview_rows,
         reason=None if overview_rows else "No persisted option trading rows are available.",
         risk_free_rate_is_fallback=risk_free_rate_is_fallback,
         source_context=source_context,
         liquidity_measurements=liquidity_measurements,
+        group_default_put_horizon_days=_frame_first_int(
+            overview_frame, "group_default_put_horizon_days"
+        ),
+        group_default_call_horizon_days=_frame_first_int(
+            overview_frame, "group_default_call_horizon_days"
+        ),
     )
     data = OptionTradingData(
         overview=overview,
@@ -608,6 +629,13 @@ def _verify_artifact_sha256(
             f"Option artifact {name} sha256 mismatch at {display_path}: "
             f"expected {expected}, got {actual}."
         )
+
+
+def _frame_first_int(frame: pd.DataFrame, column: str) -> int | None:
+    if column not in frame.columns or frame.empty:
+        return None
+    values = pd.to_numeric(frame[column], errors="coerce").dropna()
+    return int(values.iloc[0]) if not values.empty else None
 
 
 def _artifact_context_float(frame: pd.DataFrame, key: str) -> float:
