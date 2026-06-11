@@ -107,6 +107,21 @@ def build_option_trading_detail_data(
         (row for row in data.overview.rows if row.ticker == normalized),
         None,
     )
+    # "Most liquid" default (C4): when the user did not pick a horizon, the
+    # backend-stamped per-ticker side-aware selection wins over the config
+    # fallback. Serve never recomputes the choice.
+    if (
+        sizing_request is not None
+        and not sizing_request.horizon_explicit
+        and overview_row is not None
+    ):
+        stamped = (
+            overview_row.most_liquid_put_horizon_days
+            if sizing_request.side == "put"
+            else overview_row.most_liquid_call_horizon_days
+        )
+        if stamped is not None:
+            sizing_request = replace(sizing_request, horizon_days=int(stamped))
     detail = build_option_trading_detail(
         ticker=normalized,
         tool_a=data.tool_a,
@@ -315,7 +330,8 @@ def parse_option_sizing_request(
     )
     horizon_raw = _query_value(query, "horizon")
     horizon = _parse_int(horizon_raw)
-    if horizon not in target_horizons:
+    horizon_explicit = horizon in target_horizons
+    if not horizon_explicit:
         if horizon_raw:
             notes.append(f"Invalid horizon; defaulted to {default_horizon}d.")
         horizon = default_horizon
@@ -355,6 +371,7 @@ def parse_option_sizing_request(
         quantity=quantity,
         budget=budget,
         notes=tuple(notes),
+        horizon_explicit=horizon_explicit,
     )
 
 

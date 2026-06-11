@@ -550,9 +550,16 @@ def _render_option_candidate_side_section(
     rows = []
     grouped = _slots_by_horizon(tuple(slots))
     for horizon in sorted(grouped):
+        expiration = next(
+            (str(slot.expiration) for slot in grouped[horizon] if slot.expiration),
+            None,
+        )
+        header = f"~{escape(str(horizon))}d target"
+        if expiration:
+            header += f" · expiry {escape(expiration)}"
         rows.append(
             "<tr class=\"option-horizon-row\">"
-            f"<th colspan=\"14\">~{escape(str(horizon))}d target</th>"
+            f"<th colspan=\"14\">{header}</th>"
             "</tr>"
         )
         for slot in grouped[horizon]:
@@ -739,8 +746,24 @@ def _render_option_sizing_calculator(detail: OptionTradingDetailData) -> str:
         }
         or {request.horizon_days}
     )
+    # Label horizons with the actual listed expiry chosen for that window —
+    # options expire on real dates, not on abstract "230d" targets.
+    expirations_by_horizon: dict[int, str] = {}
+    for slot in (*detail.put_slots, *detail.call_slots):
+        if slot.expiration and slot.horizon_days not in expirations_by_horizon:
+            expirations_by_horizon[slot.horizon_days] = str(slot.expiration)
     horizon_options = "".join(
-        f"<option value=\"{horizon}\"{' selected' if request.horizon_days == horizon else ''}>{horizon}d</option>"
+        (
+            f"<option value=\"{horizon}\""
+            f"{' selected' if request.horizon_days == horizon else ''}>"
+            f"{horizon}d"
+            + (
+                f" · {escape(expirations_by_horizon[horizon])}"
+                if horizon in expirations_by_horizon
+                else ""
+            )
+            + "</option>"
+        )
         for horizon in horizons
     )
     bucket_options = _bucket_options_for_request(detail, request)

@@ -42,6 +42,9 @@ class OptionSizingRequest:
     quantity: int = 5
     budget: float | None = None
     notes: tuple[str, ...] = ()
+    # True when the user picked the horizon explicitly; False lets the
+    # backend-stamped "Most liquid" default take over on the detail page.
+    horizon_explicit: bool = False
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,12 @@ class OptionTradingRow:
     option_vehicle_type: str = "single_stock"
     signal_horizon_days: int | None = None
     context_horizon_days: int | None = None
+    # Backend-selected "Most liquid" defaults (Milestone C3/C4): stamped at
+    # build time per side; serve renders them, never recomputes them.
+    most_liquid_put_horizon_days: int | None = None
+    most_liquid_put_expiration: str | None = None
+    most_liquid_call_horizon_days: int | None = None
+    most_liquid_call_expiration: str | None = None
 
 
 @dataclass(frozen=True)

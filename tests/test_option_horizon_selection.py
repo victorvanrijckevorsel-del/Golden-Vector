@@ -202,3 +202,90 @@ def test_no_tradable_contracts_yields_no_selection():
         )
         is None
     )
+
+
+def test_detail_uses_stamped_most_liquid_default_when_horizon_not_explicit():
+    """C4: the backend-stamped per-ticker side-aware default wins when the
+    user did not pick a horizon; an explicit pick always wins."""
+
+    from golden_vector.hedge.option_trading import (
+        OptionSizingRequest,
+        OptionTradingOverviewData,
+        OptionTradingRow,
+    )
+    from golden_vector.serve.option_trading_data import (
+        OptionTradingData,
+        build_option_trading_detail_data,
+    )
+    from golden_vector.app.config import load_app_config
+    from golden_vector.app.paths import ProjectPaths
+    import pandas as pd
+
+    row = OptionTradingRow(
+        ticker="NEM",
+        structural_delta_core=None,
+        down_beta_core=1.2,
+        up_beta_core=1.0,
+        confidence_label="High",
+        confidence_score=80.0,
+        iv_percentile_cross_sectional=50.0,
+        iv_skew_signal=0.05,
+        iv_rv_ratio_signal=1.2,
+        optionability_tier="directly_hedgeable",
+        put_status="tradable",
+        call_status="tradable",
+        pnl_put_at_context=None,
+        pnl_call_at_context=None,
+        notes=(),
+        current_stock_price=100.0,
+        signal_horizon_days=90,
+        context_horizon_days=90,
+        most_liquid_put_horizon_days=230,
+        most_liquid_put_expiration="2027-01-15",
+        most_liquid_call_horizon_days=180,
+        most_liquid_call_expiration="2026-12-18",
+    )
+    data = OptionTradingData(
+        overview=OptionTradingOverviewData(rows=(row,), liquidity_measurements=()),
+        candidate_grids={},
+        call_candidate_grids={},
+        candidate_slots={},
+        call_candidate_slots={},
+        options_features=pd.DataFrame(),
+        tool_a=pd.DataFrame(),
+        tool_b=pd.DataFrame(),
+        raw_options_by_ticker={},
+        risk_free_rate=0.04,
+        risk_free_rate_is_fallback=False,
+        cache_key=None,
+    )
+    app_config = load_app_config(ProjectPaths.discover()).app
+
+    implicit = build_option_trading_detail_data(
+        data,
+        ticker="NEM",
+        app_config=app_config,
+        sizing_request=OptionSizingRequest(side="put", horizon_days=90),
+    )
+    assert implicit.sizing is not None
+    assert implicit.sizing.request.horizon_days == 230
+
+    explicit = build_option_trading_detail_data(
+        data,
+        ticker="NEM",
+        app_config=app_config,
+        sizing_request=OptionSizingRequest(
+            side="put", horizon_days=90, horizon_explicit=True
+        ),
+    )
+    assert explicit.sizing is not None
+    assert explicit.sizing.request.horizon_days == 90
+
+    call_side = build_option_trading_detail_data(
+        data,
+        ticker="NEM",
+        app_config=app_config,
+        sizing_request=OptionSizingRequest(side="call", horizon_days=90),
+    )
+    assert call_side.sizing is not None
+    assert call_side.sizing.request.horizon_days == 180

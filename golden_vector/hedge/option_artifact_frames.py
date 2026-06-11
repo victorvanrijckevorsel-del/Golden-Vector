@@ -216,6 +216,18 @@ def overview_rows_from_frame(frame: pd.DataFrame) -> tuple[OptionTradingRow, ...
                 or "single_stock",
                 signal_horizon_days=_optional_int(record.get("signal_horizon_days")),
                 context_horizon_days=_optional_int(record.get("context_horizon_days")),
+                most_liquid_put_horizon_days=_optional_int(
+                    record.get("most_liquid_put_horizon_days")
+                ),
+                most_liquid_put_expiration=_optional_str(
+                    record.get("most_liquid_put_expiration")
+                ),
+                most_liquid_call_horizon_days=_optional_int(
+                    record.get("most_liquid_call_horizon_days")
+                ),
+                most_liquid_call_expiration=_optional_str(
+                    record.get("most_liquid_call_expiration")
+                ),
             )
         )
     return tuple(rows)
