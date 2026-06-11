@@ -11,6 +11,8 @@ from golden_vector.common.files import sha256_file
 from golden_vector.contracts.fundamentals import (
     FETCHED_FUNDAMENTALS_COLUMNS,
     FETCHED_FUNDAMENTALS_SCHEMA_VERSION,
+    FUNDAMENTAL_STATUS_PRECEDENCE,
+    FUNDAMENTAL_VALUE_STATUSES,
     FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
     fetched_fundamentals_latest_path,
 )
@@ -34,6 +36,12 @@ def test_fundamental_field_catalog_partitions_manual_numeric_fields():
     assert OPERATIONAL_SINGLE_SOURCE_FIELDS.isdisjoint(FINANCIAL_DUAL_SOURCE_FIELDS)
     assert OPERATIONAL_SINGLE_SOURCE_FIELDS | FINANCIAL_DUAL_SOURCE_FIELDS == set(
         NUMERIC_COMPANY_FIELDS
+    )
+
+
+def test_fundamental_status_precedence_covers_every_non_ok_status():
+    assert set(FUNDAMENTAL_STATUS_PRECEDENCE) == (
+        set(FUNDAMENTAL_VALUE_STATUSES) - {"OK"}
     )
 
 

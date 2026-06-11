@@ -169,10 +169,13 @@ def _map_net_debt(
     if total_debt is None:
         long_debt = _find_value(balance, LONG_TERM_DEBT_ALIASES)
         current_debt = _find_value(balance, CURRENT_DEBT_ALIASES)
-        if long_debt is None and current_debt is None:
+        if long_debt is None or current_debt is None:
             return _missing_field("net_debt_musd", period_end=period_end, currency=currency)
-        total_debt = (long_debt or 0.0) + (current_debt or 0.0)
-    cash = _find_value(balance, CASH_ALIASES) or 0.0
+        total_debt = long_debt + current_debt
+    cash = _find_value(balance, CASH_ALIASES)
+    cash_missing = cash is None
+    if cash_missing:
+        cash = 0.0
     converted = _convert_money(
         total_debt - cash,
         currency=currency,
@@ -185,6 +188,8 @@ def _map_net_debt(
         fetched_at_utc=fetched_at_utc,
         max_statement_age_days=max_statement_age_days,
     )
+    if cash_missing and status == "OK":
+        status = "MISSING"
     return _MappedField(
         field_name="net_debt_musd",
         value=converted.value_musd,
@@ -192,7 +197,11 @@ def _map_net_debt(
         period_end=period_end,
         period_type="ANNUAL",
         statement_currency=currency,
-        statement_scale="absolute_to_usd_millions",
+        statement_scale=(
+            "absolute_to_usd_millions_cash_missing_assumed_zero"
+            if cash_missing
+            else "absolute_to_usd_millions"
+        ),
     )
 
 
@@ -205,8 +214,12 @@ def _map_ebitda(
     ebitda_reconciliation_max_pct: float,
     fx_histories: dict[str, pd.DataFrame],
 ) -> _MappedField:
-    period_end = _period_end(income) or _period_end(cashflow)
+    income_period_end = _period_end(income)
+    cashflow_period_end = _period_end(cashflow)
+    period_end = income_period_end or cashflow_period_end
     currency = _statement_currency(income) or _statement_currency(cashflow)
+    if _periods_conflict(income_period_end, cashflow_period_end):
+        return _missing_field("ebitda_ltm_musd", period_end=period_end, currency=currency)
     operating_income = _find_value(income, OPERATING_INCOME_ALIASES)
     da = _find_value(cashflow, DA_ALIASES)
     if da is None:
@@ -244,7 +257,7 @@ def _map_ebitda(
         value=converted.value_musd,
         value_status=status,
         period_end=period_end,
-        period_type="TTM",
+        period_type="ANNUAL",
         statement_currency=currency,
         statement_scale="absolute_to_usd_millions",
     )
@@ -258,8 +271,12 @@ def _map_da(
     max_statement_age_days: int,
     fx_histories: dict[str, pd.DataFrame],
 ) -> _MappedField:
-    period_end = _period_end(cashflow) or _period_end(income)
+    income_period_end = _period_end(income)
+    cashflow_period_end = _period_end(cashflow)
+    period_end = cashflow_period_end or income_period_end
     currency = _statement_currency(cashflow) or _statement_currency(income)
+    if _periods_conflict(income_period_end, cashflow_period_end):
+        return _missing_field("da_musd", period_end=period_end, currency=currency)
     da = _find_value(cashflow, DA_ALIASES)
     if da is None:
         da = _find_value(income, DA_ALIASES)
@@ -282,7 +299,7 @@ def _map_da(
         value=converted.value_musd,
         value_status=status,
         period_end=period_end,
-        period_type="TTM",
+        period_type="ANNUAL",
         statement_currency=currency,
         statement_scale="absolute_to_usd_millions",
     )
@@ -321,7 +338,7 @@ def _map_interest(
         value=converted.value_musd,
         value_status=status,
         period_end=period_end,
-        period_type="TTM",
+        period_type="ANNUAL",
         statement_currency=currency,
         statement_scale="absolute_to_usd_millions",
     )
@@ -428,6 +445,10 @@ def _period_end(rows: pd.DataFrame) -> date | None:
     if values.empty:
         return None
     return values.max().date()
+
+
+def _periods_conflict(left: date | None, right: date | None) -> bool:
+    return left is not None and right is not None and left != right
 
 
 def _statement_currency(rows: pd.DataFrame) -> str:

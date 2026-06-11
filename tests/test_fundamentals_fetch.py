@@ -9,13 +9,17 @@ from golden_vector.app.config import load_app_config
 from golden_vector.app.run_context import RunContext
 from golden_vector.app.run_pruning import prune_runs
 from golden_vector.contracts.fundamentals import (
+    FETCHED_FUNDAMENTALS_SCHEMA_VERSION,
     FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
     RAW_FUNDAMENTALS_STATEMENTS_COLUMNS,
     fetched_fundamentals_latest_path,
     fundamentals_fetch_manifest_run_stamped_path,
     raw_fundamentals_statements_latest_path,
 )
-from golden_vector.fundamentals.artifacts import load_official_fundamentals
+from golden_vector.fundamentals.artifacts import (
+    load_official_fundamentals,
+    write_fetched_fundamentals_artifact_pair,
+)
 from golden_vector.fundamentals.fetch import fetch_and_publish_fundamentals
 from golden_vector.fundamentals.mapper import map_raw_fundamentals_to_official
 from golden_vector.fundamentals.raw_store import (
@@ -58,7 +62,6 @@ def test_raw_fundamentals_round_trip_preserves_yahoo_lines_periods_currency_and_
 
 
 def test_mapper_converts_currency_then_scales_to_millions_once(tmp_path):
-    paths = build_test_paths(tmp_path)
     source_run_id = "20260610T120000Z-fetch-fundamentals"
     raw = raw_statement_payload_to_frame(
         ticker="AAZ.L",
@@ -118,6 +121,155 @@ def test_mapper_missing_debt_leg_is_missing_not_zero_strength(tmp_path):
     row = official[official["field_name"].eq("net_debt_musd")].iloc[0]
     assert pd.isna(row["value"])
     assert row["value_status"] == "MISSING"
+
+
+def test_mapper_missing_one_split_debt_leg_is_missing_not_understated(tmp_path):
+    source_run_id = "20260610T120000Z-fetch-fundamentals"
+    payload = _payload(currency="USD")
+    payload["balance_sheet"] = pd.DataFrame(
+        {
+            "2025-12-31": {
+                "Long Term Debt": 450_000_000.0,
+                "Cash And Cash Equivalents": 50_000_000.0,
+            }
+        }
+    )
+    raw = raw_statement_payload_to_frame(
+        ticker="NEM",
+        yahoo_symbol="NEM",
+        payload=payload,
+        fetched_at_utc="2026-06-10T12:00:00Z",
+        source_run_id=source_run_id,
+    )
+
+    official = map_raw_fundamentals_to_official(
+        raw,
+        fx_histories={},
+        source_run_id=source_run_id,
+        max_statement_age_days=540,
+        ebitda_reconciliation_max_pct=0.25,
+    )
+
+    row = official[official["field_name"].eq("net_debt_musd")].iloc[0]
+    assert pd.isna(row["value"])
+    assert row["value_status"] == "MISSING"
+
+
+def test_mapper_missing_cash_leg_keeps_debt_value_but_degrades_status(tmp_path):
+    source_run_id = "20260610T120000Z-fetch-fundamentals"
+    payload = _payload(currency="USD")
+    payload["balance_sheet"] = pd.DataFrame(
+        {"2025-12-31": {"Total Debt": 500_000_000.0}}
+    )
+    raw = raw_statement_payload_to_frame(
+        ticker="AEM",
+        yahoo_symbol="AEM",
+        payload=payload,
+        fetched_at_utc="2026-06-10T12:00:00Z",
+        source_run_id=source_run_id,
+    )
+
+    official = map_raw_fundamentals_to_official(
+        raw,
+        fx_histories={},
+        source_run_id=source_run_id,
+        max_statement_age_days=540,
+        ebitda_reconciliation_max_pct=0.25,
+    )
+
+    row = official[official["field_name"].eq("net_debt_musd")].iloc[0]
+    assert row["value"] == 500.0
+    assert row["value_status"] == "MISSING"
+    assert row["statement_scale"] == "absolute_to_usd_millions_cash_missing_assumed_zero"
+
+
+def test_mapper_net_cash_miner_stays_net_cash_when_cash_is_present(tmp_path):
+    source_run_id = "20260610T120000Z-fetch-fundamentals"
+    payload = _payload(currency="USD")
+    payload["balance_sheet"] = pd.DataFrame(
+        {
+            "2025-12-31": {
+                "Total Debt": 100_000_000.0,
+                "Cash And Cash Equivalents": 500_000_000.0,
+            }
+        }
+    )
+    raw = raw_statement_payload_to_frame(
+        ticker="AEM",
+        yahoo_symbol="AEM",
+        payload=payload,
+        fetched_at_utc="2026-06-10T12:00:00Z",
+        source_run_id=source_run_id,
+    )
+
+    official = map_raw_fundamentals_to_official(
+        raw,
+        fx_histories={},
+        source_run_id=source_run_id,
+        max_statement_age_days=540,
+        ebitda_reconciliation_max_pct=0.25,
+    )
+
+    row = official[official["field_name"].eq("net_debt_musd")].iloc[0]
+    assert row["value"] == -400.0
+    assert row["value_status"] == "OK"
+
+
+def test_mapper_rejects_cross_period_ebitda_and_da_mix(tmp_path):
+    source_run_id = "20260610T120000Z-fetch-fundamentals"
+    payload = _payload(currency="USD")
+    payload["cashflow"] = pd.DataFrame(
+        {
+            "2024-12-31": {
+                "Depreciation And Amortization": 100_000_000.0,
+            }
+        }
+    )
+    raw = raw_statement_payload_to_frame(
+        ticker="AEM",
+        yahoo_symbol="AEM",
+        payload=payload,
+        fetched_at_utc="2026-06-10T12:00:00Z",
+        source_run_id=source_run_id,
+    )
+
+    official = map_raw_fundamentals_to_official(
+        raw,
+        fx_histories={},
+        source_run_id=source_run_id,
+        max_statement_age_days=540,
+        ebitda_reconciliation_max_pct=0.25,
+    )
+
+    rows = official.set_index("field_name")
+    assert pd.isna(rows.loc["ebitda_ltm_musd", "value"])
+    assert rows.loc["ebitda_ltm_musd", "value_status"] == "MISSING"
+    assert pd.isna(rows.loc["da_musd", "value"])
+    assert rows.loc["da_musd", "value_status"] == "MISSING"
+
+
+def test_mapper_annual_statement_fields_are_labeled_annual_not_ttm(tmp_path):
+    source_run_id = "20260610T120000Z-fetch-fundamentals"
+    raw = raw_statement_payload_to_frame(
+        ticker="AEM",
+        yahoo_symbol="AEM",
+        payload=_payload(currency="USD"),
+        fetched_at_utc="2026-06-10T12:00:00Z",
+        source_run_id=source_run_id,
+    )
+
+    official = map_raw_fundamentals_to_official(
+        raw,
+        fx_histories={},
+        source_run_id=source_run_id,
+        max_statement_age_days=540,
+        ebitda_reconciliation_max_pct=0.25,
+    )
+
+    rows = official.set_index("field_name")
+    assert rows.loc["ebitda_ltm_musd", "period_type"] == "ANNUAL"
+    assert rows.loc["da_musd", "period_type"] == "ANNUAL"
+    assert rows.loc["interest_expense_musd", "period_type"] == "ANNUAL"
 
 
 def test_mapper_marks_divergent_reported_ebitda_contaminated(tmp_path):
@@ -212,6 +364,59 @@ def test_fetch_stage_isolates_per_ticker_statement_exception(tmp_path):
     assert set(official["ticker"]) == {"AEM", "NEM"}
     failed_official = official[official["ticker"].eq("NEM")]
     assert set(failed_official["value_status"]) == {"MISSING"}
+
+
+def test_full_fundamentals_outage_writes_run_artifacts_without_advancing_current(tmp_path):
+    paths = build_test_paths(tmp_path)
+    loaded_config = load_app_config(paths)
+    prior_source_run_id = "20260609T120000Z-fetch-fundamentals"
+    write_fetched_fundamentals_artifact_pair(
+        paths=paths,
+        frame=pd.DataFrame(
+            [
+                {
+                    "schema_version": FETCHED_FUNDAMENTALS_SCHEMA_VERSION,
+                    "ticker": "AEM",
+                    "field_name": "net_debt_musd",
+                    "value": 250.0,
+                    "source": "YAHOO",
+                    "source_run_id": prior_source_run_id,
+                    "fetched_at_utc": "2026-06-09T12:00:00Z",
+                    "statement_period": "FY2025",
+                    "period_end": date(2025, 12, 31),
+                    "period_type": "ANNUAL",
+                    "statement_currency": "USD",
+                    "statement_scale": "absolute_to_usd_millions",
+                    "value_status": "OK",
+                }
+            ]
+        ),
+        source_run_id=prior_source_run_id,
+    )
+    latest_before = fetched_fundamentals_latest_path(paths).read_bytes()
+    run_context = RunContext.start(
+        paths=paths,
+        command="fetch-fundamentals",
+        parameters={"tickers": ["AEM", "NEM"]},
+        config_hash=loaded_config.config_hash,
+    )
+    fake_client = _FakeYahooClient({}, raised_symbols={"AEM", "NEM"})
+
+    result = fetch_and_publish_fundamentals(
+        paths=paths,
+        app_config=loaded_config.app,
+        run_context=run_context,
+        yahoo_client=fake_client,
+        tickers=["AEM", "NEM"],
+    )
+
+    assert result.manifest["stage_timings"]["current_publish_blocked_reason"] == (
+        "full_yahoo_outage"
+    )
+    assert fetched_fundamentals_latest_path(paths).read_bytes() == latest_before
+    assert not raw_fundamentals_statements_latest_path(paths).exists()
+    assert not paths.latest_fundamentals_fetch_manifest_path.exists()
+    assert paths.resolve_repo_relative(result.manifest["official_artifact"]["path"]).exists()
 
 
 def test_partial_fetch_writes_run_stamped_artifacts_without_current_aliases(tmp_path):

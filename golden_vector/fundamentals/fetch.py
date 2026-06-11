@@ -5,15 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
+from types import SimpleNamespace
 
 import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext, utc_now_iso
 from golden_vector.common.files import repo_relative
+from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.contracts.config_models import AppConfig, UniverseTicker
 from golden_vector.contracts.fundamentals import (
+    fetched_fundamentals_latest_path,
     fundamentals_fetch_manifest_run_stamped_path,
+    raw_fundamentals_statements_latest_path,
 )
 from golden_vector.fundamentals.artifacts import write_fetched_fundamentals_artifact_pair
 from golden_vector.fundamentals.mapper import map_raw_fundamentals_to_official
@@ -26,7 +30,10 @@ from golden_vector.fundamentals.raw_store import (
     write_fundamentals_fetch_manifest,
     write_raw_fundamentals_artifact_pair,
 )
-from golden_vector.ingestion.collection_resilience import map_with_bounded_workers
+from golden_vector.ingestion.collection_resilience import (
+    fetch_dataset_outage_status,
+    map_with_bounded_workers,
+)
 from golden_vector.ingestion.yahoo_client import YahooClient
 
 
@@ -80,12 +87,10 @@ def fetch_and_publish_fundamentals(
         paths=paths,
         frame=raw_frame,
         source_run_id=source_run_id,
-        publish_latest_alias=publish_current,
+        publish_latest_alias=False,
     )
     raw_run_path = Path(raw_write.run_path)
     run_context.record_artifact(raw_run_path)
-    if raw_write.latest_path is not None:
-        run_context.record_artifact(Path(raw_write.latest_path))
     timings["raw_write_seconds"] = round(perf_counter() - started_at, 3)
     timings["raw_rows"] = raw_write.row_count
 
@@ -103,12 +108,26 @@ def fetch_and_publish_fundamentals(
     timings["map_seconds"] = round(perf_counter() - started_at, 3)
     timings["official_rows"] = int(len(official.index))
 
+    publish_blocked_reason = _current_publish_blocked_reason(
+        paths=paths,
+        ticker_statuses=ticker_statuses,
+        official=official,
+    )
+    publish_current_effective = publish_current and publish_blocked_reason is None
+    if publish_blocked_reason is not None:
+        timings["current_publish_blocked_reason"] = publish_blocked_reason
+    raw_latest_path: Path | None = None
+    if publish_current_effective:
+        raw_latest_path = raw_fundamentals_statements_latest_path(paths)
+        write_parquet_atomic(persisted_raw, raw_latest_path, index=False)
+        run_context.record_artifact(raw_latest_path)
+
     started_at = perf_counter()
     official_write = write_fetched_fundamentals_artifact_pair(
         paths=paths,
         frame=official,
         source_run_id=source_run_id,
-        publish_latest_alias=publish_current,
+        publish_latest_alias=publish_current_effective,
     )
     official_run_path = Path(official_write.run_path)
     run_context.record_artifact(official_run_path)
@@ -130,16 +149,16 @@ def fetch_and_publish_fundamentals(
         source_run_id=source_run_id,
         fetched_at_utc=fetched_at_utc,
         raw_run_path=raw_write.run_path,
-        raw_latest_path=raw_write.latest_path,
+        raw_latest_path=raw_latest_path.as_posix() if raw_latest_path is not None else None,
         ticker_statuses=ticker_statuses,
         timings=timings,
         official_artifact=official_artifact,
-        publish_latest_alias=publish_current,
+        publish_latest_alias=publish_current_effective,
     )
     run_context.record_artifact(
         fundamentals_fetch_manifest_run_stamped_path(paths, source_run_id)
     )
-    if publish_current:
+    if publish_current_effective:
         run_context.record_artifact(paths.latest_fundamentals_fetch_manifest_path)
 
     return FundamentalsFetchResult(
@@ -168,6 +187,36 @@ def load_statement_fx_histories(paths: ProjectPaths) -> dict[str, pd.DataFrame]:
         except Exception:
             continue
     return histories
+
+
+def _current_publish_blocked_reason(
+    *,
+    paths: ProjectPaths,
+    ticker_statuses: list[dict[str, object]],
+    official: pd.DataFrame,
+) -> str | None:
+    """Return why the fetch must not advance current aliases, if any."""
+
+    outage_status = fetch_dataset_outage_status(
+        [
+            SimpleNamespace(
+                dataset="fundamentals",
+                status=str(row.get("status") or "").upper(),
+            )
+            for row in ticker_statuses
+        ],
+        dataset="fundamentals",
+    )
+    if outage_status == "FULL_OUTAGE" or _has_no_successful_fetch(ticker_statuses):
+        return "full_yahoo_outage"
+    if official.empty and fetched_fundamentals_latest_path(paths).exists():
+        return "empty_official_with_prior_current"
+    return None
+
+
+def _has_no_successful_fetch(ticker_statuses: list[dict[str, object]]) -> bool:
+    statuses = [str(row.get("status") or "").upper() for row in ticker_statuses]
+    return bool(statuses) and all(status != RAW_FETCH_STATUS_PASS for status in statuses)
 
 
 def _fetch_one(

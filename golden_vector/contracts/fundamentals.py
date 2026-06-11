@@ -32,6 +32,14 @@ FUNDAMENTAL_VALUE_STATUSES: tuple[FundamentalValueStatus, ...] = (
     "CURRENCY_BASIS_MISMATCH",
 )
 
+FUNDAMENTAL_STATUS_PRECEDENCE: tuple[FundamentalValueStatus, ...] = (
+    "CURRENCY_BASIS_MISMATCH",
+    "CONTAMINATED",
+    "MISSING",
+    "CURRENCY_UNCONVERTIBLE",
+    "STALE",
+)
+
 FETCHED_FUNDAMENTALS_COLUMNS: tuple[str, ...] = (
     "schema_version",
     "ticker",

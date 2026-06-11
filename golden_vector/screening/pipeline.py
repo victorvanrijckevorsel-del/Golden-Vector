@@ -11,6 +11,7 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.common.numeric import optional_finite_float
 from golden_vector.contracts.config_models import AppConfig
+from golden_vector.contracts.fundamentals import FUNDAMENTAL_STATUS_PRECEDENCE
 from golden_vector.fundamentals.artifacts import (
     empty_fetched_fundamentals_frame,
     load_official_fundamentals,
@@ -34,14 +35,6 @@ from golden_vector.screening.schema import TOOL_B_OUTPUT_COLUMNS
 from golden_vector.screening.verdicts import (
     compute_fundamental_checks,
     determine_screening_verdict,
-)
-
-_FINANCIAL_STATUS_PRECEDENCE: tuple[str, ...] = (
-    "CURRENCY_BASIS_MISMATCH",
-    "CONTAMINATED",
-    "MISSING",
-    "CURRENCY_UNCONVERTIBLE",
-    "STALE",
 )
 
 
@@ -283,6 +276,7 @@ def _build_tool_b_rows(
             if official_fundamentals is not None
             else empty_fetched_fundamentals_frame()
         ),
+        snapshot_feed_currencies=merged[["ticker", "feed_currency"]],
     )
     resolved_lookup = _resolved_lookup(resolved)
     for _, row in merged.iterrows():
@@ -527,7 +521,7 @@ def _rollup_financial_status(statuses: list[str]) -> str:
     normalized = [_clean_status(status) for status in statuses]
     if normalized and all(status == "OK" for status in normalized):
         return "OK"
-    for status in _FINANCIAL_STATUS_PRECEDENCE:
+    for status in FUNDAMENTAL_STATUS_PRECEDENCE:
         if status in normalized:
             return status
     return "MISSING"
@@ -584,6 +578,7 @@ def _prepare_market_snapshots(
         "market_cap_usd",
         "market_cap_musd",
         "shares_outstanding",
+        "feed_currency",
         "snapshot_normalization_status",
         "fx_staleness_days",
     ]
@@ -609,6 +604,8 @@ def _prepare_market_snapshots(
     )
     if "fx_staleness_days" not in working.columns:
         working["fx_staleness_days"] = pd.NA
+    if "feed_currency" not in working.columns:
+        working["feed_currency"] = pd.NA
     working = working.sort_values(["ticker", "snapshot_date"]).drop_duplicates(
         subset=["ticker"],
         keep="last",
