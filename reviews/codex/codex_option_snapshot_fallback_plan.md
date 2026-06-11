@@ -6,6 +6,20 @@
 > below instead of loose end-sections, with a dedicated horizon **blast-radius** analysis.
 > Full carry-forward findings + file:line evidence: `reviews/codex/claude_review_option_snapshot_fallback_plan.md`.
 
+## Changelog (2026-06-11 v3, Claude — Milestone C amended per Codex program review)
+
+- **A + B + D1 are SHIPPED** (main `a2b5a65`), including the gold-dial merge, three post-merge
+  semantic fixes, and a passed live smoke test. Milestone C is now the active front.
+- **Milestone C amended to buildable** per `codex_review_option_program_plan.md`: candidate vs
+  signal horizon policies split (signal = explicit 90d knob, never per-ticker most-liquid);
+  optionability re-keyed to a core-horizon subset; history migration decided (long-form +
+  backfill + `LIMITED_HISTORY`, covering the separate history store the artifact gate misses);
+  `OptionTradingRow.*_60d` renamed during the schema bump; concrete side-aware most-liquid
+  selector contract in `hedge/option_horizon_selection.py`; LEAPS = named ~450–650 DTE band;
+  CF presets switch to benchmark-relative `skew_residual_signal`; blast radius extended with the
+  five non-web 60d consumer modules; C5 resolved as bounded acceptance with a persist trigger.
+  All ten decisions (6 original + 4 added) are resolved in the Decisions table.
+
 ## Changelog (2026-06-11, Claude restructure)
 
 - **Reframed** the document from a single fallback plan into a 4-milestone option-area program
@@ -537,6 +551,14 @@ must be *generalized to long-dated expiries first* — this is the part the adde
   `features/options.py:138`), *not* the benchmark-relative residual the UI's "Skew Read" shows —
   decide whether to unify (see Decisions).
 
+**4b. Live 60d consumers OUTSIDE the Option Trading web page (added per Codex review — the
+original map under-counted).** These encode 60d semantics in production modules and would either
+break on the C2 rename or keep showing stale 60d language; each is migrated or explicitly frozen:
+`hedge/sensitivity_ranking.py` (:20-22, :34-36, :140-143, :173-181), `hedge/portfolio_totals.py`
+(:32, :158-159, :259-265, :311-319), `hedge/header_context.py` (:35-40, :178-188, :227-244),
+`hedge/report.py` (:507-517, :580-599, :733-737), `hedge/speculation_section.py` (:22, :31-32,
+:174-179), plus `features/options.py` (:22, :143, :155).
+
 **5. Serve render sites still pinned to 60d.**
 
 - Overview "Skew Read" cell → `option_signal_skew_display_value(signal)` default `horizon=60`
@@ -563,29 +585,67 @@ must be *generalized to long-dated expiries first* — this is the part the adde
 ### Sub-chunks (build in this order)
 
 **C1 — Consolidate horizon config (foundational, low-risk ratchet; no behavior change).**
-Introduce one `OptionHorizonPolicy` (allowed targets, bands, an explicit `signal_horizon`/primary,
-and a `default = "most_liquid"` flag). Make `DISPLAY_SIGNAL_HORIZONS`, the `band_for_horizon`
-fallback dict, and every legacy `(30,60,90)`/`(60,90,120)` default **derive from config**. Keep the
-live values `[60,90,120]` + `signal_horizon=60` so nothing changes yet. This kills the divergence and
-is the safe first step. (Honors Golden Vector rule #2: horizons only via centralized config.)
+Introduce **two** linked policies in config (amended per Codex review — candidate and signal horizons
+are different products and must not be conflated):
+
+- `candidate_horizon_policy`: the selectable expiry windows for trade candidates
+  (targets + DTE bands + a `default = "most_liquid"` flag). This is what grows to 90/180/~230/LEAPS.
+- `signal_horizon_policy`: one explicit `option_signal_horizon_days` driving Signal / Activity /
+  Cost / IV-rank. Stays **short/medium (90d in v1)** — an 18-month skew is sparse, rolls slowly,
+  and has no history; long-dated *signals* are a separate research question, not part of C.
+
+Also decide **optionability semantics now** (Codex HIGH): `directly_hedgeable` currently requires a
+25-delta put estimate at **all** configured target horizons (`features/options.py:223-228`) — with
+LEAPS in the set, most names would silently degrade to `thin`. Change to a configured
+`core_optionability_horizons` subset (v1: 90/180) or a minimum-coverage count, never "all selectable
+horizons". Make `DISPLAY_SIGNAL_HORIZONS`, the `band_for_horizon` fallback dict, and every legacy
+`(30,60,90)`/`(60,90,120)` default **derive from config**. Keep live values `[60,90,120]` +
+`signal_horizon=60` in this chunk so nothing changes yet. (Golden Vector rule #2: horizons only via
+centralized config.)
 
 **C2 — De-60d the signal/feature/history layer (the stored-schema chunk).**
-Parameterize the direction/headline/cost/IV-rank reads off `signal_horizon` (not literal 60).
-Generalize the overview contract: rename `OptionTradingRow.*_60d` to horizon-agnostic names (or add
-parallel generic columns) and update `_build_overview_row` + `overview_rows_from_frame` + the render.
-Resolve the **history schema** migration (generic columns vs schema bump — Decision). Fix
-`iv_percentile_cross_sectional` and drop/repair `term_slope_30_90`. **Bump
-`OPTION_ARTIFACT_SCHEMA_VERSION`.** This composes with Milestone A: carried-forward artifacts on the
-old schema downgrade to `UNAVAILABLE` automatically (A test 8), which is correct.
+Parameterize the direction/headline/cost/IV-rank reads off `option_signal_horizon_days` (not literal
+60). **Rename the `OptionTradingRow.*_60d` persisted fields during the schema bump** (decided —
+no parallel old/new forever): `signal_horizon_days`, `iv_skew_signal`, `iv_rv_ratio_signal`,
+`pnl_put_at_context`, `pnl_call_at_context` + context horizon/expiry metadata; update
+`_build_overview_row` + `overview_rows_from_frame` + render together. **History migration (decided —
+long-form, not reset):** the append-only `option_signal_history.parquet` (a separate local store,
+NOT covered by the artifact schema gate — Codex HIGH) moves to long format
+(`ticker, as_of_date, signal_horizon_days, skew_residual, atm_iv, iv_rv_ratio, benchmark_symbol,
+quote_snapshot_run_id`) with a one-time backfill from the existing `skew_residual_60d/90d` +
+`atm_iv_60d` columns; IV-rank reads the new shape filtered to the signal horizon, and shows
+`LIMITED_HISTORY` calmly while the 90d series fills. Fix `iv_percentile_cross_sectional` to the
+signal horizon; **remove `term_slope_30_90`** (reads `atm_iv_30d`, which the live config never
+produces — already silently None; removing beats keeping a dead column). **Bump
+`OPTION_ARTIFACT_SCHEMA_VERSION`.** Composes with Milestone A: old-schema carried artifacts
+downgrade to `UNAVAILABLE` (A test 8). Also sweep the **full 60d consumer list** (Codex HIGH —
+migrate or explicitly freeze): `hedge/sensitivity_ranking.py`, `hedge/portfolio_totals.py`,
+`hedge/header_context.py`, `hedge/report.py`, `hedge/speculation_section.py` — each either reads the
+renamed signal fields or is declared frozen/retired in the C2 commit message; no silent stale-60d
+text may survive.
 
 **C3 — Add the long-dated horizons + "Most liquid" selector (new backend logic).**
-Add 180/230/LEAPS to config with appropriate bands (LEAPS needs a wide band, e.g. `>365`). Build a
-backend selector that groups `option_contract_metrics` by expiry, aggregates tradable liquidity
-(count of tradable contracts, median tradable spread/OI/volume/depth — reuse Milestone B's
-tradable-only aggregation), and picks the **most-liquid expiry/horizon per ticker** (or per group —
-Decision). Stamp the chosen default into the artifact/manifest so serve only reads it. Note: ~230d and
-LEAPS should be **liquidity-selected within a window**, not `band_for_horizon` nominal-integer
-matching, which would pick by DTE distance and miss the liquid expiry.
+Add 180/230/LEAPS to config. **LEAPS is a named band, not open-ended:** start ~450–650 DTE
+(per Codex's read of cached coverage; 1y-ish single-stock coverage is weak — only add a 1y band if
+data later supports it). **Selector contract (decided, per Codex's concrete recommendation):**
+
+- Lives in backend `hedge/option_horizon_selection.py`, runs during the option-artifact build after
+  `option_contract_metrics` exists; serve only reads the stamped result.
+- Evaluates **only configured horizon windows** (never whole-chain), per ticker × side × window ×
+  expiry, filtered to `liquidity_tier == "tradable"` with valid mid/rel_spread — reusing Milestone
+  B's `aggregate_tradable_liquidity` primitive, never a second liquidity summary.
+- Scores an expiry with **robust aggregates, not raw sums** (a sum rewards one ticker with many
+  contracts): unique tradable contract count, median tradable spread (lower better), median OI,
+  median volume, median near-spot depth; standard-monthly flag and DTE-distance-in-window as
+  tie-breakers only.
+- **Defaults are side-aware and scoped:** overview default = group-level over single-stock miners
+  with per-ticker normalized scores (so GDX/GDXJ can't dominate); ticker detail default = that
+  ticker's best expiry for the selected side (put-heavy expiry must not become the call default).
+- Deterministic tie-break chain: ticker coverage → median spread → median OI → median volume →
+  closer target DTE → earlier expiration → lexical.
+- The published **Signal stays on the global signal horizon** (comparable across rows); per-ticker
+  most-liquid drives candidate/default expiry only. A LEAPS candidate can coexist with a SPARSE
+  90d signal — the UI explains these are different lanes (D2 tooltip).
 
 **C4 — Serve: horizon switcher + real expiry dates (de-60d the render).**
 Add a page-wide horizon control threaded through the `/option-trading` overview and `/ticker` detail
@@ -597,13 +657,14 @@ rows + scenarios for the selected expiry, side switch (`put`/`call`) without res
 Render `slot.expiration` ("Jan 15 2027") in the switcher/group headers, with the nominal target in the
 tooltip ("Target ~230d · selected Jan 15 2027 · most-liquid near target").
 
-**C5 — DECISION/DEBT: serve-side scenario recompute.**
+**C5 — Serve-side scenario recompute (RESOLVED: bounded acceptance, does not block C).**
 `build_option_trading_detail` recomputes P&L scenario bundles **at request time** with hardcoded gold
 ladders (`option_trading.py:250,265`) — a pre-existing "backend computes, serve renders" violation,
-not introduced here. A per-horizon redesign that recomputes scenarios for the selected expiry makes
-this worse. Decide: persist scenario bundles per-horizon in an artifact (clean, larger artifacts), or
-explicitly accept the serve-side recompute as bounded and documented for now. Flag, don't silently
-carry.
+not introduced by C. Per Codex review: it is backend Python over persisted selected candidates (not a
+raw chain scan), so C keeps request-time compute **for the single selected candidate/horizon only**,
+adds timing/logging, and a guardrail test proving no raw chain scan happens in the serve path. The
+moment any page renders scenario bundles for **multiple** horizons at once, they must move to a
+persisted per-horizon artifact — that trigger is written into the C4 acceptance criteria.
 
 ### Milestone C tests
 
@@ -620,21 +681,37 @@ carry.
 - (C5) Whatever is decided: either scenarios load from a persisted per-horizon artifact, or a test
   documents the bounded serve-side recompute.
 
-### Decisions needed before C (forks that change the code path)
+Added by the Codex-review amendment:
 
-1. **Signal horizon after redesign.** The published direction is hardwired to 60d and the new set has
-   no 60. Add an explicit `option_signal_horizon_days` knob, or drive the signal off the per-ticker
-   "most-liquid" horizon? (Affects C2/C3.)
-2. **History-schema migration.** Generic columns (`skew_residual_signal`/`atm_iv_signal`) with
-   backfill, or bump `OPTION_ARTIFACT_SCHEMA_VERSION` and reset history? (Affects C2 + Milestone A
-   carry-forward.)
-3. **Most-liquid aggregation policy.** Rank expiries by sum vs median liquidity_score vs tradable
-   count? Across the whole chain or within a DTE window? Per-ticker or per-group (benchmark vs name)?
-4. **LEAPS band.** What DTE defines LEAPS (e.g. `>365`)? No band exists today.
-5. **`OptionTradingRow` rename appetite.** Rename the `*_60d` persisted fields (cross-cutting) or add
-   parallel generic columns and deprecate later?
-6. **Candidate Finder skew field.** Keep CF scoring on the name's own `iv_skew` or switch to the
-   benchmark-relative residual the UI shows, for consistency? And at which horizon?
+- Optionability: with LEAPS configured, a name with solid 90/180 coverage but no LEAPS quote keeps
+  `directly_hedgeable` (core-subset rule); the old "all horizons" rule is pinned as removed.
+- Signal-vs-candidate split: with `option_signal_horizon_days=90`, a ticker with only LEAPS
+  candidates still shows a 90d-based Signal (or a calm SPARSE), never a LEAPS-derived one.
+- Side-aware defaults: a put-heavy expiry does not become the call-side default on the detail page.
+- History backfill: legacy wide-format history rows are readable post-migration; IV-rank matches the
+  pre-migration value for the 60d series at the boundary; `LIMITED_HISTORY` renders while 90d fills.
+- Frozen-consumer sweep: a grep-level test (or checklist in the C2 PR) proves no production module
+  still reads `*_60d` fields except declared-frozen ones.
+
+### Decisions — RESOLVED (2026-06-11, per Codex program review + Claude reconciliation)
+
+| # | Decision | Resolution |
+|---|---|---|
+| 1 | Signal horizon | Explicit `option_signal_horizon_days` knob, **90d in v1**. Never per-ticker most-liquid for the published Signal — rows must stay comparable (AEM at 230d vs NEM at 90d would make the column meaningless). |
+| 2 | History migration | **Long-form history** with `signal_horizon_days` + one-time backfill from `skew_residual_60d/90d`/`atm_iv_60d`; covers the separate `option_signal_history.parquet` store the artifact schema gate does NOT protect. `LIMITED_HISTORY` shown calmly while the 90d series fills. Plus `OPTION_ARTIFACT_SCHEMA_VERSION` bump for the ten artifacts. |
+| 3 | Most-liquid policy | Backend per-window expiry scoring over tradable contracts only (reuses B's primitive); robust medians not sums; overview default group-level (per-ticker normalized, miners only), detail default per-ticker **and side-aware**; deterministic tie-breaks. |
+| 4 | LEAPS band | Named config band, **~450–650 DTE** to start; no open-ended `>365`; a separate 1y band only if coverage data later supports it. |
+| 5 | `OptionTradingRow.*_60d` rename | **Rename during the schema bump** (`iv_skew_signal`, `iv_rv_ratio_signal`, `pnl_*_at_context` + horizon/expiry metadata). No parallel old/new columns; compatibility lives in migration helpers/tests only. |
+| 6 | CF skew field | Bull/Bear presets switch to benchmark-relative **`skew_residual_signal`** (asks "unusually tilted vs GDX/GDXJ?"); raw `name_iv_skew_signal` stays available as an optional criterion (different question). `candidate_finder_inputs` gains the generic signal fields + `benchmark_symbol` + `signal_horizon_days`. |
+
+Added decisions (Codex review), also resolved:
+
+| Decision | Resolution |
+|---|---|
+| Optionability after LEAPS | `directly_hedgeable` keyed to a configured `core_optionability_horizons` subset (v1: 90/180) or min-coverage count — never "all selectable horizons" (`features/options.py:223-228` would silently downgrade names). |
+| Is most-liquid side-specific? | Yes — put and call liquidity differ; detail defaults are per-side. |
+| LEAPS candidate + SPARSE signal coexistence | Allowed and explained: candidate lanes and signal lanes are different products; D2 tooltip documents it. |
+| Old Hedge Readiness markdown/CLI outputs | Each 60d consumer (`report.py`, `sensitivity_ranking.py`, `portfolio_totals.py`, `header_context.py`, `speculation_section.py`) is migrated to the renamed signal fields **or explicitly frozen/retired in the C2 commit** — no silent stale-60d text. |
 
 ---
 
