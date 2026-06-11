@@ -68,7 +68,13 @@ def render_candidate_finder_page(
                 refresh_status or OptionRefreshStatus(),
                 return_to=base_path,
             ),
-            _render_preset_bar(data, active_preset_id, base_path=base_path),
+            _render_gold_scenario_control(data, query, base_path=base_path),
+            _render_preset_bar(
+                data,
+                active_preset_id,
+                query=query,
+                base_path=base_path,
+            ),
             _render_active_preset_description(data, active_preset_id),
             _render_warning_banner(screen.warnings),
             _render_summary_cards(screen),
@@ -129,11 +135,16 @@ def _render_preset_bar(
     data: CandidateFinderData,
     active_preset_id: str,
     *,
+    query: Mapping[str, Sequence[str]],
     base_path: str,
 ) -> str:
     links: list[str] = []
     for preset in data.criteria_config.presets:
-        href = base_path + "?" + urlencode({"preset": preset.id})
+        href = _preset_href(
+            base_path=base_path,
+            preset_id=preset.id,
+            query=query,
+        )
         active = " is-active" if preset.id == active_preset_id else ""
         links.append(
             (
@@ -146,6 +157,62 @@ def _render_preset_bar(
         + "".join(links)
         + "</div>"
     )
+
+
+def _preset_href(
+    *,
+    base_path: str,
+    preset_id: str,
+    query: Mapping[str, Sequence[str]],
+) -> str:
+    params: list[tuple[str, str]] = [("preset", preset_id)]
+    gold_price = _first(query, "gold_price")
+    if gold_price:
+        params.append(("gold_price", gold_price))
+    return base_path + "?" + urlencode(params)
+
+
+def _render_gold_scenario_control(
+    data: CandidateFinderData,
+    query: Mapping[str, Sequence[str]],
+    *,
+    base_path: str,
+) -> str:
+    current_value = (
+        ""
+        if data.gold_price_used is None
+        else f"{float(data.gold_price_used):.0f}"
+    )
+    hidden = _hidden_query_inputs(query, exclude={"gold_price"})
+    reset_query = _query_without(query, {"gold_price"})
+    reset_href = base_path + (f"?{reset_query}" if reset_query else "")
+    if data.scenario_active:
+        status = (
+            f"Scenario ranks gold-dependent fundamentals at ${data.gold_price_used:,.0f}/oz. "
+            "Persisted model artifacts are unchanged."
+        )
+    elif data.scenario_requested_gold_price is not None and data.scenario_error:
+        status = "Scenario failed; this page is showing the persisted spot-ranked screen."
+    elif data.spot_gold_usd is not None:
+        status = f"Current screen uses persisted spot gold at ${data.spot_gold_usd:,.0f}/oz."
+    else:
+        status = "Current screen uses the persisted model run."
+    return f"""
+<section class="panel candidate-gold-scenario-panel">
+  <form method="get" action="{escape(base_path, quote=True)}" class="candidate-finder-form">
+    {hidden}
+    <div class="candidate-form-row">
+      <label>
+        Gold price for ranking
+        <input type="number" name="gold_price" min="1" step="1" value="{escape(current_value)}">
+      </label>
+      <button type="submit">Apply Gold Scenario</button>
+      <a href="{escape(reset_href, quote=True)}">Reset to persisted spot</a>
+    </div>
+    <p class="hint">{escape(status)}</p>
+  </form>
+</section>
+"""
 
 
 def _render_active_preset_description(
@@ -526,6 +593,33 @@ def _first(query: Mapping[str, Sequence[str]], key: str) -> str:
     if not values:
         return ""
     return str(values[0]).strip()
+
+
+def _hidden_query_inputs(
+    query: Mapping[str, Sequence[str]],
+    *,
+    exclude: set[str],
+) -> str:
+    fields: list[str] = []
+    for key, values in query.items():
+        if key in exclude:
+            continue
+        for value in values:
+            fields.append(
+                f'<input type="hidden" name="{escape(str(key), quote=True)}" '
+                f'value="{escape(str(value), quote=True)}">'
+            )
+    return "\n".join(fields)
+
+
+def _query_without(query: Mapping[str, Sequence[str]], exclude: set[str]) -> str:
+    params: list[tuple[str, str]] = []
+    for key, values in query.items():
+        if key in exclude:
+            continue
+        for value in values:
+            params.append((str(key), str(value)))
+    return urlencode(params)
 
 
 def _fmt_weight(value: float) -> str:

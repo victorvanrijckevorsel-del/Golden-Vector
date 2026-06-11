@@ -1048,11 +1048,32 @@ class PortfolioConfig(StrictConfigModel):
     enabled: bool = False
 
 
+class FundamentalsConfig(StrictConfigModel):
+    version: int = 1
+    max_statement_age_days: int = 540
+    ebitda_reconciliation_max_pct: float = 0.25
+
+    @field_validator("max_statement_age_days")
+    @classmethod
+    def positive_statement_age(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("max_statement_age_days must be positive")
+        return int(value)
+
+    @field_validator("ebitda_reconciliation_max_pct")
+    @classmethod
+    def positive_reconciliation_threshold(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("ebitda_reconciliation_max_pct must be positive")
+        return float(value)
+
+
 class AppConfig(StrictConfigModel):
     universe: UniverseConfig
     benchmarks: BenchmarksConfig
     market_data: MarketDataConfig = Field(default_factory=MarketDataConfig)
     portfolio: PortfolioConfig = Field(default_factory=PortfolioConfig)
+    fundamentals: FundamentalsConfig = Field(default_factory=FundamentalsConfig)
     candidate_finder: CandidateFinderConfig
     hedge_readiness: HedgeReadinessConfig = Field(default_factory=HedgeReadinessConfig)
     tool_c: ToolCConfig = Field(default_factory=ToolCConfig)

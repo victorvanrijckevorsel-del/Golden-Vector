@@ -196,6 +196,7 @@ def _protection_sets(
             ):
                 protected_run_ids.update(_run_ids(raw_artifact.get(field_name)))
     protected_paths.update(_latest_portfolio_protected_paths(paths))
+    protected_paths.update(_fundamentals_fetch_protected_paths(paths))
     return protected_paths, protected_run_ids
 
 
@@ -260,6 +261,13 @@ def _artifact_file_candidates(paths: ProjectPaths) -> list[PruneCandidate]:
         (
             paths.output_portfolio_dir,
             ("*_latest_*.*",),
+        ),
+        (
+            paths.raw_fundamentals_dir,
+            (
+                "raw_fundamentals_statements_latest_*.*",
+                "fundamentals_fetch_manifest_latest_*.json",
+            ),
         ),
         (
             paths.intermediate_status_dir,
@@ -341,6 +349,29 @@ def _latest_portfolio_protected_paths(paths: ProjectPaths) -> set[Path]:
     for alias in aliases:
         protected.add(_resolve_path(alias))
         protected.update(_matching_run_stamped_alias_files(alias))
+    return protected
+
+
+def _fundamentals_fetch_protected_paths(paths: ProjectPaths) -> set[Path]:
+    protected: set[Path] = set()
+    manifest_paths = list(
+        paths.raw_fundamentals_dir.glob("fundamentals_fetch_manifest_latest_*.json")
+    )
+    if paths.latest_fundamentals_fetch_manifest_path.exists():
+        manifest_paths.append(paths.latest_fundamentals_fetch_manifest_path)
+    for manifest_path in _unique_paths(manifest_paths):
+        payload = _read_json_object(manifest_path)
+        if payload is None:
+            continue
+        protected.add(_resolve_path(manifest_path))
+        raw_statements = payload.get("raw_statements")
+        if not isinstance(raw_statements, dict):
+            continue
+        for field_name in ("path", "latest_alias_path"):
+            raw_path = str(raw_statements.get(field_name) or "").strip()
+            if not raw_path:
+                continue
+            protected.add(_resolve_path(_resolve_repo_path(paths, raw_path)))
     return protected
 
 

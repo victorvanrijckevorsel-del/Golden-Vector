@@ -27,6 +27,11 @@ from golden_vector.common.strings import clean_string as _common_clean_string
 from golden_vector.common.strings import unique_strings as _common_unique_strings
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import to_jsonable
+from golden_vector.contracts.fundamentals import (
+    FETCHED_FUNDAMENTALS_PREFIX,
+    FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
+    fetched_fundamentals_latest_path,
+)
 from golden_vector.contracts.option_artifacts import (
     OPTION_ARTIFACT_NAMES,
     OPTION_ARTIFACT_PREFIXES,
@@ -529,6 +534,12 @@ def _artifact_map(
             path=paths.latest_tool_d_spot_snapshot_parquet_path,
             required_for_complete=False,
         ),
+        FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME: _parquet_artifact(
+            paths=paths,
+            name=FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
+            path=fetched_fundamentals_latest_path(paths),
+            required_for_complete=False,
+        ),
         "portfolio_lines": _parquet_artifact(
             paths=paths,
             name="portfolio_lines",
@@ -774,6 +785,13 @@ def _parquet_artifact(
         snapshot_ids = _metadata_strings(alias_metadata, "snapshot_refresh_run_id")
     artifact["snapshot_refresh_run_ids"] = snapshot_ids
     artifact["source_run_ids"] = source_ids
+    if name == FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME:
+        artifact["fetched_at_utc"] = _clean_string(
+            _first_present(frame, "fetched_at_utc")
+        )
+        value_statuses = _unique_strings(frame, "value_status")
+        if value_statuses:
+            artifact["value_statuses"] = value_statuses
     return artifact
 
 
@@ -1323,6 +1341,11 @@ def _artifact_health_warnings(artifacts: dict[str, dict[str, Any]]) -> list[str]
         warnings.append("Options phase status is missing.")
     if options_status and options_status == "FAIL":
         warnings.append("Options phase status is FAIL.")
+    fundamentals = artifacts.get(FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME)
+    if isinstance(fundamentals, dict) and fundamentals.get("usable"):
+        statuses = set(fundamentals.get("value_statuses") or [])
+        if "STALE" in statuses:
+            warnings.append("Official fundamentals include stale statement fields.")
     for name in REQUIRED_ARTIFACTS:
         artifact = artifacts[name]
         if (
@@ -1553,6 +1576,8 @@ def _tool_latest_directory_and_prefix(paths: ProjectPaths, name: str) -> tuple[P
         return paths.output_tool_c_dir, "tool_c"
     if name in {"tool_d", "tool_d_spot"}:
         return paths.output_tool_d_dir, "tool_d"
+    if name == FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME:
+        return paths.output_fundamentals_dir, FETCHED_FUNDAMENTALS_PREFIX
     if name in OPTION_ARTIFACT_PREFIXES:
         return paths.output_options_dir, OPTION_ARTIFACT_PREFIXES[name]
     if name in PORTFOLIO_ARTIFACTS:

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections import OrderedDict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -11,9 +12,13 @@ import pandas as pd
 import yaml
 
 from golden_vector.common.files import optional_sha256_file as _file_sha256
+from golden_vector.common.numeric import require_finite_positive
 from golden_vector.common.strings import unique_strings as _common_unique_strings
+from golden_vector.app.latest_data import load_latest_foundation_snapshot
 from golden_vector.app.model_state import (
     load_current_model_state_manifest,
+    read_current_model_parquet,
+    resolve_current_foundation_manifest_path,
     resolve_current_model_artifact_path,
     summarize_model_state_alignment,
 )
@@ -29,9 +34,17 @@ from golden_vector.model.candidate_finder import (
     CriterionSelection,
     rank_candidates,
 )
+from golden_vector.model.tool_d import (
+    ToolDExecutionInputs,
+    compute_tool_d_outputs,
+    latest_gold_price_from_history,
+)
+from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.screening.manual_store import load_store_tables
+from golden_vector.screening.pipeline import compute_tool_b_in_memory
 from golden_vector.hedge.option_availability import has_usable_option_slots
+from golden_vector.serve.format_helpers import _first_frame_number
 from golden_vector.serve.option_trading_data import (
     OptionTradingData,
     load_option_trading_data,
@@ -47,6 +60,20 @@ TOOL_D_FINDER_FIELDS = frozenset(
         "cost_curve_aisc_percentile",
     }
 )
+TOOL_B_GOLD_SCENARIO_FIELDS = frozenset(
+    {
+        "ev_ebitda",
+        "forward_pe",
+        "fcf_yield",
+        "margin_pct",
+    }
+)
+_SCENARIO_SOURCE_RUN_ID = "candidate-finder-scenario"
+_CACHE_MAX_SIZE = 32
+
+
+class CandidateFinderScenarioError(ValueError):
+    """Raised when a Candidate Finder scenario request is invalid."""
 
 
 @dataclass(frozen=True)
@@ -62,12 +89,34 @@ class CandidateFinderCacheKey:
     tool_c_latest_hash: str | None
     tool_d_latest_hash: str | None
     model_state_manifest_hash: str | None = None
+    scenario_gold_price: float | None = None
+    scenario_foundation_manifest_hash: str | None = None
 
 
 @dataclass(frozen=True)
 class CandidateFinderSourceLoad:
     frame: pd.DataFrame
     warning: str | None = None
+
+
+@dataclass(frozen=True)
+class CandidateFinderScenario:
+    gold_price: float
+
+    @classmethod
+    def from_value(cls, value: object) -> "CandidateFinderScenario":
+        return cls(gold_price=require_finite_positive("gold_price", value))
+
+
+@dataclass(frozen=True)
+class _CandidateFinderScenarioSources:
+    tool_b: CandidateFinderSourceLoad
+    tool_d: CandidateFinderSourceLoad
+    gold_price_used: float
+    spot_gold_usd: float
+    spot_gold_date: str | None
+    source_basis: str
+    rank_basis: str
 
 
 @dataclass(frozen=True)
@@ -91,6 +140,14 @@ class CandidateFinderData:
     alignment: CandidateFinderAlignment
     cache_key: CandidateFinderCacheKey
     model_state_manifest: dict[str, Any] | None = None
+    gold_price_used: float | None = None
+    spot_gold_usd: float | None = None
+    spot_gold_date: str | None = None
+    source_basis: str = "persisted_spot"
+    rank_basis: str = "persisted_current"
+    scenario_requested_gold_price: float | None = None
+    scenario_active: bool = False
+    scenario_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -103,17 +160,35 @@ class CandidateFinderScreen:
     warnings: tuple[str, ...]
 
 
-_CACHE: dict[CandidateFinderCacheKey, CandidateFinderData] = {}
+_CACHE: OrderedDict[CandidateFinderCacheKey, CandidateFinderData] = OrderedDict()
 
 
 def clear_candidate_finder_cache() -> None:
     _CACHE.clear()
 
 
+def parse_candidate_finder_scenario(
+    query: Mapping[str, Sequence[str]],
+) -> CandidateFinderScenario | None:
+    """Parse the optional Candidate Finder gold-price scenario from a query."""
+
+    raw_values = query.get("gold_price")
+    if not raw_values:
+        return None
+    raw_value = str(raw_values[0]).strip()
+    if not raw_value:
+        return None
+    try:
+        return CandidateFinderScenario.from_value(raw_value)
+    except ValueError as exc:
+        raise CandidateFinderScenarioError(str(exc)) from exc
+
+
 def load_candidate_finder_data(
     paths: ProjectPaths,
     *,
     app_config: AppConfig,
+    scenario: CandidateFinderScenario | None = None,
 ) -> CandidateFinderData:
     """Load the latest joined frame used by Candidate Finder screens."""
 
@@ -141,18 +216,26 @@ def load_candidate_finder_data(
     tool_c_load = _read_optional_parquet(tool_c_path, label="Gold Downside")
     tool_d_load = _read_optional_parquet(tool_d_source_path, label="Corporate Resilience")
     tool_c = tool_c_load.frame
-    tool_d_spot_load = _spot_tool_d_source(tool_d_load.frame)
-    tool_d = tool_d_spot_load.frame
     option_data = load_option_trading_data(paths, app_config=app_config)
     manual_company, _, _, _ = load_store_tables(paths)
     manual_hash = _file_sha256(paths.manual_screening_store_path)
     manual_as_of = _manual_as_of(manual_company)
     options_refresh_run_id = _options_refresh_run_id(option_data)
+    scenario_foundation_manifest_path: Path | None = None
+    scenario_foundation_error: Exception | None = None
+    if scenario is not None:
+        try:
+            scenario_foundation_manifest_path = resolve_current_foundation_manifest_path(
+                paths,
+                require_current_manifest=True,
+            )
+        except Exception as exc:
+            scenario_foundation_error = exc
     cache_key = CandidateFinderCacheKey(
         tool_a_refresh_run_ids=_unique_strings(tool_a, "snapshot_refresh_run_id"),
         tool_b_refresh_run_ids=_unique_strings(tool_b, "snapshot_refresh_run_id"),
         tool_c_refresh_run_ids=_unique_strings(tool_c, "snapshot_refresh_run_id"),
-        tool_d_refresh_run_ids=_unique_strings(tool_d, "snapshot_refresh_run_id"),
+        tool_d_refresh_run_ids=_unique_strings(tool_d_load.frame, "snapshot_refresh_run_id"),
         options_refresh_run_id=options_refresh_run_id or "unknown",
         manual_store_hash=manual_hash,
         tool_a_latest_hash=_file_sha256(tool_a_path),
@@ -160,10 +243,62 @@ def load_candidate_finder_data(
         tool_c_latest_hash=_file_sha256(tool_c_path),
         tool_d_latest_hash=_file_sha256(tool_d_source_path),
         model_state_manifest_hash=_file_sha256(paths.latest_model_state_manifest_path),
+        scenario_gold_price=_cache_gold_price(scenario),
+        scenario_foundation_manifest_hash=_file_sha256(scenario_foundation_manifest_path),
     )
-    cached = _CACHE.get(cache_key)
+    cached = _cache_get(cache_key)
     if cached is not None:
         return cached
+
+    scenario_error: str | None = None
+    scenario_requested_gold_price = scenario.gold_price if scenario is not None else None
+    if scenario is not None:
+        try:
+            if scenario_foundation_error is not None:
+                raise scenario_foundation_error
+            scenario_sources = _compute_scenario_sources(
+                paths=paths,
+                app_config=app_config,
+                scenario=scenario,
+                foundation_manifest_path=scenario_foundation_manifest_path,
+            )
+            tool_b_load = scenario_sources.tool_b
+            tool_b = tool_b_load.frame
+            tool_d_load = scenario_sources.tool_d
+            tool_d = tool_d_load.frame
+            scenario_active = True
+            gold_price_used = scenario_sources.gold_price_used
+            spot_gold_usd = scenario_sources.spot_gold_usd
+            spot_gold_date = scenario_sources.spot_gold_date
+            source_basis = scenario_sources.source_basis
+            rank_basis = scenario_sources.rank_basis
+        except Exception as exc:
+            scenario_error = f"Could not compute Candidate Finder scenario: {exc}"
+            tool_b_spot_load = _spot_tool_b_source(tool_b_load.frame)
+            tool_d_spot_load = _spot_tool_d_source(tool_d_load.frame)
+            tool_b_load = tool_b_spot_load
+            tool_b = tool_b_load.frame
+            tool_d_load = tool_d_spot_load
+            tool_d = tool_d_load.frame
+            scenario_active = False
+            gold_price_used = _first_provenance_number("gold_price_used", tool_b, tool_d)
+            spot_gold_usd = _first_provenance_number("spot_gold_usd", tool_b, tool_d)
+            spot_gold_date = _first_provenance_text("spot_gold_date", tool_b, tool_d)
+            source_basis = "persisted_spot"
+            rank_basis = "persisted_current"
+    else:
+        tool_b_spot_load = _spot_tool_b_source(tool_b_load.frame)
+        tool_d_spot_load = _spot_tool_d_source(tool_d_load.frame)
+        tool_b_load = tool_b_spot_load
+        tool_b = tool_b_load.frame
+        tool_d_load = tool_d_spot_load
+        tool_d = tool_d_load.frame
+        scenario_active = False
+        gold_price_used = _first_provenance_number("gold_price_used", tool_b, tool_d)
+        spot_gold_usd = _first_provenance_number("spot_gold_usd", tool_b, tool_d)
+        spot_gold_date = _first_provenance_text("spot_gold_date", tool_b, tool_d)
+        source_basis = "persisted_spot"
+        rank_basis = "persisted_current"
 
     frame = _joined_frame(
         app_config=app_config,
@@ -192,7 +327,7 @@ def load_candidate_finder_data(
                     tool_b_load.warning,
                     tool_c_load.warning,
                     tool_d_load.warning,
-                    tool_d_spot_load.warning,
+                    scenario_error,
                 )
                 if warning is not None
             ]
@@ -205,8 +340,17 @@ def load_candidate_finder_data(
         alignment=alignment,
         cache_key=cache_key,
         model_state_manifest=model_state_manifest,
+        gold_price_used=gold_price_used,
+        spot_gold_usd=spot_gold_usd,
+        spot_gold_date=spot_gold_date,
+        source_basis=source_basis,
+        rank_basis=rank_basis,
+        scenario_requested_gold_price=scenario_requested_gold_price,
+        scenario_active=scenario_active,
+        scenario_error=scenario_error,
     )
-    _CACHE[cache_key] = data
+    if scenario_error is None:
+        _cache_set(cache_key, data)
     return data
 
 
@@ -287,6 +431,12 @@ def candidate_finder_result_frame(screen: CandidateFinderScreen) -> pd.DataFrame
             "options_side": screen.options_side,
             "alignment_status": screen.data.alignment.status,
             "alignment_message": screen.data.alignment.message,
+            "gold_price_used": screen.data.gold_price_used,
+            "spot_gold_usd": screen.data.spot_gold_usd,
+            "spot_gold_date": screen.data.spot_gold_date,
+            "source_basis": screen.data.source_basis,
+            "rank_basis": screen.data.rank_basis,
+            "scenario_active": screen.data.scenario_active,
         }
         for criterion in screen.ranking.selected_criteria:
             output[f"raw_{criterion.id}"] = row.raw_values.get(criterion.id)
@@ -797,6 +947,129 @@ def _read_optional_parquet(path: Path | None, *, label: str) -> CandidateFinderS
     return CandidateFinderSourceLoad(frame=frame)
 
 
+def _compute_scenario_sources(
+    *,
+    paths: ProjectPaths,
+    app_config: AppConfig,
+    scenario: CandidateFinderScenario,
+    foundation_manifest_path: Path | None,
+) -> _CandidateFinderScenarioSources:
+    foundation_snapshot = load_latest_foundation_snapshot(
+        paths=paths,
+        app_config=app_config,
+        include_gold_history=True,
+        include_equity_histories=False,
+        include_market_snapshots=True,
+        manifest_path=foundation_manifest_path,
+    )
+    spot_gold_usd, spot_gold_date = latest_gold_price_from_history(
+        foundation_snapshot.gold_history
+    )
+    gold_price_basis = (
+        "latest_daily_gold_close"
+        if abs(scenario.gold_price - spot_gold_usd) <= 0.01
+        else "custom_scenario"
+    )
+    manual_data = load_manual_screening_data(
+        paths,
+        tickers=sorted(
+            ticker.ticker
+            for ticker in app_config.universe.tickers
+            if ticker.active and ticker.tool_b_enabled
+        ),
+    )
+    tool_b = validate_tool_b_output_schema(
+        compute_tool_b_in_memory(
+            app_config=app_config,
+            manual_data=manual_data,
+            normalized_market_snapshots=foundation_snapshot.normalized_market_snapshots,
+            gold_price_assumption=scenario.gold_price,
+            snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
+            snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
+            source_run_id=_SCENARIO_SOURCE_RUN_ID,
+            spot_gold_usd=spot_gold_usd,
+            spot_gold_date=spot_gold_date,
+            gold_price_basis=gold_price_basis,
+        ),
+        label="Candidate Finder scenario Corporate Finance frame",
+    )
+    tool_b_latest = validate_tool_b_output_schema(
+        read_current_model_parquet(
+            paths,
+            "tool_b",
+            fallback_path=paths.latest_tool_b_snapshot_parquet_path,
+        ),
+        label="Candidate Finder scenario persisted Corporate Finance input",
+    )
+    if tool_b_latest.empty:
+        tool_b_latest = tool_b
+    tool_d = compute_tool_d_outputs(
+        inputs=ToolDExecutionInputs(
+            app_config=app_config,
+            manual_data=manual_data,
+            normalized_market_snapshots=foundation_snapshot.normalized_market_snapshots,
+            tool_b_latest=tool_b_latest,
+            spot_gold_usd=spot_gold_usd,
+            spot_gold_date=spot_gold_date,
+            snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
+            snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
+        ),
+        config=app_config.tool_d,
+        gold_price=scenario.gold_price,
+        source_run_id=_SCENARIO_SOURCE_RUN_ID,
+    )
+    tool_d_load = _scenario_tool_d_source(
+        tool_d,
+        expected_gold_price=scenario.gold_price,
+    )
+    rank_basis = (
+        "latest_daily_gold_close"
+        if gold_price_basis == "latest_daily_gold_close"
+        else "custom_gold_scenario"
+    )
+    return _CandidateFinderScenarioSources(
+        tool_b=CandidateFinderSourceLoad(frame=tool_b),
+        tool_d=tool_d_load,
+        gold_price_used=float(scenario.gold_price),
+        spot_gold_usd=float(spot_gold_usd),
+        spot_gold_date=spot_gold_date,
+        source_basis=gold_price_basis,
+        rank_basis=rank_basis,
+    )
+
+
+def _spot_tool_b_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:
+    if frame.empty:
+        return CandidateFinderSourceLoad(frame=frame)
+    required = {"gold_price_used", "spot_gold_usd", "gold_price_basis"}
+    if not required.issubset(frame.columns):
+        return CandidateFinderSourceLoad(
+            frame=_blank_tool_b_gold_scenario_fields(frame),
+            warning=(
+                "Corporate Finance latest parquet does not record spot-gold provenance; "
+                "Candidate Finder treats gold-dependent Corporate Finance criteria as missing "
+                f"for affected tickers: {_ticker_sample(frame)}."
+            ),
+        )
+    gold_price = pd.to_numeric(frame["gold_price_used"], errors="coerce")
+    spot_gold = pd.to_numeric(frame["spot_gold_usd"], errors="coerce")
+    basis = frame["gold_price_basis"].astype(str).str.strip()
+    comparable = gold_price.notna() & spot_gold.notna()
+    is_spot = comparable & gold_price.sub(spot_gold).abs().le(0.01) & basis.eq(
+        "latest_daily_gold_close"
+    )
+    if bool(is_spot.all()):
+        return CandidateFinderSourceLoad(frame=frame)
+    return CandidateFinderSourceLoad(
+        frame=_blank_tool_b_gold_scenario_fields(frame),
+        warning=(
+            "Corporate Finance latest parquet is not a spot-gold run; Candidate Finder "
+            "treats gold-dependent Corporate Finance criteria as missing until spot "
+            f"Corporate Finance is rerun. Off-spot tickers: {_ticker_sample(frame.loc[~is_spot])}."
+        ),
+    )
+
+
 def _tool_d_finder_source_path(paths: ProjectPaths) -> Path | None:
     spot_path = resolve_current_model_artifact_path(
         paths,
@@ -835,10 +1108,46 @@ def _spot_tool_d_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:
         frame=_blank_tool_d_finder_fields(frame),
         warning=(
             "Corporate Resilience latest parquet is not a spot-gold run; Candidate Finder "
-            "treats Corporate Resilience criteria as missing until spot Corporate Resilience is rerun. "
-            f"Off-spot tickers: {_ticker_sample(frame.loc[~is_spot])}."
+            "treats Corporate Resilience criteria as missing until spot Corporate "
+            f"Resilience is rerun. Off-spot tickers: {_ticker_sample(frame.loc[~is_spot])}."
         ),
     )
+
+
+def _scenario_tool_d_source(
+    frame: pd.DataFrame,
+    *,
+    expected_gold_price: float,
+) -> CandidateFinderSourceLoad:
+    if frame.empty:
+        return CandidateFinderSourceLoad(frame=frame)
+    if "gold_price_used" not in frame.columns:
+        return CandidateFinderSourceLoad(
+            frame=_blank_tool_d_finder_fields(frame),
+            warning=(
+                "Candidate Finder scenario Corporate Resilience frame does not record "
+                "gold-price provenance; Corporate Resilience criteria were withheld."
+            ),
+        )
+    gold_price = pd.to_numeric(frame["gold_price_used"], errors="coerce")
+    is_expected = gold_price.notna() & gold_price.sub(float(expected_gold_price)).abs().le(0.01)
+    if bool(is_expected.all()):
+        return CandidateFinderSourceLoad(frame=frame)
+    return CandidateFinderSourceLoad(
+        frame=_blank_tool_d_finder_fields(frame),
+        warning=(
+            "Candidate Finder scenario Corporate Resilience frame was computed at the wrong "
+            "gold price; Corporate Resilience criteria were withheld."
+        ),
+    )
+
+
+def _blank_tool_b_gold_scenario_fields(frame: pd.DataFrame) -> pd.DataFrame:
+    result = frame.copy()
+    for column in TOOL_B_GOLD_SCENARIO_FIELDS:
+        if column in result.columns:
+            result[column] = pd.NA
+    return result
 
 
 def _blank_tool_d_finder_fields(frame: pd.DataFrame) -> pd.DataFrame:
@@ -847,6 +1156,48 @@ def _blank_tool_d_finder_fields(frame: pd.DataFrame) -> pd.DataFrame:
         if column in result.columns:
             result[column] = pd.NA
     return result
+
+
+def _first_provenance_number(column: str, *frames: pd.DataFrame) -> float | None:
+    for frame in frames:
+        value = _first_frame_number(frame, column)
+        if value is not None:
+            return value
+    return None
+
+
+def _first_provenance_text(column: str, *frames: pd.DataFrame) -> str | None:
+    for frame in frames:
+        if frame.empty or column not in frame.columns:
+            continue
+        values = frame[column].dropna()
+        if values.empty:
+            continue
+        text = str(values.iloc[0]).strip()
+        if text:
+            return text
+    return None
+
+
+def _cache_gold_price(scenario: CandidateFinderScenario | None) -> float | None:
+    if scenario is None:
+        return None
+    return round(float(scenario.gold_price), 4)
+
+
+def _cache_get(cache_key: CandidateFinderCacheKey) -> CandidateFinderData | None:
+    cached = _CACHE.get(cache_key)
+    if cached is None:
+        return None
+    _CACHE.move_to_end(cache_key)
+    return cached
+
+
+def _cache_set(cache_key: CandidateFinderCacheKey, data: CandidateFinderData) -> None:
+    _CACHE[cache_key] = data
+    _CACHE.move_to_end(cache_key)
+    while len(_CACHE) > _CACHE_MAX_SIZE:
+        _CACHE.popitem(last=False)
 
 
 def _ticker_sample(frame: pd.DataFrame, *, limit: int = 5) -> str:

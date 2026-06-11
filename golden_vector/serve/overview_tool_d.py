@@ -24,7 +24,11 @@ from golden_vector.model.tool_d import (
 )
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.schema import ToolBStaleSchemaError, validate_tool_b_output_schema
-from golden_vector.serve.format_helpers import _fmt_numeric_td, _fmt_text
+from golden_vector.serve.format_helpers import (
+    _first_frame_number,
+    _fmt_numeric_td,
+    _fmt_text,
+)
 from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.overview_helpers import (
     _render_provenance_warnings,
@@ -332,12 +336,4 @@ def _scenario_href(*, search: str, gold_price: float) -> str:
 
 
 def _first_number(frame, column: str) -> float | None:
-    if frame.empty or column not in frame.columns:
-        return None
-    series = frame[column].dropna()
-    if series.empty:
-        return None
-    try:
-        return float(series.iloc[0])
-    except (TypeError, ValueError):
-        return None
+    return _first_frame_number(frame, column)

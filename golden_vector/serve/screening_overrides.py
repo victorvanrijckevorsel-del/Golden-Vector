@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
+from golden_vector.common.numeric import require_finite_number
 from golden_vector.contracts.config_models import (
     AppConfig,
     JurisdictionDiscounts,
@@ -57,6 +58,14 @@ class ScreeningOverrides:
             or bool(self.jurisdiction)
         )
 
+    def has_non_gold(self) -> bool:
+        """True when any threshold/jurisdiction override is active.
+
+        The gold dial is the page's primary control; the advanced
+        assumptions panel only auto-opens for these.
+        """
+        return bool(self.layer1) or bool(self.verdict) or bool(self.jurisdiction)
+
 
 class ScreeningOverrideError(ValueError):
     """Raised when a URL param fails validation."""
@@ -85,6 +94,10 @@ def parse_query_overrides(query: Mapping[str, list[str]]) -> ScreeningOverrides:
             raise ScreeningOverrideError(
                 f"{param_name} must be a number (got {raw!r})"
             ) from exc
+        try:
+            numeric = require_finite_number(param_name, numeric)
+        except ValueError as exc:
+            raise ScreeningOverrideError(str(exc)) from exc
         if numeric < 0:
             raise ScreeningOverrideError(
                 f"{param_name} must be non-negative (got {numeric})"

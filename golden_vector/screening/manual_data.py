@@ -10,7 +10,9 @@ import pandas as pd
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.screening.manual_store import (
     COMPANY_INPUT_COLUMNS,
+    FINANCIAL_DUAL_SOURCE_FIELDS,
     NUMERIC_COMPANY_FIELDS,
+    OPERATIONAL_SINGLE_SOURCE_FIELDS,
     REPORTING_CALENDAR_COLUMNS,
     SOURCE_VERIFICATION_COLUMNS,
     STOCK_NOTE_COLUMNS,
@@ -22,17 +24,9 @@ from golden_vector.screening.manual_store import (
 
 
 REQUIRED_MANUAL_FIELDS = [
-    "production_oz",
-    "aisc_usd_per_oz",
-    "cash_cost_usd_per_oz",
-    "royalty_rate",
-    "sustaining_capex_musd",
-    "da_musd",
-    "interest_expense_musd",
-    "tax_rate",
-    "reserve_life_years",
-    "net_debt_musd",
-    "ebitda_ltm_musd",
+    field_name
+    for field_name in NUMERIC_COMPANY_FIELDS
+    if field_name in OPERATIONAL_SINGLE_SOURCE_FIELDS | FINANCIAL_DUAL_SOURCE_FIELDS
 ]
 
 

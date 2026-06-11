@@ -7,6 +7,8 @@ test_workspace_app.py.
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 import pytest
 
@@ -96,6 +98,17 @@ def test_parse_query_overrides_rejects_negative_values():
 def test_parse_query_overrides_rejects_zero_gold_price():
     with pytest.raises(ScreeningOverrideError):
         parse_query_overrides({"gold_price": ["0"]})
+
+
+def test_parse_query_overrides_rejects_nonfinite_gold_price():
+    for value in ("nan", "inf", "-inf"):
+        with pytest.raises(ScreeningOverrideError):
+            parse_query_overrides({"gold_price": [value]})
+
+
+def test_parse_query_overrides_rejects_nonfinite_thresholds():
+    with pytest.raises(ScreeningOverrideError):
+        parse_query_overrides({"margin_target": [str(math.inf)]})
 
 
 def test_parse_query_overrides_rejects_discount_above_100():

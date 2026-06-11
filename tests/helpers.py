@@ -56,9 +56,20 @@ def tool_b_output_row(
     forward_eps: float = 5.0,
     forward_pe: float = 8.0,
     ev_ebitda: float = 2.4,
+    ev_ebitda_official: float | None = None,
+    ev_ebitda_differs: bool = False,
     sustainable_fcf_musd: float = 180.0,
     fcf_yield: float = 0.18,
     leverage: float = 0.4,
+    leverage_official: float | None = None,
+    leverage_differs: bool = False,
+    financial_data_status: str = "OK",
+    divergent_field_count: int = 0,
+    max_divergence_pct: float | None = None,
+    gold_price_used: float | None = None,
+    spot_gold_usd: float | None = None,
+    spot_gold_date: str | None = "2026-04-22",
+    gold_price_basis: str = "latest_daily_gold_close",
 ) -> dict[str, object]:
     passed = round((fundamental_check_score / 100.0) * 7)
     total = 7
@@ -90,10 +101,22 @@ def tool_b_output_row(
         if margin_pct is None
         else margin_pct
     )
+    if gold_price_used is None:
+        gold_price_used = gold_price_assumption
+    if spot_gold_usd is None:
+        spot_gold_usd = gold_price_assumption
+    if ev_ebitda_official is None:
+        ev_ebitda_official = ev_ebitda
+    if leverage_official is None:
+        leverage_official = leverage
     return {
         "ticker": ticker,
         "as_of_date": as_of_date,
         "gold_price_assumption": gold_price_assumption,
+        "gold_price_used": gold_price_used,
+        "spot_gold_usd": spot_gold_usd,
+        "spot_gold_date": spot_gold_date,
+        "gold_price_basis": gold_price_basis,
         "layer1_status": "PASS",
         "layer1_pass": True,
         "layer1_fail_reasons": None,
@@ -117,9 +140,27 @@ def tool_b_output_row(
         "forward_eps": forward_eps,
         "forward_pe": forward_pe,
         "ev_ebitda": ev_ebitda,
+        "ev_ebitda_our_view": ev_ebitda,
+        "ev_ebitda_official": ev_ebitda_official,
+        "ev_ebitda_differs": ev_ebitda_differs,
+        "ev_ebitda_trailing": ev_ebitda,
         "sustainable_fcf_musd": sustainable_fcf_musd,
         "fcf_yield": fcf_yield,
         "leverage": leverage,
+        "leverage_our_view": leverage,
+        "leverage_official": leverage_official,
+        "leverage_differs": leverage_differs,
+        "enterprise_value_musd_our_view": enterprise_value_musd,
+        "enterprise_value_musd_official": enterprise_value_musd,
+        "financial_data_status": financial_data_status,
+        "financial_difference_summary": None,
+        "divergent_field_count": divergent_field_count,
+        "max_divergence_pct": max_divergence_pct,
+        "fundamental_check_score_official": fundamental_check_score,
+        "fundamental_check_rank_official": fundamental_check_rank,
+        "fundamental_checks_passed_official": passed,
+        "fundamental_checks_total_official": total,
+        "fundamental_check_summary_official": f"{passed}/{total}: {check_summary}",
         "fundamental_check_score": fundamental_check_score,
         "fundamental_check_rank": fundamental_check_rank,
         "fundamental_checks_passed": passed,

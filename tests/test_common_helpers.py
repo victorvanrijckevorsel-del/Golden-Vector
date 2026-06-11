@@ -10,7 +10,7 @@ from golden_vector.common.files import (
 )
 from golden_vector.common.eligibility import is_score_eligible, score_eligible_mask
 from golden_vector.common.frames import latest_records_by_key
-from golden_vector.common.numeric import sum_optional_floats
+from golden_vector.common.numeric import optional_finite_float, sum_optional_floats
 from golden_vector.common.status import combine_statuses
 from golden_vector.common.strings import clean_string, unique_strings
 from golden_vector.serve.format_helpers import format_dte_suffix
@@ -51,6 +51,15 @@ def test_sum_optional_floats_ignores_missing_values_and_reports_no_data():
     assert sum_optional_floats([1, None, "2.5", pd.NA]) == pytest.approx(3.5)
     assert sum_optional_floats([None, pd.NA, ""]) is None
     assert sum_optional_floats(None) is None
+
+
+def test_optional_finite_float_rejects_missing_invalid_and_infinite_values():
+    assert optional_finite_float("2.5") == pytest.approx(2.5)
+    assert optional_finite_float(None) is None
+    assert optional_finite_float(pd.NA) is None
+    assert optional_finite_float("not-a-number") is None
+    assert optional_finite_float(float("nan")) is None
+    assert optional_finite_float(float("inf")) is None
 
 
 def test_format_dte_suffix_ignores_missing_values():

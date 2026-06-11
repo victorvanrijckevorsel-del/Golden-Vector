@@ -56,6 +56,7 @@ class ProjectPaths:
             self.raw_equities_dir,
             self.raw_fx_dir,
             self.raw_gold_dir,
+            self.raw_fundamentals_dir,
             self.raw_market_snapshots_dir,
             self.raw_status_dir,
             self.manual_screening_dir,
@@ -75,6 +76,7 @@ class ProjectPaths:
             self.output_tool_b_dir,
             self.output_tool_c_dir,
             self.output_tool_d_dir,
+            self.output_fundamentals_dir,
             self.output_options_dir,
             self.output_hedge_readiness_dir,
             self.output_portfolio_dir,
@@ -105,6 +107,18 @@ class ProjectPaths:
     @property
     def raw_gold_dir(self) -> Path:
         return self.raw_dir / "gold"
+
+    @property
+    def raw_fundamentals_dir(self) -> Path:
+        return self.raw_dir / "fundamentals"
+
+    @property
+    def latest_raw_fundamentals_statements_path(self) -> Path:
+        return self.raw_fundamentals_dir / "raw_fundamentals_statements_latest.parquet"
+
+    @property
+    def latest_fundamentals_fetch_manifest_path(self) -> Path:
+        return self.raw_fundamentals_dir / "latest_fundamentals_fetch_manifest.json"
 
     @property
     def raw_market_snapshots_dir(self) -> Path:
@@ -263,6 +277,10 @@ class ProjectPaths:
     @property
     def output_tool_d_dir(self) -> Path:
         return self.output_dir / "tool_d"
+
+    @property
+    def output_fundamentals_dir(self) -> Path:
+        return self.output_dir / "fundamentals"
 
     @property
     def output_options_dir(self) -> Path:

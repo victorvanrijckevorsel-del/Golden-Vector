@@ -30,6 +30,27 @@ def test_tool_b_schema_guard_rejects_any_target_upside_or_best_column():
         raise AssertionError("schema guard should reject target-price columns")
 
 
+def test_tool_b_schema_requires_spot_gold_provenance_columns():
+    """A pre-gold-dial parquet (no spot columns) must trip the calm refresh
+    message, not silently pass and 500 later in a reader."""
+    import pandas as pd
+
+    spot_columns = {"gold_price_used", "spot_gold_usd", "spot_gold_date", "gold_price_basis"}
+    row = {
+        column: None for column in TOOL_B_OUTPUT_COLUMNS if column not in spot_columns
+    }
+    row["ticker"] = "AEM"
+    frame = pd.DataFrame([row])
+
+    try:
+        validate_tool_b_output_schema(frame)
+    except ToolBStaleSchemaError as exc:
+        assert "spot_gold_usd" in str(exc)
+        assert "gold_price_basis" in str(exc)
+    else:
+        raise AssertionError("schema guard should reject pre-spot-provenance artifacts")
+
+
 def test_tool_b_schema_guard_checks_empty_stale_artifact_columns():
     import pandas as pd
 

@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import pandas as pd
 
+from golden_vector.common.numeric import require_finite_positive
 from golden_vector.common.status import combine_statuses as _combine_statuses
 from golden_vector.common.parquet import read_optional_parquet
 from golden_vector.app.config import load_app_config
@@ -61,6 +62,7 @@ from golden_vector.app.run_pruning import PruneReport, prune_runs
 from golden_vector.app.run_context import RunContext, to_jsonable
 from golden_vector.features.horizons import parse_requested_horizons
 from golden_vector.features.returns import RETURN_COLUMNS, compute_horizon_returns_for_ticker
+from golden_vector.fundamentals.fetch import fetch_and_publish_fundamentals
 from golden_vector.hedge.comparison import COMPARISON_SORT_COLUMNS
 from golden_vector.hedge.option_artifact_builder import (
     build_option_artifact_inputs,
@@ -200,6 +202,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Gold price G in USD per oz. Defaults to the latest spot gold close.",
     )
+    fetch_fundamentals_parser = subparsers.add_parser(
+        "fetch-fundamentals",
+        help=(
+            "Fetch Yahoo financial statements into the durable fundamentals store "
+            "and publish the official fundamentals artifact."
+        ),
+    )
+    fetch_fundamentals_parser.add_argument(
+        "--ticker",
+        dest="tickers",
+        action="append",
+        default=None,
+        help="Limit the fetch to one ticker. Can be passed more than once.",
+    )
 
     refresh_parser = subparsers.add_parser(
         "refresh",
@@ -213,8 +229,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help=(
-            "Override the gold price assumption for the Tool B step. Defaults to "
-            "screening_params.default_gold_price_assumption."
+            "Deprecated for refresh: canonical Tool B always prices at the latest "
+            "daily gold close. Use tool-b --gold-price for a run-stamped scenario."
         ),
     )
     refresh_parser.add_argument(
@@ -321,8 +337,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Gold price assumption in USD per oz. "
-            "Defaults to screening_params.default_gold_price_assumption (or the first "
-            "configured scenario if no default is set)."
+            "Omit for the canonical latest daily gold close; pass a value for a "
+            "run-stamped scenario that does not publish latest aliases."
         ),
     )
 
@@ -599,6 +615,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "tool-d":
         return run_tool_d(paths, gold_price=args.gold_price)
 
+    if args.command == "fetch-fundamentals":
+        return run_fetch_fundamentals(paths, tickers=args.tickers)
+
     if args.command == "tool-b":
         return run_tool_b(paths, gold_price=args.gold_price)
 
@@ -723,6 +742,81 @@ def run_options_liquidity_summary(
             f"{call_counts['tradable']} | {call_counts['watch']} | {call_counts['no_trade']}"
         )
     return 0
+
+
+def run_fetch_fundamentals(
+    paths: ProjectPaths,
+    *,
+    tickers: list[str] | None = None,
+) -> int:
+    loaded_config = load_app_config(paths)
+    publish_current = not tickers
+    run_context = RunContext.start(
+        paths=paths,
+        command="fetch-fundamentals",
+        parameters={"tickers": tickers or []},
+        config_hash=loaded_config.config_hash,
+    )
+    try:
+        yahoo_client = YahooClient(
+            retry_policy=retry_policy_from_config(loaded_config.app.market_data)
+        )
+        result = fetch_and_publish_fundamentals(
+            paths=paths,
+            app_config=loaded_config.app,
+            run_context=run_context,
+            yahoo_client=yahoo_client,
+            tickers=tickers,
+            publish_current=publish_current,
+        )
+        summary = dict(result.manifest.get("summary") or {})
+        summary.update(
+            {
+                "source_run_id": result.source_run_id,
+                "raw_row_count": result.raw_row_count,
+                "official_row_count": result.official_row_count,
+                "published_current": publish_current,
+            }
+        )
+        model_state: dict[str, object] | None = None
+        if publish_current:
+            model_state = write_current_model_state_manifest(
+                paths=paths,
+                config_hash=loaded_config.config_hash,
+                stage_timings={
+                    "fetch_fundamentals": result.manifest.get("stage_timings", {})
+                },
+            )
+            run_context.record_artifact(paths.latest_model_state_manifest_path)
+            summary["model_state"] = model_state.get("state")
+        else:
+            summary["model_state"] = "unchanged"
+        status = "SUCCESS" if int(summary.get("fail_count") or 0) == 0 else "WARN"
+        run_context.finalize(status, summary=summary)
+        print(
+            "Fetched fundamentals: "
+            f"{summary.get('pass_count', 0)} pass, "
+            f"{summary.get('empty_count', 0)} empty, "
+            f"{summary.get('fail_count', 0)} fail."
+        )
+        print(f"Raw rows: {result.raw_row_count}")
+        print(f"Official rows: {result.official_row_count}")
+        if model_state is not None:
+            print(
+                "Model-state manifest updated: "
+                f"{paths.latest_model_state_manifest_path.relative_to(paths.repo_root).as_posix()} "
+                f"({str(model_state.get('state')).upper()})"
+            )
+        else:
+            print(
+                "Partial fundamentals fetch wrote run-stamped artifacts only; "
+                "current model state was not changed."
+            )
+        return 0
+    except Exception as exc:
+        run_context.finalize("FAIL", summary={"error": str(exc)})
+        print(f"fetch-fundamentals failed: {exc}")
+        return 1
 
 
 def run_candidate_finder(
@@ -1834,18 +1928,24 @@ def _previous_option_contract_metrics(paths: ProjectPaths) -> pd.DataFrame:
     return read_optional_parquet(path)
 
 
-def run_tool_b(paths: ProjectPaths, *, gold_price: float | None) -> int:
+def run_tool_b(
+    paths: ProjectPaths,
+    *,
+    gold_price: float | None,
+    _use_model_state_inputs: bool = True,
+) -> int:
     run_context: RunContext | None = None
 
     try:
         loaded_config = load_app_config(paths)
-        # Resolve gold price: CLI override -> config default -> first scenario.
-        # This lets `tool-b` (and the new `refresh` command) work without
-        # requiring the user to remember the magic number every run.
-        resolved_gold_price = loaded_config.app.screening_params.resolve_gold_price(gold_price)
-        if resolved_gold_price <= 0:
-            raise ValueError("gold price must be positive")
-        gold_price = resolved_gold_price
+        # Gold resolution (Gold dial M1): the canonical run prices at the
+        # latest daily gold close from the fresh foundation, resolved AFTER
+        # the foundation loads below. An explicit --gold-price override is a
+        # scenario run: it persists run-stamped artifacts only and never
+        # becomes the published latest state. The config default is no
+        # longer consulted here — a missing gold close fails the run.
+        if gold_price is not None:
+            gold_price = require_finite_positive("gold price", gold_price)
 
         run_context = RunContext.start(
             paths=paths,
@@ -1870,7 +1970,7 @@ def run_tool_b(paths: ProjectPaths, *, gold_price: float | None) -> int:
             "active_ticker_count": len(active_tickers),
             "tool_a_enabled_ticker_count": len(tool_a_enabled),
             "tool_b_enabled_ticker_count": len(tool_b_enabled),
-            "gold_price_assumption": gold_price,
+            "gold_price_override": gold_price,
             "configured_gold_price_scenarios": loaded_config.app.screening_params.gold_price_scenarios,
             "config_hash": loaded_config.config_hash,
         }
@@ -1898,20 +1998,80 @@ def run_tool_b(paths: ProjectPaths, *, gold_price: float | None) -> int:
             paths=paths,
             app_config=loaded_config.app,
             run_context=run_context,
-            include_gold_history=False,
+            include_gold_history=True,
             include_equity_histories=False,
             include_market_snapshots=True,
+            use_model_state=_use_model_state_inputs,
         )
         _capture_foundation_for_replay_manifest(run_context, foundation_snapshot)
+
+        spot_gold_usd: float | None = None
+        spot_gold_date: str | None = None
+        try:
+            spot_gold_usd, spot_gold_date = _spot_gold_from_history(
+                foundation_snapshot.gold_history
+            )
+        except ValueError as exc:
+            if gold_price is None:
+                # Fail closed BEFORE any persistence: never publish a
+                # "spot" run priced at a config constant. The previous
+                # published state stays intact.
+                message = (
+                    f"Tool B cannot price at spot gold: {exc}. "
+                    "No outputs were written; the previous published state "
+                    "is unchanged. Run python main.py update-data to fetch "
+                    "gold history, or pass --gold-price for an explicit "
+                    "scenario run."
+                )
+                run_context.finalize(
+                    status="FAIL",
+                    summary=config_summary,
+                    notes=[message],
+                )
+                LOGGER.error("%s", message)
+                return 1
+            LOGGER.warning(
+                "Spot gold unavailable for scenario run (%s); "
+                "spot provenance columns will be empty.",
+                exc,
+            )
+
+        if gold_price is None:
+            resolved_gold_price = float(spot_gold_usd)
+            gold_price_basis = "latest_daily_gold_close"
+            publish_latest_aliases = True
+        else:
+            resolved_gold_price = float(gold_price)
+            gold_price_basis = "custom_scenario"
+            # Scenario runs persist run-stamped artifacts only: they must
+            # never overwrite the latest alias the workspace and Candidate
+            # Finder consume as the canonical spot view.
+            publish_latest_aliases = False
+        if resolved_gold_price <= 0:
+            raise ValueError("gold price must be positive")
+        config_summary.update(
+            {
+                "gold_price_assumption": resolved_gold_price,
+                "gold_price_basis": gold_price_basis,
+                "spot_gold_usd": spot_gold_usd,
+                "spot_gold_date": spot_gold_date,
+                "publish_latest_aliases": publish_latest_aliases,
+            }
+        )
+        run_context.write_json("config_summary.json", config_summary)
 
         tool_b_result = execute_tool_b_pipeline(
             paths=paths,
             app_config=loaded_config.app,
             run_context=run_context,
             normalized_market_snapshots=foundation_snapshot.normalized_market_snapshots,
-            gold_price_assumption=gold_price,
+            gold_price_assumption=resolved_gold_price,
             snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
             snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
+            spot_gold_usd=spot_gold_usd,
+            spot_gold_date=spot_gold_date,
+            gold_price_basis=gold_price_basis,
+            publish_latest_aliases=publish_latest_aliases,
         )
         run_context.write_json("tool_b_output_summary.json", tool_b_result.summary)
 
@@ -1931,6 +2091,13 @@ def run_tool_b(paths: ProjectPaths, *, gold_price: float | None) -> int:
         )
         notes = [
             "Tool B ran from the latest validated local market-data snapshot and the local Tool B manual-data store.",
+            (
+                f"Gold price: ${resolved_gold_price:,.2f} "
+                f"(latest daily gold close, {spot_gold_date})."
+                if gold_price_basis == "latest_daily_gold_close"
+                else f"Scenario run at ${resolved_gold_price:,.2f}: outputs are "
+                "run-stamped only; the published latest state was not changed."
+            ),
             f"Snapshot refresh run: {foundation_snapshot.refresh_run_id}.",
             f"Snapshot as-of date: {foundation_snapshot.snapshot_as_of_date}.",
             f"Raw QA status: {foundation_snapshot.raw_qa_summary.get('overall_status')}.",
@@ -2940,6 +3107,20 @@ def run_refresh(
     _fault_after_step: str | None = None,
     _process_exists: Callable[[int], bool] | None = None,
 ) -> int:
+    if gold_price_override is not None:
+        # A refresh publishes the canonical model state, and the canonical
+        # Tool B run always prices at the latest daily gold close. Allowing
+        # a gold override here would publish a manifest whose Tool B is a
+        # scenario while everything else is current — the exact incoherence
+        # the gold dial work removes.
+        print(
+            "refresh always prices Tool B at the latest daily gold close. "
+            "For a what-if at another gold price, use the gold dial in the "
+            "workspace or run: python main.py tool-b --gold-price "
+            f"{gold_price_override:g} (writes a run-stamped scenario "
+            "artifact without touching the published state)."
+        )
+        return 2
     command = _refresh_lock_command(
         gold_price_override=gold_price_override,
         skip_tool_b=skip_tool_b,

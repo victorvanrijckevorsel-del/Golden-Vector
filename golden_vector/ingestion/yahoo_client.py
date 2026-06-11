@@ -127,6 +127,49 @@ class YahooClient:
         except Exception:
             return {}
 
+    def fetch_financial_statements(self, symbol: str) -> dict[str, object]:
+        """Fetch raw Yahoo financial statements for one symbol.
+
+        This intentionally returns Yahoo-shaped frames. Canonical field mapping,
+        currency conversion, and data-quality decisions happen downstream after
+        the raw frames have been persisted.
+        """
+
+        try:
+            ticker = self._yf.Ticker(symbol)
+            income_stmt = call_with_retries(
+                f"Yahoo statements {symbol} income_stmt",
+                lambda: ticker.income_stmt,
+                policy=self._retry_policy,
+                logger=LOGGER,
+                sleep_func=self._sleep_func,
+                before_attempt=self._rate_limiter.wait,
+            )
+            balance_sheet = call_with_retries(
+                f"Yahoo statements {symbol} balance_sheet",
+                lambda: ticker.balance_sheet,
+                policy=self._retry_policy,
+                logger=LOGGER,
+                sleep_func=self._sleep_func,
+                before_attempt=self._rate_limiter.wait,
+            )
+            cashflow = call_with_retries(
+                f"Yahoo statements {symbol} cashflow",
+                lambda: ticker.cashflow,
+                policy=self._retry_policy,
+                logger=LOGGER,
+                sleep_func=self._sleep_func,
+                before_attempt=self._rate_limiter.wait,
+            )
+            return {
+                "income_stmt": income_stmt,
+                "balance_sheet": balance_sheet,
+                "cashflow": cashflow,
+                "financialCurrency": self._financial_currency(ticker),
+            }
+        except Exception:
+            return {}
+
     def fetch_options_expirations(self, symbol: str) -> list[str]:
         return list(
             call_with_retries(
@@ -148,3 +191,48 @@ class YahooClient:
             sleep_func=self._sleep_func,
             before_attempt=self._rate_limiter.wait,
         )
+
+    def _financial_currency(self, ticker: object) -> str | None:
+        try:
+            value = call_with_retries(
+                "Yahoo statements financial currency",
+                lambda: getattr(ticker, "financial_currency", None),
+                policy=self._retry_policy,
+                logger=LOGGER,
+                sleep_func=self._sleep_func,
+                before_attempt=self._rate_limiter.wait,
+            )
+        except Exception:
+            value = None
+        if value:
+            return str(value).upper()
+        try:
+            info = call_with_retries(
+                "Yahoo statements info currency",
+                lambda: getattr(ticker, "info", None) or {},
+                policy=self._retry_policy,
+                logger=LOGGER,
+                sleep_func=self._sleep_func,
+                before_attempt=self._rate_limiter.wait,
+            )
+        except Exception:
+            info = {}
+        if isinstance(info, Mapping):
+            value = info.get("financialCurrency") or info.get("currency")
+            if value:
+                return str(value).upper()
+        try:
+            fast_info = dict(
+                call_with_retries(
+                    "Yahoo statements fast_info currency",
+                    lambda: getattr(ticker, "fast_info", {}) or {},
+                    policy=self._retry_policy,
+                    logger=LOGGER,
+                    sleep_func=self._sleep_func,
+                    before_attempt=self._rate_limiter.wait,
+                )
+            )
+        except Exception:
+            fast_info = {}
+        value = fast_info.get("currency")
+        return str(value).upper() if value else None
