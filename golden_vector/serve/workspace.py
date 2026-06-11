@@ -343,6 +343,7 @@ def create_workspace_app(
                         option_trading_data.overview,
                         option_signal_summary=option_trading_data.option_signal_summary,
                         model_state_manifest=load_current_model_state_manifest(paths),
+                        app_config=app_config,
                     ),
                 )
 

@@ -308,13 +308,13 @@ def _render_option_signal_card(detail: OptionTradingDetailData) -> str:
             _activity_text(signal),
         ),
         (
-            "Cost",
+            "Option Cost Signal",
             signal.get("cost_label"),
             signal.get("cost_reason"),
             _fmt_number(signal.get("iv_rv_ratio"), decimals=2),
         ),
         (
-            "Data Quality",
+            "Option Signal Quality",
             signal.get("data_quality_label"),
             signal.get("data_quality_reason"),
             _fmt_percent(signal.get("signal_area_quote_coverage"), decimals=0),
@@ -461,7 +461,7 @@ def _render_option_trading_context_table(detail: OptionTradingDetailData) -> str
         "<table><tbody>"
         "<tr><th>Stock Price</th>"
         f"<td>{_fmt_number(stock_price, decimals=2)}</td></tr>"
-        "<tr><th>Snapshot Date</th>"
+        "<tr><th>Option Snapshot Date</th>"
         f"<td>{_fmt_text(snapshot_date)}</td></tr>"
         "<tr><th>Source</th>"
         f"<td>{escape(source)}</td></tr>"

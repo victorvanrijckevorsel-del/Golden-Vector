@@ -7,12 +7,14 @@ from urllib.parse import quote
 
 import pandas as pd
 
+from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge._helpers import rows_by_ticker_dict
 from golden_vector.hedge.option_trading import (
     OptionLiquidityMeasurement,
     OptionTradingOverviewData,
     OptionTradingRow,
 )
+from golden_vector.serve.column_help import help_th
 from golden_vector.serve.model_state_banner import (
     render_model_state_banner,
     render_option_freshness_box,
@@ -27,6 +29,7 @@ from golden_vector.serve.overview_helpers import _collect_filter_options, _rende
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.option_signal_render import (
     option_signal_skew_display_value,
+    option_signal_skew_hover,
     render_option_signal_badge,
 )
 
@@ -36,6 +39,7 @@ def _render_option_trading_overview_page(
     *,
     option_signal_summary: pd.DataFrame | None = None,
     model_state_manifest: dict[str, object] | None = None,
+    app_config: AppConfig | None = None,
 ) -> str:
     snapshot_date = (
         overview.source_context.as_of_date
@@ -64,7 +68,12 @@ def _render_option_trading_overview_page(
             "<p class=\"hint\">Risk-free rate was missing from the options manifest; "
             "scenario values use a 0% rate fallback.</p>"
         )
-    body.append(_render_liquidity_measurements(overview.liquidity_measurements))
+    body.append(
+        _render_liquidity_measurements(
+            overview.liquidity_measurements,
+            app_config=app_config,
+        )
+    )
     if not overview.rows:
         reason = overview.reason or "No optionable tickers are available."
         body.append(
@@ -96,7 +105,7 @@ def _render_option_trading_overview_page(
             ),
             column_labels={
                 "direction": "Option Signal",
-                "data_quality": "Data Quality",
+                "data_quality": "Option Signal Quality",
                 "put_status": "Put Candidates",
                 "call_status": "Call Candidates",
                 "confidence": "Gold Sensitivity Confidence",
@@ -116,15 +125,42 @@ def _render_option_trading_overview_page(
         "<th data-col-name=\"up_beta\" data-sort-numeric>Up Beta</th>"
         "<th data-col-name=\"confidence\">Gold Sensitivity Confidence</th>"
         "<th data-col-name=\"direction\">Signal</th>"
-        "<th data-col-name=\"skew\" data-sort-numeric>Skew Read</th>"
-        "<th data-col-name=\"activity\">Activity</th>"
-        "<th data-col-name=\"cost\">Cost</th>"
-        "<th data-col-name=\"data_quality\">Data Quality</th>"
-        "<th data-col-name=\"iv\" data-sort-numeric>IV %ile</th>"
-        "<th data-col-name=\"put_status\">Put Status</th>"
+        + help_th(
+            "Skew vs Benchmark",
+            key="skew_vs_benchmark",
+            app_config=app_config,
+            col_name="skew",
+            sort_numeric=True,
+        )
+        + "<th data-col-name=\"activity\">Activity</th>"
+        + help_th(
+            "Option Cost Signal",
+            key="option_cost_signal",
+            app_config=app_config,
+            col_name="cost",
+        )
+        + help_th(
+            "Option Signal Quality",
+            key="option_signal_quality",
+            app_config=app_config,
+            col_name="data_quality",
+        )
+        + help_th(
+            "IV %ile",
+            key="iv_percentile",
+            app_config=app_config,
+            col_name="iv",
+            sort_numeric=True,
+        )
+        + "<th data-col-name=\"put_status\">Put Status</th>"
         "<th data-col-name=\"call_status\">Call Status</th>"
-        "<th data-col-name=\"snapshot\">Snapshot Date</th>"
-        "<th data-col-name=\"notes\">Notes</th>"
+        + help_th(
+            "Option Snapshot Date",
+            key="option_snapshot_date",
+            app_config=app_config,
+            col_name="snapshot",
+        )
+        + "<th data-col-name=\"notes\">Notes</th>"
         "</tr></thead>"
         f"<tbody>{rows_html}</tbody>"
         "</table>"
@@ -138,6 +174,8 @@ def _render_option_trading_overview_page(
 
 def _render_liquidity_measurements(
     measurements: tuple[OptionLiquidityMeasurement, ...],
+    *,
+    app_config: AppConfig | None = None,
 ) -> str:
     if not measurements:
         return ""
@@ -167,11 +205,20 @@ def _render_liquidity_measurements(
         "If Benchmark ETFs show zero contracts, GDX/GDXJ option chains are not measured in "
         "the latest snapshot yet. Proxy alternatives stay hidden unless this cached check supports them.</p>"
         "<table><thead><tr>"
-        "<th>Group</th><th>Tickers</th><th>Measured Contracts</th>"
-        "<th>Tradable</th><th>Watch</th><th>No-trade</th>"
-        "<th>Median Tradable Spread</th><th>Median Tradable OI</th>"
-        "<th>Median Tradable Volume</th><th>Median Tradable Near-Spot Depth</th>"
-        "</tr></thead>"
+        "<th>Group</th><th>Tickers</th>"
+        + help_th("Measured Contracts", key="measured_contracts", app_config=app_config)
+        + help_th("Tradable", key="tradable_count", app_config=app_config)
+        + help_th("Watch", key="watch_count", app_config=app_config)
+        + help_th("No-trade", key="no_trade_count", app_config=app_config)
+        + help_th("Median Tradable Spread", key="median_tradable_spread", app_config=app_config)
+        + help_th("Median Tradable OI", key="median_tradable_oi", app_config=app_config)
+        + help_th("Median Tradable Volume", key="median_tradable_volume", app_config=app_config)
+        + help_th(
+            "Median Tradable Near-Spot Depth",
+            key="median_tradable_near_spot_depth",
+            app_config=app_config,
+        )
+        + "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
         "</section>"
     )
@@ -200,7 +247,7 @@ def _render_row(
         f"{_fmt_numeric_td(row.up_beta_core, decimals=2)}"
         f"<td>{_fmt_text(row.confidence_label)}</td>"
         f"<td>{_signal_badge(signal, 'direction_label')}</td>"
-        f"{_vol_points_td(option_signal_skew_display_value(signal))}"
+        f"{_vol_points_td(option_signal_skew_display_value(signal), title=option_signal_skew_hover(signal))}"
         f"<td>{_signal_badge(signal, 'activity_label')}</td>"
         f"<td>{_signal_badge(signal, 'cost_label')}</td>"
         f"<td>{_signal_badge(signal, 'data_quality_label')}</td>"
@@ -246,14 +293,18 @@ def _signal_badge(signal: dict[str, object] | None, key: str) -> str:
     return render_option_signal_badge(value)
 
 
-def _vol_points_td(value: object | None) -> str:
+def _vol_points_td(value: object | None, *, title: str | None = None) -> str:
+    title_attr = f" title=\"{escape(title)}\"" if title else ""
     try:
         numeric = float(value) if value is not None else None
     except (TypeError, ValueError):
         numeric = None
     if numeric is None or pd.isna(numeric):
-        return "<td data-order=\"9000000000000000\">-</td>"
-    return f"<td data-order=\"{numeric:.8f}\">{escape(f'{numeric * 100:.1f} vol pts')}</td>"
+        return f"<td data-order=\"9000000000000000\"{title_attr}>-</td>"
+    return (
+        f"<td data-order=\"{numeric:.8f}\"{title_attr}>"
+        f"{escape(f'{numeric * 100:.1f} vol pts')}</td>"
+    )
 
 
 def _status_label(status: str) -> str:

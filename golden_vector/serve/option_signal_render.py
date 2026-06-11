@@ -42,6 +42,47 @@ def option_signal_skew_display_value(
     return signal.get(f"skew_residual_{horizon}d")
 
 
+def option_signal_skew_hover(
+    signal: dict[str, object] | None,
+    *,
+    horizon: int = 60,
+) -> str | None:
+    """Plain-text hover showing the actual skew calculation for one row.
+
+    Built only from the persisted signal fields (name skew, benchmark skew,
+    residual, benchmark symbol) — serve renders the stored math, it never
+    recomputes it.
+    """
+
+    if not signal:
+        return None
+    ticker = str(signal.get("ticker") or "").strip().upper() or "This stock"
+    benchmark = str(signal.get("benchmark_symbol") or "").strip().upper() or "the benchmark"
+    vehicle_type = str(signal.get("option_vehicle_type") or "").strip()
+    name_skew = optional_float(signal.get(f"name_skew_{horizon}d"))
+    if ticker == benchmark or vehicle_type == "benchmark_etf":
+        if name_skew is None:
+            return None
+        return (
+            f"Benchmark skew, {horizon}d window:\n"
+            f"{ticker} put/call skew: {format_vol_points(name_skew)}\n"
+            "This is the sector baseline used to compare single-stock skew.\n"
+            "Positive means puts are priced richer than calls."
+        )
+    sector_skew = optional_float(signal.get(f"sector_skew_{horizon}d"))
+    residual = optional_float(signal.get(f"skew_residual_{horizon}d"))
+    if name_skew is None and residual is None:
+        return None
+    return (
+        f"Skew vs benchmark, {horizon}d window:\n"
+        f"{ticker} stock skew: {format_vol_points(name_skew)}\n"
+        f"Benchmark used: {benchmark}\n"
+        f"{benchmark} benchmark skew: {format_vol_points(sector_skew)}\n"
+        f"Difference: {format_vol_points(residual)}\n"
+        f"Positive means {ticker} puts are priced richer than calls versus {benchmark}."
+    )
+
+
 def _badge_class(value: str) -> str:
     return {
         "OK": "badge-verified",
