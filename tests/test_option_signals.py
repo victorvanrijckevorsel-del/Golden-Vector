@@ -33,7 +33,7 @@ def test_option_signal_summary_uses_sector_relative_skew(tmp_path):
 
     assert artifacts.publish_blockers == ()
     assert summary.loc["AEM", "benchmark_symbol"] == "GDX"
-    assert summary.loc["AEM", "skew_residual_60d"] == 0.05
+    assert summary.loc["AEM", "skew_residual_90d"] == 0.05
     assert summary.loc["AEM", "direction_label"] == "DOWNSIDE"
     assert summary.loc["AEM", "data_quality_label"] == "OK"
     assert "vs GDX" in summary.loc["AEM", "headline"]
@@ -59,9 +59,9 @@ def test_option_signal_benchmark_is_sector_gauge_not_self_residual(tmp_path):
     row = artifacts.summary.set_index("ticker").loc["GDX"]
 
     assert row["benchmark_symbol"] == "GDX"
-    assert row["name_skew_60d"] == 0.05
-    assert row["sector_skew_60d"] == 0.05
-    assert row["skew_residual_60d"] == 0.0
+    assert row["name_skew_90d"] == 0.05
+    assert row["sector_skew_90d"] == 0.05
+    assert row["skew_residual_90d"] == 0.0
     assert row["direction_label"] == "DOWNSIDE"
     assert "sector puts" in row["direction_reason"]
 
@@ -222,9 +222,9 @@ def test_option_signal_iv_rank_requires_min_history(tmp_path):
                 "as_of_date": f"2026-05-{day:02d}",
                 "quote_snapshot_run_id": f"run-{day}",
                 "benchmark_symbol": "GDX",
-                "skew_residual_60d": 0.01,
-                "skew_residual_90d": 0.01,
-                "atm_iv_60d": 0.20 + day / 1000,
+                "signal_horizon_days": 90,
+                "skew_residual": 0.01,
+                "atm_iv": 0.20 + day / 1000,
                 "iv_rv_ratio": 1.0,
             }
             for day in range(1, 21)
@@ -282,7 +282,7 @@ def test_option_signal_chart_frames_keep_high_iv_with_flags(tmp_path):
     skew_rows = artifacts.skew_curve_points
     selected_put = skew_rows[
         (skew_rows["ticker"] == "AEM")
-        & (skew_rows["horizon_days"] == 60)
+        & (skew_rows["horizon_days"] == 90)
         & (skew_rows["side"] == "P")
         & (skew_rows["delta_bucket"] == 0.25)
     ].iloc[0]
@@ -360,11 +360,11 @@ def _feature(
         "run_id": "options-run",
         "optionability_tier": "directly_hedgeable",
         "option_vehicle_type": vehicle,
-        "iv_skew_60d": skew_60,
-        "iv_skew_90d": skew_90,
-        "iv_skew_120d": skew_90,
-        "atm_iv_60d": atm_iv_60,
-        "iv_rv_ratio_60d": 1.4,
+        "iv_skew_90d": skew_60,
+        "iv_skew_180d": skew_90,
+        "iv_skew_230d": skew_90,
+        "atm_iv_90d": atm_iv_60,
+        "iv_rv_ratio_90d": 1.4,
     }
 
 
@@ -448,7 +448,7 @@ def _metric(
         ticker=ticker,
         option_type=cast(Literal["P", "C"], option_type),
         expiration=expiration,
-        days_to_expiry=74,
+        days_to_expiry=90,
         strike=strike,
         underlying_price=100.0,
         bid=bid,

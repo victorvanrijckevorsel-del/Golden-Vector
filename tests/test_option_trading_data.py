@@ -69,7 +69,7 @@ def test_build_option_trading_overview_filters_and_sorts_optionable_rows():
 
     overview = build_option_trading_overview(
         target_horizons_days=(60, 90, 120),
-        signal_horizon_days=60,
+        signal_horizon_days=90,
         tool_a=tool_a,
         options_features=features,
         candidate_grids={"AEM": [_candidate("AEM")], "NEM": [_candidate("NEM")]},
@@ -94,7 +94,7 @@ def test_build_option_trading_overview_filters_and_sorts_optionable_rows():
 def test_build_option_trading_overview_tracks_side_specific_status():
     overview = build_option_trading_overview(
         target_horizons_days=(60, 90, 120),
-        signal_horizon_days=60,
+        signal_horizon_days=90,
         tool_a=pd.DataFrame([{"ticker": "CMCL", "down_beta_core": 1.0}]),
         options_features=pd.DataFrame(
             [_feature("CMCL", "thin", put_iv=None, call_iv=0.5, iv_rank=50.0)]
@@ -125,12 +125,13 @@ def test_load_option_trading_data_uses_composite_cache_key(tmp_path):
     assert first.cache_key.tool_a_refresh_run_ids == ("tool-run-a",)
     assert first.cache_key.model_state_manifest_hash is not None
     assert {row.ticker for row in first.overview.rows} == {"AEM", "GDX", "GDXJ"}
-    assert app_config.hedge_readiness.target_horizons_days == [60, 90, 120]
-    assert app_config.hedge_readiness.display_horizons_days == [60, 90, 120]
+    assert app_config.hedge_readiness.target_horizons_days == [90, 180, 230, 550]
+    assert app_config.hedge_readiness.display_horizons_days == [90, 180, 230, 550]
     assert sorted({slot.horizon_days for slot in first.candidate_slots["AEM"]}) == [
-        60,
         90,
-        120,
+        180,
+        230,
+        550,
     ]
     assert {slot.bucket for slot in first.candidate_slots["AEM"]} == {
         "near_atm",
@@ -199,7 +200,7 @@ def test_build_option_trading_detail_data_reuses_cached_overview_row(tmp_path):
     aem_row = next(row for row in data.overview.rows if row.ticker == "AEM")
     assert detail.row is aem_row
     assert detail.row.pnl_put_at_context == aem_row.pnl_put_at_context
-    assert sorted({slot.horizon_days for slot in detail.put_slots}) == [60, 90, 120]
+    assert sorted({slot.horizon_days for slot in detail.put_slots}) == [90, 180, 230, 550]
     assert {slot.bucket for slot in detail.put_slots} == {
         "near_atm",
         "directional",
@@ -219,7 +220,7 @@ def test_option_trading_detail_renders_persisted_charts_and_scenarios(tmp_path):
         data,
         ticker="AEM",
         app_config=app_config,
-        sizing_request=OptionSizingRequest(side="put", horizon_days=60),
+        sizing_request=OptionSizingRequest(side="put", horizon_days=90),
     )
     html = _render_option_trading_panel(detail)
 
@@ -261,7 +262,7 @@ def test_build_option_trading_detail_does_not_model_watch_candidates():
         risk_free_rate=0.04,
         sizing_request=OptionSizingRequest(
             side="put",
-            horizon_days=60,
+            horizon_days=90,
             bucket="near_atm",
         ),
     )
@@ -270,7 +271,7 @@ def test_build_option_trading_detail_does_not_model_watch_candidates():
     assert detail.put_bundles == ()
     assert detail.sizing is not None
     assert detail.sizing.bundle is None
-    assert "No 60d Near-ATM put candidate is available." in detail.sizing.notes
+    assert "No 90d Near-ATM put candidate is available." in detail.sizing.notes
 
 
 def test_load_option_trading_data_handles_missing_manifest(tmp_path):
@@ -482,7 +483,7 @@ def test_option_detail_shows_proxy_fallback_when_single_name_missing(tmp_path):
         data,
         ticker="AEM",
         app_config=app_config,
-        sizing_request=OptionSizingRequest(side="put", horizon_days=60),
+        sizing_request=OptionSizingRequest(side="put", horizon_days=90),
     )
 
     assert detail.sizing is not None
@@ -586,7 +587,7 @@ def test_option_artifact_reader_matches_shared_builder_for_same_sources(tmp_path
         persisted,
         ticker="AEM",
         app_config=app_config,
-        sizing_request=OptionSizingRequest(side="put", horizon_days=60),
+        sizing_request=OptionSizingRequest(side="put", horizon_days=90),
     )
 
     assert persisted.risk_free_rate == pytest.approx(sources.risk_free_rate)
@@ -716,16 +717,16 @@ def test_parse_option_sizing_request_budget_mode_ignores_unused_quantity(tmp_pat
     assert "Invalid quantity" not in " ".join(request.notes)
 
 
-def test_parse_option_sizing_request_accepts_display_only_120d_horizon(tmp_path):
+def test_parse_option_sizing_request_accepts_long_dated_display_horizon(tmp_path):
     paths = build_test_paths(tmp_path)
     app_config = load_app_config(paths).app
 
     request = parse_option_sizing_request(
-        {"horizon": ["120"]},
+        {"horizon": ["230"]},
         app_config=app_config,
     )
 
-    assert request.horizon_days == 120
+    assert request.horizon_days == 230
     assert request.notes == ()
 
 
@@ -918,7 +919,7 @@ def _candidate(
     delta = -0.25 if option_type == "P" else 0.25
     return CandidatePut(
         ticker=ticker,
-        horizon_days=60,
+        horizon_days=90,
         expiration="2026-07-31",
         days_to_expiry=60,
         strike=strike,

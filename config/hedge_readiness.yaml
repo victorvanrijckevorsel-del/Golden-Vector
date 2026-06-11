@@ -1,13 +1,17 @@
 version: 2
 target_delta: -0.25
+# Milestone C3: candidate horizons are medium/long-dated. The published
+# Signal stays on option_signal_horizon_days (90) regardless of this set.
 target_horizons_days:
-  - 60
   - 90
-  - 120
+  - 180
+  - 230
+  - 550
 display_horizons_days:
-  - 60
   - 90
-  - 120
+  - 180
+  - 230
+  - 550
 optionability_open_interest_threshold: 1000
 implied_move_max_spread_pct: 0.35
 implied_move_min_open_interest: 1
@@ -51,15 +55,19 @@ option_lottery_dte_max: 75
 option_verdict_model_over_market_ratio: 1.5
 option_verdict_market_over_model_ratio: 0.67
 option_dte_bands:
-  60:
-    - 40
-    - 74
   90:
     - 75
     - 104
-  120:
-    - 105
+  180:
     - 150
+    - 209
+  230:
+    - 210
+    - 320
+  # Long-dated / LEAPS (~18mo): a named band, deliberately not open-ended.
+  550:
+    - 450
+    - 650
 delta_gap_warning_threshold: 0.10
 hedge_ratio_cheap_max: 0.40
 hedge_ratio_expensive_min: 0.80
@@ -96,7 +104,9 @@ option_signal_activity_volume_to_oi_min: 0.10
 option_signal_area_min_contracts: 4
 # Signal/Activity/Cost/IV-rank read this ONE horizon (comparable across rows).
 # Candidate horizons above may grow long-dated independently of it.
-option_signal_horizon_days: 60
-# directly_hedgeable needs put-quote coverage at these horizons only.
-# Empty = all target horizons. Set this BEFORE adding long-dated targets.
-optionability_core_horizons: []
+option_signal_horizon_days: 90
+# directly_hedgeable needs put-quote coverage at these horizons only —
+# a missing LEAPS quote must never degrade a name to "thin".
+optionability_core_horizons:
+  - 90
+  - 180

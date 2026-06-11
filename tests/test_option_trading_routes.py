@@ -125,7 +125,7 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
     assert "Candidate" in body
     assert "Tradable" in body
     assert "Open Yahoo chain for this expiry" in body
-    assert "120d" in body
+    assert "230d" in body
     assert "30d tactical" not in body
     assert "Put P&amp;L/share @ Gold -10% (60d)" not in body
     assert "Call P&amp;L/share @ Gold +10% (60d)" not in body
@@ -185,7 +185,7 @@ def test_workspace_option_trading_calculator_contracts_mode(tmp_path):
         app,
         method="GET",
         path=(
-            "/ticker/AEM?lens=option-trading&side=call&horizon=60"
+            "/ticker/AEM?lens=option-trading&side=call&horizon=90"
             "&size_mode=contracts&quantity=3"
         ),
     )
@@ -194,7 +194,7 @@ def test_workspace_option_trading_calculator_contracts_mode(tmp_path):
     body = response["body"]
     assert "Sizing Calculator" in body
     assert 'class="radio-label"' in body
-    assert "Selected: 60d Near-ATM call" in body
+    assert "Selected: 90d Near-ATM call" in body
     assert "Contracts: 3." in body
     assert "Premium spend: 360.00." in body
 
@@ -216,14 +216,14 @@ def test_workspace_option_trading_calculator_budget_mode(tmp_path):
         app,
         method="GET",
         path=(
-            "/ticker/AEM?lens=option-trading&side=put&horizon=60"
+            "/ticker/AEM?lens=option-trading&side=put&horizon=90"
             "&size_mode=budget&budget=500"
         ),
     )
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert "Selected: 60d Near-ATM put" in body
+    assert "Selected: 90d Near-ATM put" in body
     assert "Contracts: 4." in body
     assert "Premium spend: 480.00." in body
     assert "Leftover cash: 20.00." in body
@@ -254,7 +254,7 @@ def test_workspace_option_trading_calculator_invalid_inputs_fall_back(tmp_path):
     assert response["status"].startswith("200")
     body = response["body"]
     assert "Invalid side; defaulted to put." in body
-    assert "Invalid horizon; defaulted to 60d." in body
+    assert "Invalid horizon; defaulted to 90d." in body
     assert "Invalid budget; defaulted to contract quantity mode." in body
     assert "Invalid quantity; defaulted to 5." in body
     assert "Contracts: 5." in body
@@ -278,14 +278,14 @@ def test_workspace_option_trading_calculator_explains_skipped_scenarios(tmp_path
         app,
         method="GET",
         path=(
-            "/ticker/AEM?lens=option-trading&side=call&horizon=60"
+            "/ticker/AEM?lens=option-trading&side=call&horizon=90"
             "&size_mode=contracts&quantity=3"
         ),
     )
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert "Selected: 60d Near-ATM call" in body
+    assert "Selected: 90d Near-ATM call" in body
     assert "Contracts: 3." in body
     assert "Up-beta is too small to model meaningful gold-up scenarios." in body
     assert "Net P&amp;L Now" not in body
@@ -309,7 +309,7 @@ def test_workspace_option_trading_calculator_get_writes_no_files(tmp_path):
         app,
         method="GET",
         path=(
-            "/ticker/AEM?lens=option-trading&side=call&horizon=60"
+            "/ticker/AEM?lens=option-trading&side=call&horizon=90"
             "&size_mode=contracts&quantity=2"
         ),
     )
@@ -411,7 +411,7 @@ def test_workspace_option_trading_detail_shows_proxy_fallback_not_overview(tmp_p
     detail_response = _call_wsgi_app(
         app,
         method="GET",
-        path="/ticker/AEM?lens=option-trading&side=put&horizon=60",
+        path="/ticker/AEM?lens=option-trading&side=put&horizon=90",
     )
 
     assert overview_response["status"].startswith("200")

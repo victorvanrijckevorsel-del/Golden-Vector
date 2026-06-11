@@ -1126,15 +1126,18 @@ def _write_options(paths, *, refresh_run_id: str) -> None:
             "as_of_date": "2026-05-29",
             "optionability_tier": "directly_hedgeable",
             "iv_percentile_cross_sectional": 40.0 if ticker == "AEM" else 60.0,
-            "iv_skew_60d": 0.05,
+
             "underlying_price": 100.0,
             "option_vehicle_type": (
                 "benchmark_etf" if ticker in {"GDX", "GDXJ"} else "single_stock"
             ),
         }
-        for horizon in (60, 90, 120):
+        for horizon in (90, 180, 230, 550):
             feature[f"put_iv_25d_{horizon}d"] = 0.4
             feature[f"call_iv_25d_{horizon}d"] = 0.4 if include_call else None
+            feature[f"iv_skew_{horizon}d"] = 0.05
+            feature[f"iv_rv_ratio_{horizon}d"] = 1.2
+            feature[f"atm_iv_{horizon}d"] = 0.4
         paths.options_features_dir.mkdir(parents=True, exist_ok=True)
         pd.DataFrame([feature]).to_parquet(
             paths.options_features_dir / f"{safe_options_file_name(ticker)}.parquet",
@@ -1168,6 +1171,8 @@ def _chain(ticker: str, *, include_call: bool) -> pd.DataFrame:
     rows = [
         _option(ticker, "P", 95.0, 4.0, 4.4),
         _option(ticker, "P", 90.0, 2.0, 2.3),
+        _option(ticker, "P", 85.0, 1.2, 1.4),
+        _option(ticker, "P", 80.0, 0.8, 1.0),
     ]
     if include_call:
         rows.append(_option(ticker, "C", 105.0, 4.0, 4.4))
@@ -1179,7 +1184,7 @@ def _chain(ticker: str, *, include_call: bool) -> pd.DataFrame:
 def _option(ticker: str, option_type: str, strike: float, bid: float, ask: float) -> dict[str, object]:
     return {
         "ticker": ticker,
-        "expiration": date(2026, 7, 17).isoformat(),
+        "expiration": date(2026, 8, 29).isoformat(),
         "option_type": option_type,
         "strike": strike,
         "bid": bid,
@@ -1190,7 +1195,7 @@ def _option(ticker: str, option_type: str, strike: float, bid: float, ask: float
         "volume": 20,
         "implied_volatility": 0.40,
         "underlying_price": 100.0,
-        "days_to_expiry": 49,
+        "days_to_expiry": 92,
         "options_available": True,
     }
 
