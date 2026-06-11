@@ -7,6 +7,7 @@ from golden_vector.hedge.sensitivity_ranking import build_sensitivity_ranking
 
 def test_build_sensitivity_ranking_sorts_rankable_rows_by_core_down_beta():
     ranking = build_sensitivity_ranking(
+        signal_horizon_days=60,
         tool_a_frame=_tool_a(
             [
                 ("AEM", 1.40, 1.10, "HIGH", 0.80, True),
@@ -29,14 +30,15 @@ def test_build_sensitivity_ranking_sorts_rankable_rows_by_core_down_beta():
 
     assert [row.ticker for row in ranking.rows] == ["KGC", "AEM"]
     assert [row.rank for row in ranking.rows] == [1, 2]
-    assert ranking.rows[0].pnl_at_minus10_60d == pytest.approx(2.80)
-    assert ranking.rows[1].pnl_at_minus10_60d == pytest.approx(0.80)
+    assert ranking.rows[0].pnl_at_minus10_context == pytest.approx(2.80)
+    assert ranking.rows[1].pnl_at_minus10_context == pytest.approx(0.80)
     assert ranking.total_count == 2
     assert ranking.score_eligible_count == 2
 
 
 def test_build_sensitivity_ranking_ranks_ineligible_beta_rows_with_note():
     ranking = build_sensitivity_ranking(
+        signal_horizon_days=60,
         tool_a_frame=_tool_a(
             [
                 ("AEM", 1.40, 1.10, "HIGH", 0.80, True),
@@ -61,6 +63,7 @@ def test_build_sensitivity_ranking_ranks_ineligible_beta_rows_with_note():
 
 def test_build_sensitivity_ranking_notes_missing_60d_candidate():
     ranking = build_sensitivity_ranking(
+        signal_horizon_days=60,
         tool_a_frame=_tool_a([("AEM", 1.40, 1.10, "HIGH", 0.80, True)]),
         options_features=_features([("AEM", "directly_hedgeable", 35.0)]),
         candidate_grids={"AEM": [_candidate("AEM", horizon_days=30)]},
@@ -69,12 +72,13 @@ def test_build_sensitivity_ranking_notes_missing_60d_candidate():
     )
 
     row = ranking.rows[0]
-    assert row.pnl_at_minus10_60d is None
+    assert row.pnl_at_minus10_context is None
     assert "no 60d candidate" in row.notes
 
 
 def test_build_sensitivity_ranking_notes_missing_options_features():
     ranking = build_sensitivity_ranking(
+        signal_horizon_days=60,
         tool_a_frame=_tool_a([("AEM", 1.40, 1.10, "HIGH", 0.80, True)]),
         options_features=pd.DataFrame(),
         candidate_grids={},
@@ -90,6 +94,7 @@ def test_build_sensitivity_ranking_notes_missing_options_features():
 
 def test_build_sensitivity_ranking_treats_missing_optionability_as_none():
     ranking = build_sensitivity_ranking(
+        signal_horizon_days=60,
         tool_a_frame=_tool_a([("AEM", 1.40, 1.10, "HIGH", 0.80, True)]),
         options_features=pd.DataFrame(
             [
@@ -112,6 +117,7 @@ def test_build_sensitivity_ranking_treats_missing_optionability_as_none():
 
 def test_build_sensitivity_ranking_honors_max_tickers_cap():
     ranking = build_sensitivity_ranking(
+        signal_horizon_days=60,
         tool_a_frame=_tool_a(
             [
                 ("AEM", 1.40, 1.10, "HIGH", 0.80, True),
@@ -138,6 +144,7 @@ def test_build_sensitivity_ranking_honors_max_tickers_cap():
 
 def test_build_sensitivity_ranking_does_not_note_rate_fallback_for_expiry_pnl():
     ranking = build_sensitivity_ranking(
+        signal_horizon_days=60,
         tool_a_frame=_tool_a([("AEM", 1.40, 1.10, "HIGH", 0.80, True)]),
         options_features=_features([("AEM", "directly_hedgeable", 35.0)]),
         candidate_grids={"AEM": [_candidate("AEM", horizon_days=60)]},
@@ -145,12 +152,13 @@ def test_build_sensitivity_ranking_does_not_note_rate_fallback_for_expiry_pnl():
         down_beta_min_for_scenario=0.10,
     )
 
-    assert ranking.rows[0].pnl_at_minus10_60d == pytest.approx(0.80)
+    assert ranking.rows[0].pnl_at_minus10_context == pytest.approx(0.80)
     assert "risk-free rate unavailable; used 0%" not in ranking.rows[0].notes
 
 
 def test_build_sensitivity_ranking_skips_risk_free_note_when_pricing_is_not_run():
     ranking = build_sensitivity_ranking(
+        signal_horizon_days=60,
         tool_a_frame=_tool_a([("AEM", 1.40, 1.10, "HIGH", 0.80, True)]),
         options_features=_features([("AEM", "directly_hedgeable", 35.0)]),
         candidate_grids={},
@@ -165,6 +173,7 @@ def test_build_sensitivity_ranking_skips_risk_free_note_when_pricing_is_not_run(
 def test_build_sensitivity_ranking_rejects_unknown_sort_column():
     with pytest.raises(ValueError, match="down_beta_core"):
         build_sensitivity_ranking(
+        signal_horizon_days=60,
             tool_a_frame=_tool_a([("AEM", 1.40, 1.10, "HIGH", 0.80, True)]),
             options_features=pd.DataFrame(),
             candidate_grids={},
@@ -176,6 +185,7 @@ def test_build_sensitivity_ranking_rejects_unknown_sort_column():
 
 def test_build_sensitivity_ranking_uses_latest_feature_row_by_date():
     ranking = build_sensitivity_ranking(
+        signal_horizon_days=60,
         tool_a_frame=_tool_a([("AEM", 1.40, 1.10, "HIGH", 0.80, True)]),
         options_features=pd.DataFrame(
             [

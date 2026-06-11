@@ -1870,6 +1870,13 @@ def run_option_artifacts_outcome(
             source_run_id=run_context.run_id,
             parent_refresh_id=parent_refresh_id,
             config_hash=loaded_config.config_hash,
+            dte_bands={
+                horizon: (band[0], band[1])
+                for horizon, band in loaded_config.app.hedge_readiness.option_dte_bands.items()
+            },
+            benchmark_tickers=tuple(
+                loaded_config.app.hedge_readiness.benchmark_tickers
+            ),
             risk_free_rate=sources.risk_free_rate,
             risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
             option_signals=option_signals,

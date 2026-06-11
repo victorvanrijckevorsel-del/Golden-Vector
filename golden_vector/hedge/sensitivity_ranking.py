@@ -18,7 +18,6 @@ from golden_vector.hedge.candidate_puts import CandidatePut
 from golden_vector.hedge.scenarios import compute_scenario_bundle
 
 RANKING_PNL_GOLD_MOVE = -0.10
-RANKING_CONTEXT_SIGNAL_HORIZON_DAYS = 60
 
 
 @dataclass(frozen=True)
@@ -31,9 +30,9 @@ class SensitivityRow:
     confidence_label: str
     confidence_score: float | None
     iv_percentile_cross_sectional: float | None
-    iv_skew_60d: float | None
-    iv_rv_ratio_60d: float | None
-    pnl_at_minus10_60d: float | None
+    iv_skew_signal: float | None
+    iv_rv_ratio_signal: float | None
+    pnl_at_minus10_context: float | None
     optionability_tier: str
     notes: list[str]
 
@@ -53,10 +52,11 @@ def build_sensitivity_ranking(
     candidate_grids: dict[str, list[CandidatePut]],
     risk_free_rate: float | None,
     down_beta_min_for_scenario: float,
+    signal_horizon_days: int,
     sort_by: str = "down_beta_core",
     max_tickers: int | None = None,
 ) -> SensitivityRankingData:
-    """Rank the universe by Tool A core down-beta and attach 60d put P&L."""
+    """Rank the universe by Tool A core down-beta and attach signal-window put P&L."""
 
     if sort_by != "down_beta_core":
         raise ValueError("Sensitivity ranking supports only sort_by='down_beta_core'.")
@@ -64,6 +64,7 @@ def build_sensitivity_ranking(
     feature_by_ticker = _features_by_ticker(options_features)
     built_rows = [
         _build_row(
+            signal_horizon_days=signal_horizon_days,
             ticker=ticker,
             tool_a_row=tool_a_row,
             feature=feature_by_ticker.get(ticker),
@@ -85,9 +86,9 @@ def build_sensitivity_ranking(
             confidence_label=row.confidence_label,
             confidence_score=row.confidence_score,
             iv_percentile_cross_sectional=row.iv_percentile_cross_sectional,
-            iv_skew_60d=row.iv_skew_60d,
-            iv_rv_ratio_60d=row.iv_rv_ratio_60d,
-            pnl_at_minus10_60d=row.pnl_at_minus10_60d,
+            iv_skew_signal=row.iv_skew_signal,
+            iv_rv_ratio_signal=row.iv_rv_ratio_signal,
+            pnl_at_minus10_context=row.pnl_at_minus10_context,
             optionability_tier=row.optionability_tier,
             notes=row.notes,
         )
@@ -120,6 +121,7 @@ def _build_row(
     candidates: list[CandidatePut],
     risk_free_rate: float | None,
     down_beta_min_for_scenario: float,
+    signal_horizon_days: int,
 ) -> tuple[SensitivityRow, bool, bool]:
     down_beta = as_float(tool_a_row.get("down_beta_core"))
     score_eligible = _as_bool(tool_a_row.get("score_eligible"), default=True)
@@ -137,14 +139,14 @@ def _build_row(
     if optionability_tier == "none":
         notes.append("no listed options")
 
-    candidate_60d = _candidate_for_horizon(candidates, horizon_days=60)
+    context_candidate = _candidate_for_horizon(candidates, horizon_days=signal_horizon_days)
     pnl_at_minus10 = None
-    if candidate_60d is None:
-        notes.append("no 60d candidate")
+    if context_candidate is None:
+        notes.append(f"no {signal_horizon_days}d candidate")
     elif down_beta is not None:
         bundle = compute_scenario_bundle(
-            candidate=candidate_60d,
-            current_stock_price=candidate_60d.underlying_price,
+            candidate=context_candidate,
+            current_stock_price=context_candidate.underlying_price,
             gold_beta=down_beta,
             confidence_label=str(tool_a_row.get("confidence_label") or "n/a"),
             risk_free_rate=risk_free_rate or 0.0,
@@ -170,15 +172,15 @@ def _build_row(
             iv_percentile_cross_sectional=as_float(
                 (feature or {}).get("iv_percentile_cross_sectional")
             ),
-            iv_skew_60d=as_float(
-                (feature or {}).get(f"iv_skew_{RANKING_CONTEXT_SIGNAL_HORIZON_DAYS}d")
+            iv_skew_signal=as_float(
+                (feature or {}).get(f"iv_skew_{signal_horizon_days}d")
             ),
-            iv_rv_ratio_60d=as_float(
+            iv_rv_ratio_signal=as_float(
                 (feature or {}).get(
-                    f"iv_rv_ratio_{RANKING_CONTEXT_SIGNAL_HORIZON_DAYS}d"
+                    f"iv_rv_ratio_{signal_horizon_days}d"
                 )
             ),
-            pnl_at_minus10_60d=pnl_at_minus10,
+            pnl_at_minus10_context=pnl_at_minus10,
             optionability_tier=optionability_tier,
             notes=unique_preserving_order(notes),
         ),

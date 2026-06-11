@@ -25,6 +25,11 @@ from golden_vector.hedge.option_trading import (
     SideStatus,
 )
 from golden_vector.hedge.options_liquidity import OptionContractMetrics
+from golden_vector.hedge.option_horizon_selection import (
+    MostLiquidSelection,
+    select_group_default_window,
+    select_ticker_default_window,
+)
 from golden_vector.hedge.option_signals import OptionSignalArtifacts
 
 CANDIDATE_FINDER_OPTION_COLUMNS: tuple[str, ...] = (
@@ -62,10 +67,20 @@ def build_option_artifact_frames(
     risk_free_rate: float,
     risk_free_rate_is_fallback: bool,
     option_signals: OptionSignalArtifacts | None = None,
+    dte_bands: dict[int, tuple[int, int]] | None = None,
+    benchmark_tickers: tuple[str, ...] = (),
 ) -> dict[str, pd.DataFrame]:
     """Return all persisted option artifact frames for one option-artifact run."""
 
     signals = option_signals or _empty_option_signal_artifacts()
+    overview_frame = _overview_frame(built.overview.rows)
+    if dte_bands:
+        overview_frame = _stamp_most_liquid_defaults(
+            overview_frame,
+            contract_metrics=contract_metrics,
+            dte_bands=dte_bands,
+            benchmark_tickers=benchmark_tickers,
+        )
     frames = {
         "option_contract_metrics": _contract_metrics_frame(contract_metrics),
         "option_liquidity_measurements": _liquidity_measurements_frame(
@@ -79,7 +94,7 @@ def build_option_artifact_frames(
             built.candidate_grids,
             built.call_candidate_grids,
         ),
-        "option_trading_overview": _overview_frame(built.overview.rows),
+        "option_trading_overview": overview_frame,
         "candidate_finder_inputs": _candidate_finder_inputs_frame(
             options_features=options_features,
             put_slots=built.candidate_slots,
@@ -245,6 +260,53 @@ def _selected_candidates_frame(
 
 def _overview_frame(rows: tuple[OptionTradingRow, ...]) -> pd.DataFrame:
     return pd.DataFrame([_dataclass_row(row) for row in rows])
+
+
+def _stamp_most_liquid_defaults(
+    overview_frame: pd.DataFrame,
+    *,
+    contract_metrics: tuple[OptionContractMetrics, ...],
+    dte_bands: dict[int, tuple[int, int]],
+    benchmark_tickers: tuple[str, ...],
+) -> pd.DataFrame:
+    """Stamp backend-selected most-liquid defaults onto the overview artifact.
+
+    Milestone C3: the "Most liquid" defaults are chosen at build time and
+    persisted — serve only reads them (C4 renders the switcher from these
+    columns). Per-ticker defaults are side-aware; the group default is a
+    per-ticker vote over single-stock miners.
+    """
+
+    if overview_frame.empty or "ticker" not in overview_frame.columns:
+        return overview_frame
+    result = overview_frame.copy()
+    tickers = [str(ticker).upper() for ticker in result["ticker"]]
+    per_side: dict[str, dict[str, MostLiquidSelection | None]] = {"P": {}, "C": {}}
+    for side in ("P", "C"):
+        for ticker in tickers:
+            per_side[side][ticker] = select_ticker_default_window(
+                metrics=contract_metrics,
+                ticker=ticker,
+                side=side,  # type: ignore[arg-type]
+                dte_bands=dte_bands,
+            )
+    for side, prefix in (("P", "put"), ("C", "call")):
+        result[f"most_liquid_{prefix}_horizon_days"] = [
+            selection.horizon_days if (selection := per_side[side][ticker]) else None
+            for ticker in tickers
+        ]
+        result[f"most_liquid_{prefix}_expiration"] = [
+            selection.expiration if (selection := per_side[side][ticker]) else None
+            for ticker in tickers
+        ]
+        result[f"group_default_{prefix}_horizon_days"] = select_group_default_window(
+            metrics=contract_metrics,
+            tickers=tickers,
+            side=side,  # type: ignore[arg-type]
+            dte_bands=dte_bands,
+            exclude_tickers=benchmark_tickers,
+        )
+    return result
 
 
 def _candidate_finder_inputs_frame(

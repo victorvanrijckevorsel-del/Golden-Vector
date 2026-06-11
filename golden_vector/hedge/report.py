@@ -335,6 +335,7 @@ def build_hedge_readiness_sections(
         candidate_grids=candidate_grids,
         risk_free_rate=risk_free_rate,
         down_beta_min_for_scenario=config.down_beta_min_for_scenario,
+        signal_horizon_days=config.option_signal_horizon_days,
         sort_by=ranking_sort,
         max_tickers=resolved_ranking_max,
     )
@@ -504,7 +505,7 @@ def _render_header_section(
     if header.implied_vs_modeled_rows:
         lines.extend(
             [
-                "| Ticker | Implied move 60d | Modeled downside at gold -10% | Verdict |",
+                "| Ticker | Implied move (signal window) | Modeled downside at gold -10% | Verdict |",
                 "|---|---:|---:|---|",
             ]
         )
@@ -512,7 +513,7 @@ def _render_header_section(
             lines.append(
                 "| "
                 f"{row.ticker} | "
-                f"{_fmt_pct(row.implied_move_60d)} | "
+                f"{_fmt_pct(row.implied_move_context)} | "
                 f"{_fmt_pct(row.modeled_downside_at_minus10)} | "
                 f"{row.verdict} |"
             )
@@ -578,7 +579,7 @@ def _render_sensitivity_ranking(ranking: SensitivityRankingData) -> list[str]:
     lines.extend(
         [
             "| Rank | Ticker | Down beta | Plain beta | Up beta | Confidence | IV percentile | "
-            "IV skew 60d | IV/RV 60d | "
+            "IV skew (signal) | IV/RV (signal) | "
             f"P&L/share at gold {RANKING_PNL_GOLD_MOVE:.0%} | "
             "Optionability | Notes |",
             "|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---|---|",
@@ -594,9 +595,9 @@ def _render_sensitivity_ranking(ranking: SensitivityRankingData) -> list[str]:
             f"{_fmt_number(row.up_beta_core)} | "
             f"{row.confidence_label} | "
             f"{_fmt_number(row.iv_percentile_cross_sectional)} | "
-            f"{_fmt_pct(row.iv_skew_60d)} | "
-            f"{_fmt_number(row.iv_rv_ratio_60d)} | "
-            f"{_fmt_price(row.pnl_at_minus10_60d)} | "
+            f"{_fmt_pct(row.iv_skew_signal)} | "
+            f"{_fmt_number(row.iv_rv_ratio_signal)} | "
+            f"{_fmt_price(row.pnl_at_minus10_context)} | "
             f"{row.optionability_tier} | "
             f"{'; '.join(row.notes) if row.notes else ''} |"
         )
@@ -733,8 +734,8 @@ def _render_speculation_candidates(
                 f"- Current stock price: {_fmt_price(block.current_stock_price)}",
                 f"- Optionability: {block.optionability_tier}",
                 f"- IV percentile: {_fmt_number(block.iv_percentile_cross_sectional)}",
-                f"- IV skew 60d: {_fmt_pct(block.iv_skew_60d)}",
-                f"- IV/RV ratio 60d: {_fmt_number(block.iv_rv_ratio_60d)}",
+                f"- IV skew (signal): {_fmt_pct(block.iv_skew_signal)}",
+                f"- IV/RV ratio (signal): {_fmt_number(block.iv_rv_ratio_signal)}",
                 f"- Tool A down beta: {_fmt_number(block.down_beta_core)}",
                 f"- Tool A confidence: {block.confidence_label}",
                 "",

@@ -123,8 +123,8 @@ def test_run_hedge_readiness_writes_markdown_report(tmp_path, capsys):
     assert "# Hedge Readiness Report" in markdown
     assert "Descriptive stress-sensitivity view" in markdown
     assert "Buying puts/calls can be right on direction" in markdown
-    assert "IV skew 60d" in markdown
-    assert "IV/RV ratio 60d" in markdown
+    assert "IV skew (signal)" in markdown
+    assert "IV/RV ratio (signal)" in markdown
     assert "downside protection is more expensive" in markdown
     assert "options look expensive versus how much" in markdown
     _assert_heading_order(

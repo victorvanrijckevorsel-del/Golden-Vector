@@ -19,7 +19,6 @@ from golden_vector.hedge._helpers import (
 from golden_vector.hedge.candidate_puts import CandidatePut, build_candidate_put_grid
 from golden_vector.hedge.scenarios import CandidateScenarioBundle, compute_scenario_bundle
 
-SPECULATION_CONTEXT_SIGNAL_HORIZON_DAYS = 60
 
 
 @dataclass(frozen=True)
@@ -28,8 +27,8 @@ class SpeculationTickerBlock:
     current_stock_price: float | None
     optionability_tier: str
     iv_percentile_cross_sectional: float | None
-    iv_skew_60d: float | None
-    iv_rv_ratio_60d: float | None
+    iv_skew_signal: float | None
+    iv_rv_ratio_signal: float | None
     down_beta_core: float | None
     confidence_label: str
     candidates: list[CandidatePut]
@@ -171,11 +170,11 @@ def _ticker_block(
         current_stock_price=current_stock_price,
         optionability_tier=feature["optionability_tier"],
         iv_percentile_cross_sectional=feature["iv_percentile_cross_sectional"],
-        iv_skew_60d=_as_float(
-            feature.get(f"iv_skew_{SPECULATION_CONTEXT_SIGNAL_HORIZON_DAYS}d")
+        iv_skew_signal=_as_float(
+            feature.get(f"iv_skew_{config.option_signal_horizon_days}d")
         ),
-        iv_rv_ratio_60d=_as_float(
-            feature.get(f"iv_rv_ratio_{SPECULATION_CONTEXT_SIGNAL_HORIZON_DAYS}d")
+        iv_rv_ratio_signal=_as_float(
+            feature.get(f"iv_rv_ratio_{config.option_signal_horizon_days}d")
         ),
         down_beta_core=down_beta_core,
         confidence_label=confidence_label,

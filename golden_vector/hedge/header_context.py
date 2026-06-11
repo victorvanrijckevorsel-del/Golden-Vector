@@ -34,7 +34,7 @@ class PriceMoveContext:
 @dataclass(frozen=True)
 class ImpliedVsModeledRow:
     ticker: str
-    implied_move_60d: float | None
+    implied_move_context: float | None
     modeled_downside_at_minus10: float | None
     verdict: str
 
@@ -175,16 +175,16 @@ def _implied_vs_modeled_rows(
         ticker = str(feature.get("ticker") or "").upper()
         if not ticker or not _is_optionable_tier(feature.get("optionability_tier")):
             continue
-        implied_move = _as_float(feature.get("implied_move_60d"))
+        implied_move = _as_float(feature.get(f"implied_move_{hedge_config.option_signal_horizon_days}d"))
         down_beta = _as_float(tool_a_by_ticker.get(ticker, {}).get("down_beta_core"))
         modeled_downside = _modeled_downside_at_minus10(down_beta)
         rows.append(
             ImpliedVsModeledRow(
                 ticker=ticker,
-                implied_move_60d=implied_move,
+                implied_move_context=implied_move,
                 modeled_downside_at_minus10=modeled_downside,
                 verdict=_verdict(
-                    implied_move_60d=implied_move,
+                    implied_move_context=implied_move,
                     modeled_downside_at_minus10=modeled_downside,
                     hedge_config=hedge_config,
                 ),
@@ -226,20 +226,20 @@ def _feature_rows(
 
 def _verdict(
     *,
-    implied_move_60d: float | None,
+    implied_move_context: float | None,
     modeled_downside_at_minus10: float | None,
     hedge_config: HedgeReadinessConfig,
 ) -> str:
     if (
-        implied_move_60d is None
-        or implied_move_60d <= 0
+        implied_move_context is None
+        or implied_move_context <= 0
         or modeled_downside_at_minus10 is None
     ):
         return "data unavailable (heuristic)"
     model_over_market = float(hedge_config.option_verdict_model_over_market_ratio)
     market_over_model = float(hedge_config.option_verdict_market_over_model_ratio)
-    if modeled_downside_at_minus10 > model_over_market * implied_move_60d:
+    if modeled_downside_at_minus10 > model_over_market * implied_move_context:
         return "model > market (heuristic)"
-    if modeled_downside_at_minus10 < market_over_model * implied_move_60d:
+    if modeled_downside_at_minus10 < market_over_model * implied_move_context:
         return "market > model (heuristic)"
     return "model ~= market (heuristic)"

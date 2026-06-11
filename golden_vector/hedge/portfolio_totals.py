@@ -29,7 +29,7 @@ class HoldingResolved:
     current_stock_price: float | None
     current_notional: float | None
     down_beta_core: float | None
-    candidate_60d: CandidatePut | None
+    context_candidate: CandidatePut | None
     totals_exclusion_reason: str | None
     downside_modelable: bool
     downside_skip_reason: str | None
@@ -155,8 +155,9 @@ def _resolve_holding(
     candidates: list[CandidatePut],
     config: HedgeReadinessConfig,
 ) -> HoldingResolved:
-    candidate_60d = _candidate_for_horizon(candidates, horizon_days=60)
-    price_candidate = candidate_60d or (candidates[0] if candidates else None)
+    signal_horizon_days = config.option_signal_horizon_days
+    context_candidate = _candidate_for_horizon(candidates, horizon_days=signal_horizon_days)
+    price_candidate = context_candidate or (candidates[0] if candidates else None)
     current_price = _current_stock_price(
         feature_row=feature_row,
         tool_b_row=tool_b_row,
@@ -178,9 +179,10 @@ def _resolve_holding(
         config=config,
     )
     hedge_cost_skip_reason = _hedge_cost_skip_reason(
+        signal_horizon_days=signal_horizon_days,
         current_notional=current_notional,
         current_stock_price=current_price,
-        candidate_60d=candidate_60d,
+        context_candidate=context_candidate,
     )
     return HoldingResolved(
         ticker=holding.ticker,
@@ -190,7 +192,7 @@ def _resolve_holding(
         current_stock_price=current_price,
         current_notional=current_notional,
         down_beta_core=down_beta,
-        candidate_60d=candidate_60d,
+        context_candidate=context_candidate,
         totals_exclusion_reason=totals_exclusion_reason,
         downside_modelable=(
             current_notional is not None and downside_skip_reason is None
@@ -256,13 +258,13 @@ def _hedge_cost_at_level(
             continue
         assert holding.current_notional is not None
         assert holding.current_stock_price is not None
-        assert holding.candidate_60d is not None
-        assert holding.candidate_60d.mid is not None
+        assert holding.context_candidate is not None
+        assert holding.context_candidate.mid is not None
         target_shares = (
             holding.current_notional * protection_level / holding.current_stock_price
         )
         contracts = math.ceil(target_shares / OPTION_CONTRACT_MULTIPLIER)
-        total += contracts * holding.candidate_60d.mid * OPTION_CONTRACT_MULTIPLIER
+        total += contracts * holding.context_candidate.mid * OPTION_CONTRACT_MULTIPLIER
     return total
 
 
@@ -271,8 +273,8 @@ def _hedge_cost_eligible(holding: HoldingResolved) -> bool:
         holding.hedge_cost_modelable
         and holding.current_notional is not None
         and holding.current_stock_price is not None
-        and holding.candidate_60d is not None
-        and holding.candidate_60d.mid is not None
+        and holding.context_candidate is not None
+        and holding.context_candidate.mid is not None
     )
 
 
@@ -308,18 +310,19 @@ def _hedge_cost_skip_reason(
     *,
     current_notional: float | None,
     current_stock_price: float | None,
-    candidate_60d: CandidatePut | None,
+    context_candidate: CandidatePut | None,
+    signal_horizon_days: int,
 ) -> str | None:
     reasons: list[str] = []
     if current_notional is None:
         return "not included in portfolio totals"
     if current_stock_price is None:
         reasons.append("no hedge-cost inputs")
-    if candidate_60d is None:
-        reasons.append("no 60d candidate")
+    if context_candidate is None:
+        reasons.append(f"no {signal_horizon_days}d candidate")
     if (
-        candidate_60d is not None
-        and (candidate_60d.mid is None or candidate_60d.mid < 0)
+        context_candidate is not None
+        and (context_candidate.mid is None or context_candidate.mid < 0)
     ):
         reasons.append("no hedge-cost inputs")
     unique_reasons = unique_preserving_order(reasons)
