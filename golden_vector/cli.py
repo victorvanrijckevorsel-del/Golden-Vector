@@ -3273,7 +3273,15 @@ def _run_refresh_unlocked(
         print()
         print(f"== Step 3/{total_steps}: tool-b ==")
         started_at = perf_counter()
-        tool_b_exit = run_tool_b(paths, gold_price=gold_price_override)
+        # Mid-refresh the CURRENT model-state manifest still points at the
+        # previous refresh's foundation; Tool B must read the foundation that
+        # step 1 just built (same bypass as tool-c/tool-d below), or it prices
+        # spot gold off yesterday's close.
+        tool_b_exit = run_tool_b(
+            paths,
+            gold_price=gold_price_override,
+            _use_model_state_inputs=False,
+        )
         record_step("tool_b", started_at, tool_b_exit)
         if tool_b_exit != 0:
             print()

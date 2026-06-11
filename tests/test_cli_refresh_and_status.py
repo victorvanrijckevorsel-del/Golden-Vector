@@ -347,7 +347,11 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
         call_order.append("tool-a")
         return 0
 
-    def fake_tool_b(_paths, *, gold_price):
+    def fake_tool_b(_paths, *, gold_price, _use_model_state_inputs):
+        # Required kwarg on purpose: refresh must bypass model-state inputs
+        # mid-refresh or Tool B prices spot gold off the PREVIOUS refresh's
+        # foundation (caught by the live smoke test).
+        assert _use_model_state_inputs is False
         call_order.append(f"tool-b@{gold_price}")
         return 0
 
@@ -442,7 +446,11 @@ def test_refresh_fault_after_tool_b_keeps_previous_manifest_and_readers_intact(
         _write_tool_a(_paths, refresh_run_id="refresh-new", rank=99)
         return 0
 
-    def fake_tool_b(_paths, *, gold_price):
+    def fake_tool_b(_paths, *, gold_price, _use_model_state_inputs):
+        # Required kwarg on purpose: refresh must bypass model-state inputs
+        # mid-refresh or Tool B prices spot gold off the PREVIOUS refresh's
+        # foundation (caught by the live smoke test).
+        assert _use_model_state_inputs is False
         call_order.append("tool-b")
         _write_tool_b(_paths, refresh_run_id="refresh-new", rank=99)
         return 0
@@ -513,7 +521,11 @@ def test_refresh_option_artifact_failure_keeps_previous_manifest(
         _write_tool_a(_paths, refresh_run_id="refresh-new", rank=99)
         return 0
 
-    def fake_tool_b(_paths, *, gold_price):
+    def fake_tool_b(_paths, *, gold_price, _use_model_state_inputs):
+        # Required kwarg on purpose: refresh must bypass model-state inputs
+        # mid-refresh or Tool B prices spot gold off the PREVIOUS refresh's
+        # foundation (caught by the live smoke test).
+        assert _use_model_state_inputs is False
         call_order.append("tool-b")
         _write_tool_b(_paths, refresh_run_id="refresh-new", rank=99)
         return 0
@@ -580,7 +592,11 @@ def test_refresh_command_stops_after_update_data_failure(tmp_path, monkeypatch, 
         call_order.append("tool-a")
         return 0
 
-    def fake_tool_b(_paths, *, gold_price):
+    def fake_tool_b(_paths, *, gold_price, _use_model_state_inputs):
+        # Required kwarg on purpose: refresh must bypass model-state inputs
+        # mid-refresh or Tool B prices spot gold off the PREVIOUS refresh's
+        # foundation (caught by the live smoke test).
+        assert _use_model_state_inputs is False
         call_order.append("tool-b")
         return 0
 
@@ -661,7 +677,11 @@ def test_refresh_command_skips_tool_b_when_flag_passed(tmp_path, monkeypatch, ca
         call_order.append("tool-a")
         return 0
 
-    def fake_tool_b(_paths, *, gold_price):
+    def fake_tool_b(_paths, *, gold_price, _use_model_state_inputs):
+        # Required kwarg on purpose: refresh must bypass model-state inputs
+        # mid-refresh or Tool B prices spot gold off the PREVIOUS refresh's
+        # foundation (caught by the live smoke test).
+        assert _use_model_state_inputs is False
         call_order.append("tool-b")
         return 0
 
@@ -715,7 +735,11 @@ def test_refresh_skip_tool_b_publishes_partial_manifest_for_new_tool_a(
         _write_tool_a(_paths, refresh_run_id="refresh-new", rank=99)
         return 0
 
-    def fake_tool_b(_paths, *, gold_price):
+    def fake_tool_b(_paths, *, gold_price, _use_model_state_inputs):
+        # Required kwarg on purpose: refresh must bypass model-state inputs
+        # mid-refresh or Tool B prices spot gold off the PREVIOUS refresh's
+        # foundation (caught by the live smoke test).
+        assert _use_model_state_inputs is False
         raise AssertionError("Tool B must not run with --skip-tool-b.")
 
     def fake_portfolio(_paths, **_kwargs):
