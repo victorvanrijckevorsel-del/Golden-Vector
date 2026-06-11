@@ -26,8 +26,9 @@ SideStatus = Literal["tradable", "watch", "none"]
 OptionSide = Literal["put", "call"]
 SizingMode = Literal["contracts", "budget"]
 
+# Fallback only (sizing-request default before config resolution). The real
+# signal/context horizon comes from hedge_readiness.option_signal_horizon_days.
 PREFERRED_OPTION_HORIZON_DAYS = 60
-OPTION_CONTEXT_SIGNAL_HORIZON_DAYS = 60
 PUT_CONTEXT_GOLD_MOVE = -0.10
 CALL_CONTEXT_GOLD_MOVE = 0.10
 
@@ -74,16 +75,20 @@ class OptionTradingRow:
     confidence_label: str
     confidence_score: float | None
     iv_percentile_cross_sectional: float | None
-    iv_skew_60d: float | None
-    iv_rv_ratio_60d: float | None
+    # Signal-horizon fields (Milestone C2): horizon-agnostic names; the
+    # actual horizon is carried in signal_horizon_days, never the field name.
+    iv_skew_signal: float | None
+    iv_rv_ratio_signal: float | None
     optionability_tier: str
     put_status: SideStatus
     call_status: SideStatus
-    pnl_put_at_minus10_60d: float | None
-    pnl_call_at_plus10_60d: float | None
+    pnl_put_at_context: float | None
+    pnl_call_at_context: float | None
     notes: tuple[str, ...]
     current_stock_price: float | None = None
     option_vehicle_type: str = "single_stock"
+    signal_horizon_days: int | None = None
+    context_horizon_days: int | None = None
 
 
 @dataclass(frozen=True)
@@ -146,9 +151,10 @@ def build_option_trading_overview(
     options_features: pd.DataFrame,
     candidate_grids: dict[str, list[OptionCandidate]],
     risk_free_rate: float,
+    target_horizons_days: tuple[int, ...],
+    signal_horizon_days: int,
     call_candidate_grids: dict[str, list[OptionCandidate]] | None = None,
-    target_horizons_days: tuple[int, ...] = (60, 90, 120),
-    preferred_horizon_days: int = PREFERRED_OPTION_HORIZON_DAYS,
+    preferred_horizon_days: int | None = None,
     put_context_gold_move: float = PUT_CONTEXT_GOLD_MOVE,
     call_context_gold_move: float = CALL_CONTEXT_GOLD_MOVE,
     down_beta_min_for_scenario: float = 0.10,
@@ -158,6 +164,10 @@ def build_option_trading_overview(
 ) -> OptionTradingOverviewData:
     """Build optionable ticker rows for the workspace overview tab."""
 
+    if preferred_horizon_days is None:
+        # Context P&L follows the signal horizon until the most-liquid
+        # selector (Milestone C3) supplies a per-ticker default.
+        preferred_horizon_days = signal_horizon_days
     if options_features.empty:
         return OptionTradingOverviewData(
             rows=(),
@@ -187,6 +197,7 @@ def build_option_trading_overview(
                 call_candidates=call_candidates,
                 risk_free_rate=risk_free_rate,
                 target_horizons_days=target_horizons_days,
+                signal_horizon_days=signal_horizon_days,
                 preferred_horizon_days=preferred_horizon_days,
                 put_context_gold_move=put_context_gold_move,
                 call_context_gold_move=call_context_gold_move,
@@ -223,7 +234,7 @@ def build_option_trading_detail(
     put_candidate_slots: dict[str, list[OptionCandidateSlot]] | None = None,
     call_candidate_slots: dict[str, list[OptionCandidateSlot]] | None = None,
     sizing_request: OptionSizingRequest | None = None,
-    target_horizons_days: tuple[int, ...] = (60, 90, 120),
+    target_horizons_days: tuple[int, ...] = (60, 90, 120),  # callers pass config
     down_beta_min_for_scenario: float = 0.10,
     risk_free_rate_is_fallback: bool = False,
     source_context: OptionTradingSourceContext | None = None,
@@ -395,6 +406,7 @@ def _build_row(
     call_candidates: tuple[OptionCandidate, ...],
     risk_free_rate: float,
     target_horizons_days: tuple[int, ...],
+    signal_horizon_days: int,
     preferred_horizon_days: int,
     put_context_gold_move: float,
     call_context_gold_move: float,
@@ -467,22 +479,18 @@ def _build_row(
         confidence_label=confidence_label,
         confidence_score=row_float(tool_a_row, "confidence_score"),
         iv_percentile_cross_sectional=row_float(feature, "iv_percentile_cross_sectional"),
-        iv_skew_60d=row_float(
-            feature,
-            f"iv_skew_{OPTION_CONTEXT_SIGNAL_HORIZON_DAYS}d",
-        ),
-        iv_rv_ratio_60d=row_float(
-            feature,
-            f"iv_rv_ratio_{OPTION_CONTEXT_SIGNAL_HORIZON_DAYS}d",
-        ),
+        iv_skew_signal=row_float(feature, f"iv_skew_{signal_horizon_days}d"),
+        iv_rv_ratio_signal=row_float(feature, f"iv_rv_ratio_{signal_horizon_days}d"),
         optionability_tier=tier,
         put_status=put_status,
         call_status=call_status,
-        pnl_put_at_minus10_60d=pnl_put,
-        pnl_call_at_plus10_60d=pnl_call,
+        pnl_put_at_context=pnl_put,
+        pnl_call_at_context=pnl_call,
         notes=tuple(notes),
         current_stock_price=current_stock_price,
         option_vehicle_type=option_vehicle_type,
+        signal_horizon_days=int(signal_horizon_days),
+        context_horizon_days=int(preferred_horizon_days),
     )
 
 

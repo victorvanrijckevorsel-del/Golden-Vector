@@ -309,7 +309,10 @@ def parse_option_sizing_request(
         notes.append("Invalid side; defaulted to put.")
 
     target_horizons = tuple(app_config.hedge_readiness.display_horizons_days)
-    default_horizon = 60 if 60 in target_horizons else target_horizons[0]
+    signal_horizon = int(app_config.hedge_readiness.option_signal_horizon_days)
+    default_horizon = (
+        signal_horizon if signal_horizon in target_horizons else target_horizons[0]
+    )
     horizon_raw = _query_value(query, "horizon")
     horizon = _parse_int(horizon_raw)
     if horizon not in target_horizons:

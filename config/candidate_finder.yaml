@@ -147,9 +147,17 @@ criteria:
     unit: percentile
     available_now: true
   - id: iv_skew
-    label: IV skew
-    description: Extra downside fear priced into puts (makes puts cost more).
-    source_field: iv_skew_60d
+    label: Skew vs benchmark
+    description: How much richer this stock's downside puts are priced versus its sector benchmark ETF (GDX/GDXJ). Same number as the Option Trading page.
+    source_field: skew_residual_signal
+    group: Options
+    default_direction: high_good
+    unit: percent
+    available_now: true
+  - id: name_iv_skew
+    label: Own put/call skew
+    description: The stock's own put-minus-call IV skew, without the benchmark comparison. Answers a different question than skew vs benchmark.
+    source_field: name_iv_skew_signal
     group: Options
     default_direction: high_good
     unit: percent

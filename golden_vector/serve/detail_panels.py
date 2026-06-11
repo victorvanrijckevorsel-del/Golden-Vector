@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, time, timezone
 from html import escape
 from typing import Any
@@ -339,12 +340,23 @@ def _render_option_signal_card(detail: OptionTradingDetailData) -> str:
     )
 
 
+def _signal_row_horizons(signal: dict[str, object]) -> list[int]:
+    """Horizons the persisted signal row actually carries (config-driven)."""
+
+    horizons = set()
+    for key in signal:
+        match = re.match(r"^name_skew_(\d+)d$", str(key))
+        if match is not None:
+            horizons.add(int(match.group(1)))
+    return sorted(horizons)
+
+
 def _render_option_skew_overlay(detail: OptionTradingDetailData) -> str:
     signal = detail.signal_row or {}
     if not signal:
         return ""
     rows = []
-    for horizon in (60, 90, 120):
+    for horizon in _signal_row_horizons(signal):
         rows.append(
             "<tr>"
             f"<td>{horizon}d</td>"

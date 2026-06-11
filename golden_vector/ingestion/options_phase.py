@@ -218,6 +218,9 @@ def run_options_ingestion_phase(
         if not feature_frame.empty:
             feature_frame["iv_percentile_cross_sectional"] = rank_options_iv_cross_section(
                 feature_frame,
+                iv_column=(
+                    f"atm_iv_{app_config.hedge_readiness.option_signal_horizon_days}d"
+                ),
             )
         feature_row_count = len(feature_frame.index)
         feature_paths = _append_feature_rows(
@@ -409,6 +412,9 @@ def _compute_feature_row(
         price_history=price_history,
         as_of_date=as_of_date,
         target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
+        optionability_core_horizons=tuple(
+            app_config.hedge_readiness.optionability_core_horizons
+        ),
         target_delta=app_config.hedge_readiness.target_delta,
         optionability_open_interest_threshold=(
             app_config.hedge_readiness.optionability_open_interest_threshold

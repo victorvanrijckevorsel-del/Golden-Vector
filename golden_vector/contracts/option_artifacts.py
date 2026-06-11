@@ -7,7 +7,11 @@ from typing import Protocol
 
 from golden_vector.common.files import safe_file_fragment
 
-OPTION_ARTIFACT_SCHEMA_VERSION = 2
+# v3 (Milestone C2): signal-horizon fields replace *_60d names
+# (iv_skew_signal, pnl_*_at_context, signal_horizon_days), candidate_finder
+# inputs gain benchmark-relative skew_residual_signal, and signal history
+# moved to long form. Pre-v3 artifacts fail loud / refuse carry-forward.
+OPTION_ARTIFACT_SCHEMA_VERSION = 3
 
 OPTION_ARTIFACT_NAMES: tuple[str, ...] = (
     "option_contract_metrics",

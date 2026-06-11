@@ -13,6 +13,7 @@ def test_compute_options_features_uses_fixture_chain():
     chain = pd.read_parquet("tests/fixtures/options/aem_chain_20260529.parquet")
 
     features = compute_options_features(
+        target_horizons_days=(30, 60, 90),
         chain=chain,
         underlying_price=50.0,
         risk_free_rate=0.04,
@@ -29,7 +30,6 @@ def test_compute_options_features_uses_fixture_chain():
     assert features["put_iv_25d_30d"] == pytest.approx(0.42)
     assert features["put_25d_delta_gap_30d"] is not None
     assert features["call_iv_25d_60d"] is not None
-    assert features["term_slope_30_90"] is not None
     assert features["implied_move_30d"] is None
     assert features["implied_move_30d_gates_ok"] is False
     assert features["realized_vol_30d"] is not None
@@ -40,6 +40,7 @@ def test_compute_options_features_uses_fixture_chain():
 
 def test_compute_options_features_handles_empty_chain():
     features = compute_options_features(
+        target_horizons_days=(30, 60, 90),
         chain=pd.DataFrame(),
         underlying_price=50.0,
         risk_free_rate=0.04,
@@ -59,6 +60,7 @@ def test_compute_options_features_handles_invalid_underlying_price():
     chain = pd.DataFrame([_contract("P", 50.0, 1.0, 1.2, 0.40, 20, 5)])
 
     features = compute_options_features(
+        target_horizons_days=(30, 60, 90),
         chain=chain,
         underlying_price=0.0,
         risk_free_rate=0.04,
@@ -82,6 +84,7 @@ def test_compute_options_features_liquidity_gates_implied_move():
     )
 
     features = compute_options_features(
+        target_horizons_days=(30, 60, 90),
         chain=chain,
         underlying_price=50.0,
         risk_free_rate=0.04,
@@ -100,6 +103,7 @@ def test_compute_options_features_uses_zero_rate_delta_fallback_without_risk_fre
     chain = pd.read_parquet("tests/fixtures/options/aem_chain_20260529.parquet")
 
     features = compute_options_features(
+        target_horizons_days=(30, 60, 90),
         chain=chain,
         underlying_price=50.0,
         risk_free_rate=None,
@@ -124,6 +128,7 @@ def test_compute_options_features_does_not_rank_untradable_candidate_quotes():
     )
 
     features = compute_options_features(
+        target_horizons_days=(30, 60, 90),
         chain=chain,
         underlying_price=50.0,
         risk_free_rate=0.04,
@@ -146,7 +151,7 @@ def test_rank_options_iv_cross_section_returns_percentiles():
         }
     )
 
-    percentiles = rank_options_iv_cross_section(features)
+    percentiles = rank_options_iv_cross_section(features, iv_column="atm_iv_60d")
 
     assert percentiles.iloc[0] == pytest.approx(2 / 3 * 100)
     assert percentiles.iloc[1] == pytest.approx(1 / 3 * 100)

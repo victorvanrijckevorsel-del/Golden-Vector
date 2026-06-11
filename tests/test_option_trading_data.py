@@ -68,6 +68,8 @@ def test_build_option_trading_overview_filters_and_sorts_optionable_rows():
     )
 
     overview = build_option_trading_overview(
+        target_horizons_days=(60, 90, 120),
+        signal_horizon_days=60,
         tool_a=tool_a,
         options_features=features,
         candidate_grids={"AEM": [_candidate("AEM")], "NEM": [_candidate("NEM")]},
@@ -80,17 +82,19 @@ def test_build_option_trading_overview_filters_and_sorts_optionable_rows():
 
     assert [row.ticker for row in overview.rows] == ["NEM", "AEM"]
     assert overview.rows[0].structural_delta_core == 1.9
-    assert overview.rows[0].iv_skew_60d == pytest.approx(-0.1)
-    assert overview.rows[0].iv_rv_ratio_60d == 1.25
+    assert overview.rows[0].iv_skew_signal == pytest.approx(-0.1)
+    assert overview.rows[0].iv_rv_ratio_signal == 1.25
     assert overview.rows[0].put_status == "tradable"
     assert overview.rows[0].call_status == "tradable"
-    assert overview.rows[0].pnl_put_at_minus10_60d is not None
-    assert overview.rows[0].pnl_call_at_plus10_60d is not None
+    assert overview.rows[0].pnl_put_at_context is not None
+    assert overview.rows[0].pnl_call_at_context is not None
     assert {row.ticker for row in overview.rows} == {"AEM", "NEM"}
 
 
 def test_build_option_trading_overview_tracks_side_specific_status():
     overview = build_option_trading_overview(
+        target_horizons_days=(60, 90, 120),
+        signal_horizon_days=60,
         tool_a=pd.DataFrame([{"ticker": "CMCL", "down_beta_core": 1.0}]),
         options_features=pd.DataFrame(
             [_feature("CMCL", "thin", put_iv=None, call_iv=0.5, iv_rank=50.0)]
@@ -102,7 +106,7 @@ def test_build_option_trading_overview_tracks_side_specific_status():
     row = overview.rows[0]
     assert row.put_status == "none"
     assert row.call_status == "none"
-    assert row.pnl_put_at_minus10_60d is None
+    assert row.pnl_put_at_context is None
 
 
 def test_load_option_trading_data_uses_composite_cache_key(tmp_path):
@@ -194,7 +198,7 @@ def test_build_option_trading_detail_data_reuses_cached_overview_row(tmp_path):
     assert data.overview.rows
     aem_row = next(row for row in data.overview.rows if row.ticker == "AEM")
     assert detail.row is aem_row
-    assert detail.row.pnl_put_at_minus10_60d == aem_row.pnl_put_at_minus10_60d
+    assert detail.row.pnl_put_at_context == aem_row.pnl_put_at_context
     assert sorted({slot.horizon_days for slot in detail.put_slots}) == [60, 90, 120]
     assert {slot.bucket for slot in detail.put_slots} == {
         "near_atm",
@@ -384,7 +388,7 @@ def test_load_option_trading_data_builds_call_context_from_up_beta(tmp_path):
     assert all(candidate.option_type == "C" for candidate in data.call_candidate_grids["AEM"])
     aem_row = next(row for row in data.overview.rows if row.ticker == "AEM")
     assert aem_row.call_status == "tradable"
-    assert aem_row.pnl_call_at_plus10_60d is not None
+    assert aem_row.pnl_call_at_context is not None
     assert detail.call_candidates
     assert detail.call_bundles
     assert detail.call_bundles[0].gold_beta_used == 1.1
@@ -945,13 +949,13 @@ def _overview_signatures(rows) -> list[tuple[object, ...]]:
             row.confidence_label,
             _round_optional(row.confidence_score),
             _round_optional(row.iv_percentile_cross_sectional),
-            _round_optional(row.iv_skew_60d),
-            _round_optional(row.iv_rv_ratio_60d),
+            _round_optional(row.iv_skew_signal),
+            _round_optional(row.iv_rv_ratio_signal),
             row.optionability_tier,
             row.put_status,
             row.call_status,
-            _round_optional(row.pnl_put_at_minus10_60d),
-            _round_optional(row.pnl_call_at_plus10_60d),
+            _round_optional(row.pnl_put_at_context),
+            _round_optional(row.pnl_call_at_context),
             tuple(row.notes),
             _round_optional(row.current_stock_price),
             row.option_vehicle_type,

@@ -47,6 +47,7 @@ def test_hedge_reads_only_real_tool_b_columns():
 
 def test_options_features_contract_contains_core_feature_columns():
     features = compute_options_features(
+        target_horizons_days=(30, 60, 90),
         chain=pd.DataFrame(),
         underlying_price=50.0,
         risk_free_rate=0.04,

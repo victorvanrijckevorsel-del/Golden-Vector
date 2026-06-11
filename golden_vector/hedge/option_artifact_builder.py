@@ -118,6 +118,7 @@ def build_option_artifact_inputs(
         call_candidate_grids=call_candidate_grids,
         risk_free_rate=risk_free_rate,
         target_horizons_days=tuple(app_config.hedge_readiness.display_horizons_days),
+        signal_horizon_days=app_config.hedge_readiness.option_signal_horizon_days,
         down_beta_min_for_scenario=app_config.hedge_readiness.down_beta_min_for_scenario,
         risk_free_rate_is_fallback=risk_free_rate_is_fallback,
         source_context=source_context,

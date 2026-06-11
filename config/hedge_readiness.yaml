@@ -94,3 +94,9 @@ option_signal_quote_coverage_min: 0.60
 option_signal_history_min_samples: 20
 option_signal_activity_volume_to_oi_min: 0.10
 option_signal_area_min_contracts: 4
+# Signal/Activity/Cost/IV-rank read this ONE horizon (comparable across rows).
+# Candidate horizons above may grow long-dated independently of it.
+option_signal_horizon_days: 60
+# directly_hedgeable needs put-quote coverage at these horizons only.
+# Empty = all target horizons. Set this BEFORE adding long-dated targets.
+optionability_core_horizons: []

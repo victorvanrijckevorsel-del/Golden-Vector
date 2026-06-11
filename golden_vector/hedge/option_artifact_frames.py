@@ -33,8 +33,15 @@ CANDIDATE_FINDER_OPTION_COLUMNS: tuple[str, ...] = (
     "run_id",
     "optionability_tier",
     "iv_percentile_cross_sectional",
-    "iv_skew_60d",
-    "iv_rv_ratio_60d",
+    # Signal-horizon fields (C2): name_iv_skew_signal is the name's own
+    # put-minus-call skew; skew_residual_signal is benchmark-relative — the
+    # number the Option Trading UI shows and what Bull/Bear presets score on.
+    # The horizon travels in signal_horizon_days, never in column names.
+    "name_iv_skew_signal",
+    "iv_rv_ratio_signal",
+    "skew_residual_signal",
+    "benchmark_symbol",
+    "signal_horizon_days",
     "options_fetch_status",
     "options_fetch_message",
     "underlying_price",
@@ -77,6 +84,7 @@ def build_option_artifact_frames(
             options_features=options_features,
             put_slots=built.candidate_slots,
             call_slots=built.call_candidate_slots,
+            signal_summary=signals.summary,
         ),
         "option_signal_summary": signals.summary,
         "option_skew_curve_points": signals.skew_curve_points,
@@ -180,17 +188,19 @@ def overview_rows_from_frame(frame: pd.DataFrame) -> tuple[OptionTradingRow, ...
                 iv_percentile_cross_sectional=as_float(
                     record.get("iv_percentile_cross_sectional")
                 ),
-                iv_skew_60d=as_float(record.get("iv_skew_60d")),
-                iv_rv_ratio_60d=as_float(record.get("iv_rv_ratio_60d")),
+                iv_skew_signal=as_float(record.get("iv_skew_signal")),
+                iv_rv_ratio_signal=as_float(record.get("iv_rv_ratio_signal")),
                 optionability_tier=_optional_str(record.get("optionability_tier")) or "none",
                 put_status=_side_status(record.get("put_status")),
                 call_status=_side_status(record.get("call_status")),
-                pnl_put_at_minus10_60d=as_float(record.get("pnl_put_at_minus10_60d")),
-                pnl_call_at_plus10_60d=as_float(record.get("pnl_call_at_plus10_60d")),
+                pnl_put_at_context=as_float(record.get("pnl_put_at_context")),
+                pnl_call_at_context=as_float(record.get("pnl_call_at_context")),
                 notes=_tuple_value(record.get("notes")),
                 current_stock_price=as_float(record.get("current_stock_price")),
                 option_vehicle_type=_optional_str(record.get("option_vehicle_type"))
                 or "single_stock",
+                signal_horizon_days=_optional_int(record.get("signal_horizon_days")),
+                context_horizon_days=_optional_int(record.get("context_horizon_days")),
             )
         )
     return tuple(rows)
@@ -242,6 +252,7 @@ def _candidate_finder_inputs_frame(
     options_features: pd.DataFrame,
     put_slots: dict[str, list[OptionCandidateSlot]],
     call_slots: dict[str, list[OptionCandidateSlot]],
+    signal_summary: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     if options_features.empty:
         base = pd.DataFrame({"ticker": pd.Series(dtype="object")})
@@ -249,6 +260,32 @@ def _candidate_finder_inputs_frame(
         base = options_features.copy()
     if "ticker" not in base.columns:
         base["ticker"] = pd.Series(dtype="object")
+    signal_horizon = _summary_signal_horizon(signal_summary)
+    if signal_horizon is not None:
+        name_skew_column = f"iv_skew_{signal_horizon}d"
+        iv_rv_column = f"iv_rv_ratio_{signal_horizon}d"
+        if name_skew_column in base.columns:
+            base["name_iv_skew_signal"] = base[name_skew_column]
+        if iv_rv_column in base.columns:
+            base["iv_rv_ratio_signal"] = base[iv_rv_column]
+        base["signal_horizon_days"] = signal_horizon
+    if signal_summary is not None and not signal_summary.empty:
+        residual_column = (
+            f"skew_residual_{signal_horizon}d" if signal_horizon is not None else None
+        )
+        join_columns = ["ticker", "benchmark_symbol"]
+        if residual_column and residual_column in signal_summary.columns:
+            join_columns.append(residual_column)
+        summary_slice = signal_summary.loc[
+            :, [column for column in join_columns if column in signal_summary.columns]
+        ].copy()
+        if residual_column in summary_slice.columns:
+            summary_slice = summary_slice.rename(
+                columns={residual_column: "skew_residual_signal"}
+            )
+        summary_slice["ticker"] = normalize_ticker_series(summary_slice["ticker"])
+        base["ticker"] = normalize_ticker_series(base["ticker"])
+        base = base.merge(summary_slice, on="ticker", how="left", suffixes=("", "_summary"))
     for column in CANDIDATE_FINDER_OPTION_COLUMNS:
         if column not in base.columns:
             base[column] = pd.NA
@@ -261,6 +298,17 @@ def _candidate_finder_inputs_frame(
         lambda ticker: has_usable_option_slots(call_slots.get(str(ticker), []))
     )
     return base
+
+
+def _summary_signal_horizon(signal_summary: pd.DataFrame | None) -> int | None:
+    if signal_summary is None or signal_summary.empty:
+        return None
+    if "signal_horizon_days" not in signal_summary.columns:
+        return None
+    values = pd.to_numeric(
+        signal_summary["signal_horizon_days"], errors="coerce"
+    ).dropna()
+    return int(values.iloc[0]) if not values.empty else None
 
 
 def _candidate_slot_row(slot: OptionCandidateSlot) -> dict[str, Any]:

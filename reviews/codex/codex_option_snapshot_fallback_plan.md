@@ -508,8 +508,10 @@ configured horizon. Selectable set:
 
 **Why this is a milestone, not a tweak — the blast radius.** The "60d-centered" page is held up by
 **four divergent horizon sources** plus a hardcoded signal band and a stored 60d/90d schema. The new
-horizons (180/230/LEAPS) sit **outside** today's 45–150 DTE signal band, so the feature/signal layer
-must be *generalized to long-dated expiries first* — this is the part the addendum under-scoped.
+horizons (180/230/LEAPS) sit **outside** today's 45–150 DTE signal band — which is why **candidate
+horizons and signal horizons are split** (resolved design): candidate selection extends to
+long-dated windows, while Signal/Activity/Cost stay on the explicit short/medium signal horizon.
+The signal layer is parameterized, not generalized to LEAPS.
 
 ### Horizon Blast Radius (first-hand map, grouped by layer)
 

@@ -11,6 +11,7 @@ from typing import Literal, Protocol, cast
 
 import pandas as pd
 
+from golden_vector.contracts.config_models import DEFAULT_OPTION_DTE_BANDS
 from golden_vector.features.options_chain import (
     add_black_scholes_delta,
     as_float,
@@ -120,11 +121,12 @@ class OptionLiquiditySettings:
     lottery_dte_max: int = 75
 
     def band_for_horizon(self, horizon_days: int) -> tuple[int, int]:
-        bands = self.dte_bands or {
-            60: (40, 74),
-            90: (75, 104),
-            120: (105, 150),
-        }
+        # The band set comes from option_dte_bands config (settings_from_config);
+        # the in-code fallback mirrors the config-model default for bare
+        # OptionLiquiditySettings() construction only. The config validator
+        # guarantees every display horizon has a real band, so the degenerate
+        # (h, h) fallback can only fire for ad-hoc horizons.
+        bands = self.dte_bands or DEFAULT_OPTION_DTE_BANDS
         return bands.get(horizon_days, (horizon_days, horizon_days))
 
 

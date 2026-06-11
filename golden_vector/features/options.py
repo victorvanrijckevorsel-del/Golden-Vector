@@ -19,7 +19,6 @@ from golden_vector.features.options_chain import (
 )
 from golden_vector.features.percentile_ranks import oriented_percentile
 
-DEFAULT_TARGET_HORIZONS_DAYS = (30, 60, 90)
 TRADING_DAYS_PER_YEAR = 252
 
 
@@ -30,7 +29,8 @@ def compute_options_features(
     risk_free_rate: float | None,
     price_history: pd.DataFrame,
     as_of_date: date,
-    target_horizons_days: tuple[int, ...] = DEFAULT_TARGET_HORIZONS_DAYS,
+    target_horizons_days: tuple[int, ...],
+    optionability_core_horizons: tuple[int, ...] = (),
     target_delta: float = -0.25,
     optionability_open_interest_threshold: int = 1000,
     implied_move_max_spread_pct: float = 0.35,
@@ -84,7 +84,6 @@ def compute_options_features(
         row[f"iv_rv_ratio_{suffix}"] = None
 
     if frame.empty:
-        row["term_slope_30_90"] = None
         row["optionability_tier"] = "none"
         return row
 
@@ -140,10 +139,10 @@ def compute_options_features(
         row[f"implied_move_{suffix}_gates_ok"] = gates_ok
         row[f"iv_rv_ratio_{suffix}"] = _ratio(atm_iv, realized_vol)
 
-    row["term_slope_30_90"] = _difference(row.get("atm_iv_90d"), row.get("atm_iv_30d"))
     row["optionability_tier"] = _optionability_tier(
         row=row,
         target_horizons_days=target_horizons_days,
+        optionability_core_horizons=optionability_core_horizons,
         open_interest_threshold=optionability_open_interest_threshold,
     )
     return row
@@ -152,7 +151,7 @@ def compute_options_features(
 def rank_options_iv_cross_section(
     features: pd.DataFrame,
     *,
-    iv_column: str = "atm_iv_60d",
+    iv_column: str,
 ) -> pd.Series:
     """Return a 0-100 cross-sectional IV percentile for one feature date."""
 
@@ -216,15 +215,20 @@ def _optionability_tier(
     *,
     row: dict[str, Any],
     target_horizons_days: tuple[int, ...],
+    optionability_core_horizons: tuple[int, ...],
     open_interest_threshold: int,
 ) -> str:
     if not row["options_available"]:
         return "none"
-    has_all_horizons = all(
+    # Optionability is judged on the CORE horizons only (empty = all target
+    # horizons, legacy behavior). With long-dated targets configured, a name
+    # missing a LEAPS quote must not silently degrade to "thin".
+    core_horizons = tuple(optionability_core_horizons) or tuple(target_horizons_days)
+    has_core_horizons = all(
         row.get(f"put_iv_25d_{horizon}d") is not None
-        for horizon in target_horizons_days
+        for horizon in core_horizons
     )
-    if row["total_open_interest"] >= open_interest_threshold and has_all_horizons:
+    if row["total_open_interest"] >= open_interest_threshold and has_core_horizons:
         return "directly_hedgeable"
     return "thin"
 

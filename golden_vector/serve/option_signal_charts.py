@@ -127,6 +127,20 @@ def _render_oi_strike_chart(points: Sequence[OptionSignalPoint]) -> str:
     )
 
 
+def _signal_history_horizon(points: Sequence[OptionSignalPoint]) -> int | None:
+    """The signal horizon to chart, taken from the persisted long-form points."""
+
+    horizons = sorted(
+        {
+            int(value)
+            for point in points
+            for value in (_optional_float(point.get("signal_horizon_days")),)
+            if value is not None
+        }
+    )
+    return horizons[0] if horizons else None
+
+
 def _render_signal_history_chart(points: Sequence[OptionSignalPoint]) -> str:
     if not points:
         return (
@@ -135,13 +149,21 @@ def _render_signal_history_chart(points: Sequence[OptionSignalPoint]) -> str:
             "<p class=\"hint\">No persisted signal history exists for this ticker yet.</p>"
             "</section>"
         )
+    horizon = _signal_history_horizon(points)
+    if horizon is not None:
+        points = [
+            point
+            for point in points
+            if _optional_float(point.get("signal_horizon_days")) == horizon
+        ]
+    label = f"{horizon}d" if horizon is not None else "Signal"
     rows = []
     for point in sorted(points, key=lambda item: str(item.get("as_of_date") or "")):
         rows.append(
             "<tr>"
             f"<td>{_fmt_text(point.get('as_of_date'))}</td>"
-            f"<td>{format_vol_points(point.get('skew_residual_60d'))}</td>"
-            f"<td>{format_vol_points(point.get('atm_iv_60d'))}</td>"
+            f"<td>{format_vol_points(point.get('skew_residual'))}</td>"
+            f"<td>{format_vol_points(point.get('atm_iv'))}</td>"
             f"<td>{_fmt_number(point.get('iv_rv_ratio'), decimals=2)}</td>"
             "</tr>"
         )
@@ -150,7 +172,7 @@ def _render_signal_history_chart(points: Sequence[OptionSignalPoint]) -> str:
         "<h4>Signal History</h4>"
         f"{_render_signal_history_svg(points)}"
         "<table><thead><tr>"
-        "<th>Date</th><th>60d Skew Residual</th><th>60d ATM IV</th><th>IV/RV Ratio</th>"
+        f"<th>Date</th><th>{label} Skew Residual</th><th>{label} ATM IV</th><th>IV/RV Ratio</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
         "</section>"
@@ -250,15 +272,17 @@ def _render_oi_strike_svg(points: Sequence[OptionSignalPoint]) -> str:
 
 def _render_signal_history_svg(points: Sequence[OptionSignalPoint]) -> str:
     ordered = sorted(points, key=lambda item: str(item.get("as_of_date") or ""))
+    horizon = _signal_history_horizon(ordered)
+    label = f"{horizon}d" if horizon is not None else "signal"
     series = [
         (
-            "60d skew residual",
-            [_optional_float(point.get("skew_residual_60d")) for point in ordered],
+            f"{label} skew residual",
+            [_optional_float(point.get("skew_residual")) for point in ordered],
             "#a45100",
         ),
         (
-            "60d ATM IV",
-            [_optional_float(point.get("atm_iv_60d")) for point in ordered],
+            f"{label} ATM IV",
+            [_optional_float(point.get("atm_iv")) for point in ordered],
             "#2f6f6d",
         ),
         (

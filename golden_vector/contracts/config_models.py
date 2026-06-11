@@ -10,6 +10,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 SUPPORTED_CURRENCIES = {"USD", "CAD", "GBP", "AUD", "ZAR", "EUR", "SEK"}
 HORIZON_PATTERN = re.compile(r"^\d+[DMY]$")
 
+# Single source of truth for the default option DTE bands; the liquidity
+# layer's fallback and the config default must never diverge.
+DEFAULT_OPTION_DTE_BANDS: dict[int, tuple[int, int]] = {
+    60: (40, 74),
+    90: (75, 104),
+    120: (105, 150),
+}
+
 
 class StrictConfigModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -153,9 +161,7 @@ class HedgeReadinessConfig(StrictConfigModel):
     options_expiry_fetch_mode: Literal["all", "targeted"] = "all"
     option_dte_bands: dict[int, list[int]] = Field(
         default_factory=lambda: {
-            60: [40, 74],
-            90: [75, 104],
-            120: [105, 150],
+            horizon: list(band) for horizon, band in DEFAULT_OPTION_DTE_BANDS.items()
         },
         min_length=1,
     )
@@ -184,6 +190,15 @@ class HedgeReadinessConfig(StrictConfigModel):
     option_signal_history_min_samples: int = 20
     option_signal_activity_volume_to_oi_min: float = 0.10
     option_signal_area_min_contracts: int = 4
+    # Signal-horizon policy (Milestone C1): Signal/Activity/Cost/IV-rank read
+    # ONE explicit horizon so rows stay comparable. Candidate horizons
+    # (target/display/dte_bands above) may grow long-dated independently.
+    option_signal_horizon_days: int = 60
+    # Optionability policy: `directly_hedgeable` requires put-quote coverage at
+    # these horizons only. Empty = all target horizons (legacy behavior);
+    # MUST be set once long-dated horizons join target_horizons_days, or names
+    # missing a LEAPS quote silently degrade to "thin".
+    optionability_core_horizons: list[int] = Field(default_factory=list)
 
     @field_validator("target_delta")
     @classmethod
@@ -191,6 +206,32 @@ class HedgeReadinessConfig(StrictConfigModel):
         if not -1.0 < value < 0.0:
             raise ValueError("target_delta must be a negative put delta between -1 and 0")
         return float(value)
+
+    @model_validator(mode="after")
+    def valid_horizon_policies(self) -> "HedgeReadinessConfig":
+        targets = set(self.target_horizons_days)
+        if self.option_signal_horizon_days not in targets:
+            raise ValueError(
+                "option_signal_horizon_days must be one of target_horizons_days "
+                f"({sorted(targets)}); got {self.option_signal_horizon_days}."
+            )
+        unknown_core = set(self.optionability_core_horizons) - targets
+        if unknown_core:
+            raise ValueError(
+                "optionability_core_horizons must be a subset of target_horizons_days; "
+                f"unknown: {sorted(unknown_core)}."
+            )
+        missing_bands = [
+            horizon
+            for horizon in self.display_horizons_days
+            if horizon not in self.option_dte_bands
+        ]
+        if missing_bands:
+            raise ValueError(
+                "Every display horizon needs an option_dte_bands entry; "
+                f"missing: {missing_bands}."
+            )
+        return self
 
     @field_validator(
         "optionability_open_interest_threshold",

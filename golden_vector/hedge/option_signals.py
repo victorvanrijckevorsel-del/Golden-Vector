@@ -19,7 +19,6 @@ from golden_vector.contracts.config_models import AppConfig, UniverseTicker
 from golden_vector.hedge._helpers import as_float, row_float, rows_by_ticker_series
 from golden_vector.hedge.options_liquidity import OptionContractMetrics
 
-DISPLAY_SIGNAL_HORIZONS: tuple[int, ...] = (60, 90, 120)
 SIGNAL_AREA_DTE_MIN = 45
 SIGNAL_AREA_DTE_MAX = 150
 SIGNAL_AREA_DELTA_MIN = 0.10
@@ -53,11 +52,25 @@ OI_STRIKE_POINT_COLUMNS: tuple[str, ...] = (
     "liquidity_flag",
     "quote_flags",
 )
+# Long-form history (Milestone C2): one row per (ticker, as_of_date, horizon).
+# The old wide 60d/90d columns are backfilled on load so stored history and
+# the IV-rank series survive the migration.
+LONG_HISTORY_COLUMNS: tuple[str, ...] = (
+    "ticker",
+    "as_of_date",
+    "quote_snapshot_run_id",
+    "benchmark_symbol",
+    "signal_horizon_days",
+    "skew_residual",
+    "atm_iv",
+    "iv_rv_ratio",
+)
 SIGNAL_HISTORY_POINT_COLUMNS: tuple[str, ...] = (
     "ticker",
     "as_of_date",
-    "skew_residual_60d",
-    "atm_iv_60d",
+    "signal_horizon_days",
+    "skew_residual",
+    "atm_iv",
     "iv_rank",
     "iv_rv_ratio",
 )
@@ -117,7 +130,13 @@ def build_option_signal_artifacts(
         )
         summary_rows.append(row)
         if row.get("data_quality_label") == "OK":
-            current_history_rows.append(_history_row(row))
+            current_history_rows.extend(
+                _history_rows(
+                    row=row,
+                    feature=feature,
+                    horizons=tuple(app_config.hedge_readiness.display_horizons_days),
+                )
+            )
 
     summary = pd.DataFrame(summary_rows)
     next_history = _append_history(
@@ -172,11 +191,19 @@ def _summary_row(
     signal_metrics = _signal_area_metrics(metrics, app_config=app_config)
     raw_coverage = _quote_coverage(metrics)
     signal_coverage = _quote_coverage(signal_metrics)
-    history_for_ticker = _history_for_ticker(history, ticker)
+    signal_horizon = int(app_config.hedge_readiness.option_signal_horizon_days)
+    display_horizons = tuple(app_config.hedge_readiness.display_horizons_days)
+    history_for_ticker = _history_for_ticker(
+        history,
+        ticker,
+        signal_horizon_days=signal_horizon,
+    )
     history_depth = int(len(history_for_ticker.index))
     min_history = int(app_config.hedge_readiness.option_signal_history_min_samples)
+    atm_iv_signal = row_float(feature, f"atm_iv_{signal_horizon}d")
+    iv_rv_ratio_signal = row_float(feature, f"iv_rv_ratio_{signal_horizon}d")
     iv_rank = _iv_rank(
-        current=row_float(feature, "atm_iv_60d"),
+        current=atm_iv_signal,
         history_for_ticker=history_for_ticker,
         min_samples=min_history,
     )
@@ -185,7 +212,7 @@ def _summary_row(
     benchmark_available = is_benchmark or benchmark_feature is not None
     name_skews = {
         horizon: row_float(feature, f"iv_skew_{horizon}d")
-        for horizon in DISPLAY_SIGNAL_HORIZONS
+        for horizon in display_horizons
     }
     sector_skews = {
         horizon: (
@@ -197,13 +224,15 @@ def _summary_row(
                 else None
             )
         )
-        for horizon in DISPLAY_SIGNAL_HORIZONS
+        for horizon in display_horizons
     }
     residuals = {
         horizon: _difference(name_skews[horizon], sector_skews[horizon])
-        for horizon in DISPLAY_SIGNAL_HORIZONS
+        for horizon in display_horizons
     }
-    direction_value = name_skews.get(60) if is_benchmark else residuals.get(60)
+    direction_value = (
+        name_skews.get(signal_horizon) if is_benchmark else residuals.get(signal_horizon)
+    )
     direction_candidate = _direction_candidate(
         direction_value,
         threshold=app_config.hedge_readiness.option_signal_skew_residual_threshold,
@@ -229,7 +258,7 @@ def _summary_row(
         app_config=app_config,
     )
     cost_label = _cost_label(
-        iv_rv_ratio=row_float(feature, "iv_rv_ratio_60d"),
+        iv_rv_ratio=iv_rv_ratio_signal,
         iv_rank=iv_rank,
         history_depth=history_depth,
         min_history=min_history,
@@ -238,16 +267,17 @@ def _summary_row(
         "ticker": ticker,
         "benchmark_symbol": benchmark_symbol,
         "as_of_date": str(manifest.get("as_of_date") or ""),
+        "signal_horizon_days": signal_horizon,
         "headline": _headline(
             ticker=ticker,
             benchmark_symbol=benchmark_symbol,
             direction_label=direction_label,
             direction_candidate=direction_candidate,
-            residual=residuals.get(60),
-            name_skew=name_skews.get(60),
-            sector_skew=sector_skews.get(60),
+            residual=residuals.get(signal_horizon),
+            name_skew=name_skews.get(signal_horizon),
+            sector_skew=sector_skews.get(signal_horizon),
             activity_label=activity["activity_label"],
-            iv_rv_ratio=row_float(feature, "iv_rv_ratio_60d"),
+            iv_rv_ratio=iv_rv_ratio_signal,
             data_quality_label=data_quality,
             is_benchmark=is_benchmark,
         ),
@@ -256,8 +286,8 @@ def _summary_row(
         "direction_reason": _direction_reason(
             direction_label=direction_label,
             direction_candidate=direction_candidate,
-            residual=residuals.get(60),
-            name_skew=name_skews.get(60),
+            residual=residuals.get(signal_horizon),
+            name_skew=name_skews.get(signal_horizon),
             benchmark_symbol=benchmark_symbol,
             is_benchmark=is_benchmark,
         ),
@@ -266,7 +296,7 @@ def _summary_row(
         "cost_label": cost_label,
         "cost_reason": _cost_reason(
             cost_label=cost_label,
-            iv_rv_ratio=row_float(feature, "iv_rv_ratio_60d"),
+            iv_rv_ratio=iv_rv_ratio_signal,
             iv_rank=iv_rank,
             history_depth=history_depth,
             min_history=min_history,
@@ -278,8 +308,8 @@ def _summary_row(
             signal_contract_count=len(signal_metrics),
             benchmark_symbol=benchmark_symbol,
         ),
-        "iv_rv_ratio": row_float(feature, "iv_rv_ratio_60d"),
-        "atm_iv_60d": row_float(feature, "atm_iv_60d"),
+        "iv_rv_ratio": iv_rv_ratio_signal,
+        "atm_iv_signal": atm_iv_signal,
         "iv_rank": iv_rank,
         "history_depth": history_depth,
         "signal_area_quote_coverage": signal_coverage,
@@ -296,24 +326,41 @@ def _summary_row(
         "quote_snapshot_run_id": str(manifest.get("refresh_run_id") or ""),
         "option_vehicle_type": str(feature.get("option_vehicle_type") or "single_stock"),
     }
-    for horizon in DISPLAY_SIGNAL_HORIZONS:
+    for horizon in display_horizons:
         row[f"name_skew_{horizon}d"] = name_skews[horizon]
         row[f"sector_skew_{horizon}d"] = sector_skews[horizon]
         row[f"skew_residual_{horizon}d"] = residuals[horizon]
     return row
 
 
-def _history_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "ticker": row.get("ticker"),
-        "as_of_date": row.get("as_of_date"),
-        "quote_snapshot_run_id": row.get("quote_snapshot_run_id"),
-        "benchmark_symbol": row.get("benchmark_symbol"),
-        "skew_residual_60d": row.get("skew_residual_60d"),
-        "skew_residual_90d": row.get("skew_residual_90d"),
-        "atm_iv_60d": row.get("atm_iv_60d"),
-        "iv_rv_ratio": row.get("iv_rv_ratio"),
-    }
+def _history_rows(
+    *,
+    row: dict[str, Any],
+    feature: pd.Series,
+    horizons: tuple[int, ...],
+) -> list[dict[str, Any]]:
+    """Long-form history rows: one per horizon with a usable observation."""
+
+    rows: list[dict[str, Any]] = []
+    for horizon in horizons:
+        skew_residual = row.get(f"skew_residual_{horizon}d")
+        atm_iv = row_float(feature, f"atm_iv_{horizon}d")
+        iv_rv_ratio = row_float(feature, f"iv_rv_ratio_{horizon}d")
+        if skew_residual is None and atm_iv is None and iv_rv_ratio is None:
+            continue
+        rows.append(
+            {
+                "ticker": row.get("ticker"),
+                "as_of_date": row.get("as_of_date"),
+                "quote_snapshot_run_id": row.get("quote_snapshot_run_id"),
+                "benchmark_symbol": row.get("benchmark_symbol"),
+                "signal_horizon_days": int(horizon),
+                "skew_residual": skew_residual,
+                "atm_iv": atm_iv,
+                "iv_rv_ratio": iv_rv_ratio,
+            }
+        )
+    return rows
 
 
 def _metrics_by_ticker(
@@ -703,37 +750,82 @@ def _iv_rank(
 ) -> float | None:
     if current is None or len(history_for_ticker.index) < min_samples:
         return None
-    values = pd.to_numeric(history_for_ticker.get("atm_iv_60d"), errors="coerce").dropna()
+    values = pd.to_numeric(history_for_ticker.get("atm_iv"), errors="coerce").dropna()
     if len(values.index) < min_samples:
         return None
     return float((values <= current).sum() / len(values.index) * 100.0)
 
 
-def _history_for_ticker(history: pd.DataFrame, ticker: str) -> pd.DataFrame:
+def _history_for_ticker(
+    history: pd.DataFrame,
+    ticker: str,
+    *,
+    signal_horizon_days: int,
+) -> pd.DataFrame:
     if history.empty or "ticker" not in history.columns:
         return pd.DataFrame()
-    return history[history["ticker"].astype(str).str.upper() == ticker.upper()].copy()
+    mask = history["ticker"].astype(str).str.upper() == ticker.upper()
+    if "signal_horizon_days" in history.columns:
+        horizons = pd.to_numeric(history["signal_horizon_days"], errors="coerce")
+        mask = mask & (horizons == int(signal_horizon_days))
+    return history[mask].copy()
 
 
 def _normalize_history(frame: pd.DataFrame | None) -> pd.DataFrame:
-    columns = [
-        "ticker",
-        "as_of_date",
-        "quote_snapshot_run_id",
-        "benchmark_symbol",
-        "skew_residual_60d",
-        "skew_residual_90d",
-        "atm_iv_60d",
-        "iv_rv_ratio",
-    ]
+    columns = list(LONG_HISTORY_COLUMNS)
     if frame is None or frame.empty:
         return pd.DataFrame(columns=columns)
     result = frame.copy()
+    if "skew_residual_60d" in result.columns and "signal_horizon_days" not in result.columns:
+        result = _backfill_legacy_history(result)
     for column in columns:
         if column not in result.columns:
             result[column] = None
     result["ticker"] = result["ticker"].map(normalize_ticker)
-    return result[columns].dropna(subset=["ticker"]).reset_index(drop=True)
+    result["signal_horizon_days"] = pd.to_numeric(
+        result["signal_horizon_days"], errors="coerce"
+    )
+    result = result.dropna(subset=["ticker", "signal_horizon_days"])
+    result["signal_horizon_days"] = result["signal_horizon_days"].astype(int)
+    return result[columns].reset_index(drop=True)
+
+
+def _backfill_legacy_history(frame: pd.DataFrame) -> pd.DataFrame:
+    """One-time logical migration of the wide 60d/90d history to long form.
+
+    The stored IV-rank series must survive: every legacy row becomes a 60d
+    long row (skew residual + ATM IV + IV/RV) and, when present, a 90d row
+    (skew residual only — the wide format never stored 90d ATM IV).
+    """
+
+    rows: list[dict[str, Any]] = []
+    for record in frame.to_dict(orient="records"):
+        base = {
+            "ticker": record.get("ticker"),
+            "as_of_date": record.get("as_of_date"),
+            "quote_snapshot_run_id": record.get("quote_snapshot_run_id"),
+            "benchmark_symbol": record.get("benchmark_symbol"),
+        }
+        rows.append(
+            {
+                **base,
+                "signal_horizon_days": 60,
+                "skew_residual": record.get("skew_residual_60d"),
+                "atm_iv": record.get("atm_iv_60d"),
+                "iv_rv_ratio": record.get("iv_rv_ratio"),
+            }
+        )
+        if record.get("skew_residual_90d") is not None:
+            rows.append(
+                {
+                    **base,
+                    "signal_horizon_days": 90,
+                    "skew_residual": record.get("skew_residual_90d"),
+                    "atm_iv": None,
+                    "iv_rv_ratio": None,
+                }
+            )
+    return pd.DataFrame(rows, columns=list(LONG_HISTORY_COLUMNS))
 
 
 def _append_history(history: pd.DataFrame, current: pd.DataFrame) -> pd.DataFrame:
@@ -742,10 +834,10 @@ def _append_history(history: pd.DataFrame, current: pd.DataFrame) -> pd.DataFram
     result = pd.concat([history, current], ignore_index=True)
     return (
         result.drop_duplicates(
-            subset=["ticker", "as_of_date"],
+            subset=["ticker", "as_of_date", "signal_horizon_days"],
             keep="last",
         )
-        .sort_values(["ticker", "as_of_date", "quote_snapshot_run_id"])
+        .sort_values(["ticker", "as_of_date", "signal_horizon_days"])
         .reset_index(drop=True)
     )
 

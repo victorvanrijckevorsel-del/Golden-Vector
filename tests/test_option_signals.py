@@ -335,8 +335,9 @@ def test_option_signal_chart_frames_expose_renderer_columns_when_empty(tmp_path)
         [
             "ticker",
             "as_of_date",
-            "skew_residual_60d",
-            "atm_iv_60d",
+            "signal_horizon_days",
+            "skew_residual",
+            "atm_iv",
             "iv_rv_ratio",
         ]
     ).issubset(artifacts.history_points.columns)

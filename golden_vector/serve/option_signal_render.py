@@ -20,20 +20,36 @@ def format_vol_points(value: object) -> str:
     return f"{numeric * 100:.1f} vol pts"
 
 
+def signal_horizon_from_row(
+    signal: dict[str, object] | None,
+    *,
+    fallback: int = 60,
+) -> int:
+    """The signal horizon a persisted row was built at (never recomputed)."""
+
+    if not signal:
+        return fallback
+    value = optional_float(signal.get("signal_horizon_days"))
+    return int(value) if value is not None else fallback
+
+
 def option_signal_skew_display_value(
     signal: dict[str, object] | None,
     *,
-    horizon: int = 60,
+    horizon: int | None = None,
 ) -> object | None:
     """Return the primary skew number to display for a persisted signal row.
 
     Single names show residual skew versus their benchmark. Benchmark ETFs are
     the sector gauge, so they show their own absolute skew while the residual
-    remains zero by definition.
+    remains zero by definition. The horizon comes from the row itself unless
+    explicitly overridden.
     """
 
     if not signal:
         return None
+    if horizon is None:
+        horizon = signal_horizon_from_row(signal)
     ticker = str(signal.get("ticker") or "").strip().upper()
     benchmark = str(signal.get("benchmark_symbol") or "").strip().upper()
     vehicle_type = str(signal.get("option_vehicle_type") or "").strip()
@@ -45,7 +61,7 @@ def option_signal_skew_display_value(
 def option_signal_skew_hover(
     signal: dict[str, object] | None,
     *,
-    horizon: int = 60,
+    horizon: int | None = None,
 ) -> str | None:
     """Plain-text hover showing the actual skew calculation for one row.
 
@@ -56,6 +72,8 @@ def option_signal_skew_hover(
 
     if not signal:
         return None
+    if horizon is None:
+        horizon = signal_horizon_from_row(signal)
     ticker = str(signal.get("ticker") or "").strip().upper() or "This stock"
     benchmark = str(signal.get("benchmark_symbol") or "").strip().upper() or "the benchmark"
     vehicle_type = str(signal.get("option_vehicle_type") or "").strip()
