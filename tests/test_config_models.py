@@ -258,7 +258,7 @@ def test_hedge_readiness_config_accepts_defaults():
 
     assert config.version == 2
     assert config.target_delta == -0.25
-    assert config.target_horizons_days == [30, 60, 90]
+    assert config.target_horizons_days == [30, 60, 90, 120]
     assert config.display_horizons_days == [30, 60, 90, 120]
     assert config.benchmark_tickers == ["GDX", "GDXJ"]
     assert config.candidate_max_spread_pct == 0.35
