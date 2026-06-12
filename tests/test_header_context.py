@@ -15,7 +15,7 @@ def test_build_header_context_reads_manifest_histories_and_price_moves(tmp_path)
             {
                 "ticker": "AEM",
                 "optionability_tier": "directly_hedgeable",
-                "implied_move_60d": 0.08,
+                "implied_move_90d": 0.08,
             }
         ]
     )
@@ -95,9 +95,9 @@ def test_build_header_context_handles_missing_implied_move_for_some_tickers(tmp_
             {
                 "ticker": "NEM",
                 "optionability_tier": "thin",
-                "implied_move_60d": 0.20,
+                "implied_move_90d": 0.20,
             },
-            {"ticker": "AAUC.TO", "optionability_tier": "none", "implied_move_60d": 0.10},
+            {"ticker": "AAUC.TO", "optionability_tier": "none", "implied_move_90d": 0.10},
         ]
     )
     tool_a = pd.DataFrame(
@@ -126,7 +126,7 @@ def test_build_header_context_treats_negative_down_beta_as_zero_modeled_downside
             {
                 "ticker": "AEM",
                 "optionability_tier": "directly_hedgeable",
-                "implied_move_60d": 0.10,
+                "implied_move_90d": 0.10,
             }
         ]
     )
@@ -151,7 +151,7 @@ def test_build_header_context_clamps_extreme_modeled_downside_at_zero_stock_pric
             {
                 "ticker": "AEM",
                 "optionability_tier": "directly_hedgeable",
-                "implied_move_60d": 0.80,
+                "implied_move_90d": 0.80,
             }
         ]
     )
@@ -176,7 +176,7 @@ def test_build_header_context_accepts_feature_frames_by_ticker(tmp_path):
             [
                 {
                     "optionability_tier": "directly_hedgeable",
-                    "implied_move_60d": 0.14,
+                    "implied_move_90d": 0.14,
                 }
             ]
         )
@@ -201,12 +201,12 @@ def test_implied_vs_modeled_verdict_boundaries_are_inclusive_to_middle_band(tmp_
             {
                 "ticker": "HIGH",
                 "optionability_tier": "directly_hedgeable",
-                "implied_move_60d": 0.10,
+                "implied_move_90d": 0.10,
             },
             {
                 "ticker": "LOW",
                 "optionability_tier": "directly_hedgeable",
-                "implied_move_60d": 0.10,
+                "implied_move_90d": 0.10,
             },
         ]
     )
@@ -237,7 +237,7 @@ def test_implied_vs_modeled_verdict_uses_configured_thresholds(tmp_path):
             {
                 "ticker": "AEM",
                 "optionability_tier": "directly_hedgeable",
-                "implied_move_60d": 0.10,
+                "implied_move_90d": 0.10,
             }
         ]
     )

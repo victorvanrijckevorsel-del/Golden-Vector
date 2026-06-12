@@ -148,7 +148,7 @@ def test_compute_portfolio_totals_notes_missing_candidate_and_skips_hedge_cost()
     assert totals.hedge_cost_by_protection[1.0] == 0.0
     assert totals.holdings_excluded_from_totals == []
     assert totals.downside_model_skipped == []
-    assert totals.hedge_cost_skipped == [("AEM", "no 60d candidate")]
+    assert totals.hedge_cost_skipped == [("AEM", "no 90d candidate")]
 
 
 def test_compute_portfolio_totals_uses_non_60d_candidate_price_for_notional_only():
@@ -172,7 +172,7 @@ def test_compute_portfolio_totals_uses_non_60d_candidate_price_for_notional_only
     assert totals is not None
     assert totals.current_total_value == pytest.approx(10_000.0)
     assert totals.holdings_resolved_count == 1
-    assert totals.hedge_cost_skipped == [("AEM", "no 60d candidate")]
+    assert totals.hedge_cost_skipped == [("AEM", "no 90d candidate")]
     assert totals.hedge_cost_by_protection[1.0] == 0.0
 
 
@@ -249,7 +249,7 @@ def _candidate(
     *,
     mid: float,
     underlying_price: float,
-    horizon_days: int = 60,
+    horizon_days: int = 90,
 ) -> CandidatePut:
     return CandidatePut(
         ticker=ticker,

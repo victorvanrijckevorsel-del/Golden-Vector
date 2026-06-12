@@ -23,8 +23,8 @@ def test_build_speculation_section_returns_universe_blocks_without_holdings(tmp_
     assert len(blocks) == 1
     assert blocks[0].ticker == "AEM"
     assert blocks[0].current_stock_price == 50.0
-    assert [candidate.horizon_days for candidate in blocks[0].candidates] == [60, 90, 120]
-    assert len(blocks[0].scenario_bundles) == 3
+    assert [candidate.horizon_days for candidate in blocks[0].candidates] == [90, 180, 230, 550]
+    assert len(blocks[0].scenario_bundles) == 4
     assert all(
         len(bundle.rows) == len(config.default_scenarios)
         for bundle in blocks[0].scenario_bundles
