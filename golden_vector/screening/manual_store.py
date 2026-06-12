@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.numeric import require_finite
 
 
 TIMESTAMP_COLUMNS = [
@@ -890,6 +891,7 @@ def _normalize_numeric_value(field_name: str, value: object) -> float | None:
         numeric = float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{field_name} must be numeric.") from exc
+    require_finite(numeric, field=field_name)
     if field_name in {"royalty_rate", "tax_rate"} and numeric > 1.0:
         return numeric / 100.0
     return numeric

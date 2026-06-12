@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from golden_vector.common.numeric import optional_float as _optional_float
+from golden_vector.common.numeric import require_finite
 
 
 RATE_FIELDS = {"royalty_rate", "tax_rate"}
@@ -247,6 +248,7 @@ def _coerce_form_numeric(value: str) -> float | None:
         numeric = float(text)
     except ValueError as exc:
         raise ValueError("Numeric fields must be numeric.") from exc
+    require_finite(numeric, field="Numeric fields")
     if percent_suffix:
         return numeric / 100.0
     return numeric

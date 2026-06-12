@@ -8,6 +8,7 @@ import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
+from golden_vector.common.files import atomic_write_file
 from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.contracts.data_models import FetchStatusRecord, QaCheckResult
 
@@ -323,8 +324,7 @@ def _write_parquet(frame: pd.DataFrame, path: Path) -> Path:
 
 def _write_csv(frame: pd.DataFrame, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_csv(path, index=False)
-    return path
+    return atomic_write_file(path, lambda tmp: frame.to_csv(tmp, index=False))
 
 
 def _concat_frames(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:

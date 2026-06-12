@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone
 from uuid import uuid4
 
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.numeric import require_finite
 from golden_vector.common.files import atomic_write_text
 from golden_vector.common.strings import clean_string, normalize_ticker
 from golden_vector.portfolio.models import (
@@ -205,6 +206,10 @@ def _positive_float(value: object, *, field: str) -> float:
         numeric = float(str(value).strip())
     except (TypeError, ValueError, AttributeError) as exc:
         raise PortfolioValidationError(f"{field.title()} must be a number.") from exc
+    try:
+        require_finite(numeric, field=field.title())
+    except ValueError as exc:
+        raise PortfolioValidationError(str(exc)) from exc
     if numeric <= 0:
         raise PortfolioValidationError(f"{field.title()} must be greater than zero.")
     return numeric

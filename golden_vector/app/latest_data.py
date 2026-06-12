@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 
 from golden_vector.common.files import repo_relative as _repo_relative
+from golden_vector.common.files import atomic_write_text
 from golden_vector.common.parquet import read_required_parquet
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
@@ -74,9 +75,9 @@ def write_latest_foundation_manifest(
     }
     manifest_path = paths.latest_foundation_manifest_path
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(
+    atomic_write_text(
+        manifest_path,
         json.dumps(payload, indent=2, sort_keys=True),
-        encoding="utf-8",
     )
     run_context.record_artifact(manifest_path)
     return manifest_path

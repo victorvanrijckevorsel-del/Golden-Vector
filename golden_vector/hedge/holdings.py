@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import yaml
 
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.numeric import require_finite
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,7 @@ def _optional_positive_float(value: object, *, field: str, index: int) -> float 
         numeric = float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"holding #{index} field '{field}' must be numeric.") from exc
+    require_finite(numeric, field=f"holding #{index} field '{field}'")
     if numeric <= 0:
         raise ValueError(f"holding #{index} field '{field}' must be positive.")
     return numeric

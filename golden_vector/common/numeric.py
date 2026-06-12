@@ -89,6 +89,20 @@ def sum_optional_floats(values: object) -> float | None:
     return total if seen else None
 
 
+def require_finite(numeric: float, *, field: str) -> float:
+    """Reject NaN/inf at input boundaries.
+
+    `nan <= 0` is False, so positivity checks silently pass non-finite
+    values: inf flows into ratio math as a "valid" number and NaN is
+    converted to NULL by SQLite (a silent field wipe). Every user-input
+    numeric must pass through this gate.
+    """
+
+    if not math.isfinite(numeric):
+        raise ValueError(f"{field} must be a finite number.")
+    return numeric
+
+
 def is_missing(value: object) -> bool:
     """Scalar-safe missing-value check."""
 
