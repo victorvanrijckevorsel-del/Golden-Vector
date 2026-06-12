@@ -416,15 +416,21 @@ def run_refresh_child(*, job_id: str, log_path: Path) -> int:
     with log_path.open("a", encoding="utf-8") as log_file:
         log_file.write(f"[{_utc_now()}] Starting full model refresh: {' '.join(command)}\n")
         log_file.flush()
-        completed = subprocess.run(
-            command,
-            cwd=paths.repo_root,
-            env={**os.environ, REFRESH_JOB_ID_ENV: job_id},
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=False,
-        )
+        run_kwargs: dict[str, Any] = {
+            "cwd": paths.repo_root,
+            "env": {**os.environ, REFRESH_JOB_ID_ENV: job_id},
+            "stdout": log_file,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+            "check": False,
+        }
+        if os.name == "nt":
+            # Run the refresh worker windowless. Without this Windows opens a
+            # visible black console window over the workspace for the duration
+            # of the refresh — alarming and easy to mistake for a crash. The
+            # refresh already logs to the job file, so no console is needed.
+            run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        completed = subprocess.run(command, **run_kwargs)
         log_file.write(
             f"[{_utc_now()}] Full model refresh finished with exit code {completed.returncode}.\n"
         )
