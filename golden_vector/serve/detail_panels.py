@@ -1118,15 +1118,22 @@ def _build_active_window_explanations(
     confidence_score = _optional_float(tool_a_row.get("confidence_score"))
     # Volatility fields: prefer the active-window values from the
     # workspace recompute; fall back to pipeline-published 52w fields.
+    # None-checks (not truthiness): a legitimate 0.0 must not fall through.
     vol_context = (
         volatility_diag.get("volatility_context")
         or str(tool_a_row.get("volatility_context") or "").strip().upper()
     )
-    residual_vol = volatility_diag.get("residual_volatility") or tool_a_row.get(
-        "residual_volatility_52w"
+    diag_residual = volatility_diag.get("residual_volatility")
+    residual_vol = (
+        diag_residual
+        if diag_residual is not None
+        else tool_a_row.get("residual_volatility_52w")
     )
-    downside_vol = volatility_diag.get("downside_volatility") or tool_a_row.get(
-        "downside_volatility_52w"
+    diag_downside = volatility_diag.get("downside_volatility")
+    downside_vol = (
+        diag_downside
+        if diag_downside is not None
+        else tool_a_row.get("downside_volatility_52w")
     )
 
     delta_text = build_delta_explanation(
@@ -1592,44 +1599,27 @@ def _compute_window_volatility(
         beta_fit, alpha_fit = np.polyfit(x, y, 1)
         residual_vol = annualize_weekly_volatility(y - (alpha_fit + beta_fit * x))
 
-    # Categorical context label from residual vol thresholds.
-    context = _classify_volatility_context(residual_vol, downside_vol, total_vol, scoring_config)
+    # Categorical context label: the ONE pipeline classifier. The previous
+    # serve-side fork read a misspelled config attribute, swallowed the
+    # AttributeError, and rendered UNKNOWN ("moderate" copy) for every
+    # non-canonical window regardless of the data.
+    from golden_vector.model.labels import determine_volatility_context
+
+    if residual_vol is None or _is_na(residual_vol):
+        context = "UNKNOWN"
+    else:
+        context = determine_volatility_context(
+            total_volatility_52w=total_vol,
+            residual_volatility_52w=residual_vol,
+            downside_volatility_52w=downside_vol,
+            scoring_config=scoring_config,
+        )
     return {
         "total_volatility": total_vol,
         "residual_volatility": residual_vol,
         "downside_volatility": downside_vol,
         "volatility_context": context,
     }
-
-
-def _classify_volatility_context(
-    residual_vol: float | None,
-    downside_vol: float | None,
-    total_vol: float | None,
-    scoring_config: Any,
-) -> str:
-    """Bucket a residual-vol into LOW_NOISE / MODERATE_NOISE / HIGH_NOISE.
-
-    Uses the same thresholds the structural pipeline applies in its
-    compute_volatility_diagnostics function. If the scoring_config or
-    a threshold block is missing, returns UNKNOWN rather than crashing.
-    """
-    if residual_vol is None or _is_na(residual_vol):
-        return "UNKNOWN"
-    try:
-        bands = scoring_config.volatility_diagnostic_bands
-    except AttributeError:
-        return "UNKNOWN"
-    # Match pipeline logic: residual-first, then downside/total escalations.
-    if downside_vol is not None and downside_vol >= bands.high_downside_volatility_min:
-        return "HIGH_DOWNSIDE_RISK"
-    if total_vol is not None and total_vol >= bands.high_total_volatility_min:
-        return "HIGH_NOISE"
-    if residual_vol >= bands.high_residual_volatility_min:
-        return "HIGH_NOISE"
-    if residual_vol <= bands.low_residual_volatility_max:
-        return "LOW_NOISE"
-    return "MODERATE_NOISE"
 
 
 def _render_exploratory_horizon_panel(exploratory_horizons: pd.DataFrame) -> str:

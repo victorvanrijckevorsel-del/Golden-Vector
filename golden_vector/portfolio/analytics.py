@@ -271,7 +271,11 @@ def _summary_with_analytics(
     nav_value = equity_value + cash_value
     positions = _with_weight_columns(positions, equity_value=equity_value, nav_value=nav_value)
     coverage_value = _sum_if_bucket(positions, "Measured beta")
-    total_loss = sum_optional_floats(positions.get("gold_down_10_loss_usd")) or 0.0
+    # None means NO position had a modelable loss (e.g. every beta is
+    # low-confidence). Keep it None: coercing to 0.0 would headline a
+    # confidently wrong "$0 loss if gold -10%" - degraded data must be
+    # excluded from confident headlines, not flagged next to them.
+    total_loss = sum_optional_floats(positions.get("gold_down_10_loss_usd"))
     top_weights = sorted(
         [
             optional_float(value) or 0.0

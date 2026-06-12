@@ -883,7 +883,9 @@ def test_portfolio_pipeline_excludes_degraded_value_from_confident_exposure(tmp_
     assert pd.isna(position["gold_down_10_loss_usd"])
     assert summary["tool_a_coverage_value_usd"] == pytest.approx(0.0)
     assert summary["tool_a_coverage_fraction"] == pytest.approx(0.0)
-    assert summary["modeled_gold_down_10_loss_usd"] == pytest.approx(0.0)
+    # No position has a modelable loss -> the headline must be NA, never a
+    # confident $0.00 (degraded data is excluded from headlines, not flagged).
+    assert pd.isna(summary["modeled_gold_down_10_loss_usd"])
     assert hedge["effective_gold_exposure_usd"] == pytest.approx(0.0)
     assert hedge["hedge_status"] == "NO_MEASURED_EXPOSURE"
 
