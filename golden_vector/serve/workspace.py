@@ -66,6 +66,8 @@ from golden_vector.serve.candidate_finder_data import (
     parse_candidate_finder_scenario,
 )
 from golden_vector.serve.candidate_finder_page import render_candidate_finder_page
+from golden_vector.serve.lab_data import load_lab_dial_data
+from golden_vector.serve.overview_lab import _render_lab_overview_page
 from golden_vector.serve.overview_option_trading import _render_option_trading_overview_page
 from golden_vector.serve.overview_tool_a import _render_tool_a_overview_page
 from golden_vector.serve.overview_tool_b import _render_tool_b_overview_page
@@ -340,6 +342,23 @@ def create_workspace_app(
                         state,
                         flash=flash,
                         search=query.get("search", [""])[0],
+                    ),
+                )
+
+            if method == "GET" and path == "/lab":
+                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+                requested_bucket = query.get("bucket", [""])[0] or None
+                lab_data = load_lab_dial_data(paths, bucket=requested_bucket)
+                selected_bucket = requested_bucket or ""
+                if lab_data.available and lab_data.buckets:
+                    known = {key for key, _ in lab_data.buckets}
+                    if selected_bucket not in known:
+                        selected_bucket = lab_data.buckets[0][0]
+                return _html_response(
+                    start_response,
+                    _render_lab_overview_page(
+                        lab_data,
+                        selected_bucket=selected_bucket,
                     ),
                 )
 
