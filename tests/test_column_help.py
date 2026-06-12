@@ -11,7 +11,7 @@ from __future__ import annotations
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.hedge.option_trading import OptionTradingOverviewData
-from golden_vector.serve.column_help import column_help_text, help_th
+from golden_vector.serve.column_help import column_help_text, help_term, help_th
 from golden_vector.serve.option_signal_render import option_signal_skew_hover
 from golden_vector.serve.overview_option_trading import (
     _render_liquidity_measurements,
@@ -78,11 +78,29 @@ def test_help_th_renders_attributes_and_escapes():
     assert html.startswith("<th ")
     assert 'data-col-name="skew"' in html
     assert "data-sort-numeric" in html
-    assert 'title="' in html
-    assert ">Skew vs Benchmark</th>" in html
+    # Transport is the dotted-underline help-term + data-help popover, not
+    # the native title= attribute.
+    assert 'class="help-term"' in html
+    assert "data-help=\"" in html
+    assert "title=" not in html
+    assert ">Skew vs Benchmark<" in html
 
     plain = help_th("Notes", col_name="notes")
-    assert "title=" not in plain
+    assert "help-term" not in plain
+    assert ">Notes</th>" in plain
+
+
+def test_help_term_inline_and_explicit_text():
+    config = _app_config()
+    # Inline use (not a header) renders the same affordance.
+    inline = help_term("Skew vs Benchmark", key="skew_vs_benchmark", app_config=config)
+    assert inline.startswith("<span class=\"help-term\"")
+    assert "tabindex=\"0\"" in inline
+    # Explicit text bypasses the registry for one-off explanations.
+    custom = help_term("EV/EBITDA", text="Enterprise value over forward EBITDA.")
+    assert "Enterprise value over forward EBITDA." in custom
+    # No key, no text -> plain escaped label.
+    assert help_term("Plain") == "Plain"
 
 
 def test_unknown_key_yields_no_tooltip():
@@ -170,7 +188,9 @@ def test_liquidity_table_headers_have_config_sourced_tooltips():
 
     html = _render_liquidity_measurements(measurements, app_config=config)
 
-    assert ">Tradable</th>" in html
+    # Label now rides inside the dotted-underline help-term span.
+    assert "Tradable<span" in html or ">Tradable</span>" in html
+    assert "class=\"help-term\"" in html
     spread = config.hedge_readiness.option_liquidity_tradable_spread_pct
     assert f"{spread * 100:g}%" in html
     # Tooltip text is sourced from the registry, not duplicated in the template.

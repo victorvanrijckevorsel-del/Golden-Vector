@@ -615,3 +615,40 @@
   text-underline-offset: 3px;
   cursor: help;
 }
+
+/* Registry-backed help affordance: dotted-underlined label + popover box.
+   The box is a single shared element appended to <body> by help-popover.js
+   so it escapes the table-scroll overflow clipping. */
+.help-term {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+  outline: none;
+}
+.help-term:focus-visible {
+  outline: 2px solid #2b6cb0;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.help-pop {
+  position: fixed;
+  z-index: 1000;
+  max-width: 340px;
+  white-space: pre-line;
+  background: #1f2933;
+  color: #fff;
+  padding: 9px 11px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+  display: none;
+}
+.help-pop.is-visible {
+  display: block;
+}

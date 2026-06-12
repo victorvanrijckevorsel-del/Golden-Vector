@@ -5,10 +5,12 @@ diverge across pages and templates never hard-code threshold numbers.
 Threshold values are resolved at render time from the loaded ``AppConfig`` —
 change the config and the tooltip changes with it.
 
-Transport today is the native ``title=`` attribute (``workspace.css`` already
-styles ``th[title]`` as hoverable). The registry keeps the explanation in
-separate parts (meaning / calculation / thresholds / direction) so a richer
-accessible popover can replace the transport later without rewriting texts.
+Transport is a dotted-underlined ``.help-term`` span carrying the explanation
+in a ``data-help`` attribute; ``help-popover.js`` shows it in a single shared
+box on hover and keyboard focus (``workspace.css`` styles ``.help-term`` /
+``.help-pop``). The registry keeps the explanation in separate parts (meaning
+/ calculation / thresholds / direction) so wording never diverges and
+templates never hard-code threshold numbers.
 """
 
 from __future__ import annotations
@@ -49,6 +51,32 @@ def column_help_text(key: str, *, app_config: AppConfig | None = None) -> str | 
     return "\n".join(part.strip() for part in parts if part and part.strip())
 
 
+def help_term(
+    label: str,
+    *,
+    key: str | None = None,
+    app_config: AppConfig | None = None,
+    text: str | None = None,
+) -> str:
+    """Wrap a label in a dotted-underlined help affordance.
+
+    Use inside any cell or label, not just headers. The explanation rides in
+    ``data-help``; ``help-popover.js`` renders the box on hover/focus. Pass an
+    explicit ``text`` to explain something not in the registry. With no help
+    text the label renders plain (escaped).
+    """
+
+    title = text if text is not None else (
+        column_help_text(key, app_config=app_config) if key else None
+    )
+    if not title:
+        return escape(label)
+    return (
+        "<span class=\"help-term\" tabindex=\"0\" role=\"note\" "
+        f"data-help=\"{escape(title)}\">{escape(label)}</span>"
+    )
+
+
 def help_th(
     label: str,
     *,
@@ -56,18 +84,17 @@ def help_th(
     app_config: AppConfig | None = None,
     col_name: str | None = None,
     sort_numeric: bool = False,
+    text: str | None = None,
 ) -> str:
-    """Render a ``<th>`` with an optional registry-driven hover title."""
+    """Render a ``<th>`` whose label carries a registry-driven help popover."""
 
     attrs: list[str] = []
     if col_name:
         attrs.append(f" data-col-name=\"{escape(col_name)}\"")
     if sort_numeric:
         attrs.append(" data-sort-numeric")
-    title = column_help_text(key, app_config=app_config) if key else None
-    if title:
-        attrs.append(f" title=\"{escape(title)}\"")
-    return f"<th{''.join(attrs)}>{escape(label)}</th>"
+    inner = help_term(label, key=key, app_config=app_config, text=text)
+    return f"<th{''.join(attrs)}>{inner}</th>"
 
 
 def _percent(value: float) -> str:
