@@ -11,6 +11,7 @@ from typing import Any
 
 from golden_vector.serve.format_helpers import _fmt_numeric_td, _fmt_text
 from golden_vector.serve.lab_data import LabDialData
+from golden_vector.serve.column_help import help_th
 from golden_vector.serve.page_shell import _page_shell
 
 
@@ -78,14 +79,14 @@ def _render_lab_overview_page(data: LabDialData, *, selected_bucket: str) -> str
         "<thead><tr>"
         "<th data-col-name=\"rank\" data-sort-numeric>Rank</th>"
         "<th data-col-name=\"ticker\">Ticker</th>"
-        "<th data-col-name=\"p_beat\" data-sort-numeric>P(beat GDX), shrunk</th>"
-        "<th data-col-name=\"p_beat_raw\" data-sort-numeric>P(beat GDX), raw</th>"
-        "<th data-col-name=\"wilson\">95% range</th>"
-        "<th data-col-name=\"median_alpha\" data-sort-numeric>Median alpha vs GDX</th>"
-        "<th data-col-name=\"alpha_range\">Alpha 10–90%</th>"
-        "<th data-col-name=\"episodes\" data-sort-numeric>Weeks (effective)</th>"
-        "<th data-col-name=\"history\">History</th>"
-        "</tr></thead>"
+        + help_th("P(beat GDX), shrunk", key="lab_p_beat_shrunk", col_name="p_beat", sort_numeric=True)
+        + help_th("P(beat GDX), raw", key="lab_p_beat_raw", col_name="p_beat_raw", sort_numeric=True)
+        + help_th("95% range", key="lab_wilson", col_name="wilson")
+        + help_th("Median alpha vs GDX", key="lab_median_alpha", col_name="median_alpha", sort_numeric=True)
+        + help_th("Alpha 10–90%", key="lab_alpha_range", col_name="alpha_range")
+        + help_th("Weeks (effective)", key="lab_episodes", col_name="episodes", sort_numeric=True)
+        + help_th("History", key="lab_history", col_name="history")
+        + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
         "</table>"
     )

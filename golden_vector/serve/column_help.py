@@ -432,4 +432,43 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         meaning="FCF yield shown for context only — it is not used in the resilience rank.",
         direction="Higher means more cash generation for the price.",
     ),
+    # ---- Lab: Conditional Dial analog table ----
+    "lab_p_beat_shrunk": ColumnHelp(
+        meaning=(
+            "How often this miner beat the GDX benchmark in the chosen gold "
+            "scenario, nudged toward the group average so thin histories aren't "
+            "over-trusted (empirical-Bayes shrinkage)."
+        ),
+        direction="Higher means more reliably outperforms in that scenario.",
+    ),
+    "lab_p_beat_raw": ColumnHelp(
+        meaning="The plain count: share of matching historical episodes where the miner beat GDX.",
+        direction="Higher is better; read the shrunk column for the ranking.",
+    ),
+    "lab_wilson": ColumnHelp(
+        meaning=(
+            "A 95% confidence range for the beat rate, using the episode-adjusted "
+            "sample count (overlapping weekly windows are not independent)."
+        ),
+    ),
+    "lab_median_alpha": ColumnHelp(
+        meaning="Typical (median) out- or under-performance versus GDX across the matching episodes.",
+        direction="Positive means it tended to beat GDX in that scenario.",
+    ),
+    "lab_alpha_range": ColumnHelp(
+        meaning="The 10th-to-90th-percentile spread of performance versus GDX — the realistic range, not just the middle.",
+    ),
+    "lab_episodes": ColumnHelp(
+        meaning=(
+            "How many historical weeks matched the scenario, with the effective "
+            "(independent) count in brackets."
+        ),
+        direction="More episodes means a more trustworthy estimate.",
+    ),
+    "lab_history": ColumnHelp(
+        meaning=(
+            "Whether there were enough independent episodes to report numbers. "
+            "Thin rows say 'insufficient history' instead of an unreliable figure."
+        ),
+    ),
 }

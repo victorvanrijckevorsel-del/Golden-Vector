@@ -20,6 +20,7 @@ from golden_vector.serve.candidate_finder_data import (
     CandidateFinderScreen,
     run_candidate_finder_screen,
 )
+from golden_vector.serve.column_help import help_term
 from golden_vector.serve.format_helpers import _fmt_number, _fmt_numeric_td, _metric_card
 from golden_vector.serve.model_state_banner import (
     render_model_state_banner,
@@ -380,6 +381,11 @@ def _render_builder_row(
     checked = selected is not None
     direction = selected.direction if selected else criterion.default_direction
     weight = selected.weight if selected else 1.0
+    direction_phrase = (
+        "Higher values rank higher." if direction == "high_good"
+        else "Lower values rank higher."
+    )
+    label_help = f"{criterion.description} {direction_phrase}"
     criterion_id = escape(criterion.id, quote=True)
     checkbox_label = escape(f"Use {criterion.label}", quote=True)
     direction_name = escape(f"direction_{criterion.id}", quote=True)
@@ -387,7 +393,7 @@ def _render_builder_row(
     return f"""
 <tr>
   <td><input type="checkbox" name="criteria" value="{criterion_id}" aria-label="{checkbox_label}"{" checked" if checked else ""}></td>
-  <td>{escape(criterion.label)}</td>
+  <td>{help_term(criterion.label, text=label_help)}</td>
   <td>
     <select name="{direction_name}">
       {_option_tag("high_good", "High values fit", direction == "high_good")}

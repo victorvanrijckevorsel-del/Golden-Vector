@@ -15,6 +15,7 @@ from golden_vector.portfolio.models import ALLOWED_PORTFOLIO_CURRENCIES
 from golden_vector.portfolio.pipeline import build_ticker_info
 from golden_vector.portfolio.reader import PortfolioData, load_portfolio_data
 from golden_vector.serve.format_helpers import _fmt_number, _fmt_percent, _fmt_text
+from golden_vector.serve.column_help import help_term
 from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.page_shell import _page_shell
 
@@ -81,12 +82,12 @@ def _render_summary(data: PortfolioData) -> str:
     return (
         "<section class=\"metric-grid\">"
         f"{_metric_card('NAV', _fmt_money(summary.get('nav_value_usd'), 'USD'))}"
-        f"{_metric_card('Total P&L at current FX', _fmt_money(summary.get('total_pnl_usd_at_current_fx'), 'USD'))}"
-        f"{_metric_card('Estimated linear loss if gold -10%', _fmt_money(summary.get('modeled_gold_down_10_loss_usd'), 'USD'))}"
-        f"{_metric_card('Beta coverage', _fmt_percent(summary.get('tool_a_coverage_fraction')))}"
-        f"{_metric_card('Resilience coverage', _fmt_percent(summary.get('resilience_coverage_fraction')))}"
-        f"{_metric_card('Largest NAV weight', _fmt_percent(summary.get('largest_position_weight_fraction')))}"
-        f"{_metric_card('Top 3 NAV weight', _fmt_percent(summary.get('top3_position_weight_fraction')))}"
+        f"{_metric_card('Total P&L at current FX', _fmt_money(summary.get('total_pnl_usd_at_current_fx'), 'USD'), help_text='Unrealized profit/loss on entered positions, valued at current prices and FX.')}"
+        f"{_metric_card('Estimated linear loss if gold -10%', _fmt_money(summary.get('modeled_gold_down_10_loss_usd'), 'USD'), help_text='Modeled book loss if gold fell 10 percent, using each holding measured down-beta. Covers only positions with a measured beta.')}"
+        f"{_metric_card('Beta coverage', _fmt_percent(summary.get('tool_a_coverage_fraction')), help_text='Share of book value that has a measured gold beta. The loss estimate only covers this part.')}"
+        f"{_metric_card('Resilience coverage', _fmt_percent(summary.get('resilience_coverage_fraction')), help_text='Share of book value with a Tool D resilience reading.')}"
+        f"{_metric_card('Largest NAV weight', _fmt_percent(summary.get('largest_position_weight_fraction')), help_text='The single biggest position as a share of net asset value — a concentration check.')}"
+        f"{_metric_card('Top 3 NAV weight', _fmt_percent(summary.get('top3_position_weight_fraction')), help_text='The three biggest positions combined, as a share of net asset value.')}"
         f"{_metric_card('Price date', _fmt_text(summary.get('as_of_date')))}"
         "<p class=\"hint\">NAV = entered stock positions; broker cash is added at import.</p>"
         "<p class=\"hint\">Gold -10% loss is a simple linear beta estimate; real selloffs can be worse.</p>"
@@ -498,8 +499,9 @@ def _currency_select(selected: str | None) -> str:
     )
 
 
-def _metric_card(title: str, value: str) -> str:
-    return f"<article class=\"panel metric-card\"><h3>{escape(title)}</h3><p>{value}</p></article>"
+def _metric_card(title: str, value: str, *, help_text: str | None = None) -> str:
+    heading = help_term(title, text=help_text) if help_text else escape(title)
+    return f"<article class=\"panel metric-card\"><h3>{heading}</h3><p>{value}</p></article>"
 
 
 def _number_input(name: str, label: str, value: object | None = None) -> str:

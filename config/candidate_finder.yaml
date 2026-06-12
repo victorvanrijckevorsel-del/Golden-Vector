@@ -164,7 +164,7 @@ criteria:
     available_now: true
   - id: tool_c_downside_rank
     label: Downside composite rank
-    description: Advanced selloff behavior score.
+    description: Blended rank of how the stock behaves when gold sells off (advanced; combines several downside measures).
     source_field: tool_c_downside_rank
     group: Advanced Composites
     default_direction: high_good
@@ -172,7 +172,7 @@ criteria:
     available_now: true
   - id: tool_c_upside_rank
     label: Upside composite rank
-    description: Advanced rally behavior score.
+    description: Blended rank of how the stock behaves when gold rallies (advanced; combines several upside measures).
     source_field: tool_c_upside_rank
     group: Advanced Composites
     default_direction: high_good
@@ -180,7 +180,7 @@ criteria:
     available_now: true
   - id: tool_d_quality_rank
     label: Resilience composite rank
-    description: Advanced survival blend.
+    description: Blended resilience rank from survival, cost, fragility and balance-sheet components (advanced).
     source_field: tool_d_quality_rank
     group: Advanced Composites
     default_direction: high_good
