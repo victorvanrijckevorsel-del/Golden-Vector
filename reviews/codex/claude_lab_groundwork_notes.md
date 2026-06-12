@@ -158,3 +158,39 @@ All of M0-1/M0-2/M0-3/M1-1/M1-2/M1-3 are BUILT, tested, and committed on dev-vic
 Next chunk: Conditional Dial analog table + beta-gap experiment (registered in
 the variant ledger BEFORE compute), then Stage 0 ship fold-in (live refresh +
 merge to main).
+
+## Verification + ship record — 2026-06-12
+
+**The 5-agent verification fleet died on the session limit (352k tokens, no
+verdicts — an empty findings list from dead agents is NOT a clean bill).
+Verification redone first-hand in the main loop:**
+
+- Purge math proven on a tiny grid (gap 4w > 3w label reach, every fold).
+- W-FRI period strings sort chronologically across year boundaries (proven
+  1999→2026); groupby/sort on strings is safe.
+- `_forward_sum` covers exactly t+1..t+h; NaN anywhere in the window ⇒ NA
+  (pandas `min_periods=window` counts non-NaN — verified).
+- Canary 2 not seed luck: 0/20 random shuffles trip |t|≥2.
+- `_price_basis` has exactly ONE production caller (benchmark-only path);
+  every other grep hit is the unrelated `gold_price_basis`. Real GDX/GDXJ:
+  currency uniformly 'USD', 0 nulls, no `*_usd` cols — fallback fires only
+  as designed.
+- Refresh vintage hook sits after the last failure return ⇒ records only on
+  full success.
+- Real-data contiguity: 0 calendar gaps across all 65 tickers — but the
+  invariant is now ENFORCED in `build_forward_return_panel` (reindex; missing
+  week ⇒ NA labels, never a stretched window) + regression test.
+- `_melt_snapshot` hardened for non-scalar values; vintage re-run on real
+  stores = perfect no-op (idempotency proven).
+
+**Live refresh smoke (2026-06-12 05:14 UTC):** Tools A–D green at fresh gold
+$4212 (Tool C 54/54 ranked both directions — the benchmark fix live).
+Vintages +231 rows in the real path. Options stage BLOCKED by design (market
+closed; GDX=SPARSE/GDXJ=LOW_LIQUIDITY publish blocker; fail-closed kept prior
+state; pages show the unavailable notice). **One refresh during US options
+market hours (14:30–21:00 UTC) is needed to mint v3 option artifacts.**
+Portfolio step skipped because `config/portfolio.yaml` has `enabled: false`
+(pre-existing); alignment WARN about stale portfolio artifacts is the
+manifest being honest, not a regression.
+
+**Final gates: full suite 1036 passed / 0 failed.** Shipping dev-vic → main.
