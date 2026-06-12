@@ -14,6 +14,7 @@ _NAV_LINKS: tuple[tuple[str, str, str], ...] = (
     ("option_trading", "/option-trading", "Option Trading"),
     ("portfolio", "/portfolio", "Portfolio"),
     ("lab", "/lab", "Lab"),
+    ("scorecard", "/scorecard", "Scorecard"),
 )
 
 

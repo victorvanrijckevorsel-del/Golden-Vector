@@ -652,3 +652,21 @@
 .help-pop.is-visible {
   display: block;
 }
+
+
+/* Scorecard verdict cards */
+.scorecard-card { margin-bottom: 12px; }
+.scorecard-verdict {
+  display: inline-block;
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding: 3px 10px;
+  border-radius: 999px;
+  margin-bottom: 6px;
+}
+.verdict-supported { background: #e3f5e6; color: #1d6b32; }
+.verdict-not-supported { background: #fce4e4; color: #a11a1a; }
+.verdict-inconclusive { background: #fff3da; color: #8a5a00; }
+.verdict-partial { background: #eef0f2; color: #41505c; }
+.verdict-accruing { background: #e6eefb; color: #2b4f8a; }
+.scorecard-claim { font-weight: 600; margin-bottom: 4px; }

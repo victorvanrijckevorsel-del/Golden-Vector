@@ -67,7 +67,9 @@ from golden_vector.serve.candidate_finder_data import (
 )
 from golden_vector.serve.candidate_finder_page import render_candidate_finder_page
 from golden_vector.serve.lab_data import load_lab_dial_data
+from golden_vector.serve.scorecard_data import load_scorecard_data
 from golden_vector.serve.overview_lab import _render_lab_overview_page
+from golden_vector.serve.overview_scorecard import _render_scorecard_page
 from golden_vector.serve.overview_option_trading import _render_option_trading_overview_page
 from golden_vector.serve.overview_tool_a import _render_tool_a_overview_page
 from golden_vector.serve.overview_tool_b import _render_tool_b_overview_page
@@ -362,6 +364,12 @@ def create_workspace_app(
                         lab_data,
                         selected_bucket=selected_bucket,
                     ),
+                )
+
+            if method == "GET" and path == "/scorecard":
+                return _html_response(
+                    start_response,
+                    _render_scorecard_page(load_scorecard_data(paths)),
                 )
 
             if method == "GET" and path == "/tool-d":

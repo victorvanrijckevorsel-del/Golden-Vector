@@ -86,3 +86,62 @@ def test_scorecard_columns_are_stable():
     row = sc._verdict_row(V(), [], kind="backtest", variant_hash="abc")
     assert set(row) == expected
     assert json.loads(row["baseline_lines"]) == []
+
+
+# --------------------------------------------- /scorecard page (render-only)
+
+
+def test_scorecard_page_renders_verdicts_and_caveats(tmp_path):
+    import pandas as pd
+
+    from golden_vector.serve.overview_scorecard import _render_scorecard_page
+    from golden_vector.serve.scorecard_data import load_scorecard_data
+    from golden_vector.lab.scorecard import SCORECARD_TABLE_FILENAME, SCORECARD_META_FILENAME
+
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    rows = [
+        {"signal_id": "validation_e1b", "claim": "Tool A predicts forward beta",
+         "verdict": "SUPPORTED (exploratory - survivor-only universe)", "kind": "backtest",
+         "n_folds": 44, "mean_ic": 0.48, "nw_t": 18.3, "share_folds_directional": 1.0,
+         "tercile_spread_mean": 1.11, "tercile_spread_t": 11.3, "median_ceiling": 0.28,
+         "fold_ic_autocorr": 0.2, "baseline_lines": json.dumps([]), "gate_results": json.dumps({}),
+         "variant_hash": "abc", "caveat": "survivor-only"},
+        {"signal_id": "tool_b_health", "claim": "Tool B forward alpha", "verdict": "ACCRUING (first verdict expected ~2031-04)",
+         "kind": "accruing", "n_folds": 0, "mean_ic": None, "nw_t": None,
+         "share_folds_directional": None, "tercile_spread_mean": None, "tercile_spread_t": None,
+         "median_ceiling": None, "fold_ic_autocorr": None, "baseline_lines": json.dumps([]),
+         "gate_results": json.dumps({}), "variant_hash": None, "caveat": "Forward-only"},
+    ]
+    pd.DataFrame(rows).to_parquet(lab / SCORECARD_TABLE_FILENAME, index=False)
+    (lab / SCORECARD_META_FILENAME).write_text(json.dumps({
+        "built_at_utc": "2026-06-12T17:33:00+00:00",
+        "leak_canary": {"honest_mean_ic": 0.48, "contaminated_mean_ic": 1.0, "contrast": 0.52},
+        "caveats": ["SUPPORTED, not VALIDATED: survivor-only universe."],
+    }))
+
+    class FakePaths:
+        data_dir = tmp_path
+
+    data = load_scorecard_data(FakePaths())  # type: ignore[arg-type]
+    assert data.available and len(data.backtest_rows) == 1 and len(data.accruing_rows) == 1
+    html = _render_scorecard_page(data)
+    assert "verdict-supported" in html
+    assert "verdict-accruing" in html
+    assert "Tool A predicts forward beta" in html
+    assert "survivor-only universe" in html
+    assert "Leak check passed" in html
+    assert ">Scorecard</a>" in html  # nav tab
+
+
+def test_scorecard_serve_layer_has_no_analytics():
+    """Render-only: the scorecard serve files must not compute verdicts/stats."""
+
+    from pathlib import Path as P
+
+    for module in ("scorecard_data.py", "overview_scorecard.py"):
+        src = P(f"golden_vector/serve/{module}").read_text(encoding="utf-8")
+        code = "\n".join(line.split("#", 1)[0] for line in src.splitlines())
+        for forbidden in (".mean(", ".std(", ".rank(", "newey_west", "spearman",
+                          "_validity_experiment", "run_e1", "run_e3", ".quantile("):
+            assert forbidden not in code, f"{module}: {forbidden}"
