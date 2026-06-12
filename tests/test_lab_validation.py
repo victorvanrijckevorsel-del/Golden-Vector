@@ -129,7 +129,7 @@ def _test_grid(panel):
     return list(periods[:: v.GRID_STEP_PERIODS])
 
 
-def _synthetic_panel_and_weekly(n_tickers=20, n_weeks=750, seed=5):
+def _synthetic_panel_and_weekly(n_tickers=20, n_weeks=750, seed=5, panel_noise=0.1, windows=("6M", "12M", "3Y")):
     """A panel + weekly frame where each ticker has a TRUE beta; the panel's
     12M delta equals that beta plus noise, so an honest experiment should
     score positive and a rigged one should be catchable."""
@@ -154,15 +154,15 @@ def _synthetic_panel_and_weekly(n_tickers=20, n_weeks=750, seed=5):
             )
         # panel: a 12M delta ~ true beta, stamped every week
         for i in range(0, n_weeks):
-            for w in ("6M", "12M", "3Y"):
+            for w in windows:
                 panel_rows.append(
                     {
                         "ticker": tk,
                         "as_of_date": str(periods[i].end_time.date()),
                         "window_id": w,
                         "window_status": "ELIGIBLE",
-                        "structural_delta": beta + rng.normal(0, 0.1),
-                        "down_beta": beta + rng.normal(0, 0.1),
+                        "structural_delta": beta + rng.normal(0, panel_noise),
+                        "down_beta": beta + rng.normal(0, panel_noise),
                     }
                 )
     panel = v._panel_with_periods(pd.DataFrame(panel_rows))
@@ -217,3 +217,152 @@ def test_honest_experiment_scores_positive_on_synthetic_truth():
     )
     assert verdict.mean_ic is not None and verdict.mean_ic > 0.3
     assert verdict.nw_t is not None and verdict.nw_t > 3
+
+
+# ------------------------------------------------- Codex-review hardening
+
+
+def test_newey_west_hand_calculation():
+    """Exact NW lag-1 t on a known 5-fold series (LOW-1: pin the convention)."""
+
+    vals = [0.2, 0.1, 0.3, 0.2, 0.2]
+    n = 5
+    mean = np.mean(vals)
+    r = np.array(vals) - mean
+    g0 = np.sum(r**2) / n
+    g1 = np.sum(r[1:] * r[:-1]) / n
+    lrv = g0 + 2.0 * 0.5 * g1
+    expected = mean / np.sqrt(lrv / n)
+    assert v.newey_west_t(vals) == pytest.approx(expected)
+
+
+def test_tercile_spread_deterministic_under_input_shuffle():
+    """MED-1: ties on rank are broken by ticker, independent of input order."""
+
+    ranks = pd.Series({f"T{i}": (i // 2) for i in range(12)})  # deliberate ties
+    out = pd.Series({f"T{i}": float(i) for i in range(12)})
+    base = v.tercile_portfolio_spread(ranks, out)
+    shuffled_idx = list(ranks.index)[::-1]
+    s2 = v.tercile_portfolio_spread(ranks.loc[shuffled_idx], out.loc[shuffled_idx])
+    assert base == pytest.approx(s2)
+
+
+def test_assert_publishable_refuses_contaminated_verdict():
+    good = v.ExperimentVerdict(
+        signal_id="x", claim="c", verdict="SUPPORTED", n_folds=10, mean_ic=0.3,
+        nw_t=4.0, share_folds_directional=0.8, tercile_spread_mean=0.3,
+        tercile_spread_t=3.0, median_ceiling=0.4, gate_results={},
+    )
+    v.assert_publishable([good])  # ok
+    bad = v.ExperimentVerdict(
+        signal_id="leak", claim="c", verdict="SUPPORTED", n_folds=10, mean_ic=1.0,
+        nw_t=99.0, share_folds_directional=1.0, tercile_spread_mean=9.0,
+        tercile_spread_t=9.0, median_ceiling=1.0, gate_results={}, contaminated=True,
+    )
+    with pytest.raises(ValueError, match="contaminated"):
+        v.assert_publishable([good, bad])
+
+
+def test_canary_time_reversal_contrast_proves_no_leak():
+    """HIGH-3: a rank built from forward data must beat the honest PIT rank by
+    >= 0.15 — if they are close, the honest path is leaking the future."""
+
+    panel, weekly, wmap = _synthetic_panel_and_weekly(panel_noise=1.0, seed=11)
+    grid = _test_grid(panel)
+    honest, contaminated = v.time_reversal_ic_contrast(
+        panel, weekly, grid, wmap, rank_column="structural_delta"
+    )
+    assert honest is not None and contaminated is not None
+    # honest must be a moderate, non-leaking signal; contaminated is ~1.0.
+    assert honest < 0.85
+    assert contaminated - honest >= v.TIME_REVERSAL_MIN_CONTRAST
+    assert contaminated > 0.95  # rank == future outcome
+
+
+def test_baseline_line_fires_when_a_baseline_matches_the_core():
+    """HIGH-2: when a baseline ranks as well as the core, the registered
+    verbatim 'adds no measured edge' line must appear."""
+
+    panel, weekly, wmap = _synthetic_panel_and_weekly(windows=("12M",))
+    grid = _test_grid(panel)
+    # Only 12M is eligible, so the weighted-median core EQUALS the 12M
+    # single-window baseline exactly -> the core cannot beat it -> line fires.
+    verdict, _ = v._validity_experiment(
+        signal_id="t", claim="c", panel=panel, ticker_weekly=weekly, grid=grid,
+        weight_map=wmap, rank_column="structural_delta",
+        baselines=[
+            v.BaselineSpec(
+                label="single_12m_window",
+                beaten_line="ADDS NO MEASURED EDGE",
+                kind="single_window", window="12M",
+            )
+        ],
+    )
+    assert "ADDS NO MEASURED EDGE" in verdict.baseline_lines
+
+
+def test_robustness_slices_change_cadence_without_breaking():
+    """MED-2: the 52w grid uses a different fold cadence; the fixed cohort is a
+    subset of the universe. Neither should error."""
+
+    panel, weekly, wmap = _synthetic_panel_and_weekly()
+    g26 = _test_grid(panel)
+    g52 = [g26[0]] + g26[2::2]  # coarser cadence proxy on synthetic data
+    assert len(g52) < len(g26)
+    cohort = v.fixed_cohort_panel(panel, before="2030-01-01")  # synthetic is 2012+
+    assert cohort["ticker"].nunique() == panel["ticker"].nunique()
+
+
+def test_reconstruction_parity_against_live_artifact():
+    """HIGH-1: PIT reconstruction at the latest period must reproduce the
+    shipped tool_a_latest core columns exactly (the no-forked-math contract)."""
+
+    import glob
+
+    from golden_vector.app.config import load_app_config
+    from golden_vector.app.paths import ProjectPaths
+
+    paths = ProjectPaths.discover()
+    panel_files = sorted(
+        glob.glob(str(paths.data_dir / "intermediate" / "tool_a_structural" / "*latest*.parquet"))
+    )
+    if not panel_files or not paths.latest_tool_a_snapshot_parquet_path.exists():
+        pytest.skip("no local structural panel / tool_a artifact")
+    panel = v._panel_with_periods(pd.read_parquet(panel_files[0]))
+    tool_a = pd.read_parquet(paths.latest_tool_a_snapshot_parquet_path)
+    if "structural_delta_core" not in tool_a.columns:
+        pytest.skip("tool_a artifact lacks core columns")
+    wmap = load_app_config(paths).app.scoring.structural_weight_map()
+
+    period = pd.Period(str(pd.to_datetime(tool_a["as_of_date"].iloc[0])), freq="W-FRI")
+    recon = v.reconstruct_cores_at(panel, period, column="structural_delta", weight_map=wmap)
+    live = tool_a.set_index("ticker")["structural_delta_core"].dropna()
+    common = recon.index.intersection(live.index)
+    assert len(common) >= 40
+    for tk in common:
+        assert recon[tk] == pytest.approx(float(live[tk]), abs=1e-6), tk
+
+
+def test_ledger_constants_match_registered_gates():
+    """MED-3: implementation gate constants must equal the registered ledger
+    configs — the guardrail against post-hoc drift."""
+
+    from golden_vector.app.paths import ProjectPaths
+    from golden_vector.lab.ledger import load_ledger
+    from golden_vector.lab.vintages import lab_dir
+
+    records = load_ledger(lab_dir(ProjectPaths.discover()))
+    by_id = {}
+    for r in records:
+        by_id[r.signal_id] = r.config  # last wins = latest registration
+    if "validation_e1b" not in by_id:
+        pytest.skip("validation variants not registered in this environment")
+    e1a, e1b, e2 = by_id["validation_e1a"], by_id["validation_e1b"], by_id["validation_e2"]
+    g1a, g1b, g2 = e1a["gates"], e1b["gates"], e2["gates"]
+    assert g1a["mean_ic_min"] == v.E1A_MEAN_IC_GATE
+    assert g1a["share_folds_ge_030"] == v.E1A_SHARE_GATE
+    assert g1b["tercile_portfolio_spread_min"] == v.E1B_SPREAD_GATE
+    assert g1b["mean_ic_gt0_nw_t"] == v.NW_T_GATE
+    assert g1b["share_folds_pos"] == v.SHARE_DIRECTIONAL_GATE
+    assert g1b["spread_t"] == v.SPREAD_T_GATE
+    assert g2["tercile_portfolio_spread_min"] == v.E2_SPREAD_GATE

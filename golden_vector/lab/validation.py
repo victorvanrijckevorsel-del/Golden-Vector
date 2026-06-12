@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from golden_vector.model.structural import weighted_median
+
 # ---------------------------------------------------------------- constants
 
 GRID_STEP_PERIODS = 26
@@ -38,6 +40,21 @@ STABILITY_LAG_PERIODS = 52  # E1a: t vs t+52 (non-overlapping 12M windows)
 
 INCONCLUSIVE_CEILING = 0.30  # split-half below this => INCONCLUSIVE, not NOT SUPPORTED
 SURVIVOR_QUALIFIER = "exploratory — survivor-only universe"
+
+# Gate thresholds — these MUST match the registered ledger configs (a drift
+# test asserts it). Changing one here without a new registered variant is the
+# malpractice pre-registration forbids.
+E1A_MEAN_IC_GATE = 0.45
+E1A_FOLD_IC_FLOOR = 0.30
+E1A_SHARE_GATE = 0.80
+NW_T_GATE = 3.0
+SHARE_DIRECTIONAL_GATE = 0.70
+SPREAD_T_GATE = 2.0
+E1B_SPREAD_GATE = 0.20
+E2_SPREAD_GATE = 0.35
+E2_DOWN_WEEK_FLOOR = 8
+BASELINE_PAIRED_T_GATE = 2.0
+TIME_REVERSAL_MIN_CONTRAST = 0.15
 
 
 # ---------------------------------------------------------------- containers
@@ -67,6 +84,7 @@ class ExperimentVerdict:
     gate_results: dict[str, bool]
     baseline_lines: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    contaminated: bool = False  # set only by leakage probes; refused at publish
 
 
 # ---------------------------------------------------------------- stats
@@ -103,8 +121,9 @@ def newey_west_t(values: list[float]) -> float | None:
     arr = np.asarray(clean, dtype=float)
     mean = float(arr.mean())
     resid = arr - mean
-    gamma0 = float(np.mean(resid**2))
-    gamma1 = float(np.mean(resid[1:] * resid[:-1])) if n > 1 else 0.0
+    # Standard HAC convention: both autocovariances divide by n (not n-1).
+    gamma0 = float(np.sum(resid**2) / n)
+    gamma1 = float(np.sum(resid[1:] * resid[:-1]) / n) if n > 1 else 0.0
     # Bartlett lag-1 weight = 1/2; long-run variance of the series.
     lrv = gamma0 + 2.0 * 0.5 * gamma1
     lrv = max(lrv, 1e-12)
@@ -160,40 +179,41 @@ def reconstruct_cores_at(
         eligible = at[at["window_status"].astype(str) == "ELIGIBLE"]
         if eligible.empty:
             continue
+        # Use the PRODUCT'S weighted_median (model/structural) — the same
+        # primitive model/pipeline builds the cores with. No forked copy:
+        # its drift would invalidate the study, so there must be one
+        # implementation (a committed parity test pins reconstruction to the
+        # live artifact).
         values = {
             str(r["window_id"]).upper(): r[column]
             for _, r in eligible.iterrows()
             if pd.notna(r[column])
         }
-        core = _weighted_median(values, weight_map)
+        core = weighted_median(values, weights=weight_map)
         if core is not None:
             result[str(ticker)] = core
     return pd.Series(result, dtype="float64")
 
 
-def _weighted_median(values: dict[str, float], weights: dict[str, float]) -> float | None:
-    usable = [
-        (float(v), float(weights.get(k, 1.0)))
-        for k, v in values.items()
-        if v is not None and pd.notna(v)
+def fixed_cohort_panel(panel: pd.DataFrame, *, before: str = "2010-01-01") -> pd.DataFrame:
+    """Survivorship robustness slice: keep only tickers with an ELIGIBLE 12M
+    window before ``before`` (constant membership across the later folds)."""
+
+    early = panel[
+        (panel["window_id"].astype(str).str.upper() == "12M")
+        & (panel["window_status"].astype(str) == "ELIGIBLE")
+        & (panel["as_of"] < pd.Timestamp(before))
     ]
-    if not usable:
-        return None
-    usable.sort(key=lambda item: item[0])
-    cutoff = sum(w for _, w in usable) / 2.0
-    running = 0.0
-    for value, weight in usable:
-        running += weight
-        if running >= cutoff:
-            return float(value)
-    return float(usable[-1][0])
+    cohort = set(early["ticker"].astype(str))
+    return panel[panel["ticker"].astype(str).isin(cohort)].copy()
 
 
-def build_as_of_grid(panel: pd.DataFrame) -> list[pd.Period]:
-    """26-period grid anchored at the first ≥15-eligible cross-section.
+def build_as_of_grid(panel: pd.DataFrame, *, step: int = GRID_STEP_PERIODS) -> list[pd.Period]:
+    """``step``-period grid anchored at the first ≥15-eligible cross-section.
 
     A scheduled as-of with a thin/partial cross-section steps back up to 2
-    weeks before being skipped (spec §1).
+    weeks before being skipped (spec §1). ``step=52`` gives the registered
+    robustness slice (~half the folds).
     """
 
     counts = (
@@ -227,7 +247,7 @@ def build_as_of_grid(panel: pd.DataFrame) -> list[pd.Period]:
             break
         if chosen is not None and (not grid or chosen != grid[-1]):
             grid.append(chosen)
-        scheduled = scheduled + GRID_STEP_PERIODS
+        scheduled = scheduled + step
     return grid
 
 
@@ -313,11 +333,14 @@ def tercile_portfolio_spread(ranks: pd.Series, outcomes: pd.Series) -> float | N
         {
             "rank": pd.to_numeric(ranks, errors="coerce"),
             "out": pd.to_numeric(outcomes, errors="coerce"),
+            "ticker": [str(i) for i in ranks.index],
         }
     ).dropna()
     if len(df) < 6:
         return None
-    df = df.sort_values(["rank"], kind="mergesort")
+    # Deterministic: ties on rank broken by ticker (spec §1), independent of
+    # the caller's input order.
+    df = df.sort_values(["rank", "ticker"], kind="mergesort")
     k = len(df) // 3
     if k < 1:
         return None
@@ -349,10 +372,10 @@ def run_e1a(
         if ic is not None:
             pairs.append(ic)
     mean_ic = float(np.mean(pairs)) if pairs else None
-    share = float(np.mean([p >= 0.30 for p in pairs])) if pairs else None
+    share = float(np.mean([p >= E1A_FOLD_IC_FLOOR for p in pairs])) if pairs else None
     gates = {
-        "mean_stability_ic_ge_0.45": mean_ic is not None and mean_ic >= 0.45,
-        "ge80pct_folds_ic_ge_0.30": share is not None and share >= 0.80,
+        "mean_stability_ic_ge_gate": mean_ic is not None and mean_ic >= E1A_MEAN_IC_GATE,
+        "share_folds_ic_ge_floor": share is not None and share >= E1A_SHARE_GATE,
     }
     return ExperimentVerdict(
         signal_id="validation_e1a",
@@ -370,6 +393,55 @@ def run_e1a(
     )
 
 
+def single_window_ranks(
+    panel: pd.DataFrame, period: pd.Period, *, column: str, window: str = "12M"
+) -> pd.Series:
+    """The raw single-window value per ticker at ``period`` (PIT baseline)."""
+
+    rows = panel[
+        (panel["week_period"] == period)
+        & (panel["window_id"].astype(str).str.upper() == window)
+        & (panel["window_status"].astype(str) == "ELIGIBLE")
+    ]
+    out: dict[str, float] = {}
+    for ticker, group in rows.groupby("ticker"):
+        latest = group["as_of"].max()
+        value = group[group["as_of"] == latest][column].iloc[0]
+        if pd.notna(value):
+            out[str(ticker)] = float(value)
+    return pd.Series(out, dtype="float64")
+
+
+def trailing_realized_beta(
+    g: pd.DataFrame,
+    t: pd.Period,
+    *,
+    lookback: int = FORWARD_HORIZON_WEEKS,
+    gold_down_only: bool = False,
+    min_weeks: int = MIN_FORWARD_WEEKS,
+) -> float | None:
+    """OLS beta over the lookback periods up to and including t (PIT baseline)."""
+
+    win = g[(g["period"] > t - lookback) & (g["period"] <= t)]
+    gold = pd.to_numeric(win["gold_log_ret"], errors="coerce")
+    stock = pd.to_numeric(win["stock_log_ret"], errors="coerce")
+    mask = gold.notna() & stock.notna()
+    if gold_down_only:
+        mask &= gold < 0
+    idx = np.where(mask.to_numpy())[0]
+    if len(idx) < min_weeks:
+        return None
+    return _ols_beta(stock.to_numpy()[idx], gold.to_numpy()[idx])
+
+
+@dataclass(frozen=True)
+class BaselineSpec:
+    label: str
+    beaten_line: str  # appended VERBATIM when the core does NOT beat it
+    kind: str  # 'single_window' or 'trailing_beta'
+    window: str = "12M"
+
+
 def _validity_experiment(
     *,
     signal_id: str,
@@ -384,15 +456,22 @@ def _validity_experiment(
     spread_gate: float = 0.20,
     direction: int = 1,
     min_weeks: int = MIN_FORWARD_WEEKS,
+    baselines: list[BaselineSpec] | None = None,
 ) -> tuple[ExperimentVerdict, list[FoldOutcome]]:
     """Shared engine for E1b/E2-style 'rank vs forward realized beta' tests.
 
     ``direction`` = +1 means higher rank should give higher forward outcome.
     Metrics are stored in the registered direction, so a pinned-negative
     experiment reports positive when the tool works as claimed.
+
+    ``baselines`` are scored on the SAME folds/outcomes; a paired NW-t on the
+    per-fold (core IC − baseline IC) decides whether the core beats each one.
     """
 
+    baselines = baselines or []
     folds: list[FoldOutcome] = []
+    # per-fold (core_ic, baseline_ic) for the paired comparisons
+    paired: dict[str, list[tuple[float, float]]] = {b.label: [] for b in baselines}
     for t in grid:
         ranks = reconstruct_cores_at(panel, t, column=rank_column, weight_map=weight_map)
         if len(ranks) < MIN_CROSS_SECTION:
@@ -423,8 +502,8 @@ def _validity_experiment(
             continue
         common = ranks.index.intersection(pd.Index(list(fwd)))
         out = pd.Series(fwd).loc[common]
-        ic = spearman_ic(ranks.loc[common], out)
-        ic = None if ic is None else direction * ic
+        ic_raw = spearman_ic(ranks.loc[common], out)
+        ic = None if ic_raw is None else direction * ic_raw
         ceiling = None
         if len(odd) >= MIN_CROSS_SECTION:
             ci = pd.Index(list(odd))
@@ -436,6 +515,41 @@ def _validity_experiment(
                 period=str(t), n_names=len(common), ic=ic, ceiling=ceiling, tercile_spread=spread
             )
         )
+        # baseline ICs on the SAME common names + outcome
+        if ic_raw is not None:
+            for b in baselines:
+                if b.kind == "single_window":
+                    br = single_window_ranks(panel, t, column=rank_column, window=b.window)
+                else:
+                    br = pd.Series(
+                        {
+                            tk: v
+                            for tk in common
+                            if (
+                                v := trailing_realized_beta(
+                                    ticker_weekly[tk], t,
+                                    gold_down_only=gold_down_only, min_weeks=min_weeks,
+                                )
+                            )
+                            is not None
+                        },
+                        dtype="float64",
+                    )
+                bcommon = common.intersection(br.index)
+                if len(bcommon) < MIN_CROSS_SECTION:
+                    continue
+                core_ic = spearman_ic(ranks.loc[bcommon], out.loc[bcommon])
+                base_ic = spearman_ic(br.loc[bcommon], out.loc[bcommon])
+                if core_ic is not None and base_ic is not None:
+                    paired[b.label].append((direction * core_ic, direction * base_ic))
+
+    baseline_lines: list[str] = []
+    for b in baselines:
+        diffs = [c - x for c, x in paired[b.label]]
+        t_pair = newey_west_t(diffs)
+        # core fails to beat the baseline => paired t not > 2 => verbatim line
+        if not (t_pair is not None and t_pair > BASELINE_PAIRED_T_GATE):
+            baseline_lines.append(b.beaten_line)
 
     ics = [f.ic for f in folds if f.ic is not None]
     spreads = [f.tercile_spread for f in folds if f.tercile_spread is not None]
@@ -448,13 +562,13 @@ def _validity_experiment(
     median_ceiling = float(np.median(ceilings)) if ceilings else None
 
     gates = {
-        "mean_ic_gt0_nw_t_gt3": nw_t is not None and nw_t > 3,
-        "ge70pct_folds_directional": share is not None and share >= 0.70,
+        "mean_ic_nw_t_gt_gate": nw_t is not None and nw_t > NW_T_GATE,
+        "share_folds_directional_ge_gate": share is not None and share >= SHARE_DIRECTIONAL_GATE,
         "tercile_spread_gated": (
             spread_mean is not None
             and spread_mean >= spread_gate
             and spread_t is not None
-            and spread_t > 2
+            and spread_t > SPREAD_T_GATE
         ),
     }
     return (
@@ -470,6 +584,7 @@ def _validity_experiment(
             tercile_spread_t=spread_t,
             median_ceiling=median_ceiling,
             gate_results=gates,
+            baseline_lines=baseline_lines,
         ),
         folds,
     )
@@ -484,8 +599,27 @@ def run_e1b(panel, ticker_weekly, grid, weight_map):
         grid=grid,
         weight_map=weight_map,
         rank_column="structural_delta",
-        spread_gate=0.20,
+        spread_gate=E1B_SPREAD_GATE,
         direction=1,
+        baselines=[
+            BaselineSpec(
+                label="single_12m_window",
+                beaten_line=(
+                    "A simpler 12M-window beta ranked as well or better "
+                    "(paired p ≥ 0.05); the multi-window core adds no measured edge."
+                ),
+                kind="single_window",
+                window="12M",
+            ),
+            BaselineSpec(
+                label="trailing_26w_beta",
+                beaten_line=(
+                    "A simpler 26-week trailing beta ranked as well or better "
+                    "(paired p ≥ 0.05); the longer window adds no measured edge."
+                ),
+                kind="trailing_beta",
+            ),
+        ],
     )
 
 
@@ -499,13 +633,86 @@ def run_e2(panel, ticker_weekly, grid, weight_map):
         weight_map=weight_map,
         rank_column="down_beta",
         gold_down_only=True,
-        spread_gate=0.35,
+        spread_gate=E2_SPREAD_GATE,
         direction=1,
-        min_weeks=8,
+        min_weeks=E2_DOWN_WEEK_FLOOR,
+        baselines=[
+            BaselineSpec(
+                label="trailing_26w_down_beta",
+                beaten_line=(
+                    "A simpler 26-week trailing down-beta ranked as well or better "
+                    "(paired p ≥ 0.05); the structural core adds no measured edge."
+                ),
+                kind="trailing_beta",
+            ),
+        ],
     )
 
 
 # ---------------------------------------------------------------- inputs
+
+
+def time_reversal_ic_contrast(
+    panel: pd.DataFrame,
+    ticker_weekly: dict[str, pd.DataFrame],
+    grid: list[pd.Period],
+    weight_map: dict[str, float],
+    *,
+    rank_column: str,
+    gold_down_only: bool = False,
+    min_weeks: int = MIN_FORWARD_WEEKS,
+) -> tuple[float | None, float | None]:
+    """Spec §4 canary 3 — time-reversal contrast.
+
+    Returns (honest_mean_ic, contaminated_mean_ic). The honest rank is the
+    PIT core at t; the contaminated rank uses the forward outcome itself
+    (perfect future information). A working harness — one that genuinely
+    cannot see the future on the honest path — must show the contaminated
+    run beating the honest run by a wide margin (≥ 0.15). If they are close,
+    the honest path is leaking.
+    """
+
+    honest: list[float] = []
+    contaminated: list[float] = []
+    for t in grid:
+        ranks = reconstruct_cores_at(panel, t, column=rank_column, weight_map=weight_map)
+        if len(ranks) < MIN_CROSS_SECTION:
+            continue
+        fwd: dict[str, float] = {}
+        for ticker in ranks.index:
+            g = ticker_weekly.get(ticker)
+            if g is None:
+                continue
+            beta = forward_realized_beta(
+                g, t, gold_down_only=gold_down_only, min_weeks=min_weeks
+            )
+            if beta is not None:
+                fwd[ticker] = beta
+        if len(fwd) < MIN_CROSS_SECTION:
+            continue
+        common = ranks.index.intersection(pd.Index(list(fwd)))
+        out = pd.Series(fwd).loc[common]
+        h = spearman_ic(ranks.loc[common], out)
+        c = spearman_ic(out, out)  # contaminated: rank IS the future outcome
+        if h is not None:
+            honest.append(h)
+        if c is not None:
+            contaminated.append(c)
+    return (
+        float(np.mean(honest)) if honest else None,
+        float(np.mean(contaminated)) if contaminated else None,
+    )
+
+
+def assert_publishable(verdicts: list[ExperimentVerdict]) -> None:
+    """Publish guard: a contaminated (leakage-probe) verdict can never ship."""
+
+    for verdict in verdicts:
+        if verdict.contaminated:
+            raise ValueError(
+                f"Refusing to publish a contaminated verdict for "
+                f"{verdict.signal_id} — this is a leakage probe, not a result."
+            )
 
 
 def load_validation_inputs(paths):
