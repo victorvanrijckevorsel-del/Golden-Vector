@@ -15,12 +15,18 @@ import pandas as pd
 
 from golden_vector.common.parquet import read_optional_parquet, write_parquet_atomic
 from golden_vector.common.strings import normalize_ticker
-from golden_vector.contracts.config_models import AppConfig, UniverseTicker
+from golden_vector.contracts.config_models import (
+    SIGNAL_AREA_DTE_MAX as _SIGNAL_AREA_DTE_MAX,
+    SIGNAL_AREA_DTE_MIN as _SIGNAL_AREA_DTE_MIN,
+    AppConfig,
+    UniverseTicker,
+)
 from golden_vector.hedge._helpers import as_float, row_float, rows_by_ticker_series
 from golden_vector.hedge.options_liquidity import OptionContractMetrics
 
-SIGNAL_AREA_DTE_MIN = 45
-SIGNAL_AREA_DTE_MAX = 150
+# Shared with the config validator (signal band must overlap this window).
+SIGNAL_AREA_DTE_MIN = _SIGNAL_AREA_DTE_MIN
+SIGNAL_AREA_DTE_MAX = _SIGNAL_AREA_DTE_MAX
 SIGNAL_AREA_DELTA_MIN = 0.10
 SIGNAL_AREA_DELTA_MAX = 0.35
 DELTA_BUCKETS: tuple[float, ...] = (0.10, 0.25, 0.35)
@@ -198,7 +204,16 @@ def _summary_row(
         ticker,
         signal_horizon_days=signal_horizon,
     )
-    history_depth = int(len(history_for_ticker.index))
+    # Depth counts USABLE observations (non-null ATM IV) — the same series
+    # IV-rank consumes. Backfilled 90d rows carry no ATM IV, so counting raw
+    # rows would skip LIMITED_HISTORY while IV-rank still returns None
+    # (audit M1; plan Decision 2 promised calm LIMITED_HISTORY).
+    if "atm_iv" in history_for_ticker.columns:
+        history_depth = int(
+            pd.to_numeric(history_for_ticker["atm_iv"], errors="coerce").notna().sum()
+        )
+    else:
+        history_depth = 0
     min_history = int(app_config.hedge_readiness.option_signal_history_min_samples)
     atm_iv_signal = row_float(feature, f"atm_iv_{signal_horizon}d")
     iv_rv_ratio_signal = row_float(feature, f"iv_rv_ratio_{signal_horizon}d")
@@ -413,17 +428,22 @@ def _default_benchmark(
     return "GDX" if "GDX" in benchmarks else sorted(benchmarks)[0]
 
 
-def _signal_area_metrics(
+def _signal_quality_metrics(
     metrics: tuple[OptionContractMetrics, ...],
     *,
     app_config: AppConfig,
 ) -> tuple[OptionContractMetrics, ...]:
+    """Delta/IV sanity filter WITHOUT the signal-area DTE clamp.
+
+    The chart frames use this per configured horizon band — long-dated bands
+    (230/550) sit wholly outside the 45-150 signal area, so clamping there
+    would make their chart artifacts structurally empty (pre-ship audit H1).
+    """
+
     min_iv = float(app_config.hedge_readiness.candidate_min_implied_volatility)
     max_iv = float(app_config.hedge_readiness.candidate_max_implied_volatility)
     result = []
     for metric in metrics:
-        if not (SIGNAL_AREA_DTE_MIN <= metric.days_to_expiry <= SIGNAL_AREA_DTE_MAX):
-            continue
         if metric.underlying_price <= 0:
             continue
         if metric.implied_volatility is None or not (min_iv <= metric.implied_volatility <= max_iv):
@@ -435,6 +455,24 @@ def _signal_area_metrics(
             continue
         result.append(metric)
     return tuple(result)
+
+
+def _signal_area_metrics(
+    metrics: tuple[OptionContractMetrics, ...],
+    *,
+    app_config: AppConfig,
+) -> tuple[OptionContractMetrics, ...]:
+    """Signal-area contracts: quality filter PLUS the 45-150 DTE window.
+
+    Drives the published Signal/Activity/Quality lanes only — never the
+    per-horizon chart frames.
+    """
+
+    return tuple(
+        metric
+        for metric in _signal_quality_metrics(metrics, app_config=app_config)
+        if SIGNAL_AREA_DTE_MIN <= metric.days_to_expiry <= SIGNAL_AREA_DTE_MAX
+    )
 
 
 def _quote_coverage(metrics: tuple[OptionContractMetrics, ...]) -> float | None:
@@ -810,17 +848,20 @@ def _backfill_legacy_history(frame: pd.DataFrame) -> pd.DataFrame:
             {
                 **base,
                 "signal_horizon_days": 60,
-                "skew_residual": record.get("skew_residual_60d"),
-                "atm_iv": record.get("atm_iv_60d"),
-                "iv_rv_ratio": record.get("iv_rv_ratio"),
+                # as_float is NaN-safe; to_dict() yields float('nan') for
+                # missing values and `nan is not None` is True (audit H2).
+                "skew_residual": as_float(record.get("skew_residual_60d")),
+                "atm_iv": as_float(record.get("atm_iv_60d")),
+                "iv_rv_ratio": as_float(record.get("iv_rv_ratio")),
             }
         )
-        if record.get("skew_residual_90d") is not None:
+        residual_90d = as_float(record.get("skew_residual_90d"))
+        if residual_90d is not None:
             rows.append(
                 {
                     **base,
                     "signal_horizon_days": 90,
-                    "skew_residual": record.get("skew_residual_90d"),
+                    "skew_residual": residual_90d,
                     "atm_iv": None,
                     "iv_rv_ratio": None,
                 }
@@ -858,11 +899,14 @@ def _skew_curve_points_frame(
     rows: list[dict[str, Any]] = []
     horizons = tuple(app_config.hedge_readiness.display_horizons_days)
     for ticker, metrics in sorted(metrics_by_ticker.items()):
-        signal_metrics = _signal_area_metrics(metrics, app_config=app_config)
+        # Quality filter only — the per-horizon config band does the DTE
+        # scoping. Routing through the 45-150 signal area here would leave
+        # every long-dated horizon permanently empty (audit H1).
+        quality_metrics = _signal_quality_metrics(metrics, app_config=app_config)
         for horizon in horizons:
             lower, upper = _horizon_band(horizon, app_config)
             horizon_metrics = [
-                metric for metric in signal_metrics if lower <= metric.days_to_expiry <= upper
+                metric for metric in quality_metrics if lower <= metric.days_to_expiry <= upper
             ]
             for option_type in ("P", "C"):
                 side_metrics = [metric for metric in horizon_metrics if metric.option_type == option_type]
@@ -891,8 +935,16 @@ def _oi_strike_points_frame(
     app_config: AppConfig,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
+    bands = [
+        _horizon_band(horizon, app_config)
+        for horizon in app_config.hedge_readiness.display_horizons_days
+    ]
     for ticker, metrics in sorted(metrics_by_ticker.items()):
-        for metric in _signal_area_metrics(metrics, app_config=app_config):
+        for metric in _signal_quality_metrics(metrics, app_config=app_config):
+            # Cover every configured horizon band, not the 45-150 signal
+            # area — long-dated open interest must be visible (audit H1).
+            if not any(lower <= metric.days_to_expiry <= upper for lower, upper in bands):
+                continue
             rows.append(
                 {
                     "ticker": ticker,

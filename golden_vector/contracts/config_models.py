@@ -13,10 +13,22 @@ HORIZON_PATTERN = re.compile(r"^\d+[DMY]$")
 # Single source of truth for the default option DTE bands; the liquidity
 # layer's fallback and the config default must never diverge.
 DEFAULT_OPTION_DTE_BANDS: dict[int, tuple[int, int]] = {
-    60: (40, 74),
     90: (75, 104),
-    120: (105, 150),
+    180: (150, 209),
+    230: (210, 320),
+    550: (450, 650),
 }
+
+# Signal-area DTE window: the published Signal/Activity/Quality lanes only
+# read contracts in this range (hedge/option_signals.py imports these).
+# Lives here so the config validator can require the signal horizon's band
+# to overlap it without a contracts->hedge layering violation.
+SIGNAL_AREA_DTE_MIN = 45
+SIGNAL_AREA_DTE_MAX = 150
+
+# Targets above this are long-dated: optionability must then be pinned to
+# explicit core horizons or names missing a LEAPS quote degrade to "thin".
+LONG_DATED_TARGET_THRESHOLD_DAYS = 250
 
 
 class StrictConfigModel(BaseModel):
@@ -111,9 +123,11 @@ class BenchmarksConfig(StrictConfigModel):
 class HedgeReadinessConfig(StrictConfigModel):
     version: int = 2
     target_delta: float = -0.25
-    target_horizons_days: list[int] = Field(default_factory=lambda: [60, 90, 120], min_length=1)
+    target_horizons_days: list[int] = Field(
+        default_factory=lambda: [90, 180, 230, 550], min_length=1
+    )
     display_horizons_days: list[int] = Field(
-        default_factory=lambda: [60, 90, 120],
+        default_factory=lambda: [90, 180, 230, 550],
         min_length=1,
     )
     optionability_open_interest_threshold: int = 1000
@@ -193,12 +207,12 @@ class HedgeReadinessConfig(StrictConfigModel):
     # Signal-horizon policy (Milestone C1): Signal/Activity/Cost/IV-rank read
     # ONE explicit horizon so rows stay comparable. Candidate horizons
     # (target/display/dte_bands above) may grow long-dated independently.
-    option_signal_horizon_days: int = 60
+    option_signal_horizon_days: int = 90
     # Optionability policy: `directly_hedgeable` requires put-quote coverage at
     # these horizons only. Empty = all target horizons (legacy behavior);
     # MUST be set once long-dated horizons join target_horizons_days, or names
     # missing a LEAPS quote silently degrade to "thin".
-    optionability_core_horizons: list[int] = Field(default_factory=list)
+    optionability_core_horizons: list[int] = Field(default_factory=lambda: [90, 180])
 
     @field_validator("target_delta")
     @classmethod
@@ -210,16 +224,46 @@ class HedgeReadinessConfig(StrictConfigModel):
     @model_validator(mode="after")
     def valid_horizon_policies(self) -> "HedgeReadinessConfig":
         targets = set(self.target_horizons_days)
-        if self.option_signal_horizon_days not in targets:
+        display = set(self.display_horizons_days)
+        signal = self.option_signal_horizon_days
+        if signal not in targets:
             raise ValueError(
                 "option_signal_horizon_days must be one of target_horizons_days "
-                f"({sorted(targets)}); got {self.option_signal_horizon_days}."
+                f"({sorted(targets)}); got {signal}."
+            )
+        # Audit M2a: the Direction lane keys skew columns by DISPLAY horizons;
+        # a signal horizon outside them silently renders every row UNAVAILABLE.
+        if signal not in display:
+            raise ValueError(
+                "option_signal_horizon_days must be one of display_horizons_days "
+                f"({sorted(display)}); got {signal}."
+            )
+        # Audit M2b: displayed-but-never-computed horizons yield all-None
+        # skew/IV columns — features are computed for target horizons only.
+        not_computed = display - targets
+        if not_computed:
+            raise ValueError(
+                "display_horizons_days must be a subset of target_horizons_days; "
+                f"not computed: {sorted(not_computed)}."
             )
         unknown_core = set(self.optionability_core_horizons) - targets
         if unknown_core:
             raise ValueError(
                 "optionability_core_horizons must be a subset of target_horizons_days; "
                 f"unknown: {sorted(unknown_core)}."
+            )
+        # Audit M2c: with long-dated targets, empty core horizons silently
+        # degrade every name missing a LEAPS quote to "thin" — the footgun
+        # the plan resolved as prevented must be a validation error.
+        if (
+            max(targets) > LONG_DATED_TARGET_THRESHOLD_DAYS
+            and not self.optionability_core_horizons
+        ):
+            raise ValueError(
+                "optionability_core_horizons must be set when long-dated targets "
+                f"(> {LONG_DATED_TARGET_THRESHOLD_DAYS}d) are configured; "
+                "empty means ALL targets and would degrade names missing a "
+                "long-dated quote to 'thin'."
             )
         missing_bands = [
             horizon
@@ -231,6 +275,17 @@ class HedgeReadinessConfig(StrictConfigModel):
                 "Every display horizon needs an option_dte_bands entry; "
                 f"missing: {missing_bands}."
             )
+        # Audit L5: the Signal/Activity/Quality lanes read signal-area
+        # contracts (45-150 DTE); a signal horizon whose band lies wholly
+        # outside it would mix incompatible lanes.
+        signal_band = self.option_dte_bands.get(signal)
+        if signal_band is not None:
+            lower, upper = int(signal_band[0]), int(signal_band[1])
+            if upper < SIGNAL_AREA_DTE_MIN or lower > SIGNAL_AREA_DTE_MAX:
+                raise ValueError(
+                    f"The signal horizon's DTE band [{lower}, {upper}] must overlap "
+                    f"the signal area [{SIGNAL_AREA_DTE_MIN}, {SIGNAL_AREA_DTE_MAX}]."
+                )
         return self
 
     @field_validator(

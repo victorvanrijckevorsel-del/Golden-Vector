@@ -184,8 +184,10 @@ def test_hedge_readiness_config_accepts_defaults():
         {
             "version": 2,
             "target_delta": -0.25,
-            "target_horizons_days": [30, 60, 90],
+            "target_horizons_days": [30, 60, 90, 120],
             "display_horizons_days": [30, 60, 90, 120],
+            "option_signal_horizon_days": 90,
+            "optionability_core_horizons": [60, 90],
             "optionability_open_interest_threshold": 1000,
             "implied_move_max_spread_pct": 0.35,
             "implied_move_min_open_interest": 1,

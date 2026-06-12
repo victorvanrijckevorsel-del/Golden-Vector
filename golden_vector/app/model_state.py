@@ -97,6 +97,10 @@ class OptionPublishBlock:
 
     blockers: tuple[str, ...] = ()
     market_session: str = "UNKNOWN"  # OPEN | CLOSED | UNKNOWN
+    # Set by inheritance from a previous UNAVAILABLE domain so rebound
+    # publishes keep the original informative reason instead of re-deriving
+    # a generic one from stub entries (audit N3).
+    inherited_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1054,6 +1058,11 @@ def _inherited_option_publish_block(
     return OptionPublishBlock(
         blockers=tuple(_message_list(domain.get("blockers"))),
         market_session=_clean_string(domain.get("market_session")) or "UNKNOWN",
+        inherited_reason=(
+            _clean_string(domain.get("reason"))
+            if status == OPTION_FRESHNESS_UNAVAILABLE
+            else None
+        ),
     )
 
 
@@ -1165,13 +1174,14 @@ def _resolve_option_carry_forward(
 
 
 def _schema_version_matches(value: object) -> bool:
+    # Strict parity with the serve reader's gate (audit N2): "3" or "3.0"
+    # match version 3; "3.9" must not.
     text = _clean_string(value)
     if not text:
         return False
-    try:
-        return int(float(text)) == int(OPTION_ARTIFACT_SCHEMA_VERSION)
-    except (TypeError, ValueError):
-        return False
+    if text.endswith(".0"):
+        text = text[:-2]
+    return text == str(OPTION_ARTIFACT_SCHEMA_VERSION)
 
 
 def _carried_option_as_of_date(
@@ -1260,12 +1270,28 @@ def _freshness_domains(
         required_usable = all(
             artifacts[name].get("usable") for name in REQUIRED_OPTION_ARTIFACT_NAMES
         )
-        if required_usable:
+        # Audit M3: OK must also mean CURRENT schema — otherwise a publisher
+        # running over pre-bump artifacts claims OK while the serve reader
+        # fails loud on the same files (dishonest split-brain).
+        required_current_schema = all(
+            _schema_version_matches(artifacts[name].get("schema_version"))
+            for name in REQUIRED_OPTION_ARTIFACT_NAMES
+        )
+        if required_usable and required_current_schema:
             option_domain = {
                 "status": OPTION_FRESHNESS_OK,
                 "source_run_id": _first_option_source_run_id(artifacts),
                 "as_of_date": _option_artifact_as_of_date(paths=paths, artifacts=artifacts)
                 or _clean_string(artifacts["options"].get("as_of_date")),
+            }
+        elif required_usable:
+            option_domain = {
+                "status": OPTION_FRESHNESS_UNAVAILABLE,
+                "reason": (
+                    "Option artifacts on disk predate the current schema "
+                    f"(v{OPTION_ARTIFACT_SCHEMA_VERSION}); run python main.py "
+                    "refresh to rebuild them."
+                ),
             }
         else:
             option_domain = {
@@ -1285,7 +1311,8 @@ def _freshness_domains(
     else:
         option_domain = {
             "status": OPTION_FRESHNESS_UNAVAILABLE,
-            "reason": carry_failure
+            "reason": option_publish_block.inherited_reason
+            or carry_failure
             or "No verified prior option artifact set is available.",
             "market_session": option_publish_block.market_session,
             "blockers": list(option_publish_block.blockers),
