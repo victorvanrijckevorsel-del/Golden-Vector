@@ -149,6 +149,23 @@ def _price_basis(frame: pd.DataFrame) -> pd.Series:
                 basis.notna(),
                 pd.to_numeric(frame[column], errors="coerce"),
             )
+    # Benchmark histories (GDX/GDXJ) are standardized as USD-currency frames
+    # with LOCAL price columns only — they skip the FX step that writes the
+    # *_usd columns. Without this currency-guarded fallback their weekly
+    # returns are all-null and every rel-vs-GDX metric silently dies
+    # (Lab groundwork survey; live Tool C bug).
+    if basis.isna().all() and "currency" in frame.columns:
+        currencies = {
+            str(value).strip().upper()
+            for value in frame["currency"].dropna().unique()
+        }
+        if currencies == {"USD"}:
+            for column in ("adj_close_local", "close_local"):
+                if column in frame.columns:
+                    basis = basis.where(
+                        basis.notna(),
+                        pd.to_numeric(frame[column], errors="coerce"),
+                    )
     return basis
 
 

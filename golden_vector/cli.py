@@ -3408,6 +3408,22 @@ def _run_refresh_unlocked(
         if option_freshness is not None and option_freshness["status"] != "OK":
             print(f"Option data: {option_freshness['status']} - {option_freshness['message']}")
 
+    # Lab point-in-time vintage recorder: option/fundamentals fields are not
+    # backtestable retroactively, so each refresh snapshots them forward.
+    # Best-effort — a vintage failure must never fail the refresh.
+    try:
+        from golden_vector.lab.vintages import record_vintages
+
+        vintage_results = record_vintages(paths)
+        appended = sum(item.rows_appended for item in vintage_results)
+        print()
+        print(
+            f"Lab vintages recorded: +{appended} rows across "
+            f"{len(vintage_results)} sources."
+        )
+    except Exception as exc:
+        print(f"Lab vintage recording skipped: {exc}")
+
     print()
     print("== Refresh complete. Operational status: ==")
     return run_status(paths)
