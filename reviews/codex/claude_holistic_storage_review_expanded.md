@@ -246,10 +246,16 @@ artifacts; pure serve-renders-backend-columns.
 
 ## 7. Re-prioritized roadmap (supersedes Codex §Recommended Roadmap)
 
-1. **Now (this session):** N-H1 vintage integrity + cleanup; N-H4 volatility
-   fork; N-H3 $0 headline; N-H2 IV-history guard; N-H5 prune chain
-   protection; N-H6 + H2 shared isfinite validator; M1/M5 atomic writes;
-   lab atomic writes + ledger torn-line tolerance; gitignore data/lab.
+1. **Now (this session) — ✅ ALL FIXED, four commits:**
+   N-H1 vintage integrity (manifest-gated sources, option freshness must be
+   OK, per-source isolation, contaminated stores deleted; verified live:
+   "skipped: option freshness is UNAVAILABLE") · N-H4 volatility fork
+   deleted → ONE pipeline classifier + regression tests · N-H3 headline
+   keeps None → renders "—" · N-H2 IV-history fail-loud + shrink guard ·
+   N-H5 pruner never deletes chain-bearing run dirs + only stamped dirs are
+   candidates · N-H6+H2 shared `require_finite` at all four input
+   boundaries · M1 atomic foundation manifest · M5 atomic CSVs · lab
+   atomic writes + torn-ledger quarantine · data/lab gitignored.
 2. **Next:** vintage backfill from run-stamped snapshots (e); beta_gap
    build_and_save entrypoint; serve guardrail walker for all 28 modules;
    portfolio-aware alignment; detail-page banner; delete lenses.py.
