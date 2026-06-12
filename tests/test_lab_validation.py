@@ -477,3 +477,95 @@ def test_e3_orientation_negative_direction_stored_positive_when_working():
     raw = v.spearman_ic(ranks, outcome)
     assert raw == pytest.approx(-1.0)
     assert (-1) * raw == pytest.approx(1.0)  # stored direction
+
+
+def test_future_injection_pit_canary():
+    """Codex round-2 MED-2: latest-period parity cannot prove the no-future
+    boundary (at the latest date, full history == history<=t). This injects
+    EXTREME future weekly rows after a HISTORICAL t and asserts the Tool C
+    reconstruction at t is unchanged — directly proving it ignores the future."""
+
+    from golden_vector.app.paths import ProjectPaths
+
+    paths = ProjectPaths.discover()
+    if not paths.latest_tool_a_structural_metrics_path.exists():
+        pytest.skip("no structural panel")
+    ctx = v.build_tool_c_recon_context(paths)
+    grid = v.build_as_of_grid(ctx.panel)
+    if len(grid) < 6:
+        pytest.skip("not enough folds")
+    t = grid[len(grid) // 2]  # a mid-history fold with a full cross-section
+
+    before = v.reconstruct_tool_c_scores_at(t, ctx).set_index("ticker").sort_index()
+    if before.empty:
+        pytest.skip("no reconstruction at chosen t")
+
+    # Append absurd future weekly rows (after t) for every ticker.
+    future_periods = pd.period_range(t + 1, t + 30, freq="W-FRI")
+    injected = []
+    for ticker in ctx.weekly_returns["ticker"].unique():
+        for p in future_periods:
+            injected.append(
+                {
+                    "ticker": ticker,
+                    "week_period": str(p),
+                    "stock_log_ret": 5.0,  # absurd; would wreck any leaked stat
+                    "gold_log_ret": -5.0,
+                    "gdx_log_ret": 5.0,
+                    "gdxj_log_ret": 5.0,
+                    "period": p,
+                }
+            )
+    poisoned = v.ToolCReconContext(
+        panel=ctx.panel,
+        weekly_returns=pd.concat([ctx.weekly_returns, pd.DataFrame(injected)], ignore_index=True),
+        structural_weekly=ctx.structural_weekly,
+        app_config=ctx.app_config,
+    )
+    after = v.reconstruct_tool_c_scores_at(t, poisoned).set_index("ticker").sort_index()
+
+    common = before.index.intersection(after.index)
+    assert len(common) >= 15
+    for col in ("tool_c_downside_score", "tool_c_upside_score"):
+        b = pd.to_numeric(before[col], errors="coerce").reindex(common)
+        a = pd.to_numeric(after[col], errors="coerce").reindex(common)
+        both = b.notna() & a.notna()
+        assert float((b[both] - a[both]).abs().max()) < 1e-9, f"{col} leaked future data"
+
+
+def test_e3_negative_orientation_full_gate_plumbing():
+    """Codex round-2 NIT-1: a fragile ranking (high rank -> WORST forward
+    outcome) must pass E3's direction=-1 plumbing with POSITIVE stored metrics;
+    a perverse ranking (high rank -> BEST outcome) must store negative."""
+
+    grid = [pd.Period("2015-01-09", freq="W-FRI") + 26 * i for i in range(20)]
+    tickers = [f"T{i}" for i in range(18)]
+    # fragile: rank i -> forward outcome -i (perfectly fragile); plus tiny noise
+    rng = np.random.default_rng(3)
+    ranks_by_t = {t: pd.Series({tk: float(i) for i, tk in enumerate(tickers)}) for t in grid}
+    out_by_t = {
+        t: {tk: -float(i) + rng.normal(0, 0.01) for i, tk in enumerate(tickers)}
+        for t in grid
+    }
+
+    def rank_fn(t):
+        return ranks_by_t[t]
+
+    def outcome_fn(ticker, t, split):
+        # split halves still rank-consistent
+        return out_by_t[t][ticker]
+
+    verdict, _ = v._validity_experiment(
+        signal_id="e3test", claim="c", grid=grid, spread_gate=0.0, direction=-1,
+        rank_fn=rank_fn, outcome_fn=outcome_fn,
+    )
+    assert verdict.mean_ic is not None and verdict.mean_ic > 0.9  # stored POSITIVE
+    assert verdict.share_folds_directional == pytest.approx(1.0)
+
+    # perverse: high rank -> BEST outcome -> stored NEGATIVE under direction=-1
+    out_perverse = {t: {tk: float(i) for i, tk in enumerate(tickers)} for t in grid}
+    perverse, _ = v._validity_experiment(
+        signal_id="e3test", claim="c", grid=grid, spread_gate=0.0, direction=-1,
+        rank_fn=rank_fn, outcome_fn=lambda tk, t, s: out_perverse[t][tk],
+    )
+    assert perverse.mean_ic is not None and perverse.mean_ic < -0.9
