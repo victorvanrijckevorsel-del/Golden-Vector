@@ -58,8 +58,15 @@ What the failure teaches (this is the valuable part):
 
 ## Follow-ups
 
-- Serve surface for the dial table (backend artifact exists; pages render
-  only) — candidate for the Lab page milestone.
+- ~~Serve surface for the dial table~~ **DONE 2026-06-12: `/lab` workspace
+  page.** Backend emits `rank_in_bucket` (one rank column), `bucket_label`,
+  and alphas converted to simple relative outperformance (exp−1, exact for
+  medians/quantiles) at artifact build time; `serve/lab_data.py` +
+  `serve/overview_lab.py` are render-only (static-scan guardrail test
+  enforces it, cloned from the Tool-D pattern); insufficient-history rows
+  render with NO numbers; survivor-only caveat + episode-adjusted-N note in
+  the page banner; `python -m golden_vector.lab.conditional_dial` rebuilds
+  the artifact + provenance meta.
 - Optional next registered experiment: per-regime (up vs down) beta split,
   ONLY if Emanuel wants it — the ledger bar rises with each trial.
 - Dead-miner registry (D2) before any confirmatory claims.
