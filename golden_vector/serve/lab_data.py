@@ -27,6 +27,9 @@ class LabDialData:
     buckets: list[tuple[str, str]] = field(default_factory=list)
     rows: list[dict[str, Any]] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
+    # "MISSING" (not built yet) vs "CORRUPT" (built but unreadable) — for a
+    # decision-support surface these must not look identical (Codex MED-3).
+    error_status: str | None = None
 
 
 def load_lab_dial_data(
@@ -36,15 +39,15 @@ def load_lab_dial_data(
 ) -> LabDialData:
     table_path = lab_dir(paths) / DIAL_TABLE_FILENAME
     if not table_path.exists():
-        return LabDialData(available=False)
+        return LabDialData(available=False, error_status="MISSING")
     try:
         frame = pd.read_parquet(table_path)
     except Exception:
-        # Optional research panel: a torn/corrupt artifact degrades to the
-        # "not built yet" notice instead of a 500 on every request.
-        return LabDialData(available=False)
+        # Built but unreadable: surface CORRUPT, not "not built yet" — corrupt
+        # means rebuild/investigate, missing means build.
+        return LabDialData(available=False, error_status="CORRUPT")
     if frame.empty:
-        return LabDialData(available=False)
+        return LabDialData(available=False, error_status="MISSING")
 
     bucket_pairs: list[tuple[str, str]] = []
     seen: set[str] = set()

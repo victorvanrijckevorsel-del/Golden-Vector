@@ -25,10 +25,17 @@ def _render_lab_overview_page(data: LabDialData, *, selected_bucket: str) -> str
     )
 
     if not data.available:
-        body.append(
-            "<div class=\"flash flash-warning\">Lab artifacts are not built yet. "
-            "Run <code>python -m golden_vector.lab.conditional_dial</code> first.</div>"
-        )
+        if data.error_status == "CORRUPT":
+            body.append(
+                "<div class=\"flash flash-warning\">Lab artifact is corrupt and "
+                "could not be read. Rebuild it: "
+                "<code>python -m golden_vector.lab.conditional_dial</code>.</div>"
+            )
+        else:
+            body.append(
+                "<div class=\"flash flash-warning\">Lab artifacts are not built yet. "
+                "Run <code>python -m golden_vector.lab.conditional_dial</code> first.</div>"
+            )
         return _page_shell(
             "Lab - Golden Vector Workspace", "".join(body), active_nav="lab"
         )

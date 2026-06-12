@@ -21,6 +21,7 @@ Design invariants enforced in code (spec §1):
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -39,7 +40,7 @@ MIN_FORWARD_WEEKS = 20  # of 26 for a realized-beta label
 STABILITY_LAG_PERIODS = 52  # E1a: t vs t+52 (non-overlapping 12M windows)
 
 INCONCLUSIVE_CEILING = 0.30  # split-half below this => INCONCLUSIVE, not NOT SUPPORTED
-SURVIVOR_QUALIFIER = "exploratory — survivor-only universe"
+SURVIVOR_QUALIFIER = "exploratory - survivor-only universe"
 
 # Gate thresholds — these MUST match the registered ledger configs (a drift
 # test asserts it). Changing one here without a new registered variant is the
@@ -440,7 +441,7 @@ class BaselineSpec:
     beaten_line: str  # appended VERBATIM when the core does NOT beat it
     kind: str  # 'single_window' | 'trailing_beta' | 'rank_fn'
     window: str = "12M"
-    rank_fn: object = None  # (t) -> pd.Series, for kind='rank_fn'
+    rank_fn: Callable[[pd.Period], pd.Series] | None = None  # for kind='rank_fn'
 
 
 def _validity_experiment(
@@ -458,8 +459,8 @@ def _validity_experiment(
     direction: int = 1,
     min_weeks: int = MIN_FORWARD_WEEKS,
     baselines: list[BaselineSpec] | None = None,
-    rank_fn: object = None,
-    outcome_fn: object = None,
+    rank_fn: Callable[[pd.Period], pd.Series] | None = None,
+    outcome_fn: Callable[[str, pd.Period, str | None], float | None] | None = None,
 ) -> tuple[ExperimentVerdict, list[FoldOutcome]]:
     """Shared engine for 'rank vs forward outcome' tests.
 
@@ -620,7 +621,7 @@ def run_e1b(panel, ticker_weekly, grid, weight_map):
                 label="single_12m_window",
                 beaten_line=(
                     "A simpler 12M-window beta ranked as well or better "
-                    "(paired p ≥ 0.05); the multi-window core adds no measured edge."
+                    "(paired p >= 0.05); the multi-window core adds no measured edge."
                 ),
                 kind="single_window",
                 window="12M",
@@ -629,7 +630,7 @@ def run_e1b(panel, ticker_weekly, grid, weight_map):
                 label="trailing_26w_beta",
                 beaten_line=(
                     "A simpler 26-week trailing beta ranked as well or better "
-                    "(paired p ≥ 0.05); the longer window adds no measured edge."
+                    "(paired p >= 0.05); the longer window adds no measured edge."
                 ),
                 kind="trailing_beta",
             ),
@@ -655,7 +656,7 @@ def run_e2(panel, ticker_weekly, grid, weight_map):
                 label="trailing_26w_down_beta",
                 beaten_line=(
                     "A simpler 26-week trailing down-beta ranked as well or better "
-                    "(paired p ≥ 0.05); the structural core adds no measured edge."
+                    "(paired p >= 0.05); the structural core adds no measured edge."
                 ),
                 kind="trailing_beta",
             ),
@@ -738,7 +739,7 @@ def run_e3(ctx: ToolCReconContext, ticker_weekly, grid, weight_map):
                 label="down_beta_core_only",
                 beaten_line=(
                     "The single down-beta component ranked as well as the "
-                    "6-component composite (paired p ≥ 0.05)."
+                    "6-component composite (paired p >= 0.05)."
                 ),
                 kind="rank_fn",
                 rank_fn=_down_beta_core_rank_fn(ctx, weight_map),
@@ -769,7 +770,7 @@ def run_e3b(ctx: ToolCReconContext, ticker_weekly, grid, weight_map):
                 label="up_beta_core_only",
                 beaten_line=(
                     "The single up-beta component ranked as well as the composite "
-                    "(paired p ≥ 0.05)."
+                    "(paired p >= 0.05)."
                 ),
                 kind="rank_fn",
                 rank_fn=_down_beta_core_rank_fn(ctx, weight_map, column="up_beta"),
@@ -801,15 +802,7 @@ def build_tool_c_recon_context(paths) -> ToolCReconContext:
     from golden_vector.model.structural import build_structural_weekly_series
 
     cfg = load_app_config(paths)
-    panel = _panel_with_periods(
-        pd.read_parquet(
-            sorted(
-                glob.glob(
-                    str(paths.data_dir / "intermediate" / "tool_a_structural" / "*latest*.parquet")
-                )
-            )[0]
-        )
-    )
+    panel = _panel_with_periods(pd.read_parquet(paths.latest_tool_a_structural_metrics_path))
     gold = pd.read_parquet(sorted(glob.glob(str(paths.raw_gold_dir / "*.parquet")))[0])
     histories = {
         p.stem: pd.read_parquet(p)

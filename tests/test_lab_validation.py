@@ -301,16 +301,47 @@ def test_baseline_line_fires_when_a_baseline_matches_the_core():
     assert "ADDS NO MEASURED EDGE" in verdict.baseline_lines
 
 
-def test_robustness_slices_change_cadence_without_breaking():
-    """MED-2: the 52w grid uses a different fold cadence; the fixed cohort is a
-    subset of the universe. Neither should error."""
+def test_build_as_of_grid_step_param_changes_cadence():
+    """MED-4: the 52-period grid must actually use the step param and yield a
+    coarser cadence than the 26-period grid (exercises the real function)."""
 
-    panel, weekly, wmap = _synthetic_panel_and_weekly()
-    g26 = _test_grid(panel)
-    g52 = [g26[0]] + g26[2::2]  # coarser cadence proxy on synthetic data
+    from golden_vector.app.paths import ProjectPaths
+
+    paths = ProjectPaths.discover()
+    if not paths.latest_tool_a_structural_metrics_path.exists():
+        pytest.skip("no structural panel")
+    panel = v._panel_with_periods(pd.read_parquet(paths.latest_tool_a_structural_metrics_path))
+    g26 = v.build_as_of_grid(panel, step=26)
+    g52 = v.build_as_of_grid(panel, step=52)
     assert len(g52) < len(g26)
+    # consecutive 52-grid folds are ~52 periods apart
+    if len(g52) >= 2:
+        assert (g52[1] - g52[0]).n >= 40
+
+
+def test_fixed_cohort_is_a_subset():
+    panel, weekly, wmap = _synthetic_panel_and_weekly()
     cohort = v.fixed_cohort_panel(panel, before="2030-01-01")  # synthetic is 2012+
     assert cohort["ticker"].nunique() == panel["ticker"].nunique()
+    empty = v.fixed_cohort_panel(panel, before="2000-01-01")  # before any data
+    assert empty.empty
+
+
+def test_lab_dial_corrupt_vs_missing_status(tmp_path):
+    """MED-3: a corrupt artifact reports CORRUPT, a missing one MISSING."""
+
+    from golden_vector.serve.lab_data import load_lab_dial_data
+
+    class FakePaths:
+        data_dir = tmp_path
+
+    missing = load_lab_dial_data(FakePaths())  # type: ignore[arg-type]
+    assert not missing.available and missing.error_status == "MISSING"
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    (lab / "dial_table_13w_latest.parquet").write_text("not parquet", encoding="utf-8")
+    corrupt = load_lab_dial_data(FakePaths())  # type: ignore[arg-type]
+    assert not corrupt.available and corrupt.error_status == "CORRUPT"
 
 
 def test_reconstruction_parity_against_live_artifact():
@@ -334,7 +365,7 @@ def test_reconstruction_parity_against_live_artifact():
         pytest.skip("tool_a artifact lacks core columns")
     wmap = load_app_config(paths).app.scoring.structural_weight_map()
 
-    period = pd.Period(str(pd.to_datetime(tool_a["as_of_date"].iloc[0])), freq="W-FRI")
+    period = pd.Period(str(pd.to_datetime(tool_a["as_of_date"]).max()), freq="W-FRI")
     recon = v.reconstruct_cores_at(panel, period, column="structural_delta", weight_map=wmap)
     live = tool_a.set_index("ticker")["structural_delta_core"].dropna()
     common = recon.index.intersection(live.index)
@@ -355,7 +386,7 @@ def test_ledger_constants_match_registered_gates():
     by_id = {}
     for r in records:
         by_id[r.signal_id] = r.config  # last wins = latest registration
-    if "validation_e1b" not in by_id:
+    if "validation_e3b" not in by_id:
         pytest.skip("validation variants not registered in this environment")
     e1a, e1b, e2 = by_id["validation_e1a"], by_id["validation_e1b"], by_id["validation_e2"]
     g1a, g1b, g2 = e1a["gates"], e1b["gates"], e2["gates"]
@@ -366,6 +397,15 @@ def test_ledger_constants_match_registered_gates():
     assert g1b["share_folds_pos"] == v.SHARE_DIRECTIONAL_GATE
     assert g1b["spread_t"] == v.SPREAD_T_GATE
     assert g2["tercile_portfolio_spread_min"] == v.E2_SPREAD_GATE
+    # E3/E3b: orientation + gates pinned against the registry
+    e3, e3b = by_id["validation_e3"], by_id["validation_e3b"]
+    assert "< 0" in e3["direction"]  # downside score pinned NEGATIVE (most fragile)
+    assert e3["gates"]["neg_mean_ic_nw_t"] == v.NW_T_GATE
+    assert e3["gates"]["share_folds_neg"] == v.SHARE_DIRECTIONAL_GATE
+    assert e3["gates"]["spread_neg_t"] == v.SPREAD_T_GATE
+    assert "down_beta_core" in e3["baselines_paired_t2"][0]
+    assert e3b["gates"]["mean_ic_nw_t"] == v.NW_T_GATE
+    assert e3b["gates"]["share_folds"] == v.SHARE_DIRECTIONAL_GATE
 
 
 # --------------------------------------------- E3/E3b (Tool C reconstruction)
@@ -383,7 +423,7 @@ def test_tool_c_reconstruction_parity_against_live_artifact():
     live = pd.read_parquet(paths.latest_tool_c_snapshot_parquet_path)
     if "tool_c_downside_score" not in live.columns:
         pytest.skip("tool_c artifact lacks score columns")
-    period = pd.Period(str(pd.to_datetime(live["as_of_date"].iloc[0])), freq="W-FRI")
+    period = pd.Period(str(pd.to_datetime(live["as_of_date"]).max()), freq="W-FRI")
     ctx = v.build_tool_c_recon_context(paths)
     recon = v.reconstruct_tool_c_scores_at(period, ctx).set_index("ticker")
     livei = live.set_index("ticker")
