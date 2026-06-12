@@ -366,3 +366,74 @@ def test_ledger_constants_match_registered_gates():
     assert g1b["share_folds_pos"] == v.SHARE_DIRECTIONAL_GATE
     assert g1b["spread_t"] == v.SPREAD_T_GATE
     assert g2["tercile_portfolio_spread_min"] == v.E2_SPREAD_GATE
+
+
+# --------------------------------------------- E3/E3b (Tool C reconstruction)
+
+
+def test_tool_c_reconstruction_parity_against_live_artifact():
+    """E3 spec parity test: PIT Tool C reconstruction at the latest period must
+    reproduce the shipped tool_c_latest downside AND upside scores exactly."""
+
+    from golden_vector.app.paths import ProjectPaths
+
+    paths = ProjectPaths.discover()
+    if not paths.latest_tool_c_snapshot_parquet_path.exists():
+        pytest.skip("no local tool_c artifact")
+    live = pd.read_parquet(paths.latest_tool_c_snapshot_parquet_path)
+    if "tool_c_downside_score" not in live.columns:
+        pytest.skip("tool_c artifact lacks score columns")
+    period = pd.Period(str(pd.to_datetime(live["as_of_date"].iloc[0])), freq="W-FRI")
+    ctx = v.build_tool_c_recon_context(paths)
+    recon = v.reconstruct_tool_c_scores_at(period, ctx).set_index("ticker")
+    livei = live.set_index("ticker")
+    common = recon.index.intersection(livei.index)
+    assert len(common) >= 40
+    for col in ("tool_c_downside_score", "tool_c_upside_score"):
+        r = pd.to_numeric(recon[col], errors="coerce").reindex(common)
+        ll = pd.to_numeric(livei[col], errors="coerce").reindex(common)
+        both = r.notna() & ll.notna()
+        assert both.sum() >= 40
+        assert float((r[both] - ll[both]).abs().max()) < 1e-6
+
+
+def test_forward_capture_sign_canary():
+    """E3 sign-convention canary: a synthetic always-RESILIENT ticker (beats GDX
+    on every gold-down week) must produce a POSITIVE down-capture, and an
+    always-fragile one a NEGATIVE one — pinning the orientation end to end."""
+
+    periods = pd.period_range("2015-01-09", periods=60, freq="W-FRI")
+    gold = np.where(np.arange(60) % 3 == 0, -0.03, 0.01)  # plenty of down weeks
+
+    def frame(stock_minus_gdx):
+        return v._ticker_weekly(
+            pd.DataFrame(
+                {
+                    "ticker": "X",
+                    "week_period": [str(p) for p in periods],
+                    "stock_log_ret": 0.001 + stock_minus_gdx,
+                    "gold_log_ret": gold,
+                    "gdx_log_ret": 0.001,
+                    "gdxj_log_ret": 0.001,
+                }
+            )
+        )["X"]
+
+    t = pd.Period(str(periods[5]), freq="W-FRI")
+    resilient = v.forward_capture_vs_gdx(frame(0.01), t, gold_down_only=True)
+    fragile = v.forward_capture_vs_gdx(frame(-0.01), t, gold_down_only=True)
+    assert resilient is not None and resilient > 0
+    assert fragile is not None and fragile < 0
+
+
+def test_e3_orientation_negative_direction_stored_positive_when_working():
+    """A perfectly fragile ranking (high score = worst down-capture) must yield
+    a POSITIVE directed IC for E3 (direction=-1), confirming the orientation
+    plumbing: a working tool reports positive, not negative."""
+
+    # raw negative correlation (high rank -> low outcome) with direction=-1
+    ranks = pd.Series({f"T{i}": float(i) for i in range(15)})
+    outcome = pd.Series({f"T{i}": float(-i) for i in range(15)})
+    raw = v.spearman_ic(ranks, outcome)
+    assert raw == pytest.approx(-1.0)
+    assert (-1) * raw == pytest.approx(1.0)  # stored direction

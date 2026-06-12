@@ -438,63 +438,75 @@ def trailing_realized_beta(
 class BaselineSpec:
     label: str
     beaten_line: str  # appended VERBATIM when the core does NOT beat it
-    kind: str  # 'single_window' or 'trailing_beta'
+    kind: str  # 'single_window' | 'trailing_beta' | 'rank_fn'
     window: str = "12M"
+    rank_fn: object = None  # (t) -> pd.Series, for kind='rank_fn'
 
 
 def _validity_experiment(
     *,
     signal_id: str,
     claim: str,
-    panel: pd.DataFrame,
-    ticker_weekly: dict[str, pd.DataFrame],
+    panel: pd.DataFrame | None = None,
+    ticker_weekly: dict[str, pd.DataFrame] | None = None,
     grid: list[pd.Period],
-    weight_map: dict[str, float],
-    rank_column: str,
+    weight_map: dict[str, float] | None = None,
+    rank_column: str | None = None,
     gold_down_only: bool = False,
     gold_up_only: bool = False,
     spread_gate: float = 0.20,
     direction: int = 1,
     min_weeks: int = MIN_FORWARD_WEEKS,
     baselines: list[BaselineSpec] | None = None,
+    rank_fn: object = None,
+    outcome_fn: object = None,
 ) -> tuple[ExperimentVerdict, list[FoldOutcome]]:
-    """Shared engine for E1b/E2-style 'rank vs forward realized beta' tests.
+    """Shared engine for 'rank vs forward outcome' tests.
+
+    Default path (E1b/E2): rank = PIT weighted-median core of ``rank_column``;
+    outcome = forward realized beta. Pass ``rank_fn(t) -> Series`` and
+    ``outcome_fn(ticker, t, split) -> float|None`` to override (E3/E3b use the
+    PIT Tool C scores + forward down/up-capture).
 
     ``direction`` = +1 means higher rank should give higher forward outcome.
     Metrics are stored in the registered direction, so a pinned-negative
-    experiment reports positive when the tool works as claimed.
-
-    ``baselines`` are scored on the SAME folds/outcomes; a paired NW-t on the
-    per-fold (core IC − baseline IC) decides whether the core beats each one.
+    experiment (E3) reports positive when the tool works as claimed.
     """
 
     baselines = baselines or []
     folds: list[FoldOutcome] = []
-    # per-fold (core_ic, baseline_ic) for the paired comparisons
     paired: dict[str, list[tuple[float, float]]] = {b.label: [] for b in baselines}
+
+    def _rank(t: pd.Period) -> pd.Series:
+        if rank_fn is not None:
+            return rank_fn(t)
+        return reconstruct_cores_at(panel, t, column=rank_column, weight_map=weight_map)
+
+    def _outcome(ticker: str, t: pd.Period, split: str | None) -> float | None:
+        if outcome_fn is not None:
+            return outcome_fn(ticker, t, split)
+        g = ticker_weekly.get(ticker)
+        if g is None:
+            return None
+        return forward_realized_beta(
+            g, t, gold_down_only=gold_down_only, gold_up_only=gold_up_only,
+            split=split, min_weeks=min_weeks,
+        )
+
     for t in grid:
-        ranks = reconstruct_cores_at(panel, t, column=rank_column, weight_map=weight_map)
+        ranks = _rank(t)
         if len(ranks) < MIN_CROSS_SECTION:
             continue
         fwd: dict[str, float] = {}
         odd: dict[str, float] = {}
         even: dict[str, float] = {}
         for ticker in ranks.index:
-            g = ticker_weekly.get(ticker)
-            if g is None:
+            full = _outcome(ticker, t, None)
+            if full is None:
                 continue
-            beta = forward_realized_beta(
-                g, t, gold_down_only=gold_down_only, gold_up_only=gold_up_only, min_weeks=min_weeks
-            )
-            if beta is None:
-                continue
-            fwd[ticker] = beta
-            o = forward_realized_beta(
-                g, t, gold_down_only=gold_down_only, gold_up_only=gold_up_only, split="odd", min_weeks=min_weeks
-            )
-            e = forward_realized_beta(
-                g, t, gold_down_only=gold_down_only, gold_up_only=gold_up_only, split="even", min_weeks=min_weeks
-            )
+            fwd[ticker] = full
+            o = _outcome(ticker, t, "odd")
+            e = _outcome(ticker, t, "even")
             if o is not None and e is not None:
                 odd[ticker] = o
                 even[ticker] = e
@@ -520,13 +532,15 @@ def _validity_experiment(
             for b in baselines:
                 if b.kind == "single_window":
                     br = single_window_ranks(panel, t, column=rank_column, window=b.window)
+                elif b.kind == "rank_fn":
+                    br = b.rank_fn(t)
                 else:
                     br = pd.Series(
                         {
-                            tk: v
+                            tk: val
                             for tk in common
                             if (
-                                v := trailing_realized_beta(
+                                val := trailing_realized_beta(
                                     ticker_weekly[tk], t,
                                     gold_down_only=gold_down_only, min_weeks=min_weeks,
                                 )
@@ -649,7 +663,246 @@ def run_e2(panel, ticker_weekly, grid, weight_map):
     )
 
 
+# ---------------------------------------------------------------- E3 / E3b (Tool C)
+
+
+def forward_capture_vs_gdx(
+    g: pd.DataFrame,
+    t: pd.Period,
+    *,
+    gold_down_only: bool = False,
+    gold_up_only: bool = False,
+    min_weeks: int = 8,
+    split: str | None = None,
+) -> float | None:
+    """Per-week MEAN of (stock − GDX) log return over forward gold-down (or up)
+    weeks. Higher = held up / participated better. Mean, not sum, so coverage
+    does not confound behavior (spec §2-E3)."""
+
+    fwd = g[(g["period"] > t) & (g["period"] <= t + FORWARD_HORIZON_WEEKS)]
+    gold = pd.to_numeric(fwd["gold_log_ret"], errors="coerce")
+    stock = pd.to_numeric(fwd["stock_log_ret"], errors="coerce")
+    gdx = pd.to_numeric(fwd["gdx_log_ret"], errors="coerce")
+    mask = gold.notna() & stock.notna() & gdx.notna()
+    if gold_down_only:
+        mask &= gold < 0
+    if gold_up_only:
+        mask &= gold > 0
+    idx = np.where(mask.to_numpy())[0]
+    if split == "odd":
+        idx = idx[1::2]
+    elif split == "even":
+        idx = idx[0::2]
+    floor = min_weeks if split is None else max(2, min_weeks // 2)
+    if len(idx) < floor:
+        return None
+    return float((stock.to_numpy()[idx] - gdx.to_numpy()[idx]).mean())
+
+
+def _tool_c_rank_fn(ctx: ToolCReconContext, score_column: str):
+    def rank_fn(t: pd.Period) -> pd.Series:
+        scores = reconstruct_tool_c_scores_at(t, ctx).set_index("ticker")[score_column]
+        return pd.to_numeric(scores, errors="coerce").dropna()
+
+    return rank_fn
+
+
+def _down_beta_core_rank_fn(ctx: ToolCReconContext, weight_map: dict[str, float], column="down_beta"):
+    def rank_fn(t: pd.Period) -> pd.Series:
+        return reconstruct_cores_at(ctx.panel, t, column=column, weight_map=weight_map)
+
+    return rank_fn
+
+
+def run_e3(ctx: ToolCReconContext, ticker_weekly, grid, weight_map):
+    """Tool C DOWNSIDE composite: HIGH score = MOST FRAGILE (orientation pinned).
+    Registered direction is NEGATIVE — a working tool sends high-score names to
+    the WORST forward down-capture, so direction=-1 stores positive metrics."""
+
+    def outcome(ticker, t, split):
+        g = ticker_weekly.get(ticker)
+        if g is None:
+            return None
+        return forward_capture_vs_gdx(g, t, gold_down_only=True, split=split)
+
+    return _validity_experiment(
+        signal_id="validation_e3",
+        claim="Tool C downside rank identifies the most fragile miners when gold falls",
+        grid=grid,
+        spread_gate=0.0,  # magnitude descriptive (spec §2-E3); sign-gated below
+        direction=-1,
+        rank_fn=_tool_c_rank_fn(ctx, "tool_c_downside_score"),
+        outcome_fn=outcome,
+        baselines=[
+            BaselineSpec(
+                label="down_beta_core_only",
+                beaten_line=(
+                    "The single down-beta component ranked as well as the "
+                    "6-component composite (paired p ≥ 0.05)."
+                ),
+                kind="rank_fn",
+                rank_fn=_down_beta_core_rank_fn(ctx, weight_map),
+            ),
+        ],
+    )
+
+
+def run_e3b(ctx: ToolCReconContext, ticker_weekly, grid, weight_map):
+    """Tool C UPSIDE composite twin: HIGH score = MOST upside capture."""
+
+    def outcome(ticker, t, split):
+        g = ticker_weekly.get(ticker)
+        if g is None:
+            return None
+        return forward_capture_vs_gdx(g, t, gold_up_only=True, split=split)
+
+    return _validity_experiment(
+        signal_id="validation_e3b",
+        claim="Tool C upside rank identifies the miners that capture most when gold rallies",
+        grid=grid,
+        spread_gate=0.0,
+        direction=1,
+        rank_fn=_tool_c_rank_fn(ctx, "tool_c_upside_score"),
+        outcome_fn=outcome,
+        baselines=[
+            BaselineSpec(
+                label="up_beta_core_only",
+                beaten_line=(
+                    "The single up-beta component ranked as well as the composite "
+                    "(paired p ≥ 0.05)."
+                ),
+                kind="rank_fn",
+                rank_fn=_down_beta_core_rank_fn(ctx, weight_map, column="up_beta"),
+            ),
+        ],
+    )
+
+
 # ---------------------------------------------------------------- inputs
+
+
+@dataclass
+class ToolCReconContext:
+    """Prebuilt inputs for PIT Tool C reconstruction (built once, reused per fold)."""
+
+    panel: pd.DataFrame
+    weekly_returns: pd.DataFrame  # full, with a 'period' Period column
+    structural_weekly: pd.DataFrame  # build_structural_weekly_series output, full
+    app_config: object
+
+
+def build_tool_c_recon_context(paths) -> ToolCReconContext:
+    """Build the heavy reconstruction inputs once."""
+
+    import glob
+
+    from golden_vector.app.config import load_app_config
+    from golden_vector.features.weekly_returns import build_weekly_return_frame
+    from golden_vector.model.structural import build_structural_weekly_series
+
+    cfg = load_app_config(paths)
+    panel = _panel_with_periods(
+        pd.read_parquet(
+            sorted(
+                glob.glob(
+                    str(paths.data_dir / "intermediate" / "tool_a_structural" / "*latest*.parquet")
+                )
+            )[0]
+        )
+    )
+    gold = pd.read_parquet(sorted(glob.glob(str(paths.raw_gold_dir / "*.parquet")))[0])
+    histories = {
+        p.stem: pd.read_parquet(p)
+        for p in sorted(paths.intermediate_usd_equities_dir.glob("*.parquet"))
+    }
+    benchmarks = {
+        ticker: pd.read_parquet(paths.benchmarks_dir / f"{ticker}.parquet")
+        for ticker in ("GDX", "GDXJ")
+        if (paths.benchmarks_dir / f"{ticker}.parquet").exists()
+    }
+    weekly = build_weekly_return_frame(
+        normalized_equity_histories=histories, gold_history=gold, benchmark_histories=benchmarks
+    )
+    weekly = weekly.copy()
+    weekly["period"] = weekly["week_period"].apply(lambda s: pd.Period(str(s), freq="W-FRI"))
+
+    # Structural weekly series for the volatility diagnostics (built once; the
+    # trailing-window logic keys on the anchor as-of, so future weeks are
+    # ignored — PIT-safe).
+    pieces = []
+    for ticker, hist in sorted(histories.items()):
+        series, _ = build_structural_weekly_series(usd_equity_history=hist, gold_history=gold)
+        if not series.empty:
+            series = series.copy()
+            series["ticker"] = str(ticker).upper()
+            pieces.append(series)
+    structural_weekly = pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame()
+    return ToolCReconContext(
+        panel=panel, weekly_returns=weekly, structural_weekly=structural_weekly, app_config=cfg.app
+    )
+
+
+def reconstruct_tool_c_scores_at(t: pd.Period, ctx: ToolCReconContext) -> pd.DataFrame:
+    """PIT Tool C downside/upside scores at period ``t`` — the SHIPPED chain.
+
+    Mirrors ``model/tool_c.compute_tool_c_outputs`` exactly, with two PIT
+    truncations: the panel is sliced to t's snapshot, and the weekly frame is
+    truncated to week_period ≤ t before gold-regime + relative-behavior (those
+    scan the whole frame, so an untruncated frame would leak the future).
+    """
+
+    from golden_vector.features.gold_regime import build_gold_regime_frame
+    from golden_vector.features.relative_behavior import compute_relative_behavior_metrics
+    from golden_vector.model.pipeline import build_tool_a_outputs_from_metrics
+    from golden_vector.model.structural import compute_volatility_diagnostics
+    from golden_vector.model.tool_c import build_tool_c_output_frame
+
+    app = ctx.app_config
+    tool_c_cfg = app.tool_c
+
+    panel_t = ctx.panel[ctx.panel["week_period"] == t]
+    if panel_t.empty:
+        return pd.DataFrame(columns=["ticker", "tool_c_downside_score", "tool_c_upside_score"])
+    panel_t = panel_t.drop(columns=["as_of", "week_period"])
+
+    vol_diag = compute_volatility_diagnostics(
+        weekly_series=ctx.structural_weekly,
+        structural_window_metrics=panel_t,
+        scoring_config=app.scoring,
+    )
+    tool_a_t = build_tool_a_outputs_from_metrics(
+        structural_window_metrics=panel_t,
+        volatility_diagnostics=vol_diag,
+        app_config=app,
+        source_run_id="validation-recon",
+        snapshot_refresh_run_id="validation-recon",
+        restrict_to_latest_snapshot_dates=True,
+    )
+
+    weekly_t = ctx.weekly_returns[ctx.weekly_returns["period"] <= t].drop(columns=["period"])
+    gold_regimes_t = build_gold_regime_frame(
+        weekly_t,
+        rolling_weeks=tool_c_cfg.regime_rolling_weeks,
+        min_weeks=tool_c_cfg.regime_min_weeks,
+        downside_hit_rate_threshold=tool_c_cfg.downside_hit_rate_threshold,
+        upside_hit_rate_threshold=tool_c_cfg.upside_hit_rate_threshold,
+    )
+    relative_t = compute_relative_behavior_metrics(
+        weekly_returns=weekly_t,
+        gold_regimes=gold_regimes_t,
+        min_events=tool_c_cfg.min_events,
+        downside_hit_rate_threshold=tool_c_cfg.downside_hit_rate_threshold,
+        upside_hit_rate_threshold=tool_c_cfg.upside_hit_rate_threshold,
+    )
+    tool_c_t = build_tool_c_output_frame(
+        tool_a_latest=tool_a_t,
+        relative_metrics=relative_t,
+        config=tool_c_cfg,
+        source_run_id="validation-recon",
+    )
+    out = tool_c_t[["ticker", "tool_c_downside_score", "tool_c_upside_score"]].copy()
+    out["ticker"] = out["ticker"].astype(str)
+    return out
 
 
 def time_reversal_ic_contrast(
