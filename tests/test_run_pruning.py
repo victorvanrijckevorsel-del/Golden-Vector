@@ -317,3 +317,59 @@ def _write_model_state(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return payload
+
+
+def test_prune_runs_never_deletes_chain_bearing_or_operational_dirs(tmp_path):
+    """Expanded-review N-H5: full option-chain snapshots are the one
+    perishable dataset; a blocked publish leaves them orphaned (no model
+    state) and they must STILL survive prune. Operational log dirs are not
+    run dirs at all."""
+
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    tool_run = "20260612T000000Z-tool-a-current"
+    option_run = "20260612T000001Z-option-artifacts-current"
+    tool_path, option_path = _write_artifacts(
+        paths,
+        tool_run_id=tool_run,
+        option_run_id=option_run,
+    )
+    latest_payload = _write_model_state(
+        paths,
+        name="model_state_current.json",
+        generated_at="2026-06-12T00:00:00Z",
+        tool_path=tool_path,
+        option_path=option_path,
+        run_ids=(tool_run, option_run),
+    )
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(latest_payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    # Orphaned run dir (no model state references it) WITH chain snapshots.
+    chain_run = paths.runs_dir / "20260610T101747Z-update-data-orphan"
+    chain_dir = chain_run / "snapshots" / "options"
+    chain_dir.mkdir(parents=True)
+    (chain_dir / "NEM.parquet").write_text("full chain snapshot\n", encoding="utf-8")
+
+    # Orphaned run dir WITHOUT chains — this one is a legitimate candidate.
+    plain_run = paths.runs_dir / "20260610T101748Z-update-data-plain"
+    plain_run.mkdir(parents=True)
+    (plain_run / "metadata.json").write_text("{}", encoding="utf-8")
+
+    # Operational dirs that must never be candidates.
+    for name in ("acceptance_logs", "ui_refresh_logs"):
+        (paths.runs_dir / name).mkdir(parents=True)
+        (paths.runs_dir / name / "log.txt").write_text("log\n", encoding="utf-8")
+
+    report = prune_runs(paths, keep_model_states=1, apply=True)
+
+    assert chain_run.exists(), "chain-bearing run dir was deleted"
+    assert (chain_dir / "NEM.parquet").exists()
+    assert (paths.runs_dir / "acceptance_logs" / "log.txt").exists()
+    assert (paths.runs_dir / "ui_refresh_logs" / "log.txt").exists()
+    assert not plain_run.exists(), "plain orphan run dir should still prune"
+    candidate_paths = {candidate.path for candidate in report.candidates}
+    assert chain_run not in candidate_paths
+    assert (paths.runs_dir / "acceptance_logs") not in candidate_paths

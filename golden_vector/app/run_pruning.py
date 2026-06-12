@@ -301,6 +301,9 @@ def _artifact_file_candidates(paths: ProjectPaths) -> list[PruneCandidate]:
     return candidates
 
 
+_RUN_DIR_NAME_PATTERN = re.compile(r"^\d{8}T\d{6}Z-[A-Za-z0-9_.-]+$")
+
+
 def _run_dir_candidates(
     paths: ProjectPaths,
     *,
@@ -311,6 +314,16 @@ def _run_dir_candidates(
     candidates: list[PruneCandidate] = []
     for path in paths.runs_dir.iterdir():
         if not path.is_dir() or path.name in protected_run_ids:
+            continue
+        # Only run-id-stamped directories are run dirs. Operational dirs
+        # (acceptance_logs, ui_refresh_logs, ...) must never be candidates.
+        if not _RUN_DIR_NAME_PATTERN.match(path.name):
+            continue
+        # Full option-chain snapshots are the one PERISHABLE dataset (locked
+        # keep-full-chain decision): markets move on and the data cannot be
+        # refetched. A run whose publish was blocked has no model state and
+        # would otherwise be deletable with its chains.
+        if (path / "snapshots" / "options").exists():
             continue
         candidates.append(PruneCandidate(path=path, kind="run_dir", is_dir=True))
     return candidates

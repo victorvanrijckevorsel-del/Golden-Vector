@@ -13,7 +13,7 @@ from typing import Any, Protocol
 
 import pandas as pd
 
-from golden_vector.common.parquet import read_optional_parquet, write_parquet_atomic
+from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.common.strings import normalize_ticker
 from golden_vector.contracts.config_models import (
     SIGNAL_AREA_DTE_MAX as _SIGNAL_AREA_DTE_MAX,
@@ -168,7 +168,14 @@ def build_option_signal_artifacts(
 
 
 def load_option_signal_history(paths: _OptionSignalPaths) -> pd.DataFrame:
-    frame = read_optional_parquet(option_signal_history_path(paths))
+    # This file is the ONLY copy of the accumulated IV-rank input series.
+    # A missing file is a legitimate empty start; an EXISTING file that
+    # cannot be read must fail loud - read_optional_parquet would return
+    # empty and the next persist would silently wipe the whole history.
+    path = option_signal_history_path(paths)
+    if not path.exists():
+        return _normalize_history(pd.DataFrame())
+    frame = pd.read_parquet(path)
     return _normalize_history(frame)
 
 
@@ -179,7 +186,26 @@ def persist_option_signal_history(
 ) -> None:
     path = option_signal_history_path(paths)
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_parquet_atomic(_normalize_history(history), path, index=False)
+    normalized = _normalize_history(history)
+    # Shrink guard: the cumulative history may only grow in as-of dates.
+    # Refusing a shrinking write turns any silent-wipe bug upstream into a
+    # loud error instead of irreversible data loss.
+    if path.exists():
+        existing_dates = _distinct_as_of_dates(pd.read_parquet(path))
+        next_dates = _distinct_as_of_dates(normalized)
+        if next_dates < existing_dates:
+            raise ValueError(
+                "Refusing to overwrite option signal history: new history has "
+                f"{next_dates} distinct as-of dates, file on disk has "
+                f"{existing_dates}. This would destroy accumulated IV history."
+            )
+    write_parquet_atomic(normalized, path, index=False)
+
+
+def _distinct_as_of_dates(frame: pd.DataFrame) -> int:
+    if frame.empty or "as_of_date" not in frame.columns:
+        return 0
+    return int(frame["as_of_date"].astype(str).nunique())
 
 
 def _summary_row(

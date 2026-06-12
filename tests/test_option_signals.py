@@ -1,6 +1,7 @@
 from typing import Literal, cast
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.hedge.option_signals import (
@@ -469,4 +470,62 @@ def _metric(
         liquidity_tier="tradable",
         quote_flags=quote_flags,
         is_standard_monthly=True,
+    )
+
+
+def test_history_load_fails_loud_on_unreadable_existing_file(tmp_path):
+    """The history file is the only copy of the accumulated IV series; an
+    existing-but-unreadable file must raise, never return empty (the next
+    persist would silently wipe the history)."""
+
+    class FakePaths:
+        output_options_dir = tmp_path
+
+    from golden_vector.hedge.option_signals import (
+        load_option_signal_history,
+        option_signal_history_path,
+    )
+
+    # Missing file: legitimate empty start.
+    assert load_option_signal_history(FakePaths()).empty
+
+    option_signal_history_path(FakePaths()).write_text("not parquet", encoding="utf-8")
+    with pytest.raises(Exception):
+        load_option_signal_history(FakePaths())
+
+
+def test_history_persist_refuses_to_shrink_accumulated_dates(tmp_path):
+    class FakePaths:
+        output_options_dir = tmp_path
+
+    from golden_vector.hedge.option_signals import (
+        load_option_signal_history,
+        persist_option_signal_history,
+    )
+
+    def history_frame(dates):
+        return pd.DataFrame(
+            {
+                "ticker": ["NEM"] * len(dates),
+                "as_of_date": dates,
+                "signal_horizon_days": [90] * len(dates),
+                "atm_iv": [0.35] * len(dates),
+            }
+        )
+
+    persist_option_signal_history(
+        paths=FakePaths(), history=history_frame(["2026-06-10", "2026-06-11"])
+    )
+    # Growing is fine.
+    persist_option_signal_history(
+        paths=FakePaths(),
+        history=history_frame(["2026-06-10", "2026-06-11", "2026-06-12"]),
+    )
+    # Shrinking must refuse - that is the silent-wipe signature.
+    with pytest.raises(ValueError, match="destroy accumulated IV history"):
+        persist_option_signal_history(
+            paths=FakePaths(), history=history_frame(["2026-06-12"])
+        )
+    assert (
+        load_option_signal_history(FakePaths())["as_of_date"].astype(str).nunique() == 3
     )
