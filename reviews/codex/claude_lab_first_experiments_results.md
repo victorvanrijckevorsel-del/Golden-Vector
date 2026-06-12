@@ -70,3 +70,22 @@ What the failure teaches (this is the valuable part):
 - Optional next registered experiment: per-regime (up vs down) beta split,
   ONLY if Emanuel wants it — the ledger bar rises with each trial.
 - Dead-miner registry (D2) before any confirmatory claims.
+
+## Vintage backfill record — 2026-06-12
+
+One-time backfill from published run-stamped snapshots (newest file per
+as_of_date; every source file verified present in a historical model-state
+manifest, so each was the legitimately published state for its date —
+PIT-correct; v2 option fields recorded as they were then):
+
+- option_signal_summary: +6,886 rows (as-of 06-08, 06-09, 06-11)
+- tool_b: +17,534 rows (8 dates back to 2026-04-22; April generations carry
+  the sparser old field set — research reads select by field name)
+- tool_d: +11,723 rows (06-05 → 06-11)
+- option_trading_overview: nothing recoverable (stamped copies pruned)
+
+Caveat noted: a backfilled vintage_date equals the artifact's as_of_date,
+which can precede its publish timestamp by a few hours (e.g. tool_b
+generated 06-12 05:13 carries as_of 06-11). Immaterial at weekly research
+granularity; flagged for honesty. `recorded_at_utc` carries a "(backfill)"
+suffix so backfilled rows are distinguishable from live captures forever.
