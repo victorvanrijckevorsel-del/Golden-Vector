@@ -37,13 +37,13 @@ def build_forward_return_panel(
 
     pieces: list[pd.DataFrame] = []
     for ticker, group in weekly_frame.groupby("ticker", sort=True):
-        ordered = _reindex_contiguous_weeks(group)
+        ordered = reindex_contiguous_weeks(group)
         out = ordered[["ticker", "week_period"]].copy()
         for horizon in horizons_weeks:
             h = int(horizon)
-            out[f"fwd_log_ret_{h}w"] = _forward_sum(ordered["stock_log_ret"], h)
-            gdx_fwd = _forward_sum(ordered["gdx_log_ret"], h)
-            gdxj_fwd = _forward_sum(ordered["gdxj_log_ret"], h)
+            out[f"fwd_log_ret_{h}w"] = forward_sum(ordered["stock_log_ret"], h)
+            gdx_fwd = forward_sum(ordered["gdx_log_ret"], h)
+            gdxj_fwd = forward_sum(ordered["gdxj_log_ret"], h)
             out[f"fwd_alpha_gdx_{h}w"] = out[f"fwd_log_ret_{h}w"] - gdx_fwd
             out[f"fwd_alpha_gdxj_{h}w"] = out[f"fwd_log_ret_{h}w"] - gdxj_fwd
         pieces.append(out)
@@ -53,7 +53,7 @@ def build_forward_return_panel(
     return pd.concat(pieces, ignore_index=True)
 
 
-def _reindex_contiguous_weeks(group: pd.DataFrame) -> pd.DataFrame:
+def reindex_contiguous_weeks(group: pd.DataFrame) -> pd.DataFrame:
     """Insert NaN rows for any calendar week missing from the ticker's grid.
 
     The forward sum shifts over ROW positions; if a week were absent (not
@@ -65,6 +65,14 @@ def _reindex_contiguous_weeks(group: pd.DataFrame) -> pd.DataFrame:
 
     ordered = group.sort_values("week_period").reset_index(drop=True)
     periods = pd.PeriodIndex(ordered["week_period"].astype(str), freq="W-FRI")
+    if periods.has_duplicates:
+        # A duplicated week double-counts in positional window math and can
+        # mask a gap (lengths coincide) — never compute labels over it.
+        ticker = str(ordered["ticker"].iloc[0]) if "ticker" in ordered.columns else "?"
+        raise ValueError(
+            f"Duplicate week_period rows for ticker {ticker}; "
+            "label math requires one row per (ticker, week)."
+        )
     if len(periods) < 2:
         return ordered
     full_grid = pd.period_range(periods.min(), periods.max(), freq="W-FRI")
@@ -76,7 +84,7 @@ def _reindex_contiguous_weeks(group: pd.DataFrame) -> pd.DataFrame:
     return reindexed.reset_index(drop=True)
 
 
-def _forward_sum(series: pd.Series, horizon_weeks: int) -> pd.Series:
+def forward_sum(series: pd.Series, horizon_weeks: int) -> pd.Series:
     """Sum of weeks t+1..t+h; NA unless every one of the h weeks is present."""
 
     values = pd.to_numeric(series, errors="coerce")

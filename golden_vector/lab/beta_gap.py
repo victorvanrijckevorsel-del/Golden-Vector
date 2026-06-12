@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from golden_vector.lab.evaluation import mae_improvement_pct
+from golden_vector.lab.forward_returns import reindex_contiguous_weeks
 from golden_vector.lab.walk_forward import generate_folds
 
 FAST_HALFLIFE_WEEKS = 13
@@ -44,14 +45,14 @@ EXPERIMENT_CONFIG = {
     "slow_window_weeks": SLOW_WINDOW_WEEKS,
     "slow_min_periods": SLOW_MIN_PERIODS,
     "label_window_weeks": LABEL_WINDOW_WEEKS,
-    "shrinkage": "james_stein_positive_part_cross_sectional",
+    "shrinkage": "james_stein_positive_part_standardized_heteroscedastic_v2",
     "baselines": ["slow_beta_persists", "fast_beta_persists"],
     "gate": {
         "min_mae_improvement_pct_vs_both": GATE_MIN_IMPROVEMENT_PCT,
         "min_t_stat": GATE_MIN_T_STAT,
         "min_fold_win_rate": GATE_MIN_FOLD_WIN_RATE,
     },
-    "folds": {"min_train_weeks": 156, "test_weeks": 26},
+    "folds": {"min_train_weeks": 156, "test_weeks": 26, "step_weeks": 52},
 }
 
 
@@ -87,7 +88,7 @@ def build_beta_panel(weekly_frame: pd.DataFrame) -> pd.DataFrame:
 
     pieces: list[pd.DataFrame] = []
     for ticker, group in weekly_frame.groupby("ticker", sort=True):
-        ordered = group.sort_values("week_period").reset_index(drop=True)
+        ordered = reindex_contiguous_weeks(group)
         stock = pd.to_numeric(ordered["stock_log_ret"], errors="coerce").astype(float)
         gold = pd.to_numeric(ordered["gold_log_ret"], errors="coerce").astype(float)
 
@@ -120,12 +121,12 @@ def build_beta_panel(weekly_frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def apply_james_stein(panel: pd.DataFrame) -> pd.DataFrame:
-    """Cross-sectional positive-part James-Stein on the fast-slow gap, per week.
+    """Standardized heteroscedastic positive-part James-Stein, per week.
 
-    Shrinks the vector of per-ticker gaps toward zero by
-    c = max(0, 1 - (k-2) * mean(SE^2) / sum(gap^2)); the nowcast is then
-    slow_beta + c * gap. With k <= 2 names or degenerate gaps, c = 0 (pure
-    slow beta) — shrinking to the structural prior is the safe default.
+    Gaps are standardized by their own SEs before computing the shrink
+    factor (c = max(0, 1-(k-2)/sum((gap/SE)^2))). With k <= 2 names or
+    degenerate gaps, c = 0 (pure slow beta) — shrinking to the structural
+    prior is the safe default.
     """
 
     working = panel.copy()
@@ -138,9 +139,17 @@ def apply_james_stein(panel: pd.DataFrame) -> pd.DataFrame:
         gaps = (valid["fast_beta"] - valid["slow_beta"]).to_numpy(dtype=float)
         ses = valid["fast_beta_se"].to_numpy(dtype=float)
         k = len(gaps)
-        gap_energy = float(np.sum(gaps**2))
-        if k > 2 and gap_energy > 0:
-            shrink = max(0.0, 1.0 - (k - 2) * float(np.mean(ses**2)) / gap_energy)
+        # Standardized heteroscedastic positive-part JS: z_i = gap_i/SE_i,
+        # c = max(0, 1 - (k-2)/sum(z^2)), nowcast_i = slow_i + c*gap_i.
+        # The v1 homoscedastic form used mean(SE^2), which real SEs
+        # (spanning 160x across names) inflated so badly the nowcast
+        # collapsed to the slow baseline in ~half the weeks.
+        # SE -> 0 means infinite precision: z -> inf, c -> 1, no shrink.
+        safe_ses = np.maximum(ses, 1e-12)
+        z = gaps / safe_ses
+        z_energy = float(np.sum(z**2))
+        if k > 2 and z_energy > 0:
+            shrink = max(0.0, 1.0 - (k - 2) / z_energy)
         else:
             shrink = 0.0
         working.loc[valid.index, "beta_nowcast"] = (
@@ -166,6 +175,11 @@ def run_experiment(panel_with_nowcast: pd.DataFrame) -> BetaGapVerdict:
         label_horizon_weeks=LABEL_WINDOW_WEEKS,
         min_train_weeks=int(EXPERIMENT_CONFIG["folds"]["min_train_weeks"]),
         test_weeks=int(EXPERIMENT_CONFIG["folds"]["test_weeks"]),
+        # step = test + label horizon: adjacent folds' test LABEL windows
+        # are disjoint, so per-fold MAE differences are not serially
+        # correlated and the plain paired t is honest (the pre-registered
+        # "episode-adjusted" requirement).
+        step_weeks=int(EXPERIMENT_CONFIG["folds"]["step_weeks"]),
     )
     fold_results: list[FoldResult] = []
     for fold in folds:

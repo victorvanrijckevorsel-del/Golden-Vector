@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from golden_vector.lab.beta_gap import (
     apply_james_stein,
@@ -153,7 +152,7 @@ def test_run_experiment_passes_on_rigged_skillful_nowcast() -> None:
     """Structure check: a nowcast almost exactly equal to the label, with
     both baselines far off, must clear every gate."""
 
-    n, tickers = 300, 8
+    n, tickers = 500, 8
     rng = np.random.default_rng(9)
     rows = []
     for t_index, period in enumerate(_grid(n)):
@@ -237,7 +236,10 @@ def test_rank_in_bucket_ties_na_and_insufficient_ordering() -> None:
     assert order.index("TWIN_B") < order.index("WEAK")
     assert order[-1] == "SPARSE"
     assert bool(down.iloc[-1]["insufficient_history"])
-    assert list(down["rank_in_bucket"]) == list(range(1, len(down) + 1))
+    measured = down[~down["insufficient_history"]]
+    assert list(measured["rank_in_bucket"]) == list(range(1, len(measured) + 1))
+    # Degraded cells carry NA rank (house rule), never a displayable number.
+    assert down[down["insufficient_history"]]["rank_in_bucket"].isna().all()
 
 
 def test_config_sentinel_structural_invariants() -> None:

@@ -412,6 +412,10 @@ def _compute_feature_row(
         price_history=price_history,
         as_of_date=as_of_date,
         target_horizons_days=tuple(app_config.hedge_readiness.target_horizons_days),
+        option_dte_bands={
+            int(horizon): (int(band[0]), int(band[1]))
+            for horizon, band in app_config.hedge_readiness.option_dte_bands.items()
+        },
         optionability_core_horizons=tuple(
             app_config.hedge_readiness.optionability_core_horizons
         ),

@@ -76,11 +76,7 @@ def evaluate_predictions(
         if spread is not None:
             spreads.append(spread)
         hits.append(
-            float(
-                (
-                    np.sign(group[prediction_column]) == np.sign(group[label_column])
-                ).mean()
-            )
+            float((group[prediction_column] * group[label_column] > 0).mean())
         )
     if skipped_thin:
         notes.append(

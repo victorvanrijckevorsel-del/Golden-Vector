@@ -147,7 +147,13 @@ def build_tool_c_output_frame(
 
     output = base.merge(metrics, how="left", on="ticker")
     if "score_eligible" not in output.columns:
-        output["score_eligible"] = True
+        # Fail loud, never open: defaulting True would make every degraded
+        # ticker silently rank-eligible if Tool A ever drops/renames the
+        # column (degraded data is EXCLUDED from rankings, not flagged).
+        raise ValueError(
+            "Tool A input lacks the required score_eligible column; "
+            "rebuild Tool A before running Tool C."
+        )
     output["source_run_id"] = source_run_id
     output["source_tool_a_run_id"] = output.get("source_tool_a_run_id")
     output["snapshot_refresh_run_id"] = output.get("snapshot_refresh_run_id")

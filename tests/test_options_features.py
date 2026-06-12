@@ -183,3 +183,39 @@ def _contract(
 
 def _price_history() -> pd.DataFrame:
     return pd.DataFrame({"return_basis_usd": [0.001, -0.002, 0.003, -0.001] * 30})
+
+
+def test_horizon_features_respect_dte_bands():
+    """A 550d-labeled feature computed from a 162d expiry (the nearest
+    listed) is a mislabeled basis. With bands supplied, horizons whose band
+    holds no expiry stay None instead of borrowing a wrong-dated chain."""
+
+    chain = pd.read_parquet("tests/fixtures/options/aem_chain_20260529.parquet")
+    # The fixture's expiries sit near 30/60 DTE; ask for 60 and 550 with
+    # bands so only 60 has an in-band expiry.
+    features = compute_options_features(
+        target_horizons_days=(60, 550),
+        chain=chain,
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        price_history=_price_history(),
+        as_of_date=date(2026, 5, 29),
+        optionability_open_interest_threshold=100,
+        option_dte_bands={60: (45, 75), 550: (450, 650)},
+    )
+    assert features["call_iv_25d_60d"] is not None  # in-band control row
+    assert features["atm_iv_550d"] is None
+    assert features["iv_skew_550d"] is None
+    assert features["implied_move_550d"] is None
+
+    # Without bands the legacy nearest-expiry behavior is preserved.
+    legacy = compute_options_features(
+        target_horizons_days=(550,),
+        chain=chain,
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        price_history=_price_history(),
+        as_of_date=date(2026, 5, 29),
+        optionability_open_interest_threshold=100,
+    )
+    assert legacy["atm_iv_550d"] is not None

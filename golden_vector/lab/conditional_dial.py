@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from golden_vector.lab.forward_returns import _forward_sum
+from golden_vector.lab.forward_returns import forward_sum, reindex_contiguous_weeks
 from golden_vector.lab.walk_forward import effective_n
 
 DEFAULT_BUCKETS: list[tuple[str, float | None, float | None]] = [
@@ -37,7 +37,7 @@ DEFAULT_BUCKETS: list[tuple[str, float | None, float | None]] = [
 BUCKET_LABELS: dict[str, str] = {
     "gold_down_big": "Gold down more than 15%",
     "gold_down": "Gold down 5% to 15%",
-    "gold_flat": "Gold flat (within ±5%)",
+    "gold_flat": "Gold flat (−5% to +5%)",
     "gold_up": "Gold up 5% to 15%",
     "gold_up_big": "Gold up more than 15%",
 }
@@ -79,9 +79,15 @@ def build_dial_table(
     )
     episodes = episodes.dropna(subset=["bucket"])
 
-    # Pooled beat rate per bucket (across all tickers) = the EB prior mean.
+    # EB prior mean per bucket: mean of PER-TICKER means (equal ticker
+    # weight) — week-weighted pooling lets long-history tickers dominate
+    # the prior every cell is shrunk toward.
     pooled = (
-        episodes.groupby("bucket")["beat_gdx"].mean().to_dict()
+        episodes.groupby(["bucket", "ticker"])["beat_gdx"]
+        .mean()
+        .groupby("bucket")
+        .mean()
+        .to_dict()
     )
 
     cells: list[DialCell] = []
@@ -145,7 +151,10 @@ def build_dial_table(
         ascending=[True, True, False, True],
         na_position="last",
     )
-    table["rank_in_bucket"] = table.groupby("bucket").cumcount() + 1
+    table["rank_in_bucket"] = (table.groupby("bucket").cumcount() + 1).astype("Int64")
+    # Degraded cells get NA rank (house rule), not a number a page could
+    # render as if meaningful; they still sort last by construction.
+    table.loc[table["insufficient_history"], "rank_in_bucket"] = pd.NA
     return table.reset_index(drop=True)
 
 
@@ -154,10 +163,10 @@ def _episode_frame(weekly_frame: pd.DataFrame, *, horizon_weeks: int) -> pd.Data
 
     pieces: list[pd.DataFrame] = []
     for ticker, group in weekly_frame.groupby("ticker", sort=True):
-        ordered = group.sort_values("week_period").reset_index(drop=True)
-        stock_fwd = _forward_sum(ordered["stock_log_ret"], horizon_weeks)
-        gold_fwd = _forward_sum(ordered["gold_log_ret"], horizon_weeks)
-        gdx_fwd = _forward_sum(ordered["gdx_log_ret"], horizon_weeks)
+        ordered = reindex_contiguous_weeks(group)
+        stock_fwd = forward_sum(ordered["stock_log_ret"], horizon_weeks)
+        gold_fwd = forward_sum(ordered["gold_log_ret"], horizon_weeks)
+        gdx_fwd = forward_sum(ordered["gdx_log_ret"], horizon_weeks)
         frame = pd.DataFrame(
             {
                 "ticker": str(ticker),

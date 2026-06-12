@@ -1,6 +1,7 @@
 from datetime import date
 
 import pandas as pd
+import pytest
 
 from golden_vector.contracts.config_models import ToolCConfig
 from golden_vector.model.tool_c import (
@@ -90,7 +91,7 @@ def test_tool_c_thin_relative_metric_is_tagged_and_excluded_from_rank():
     assert "thin_history" in row["tool_c_downside_tags"]
 
 
-def test_tool_c_missing_score_eligible_column_defaults_to_eligible():
+def test_tool_c_missing_score_eligible_column_fails_loud():
     tool_a = pd.DataFrame(
         [
             {
@@ -108,16 +109,15 @@ def test_tool_c_missing_score_eligible_column_defaults_to_eligible():
         [_metric_row("AAA", rel_weakness=0.7, rel_strength=0.4)]
     )
 
-    output = build_tool_c_output_frame(
-        tool_a_latest=tool_a,
-        relative_metrics=metrics,
-        config=ToolCConfig(min_events=2),
-        source_run_id="tool-c-run",
-    )
-
-    row = output.iloc[0]
-    assert bool(row["score_eligible"]) is True
-    assert pd.notna(row["tool_c_downside_rank"])
+    # Fail loud, never open: defaulting True would silently rank every
+    # degraded ticker if Tool A ever dropped/renamed the column.
+    with pytest.raises(ValueError, match="score_eligible"):
+        build_tool_c_output_frame(
+            tool_a_latest=tool_a,
+            relative_metrics=metrics,
+            config=ToolCConfig(min_events=2),
+            source_run_id="tool-c-run",
+        )
 
 
 def test_tool_c_tail_counts_contribute_to_thin_history_tags():

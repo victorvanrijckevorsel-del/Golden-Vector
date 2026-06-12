@@ -41,6 +41,7 @@ def compute_options_features(
     candidate_min_volume: int = 0,
     candidate_min_implied_volatility: float = 0.01,
     candidate_max_implied_volatility: float = 10.0,
+    option_dte_bands: dict[int, tuple[int, int]] | None = None,
 ) -> dict[str, Any]:
     """Compute one long-format options feature row for a ticker/as-of date."""
 
@@ -89,7 +90,20 @@ def compute_options_features(
 
     for horizon in target_horizons_days:
         suffix = f"{horizon}d"
-        expiry = nearest_expiration(frame, horizon)
+        # Horizon-labeled features must come from an expiry INSIDE the
+        # configured DTE band — a 550d label computed from a 162d expiry
+        # (the nearest listed) is a mislabeled basis, and residuals would
+        # subtract a true-550d benchmark from a 162d name. No expiry in
+        # band -> the horizon's features stay None (honest blank).
+        band = option_dte_bands.get(horizon) if option_dte_bands else None
+        if band is not None:
+            low, high = int(band[0]), int(band[1])
+            in_band = frame[
+                pd.to_numeric(frame["days_to_expiry"], errors="coerce").between(low, high)
+            ]
+            expiry = nearest_expiration(in_band, horizon)
+        else:
+            expiry = nearest_expiration(frame, horizon)
         if expiry is None:
             continue
 
@@ -192,8 +206,15 @@ def _atm_iv(frame: pd.DataFrame, underlying_price: float) -> float | None:
     if candidates.empty:
         return None
     candidates["distance"] = (candidates["strike"] - float(underlying_price)).abs()
-    selected = candidates.sort_values(["distance", "option_type"]).iloc[0]
-    return as_float(selected["implied_volatility"])
+    nearest_strike = candidates.sort_values("distance").iloc[0]["strike"]
+    # Standard ATM-IV practice: average the put and call IV at the nearest
+    # strike. A single contract flips sides between snapshots under skew,
+    # injecting spurious variance into the IV history that drives iv_rank.
+    at_strike = candidates[candidates["strike"] == nearest_strike]
+    values = pd.to_numeric(at_strike["implied_volatility"], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return float(values.mean())
 
 
 def _realized_vol(price_history: pd.DataFrame, *, window_days: int) -> float | None:
@@ -205,13 +226,17 @@ def _realized_vol(price_history: pd.DataFrame, *, window_days: int) -> float | N
         returns = pd.to_numeric(price_history["adj_close_usd"], errors="coerce").pct_change().dropna()
     else:
         return None
-    returns = returns.tail(window_days)
-    # Honesty floor (audit M6): with a 550d window over ~250 rows of history,
+    # window_days is the option's CALENDAR horizon; returns rows are TRADING
+    # days. Convert (252/365.25) so the realized leg covers the same span the
+    # IV prices - a 90d option's realized vol uses ~62 trading rows, not 90
+    # (which would span ~130 calendar days and lag regime shifts).
+    trading_rows = max(2, int(round(window_days * 252.0 / 365.25)))
+    returns = returns.tail(trading_rows)
+    # Honesty floor (audit M6): with a long window over short history,
     # tail() silently returns ALL history and the value is full-history vol
-    # mislabeled as 550d. Require most of the window or return None — a
-    # missing number beats a wrong one. (Known basis note: windows count
-    # TRADING rows vs an option's CALENDAR days; recorded for a future pass.)
-    if len(returns.index) < max(2, int(window_days * 0.8)):
+    # mislabeled with the horizon. Require most of the window or return
+    # None — a missing number beats a wrong one.
+    if len(returns.index) < max(2, int(trading_rows * 0.8)):
         return None
     return float(returns.std(ddof=1) * math.sqrt(TRADING_DAYS_PER_YEAR))
 

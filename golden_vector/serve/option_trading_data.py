@@ -146,9 +146,13 @@ def build_option_trading_detail_data(
             # can differ from the band-fit slot the matrix shows (audit M5);
             # the note keeps that visible. It also corrects any earlier
             # "defaulted to Xd" note (audit L3).
-            note = f"Using the most-liquid default: {int(stamped)}d"
+            note = f"Using the most-liquid window: {int(stamped)}d"
             if stamped_expiration:
-                note += f" · expiry {stamped_expiration}"
+                # The sized contract is the bucket-fit pick inside this
+                # window, which can be a different expiry than the
+                # most-liquid rule's own pick - say "window", never claim
+                # the sized contract IS this expiry.
+                note += f" (most-liquid expiry there: {stamped_expiration})"
             sizing_request = replace(
                 sizing_request,
                 horizon_days=int(stamped),

@@ -85,7 +85,79 @@ endpoints, portfolio 403 gating. Two findings, both fixed:
 - **Deferred:** fixture-side Tool B formula copy in tests/helpers.py
   (cross-check test); healthy-control gaps in 2 Tool B exclusion tests.
 
+## Math lenses (returned on attempt 3) — and the fixes
+
+### option-math: 1 HIGH (fixed) + 8, 10 verified-ok
+- **HIGH (fixed):** horizon-labeled option features had NO DTE-band clamp —
+  `*_550d` features were computed from 162–218d expiries on CMCL/DRD/GAU/
+  ORLA/TXG (mislabeled basis), and skew residuals subtracted a true-550d
+  benchmark from a ~162d name. `compute_options_features` now restricts
+  each horizon to its configured band (no in-band expiry → honest None);
+  bands threaded from config; regression test with in-band control.
+- **MEDIUM (fixed):** iv_rv_ratio compared calendar-day IV to a trading-day
+  realized window ~45% too long (90d option vs ~130 calendar days of
+  realized) — converted at 252/365.25 (90d → 62 trading rows).
+- **MEDIUM (fixed):** the most-liquid default note claimed the sized
+  contract IS the stamped expiry; the bucket-fit pick can differ —
+  rephrased to "most-liquid window … (most-liquid expiry there: X)".
+- **LOW (fixed):** ATM IV was one nearest contract, tie-broken to the call —
+  side flips under skew injected noise into the IV-rank history. Now the
+  standard put/call average at the nearest strike.
+- Deferred: holiday-Thursday monthly detection (latent, no 2026 impact),
+  OI-change excludes newly listed contracts + dead per-strike columns,
+  config twins in option_trading defaults, iv_rank→iv_percentile naming
+  (D2 milestone), 60d→90d history depth reset (one-time, documented).
+- Verified OK first-hand by the agent: Black-Scholes formulas (8 stored
+  deltas recomputed exactly), P&L scenario math, sizing math, skew residual
+  structure, rel_spread/half_spread over all 11,302 contracts (0
+  mismatches), selector determinism, LIMITED_HISTORY honesty.
+
+### model-math: 9 findings, Tool A/B reproduced exactly
+- Verified OK: Tool A betas/vol reproduced end-to-end from raw files (BTG
+  exact match); Tool B layer math (margin, FCF, leverage with non-positive-
+  EBITDA routing, linear forward EBITDA); prefix-sum windows ≡ legacy mask.
+- **Fixed now:** Tool C fail-open (`score_eligible` defaulting True when
+  the column is missing → degraded tickers silently rankable) → fails loud.
+- Deferred (next session, documented): Tool D `fcf_yield` spot-basis
+  unlabeled next to at-G columns (rename `fcf_yield_at_spot` + header);
+  EV/EBITDA formula in two diverging copies (Tool B uncapped vs Tool D
+  capped — unify in common/); >1.0-means-percent auto-divide in 5+ copies
+  (extract one normalizer with a negative-rate guard); stress-ladder
+  presets hardcoded; hit-rate 10% thresholds applied to log returns;
+  gold-regime quantile self-inclusion (becomes leakage if Lab backtests
+  against it); "52w" vol = 52 observations not 52 calendar weeks.
+
+### lab-statistics: the JS bug, and a STRONGER null
+- **MEDIUM (fixed + re-run):** v1 James-Stein used the homoscedastic
+  mean(SE²) form; real SEs span 160x, so shrinkage collapsed the nowcast to
+  the slow baseline in ~half the weeks (median applied factor 0.026) — the
+  flagship's null could have been an artifact. Per ledger discipline, a v2
+  variant (standardized heteroscedastic JS, z=gap/SE) was REGISTERED
+  (n_trials now 3) and re-run with honest disjoint folds:
+  **v2 VERDICT: FAILED again** — vs slow +1.06% MAE, t=1.18, 65% folds
+  (20 disjoint folds; median shrink factor 0.189, so the model genuinely
+  used the fast signal this time). Two independent variants failing the
+  same pre-registered gate = the structural-beta conclusion is now robust,
+  not an artifact.
+- **MEDIUM (fixed):** gate t-stat wasn't episode-adjusted and fold label
+  windows overlapped (t overstated) → fold step now test+label (disjoint
+  label windows), code matches the pre-registered text.
+- **MEDIUM (fixed):** contiguity guard existed only in forward_returns —
+  beta_gap and conditional_dial now route through it (promoted public).
+- **MEDIUM (fixed):** duplicate ticker-weeks silently double-counted and
+  could mask a gap → reindex now raises on duplicates.
+- **LOW/NIT (fixed):** EB prior now equal-ticker-weight (long-history
+  tickers dominated it); insufficient-history cells carry NA rank (house
+  rule); bucket labels state edges exactly; hit = pred×label>0. Dial
+  artifact rebuilt with all of it.
+- Verified OK: n_eff derivation, SE proxy form, forward label window,
+  no train/test contamination, verdict JSON internally consistent
+  (paired t recomputed), Wilson algebra, quantile-spread non-overlap.
+
 ## Net effect
 
-35 findings round-2 (so far), 18 fixed across 4 commits, the rest
-documented above as deferred with reasons. Math-lens results pending.
+53 findings across round-2, 28 fixed (6 commits), the rest documented
+above as deferred with reasons. The flagship experiment's null verdict was
+re-established under a corrected estimator and honest folds — `data/lab/
+beta_gap_verdict_v2_latest.json` is the binding record (variant
+483248babea7).
