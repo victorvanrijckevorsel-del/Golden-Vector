@@ -2386,3 +2386,52 @@ def test_workspace_combined_route_is_removed(tmp_path):
     response = _call_wsgi_app(app, method="GET", path="/combined")
 
     assert response["status"].startswith("404")
+
+
+def test_all_serve_modules_avoid_unsanctioned_analytics_tokens():
+    """Sweep EVERY serve module for high-signal analytics tokens (the
+    per-file guardrails above only cover four modules, and token lists were
+    proven bypassable via pandas method-call arithmetic). Sanctioned
+    exceptions are explicit and documented here, so a NEW violation fails
+    while today's audited state stays green."""
+
+    sanctioned: dict[str, set[str]] = {
+        # Bounded, measured non-canonical-window recompute (documented).
+        "detail_panels.py": {"np.polyfit(", ".std("},
+        # Gold-dial scenario recompute is a sanctioned product tradeoff.
+        "candidate_finder_data.py": {".fillna("},
+        "overview_tool_a.py": {".fillna("},
+    }
+    forbidden_tokens = (
+        "np.polyfit(",
+        "np.linalg",
+        ".eval(",
+        ".query(",
+        ".rolling(",
+        ".ewm(",
+        ".cov(",
+        ".corr(",
+        ".quantile(",
+        ".std(",
+        ".combine_first(",
+        ".fillna(",
+        # method-call arithmetic on frames (proven token-scan bypass)
+        "].add(",
+        "].sub(",
+        "].mul(",
+        "].div(",
+    )
+    violations: list[str] = []
+    for module in sorted(Path("golden_vector/serve").glob("*.py")):
+        source = module.read_text(encoding="utf-8")
+        # strip comments so documentation can mention banned tokens
+        code_lines = [line.split("#", 1)[0] for line in source.splitlines()]
+        code = "\n".join(code_lines)
+        allowed = sanctioned.get(module.name, set())
+        for token in forbidden_tokens:
+            if token in code and token not in allowed:
+                violations.append(f"{module.name}: {token}")
+    assert not violations, (
+        "Unsanctioned analytics in serve (backend computes, serve renders): "
+        + ", ".join(violations)
+    )

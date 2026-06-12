@@ -49,8 +49,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const dt = new DataTable(table, {
       paging: false,
       info: false,
-      // Preserve the server-emitted DOM order on first paint. Non-default
-      // lenses on the Combined view rely on this.
+      // Preserve the server-emitted DOM order on first paint - pages sort
+      // on the ONE backend-provided rank column.
       order: [],
       columns: columns,
       // Hide DataTables' own "Search:" label — we render our own input.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
+
 import logging
 import math
 from dataclasses import dataclass, field, replace
@@ -93,7 +95,11 @@ class OptionArtifactStaleSchemaError(ValueError):
     """Raised when persisted option artifacts are from an older schema."""
 
 
-_CACHE: dict[OptionTradingCacheKey, OptionTradingData] = {}
+# Bounded: keys change on every refresh, and each entry holds several MB of
+# frames - an unbounded dict leaks one generation per refresh in a
+# long-running server. 4 generations comfortably covers dial flips.
+_CACHE: OrderedDict[OptionTradingCacheKey, OptionTradingData] = OrderedDict()
+_CACHE_MAX_ENTRIES = 4
 
 
 def clear_option_trading_cache() -> None:
@@ -562,6 +568,8 @@ def load_option_trading_data(
         cache_key=cache_key,
     )
     _CACHE[cache_key] = data
+    while len(_CACHE) > _CACHE_MAX_ENTRIES:
+        _CACHE.popitem(last=False)
     return data
 
 

@@ -268,3 +268,17 @@ def _candidate(
         premium_pct_spot=mid / underlying_price if underlying_price > 0 else None,
         underlying_price=underlying_price,
     )
+
+
+def test_mixed_healthy_and_degraded_loss_sums_healthy_only():
+    """The gold-down headline with one measured and one degraded position
+    must equal the measured position's loss — never NaN, never a coerced 0."""
+
+    import pandas as pd
+
+    from golden_vector.common.numeric import sum_optional_floats
+
+    mixed = pd.DataFrame({"gold_down_10_loss_usd": [150.0, float("nan")]})
+    assert sum_optional_floats(mixed.get("gold_down_10_loss_usd")) == 150.0
+    all_degraded = pd.DataFrame({"gold_down_10_loss_usd": [float("nan"), None]})
+    assert sum_optional_floats(all_degraded.get("gold_down_10_loss_usd")) is None

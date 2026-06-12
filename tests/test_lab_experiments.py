@@ -199,3 +199,60 @@ def test_run_experiment_fails_on_no_skill() -> None:
     verdict = run_experiment(pd.DataFrame(rows))
     assert not verdict.passed
     assert any(reason.startswith("FAIL") for reason in verdict.reasons)
+
+
+def test_rank_in_bucket_ties_na_and_insufficient_ordering() -> None:
+    """The ONE rank column the /lab page sorts on: deliberate tie broken by
+    ticker, insufficient-history rows rank last, ranks dense 1..N."""
+
+    grid = _grid(200)
+    gold = np.where(np.arange(200) % 26 < 13, -0.012, 0.012)
+    rows = []
+    # TWIN_A / TWIN_B: identical returns -> exact tie on p_beat_gdx_shrunk.
+    # WEAK: clearly worse. SPARSE: too few weeks -> insufficient history.
+    for ticker, edge, n in (
+        ("TWIN_A", 0.004, 200),
+        ("TWIN_B", 0.004, 200),
+        ("WEAK", -0.004, 200),
+        ("SPARSE", 0.004, 40),
+    ):
+        for i in range(n):
+            rows.append(
+                {
+                    "ticker": ticker,
+                    "week_period": grid[i],
+                    "stock_log_ret": 0.001 + edge,
+                    "gold_log_ret": gold[i],
+                    "gdx_log_ret": 0.001,
+                    "gdxj_log_ret": 0.001,
+                }
+            )
+    table = build_dial_table(
+        pd.DataFrame(rows), horizon_weeks=13, min_effective_n=4.0
+    )
+    down = table[table["bucket"] == "gold_down"].sort_values("rank_in_bucket")
+    order = list(down["ticker"])
+    # Tie broken alphabetically; weak after the twins; sparse (insufficient) last.
+    assert order.index("TWIN_A") < order.index("TWIN_B")
+    assert order.index("TWIN_B") < order.index("WEAK")
+    assert order[-1] == "SPARSE"
+    assert bool(down.iloc[-1]["insufficient_history"])
+    assert list(down["rank_in_bucket"]) == list(range(1, len(down) + 1))
+
+
+def test_config_sentinel_structural_invariants() -> None:
+    """Literal-minimum sentinels: most tests derive expectations from the
+    same config the code reads, so a catastrophic config edit reshapes both
+    sides in lockstep. These literals do not."""
+
+    from golden_vector.app.config import load_app_config
+    from golden_vector.app.paths import ProjectPaths
+
+    loaded = load_app_config(ProjectPaths.discover())
+    app = loaded.app
+    active = [t for t in app.universe.tickers if getattr(t, "active", True)]
+    assert len(active) >= 30  # literal floor, not derived
+    hedge = app.hedge_readiness
+    assert len(hedge.target_horizons_days) >= 2
+    assert sorted(hedge.target_horizons_days) == list(hedge.target_horizons_days)
+    assert hedge.option_signal_horizon_days in hedge.target_horizons_days
