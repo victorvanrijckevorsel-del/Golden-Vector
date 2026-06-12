@@ -212,3 +212,30 @@ def test_every_thresholds_callable_resolves_against_real_config():
         assert isinstance(text, str) and text.strip(), f"empty thresholds for {key}"
         checked += 1
     assert checked >= 5
+
+
+def test_tool_overview_registry_keys_resolve():
+    """Every Tool A/B/C/D header key added in the D2 rollout must resolve to
+    real help text against the live config (a renamed config field or a typo'd
+    key would silently drop the explanation)."""
+
+    config = _app_config()
+    keys = [
+        "tool_a_delta", "tool_a_gamma", "tool_a_asymmetry", "tool_a_confidence",
+        "tool_a_volatility", "tool_a_score",
+        "tool_c_downside_rank", "tool_c_upside_rank", "tool_c_down_beta",
+        "tool_c_up_beta", "tool_c_down_hit_rate", "tool_c_up_hit_rate",
+        "tool_b_score", "tool_b_enterprise_value", "tool_b_aisc", "tool_b_cash_margin",
+        "tool_b_forward_ebitda", "tool_b_forward_pe", "tool_b_ev_ebitda",
+        "tool_b_fcf_yield", "tool_b_leverage", "tool_b_reserve_life",
+        "tool_d_quality_rank", "tool_d_gold_used", "tool_d_interest_cover",
+        "tool_d_survival_distance", "tool_d_breakeven", "tool_d_fcf_breakeven",
+        "tool_d_debt_stress", "tool_d_cost_curve", "tool_d_fragility",
+        "tool_d_leverage", "tool_d_ev_ebitda_context", "tool_d_fcf_yield_context",
+    ]
+    for key in keys:
+        text = column_help_text(key, app_config=config)
+        assert text and text.strip(), f"no help text for {key}"
+    # Config-sourced threshold sentences actually appear.
+    assert "x" in column_help_text("tool_b_leverage", app_config=config)
+    assert "%" in column_help_text("tool_c_down_hit_rate", app_config=config)

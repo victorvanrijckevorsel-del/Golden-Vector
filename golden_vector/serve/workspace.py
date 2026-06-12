@@ -291,6 +291,7 @@ def create_workspace_app(
                         state,
                         flash=flash,
                         search=query.get("search", [""])[0],
+                        app_config=app_config,
                     ),
                 )
 
@@ -342,6 +343,7 @@ def create_workspace_app(
                         state,
                         flash=flash,
                         search=query.get("search", [""])[0],
+                        app_config=app_config,
                     ),
                 )
 

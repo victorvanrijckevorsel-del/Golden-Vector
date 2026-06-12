@@ -36,6 +36,7 @@ from golden_vector.serve.overview_helpers import (
     _render_refresh_summary,
 )
 from golden_vector.serve.model_state_banner import render_model_state_banner
+from golden_vector.serve.column_help import help_th
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.screening_overrides import ScreeningOverrides, apply_overrides
 from golden_vector.serve.workspace_state import WorkspaceState
@@ -336,20 +337,21 @@ def _render_tool_b_overview_page(
         "<thead><tr>"
         "<th data-col-name=\"ticker\">Ticker</th>"
         "<th data-col-name=\"verdict\">Verdict</th>"
-        "<th data-col-name=\"score\" data-sort-numeric>Checks Passed %</th>"
-        "<th data-col-name=\"rank\" data-sort-numeric>Rank</th>"
+        + help_th("Checks Passed %", key="tool_b_score", app_config=app_config, col_name="score", sort_numeric=True)
+        + "<th data-col-name=\"rank\" data-sort-numeric>Rank</th>"
         "<th data-col-name=\"share_price\" data-sort-numeric>Share Price</th>"
         "<th data-col-name=\"market_cap\" data-sort-numeric>Market Cap</th>"
-        "<th data-col-name=\"enterprise_value\" data-sort-numeric>Enterprise Value</th>"
-        "<th data-col-name=\"aisc\" data-sort-numeric>AISC</th>"
-        "<th data-col-name=\"cash_margin\" data-sort-numeric>Cash Margin/oz</th>"
-        "<th data-col-name=\"margin_pct\" data-sort-numeric>Margin %</th>"
-        "<th data-col-name=\"forward_ebitda\" data-sort-numeric>Forward EBITDA est.</th>"
-        "<th data-col-name=\"forward_pe\" data-sort-numeric>Forward P/E est.</th>"
-        "<th data-col-name=\"ev_ebitda\" data-sort-numeric>EV/EBITDA est.</th>"
-        "<th data-col-name=\"fcf_yield\" data-sort-numeric>FCF Yield est.</th>"
-        "<th data-col-name=\"leverage\" data-sort-numeric>Net Debt/EBITDA</th>"
-        "<th data-col-name=\"reserve_life\" data-sort-numeric>Reserve Life</th>"
+        + help_th("Enterprise Value", key="tool_b_enterprise_value", app_config=app_config, col_name="enterprise_value", sort_numeric=True)
+        + help_th("AISC", key="tool_b_aisc", app_config=app_config, col_name="aisc", sort_numeric=True)
+        + help_th("Cash Margin/oz", key="tool_b_cash_margin", app_config=app_config, col_name="cash_margin", sort_numeric=True)
+        + "<th data-col-name=\"margin_pct\" data-sort-numeric>Margin %</th>"
+        + help_th("Forward EBITDA est.", key="tool_b_forward_ebitda", app_config=app_config, col_name="forward_ebitda", sort_numeric=True)
+        + help_th("Forward P/E est.", key="tool_b_forward_pe", app_config=app_config, col_name="forward_pe", sort_numeric=True)
+        + help_th("EV/EBITDA est.", key="tool_b_ev_ebitda", app_config=app_config, col_name="ev_ebitda", sort_numeric=True)
+        + help_th("FCF Yield est.", key="tool_b_fcf_yield", app_config=app_config, col_name="fcf_yield", sort_numeric=True)
+        + help_th("Net Debt/EBITDA", key="tool_b_leverage", app_config=app_config, col_name="leverage", sort_numeric=True)
+        + help_th("Reserve Life", key="tool_b_reserve_life", app_config=app_config, col_name="reserve_life", sort_numeric=True)
+        + 
         "<th data-col-name=\"financial_data\">Market Data</th>"
         "<th data-col-name=\"differences\" data-sort-numeric>Differences</th>"
         "<th data-col-name=\"layer1\">Layer 1</th>"

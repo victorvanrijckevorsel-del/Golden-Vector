@@ -152,6 +152,29 @@ def _iv_percentile_thresholds(config: AppConfig) -> str:
     )
 
 
+def _hit_rate_thresholds(config: AppConfig) -> str:
+    pct = config.tool_c.downside_hit_rate_threshold_pct
+    return (
+        f"A 'hit' is a week the stock moved more than {abs(pct):g}% in the "
+        "measured direction."
+    )
+
+
+def _debt_stress_thresholds(config: AppConfig) -> str:
+    return (
+        "Danger band is Net Debt / EBITDA at or above "
+        f"{config.tool_d.debt_stress_leverage_danger_threshold:g}x."
+    )
+
+
+def _ev_ebitda_cap_thresholds(config: AppConfig) -> str:
+    return (
+        "Values above "
+        f"{config.tool_d.max_reasonable_ev_ebitda:g}x are treated as not "
+        "meaningful and shown blank."
+    )
+
+
 COLUMN_HELP: dict[str, ColumnHelp] = {
     "measured_contracts": ColumnHelp(
         meaning="Number of cached contracts with a usable two-sided quote (bid/ask/mid).",
@@ -249,5 +272,164 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         ),
         thresholds=_iv_percentile_thresholds,
         direction="Higher means options are expensive relative to peers.",
+    ),
+    # ---- Tool A: Gold Sensitivity ----
+    "tool_a_delta": ColumnHelp(
+        meaning=(
+            "How much this stock tends to move for each 1% move in the gold price "
+            "— its gold beta over the core window."
+        ),
+        calculation="Slope of weekly stock returns regressed on weekly gold returns.",
+        direction="Higher means more leveraged to gold (both up and down).",
+    ),
+    "tool_a_gamma": ColumnHelp(
+        meaning="How much the gold beta itself shifts between calm and volatile gold regimes.",
+        direction="Higher means the sensitivity is less stable across regimes.",
+    ),
+    "tool_a_asymmetry": ColumnHelp(
+        meaning="Whether the stock reacts more to gold rising than to gold falling (or vice versa).",
+        calculation="Up-regime beta minus down-regime beta.",
+        direction="Positive means it captures more upside than downside.",
+    ),
+    "tool_a_confidence": ColumnHelp(
+        meaning=(
+            "How trustworthy this row's sensitivity estimate is, based on history "
+            "depth and fit quality. Low-confidence names are held out of the ranking."
+        ),
+        direction="Higher is more reliable.",
+    ),
+    "tool_a_volatility": ColumnHelp(
+        meaning=(
+            "How noisy the stock is around its gold relationship — total, residual "
+            "(stock-specific), and downside volatility."
+        ),
+        direction="Lower residual volatility means a cleaner gold play.",
+    ),
+    "tool_a_score": ColumnHelp(
+        meaning="The overall gold-sensitivity score that sets the rank on this page.",
+        direction="Higher ranks as a stronger gold play.",
+    ),
+    # ---- Tool C: Gold Downside / Upside ----
+    "tool_c_downside_rank": ColumnHelp(
+        meaning="Rank by how the stock behaves when gold falls (1 = most resilient).",
+        direction="Lower rank number is more resilient on the downside.",
+    ),
+    "tool_c_upside_rank": ColumnHelp(
+        meaning="Rank by how the stock behaves when gold rises (1 = most upside capture).",
+        direction="Lower rank number captures more upside.",
+    ),
+    "tool_c_down_beta": ColumnHelp(
+        meaning="The stock's gold beta measured using only weeks when gold fell.",
+        direction="Lower means it falls less than gold on down weeks.",
+    ),
+    "tool_c_up_beta": ColumnHelp(
+        meaning="The stock's gold beta measured using only weeks when gold rose.",
+        direction="Higher means it rises more than gold on up weeks.",
+    ),
+    "tool_c_down_hit_rate": ColumnHelp(
+        meaning="Share of big gold-down weeks where the stock also fell sharply.",
+        thresholds=_hit_rate_thresholds,
+        direction="Lower is better — it held up when gold dropped.",
+    ),
+    "tool_c_up_hit_rate": ColumnHelp(
+        meaning="Share of big gold-up weeks where the stock also rose sharply.",
+        thresholds=_hit_rate_thresholds,
+        direction="Higher is better — it participated when gold rose.",
+    ),
+    # ---- Tool B: Corporate Finance ----
+    "tool_b_score": ColumnHelp(
+        meaning="Percent of the corporate-finance quality checks this name passed.",
+        direction="Higher is healthier.",
+    ),
+    "tool_b_enterprise_value": ColumnHelp(
+        meaning="Market value of equity plus net debt — what it would cost to buy the whole company.",
+        calculation="Market cap + net debt.",
+    ),
+    "tool_b_aisc": ColumnHelp(
+        meaning="All-in sustaining cost to produce one ounce of gold — the industry-standard cost measure.",
+        direction="Lower means a cheaper, more resilient producer.",
+    ),
+    "tool_b_cash_margin": ColumnHelp(
+        meaning="Cash earned per ounce at the current gold price.",
+        calculation="Gold price minus AISC.",
+        direction="Higher is better.",
+    ),
+    "tool_b_forward_ebitda": ColumnHelp(
+        meaning="Estimated forward earnings before interest, tax, depreciation and amortization at the current gold price.",
+        direction="Higher is better.",
+    ),
+    "tool_b_forward_pe": ColumnHelp(
+        meaning="Share price divided by estimated forward earnings per share — how many years of earnings you pay for the stock.",
+        direction="Lower is cheaper.",
+    ),
+    "tool_b_ev_ebitda": ColumnHelp(
+        meaning="Enterprise value divided by forward EBITDA — the standard valuation multiple for miners.",
+        calculation="(Market cap + net debt) / forward EBITDA.",
+        direction="Lower is cheaper.",
+    ),
+    "tool_b_fcf_yield": ColumnHelp(
+        meaning="Estimated free cash flow as a percent of market value.",
+        direction="Higher means more cash generation for the price.",
+    ),
+    "tool_b_leverage": ColumnHelp(
+        meaning="Net debt divided by EBITDA — how many years of earnings it would take to repay debt.",
+        thresholds=_debt_stress_thresholds,
+        direction="Lower is safer.",
+    ),
+    "tool_b_reserve_life": ColumnHelp(
+        meaning="Years of production left at the current rate, from stated reserves.",
+        direction="Higher means a longer runway.",
+    ),
+    # ---- Tool D: Corporate Resilience (moved from hard-coded titles) ----
+    "tool_d_quality_rank": ColumnHelp(
+        meaning="Percentile rank of the transparent resilience components (survival, cost, fragility, balance sheet).",
+        direction="Lower rank number is more resilient.",
+    ),
+    "tool_d_gold_used": ColumnHelp(
+        meaning="The gold price used for every stress figure in this row.",
+    ),
+    "tool_d_interest_cover": ColumnHelp(
+        meaning="The gold price at which modeled EBITDA would just equal interest expense.",
+        direction="Lower is safer — more room before earnings can't cover interest.",
+    ),
+    "tool_d_survival_distance": ColumnHelp(
+        meaning="How far today's gold price sits above the interest-cover line.",
+        calculation="(Gold used − interest-cover line) / gold used.",
+        direction="Higher is safer.",
+    ),
+    "tool_d_breakeven": ColumnHelp(
+        meaning="The gold price where mine margin reaches zero (AISC breakeven).",
+        direction="Lower is safer.",
+    ),
+    "tool_d_fcf_breakeven": ColumnHelp(
+        meaning="The gold price needed to cover AISC plus sustaining capex per ounce.",
+        direction="Lower is safer.",
+    ),
+    "tool_d_debt_stress": ColumnHelp(
+        meaning="The gold price where Net Debt / EBITDA reaches the danger band.",
+        thresholds=_debt_stress_thresholds,
+        direction="Lower is safer.",
+    ),
+    "tool_d_cost_curve": ColumnHelp(
+        meaning="Where this name's AISC sits across the universe (cost-curve percentile).",
+        direction="Lower percentile is a cheaper, more resilient producer.",
+    ),
+    "tool_d_fragility": ColumnHelp(
+        meaning="Modeled EBITDA loss for a 10% gold fall, as a share of EBITDA at the selected gold price.",
+        direction="Lower means less fragile to a gold drop.",
+    ),
+    "tool_d_leverage": ColumnHelp(
+        meaning="Net Debt / EBITDA at the selected gold price.",
+        thresholds=_debt_stress_thresholds,
+        direction="Lower is safer.",
+    ),
+    "tool_d_ev_ebitda_context": ColumnHelp(
+        meaning="EV/EBITDA shown for context only — it is not used in the resilience rank.",
+        thresholds=_ev_ebitda_cap_thresholds,
+        direction="Lower is cheaper.",
+    ),
+    "tool_d_fcf_yield_context": ColumnHelp(
+        meaning="FCF yield shown for context only — it is not used in the resilience rank.",
+        direction="Higher means more cash generation for the price.",
     ),
 }

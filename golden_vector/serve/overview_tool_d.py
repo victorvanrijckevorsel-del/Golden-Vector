@@ -34,6 +34,7 @@ from golden_vector.serve.overview_helpers import (
     _render_provenance_warnings,
     _render_refresh_summary,
 )
+from golden_vector.serve.column_help import help_th
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.workspace_state import WorkspaceState
 
@@ -126,7 +127,7 @@ def _render_tool_d_overview_page(
         )
     )
     body.append(_render_flip_section(flip_rows))
-    body.append(_render_table(frame))
+    body.append(_render_table(frame, app_config=app_config))
     return _page_shell(
         "Corporate Resilience - Golden Vector Workspace",
         "".join(body),
@@ -255,7 +256,7 @@ def _render_flip_section(frame) -> str:
     )
 
 
-def _render_table(frame) -> str:
+def _render_table(frame, *, app_config=None) -> str:
     rows_html: list[str] = []
     for row in frame.to_dict(orient="records"):
         ticker = str(row.get("ticker") or "")
@@ -290,16 +291,17 @@ def _render_table(frame) -> str:
         "<table id=\"tool-d-table\" class=\"js-datatable\">"
         "<thead><tr>"
         "<th data-col-name=\"ticker\">Ticker</th>"
-        "<th data-col-name=\"quality_rank\" data-sort-numeric title=\"Percentile rank of the transparent resilience components\">Resilience Rank</th>"
-        "<th data-col-name=\"gold_price\" data-sort-numeric title=\"Gold price used for every stress figure in this row\">Gold @ G</th>"
-        "<th data-col-name=\"interest_cover\" data-sort-numeric title=\"Gold price where modeled EBITDA equals interest expense\">Interest-Cover Line</th>"
-        "<th data-col-name=\"survival_distance\" data-sort-numeric title=\"(Gold @ G - interest-cover line) / Gold @ G\">Distance To Line</th>"
-        "<th data-col-name=\"breakeven\" data-sort-numeric title=\"AISC: the gold price where mine margin reaches zero before sustaining capex\">Breakeven Gold</th>"
-        "<th data-col-name=\"fcf_breakeven\" data-sort-numeric title=\"AISC plus sustaining capex per ounce\">FCF Breakeven</th>"
-        "<th data-col-name=\"debt_stress\" data-sort-numeric title=\"Gold price where Net Debt / EBITDA reaches the configured danger band\">Debt-Stress Line</th>"
-        "<th data-col-name=\"cost_curve\" data-sort-numeric title=\"AISC percentile across the universe; lower is more resilient\">Cost-Curve %ile</th>"
-        "<th data-col-name=\"fragility\" data-sort-numeric title=\"Modeled EBITDA loss for a 10% gold fall, divided by EBITDA at the selected gold price\">Fragility Slope</th>"
-        "<th data-col-name=\"leverage\" data-sort-numeric title=\"Net Debt / EBITDA at the selected gold price\">Leverage @ G</th>"
+        + help_th("Resilience Rank", key="tool_d_quality_rank", app_config=app_config, col_name="quality_rank", sort_numeric=True)
+        + help_th("Gold @ G", key="tool_d_gold_used", app_config=app_config, col_name="gold_price", sort_numeric=True)
+        + help_th("Interest-Cover Line", key="tool_d_interest_cover", app_config=app_config, col_name="interest_cover", sort_numeric=True)
+        + help_th("Distance To Line", key="tool_d_survival_distance", app_config=app_config, col_name="survival_distance", sort_numeric=True)
+        + help_th("Breakeven Gold", key="tool_d_breakeven", app_config=app_config, col_name="breakeven", sort_numeric=True)
+        + help_th("FCF Breakeven", key="tool_d_fcf_breakeven", app_config=app_config, col_name="fcf_breakeven", sort_numeric=True)
+        + help_th("Debt-Stress Line", key="tool_d_debt_stress", app_config=app_config, col_name="debt_stress", sort_numeric=True)
+        + help_th("Cost-Curve %ile", key="tool_d_cost_curve", app_config=app_config, col_name="cost_curve", sort_numeric=True)
+        + help_th("Fragility Slope", key="tool_d_fragility", app_config=app_config, col_name="fragility", sort_numeric=True)
+        + help_th("Leverage @ G", key="tool_d_leverage", app_config=app_config, col_name="leverage", sort_numeric=True)
+        + 
         "<th data-col-name=\"ladder\">Failure Ladder</th>"
         "<th data-col-name=\"tags\">Resilience Flags</th>"
         "<th data-col-name=\"status\">Data Status</th>"
@@ -307,8 +309,9 @@ def _render_table(frame) -> str:
         "<th data-col-name=\"cost_component\" data-sort-numeric>Cost Component</th>"
         "<th data-col-name=\"fragility_component\" data-sort-numeric>Fragility Component</th>"
         "<th data-col-name=\"balance_sheet_component\" data-sort-numeric>Balance-Sheet Component</th>"
-        "<th data-col-name=\"ev_ebitda\" data-sort-numeric title=\"Secondary context only; not used in the rank\">EV/EBITDA Context</th>"
-        "<th data-col-name=\"fcf_yield\" data-sort-numeric title=\"Secondary context only; not used in the rank\">FCF Yield Context</th>"
+        + help_th("EV/EBITDA Context", key="tool_d_ev_ebitda_context", app_config=app_config, col_name="ev_ebitda", sort_numeric=True)
+        + help_th("FCF Yield Context", key="tool_d_fcf_yield_context", app_config=app_config, col_name="fcf_yield", sort_numeric=True)
+        + 
         "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
         "</table>"

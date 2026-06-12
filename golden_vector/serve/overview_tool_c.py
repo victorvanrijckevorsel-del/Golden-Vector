@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import escape
+from typing import Any
 
 from golden_vector.serve.format_helpers import _fmt_numeric_td, _fmt_text
 from golden_vector.serve.model_state_banner import render_model_state_banner
@@ -10,6 +11,7 @@ from golden_vector.serve.overview_helpers import (
     _render_provenance_warnings,
     _render_refresh_summary,
 )
+from golden_vector.serve.column_help import help_th
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.workspace_state import WorkspaceState
 
@@ -19,6 +21,7 @@ def _render_tool_c_overview_page(
     *,
     flash: str | None,
     search: str = "",
+    app_config: Any = None,
 ) -> str:
     """Render the persisted Tool C symmetric gold-downside rankings."""
 
@@ -86,14 +89,15 @@ def _render_tool_c_overview_page(
         "<table id=\"tool-c-table\" class=\"js-datatable\">"
         "<thead><tr>"
         "<th data-col-name=\"ticker\">Ticker</th>"
-        "<th data-col-name=\"downside_rank\" data-sort-numeric>Downside Rank</th>"
-        "<th data-col-name=\"downside_score\" data-sort-numeric>Downside Score</th>"
-        "<th data-col-name=\"upside_rank\" data-sort-numeric>Upside Rank</th>"
-        "<th data-col-name=\"upside_score\" data-sort-numeric>Upside Score</th>"
-        "<th data-col-name=\"down_beta\" data-sort-numeric>Down Beta</th>"
-        "<th data-col-name=\"up_beta\" data-sort-numeric>Up Beta</th>"
-        "<th data-col-name=\"down_hit\" data-sort-numeric>Down Hit Rate</th>"
-        "<th data-col-name=\"up_hit\" data-sort-numeric>Up Hit Rate</th>"
+        + help_th("Downside Rank", key="tool_c_downside_rank", app_config=app_config, col_name="downside_rank", sort_numeric=True)
+        + help_th("Downside Score", key="tool_c_downside_rank", app_config=app_config, col_name="downside_score", sort_numeric=True)
+        + help_th("Upside Rank", key="tool_c_upside_rank", app_config=app_config, col_name="upside_rank", sort_numeric=True)
+        + help_th("Upside Score", key="tool_c_upside_rank", app_config=app_config, col_name="upside_score", sort_numeric=True)
+        + help_th("Down Beta", key="tool_c_down_beta", app_config=app_config, col_name="down_beta", sort_numeric=True)
+        + help_th("Up Beta", key="tool_c_up_beta", app_config=app_config, col_name="up_beta", sort_numeric=True)
+        + help_th("Down Hit Rate", key="tool_c_down_hit_rate", app_config=app_config, col_name="down_hit", sort_numeric=True)
+        + help_th("Up Hit Rate", key="tool_c_up_hit_rate", app_config=app_config, col_name="up_hit", sort_numeric=True)
+        + 
         "<th data-col-name=\"down_tags\">Down Tags</th>"
         "<th data-col-name=\"up_tags\">Up Tags</th>"
         "</tr></thead>"

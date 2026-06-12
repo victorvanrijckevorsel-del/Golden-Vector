@@ -18,6 +18,7 @@ from golden_vector.serve.overview_helpers import (
     _render_refresh_summary,
 )
 from golden_vector.serve.model_state_banner import render_model_state_banner
+from golden_vector.serve.column_help import help_th
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.workspace_state import WorkspaceState
 
@@ -27,6 +28,7 @@ def _render_tool_a_overview_page(
     *,
     flash: str | None,
     search: str = "",
+    app_config: Any = None,
 ) -> str:
     """Tool A focused overview: ranked by gold-sensitivity score.
 
@@ -120,12 +122,13 @@ def _render_tool_a_overview_page(
         "<thead><tr>"
         "<th data-col-name=\"ticker\">Ticker</th>"
         "<th data-col-name=\"profile\">Profile</th>"
-        "<th data-col-name=\"delta\" data-sort-numeric>Δ Core</th>"
-        "<th data-col-name=\"gamma\" data-sort-numeric>Gamma</th>"
-        "<th data-col-name=\"asymmetry\" data-sort-numeric>Asymmetry</th>"
-        "<th data-col-name=\"confidence\">Confidence</th>"
-        "<th data-col-name=\"volatility\">Volatility</th>"
-        "<th data-col-name=\"score\" data-sort-numeric>Gold Sensitivity Score</th>"
+        + help_th("Δ Core", key="tool_a_delta", app_config=app_config, col_name="delta", sort_numeric=True)
+        + help_th("Gamma", key="tool_a_gamma", app_config=app_config, col_name="gamma", sort_numeric=True)
+        + help_th("Asymmetry", key="tool_a_asymmetry", app_config=app_config, col_name="asymmetry", sort_numeric=True)
+        + help_th("Confidence", key="tool_a_confidence", app_config=app_config, col_name="confidence")
+        + help_th("Volatility", key="tool_a_volatility", app_config=app_config, col_name="volatility")
+        + help_th("Gold Sensitivity Score", key="tool_a_score", app_config=app_config, col_name="score", sort_numeric=True)
+        + 
         "<th data-col-name=\"rank\" data-sort-numeric>Rank</th>"
         "<th data-col-name=\"notes\" data-sort-numeric>Notes</th>"
         "</tr></thead>"
