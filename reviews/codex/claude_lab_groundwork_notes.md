@@ -117,3 +117,44 @@ price-only residual-momentum baseline.
   hit rate — industry-standard only.
 - **M1-3 leakage canaries as CI tests** (the three rigged inputs must be caught).
 - Then (next chunk): Conditional Dial analog table + beta-gap experiment run.
+
+## Build log — 2026-06-12 (M0 + M1 shipped)
+
+All of M0-1/M0-2/M0-3/M1-1/M1-2/M1-3 are BUILT, tested, and committed on dev-vic:
+
+- **M0-1 ✅ benchmark USD fix is live.** `_price_basis` gained a currency-guarded
+  fallback (only when ALL USD basis columns are null AND the frame's currency is
+  uniformly USD → use `adj_close_local`/`close_local`). Verified against real cached
+  GDX: 5,046/5,046 basis rows (was 0). Rebuilt Tool C offline:
+  `rel_weakness_vs_gdx_pct` / `rel_strength_vs_gdx_pct` now **62/62 non-null**
+  (was 0/62). Three contract tests incl. a non-USD negative case.
+- **M0-2 ✅ `golden_vector/lab/`:** `ledger.py` (sha256 variant registry,
+  `n_trials` from the ledger only, `require_registered` admissibility gate) and
+  `vintages.py` (long-format append-only PIT recorder, first-write-wins per
+  `(vintage_date, source, ticker, field)`). **The clock started 2026-06-12:**
+  first vintage = 11,608 rows across 5 sources (tool_b 3131, tool_d 2829,
+  tool_d_spot 2829, option_signal_summary 2294, option_trading_overview 525).
+  Hooked into the end of `_run_refresh_unlocked` (best-effort: a vintage failure
+  can never fail a refresh).
+- **M0-3 ✅ `forward_returns.py`:** strictly-forward h-week labels
+  (`rolling(h).sum().shift(-h)` = weeks t+1..t+h), complete-window-only (NaN in
+  window → NA label, never a partial sum), alpha vs GDX/GDXJ. No gold-return
+  labels by construction.
+- **M1-1 ✅ `walk_forward.py`:** expanding folds on the W-FRI grid, purge =
+  label horizon between train end and test start, `effective_n` = weeks/horizon,
+  `assert_no_label_overlap` invariant.
+- **M1-2 ✅ `evaluation.py`:** per-date Spearman rank IC + t-stat on
+  episode-adjusted N, MAE, hit rate, quantile spread, `mae_improvement_pct` for
+  the ≥10% flagship gate, and a **leakage alarm** (mean |IC| > 0.90 ⇒
+  inadmissible).
+- **M1-3 ✅ canaries:** label-as-feature trips the alarm; shuffled labels show
+  no skill; a forward-shifted feature (built through the real label pipeline) is
+  caught. 19 new tests, all green.
+- **Full gate: 1035 passed, 0 failed** (the earlier 19-failure capture was the
+  stale pre-N5-fix run). Adversarial 5-lens verification fleet launched over the
+  lab package (leakage/stats, label construction, PIT semantics, benchmark-fix
+  blast radius, test quality) — findings to be fixed serially before ship.
+
+Next chunk: Conditional Dial analog table + beta-gap experiment (registered in
+the variant ledger BEFORE compute), then Stage 0 ship fold-in (live refresh +
+merge to main).
