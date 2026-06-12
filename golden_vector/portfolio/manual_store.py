@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import json
 from datetime import date, datetime, timezone
 from uuid import uuid4
@@ -165,8 +167,8 @@ def _parse_lot(item: object, *, index: int) -> PortfolioLot:
     return PortfolioLot(
         id=_clean_lot_id(item.get("id")),
         ticker=normalize_ticker(item.get("ticker")) or _raise_invalid_lot(index, "ticker"),
-        shares=_positive_float(item.get("shares"), field=f"lot #{index} shares"),
-        buy_price=_positive_float(item.get("buy_price"), field=f"lot #{index} buy price"),
+        shares=_stored_positive_float(item.get("shares"), field=f"lot #{index} shares"),
+        buy_price=_stored_positive_float(item.get("buy_price"), field=f"lot #{index} buy price"),
         buy_currency=_clean_currency(item.get("buy_currency")),
         buy_date=_parse_buy_date(item.get("buy_date")),
         note=clean_string(item.get("note")),
@@ -210,6 +212,27 @@ def _positive_float(value: object, *, field: str) -> float:
         require_finite(numeric, field=field.title())
     except ValueError as exc:
         raise PortfolioValidationError(str(exc)) from exc
+    if numeric <= 0:
+        raise PortfolioValidationError(f"{field.title()} must be greater than zero.")
+    return numeric
+
+
+def _stored_positive_float(value: object, *, field: str) -> float:
+    """Parse a numeric from the STORED lots file (not new user input).
+
+    New input goes through _positive_float, which rejects non-finite values
+    loudly. Stored data written before that gate existed may carry NaN/inf;
+    a single bad stored lot must degrade downstream (position_status), never
+    abort loading the whole portfolio — fail loud on required data, degrade
+    per item on a bad item.
+    """
+
+    try:
+        numeric = float(str(value).strip())
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise PortfolioValidationError(f"{field.title()} must be a number.") from exc
+    if not math.isfinite(numeric):
+        return float("nan")
     if numeric <= 0:
         raise PortfolioValidationError(f"{field.title()} must be greater than zero.")
     return numeric
