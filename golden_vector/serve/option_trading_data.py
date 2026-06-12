@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from time import perf_counter
@@ -429,7 +430,10 @@ def _parse_float(raw: str) -> float | None:
     if not cleaned:
         return None
     try:
-        return float(cleaned)
+        value = float(cleaned)
+        # inf/nan pass `<= 0` guards (nan <= 0 is False) and crash the
+        # sizing math downstream; treat them as unparseable input.
+        return value if math.isfinite(value) else None
     except ValueError:
         return None
 

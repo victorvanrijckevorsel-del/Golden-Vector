@@ -49,7 +49,8 @@ def _read_form_data(environ: dict[str, Any]) -> dict[str, list[str]]:
     except (TypeError, ValueError):
         content_length = 0
     body = environ.get("wsgi.input", io.BytesIO()).read(content_length)
-    return parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    # errors="replace": a malformed charset is a client problem, not a 500.
+    return parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True)
 
 
 def _html_response(

@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from golden_vector.common.files import atomic_write_text
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -60,7 +62,17 @@ def register_variant(
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = {entry.variant_hash for entry in load_ledger(lab_dir)}
     if digest not in existing:
+        # If a crash tore the final line (no trailing newline), a plain
+        # append would MERGE the new record onto it — the registration would
+        # later be quarantined as unparseable and n_trials would silently
+        # undercount. Always start on a fresh line.
+        needs_newline = False
+        if path.exists():
+            tail = path.read_bytes()[-1:]
+            needs_newline = bool(tail) and tail not in (b"\n", b"\r")
         with path.open("a", encoding="utf-8") as handle:
+            if needs_newline:
+                handle.write("\n")
             handle.write(
                 json.dumps(
                     {
@@ -94,8 +106,13 @@ def load_ledger(lab_dir: Path) -> list[VariantRecord]:
             if index == len(lines) - 1:
                 quarantine = path.with_suffix(".jsonl.torn")
                 quarantine.write_text(line + "\n", encoding="utf-8")
+                # Rewrite the ledger without the torn line so it cannot
+                # swallow a future append.
+                atomic_write_text(path, "".join(l + "\n" for l in lines[:-1]))
                 LOGGER.warning(
-                    "Variant ledger: torn final line quarantined to %s.", quarantine
+                    "Variant ledger: torn final line quarantined to %s and "
+                    "removed from the ledger.",
+                    quarantine,
                 )
                 break
             raise

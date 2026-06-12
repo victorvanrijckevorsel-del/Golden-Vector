@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sqlite3
 import subprocess
@@ -12,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from golden_vector.common.files import repo_relative as _repo_relative
+from golden_vector.common.files import repo_relative as _repo_relative, _replace_with_retry
 from golden_vector.common.files import sha256_file as _sha256_file
 from golden_vector.app.config import expected_config_paths
 from golden_vector.app.paths import ProjectPaths
@@ -336,7 +335,7 @@ def _backup_sqlite_database(source_path: Path, snapshot_path: Path) -> None:
             with closing(sqlite3.connect(tmp_path, timeout=5.0)) as snapshot_connection:
                 source_connection.backup(snapshot_connection)
                 snapshot_connection.commit()
-        os.replace(tmp_path, snapshot_path)
+        _replace_with_retry(tmp_path, snapshot_path)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
@@ -740,7 +739,7 @@ def _copy_file_atomic(source_path: Path, target_path: Path) -> None:
     tmp_path = target_path.with_name(f"{target_path.name}.tmp")
     try:
         shutil.copyfile(source_path, tmp_path)
-        os.replace(tmp_path, target_path)
+        _replace_with_retry(tmp_path, target_path)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
@@ -754,7 +753,7 @@ def _write_json_atomic(target_path: Path, payload: dict[str, Any]) -> None:
             json.dumps(payload, indent=2, sort_keys=True),
             encoding="utf-8",
         )
-        os.replace(tmp_path, target_path)
+        _replace_with_retry(tmp_path, target_path)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise

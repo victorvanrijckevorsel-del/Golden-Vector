@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -53,7 +54,7 @@ def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Path
     tmp_path = _unique_tmp_path(path)
     try:
         tmp_path.write_text(text, encoding=encoding)
-        tmp_path.replace(path)
+        _replace_with_retry(tmp_path, path)
     finally:
         _cleanup_tmp_path(tmp_path)
     return path
@@ -66,7 +67,7 @@ def atomic_write_bytes(path: Path, data: bytes) -> Path:
     tmp_path = _unique_tmp_path(path)
     try:
         tmp_path.write_bytes(data)
-        tmp_path.replace(path)
+        _replace_with_retry(tmp_path, path)
     finally:
         _cleanup_tmp_path(tmp_path)
     return path
@@ -79,10 +80,31 @@ def atomic_write_file(path: Path, writer: Callable[[Path], None]) -> Path:
     tmp_path = _unique_tmp_path(path)
     try:
         writer(tmp_path)
-        tmp_path.replace(path)
+        _replace_with_retry(tmp_path, path)
     finally:
         _cleanup_tmp_path(tmp_path)
     return path
+
+
+def _replace_with_retry(tmp_path: Path, path: Path) -> None:
+    """Atomic replace with a bounded retry on Windows sharing violations.
+
+    On Windows, os.replace raises PermissionError (WinError 5) while ANY
+    process holds the destination open - and the workspace server reads
+    latest aliases and the model-state manifest on every request, so every
+    publish can collide with a read. Retry briefly on PermissionError only;
+    everything else stays fail-loud.
+    """
+
+    delay = 0.01
+    for _ in range(8):
+        try:
+            tmp_path.replace(path)
+            return
+        except PermissionError:
+            time.sleep(delay)
+            delay = min(delay * 2, 0.5)
+    tmp_path.replace(path)
 
 
 def _unique_tmp_path(path: Path) -> Path:

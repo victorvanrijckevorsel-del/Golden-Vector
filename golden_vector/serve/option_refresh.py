@@ -134,7 +134,12 @@ def read_option_refresh_status(
                 stage_detail=status.stage_detail,
                 error_summary="Refresh process is no longer running.",
             )
-            write_option_refresh_status(paths, recovered)
+            try:
+                write_option_refresh_status(paths, recovered)
+            except OSError:
+                # Persisting the recovery is an optimization; a transient
+                # write collision must not fail the page render.
+                pass
             return recovered
         return _with_log_stage(paths, status)
     return status

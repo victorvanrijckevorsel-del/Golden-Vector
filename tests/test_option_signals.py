@@ -490,7 +490,7 @@ def test_history_load_fails_loud_on_unreadable_existing_file(tmp_path):
     assert load_option_signal_history(FakePaths()).empty
 
     option_signal_history_path(FakePaths()).write_text("not parquet", encoding="utf-8")
-    with pytest.raises(Exception):
+    with pytest.raises((OSError, ValueError)):  # pyarrow ArrowInvalid subclasses ValueError
         load_option_signal_history(FakePaths())
 
 

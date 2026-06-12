@@ -226,6 +226,8 @@ def test_record_vintages_isolates_a_corrupt_source(tmp_path, monkeypatch) -> Non
 
 
 def test_load_ledger_quarantines_torn_final_line_only(tmp_path) -> None:
+    import json
+
     from golden_vector.lab.ledger import ledger_path, load_ledger, register_variant
 
     register_variant(lab_dir=tmp_path, signal_id="beta_gap", config={"w": 1})
@@ -235,9 +237,34 @@ def test_load_ledger_quarantines_torn_final_line_only(tmp_path) -> None:
     records = load_ledger(tmp_path)
     assert len(records) == 1  # healthy record survives, torn line quarantined
     assert path.with_suffix(".jsonl.torn").exists()
+    # The torn line is REMOVED from the ledger so it cannot swallow a
+    # future append.
+    assert '"signal_id"\n' not in path.read_text(encoding="utf-8")
 
     # A malformed NON-final line is real corruption and must fail loud.
     healthy_line = path.read_text(encoding="utf-8").splitlines()[0]
     path.write_text('{"broken"\n' + healthy_line + "\n", encoding="utf-8")
-    with pytest.raises(Exception):
+    with pytest.raises(json.JSONDecodeError):
         load_ledger(tmp_path)
+
+
+def test_register_after_torn_line_never_merges(tmp_path) -> None:
+    """A torn final line (crash mid-append, no trailing newline) must not
+    merge with the next registration — that would silently swallow the new
+    record and undercount n_trials."""
+
+    from golden_vector.lab.ledger import (
+        ledger_path,
+        load_ledger,
+        n_trials,
+        register_variant,
+    )
+
+    register_variant(lab_dir=tmp_path, signal_id="a", config={"w": 1})
+    path = ledger_path(tmp_path)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write('{"torn')  # no trailing newline
+    record = register_variant(lab_dir=tmp_path, signal_id="b", config={"w": 2})
+    records = load_ledger(tmp_path)
+    assert record.variant_hash in {entry.variant_hash for entry in records}
+    assert n_trials(tmp_path) == 2  # both registrations counted
