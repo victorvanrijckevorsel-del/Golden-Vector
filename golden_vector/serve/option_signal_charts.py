@@ -24,6 +24,7 @@ def render_option_signal_charts(
     signal_history_points: Sequence[OptionSignalPoint],
     *,
     signal_horizon_days: int | None = None,
+    underlying_price: float | None = None,
 ) -> str:
     """Render persisted option-signal frames; no chain scans or analytics here."""
 
@@ -39,7 +40,7 @@ def render_option_signal_charts(
         "<section class=\"nested-panel option-signal-charts\">"
         "<h3>Option Signal Charts</h3>"
         f"{_render_skew_curve_chart(skew_curve_points)}"
-        f"{_render_oi_strike_chart(oi_strike_points)}"
+        f"{_render_oi_strike_chart(oi_strike_points, underlying_price=underlying_price)}"
         f"{_render_signal_history_chart(signal_history_points, signal_horizon_days=signal_horizon_days)}"
         "<p class=\"hint\">IV rank is not available yet; the history store needs "
         "more market-hours snapshots before that label is useful.</p>"
@@ -86,7 +87,11 @@ def _render_skew_curve_chart(points: Sequence[OptionSignalPoint]) -> str:
     )
 
 
-def _render_oi_strike_chart(points: Sequence[OptionSignalPoint]) -> str:
+def _render_oi_strike_chart(
+    points: Sequence[OptionSignalPoint],
+    *,
+    underlying_price: float | None = None,
+) -> str:
     if not points:
         return (
             "<section class=\"option-chart-block\">"
@@ -95,9 +100,16 @@ def _render_oi_strike_chart(points: Sequence[OptionSignalPoint]) -> str:
             "for this ticker.</p>"
             "</section>"
         )
+    shown, omitted = _select_oi_strikes(points, underlying_price=underlying_price)
+    trim_note = ""
+    if omitted:
+        trim_note = (
+            "<p class=\"hint\">Showing strikes near the money plus the highest "
+            f"open-interest strikes; {omitted} further strike rows are omitted.</p>"
+        )
     rows = []
     for point in sorted(
-        points,
+        shown,
         key=lambda item: (
             str(item.get("side") or ""),
             _sort_number(item.get("strike")),
@@ -119,14 +131,56 @@ def _render_oi_strike_chart(points: Sequence[OptionSignalPoint]) -> str:
     return (
         "<section class=\"option-chart-block\">"
         "<h4>Open Interest by Strike</h4>"
-        f"{_render_oi_strike_svg(points)}"
+        f"{_render_oi_strike_svg(shown)}"
         "<table><thead><tr>"
         "<th>Side</th><th>Strike</th><th>Open Interest</th><th>Volume</th>"
         "<th>Expiry / DTE</th><th>Liquidity</th><th>Flags</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
+        f"{trim_note}"
         "</section>"
     )
+
+
+def _select_oi_strikes(
+    points: Sequence[OptionSignalPoint],
+    *,
+    underlying_price: float | None = None,
+    near: int = 11,
+    top_oi: int = 5,
+) -> tuple[list[OptionSignalPoint], int]:
+    """Trim the strike dump to the strikes that matter.
+
+    Keeps the strikes nearest the money (``near`` distinct strikes, ~±5 around
+    the underlying) plus the ``top_oi`` strikes carrying the most open interest,
+    then returns the matching rows and the count of strike rows omitted.
+    """
+
+    strikes = sorted(
+        {value for point in points if (value := _optional_float(point.get("strike"))) is not None}
+    )
+    if not strikes:
+        return list(points), 0
+    reference = underlying_price if underlying_price and underlying_price > 0 else None
+    if reference is None:
+        reference = strikes[len(strikes) // 2]
+    nearest = sorted(strikes, key=lambda strike: abs(strike - reference))[:near]
+    oi_by_strike: dict[float, float] = {}
+    for point in points:
+        strike = _optional_float(point.get("strike"))
+        if strike is None:
+            continue
+        oi_by_strike[strike] = oi_by_strike.get(strike, 0.0) + (
+            _optional_float(point.get("open_interest")) or 0.0
+        )
+    busiest = sorted(oi_by_strike, key=lambda strike: oi_by_strike[strike], reverse=True)[:top_oi]
+    kept = set(nearest) | set(busiest)
+    shown = [
+        point
+        for point in points
+        if _optional_float(point.get("strike")) in kept
+    ]
+    return shown, len(points) - len(shown)
 
 
 def _signal_history_horizon(points: Sequence[OptionSignalPoint]) -> int | None:

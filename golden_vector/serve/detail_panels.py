@@ -35,11 +35,13 @@ from golden_vector.serve.format_helpers import (
     _render_small_table,
     format_dte_suffix as _dte_suffix,
 )
+from golden_vector.serve.column_help import help_term
 from golden_vector.serve.model_state_banner import render_option_freshness_box
 from golden_vector.serve.option_signal_charts import render_option_signal_charts
 from golden_vector.serve.option_signal_render import (
     format_vol_points,
     option_signal_skew_display_value,
+    option_signal_skew_hover,
     render_option_signal_badge,
     signal_horizon_from_row,
 )
@@ -238,46 +240,47 @@ def _render_option_trading_panel(
     )
     body.append(_render_option_context_warnings(detail.source_context))
     body.append(_render_option_signal_card(detail))
-    body.append(_render_option_skew_overlay(detail))
-    body.append(
-        render_option_signal_charts(
-            detail.skew_curve_points,
-            detail.oi_strike_points,
-            detail.signal_history_points,
-            signal_horizon_days=signal_horizon_from_row(detail.signal_row),
-        )
-    )
-    body.append(
-        "<details class=\"method-disclosure\"><summary>Method</summary>"
-        "<p>Contracts are selected during refresh from cached Yahoo Finance "
-        "option-chain artifacts. "
-        "Tradable rows passed stricter spread and open-interest checks. Watch rows "
-        "passed one relaxed check and can be expensive to enter or exit.</p>"
-        "<p>Open interest is existing open contracts. Volume is today's trading. "
-        "Spread is ask minus bid divided by mid; lower is usually better.</p>"
-        "</details>"
-    )
+    # Hero: the tradable candidates, then the sizing calculator for a selected
+    # contract. Everything else is reference detail, collapsed below.
+    body.append(_render_option_candidate_matrix(detail))
     if detail.risk_free_rate_is_fallback:
         body.append(
             "<p class=\"hint\">Risk-free rate was missing from the options manifest; "
             "scenario values use a 0% rate fallback.</p>"
         )
-    body.extend(
+    body.append(_render_option_sizing_calculator(detail))
+    body.append(_render_option_proxy_fallback(detail))
+    chain_detail = "".join(
         [
-            _render_option_trading_context_table(
-                detail,
+            _render_option_skew_overlay(detail),
+            render_option_signal_charts(
+                detail.skew_curve_points,
+                detail.oi_strike_points,
+                detail.signal_history_points,
+                signal_horizon_days=signal_horizon_from_row(detail.signal_row),
+                underlying_price=_option_panel_stock_price(detail),
             ),
+            _render_option_trading_context_table(detail),
             _render_option_liquidity_summary(detail),
+            "<details class=\"method-disclosure\"><summary>Method</summary>"
+            "<p>Contracts are selected during refresh from cached Yahoo Finance "
+            "option-chain artifacts. "
+            "Tradable rows passed stricter spread and open-interest checks. Watch rows "
+            "passed one relaxed check and can be expensive to enter or exit.</p>"
+            "<p>Open interest is existing open contracts. Volume is today's trading. "
+            "Spread is ask minus bid divided by mid; lower is usually better.</p>"
+            "</details>",
+            "<details class=\"method-disclosure\"><summary>Glossary</summary>"
+            "<p>Bid is the price buyers currently show. Ask is the price sellers show. "
+            "Mid is the midpoint of bid and ask. Last is the most recent reported trade, "
+            "not necessarily executable now. Delta is shown as context, not as the bucket rule.</p>"
+            "</details>",
         ]
     )
-    body.append(_render_option_sizing_calculator(detail))
-    body.append(_render_option_candidate_matrix(detail))
-    body.append(_render_option_proxy_fallback(detail))
     body.append(
-        "<details class=\"method-disclosure\"><summary>Glossary</summary>"
-        "<p>Bid is the price buyers currently show. Ask is the price sellers show. "
-        "Mid is the midpoint of bid and ask. Last is the most recent reported trade, "
-        "not necessarily executable now. Delta is shown as context, not as the bucket rule.</p>"
+        "<details class=\"option-chain-detail\">"
+        "<summary>Show chain detail (skew curve, open interest by strike, liquidity, method)</summary>"
+        f"{chain_detail}"
         "</details>"
     )
     if row.notes:
@@ -303,32 +306,38 @@ def _render_option_signal_card(detail: OptionTradingDetailData) -> str:
             signal.get("direction_label"),
             signal.get("direction_reason"),
             format_vol_points(option_signal_skew_display_value(signal)),
+            option_signal_skew_hover(signal),
         ),
         (
             "Activity",
             signal.get("activity_label"),
             signal.get("activity_reason"),
             _activity_text(signal),
+            None,
         ),
         (
             "Option Cost Signal",
             signal.get("cost_label"),
             signal.get("cost_reason"),
             _fmt_number(signal.get("iv_rv_ratio"), decimals=2),
+            None,
         ),
         (
             "Option Signal Quality",
             signal.get("data_quality_label"),
             signal.get("data_quality_reason"),
             _fmt_percent(signal.get("signal_area_quote_coverage"), decimals=0),
+            None,
         ),
     )
     lane_html = []
-    for title, label, reason, value in lanes:
+    for title, label, reason, value, hover in lanes:
+        value_text = str(value or "-")
+        value_html = help_term(value_text, text=hover) if hover else escape(value_text)
         lane_html.append(
             "<article class=\"option-signal-lane\">"
             f"<h4>{escape(title)}</h4>"
-            f"<p>{render_option_signal_badge(label)} <strong>{escape(str(value or '-'))}</strong></p>"
+            f"<p>{render_option_signal_badge(label)} <strong>{value_html}</strong></p>"
             f"<p class=\"hint\">{_fmt_text(reason)}</p>"
             "</article>"
         )
@@ -451,9 +460,7 @@ def _render_option_context_warnings(context: object | None) -> str:
 
 def _render_option_trading_context_table(detail: OptionTradingDetailData) -> str:
     context = detail.source_context
-    stock_price = (
-        detail.row.current_stock_price if detail.row is not None else None
-    ) or _first_slot_stock_price((*detail.put_slots, *detail.call_slots))
+    stock_price = _option_panel_stock_price(detail)
     risk_free_rate = (
         context.risk_free_rate
         if context is not None and context.risk_free_rate is not None
@@ -527,7 +534,9 @@ def _render_option_candidate_matrix(detail: OptionTradingDetailData) -> str:
     return (
         "<section id=\"option-candidates\" class=\"nested-panel\">"
         "<h3>Option Candidates</h3>"
-        "<p class=\"hint\">Each side shows near-ATM and directional candidates around the configured target horizons.</p>"
+        "<p class=\"hint\">Each side shows near-ATM and directional candidates around the "
+        "configured target horizons. The bold row is the tradable near-ATM pick. Hover a "
+        "candidate name for bid/ask, open interest, and volume.</p>"
         f"{_render_option_candidate_side_section('Puts', put_slots, ticker=detail.ticker)}"
         f"{_render_option_candidate_side_section('Calls', call_slots, ticker=detail.ticker)}"
         "</section>"
@@ -559,7 +568,7 @@ def _render_option_candidate_side_section(
             header += f" · expiry {escape(expiration)}"
         rows.append(
             "<tr class=\"option-horizon-row\">"
-            f"<th colspan=\"14\">{header}</th>"
+            f"<th colspan=\"7\">{header}</th>"
             "</tr>"
         )
         for slot in grouped[horizon]:
@@ -569,9 +578,8 @@ def _render_option_candidate_side_section(
         f"<h4>{escape(title)}</h4>"
         "<table>"
         "<thead><tr>"
-        "<th>Candidate</th><th>Expiry / DTE</th><th>Strike</th><th>OTM</th>"
-        "<th>Mid</th><th>Bid / Ask</th><th>Spread</th><th>OI</th><th>Volume</th>"
-        "<th>Delta</th><th>Tier</th><th>Select</th><th>Yahoo Chain</th><th>Note</th>"
+        "<th>Candidate</th><th>Strike &middot; Expiry (DTE)</th><th>Delta</th>"
+        "<th>Mid</th><th>Spread</th><th>Liquidity</th><th>Actions</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"
@@ -598,17 +606,16 @@ def _render_option_candidate_matrix_row(
     candidate = slot.candidate
     side = "put" if slot.option_type == "P" else "call"
     label = _candidate_slot_label(slot)
-    yahoo_link = _yahoo_chain_link(slot.ticker, slot.expiration)
+    yahoo_icon = _yahoo_chain_link(slot.ticker, slot.expiration)
     if candidate is None:
+        label_html = help_term(label, text=slot.reason) if slot.reason else escape(label)
         return (
             "<tr>"
-            f"<td>{escape(label)}</td>"
-            f"<td>{_fmt_text(slot.expiration)}"
-            f"{_dte_suffix(slot.days_to_expiry)}</td>"
-            "<td>-</td><td colspan=\"7\">-</td>"
-            f"<td>{_tier_label(slot)}</td><td>-</td>"
-            f"<td>{yahoo_link}</td>"
-            f"<td>{escape(slot.reason)}</td>"
+            f"<td>{label_html}</td>"
+            f"<td>{_fmt_text(slot.expiration)}{_dte_suffix(slot.days_to_expiry)}</td>"
+            "<td>-</td><td>-</td><td>-</td>"
+            f"<td>{_tier_label(slot)}</td>"
+            f"<td>{yahoo_icon}</td>"
             "</tr>"
         )
     select_link = (
@@ -619,30 +626,42 @@ def _render_option_candidate_matrix_row(
             bucket=slot.bucket,
         )
         if candidate.liquidity_tier == "tradable"
-        else "-"
+        else ""
     )
-    bid_ask = (
-        f"{_fmt_number(candidate.bid, decimals=2)} / "
-        f"{_fmt_number(candidate.ask, decimals=2)}"
+    actions = " ".join(part for part in (select_link, yahoo_icon) if part) or "-"
+    depth = _candidate_depth_hover(candidate, _candidate_note(slot, candidate))
+    label_html = help_term(label, text=depth)
+    if slot.bucket == "near_atm" and candidate.liquidity_tier == "tradable":
+        label_html = f"<strong>{label_html}</strong>"
+    strike_exp = (
+        f"{_fmt_number(candidate.strike, decimals=2)} &middot; "
+        f"{_fmt_text(candidate.expiration)}{_dte_suffix(candidate.days_to_expiry)}"
     )
     return (
         "<tr>"
-        f"<td>{escape(label)}</td>"
-        f"<td>{_fmt_text(candidate.expiration)}{_dte_suffix(candidate.days_to_expiry)}</td>"
-        f"<td>{_fmt_number(candidate.strike, decimals=2)}</td>"
-        f"<td>{_fmt_percent(candidate.otm_pct, decimals=1)} OTM</td>"
-        f"<td>{_fmt_number(candidate.mid, decimals=2)}</td>"
-        f"<td>{bid_ask}</td>"
-        f"<td>{_fmt_percent(candidate.rel_spread, decimals=1)}</td>"
-        f"<td>{_fmt_number(candidate.open_interest, decimals=0)}</td>"
-        f"<td>{_fmt_number(candidate.volume, decimals=0)}</td>"
+        f"<td>{label_html}</td>"
+        f"<td>{strike_exp}</td>"
         f"<td>{_fmt_number(candidate.delta, decimals=2)}</td>"
+        f"<td>{_fmt_number(candidate.mid, decimals=2)}</td>"
+        f"<td>{_fmt_percent(candidate.rel_spread, decimals=1)}</td>"
         f"<td>{_tier_label(slot)}</td>"
-        f"<td>{select_link}</td>"
-        f"<td>{yahoo_link}</td>"
-        f"<td>{escape(_candidate_note(slot, candidate))}</td>"
+        f"<td>{actions}</td>"
         "</tr>"
     )
+
+
+def _candidate_depth_hover(candidate: OptionCandidate, note: str) -> str:
+    """Bid/ask, open interest, and volume folded into the candidate-name hover."""
+
+    text = (
+        f"Bid {_fmt_number(candidate.bid, decimals=2)} / "
+        f"Ask {_fmt_number(candidate.ask, decimals=2)} · "
+        f"OI {_fmt_number(candidate.open_interest, decimals=0)} · "
+        f"Volume {_fmt_number(candidate.volume, decimals=0)}"
+    )
+    if note:
+        text = f"{text}\n{note}"
+    return text
 
 
 def _candidate_slot_label(slot: OptionCandidateSlot) -> str:
@@ -701,6 +720,13 @@ def _contract_select_link(
     return f"<a class=\"button-link\" href=\"{escape(href, quote=True)}\">Select</a>"
 
 
+def _option_panel_stock_price(detail: OptionTradingDetailData) -> float | None:
+    """Best available underlying price: the row's, else the first slot's."""
+
+    price = detail.row.current_stock_price if detail.row is not None else None
+    return price or _first_slot_stock_price((*detail.put_slots, *detail.call_slots))
+
+
 def _first_slot_stock_price(slots: tuple[OptionCandidateSlot, ...]) -> float | None:
     for slot in slots:
         candidate = slot.display_candidate
@@ -724,8 +750,9 @@ def _yahoo_chain_link(ticker: str, expiration: str | None) -> str:
         f"?date={expiry_epoch}"
     )
     return (
-        f"<a href=\"{escape(href, quote=True)}\" target=\"_blank\" "
-        "rel=\"noopener noreferrer\">Open Yahoo chain for this expiry</a>"
+        f"<a class=\"yahoo-chain-icon\" href=\"{escape(href, quote=True)}\" target=\"_blank\" "
+        "rel=\"noopener noreferrer\" title=\"Open Yahoo option chain for this expiry\" "
+        "aria-label=\"Open Yahoo option chain for this expiry\">&#8599;</a>"
     )
 
 

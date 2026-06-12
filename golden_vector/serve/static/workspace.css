@@ -670,3 +670,25 @@
 .verdict-partial { background: #eef0f2; color: #41505c; }
 .verdict-accruing { background: #e6eefb; color: #2b4f8a; }
 .scorecard-claim { font-weight: 600; margin-bottom: 4px; }
+
+/* Option Trading: compact candidates table + collapsed chain detail */
+.yahoo-chain-icon {
+  text-decoration: none;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.yahoo-chain-icon:hover { background: #eef0f2; }
+.option-side-candidates strong .help-term { font-weight: 700; }
+.option-chain-detail {
+  margin-top: 18px;
+  border-top: 1px solid var(--border, #d9d2c4);
+  padding-top: 10px;
+}
+.option-chain-detail > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted, #5f584e);
+  padding: 4px 0;
+}
+.option-chain-detail[open] > summary { margin-bottom: 8px; }

@@ -124,7 +124,11 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
     assert "Half-spread Cost" not in body
     assert "Candidate" in body
     assert "Tradable" in body
-    assert "Open Yahoo chain for this expiry" in body
+    # Yahoo chain is now a compact arrow icon carrying the label in its title.
+    assert 'class="yahoo-chain-icon"' in body
+    assert "Open Yahoo option chain for this expiry" in body
+    # Chain detail (open interest, skew curve, liquidity, method) is collapsed.
+    assert "Show chain detail" in body
     assert "230d" in body
     assert "30d tactical" not in body
     assert "Put P&amp;L/share @ Gold -10% (60d)" not in body
