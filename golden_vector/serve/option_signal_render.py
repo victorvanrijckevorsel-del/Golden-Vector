@@ -23,9 +23,14 @@ def format_vol_points(value: object) -> str:
 def signal_horizon_from_row(
     signal: dict[str, object] | None,
     *,
-    fallback: int = 60,
-) -> int:
-    """The signal horizon a persisted row was built at (never recomputed)."""
+    fallback: int | None = None,
+) -> int | None:
+    """The signal horizon a persisted row was built at (never recomputed).
+
+    No stale-constant fallback (audit L2): when the row predates the horizon
+    column, return None and let callers use their documented fallbacks
+    (e.g. the history chart's min-of-points).
+    """
 
     if not signal:
         return fallback
@@ -50,6 +55,8 @@ def option_signal_skew_display_value(
         return None
     if horizon is None:
         horizon = signal_horizon_from_row(signal)
+    if horizon is None:
+        return None
     ticker = str(signal.get("ticker") or "").strip().upper()
     benchmark = str(signal.get("benchmark_symbol") or "").strip().upper()
     vehicle_type = str(signal.get("option_vehicle_type") or "").strip()
@@ -74,6 +81,8 @@ def option_signal_skew_hover(
         return None
     if horizon is None:
         horizon = signal_horizon_from_row(signal)
+    if horizon is None:
+        return None
     ticker = str(signal.get("ticker") or "").strip().upper() or "This stock"
     benchmark = str(signal.get("benchmark_symbol") or "").strip().upper() or "the benchmark"
     vehicle_type = str(signal.get("option_vehicle_type") or "").strip()

@@ -293,11 +293,15 @@ def _stamp_most_liquid_defaults(
         return overview_frame
     result = overview_frame.copy()
     tickers = [str(ticker).upper() for ticker in result["ticker"]]
+    # Only displayable windows may be stamped — validators allow extra DTE
+    # bands, and a stamped horizon the UI cannot render would poison the
+    # most-liquid default (audit M4).
+    metric_list = list(contract_metrics)
     per_side: dict[str, dict[str, MostLiquidSelection | None]] = {"P": {}, "C": {}}
     for side in ("P", "C"):
         for ticker in tickers:
             per_side[side][ticker] = select_ticker_default_window(
-                metrics=contract_metrics,
+                metrics=metric_list,
                 ticker=ticker,
                 side=side,  # type: ignore[arg-type]
                 dte_bands=dte_bands,
@@ -311,12 +315,15 @@ def _stamp_most_liquid_defaults(
             selection.expiration if (selection := per_side[side][ticker]) else None
             for ticker in tickers
         ]
+        # Reuse the per-ticker selections for the vote (audit M8): the group
+        # default must never re-run identical selector work.
         result[f"group_default_{prefix}_horizon_days"] = select_group_default_window(
-            metrics=contract_metrics,
+            metrics=(),
             tickers=tickers,
             side=side,  # type: ignore[arg-type]
             dte_bands=dte_bands,
             exclude_tickers=benchmark_tickers,
+            precomputed=per_side[side],
         )
     return result
 

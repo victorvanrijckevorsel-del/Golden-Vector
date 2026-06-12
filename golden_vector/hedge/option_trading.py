@@ -26,9 +26,10 @@ SideStatus = Literal["tradable", "watch", "none"]
 OptionSide = Literal["put", "call"]
 SizingMode = Literal["contracts", "budget"]
 
-# Fallback only (sizing-request default before config resolution). The real
-# signal/context horizon comes from hedge_readiness.option_signal_horizon_days.
-PREFERRED_OPTION_HORIZON_DAYS = 60
+# Bare-construction fallback only; production paths resolve the horizon
+# from config (signal horizon) or the stamped most-liquid default. Kept at
+# the signal-horizon default so a bare request is never a retired horizon.
+PREFERRED_OPTION_HORIZON_DAYS = 90
 PUT_CONTEXT_GOLD_MOVE = -0.10
 CALL_CONTEXT_GOLD_MOVE = 0.10
 
@@ -247,7 +248,7 @@ def build_option_trading_detail(
     put_candidate_slots: dict[str, list[OptionCandidateSlot]] | None = None,
     call_candidate_slots: dict[str, list[OptionCandidateSlot]] | None = None,
     sizing_request: OptionSizingRequest | None = None,
-    target_horizons_days: tuple[int, ...] = (60, 90, 120),  # callers pass config
+    target_horizons_days: tuple[int, ...] = (90, 180, 230, 550),  # callers pass config
     down_beta_min_for_scenario: float = 0.10,
     risk_free_rate_is_fallback: bool = False,
     source_context: OptionTradingSourceContext | None = None,
@@ -293,7 +294,8 @@ def build_option_trading_detail(
         if candidate.liquidity_tier == "tradable"
     )
     sizing = build_option_sizing_result(
-        request=sizing_request or OptionSizingRequest(),
+        request=sizing_request
+        or OptionSizingRequest(horizon_days=target_horizons_days[0]),
         put_bundles=put_bundles,
         call_bundles=call_bundles,
     )

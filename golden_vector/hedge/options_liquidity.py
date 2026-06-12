@@ -167,6 +167,16 @@ class OptionChainScan:
     def by_type(self, option_type: OptionSideType) -> tuple[OptionContractMetrics, ...]:
         return tuple(metric for metric in self.metrics if metric.option_type == option_type)
 
+    def tier_count(self, option_type: OptionSideType, tier: OptionLiquidityTier) -> int:
+        # Restored after a Milestone B refactor orphaned this method inside
+        # _median_or_none (audit M7); liquidity_summary / the
+        # options-liquidity-summary CLI depend on it.
+        return sum(
+            1
+            for metric in self.metrics
+            if metric.option_type == option_type and metric.liquidity_tier == tier
+        )
+
 
 @dataclass(frozen=True)
 class TradableLiquidityAggregate:
@@ -233,13 +243,6 @@ def aggregate_tradable_liquidity(
 def _median_or_none(values: Iterable[float | None]) -> float | None:
     numeric = [float(value) for value in values if value is not None]
     return float(statistics.median(numeric)) if numeric else None
-
-    def tier_count(self, option_type: OptionSideType, tier: OptionLiquidityTier) -> int:
-        return sum(
-            1
-            for metric in self.metrics
-            if metric.option_type == option_type and metric.liquidity_tier == tier
-        )
 
 
 def settings_from_config(config: OptionLiquidityConfigLike) -> OptionLiquiditySettings:

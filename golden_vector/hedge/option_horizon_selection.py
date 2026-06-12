@@ -53,6 +53,7 @@ class MostLiquidSelection:
     median_open_interest: float | None
     median_volume: float | None
     median_near_spot_depth: float | None
+    is_standard_monthly: bool = False
 
 
 def rank_expiry_liquidity(
@@ -153,6 +154,7 @@ def select_most_liquid_expiry(
         median_open_interest=best.median_open_interest,
         median_volume=best.median_volume,
         median_near_spot_depth=best.median_near_spot_depth,
+        is_standard_monthly=best.is_standard_monthly,
     )
 
 
@@ -166,8 +168,9 @@ def select_ticker_default_window(
     """A ticker's best window/expiry for one side (detail-page default).
 
     Windows compete on their best expiry's aggregates with the same
-    deterministic chain; the DTE-distance tie-breaker does not apply across
-    windows, so the final cross-window tie-break is the smaller horizon.
+    deterministic chain (incl. standard-monthly-first); the DTE-distance
+    tie-breaker does not apply across windows, so the final cross-window
+    tie-breaks are the smaller horizon, then lexical expiration.
     """
 
     metric_list = list(metrics)
@@ -195,6 +198,7 @@ def select_ticker_default_window(
             -(item.median_open_interest or 0.0),
             -(item.median_volume or 0.0),
             -(item.median_near_spot_depth or 0.0),
+            not item.is_standard_monthly,
             item.horizon_days,
             item.expiration,
         ),
@@ -208,6 +212,7 @@ def select_group_default_window(
     side: OptionSideType,
     dte_bands: Mapping[int, tuple[int, int]],
     exclude_tickers: Iterable[str] = (),
+    precomputed: Mapping[str, MostLiquidSelection | None] | None = None,
 ) -> int | None:
     """Group-level default window for the overview (single-stock miners).
 
@@ -215,18 +220,23 @@ def select_group_default_window(
     its own best window, so one ticker with thousands of contracts (or the
     benchmark ETFs, which are excluded) cannot dominate the default. Ties
     break by vote count desc, then the smaller horizon for determinism.
+    ``precomputed`` lets the artifact build reuse already-computed per-ticker
+    selections instead of re-running them (audit M8).
     """
 
     excluded = {str(ticker).upper() for ticker in exclude_tickers}
-    metric_list = list(metrics)
+    metric_list = list(metrics) if precomputed is None else []
     votes: dict[int, int] = {}
     for ticker in sorted({str(ticker).upper() for ticker in tickers} - excluded):
-        best = select_ticker_default_window(
-            metrics=metric_list,
-            ticker=ticker,
-            side=side,
-            dte_bands=dte_bands,
-        )
+        if precomputed is not None:
+            best = precomputed.get(ticker)
+        else:
+            best = select_ticker_default_window(
+                metrics=metric_list,
+                ticker=ticker,
+                side=side,
+                dte_bands=dte_bands,
+            )
         if best is None:
             continue
         votes[best.horizon_days] = votes.get(best.horizon_days, 0) + 1

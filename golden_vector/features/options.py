@@ -206,7 +206,12 @@ def _realized_vol(price_history: pd.DataFrame, *, window_days: int) -> float | N
     else:
         return None
     returns = returns.tail(window_days)
-    if len(returns.index) < 2:
+    # Honesty floor (audit M6): with a 550d window over ~250 rows of history,
+    # tail() silently returns ALL history and the value is full-history vol
+    # mislabeled as 550d. Require most of the window or return None — a
+    # missing number beats a wrong one. (Known basis note: windows count
+    # TRADING rows vs an option's CALENDAR days; recorded for a future pass.)
+    if len(returns.index) < max(2, int(window_days * 0.8)):
         return None
     return float(returns.std(ddof=1) * math.sqrt(TRADING_DAYS_PER_YEAR))
 

@@ -1873,6 +1873,9 @@ def run_option_artifacts_outcome(
             dte_bands={
                 horizon: (band[0], band[1])
                 for horizon, band in loaded_config.app.hedge_readiness.option_dte_bands.items()
+                # Only displayable windows may drive most-liquid stamping
+                # (audit M4): validators allow extra bands the UI can't show.
+                if horizon in loaded_config.app.hedge_readiness.display_horizons_days
             },
             benchmark_tickers=tuple(
                 loaded_config.app.hedge_readiness.benchmark_tickers

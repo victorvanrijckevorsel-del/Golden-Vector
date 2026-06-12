@@ -113,7 +113,9 @@ def build_option_trading_detail_data(
     )
     # "Most liquid" default (C4): when the user did not pick a horizon, the
     # backend-stamped per-ticker side-aware selection wins over the config
-    # fallback. Serve never recomputes the choice.
+    # fallback. Serve never recomputes the choice — and never applies a
+    # stamped horizon the UI cannot render (audit M4: stale artifacts or
+    # extra config bands could stamp a non-displayable window).
     if (
         sizing_request is not None
         and not sizing_request.horizon_explicit
@@ -124,8 +126,27 @@ def build_option_trading_detail_data(
             if sizing_request.side == "put"
             else overview_row.most_liquid_call_horizon_days
         )
-        if stamped is not None:
-            sizing_request = replace(sizing_request, horizon_days=int(stamped))
+        stamped_expiration = (
+            overview_row.most_liquid_put_expiration
+            if sizing_request.side == "put"
+            else overview_row.most_liquid_call_expiration
+        )
+        if (
+            stamped is not None
+            and int(stamped) in app_config.hedge_readiness.display_horizons_days
+        ):
+            # The stamped expiry is the most-liquid rule's actual pick, which
+            # can differ from the band-fit slot the matrix shows (audit M5);
+            # the note keeps that visible. It also corrects any earlier
+            # "defaulted to Xd" note (audit L3).
+            note = f"Using the most-liquid default: {int(stamped)}d"
+            if stamped_expiration:
+                note += f" · expiry {stamped_expiration}"
+            sizing_request = replace(
+                sizing_request,
+                horizon_days=int(stamped),
+                notes=(*sizing_request.notes, f"{note}."),
+            )
     # C5 bounded acceptance: the detail build recomputes scenario bundles for
     # ONE selected candidate from persisted data (no raw chain scans — a
     # guardrail test pins this). Timed so growth past "bounded" is visible.
@@ -157,7 +178,10 @@ def build_option_trading_detail_data(
         data=data,
         detail=detail,
         app_config=app_config,
-        request=sizing_request or OptionSizingRequest(),
+        request=sizing_request
+        or OptionSizingRequest(
+            horizon_days=app_config.hedge_readiness.option_signal_horizon_days
+        ),
     )
     detail = _with_option_signal_payloads(data=data, detail=detail)
     if detail.row is not None or not data.overview.reason:
