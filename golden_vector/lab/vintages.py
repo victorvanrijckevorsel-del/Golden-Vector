@@ -67,10 +67,12 @@ def _melt_snapshot(frame: pd.DataFrame, *, source: str, vintage_date: str, recor
             elif isinstance(value, (int, float)):
                 value_num = float(value)
             else:
-                text = str(value)
-                if pd.isna(pd.Series([value]).iloc[0]):
-                    continue
-                value_text = text
+                try:
+                    if pd.isna(value):
+                        continue
+                except (TypeError, ValueError):
+                    pass  # non-scalar (list/array) — keep its text form
+                value_text = str(value)
             rows.append(
                 {
                     "vintage_date": vintage_date,

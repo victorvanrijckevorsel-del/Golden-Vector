@@ -112,6 +112,32 @@ def test_forward_returns_require_full_window() -> None:
     assert panel.iloc[1]["fwd_log_ret_2w"] == pytest.approx(0.07)
 
 
+def test_forward_returns_missing_week_row_does_not_stretch_window() -> None:
+    """An absent week (missing row, not NaN) must not let an h-week label
+    silently span more than h calendar weeks."""
+
+    grid = _weekly_grid(6)
+    weekly = pd.DataFrame(
+        {
+            "ticker": ["AEM"] * 5,
+            "week_period": [grid[0], grid[1], grid[3], grid[4], grid[5]],  # week 2 absent
+            "stock_log_ret": [0.01, 0.02, 0.04, 0.05, 0.06],
+            "gold_log_ret": [0.0] * 5,
+            "gdx_log_ret": [0.0] * 5,
+            "gdxj_log_ret": [0.0] * 5,
+        }
+    )
+    panel = build_forward_return_panel(weekly, horizons_weeks=[2])
+    assert len(panel) == 6  # gap week reinstated as a NaN row
+    by_period = panel.set_index("week_period")
+    # t=1's window covers weeks 2..3; week 2 is missing -> NA, never 0.02+0.04.
+    assert pd.isna(by_period.loc[grid[1], "fwd_log_ret_2w"])
+    assert pd.isna(by_period.loc[grid[0], "fwd_log_ret_2w"])
+    # t=3's window covers weeks 4..5, fully present.
+    assert by_period.loc[grid[3], "fwd_log_ret_2w"] == pytest.approx(0.11)
+    assert (panel["ticker"] == "AEM").all()
+
+
 # ------------------------------------------------------- evaluation
 
 

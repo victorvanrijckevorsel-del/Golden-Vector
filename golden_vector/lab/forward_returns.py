@@ -37,7 +37,7 @@ def build_forward_return_panel(
 
     pieces: list[pd.DataFrame] = []
     for ticker, group in weekly_frame.groupby("ticker", sort=True):
-        ordered = group.sort_values("week_period").reset_index(drop=True)
+        ordered = _reindex_contiguous_weeks(group)
         out = ordered[["ticker", "week_period"]].copy()
         for horizon in horizons_weeks:
             h = int(horizon)
@@ -51,6 +51,29 @@ def build_forward_return_panel(
     if not pieces:
         return pd.DataFrame(columns=["ticker", "week_period"])
     return pd.concat(pieces, ignore_index=True)
+
+
+def _reindex_contiguous_weeks(group: pd.DataFrame) -> pd.DataFrame:
+    """Insert NaN rows for any calendar week missing from the ticker's grid.
+
+    The forward sum shifts over ROW positions; if a week were absent (not
+    NaN, missing entirely) an h-week label would silently span more than h
+    calendar weeks. Real data is contiguous today (verified across all 65
+    tickers), but the label math must not depend on an unstated upstream
+    invariant — a halted ticker would corrupt labels without this.
+    """
+
+    ordered = group.sort_values("week_period").reset_index(drop=True)
+    periods = pd.PeriodIndex(ordered["week_period"].astype(str), freq="W-FRI")
+    if len(periods) < 2:
+        return ordered
+    full_grid = pd.period_range(periods.min(), periods.max(), freq="W-FRI")
+    if len(full_grid) == len(periods):
+        return ordered
+    reindexed = ordered.set_index(periods).reindex(full_grid)
+    reindexed["ticker"] = reindexed["ticker"].ffill().bfill()
+    reindexed["week_period"] = [str(period) for period in full_grid]
+    return reindexed.reset_index(drop=True)
 
 
 def _forward_sum(series: pd.Series, horizon_weeks: int) -> pd.Series:
