@@ -58,6 +58,30 @@ When a milestone is ready to ship:
 5. Switch back to `dev-vic` (recreate from `main`) to continue working
 Do this automatically at each milestone — no need to ask.
 
+## Branch integration safety
+Before merging any branch, feature milestone, or worktree into `dev-vic` or
+`main`, run a deliberate integration audit. This is mandatory when multiple
+agents have been coding in parallel.
+
+- List every local and remote branch that is not merged into `origin/main`.
+- List every active worktree and note its branch, base commit, and ahead/behind
+  state.
+- Compare touched files across active branches before merging. Pay special
+  attention to `golden_vector/app/model_state.py`, `golden_vector/cli.py`,
+  `golden_vector/contracts/`, `golden_vector/serve/`, Candidate Finder,
+  Option Trading, Tool B, portfolio artifacts, and all schema/manifest code.
+- Do not assume a clean Git merge means a safe product merge. Schema changes,
+  artifact contracts, model-state publishing, freshness handling, and UI
+  readers can conflict logically without textual conflicts.
+- If two branches touch the same data spine or serve surface, integrate through
+  a temporary integration branch first. Run focused schema/reader tests, then
+  the full suite, then a real workspace smoke check before declaring it safe.
+- Never merge a branch that changes persisted artifacts, model-state manifest
+  shape, refresh publishing, or reader resolution without checking whether
+  another unmerged branch changed the same contract.
+- Treat unmerged branch inventory as part of the handoff. Report what is
+  merged, what is pending, and what must be reconciled next.
+
 ## Fix bugs immediately
 When a bug or code smell is identified, fix it now unless there's a concrete reason to defer. "It works for now" is NOT a valid reason to defer.
 
