@@ -15,6 +15,7 @@ data/raw/
 data/intermediate/
 data/output/
 data/runs/
+data/lab/
 !data/manual/
 !data/manual/**/*.csv
 

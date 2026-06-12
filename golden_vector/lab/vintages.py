@@ -20,9 +20,22 @@ from pathlib import Path
 
 import pandas as pd
 
+from golden_vector.app.model_state import (
+    load_current_model_state_manifest,
+    resolve_current_model_artifact_path,
+    summarize_option_freshness,
+)
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.parquet import write_parquet_atomic
 
 LOGGER = logging.getLogger(__name__)
+
+# Option artifacts are only recorded when the manifest's freshness domain says
+# OK. CARRIED_FORWARD/UNAVAILABLE (or no manifest at all) means the data on
+# disk may be stale or schema-rejected — and first-write-wins dedupe would
+# make a bad capture permanent. A skipped week is honest; a contaminated
+# week is forever.
+_OPTION_SOURCES = frozenset({"option_signal_summary", "option_trading_overview"})
 
 VINTAGE_COLUMNS = [
     "vintage_date",
@@ -102,9 +115,7 @@ def _append_vintage(store_path: Path, new_rows: pd.DataFrame, *, source: str) ->
     if not fresh.empty:
         combined = pd.concat([existing, fresh], ignore_index=True)
         store_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = store_path.with_suffix(".tmp.parquet")
-        combined.to_parquet(tmp_path, index=False)
-        tmp_path.replace(store_path)
+        write_parquet_atomic(combined, store_path)
     return VintageSourceResult(
         source=source,
         rows_appended=int(len(fresh)),
@@ -123,25 +134,60 @@ def _vintage_sources(paths: ProjectPaths) -> dict[str, Path]:
 
 
 def record_vintages(paths: ProjectPaths, *, now: datetime | None = None) -> list[VintageSourceResult]:
-    """Snapshot all configured latest artifacts into the vintage stores."""
+    """Snapshot the current manifest-resolved artifacts into the vintage stores.
+
+    Sources resolve through the model-state manifest (never a bare mutable
+    alias when a manifest exists), option sources require freshness OK, and
+    each source is isolated — one corrupt artifact must not cost the week's
+    snapshot of the others.
+    """
 
     moment = now or datetime.now(timezone.utc)
     vintage_date = moment.date().isoformat()
     recorded_at_utc = moment.isoformat()
+
+    manifest = load_current_model_state_manifest(paths)
+    option_freshness = summarize_option_freshness(manifest)
+    option_data_ok = (
+        option_freshness is not None and option_freshness.get("status") == "OK"
+    )
+
     results: list[VintageSourceResult] = []
-    for source, artifact_path in _vintage_sources(paths).items():
-        if not artifact_path.exists():
-            LOGGER.warning("Vintage source %s missing at %s — skipped.", source, artifact_path)
+    for source, alias_path in _vintage_sources(paths).items():
+        try:
+            if source in _OPTION_SOURCES and not option_data_ok:
+                status = (
+                    option_freshness.get("status")
+                    if option_freshness is not None
+                    else "NO_MANIFEST"
+                )
+                LOGGER.warning(
+                    "Vintage source %s skipped: option freshness is %s, not OK.",
+                    source,
+                    status,
+                )
+                continue
+            artifact_path = resolve_current_model_artifact_path(
+                paths, source, fallback_path=alias_path
+            )
+            if artifact_path is None or not artifact_path.exists():
+                LOGGER.warning(
+                    "Vintage source %s is not usable in the current model state — skipped.",
+                    source,
+                )
+                continue
+            frame = pd.read_parquet(artifact_path)
+            melted = _melt_snapshot(
+                frame,
+                source=source,
+                vintage_date=vintage_date,
+                recorded_at_utc=recorded_at_utc,
+            )
+            store_path = vintages_dir(paths) / f"{source}.parquet"
+            result = _append_vintage(store_path, melted, source=source)
+        except Exception as exc:
+            LOGGER.warning("Vintage source %s failed: %s — continuing.", source, exc)
             continue
-        frame = pd.read_parquet(artifact_path)
-        melted = _melt_snapshot(
-            frame,
-            source=source,
-            vintage_date=vintage_date,
-            recorded_at_utc=recorded_at_utc,
-        )
-        store_path = vintages_dir(paths) / f"{source}.parquet"
-        result = _append_vintage(store_path, melted, source=source)
         results.append(result)
         LOGGER.info(
             "Vintage %s on %s: +%d rows (%d already recorded).",

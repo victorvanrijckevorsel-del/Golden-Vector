@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -78,12 +81,24 @@ def load_ledger(lab_dir: Path) -> list[VariantRecord]:
     path = ledger_path(lab_dir)
     if not path.exists():
         return []
+    lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
+    lines = [line for line in lines if line]
     records: list[VariantRecord] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        payload = json.loads(line)
+    for index, line in enumerate(lines):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            # A crash mid-append can tear only the FINAL line; quarantine it
+            # so registration/gating keep working. A malformed line anywhere
+            # else means real corruption — fail loud.
+            if index == len(lines) - 1:
+                quarantine = path.with_suffix(".jsonl.torn")
+                quarantine.write_text(line + "\n", encoding="utf-8")
+                LOGGER.warning(
+                    "Variant ledger: torn final line quarantined to %s.", quarantine
+                )
+                break
+            raise
         records.append(
             VariantRecord(
                 variant_hash=str(payload["variant_hash"]),

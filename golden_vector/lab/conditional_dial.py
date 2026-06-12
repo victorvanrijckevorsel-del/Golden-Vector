@@ -243,10 +243,12 @@ def build_and_save(paths, *, horizon_weeks: int = 13) -> pd.DataFrame:
     )
     weekly = weekly[weekly["gdx_log_ret"].notna()]
 
+    from golden_vector.common.parquet import write_parquet_atomic
+
     table = build_dial_table(weekly, horizon_weeks=horizon_weeks)
     target_dir = lab_dir(paths)
     target_dir.mkdir(parents=True, exist_ok=True)
-    table.to_parquet(target_dir / DIAL_TABLE_FILENAME, index=False)
+    write_parquet_atomic(table, target_dir / DIAL_TABLE_FILENAME)
     meta = {
         "built_at_utc": datetime.now(timezone.utc).isoformat(),
         "variant_hash": record.variant_hash,
@@ -257,7 +259,9 @@ def build_and_save(paths, *, horizon_weeks: int = 13) -> pd.DataFrame:
         "usable_cells": int((~table["insufficient_history"]).sum()),
         "caveat": "Exploratory, survivor-only universe (no dead-miner records yet); GDX-era weeks only.",
     }
-    (target_dir / DIAL_META_FILENAME).write_text(json.dumps(meta, indent=2))
+    from golden_vector.common.files import atomic_write_text
+
+    atomic_write_text(target_dir / DIAL_META_FILENAME, json.dumps(meta, indent=2))
     return table
 
 

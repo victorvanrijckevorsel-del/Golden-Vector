@@ -37,7 +37,12 @@ def load_lab_dial_data(
     table_path = lab_dir(paths) / DIAL_TABLE_FILENAME
     if not table_path.exists():
         return LabDialData(available=False)
-    frame = pd.read_parquet(table_path)
+    try:
+        frame = pd.read_parquet(table_path)
+    except Exception:
+        # Optional research panel: a torn/corrupt artifact degrades to the
+        # "not built yet" notice instead of a 500 on every request.
+        return LabDialData(available=False)
     if frame.empty:
         return LabDialData(available=False)
 
@@ -56,7 +61,10 @@ def load_lab_dial_data(
     meta: dict[str, Any] = {}
     meta_path = lab_dir(paths) / DIAL_META_FILENAME
     if meta_path.exists():
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            meta = {}
 
     return LabDialData(
         available=True,

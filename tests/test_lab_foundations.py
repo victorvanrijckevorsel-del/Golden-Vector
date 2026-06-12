@@ -135,23 +135,45 @@ def test_append_vintage_first_write_wins(tmp_path) -> None:
     assert third.rows_appended == len(next_day)  # new vintage date appends
 
 
-def test_record_vintages_smoke(tmp_path, monkeypatch) -> None:
+def _patched_vintage_env(tmp_path, monkeypatch, *, sources, freshness_status):
+    """Wire record_vintages to fixture sources with a stubbed manifest."""
+
     from golden_vector.lab import vintages as vintages_module
 
-    artifact = tmp_path / "tool_b_latest.parquet"
-    _snapshot_frame().to_parquet(artifact, index=False)
-
+    monkeypatch.setattr(vintages_module, "_vintage_sources", lambda paths: sources)
+    monkeypatch.setattr(
+        vintages_module, "load_current_model_state_manifest", lambda paths: {}
+    )
     monkeypatch.setattr(
         vintages_module,
-        "_vintage_sources",
-        lambda paths: {"tool_b": artifact},
+        "resolve_current_model_artifact_path",
+        lambda paths, name, fallback_path=None: fallback_path,
+    )
+    monkeypatch.setattr(
+        vintages_module,
+        "summarize_option_freshness",
+        lambda payload: (
+            None
+            if freshness_status is None
+            else {"status": freshness_status, "message": ""}
+        ),
     )
 
     class FakePaths:
         data_dir = tmp_path / "data"
 
+    return vintages_module, FakePaths()
+
+
+def test_record_vintages_smoke(tmp_path, monkeypatch) -> None:
+    artifact = tmp_path / "tool_b_latest.parquet"
+    _snapshot_frame().to_parquet(artifact, index=False)
+    vintages_module, paths = _patched_vintage_env(
+        tmp_path, monkeypatch, sources={"tool_b": artifact}, freshness_status="OK"
+    )
+
     results = vintages_module.record_vintages(
-        FakePaths(),  # type: ignore[arg-type]
+        paths,  # type: ignore[arg-type]
         now=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
     )
     assert len(results) == 1
@@ -160,3 +182,62 @@ def test_record_vintages_smoke(tmp_path, monkeypatch) -> None:
     stored = pd.read_parquet(store)
     assert set(stored["vintage_date"]) == {"2026-06-12"}
     assert results[0].rows_appended == len(stored)
+
+
+def test_record_vintages_skips_option_sources_unless_fresh(tmp_path, monkeypatch) -> None:
+    """Manifest-rejected option data must never enter the PIT store —
+    first-write-wins would make the contamination permanent."""
+
+    artifact = tmp_path / "option_signal_summary_latest.parquet"
+    _snapshot_frame().to_parquet(artifact, index=False)
+    for status in ("UNAVAILABLE", "CARRIED_FORWARD", None):
+        vintages_module, paths = _patched_vintage_env(
+            tmp_path,
+            monkeypatch,
+            sources={"option_signal_summary": artifact},
+            freshness_status=status,
+        )
+        results = vintages_module.record_vintages(
+            paths,  # type: ignore[arg-type]
+            now=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+        )
+        assert results == [], f"option source recorded under freshness={status}"
+        store = tmp_path / "data" / "lab" / "vintages" / "option_signal_summary.parquet"
+        assert not store.exists()
+
+
+def test_record_vintages_isolates_a_corrupt_source(tmp_path, monkeypatch) -> None:
+    corrupt = tmp_path / "tool_b_latest.parquet"
+    corrupt.write_text("not parquet", encoding="utf-8")
+    healthy = tmp_path / "tool_d_latest.parquet"
+    _snapshot_frame().to_parquet(healthy, index=False)
+    vintages_module, paths = _patched_vintage_env(
+        tmp_path,
+        monkeypatch,
+        sources={"tool_b": corrupt, "tool_d": healthy},
+        freshness_status="OK",
+    )
+    results = vintages_module.record_vintages(
+        paths,  # type: ignore[arg-type]
+        now=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+    )
+    assert [item.source for item in results] == ["tool_d"]
+    assert (tmp_path / "data" / "lab" / "vintages" / "tool_d.parquet").exists()
+
+
+def test_load_ledger_quarantines_torn_final_line_only(tmp_path) -> None:
+    from golden_vector.lab.ledger import ledger_path, load_ledger, register_variant
+
+    register_variant(lab_dir=tmp_path, signal_id="beta_gap", config={"w": 1})
+    path = ledger_path(tmp_path)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write('{"variant_hash": "abc", "signal_id"')  # torn append
+    records = load_ledger(tmp_path)
+    assert len(records) == 1  # healthy record survives, torn line quarantined
+    assert path.with_suffix(".jsonl.torn").exists()
+
+    # A malformed NON-final line is real corruption and must fail loud.
+    healthy_line = path.read_text(encoding="utf-8").splitlines()[0]
+    path.write_text('{"broken"\n' + healthy_line + "\n", encoding="utf-8")
+    with pytest.raises(Exception):
+        load_ledger(tmp_path)
