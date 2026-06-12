@@ -97,13 +97,17 @@ def _render_lab_overview_page(data: LabDialData, *, selected_bucket: str) -> str
 def _render_dial_row(row: dict[str, Any]) -> str:
     ticker = str(row.get("ticker") or "")
     if bool(row.get("insufficient_history")):
+        # One <td> per header column (no colspan): DataTables counts cells,
+        # not colspans, so a short row breaks the whole table. The five stat
+        # columns show a muted dash; the History column carries the reason.
+        dash = "<td class=\"hint\">—</td>"
         return (
             "<tr>"
             f"{_fmt_numeric_td(row.get('rank_in_bucket'), decimals=0)}"
             f"<td><a href=\"/ticker/{escape(ticker)}\">{escape(ticker)}</a></td>"
-            "<td class=\"hint\" colspan=\"5\">insufficient history</td>"
+            f"{dash * 5}"
             f"<td>{_fmt_text(_episodes_text(row))}</td>"
-            "<td>insufficient</td>"
+            "<td class=\"hint\">insufficient history</td>"
             "</tr>"
         )
     return (

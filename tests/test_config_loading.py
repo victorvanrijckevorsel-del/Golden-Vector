@@ -31,7 +31,7 @@ def test_load_app_config_reads_repo_yaml(monkeypatch):
     assert loaded.app.horizons.core_horizons[0] == "5D"
     assert loaded.app.qa.near_zero_gold_return_threshold == 0.005
     assert 4000 in loaded.app.screening_params.gold_price_scenarios
-    assert loaded.app.portfolio.enabled is False
+    assert loaded.app.portfolio.enabled is True  # committed default: portfolio on
     assert len(loaded.config_hash) == 64
 
 

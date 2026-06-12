@@ -144,3 +144,40 @@ def test_lab_serve_layer_has_no_dial_arithmetic() -> None:
         if "sort_values" in source:
             assert source.count("sort_values") == 1
             assert 'sort_values("rank_in_bucket")' in source
+
+
+def test_dial_rows_have_one_cell_per_header_column():
+    """DataTables counts <td> cells, not colspans — a short body row breaks
+    the whole table ('Requested unknown parameter'). Every row type, healthy
+    or insufficient, must emit exactly as many cells as the table has
+    headers (9)."""
+
+    import re
+
+    from golden_vector.serve.overview_lab import _render_dial_row
+
+    healthy = {
+        "ticker": "AEM",
+        "insufficient_history": False,
+        "rank_in_bucket": 1,
+        "p_beat_gdx_shrunk": 0.7,
+        "p_beat_gdx": 0.8,
+        "wilson_low": 0.5,
+        "wilson_high": 0.9,
+        "median_alpha": 0.1,
+        "alpha_q10": -0.1,
+        "alpha_q90": 0.3,
+        "n_weeks": 150,
+        "effective_n": 11.5,
+    }
+    insufficient = {
+        "ticker": "SPARSE",
+        "insufficient_history": True,
+        "rank_in_bucket": None,
+        "n_weeks": 40,
+        "effective_n": 3.1,
+    }
+    for row in (healthy, insufficient):
+        html = _render_dial_row(row)
+        assert len(re.findall(r"<td", html)) == 9
+        assert "colspan" not in html
