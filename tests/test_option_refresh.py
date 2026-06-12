@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+from datetime import datetime, timezone
 
 from golden_vector.app.config import load_app_config
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
@@ -39,7 +40,7 @@ def test_option_refresh_status_recovers_stale_running_process(tmp_path):
             status="running",
             job_id="job-1",
             process_id=12345,
-            started_at="2026-06-04T10:00:00Z",
+            started_at=datetime.now(timezone.utc).isoformat(),
             command=("python", "main.py", "refresh"),
         ),
     )
@@ -151,7 +152,7 @@ def test_complete_options_refresh_records_latest_model_refresh_id(tmp_path):
             status="running",
             job_id="job-1",
             process_id=456,
-            started_at="2026-06-04T10:00:00Z",
+            started_at=datetime.now(timezone.utc).isoformat(),
             command=("python", "main.py", "refresh"),
         ),
     )
@@ -190,7 +191,7 @@ def test_running_option_refresh_status_reads_latest_logged_stage(tmp_path):
             status="running",
             job_id="job-1",
             process_id=456,
-            started_at="2026-06-04T10:00:00Z",
+            started_at=datetime.now(timezone.utc).isoformat(),
             command=("python", "main.py", "refresh"),
             log_path=log_path.relative_to(paths.repo_root).as_posix(),
         ),
@@ -210,7 +211,7 @@ def test_complete_options_refresh_does_not_clobber_newer_job(tmp_path):
             status="running",
             job_id="newer-job",
             process_id=789,
-            started_at="2026-06-04T10:01:00Z",
+            started_at=datetime.now(timezone.utc).isoformat(),
         ),
     )
 
@@ -347,7 +348,7 @@ def test_main_overview_shows_disabled_refresh_control(tmp_path):
         OptionRefreshStatus(
             status="running",
             job_id="job-1",
-            started_at="2026-06-04T10:00:00Z",
+            started_at=datetime.now(timezone.utc).isoformat(),
         ),
     )
 
@@ -358,7 +359,7 @@ def test_main_overview_shows_disabled_refresh_control(tmp_path):
     assert "action=\"/refresh\"" in response["body"]
     assert "Refresh all model data" in response["body"]
     assert "<button type=\"submit\" disabled>" in response["body"]
-    assert "Full model refresh running since 2026-06-04T10:00:00Z." in response["body"]
+    assert "Full model refresh running since " in response["body"]
 
 
 def test_option_trading_overview_does_not_show_refresh_control(tmp_path):
@@ -377,7 +378,7 @@ def test_option_trading_overview_does_not_show_refresh_control(tmp_path):
         OptionRefreshStatus(
             status="running",
             job_id="job-1",
-            started_at="2026-06-04T10:00:00Z",
+            started_at=datetime.now(timezone.utc).isoformat(),
         ),
     )
 
@@ -424,3 +425,40 @@ def _call_wsgi_app(app, *, method: str, path: str, body: str = "") -> dict[str, 
         "headers": dict(captured["headers"]),
         "body": body_bytes.decode("utf-8"),
     }
+
+
+def test_running_lock_past_runtime_ceiling_recovers_to_failed(tmp_path):
+    """PID reuse can make a dead runner's PID look alive forever; a RUNNING
+    lock older than the runtime ceiling must recover to FAILED so the
+    refresh button is not permanently disabled."""
+
+    from datetime import timedelta
+
+    from golden_vector.serve.option_refresh import (
+        OptionRefreshStatus,
+        read_option_refresh_status,
+        write_option_refresh_status,
+    )
+    from tests.helpers import build_test_paths
+
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    ancient = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    write_option_refresh_status(
+        paths,
+        OptionRefreshStatus(
+            status="running",
+            job_id="stale-job",
+            process_id=4242,
+            started_at=ancient,
+            finished_at=None,
+            command="python main.py refresh",
+            latest_run_id=None,
+            log_path=None,
+            stage_detail=None,
+            error_summary=None,
+        ),
+    )
+    status = read_option_refresh_status(paths, process_exists=lambda _pid: True)
+    assert status.status == "failed"
+    assert "ceiling" in (status.error_summary or "")

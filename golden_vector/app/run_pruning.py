@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,8 @@ def prune_runs(
 
     if keep_model_states <= 0:
         raise ValueError("keep_model_states must be positive")
+    if apply:
+        _refuse_apply_during_refresh(paths)
 
     model_states = _load_model_state_records(paths)
     retained_snapshots = model_states[:keep_model_states]
@@ -301,6 +304,26 @@ def _artifact_file_candidates(paths: ProjectPaths) -> list[PruneCandidate]:
     return candidates
 
 
+RUN_DIR_MIN_AGE_SECONDS = 24 * 60 * 60
+
+
+def _refuse_apply_during_refresh(paths: ProjectPaths) -> None:
+    """A refresh's run dir is unreferenced until its final manifest flip —
+    pruning mid-refresh would delete the snapshots it is about to read."""
+
+    try:
+        from golden_vector.serve.option_refresh import read_option_refresh_status
+
+        lock = read_option_refresh_status(paths)
+    except Exception:  # pragma: no cover - lock readability is best-effort
+        return
+    if lock.status == "running":
+        raise RuntimeError(
+            "A refresh is currently running; re-run prune-runs --apply after "
+            "it completes."
+        )
+
+
 _RUN_DIR_NAME_PATTERN = re.compile(r"^\d{8}T\d{6}Z-[A-Za-z0-9_.-]+$")
 
 
@@ -318,6 +341,14 @@ def _run_dir_candidates(
         # Only run-id-stamped directories are run dirs. Operational dirs
         # (acceptance_logs, ui_refresh_logs, ...) must never be candidates.
         if not _RUN_DIR_NAME_PATTERN.match(path.name):
+            continue
+        # Age floor: an in-flight or just-blocked refresh has a run dir that
+        # no model state references yet — never delete anything this young.
+        try:
+            age_seconds = time.time() - path.stat().st_mtime
+        except OSError:
+            continue
+        if age_seconds < RUN_DIR_MIN_AGE_SECONDS:
             continue
         # Full option-chain snapshots are the one PERISHABLE dataset (locked
         # keep-full-chain decision): markets move on and the data cannot be

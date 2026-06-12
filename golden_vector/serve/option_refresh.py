@@ -11,7 +11,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -121,7 +121,11 @@ def read_option_refresh_status(
         )
     if status.status == REFRESH_STATUS_RUNNING and status.process_id is not None:
         exists = process_exists or is_process_running
-        if not exists(status.process_id):
+        # Staleness ceiling: Windows recycles PIDs aggressively, so a dead
+        # runner whose PID was reused by an unrelated process would keep the
+        # lock RUNNING forever (refresh button disabled until a hand-delete).
+        # A real refresh takes minutes; anything past the ceiling is stale.
+        if not exists(status.process_id) or _running_past_ceiling(status):
             recovered = OptionRefreshStatus(
                 status=REFRESH_STATUS_FAILED,
                 job_id=status.job_id,
@@ -132,7 +136,11 @@ def read_option_refresh_status(
                 latest_run_id=status.latest_run_id,
                 log_path=status.log_path,
                 stage_detail=status.stage_detail,
-                error_summary="Refresh process is no longer running.",
+                error_summary=(
+                    "Refresh process is no longer running."
+                    if not exists(status.process_id)
+                    else "Refresh marked stale after exceeding the runtime ceiling."
+                ),
             )
             try:
                 write_option_refresh_status(paths, recovered)
@@ -145,6 +153,22 @@ def read_option_refresh_status(
     return status
 
 
+REFRESH_RUNTIME_CEILING_SECONDS = 2 * 60 * 60  # a real refresh takes ~3 min
+
+
+def _running_past_ceiling(status: OptionRefreshStatus) -> bool:
+    if not status.started_at:
+        return False
+    try:
+        started = datetime.fromisoformat(str(status.started_at))
+    except ValueError:
+        return False
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+    return elapsed > REFRESH_RUNTIME_CEILING_SECONDS
+
+
 def write_option_refresh_status(
     paths: ProjectPaths,
     status: OptionRefreshStatus,
@@ -155,6 +179,48 @@ def write_option_refresh_status(
         json.dumps(status.to_payload(), indent=2, sort_keys=True),
     )
     return status_path
+
+
+def _acquire_exclusive_sidecar(paths: ProjectPaths) -> int | None:
+    """OS-level mutual exclusion around lock acquisition.
+
+    read-check-write on the status JSON has a race window (two acquirers can
+    both read 'not running' before either writes RUNNING - proven realistic
+    with a scheduled refresh plus the UI button, or two workspace servers).
+    O_CREAT|O_EXCL on a sidecar serializes the acquisition itself. The
+    sidecar is held only for the milliseconds of acquisition; one older
+    than a minute is a crash leftover and is broken.
+    """
+
+    sidecar = option_refresh_status_path(paths).with_suffix(".acquire.lock")
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            return os.open(str(sidecar), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                age = time.time() - sidecar.stat().st_mtime
+            except OSError:
+                continue  # vanished between open and stat; retry
+            if age > 60:
+                try:
+                    sidecar.unlink()
+                except OSError:
+                    return None
+                continue
+            return None
+    return None
+
+
+def _release_exclusive_sidecar(paths: ProjectPaths, handle: int) -> None:
+    sidecar = option_refresh_status_path(paths).with_suffix(".acquire.lock")
+    try:
+        os.close(handle)
+    finally:
+        try:
+            sidecar.unlink()
+        except OSError:
+            pass
 
 
 def acquire_refresh_lock(
@@ -179,15 +245,35 @@ def acquire_refresh_lock(
             already_running=True,
         )
 
-    status = OptionRefreshStatus(
-        status=REFRESH_STATUS_RUNNING,
-        job_id=_new_job_id(),
-        process_id=process_id if process_id is not None else os.getpid(),
-        started_at=_utc_now(),
-        command=tuple(command),
-    )
-    write_option_refresh_status(paths, status)
-    return OptionRefreshStartResult(status=status, started=True)
+    sidecar_handle = _acquire_exclusive_sidecar(paths)
+    if sidecar_handle is None:
+        # Another process is acquiring right now; treat as already running.
+        return OptionRefreshStartResult(
+            status=current,
+            started=False,
+            already_running=True,
+        )
+    try:
+        # Re-check under the sidecar: the first read may predate a
+        # concurrent acquirer's RUNNING write.
+        current = read_option_refresh_status(paths, process_exists=process_exists)
+        if current.status == REFRESH_STATUS_RUNNING:
+            return OptionRefreshStartResult(
+                status=current,
+                started=False,
+                already_running=True,
+            )
+        status = OptionRefreshStatus(
+            status=REFRESH_STATUS_RUNNING,
+            job_id=_new_job_id(),
+            process_id=process_id if process_id is not None else os.getpid(),
+            started_at=_utc_now(),
+            command=tuple(command),
+        )
+        write_option_refresh_status(paths, status)
+        return OptionRefreshStartResult(status=status, started=True)
+    finally:
+        _release_exclusive_sidecar(paths, sidecar_handle)
 
 
 def start_options_refresh(
@@ -204,6 +290,34 @@ def start_options_refresh(
             already_running=True,
         )
 
+    sidecar_handle = _acquire_exclusive_sidecar(paths)
+    if sidecar_handle is None:
+        return OptionRefreshStartResult(
+            status=current,
+            started=False,
+            already_running=True,
+        )
+    try:
+        current = read_option_refresh_status(paths, process_exists=process_exists)
+        if current.status == REFRESH_STATUS_RUNNING:
+            return OptionRefreshStartResult(
+                status=current,
+                started=False,
+                already_running=True,
+            )
+        return _start_options_refresh_locked(
+            paths,
+            popen_factory=popen_factory,
+        )
+    finally:
+        _release_exclusive_sidecar(paths, sidecar_handle)
+
+
+def _start_options_refresh_locked(
+    paths: ProjectPaths,
+    *,
+    popen_factory: PopenFactory | None = None,
+) -> OptionRefreshStartResult:
     job_id = _new_job_id()
     log_path = option_refresh_logs_dir(paths) / f"{job_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)

@@ -14,6 +14,7 @@ rewrites what we knew. Run it after every refresh (or standalone via
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -145,6 +146,27 @@ def record_vintages(paths: ProjectPaths, *, now: datetime | None = None) -> list
     moment = now or datetime.now(timezone.utc)
     vintage_date = moment.date().isoformat()
     recorded_at_utc = moment.isoformat()
+
+    # Lost-update guard: the stores are read-modify-rewrite, so a manual
+    # recorder racing the refresh-end recorder can silently drop the other's
+    # rows. Defer to a live refresh owned by another process.
+    try:
+        from golden_vector.serve.option_refresh import read_option_refresh_status
+
+        lock = read_option_refresh_status(paths)
+        if (
+            lock.status == "running"
+            and lock.process_id is not None
+            and int(lock.process_id) != os.getpid()
+        ):
+            LOGGER.warning(
+                "A refresh is running (job %s); skipping vintage recording — "
+                "the refresh records vintages itself when it completes.",
+                lock.job_id,
+            )
+            return []
+    except Exception:  # pragma: no cover - lock readability is best-effort
+        pass
 
     manifest = load_current_model_state_manifest(paths)
     option_freshness = summarize_option_freshness(manifest)

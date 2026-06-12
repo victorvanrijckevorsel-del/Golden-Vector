@@ -6,6 +6,16 @@ from golden_vector.cli import run_prune_runs
 from tests.helpers import build_test_paths
 
 
+def _backdate(path, *, days: float = 3.0) -> None:
+    """Move a dir's mtime past the prune age floor (fresh dirs are protected)."""
+
+    import os
+    import time
+
+    stamp = time.time() - days * 86400
+    os.utime(path, (stamp, stamp))
+
+
 def test_prune_runs_dry_run_default_preserves_all_retained_manifest_artifacts(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -68,6 +78,7 @@ def test_prune_runs_dry_run_default_preserves_all_retained_manifest_artifacts(tm
     ):
         (paths.runs_dir / run_id).mkdir(parents=True)
         (paths.runs_dir / run_id / "metadata.json").write_text("{}", encoding="utf-8")
+        _backdate(paths.runs_dir / run_id)
 
     report = prune_runs(paths, keep_model_states=2)
 
@@ -357,6 +368,11 @@ def test_prune_runs_never_deletes_chain_bearing_or_operational_dirs(tmp_path):
     plain_run = paths.runs_dir / "20260610T101748Z-update-data-plain"
     plain_run.mkdir(parents=True)
     (plain_run / "metadata.json").write_text("{}", encoding="utf-8")
+    _backdate(plain_run)
+    # The chain-bearing dir is deliberately NOT backdated in addition to its
+    # protection: even a fresh chain dir must survive, but backdate it too so
+    # the test proves the CHAIN protection (not the age floor) saves it.
+    _backdate(chain_run)
 
     # Operational dirs that must never be candidates.
     for name in ("acceptance_logs", "ui_refresh_logs"):

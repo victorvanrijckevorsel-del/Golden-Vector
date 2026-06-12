@@ -8,7 +8,7 @@ without requiring the user to inspect three different files.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pandas as pd
 import pytest
@@ -782,7 +782,7 @@ def test_refresh_command_refuses_when_website_refresh_is_running(tmp_path, monke
             status="running",
             job_id="website-job",
             process_id=12345,
-            started_at="2026-06-07T10:00:00Z",
+            started_at=datetime.now(timezone.utc).isoformat(),
             command=("python", "main.py", "refresh"),
         ),
     )
@@ -820,7 +820,7 @@ def test_refresh_command_reclaims_stale_lock_before_running(tmp_path, monkeypatc
             status="running",
             job_id="stale-job",
             process_id=99999,
-            started_at="2026-06-07T10:00:00Z",
+            started_at=datetime.now(timezone.utc).isoformat(),
         ),
     )
     call_order: list[str] = []
@@ -859,7 +859,7 @@ def test_refresh_command_adopts_website_runner_lock(tmp_path, monkeypatch):
             status="running",
             job_id="website-runner-job",
             process_id=12345,
-            started_at="2026-06-07T10:00:00Z",
+            started_at=datetime.now(timezone.utc).isoformat(),
             command=("python", "main.py", "refresh"),
         ),
     )
