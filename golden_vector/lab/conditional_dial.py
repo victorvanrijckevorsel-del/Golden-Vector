@@ -49,9 +49,11 @@ BUCKET_LABELS: dict[str, str] = {
 MIN_EFFECTIVE_N = 8.0
 EB_PRIOR_STRENGTH = 10.0  # pseudo-episodes pulling each cell toward the pooled rate
 
-# Selectable lenses (Emanuel locked all three; longer ones honestly render
-# insufficient-history rather than fabricating a rate — see plan_v3 s6).
-DIAL_HORIZONS_WEEKS: list[int] = [13, 26, 52]
+# Selectable look-ahead lenses, fast -> slow. Measured usable-cell counts drove
+# the set: 4w/8w ADD data (more independent episodes — gold_down stays 54-56/65);
+# 52w was always empty everywhere so it was dropped; 26w still renders
+# insufficient-history honestly for thin scenarios (e.g. gold_down). 13w default.
+DIAL_HORIZONS_WEEKS: list[int] = [4, 8, 13, 26]
 DIAL_BENCHMARKS: list[str] = ["GDX", "GDXJ"]
 DIAL_SIGNAL_ID = "conditional_dial_analog"
 # Bumped from the GDX-only-13w artifact: long-form episodes + wide cells keyed

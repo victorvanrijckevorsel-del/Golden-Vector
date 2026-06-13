@@ -206,9 +206,9 @@ def test_loader_flags_stale_when_live_horizons_change(tmp_path) -> None:
     assert data.error_status == "STALE"
 
 
-def test_six_variants_have_distinct_hashes() -> None:
+def test_variant_hashes_are_distinct_per_benchmark_horizon() -> None:
     """Benchmark x horizon multiplicity: every (benchmark, horizon) config is a
-    distinct registered variant — 6 total, none colliding."""
+    distinct registered variant — one per pair, none colliding."""
 
     bucket_cfg = [[n, lo, hi] for n, lo, hi in DEFAULT_BUCKETS]
     hashes = set()
@@ -223,7 +223,7 @@ def test_six_variants_have_distinct_hashes() -> None:
                 "benchmark": str(bench).upper(),
             }
             hashes.add(variant_hash(DIAL_SIGNAL_ID, cfg))
-    assert len(hashes) == 6
+    assert len(hashes) == len(DIAL_BENCHMARKS) * len(DIAL_HORIZONS_WEEKS)
 
 
 def test_relstrength_rebased_to_100_at_start() -> None:
