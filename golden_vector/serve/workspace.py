@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 from typing import Any, Callable, Iterable
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 from wsgiref.simple_server import make_server
 
 from golden_vector.serve.screening_overrides import (
@@ -66,7 +66,8 @@ from golden_vector.serve.candidate_finder_data import (
     parse_candidate_finder_scenario,
 )
 from golden_vector.serve.candidate_finder_page import render_candidate_finder_page
-from golden_vector.serve.lab_data import load_lab_dial_data
+from golden_vector.serve.lab_curve_data import load_dial_cells, load_ticker_curve
+from golden_vector.serve.lab_curve_page import _render_lab_curve_page
 from golden_vector.serve.scorecard_data import load_scorecard_data
 from golden_vector.serve.overview_lab import _render_lab_overview_page
 from golden_vector.serve.overview_scorecard import _render_scorecard_page
@@ -352,7 +353,13 @@ def create_workspace_app(
             if method == "GET" and path == "/lab":
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 requested_bucket = query.get("bucket", [""])[0] or None
-                lab_data = load_lab_dial_data(paths, bucket=requested_bucket)
+                try:
+                    requested_horizon = int(query.get("horizon", ["13"])[0])
+                except (TypeError, ValueError):
+                    requested_horizon = 13
+                lab_data = load_dial_cells(
+                    paths, horizon=requested_horizon, bucket=requested_bucket
+                )
                 selected_bucket = requested_bucket or ""
                 if lab_data.available and lab_data.buckets:
                     known = {key for key, _ in lab_data.buckets}
@@ -363,7 +370,29 @@ def create_workspace_app(
                     _render_lab_overview_page(
                         lab_data,
                         selected_bucket=selected_bucket,
+                        selected_horizon=lab_data.horizon,
                     ),
+                )
+
+            if method == "GET" and path.startswith("/lab/dial/"):
+                ticker = unquote(path[len("/lab/dial/") :]).strip().upper()
+                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+                scenario = query.get("scenario", ["gold_down"])[0] or "gold_down"
+                benchmark = (query.get("benchmark", ["GDX"])[0] or "GDX").upper()
+                try:
+                    horizon = int(query.get("horizon", ["13"])[0])
+                except (TypeError, ValueError):
+                    horizon = 13
+                curve = load_ticker_curve(
+                    paths,
+                    ticker=ticker,
+                    scenario_bucket=scenario,
+                    horizon=horizon,
+                    benchmark=benchmark,
+                )
+                return _html_response(
+                    start_response,
+                    _render_lab_curve_page(curve),
                 )
 
             if method == "GET" and path == "/scorecard":

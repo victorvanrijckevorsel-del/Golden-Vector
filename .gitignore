@@ -11,6 +11,8 @@ build/
 *.sqlite3
 *.log
 *.parquet
+# Committed test fixtures (small, deterministic) must survive the *.parquet rule.
+!tests/fixtures/**/*.parquet
 data/raw/
 data/intermediate/
 data/output/

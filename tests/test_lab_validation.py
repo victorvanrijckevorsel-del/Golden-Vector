@@ -330,17 +330,18 @@ def test_fixed_cohort_is_a_subset():
 def test_lab_dial_corrupt_vs_missing_status(tmp_path):
     """MED-3: a corrupt artifact reports CORRUPT, a missing one MISSING."""
 
-    from golden_vector.serve.lab_data import load_lab_dial_data
+    from golden_vector.lab.conditional_dial import DIAL_CELLS_FILENAME
+    from golden_vector.serve.lab_curve_data import load_dial_cells
 
     class FakePaths:
         data_dir = tmp_path
 
-    missing = load_lab_dial_data(FakePaths())  # type: ignore[arg-type]
+    missing = load_dial_cells(FakePaths())  # type: ignore[arg-type]
     assert not missing.available and missing.error_status == "MISSING"
     lab = tmp_path / "lab"
     lab.mkdir()
-    (lab / "dial_table_13w_latest.parquet").write_text("not parquet", encoding="utf-8")
-    corrupt = load_lab_dial_data(FakePaths())  # type: ignore[arg-type]
+    (lab / DIAL_CELLS_FILENAME).write_text("not parquet", encoding="utf-8")
+    corrupt = load_dial_cells(FakePaths())  # type: ignore[arg-type]
     assert not corrupt.available and corrupt.error_status == "CORRUPT"
 
 

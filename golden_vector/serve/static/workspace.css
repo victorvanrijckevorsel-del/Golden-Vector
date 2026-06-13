@@ -692,3 +692,27 @@
   padding: 4px 0;
 }
 .option-chain-detail[open] > summary { margin-bottom: 8px; }
+
+/* Lab: scenario-analog drill-down (which weeks beat the benchmark) */
+.lab-empty-state h2 { font-size: 1.1rem; margin: 0 0 8px; }
+.lab-empty-state table { margin-top: 10px; }
+.lab-curve-controls p { margin: 4px 0; }
+.benchmark-toggle {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #d9d2c4);
+  text-decoration: none;
+  margin-right: 4px;
+  font-weight: 600;
+}
+.benchmark-toggle.active { background: #2f6f6d; color: #fff; border-color: #2f6f6d; }
+.lab-curve-headline p { margin: 4px 0; }
+.lab-curve-headline strong { font-size: 1.15rem; }
+.lab-dots-svg {
+  width: 100%;
+  max-width: 860px;
+  height: auto;
+  background: #fbf9f4;
+  border-radius: 6px;
+}

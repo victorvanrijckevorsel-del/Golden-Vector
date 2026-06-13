@@ -471,4 +471,36 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "Thin rows say 'insufficient history' instead of an unreliable figure."
         ),
     ),
+    "lab_p_beat_gdxj": ColumnHelp(
+        meaning=(
+            "How often this miner beat the GDXJ junior-miner benchmark in the chosen "
+            "scenario, nudged toward the group average (same shrinkage as the GDX column)."
+        ),
+        calculation=(
+            "Shown for comparison only — the ranking follows GDX. GDXJ history starts "
+            "later (2009) so it has its own, usually smaller, sample; a blank means too "
+            "few independent GDXJ episodes to count."
+        ),
+        direction="Higher means more reliably beats the junior-miner basket in that scenario.",
+    ),
+    "lab_benchmark_gdx": ColumnHelp(
+        meaning=(
+            "GDX is the broad gold-miner ETF — the large, established producers. It is "
+            "the default yardstick and the one the table is ranked by."
+        ),
+    ),
+    "lab_benchmark_gdxj": ColumnHelp(
+        meaning=(
+            "GDXJ is the junior-miner ETF — smaller, more volatile names that swing "
+            "harder both ways. Beating GDXJ is usually easier when gold rises and harder "
+            "when gold falls."
+        ),
+    ),
+    "lab_horizon": ColumnHelp(
+        meaning=(
+            "How many weeks forward each episode looks. 13 weeks (one quarter) is the "
+            "default; longer windows leave far fewer independent episodes, so many cells "
+            "honestly read 'insufficient history'."
+        ),
+    ),
 }
