@@ -71,13 +71,19 @@ def _render_lab_overview_page(
 
     body.append(_render_filters(data, selected_bucket=selected_bucket, horizon=horizon))
 
-    usable = int(
-        data.bucket_availability.get(str(horizon), {}).get(selected_bucket, 0)
-    )
-    if usable <= 0:
-        body.append(_render_empty_state(data, selected_bucket=selected_bucket, horizon=horizon))
-        return _page_shell(
-            "Lab - Golden Vector Workspace", "".join(body), active_nav="lab"
+    usable = int(data.bucket_availability.get(str(horizon), {}).get(selected_bucket, 0))
+    total = len(data.rows)
+    # Always show the table. When some/all miners lack countable history, a slim
+    # banner explains it; those rows render greyed + non-clickable (below).
+    if usable < total:
+        body.append(
+            _render_thin_banner(
+                data,
+                selected_bucket=selected_bucket,
+                horizon=horizon,
+                usable=usable,
+                total=total,
+            )
         )
 
     rows_html = [_render_dial_row(row, selected_bucket=selected_bucket, horizon=horizon) for row in data.rows]
@@ -144,31 +150,37 @@ def _render_filters(data: LabCellsData, *, selected_bucket: str, horizon: int) -
     )
 
 
-def _render_empty_state(data: LabCellsData, *, selected_bucket: str, horizon: int) -> str:
-    """Evidence-collapse view: no rank, no sortable table — explain WHY it's blank."""
+def _render_thin_banner(
+    data: LabCellsData,
+    *,
+    selected_bucket: str,
+    horizon: int,
+    usable: int,
+    total: int,
+) -> str:
+    """Slim banner shown above the table when some/all miners lack history.
+
+    The table still renders every miner; rows without enough history are greyed
+    and non-clickable. This explains why without taking over the page."""
 
     scenario_label = dict(data.buckets).get(selected_bucket, selected_bucket)
-    rows = []
-    for hz in data.horizons:
-        count = data.bucket_availability.get(str(hz), {}).get(selected_bucket, 0)
-        rows.append(
-            f"<tr><td>{int(hz)} weeks</td>"
-            f"<td>{int(count)} of {len(data.rows) or '—'} miners have enough independent history</td></tr>"
+    if usable <= 0:
+        return (
+            "<div class=\"flash flash-warning\">"
+            f"<strong>No miner has countable history at {int(horizon)} weeks for "
+            f"&ldquo;{escape(str(scenario_label))}&rdquo;.</strong> About three years of "
+            "weekly data leaves too few <em>independent</em> episodes over a window this "
+            "long to count anything reliably, so the rows below are shown for "
+            "completeness but can't be ranked or opened. Switch the look-ahead to "
+            "13 weeks (or pick another scenario) for counted, clickable results."
+            "</div>"
         )
     return (
-        "<section class=\"panel lab-empty-state\">"
-        f"<h2>No countable history at {int(horizon)} weeks for "
-        f"&ldquo;{escape(str(scenario_label))}&rdquo;</h2>"
-        "<p>Over a longer look-ahead window, about three years of weekly history leaves "
-        "too few <em>independent</em> episodes to count anything reliably, so every cell "
-        "here would be a guess. That is why the dial judges over 13 weeks by default. "
-        "Whether a longer holding period actually predicts better is a separate, "
-        "out-of-sample question — not something to read off this table.</p>"
-        "<table><thead><tr><th>Look-ahead</th><th>Usable miners in this scenario</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
-        "<p class=\"hint\">Switch the look-ahead back to 13 weeks (or pick another gold "
-        "scenario) to see counted results.</p>"
-        "</section>"
+        "<div class=\"flash\">"
+        f"{usable} of {total} miners have enough independent history at {int(horizon)} "
+        "weeks for this scenario. The greyed rows below don't, so they can't be ranked "
+        "or opened."
+        "</div>"
     )
 
 
@@ -182,21 +194,23 @@ def _drilldown_href(ticker: str, *, bucket: str, horizon: int) -> str:
 def _render_dial_row(row: dict[str, Any], *, selected_bucket: str = "", horizon: int = 13) -> str:
     ticker = str(row.get("ticker") or "")
     bucket = str(row.get("bucket") or selected_bucket)
-    href = _drilldown_href(ticker, bucket=bucket, horizon=horizon)
-    ticker_cell = f"<td><a href=\"{escape(href, quote=True)}\">{escape(ticker)}</a></td>"
     if bool(row.get("gdx_insufficient_history")):
-        # One <td> per header column (no colspan): DataTables counts cells. The
-        # six stat columns show a muted dash; History carries the reason.
+        # No countable history -> the ticker is NOT a link (nothing to rank/open),
+        # shown greyed. One <td> per header column (no colspan): DataTables counts
+        # cells. The six stat columns show a muted dash; History carries the reason.
+        ticker_plain = f"<td class=\"hint lab-no-data\">{escape(ticker)}</td>"
         dash = "<td class=\"hint\">—</td>"
         return (
-            "<tr>"
+            "<tr class=\"lab-row-insufficient\">"
             f"{_fmt_numeric_td(row.get('rank_in_bucket'), decimals=0)}"
-            f"{ticker_cell}"
+            f"{ticker_plain}"
             f"{dash * 6}"
             f"<td>{_fmt_text(_episodes_text(row))}</td>"
             "<td class=\"hint\">insufficient history</td>"
             "</tr>"
         )
+    href = _drilldown_href(ticker, bucket=bucket, horizon=horizon)
+    ticker_cell = f"<td><a href=\"{escape(href, quote=True)}\">{escape(ticker)}</a></td>"
     return (
         "<tr>"
         f"{_fmt_numeric_td(row.get('rank_in_bucket'), decimals=0)}"

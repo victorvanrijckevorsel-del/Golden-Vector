@@ -113,14 +113,21 @@ def test_lab_page_renders_ranked_rows_caveat_and_gdxj(tmp_path) -> None:
     assert "/lab/dial/WIN?scenario=gold_down&amp;horizon=13&amp;benchmark=GDX" in html
 
 
-def test_lab_page_empty_state_when_all_cells_insufficient(tmp_path) -> None:
+def test_lab_page_all_insufficient_shows_table_with_banner_and_no_links(tmp_path) -> None:
+    """When no miner has history, the TABLE still renders (every miner listed),
+    a banner explains why, and the no-data rows are greyed + non-clickable."""
+
     paths = _write_artifacts(tmp_path, min_eff=999.0)  # forces every cell insufficient
     data = load_dial_cells(paths, horizon=13, bucket="gold_down")  # type: ignore[arg-type]
     html = _render_lab_overview_page(data, selected_bucket="gold_down", selected_horizon=13)
-    # Evidence-collapse view: explanation, no sortable ranking table.
-    assert "No countable history" in html
-    assert 'id="lab-dial-table"' not in html
-    assert "out-of-sample" in html
+    # Table is always shown (no full-page takeover), with a slim explanatory banner.
+    assert 'id="lab-dial-table"' in html
+    assert "No miner has countable history" in html
+    assert "insufficient history" in html
+    # The miners are listed but NOT clickable (no drill-down links for no-data rows).
+    assert ">WIN<" in html and ">LOSE<" in html
+    assert "/lab/dial/WIN" not in html
+    assert "lab-row-insufficient" in html
 
 
 def test_lab_page_degrades_when_artifact_missing(tmp_path) -> None:

@@ -694,8 +694,8 @@
 .option-chain-detail[open] > summary { margin-bottom: 8px; }
 
 /* Lab: scenario-analog drill-down (which weeks beat the benchmark) */
-.lab-empty-state h2 { font-size: 1.1rem; margin: 0 0 8px; }
-.lab-empty-state table { margin-top: 10px; }
+.lab-row-insufficient { opacity: 0.62; }
+.lab-row-insufficient .lab-no-data { font-style: italic; cursor: default; }
 .lab-curve-controls p { margin: 4px 0; }
 .benchmark-toggle {
   display: inline-block;
