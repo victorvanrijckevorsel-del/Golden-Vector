@@ -282,7 +282,15 @@ def _render_chart_b(curve: LabCurveData) -> str:
     counted number above."""
 
     points = curve.relstrength_points
-    line = _build_line_svg(points, benchmark=curve.benchmark)
+    if curve.relstrength_status in ("MISSING", "CORRUPT"):
+        line = (
+            "<p class=\"hint\">Relative-strength artifact is "
+            f"{escape(curve.relstrength_status.lower())} — rebuild the Lab artifacts "
+            "(<code>python -m golden_vector.lab.conditional_dial</code>) to restore this "
+            "context chart. The counted evidence above is unaffected.</p>"
+        )
+    else:
+        line = _build_line_svg(points, benchmark=curve.benchmark)
     return (
         "<details class=\"method-disclosure lab-relstrength\">"
         "<summary>Different measure: overall relative strength (every week)</summary>"

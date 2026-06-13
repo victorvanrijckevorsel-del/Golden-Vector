@@ -606,10 +606,10 @@ def build_and_save(
     Registers EVERY (benchmark, horizon) variant in the ledger BEFORE compute
     (multiple-testing discipline; ``n_trials`` is read back from the ledger,
     never hardcoded), then writes:
-      - ``dial_cells_latest.parquet``    wide overview (GDX-ranked + GDXJ compare)
-      - ``dial_episodes_latest.parquet`` long-form chart detail
-      - ``dial_table_13w_latest.parquet`` legacy GDX-13w table (back-compat)
-      - ``dial_meta.json``               schema_version, config_hash, hashes, N
+      - ``dial_cells_latest.parquet``      wide overview (GDX-ranked + GDXJ compare)
+      - ``dial_episodes_latest.parquet``   long-form chart detail (Chart A dots)
+      - ``dial_relstrength_latest.parquet`` weekly relative-strength line (Chart B)
+      - ``dial_meta.json``                 schema_version, config_hash, hashes, N
     GDX-era weeks only (alpha labels need the benchmark); GDXJ degrades per-week.
     Returns the wide cells table.
     """

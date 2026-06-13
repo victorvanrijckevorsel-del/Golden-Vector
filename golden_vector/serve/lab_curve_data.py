@@ -78,6 +78,9 @@ class LabCurveData:
     scenario_label: str = ""
     points: list[dict[str, Any]] = field(default_factory=list)
     relstrength_points: list[dict[str, Any]] = field(default_factory=list)
+    # Chart B's own artifact health: None = ok (it may still be empty for a thin
+    # ticker), "MISSING"/"CORRUPT" = the relstrength artifact itself is bad.
+    relstrength_status: str | None = None
     cell: dict[str, Any] | None = None
     meta: dict[str, Any] = field(default_factory=dict)
     error_status: str | None = None
@@ -121,20 +124,18 @@ def _schema_is_current(meta: dict[str, Any]) -> bool:
 
 
 def _config_is_current(meta: dict[str, Any]) -> bool:
-    """The artifact's config_hash must match the live config — so a changed bucket
-    threshold / floor (which does NOT bump the schema version) still goes STALE."""
+    """The artifact's config_hash must match the LIVE config — computed from the
+    live ``DIAL_HORIZONS_WEEKS`` / ``DIAL_BENCHMARKS`` (and buckets / floors), NOT
+    from the artifact's own stored lists. Hashing the stored lists back against
+    themselves would miss a live horizon/benchmark change (Codex MED): the
+    workspace "current" reader must fail closed when the live dial config drifts."""
 
-    expected = dial_config_hash(configured_horizons(meta), configured_benchmarks(meta))
+    expected = dial_config_hash(DIAL_HORIZONS_WEEKS, DIAL_BENCHMARKS)
     return str(meta.get("config_hash") or "") == expected
 
 
 def _artifact_is_current(meta: dict[str, Any]) -> bool:
     return _schema_is_current(meta) and _config_is_current(meta)
-
-
-def configured_horizons(meta: dict[str, Any]) -> list[int]:
-    raw = meta.get("horizons_weeks") or DIAL_HORIZONS_WEEKS
-    return [int(h) for h in raw]
 
 
 def configured_benchmarks(meta: dict[str, Any]) -> list[str]:
@@ -248,7 +249,9 @@ def load_ticker_curve(
         )
 
     cell = _matching_cell(paths, ticker=ticker_u, bucket=str(scenario_bucket), horizon=horizon_i)
-    relstrength_points = _relstrength_points(paths, ticker=ticker_u, benchmark=bench)
+    relstrength_points, relstrength_status = _relstrength_points(
+        paths, ticker=ticker_u, benchmark=bench
+    )
     return LabCurveData(
         available=bool(points) or cell is not None,
         ticker=ticker_u,
@@ -258,6 +261,7 @@ def load_ticker_curve(
         scenario_label=str(BUCKET_LABELS.get(str(scenario_bucket), scenario_bucket)),
         points=points,
         relstrength_points=relstrength_points,
+        relstrength_status=relstrength_status,
         cell=cell,
         meta=meta,
         error_status=None if (points or cell is not None) else "MISSING",
@@ -269,22 +273,27 @@ def _relstrength_points(
     *,
     ticker: str,
     benchmark: str,
-) -> list[dict[str, Any]]:
-    """Weekly relative-strength line points for (ticker, benchmark) — Chart B."""
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Weekly relative-strength line points for (ticker, benchmark) — Chart B.
 
-    frame, _status = _load_frame(
+    Returns (points, status). status distinguishes an artifact-level problem
+    (MISSING/CORRUPT) from a healthy-but-empty result for a thin ticker, so the
+    page can fail loud on a bad artifact instead of silently showing blank."""
+
+    frame, status = _load_frame(
         paths, filename=DIAL_RELSTRENGTH_FILENAME, required_columns=RELSTRENGTH_COLUMNS
     )
     if frame is None:
-        return []
+        return [], status
     view = frame.loc[
         (frame["ticker"].astype(str).str.upper() == str(ticker).upper())
         & (frame["benchmark"].astype(str).str.upper() == str(benchmark).upper())
     ].sort_values("week_date")
-    return [
+    points = [
         {"date": str(record.get("week_date") or ""), "relstrength": record.get("relstrength")}
         for record in view.to_dict(orient="records")
     ]
+    return points, None
 
 
 def _matching_cell(

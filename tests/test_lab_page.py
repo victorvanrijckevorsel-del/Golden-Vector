@@ -9,8 +9,10 @@ import pandas as pd
 
 from golden_vector.lab.conditional_dial import (
     DIAL_ARTIFACT_META_FILENAME,
+    DIAL_BENCHMARKS,
     DIAL_CELLS_FILENAME,
     DIAL_EPISODES_FILENAME,
+    DIAL_HORIZONS_WEEKS,
     DIAL_SCHEMA_VERSION,
     build_dial_cells_wide,
     build_episode_artifact,
@@ -80,7 +82,9 @@ def _write_artifacts(
             availability[str(int(horizon))] = per_bucket
     meta = {
         "schema_version": schema_version,
-        "config_hash": dial_config_hash([int(h) for h in horizons], benchmarks),
+        # Loader checks config_hash vs the LIVE config; stamp the live-default hash
+        # (fixture builds a horizon subset for speed; tests query within it).
+        "config_hash": dial_config_hash(DIAL_HORIZONS_WEEKS, DIAL_BENCHMARKS),
         "horizons_weeks": [int(h) for h in horizons],
         "benchmarks": benchmarks,
         "usable_gdx_cells_by_horizon_bucket": availability,

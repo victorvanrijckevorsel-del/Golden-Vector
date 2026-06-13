@@ -54,7 +54,10 @@ def _write(tmp_path: Path, frame: pd.DataFrame, *, horizons, benchmarks, min_eff
     relstrength.to_parquet(lab / DIAL_RELSTRENGTH_FILENAME, index=False)
     meta = {
         "schema_version": DIAL_SCHEMA_VERSION,
-        "config_hash": dial_config_hash([int(h) for h in horizons], [str(b).upper() for b in benchmarks]),
+        # The loader checks config_hash against the LIVE config, so a fixture must
+        # stamp the live-default hash to read as current (it builds a subset of
+        # horizons for speed; the tests query within that subset).
+        "config_hash": dial_config_hash(DIAL_HORIZONS_WEEKS, DIAL_BENCHMARKS),
         "horizons_weeks": [int(h) for h in horizons],
         "benchmarks": [str(b).upper() for b in benchmarks],
         "usable_gdx_cells_by_horizon_bucket": {},
@@ -186,6 +189,23 @@ def test_loader_flags_stale_when_config_hash_mismatches(tmp_path) -> None:
     assert data.error_status == "STALE"
 
 
+def test_loader_flags_stale_when_live_horizons_change(tmp_path) -> None:
+    """Codex MED: a live horizon-LIST change must go STALE — the guard checks the
+    live DIAL_HORIZONS_WEEKS, not the artifact's own stored list hashed to itself."""
+
+    frame = parity_weekly_frame()
+    paths, _ = _write(tmp_path, frame, horizons=[13], benchmarks=["GDX", "GDXJ"])
+    meta_path = tmp_path / "lab" / DIAL_ARTIFACT_META_FILENAME
+    meta = json.loads(meta_path.read_text())
+    # Artifact was built for a DIFFERENT horizon set than the live default.
+    meta["config_hash"] = dial_config_hash([13, 26, 52, 104], DIAL_BENCHMARKS)
+    meta["horizons_weeks"] = [13, 26, 52, 104]
+    meta_path.write_text(json.dumps(meta))
+    data = load_dial_cells(paths, horizon=13, bucket="gold_down")
+    assert not data.available
+    assert data.error_status == "STALE"
+
+
 def test_six_variants_have_distinct_hashes() -> None:
     """Benchmark x horizon multiplicity: every (benchmark, horizon) config is a
     distinct registered variant — 6 total, none colliding."""
@@ -253,6 +273,25 @@ def test_relstrength_prefix_stable_under_truncation() -> None:
         part_aaa["relstrength"].to_numpy(dtype=float),
         atol=1e-9,
     )
+
+
+def test_chart_b_reports_missing_relstrength_artifact() -> None:
+    """Codex LOW: a bad/absent relstrength artifact must say so, not silently
+    render an empty Chart B."""
+
+    from golden_vector.serve.lab_curve_page import _render_lab_curve_page
+
+    paths, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    # Remove just the relstrength artifact; Chart A (episodes/cells) stays intact.
+    (Path(paths.data_dir) / "lab" / DIAL_RELSTRENGTH_FILENAME).unlink()
+    curve = load_ticker_curve(
+        paths, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDX"
+    )
+    assert curve.relstrength_status == "MISSING"
+    html = _render_lab_curve_page(curve)
+    assert "Relative-strength artifact is missing" in html
+    # Chart A (the counted evidence) is unaffected.
+    assert "lab-dots-svg" in html
 
 
 def test_drilldown_render_has_forward_and_survivor_honesty() -> None:
