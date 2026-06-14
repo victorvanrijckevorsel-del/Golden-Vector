@@ -99,7 +99,7 @@ def test_lab_page_renders_ranked_rows_caveat_and_gdxj(tmp_path) -> None:
     paths = _write_artifacts(tmp_path)
     data = load_dial_cells(paths, horizon=13, bucket="gold_down")  # type: ignore[arg-type]
     assert data.available
-    html = _render_lab_overview_page(data, selected_bucket="gold_down", selected_horizon=13)
+    html = _render_lab_overview_page(data, selected_bucket="gold_down")
     # Backend rank order: WIN before LOSE.
     assert html.index(">WIN<") < html.index(">LOSE<")
     assert "Exploratory, survivor-only universe." in html
@@ -119,22 +119,65 @@ def test_lab_page_all_insufficient_shows_table_with_banner_and_no_links(tmp_path
 
     paths = _write_artifacts(tmp_path, min_eff=999.0)  # forces every cell insufficient
     data = load_dial_cells(paths, horizon=13, bucket="gold_down")  # type: ignore[arg-type]
-    html = _render_lab_overview_page(data, selected_bucket="gold_down", selected_horizon=13)
+    html = _render_lab_overview_page(data, selected_bucket="gold_down")
     # Table is always shown (no full-page takeover), with a slim explanatory banner.
     assert 'id="lab-dial-table"' in html
     assert "No miner has countable history" in html
     assert "insufficient history" in html
-    # The miners are listed but NOT clickable (no drill-down links for no-data rows).
-    assert ">WIN<" in html and ">LOSE<" in html
+    # The miners are listed (greyed, with a non-colour "(no data)" cue) but NOT
+    # clickable (no drill-down links for no-data rows).
+    assert 'lab-no-data">WIN ' in html and 'lab-no-data">LOSE ' in html
+    assert "(no data)" in html
     assert "/lab/dial/WIN" not in html
     assert "lab-row-insufficient" in html
+
+
+def test_banner_derives_from_rows_not_meta(tmp_path) -> None:
+    """The banner's usable count comes from the SAME rows the table renders, not
+    from meta — so a stale/empty meta can't claim 'no countable history' above
+    ranked, clickable miners (the two-truths bug)."""
+
+    paths = _write_artifacts(tmp_path, min_eff=2.0)  # healthy, clickable rows
+    # Wipe meta's availability map (simulate stale/partial meta) — must NOT matter.
+    meta_path = tmp_path / "lab" / DIAL_ARTIFACT_META_FILENAME
+    meta = json.loads(meta_path.read_text())
+    meta["usable_gdx_cells_by_horizon_bucket"] = {}
+    meta_path.write_text(json.dumps(meta))
+    data = load_dial_cells(paths, horizon=13, bucket="gold_down")  # type: ignore[arg-type]
+    html = _render_lab_overview_page(data, selected_bucket="gold_down")
+    assert "No miner has countable history" not in html  # would fire off stale meta (the bug)
+    assert "/lab/dial/WIN" in html  # ranked + clickable, as the rows say
+
+
+def test_insufficient_row_numeric_cells_sort_last(tmp_path) -> None:
+    """Greyed (insufficient) rows must carry the sort-last sentinel on numeric
+    cells so they never interleave with ranked rows; the episodes cell carries a
+    real numeric sort key."""
+
+    from golden_vector.serve.format_helpers import _MISSING_SORT_SENTINEL
+    from golden_vector.serve.overview_lab import _render_dial_row
+
+    insufficient = {
+        "ticker": "SPARSE",
+        "bucket": "gold_down",
+        "horizon_weeks": 13,
+        "gdx_insufficient_history": True,
+        "rank_in_bucket": None,
+        "gdx_n_weeks": 40,
+        "gdx_effective_n": 3.1,
+    }
+    html = _render_dial_row(insufficient, selected_bucket="gold_down", horizon=13)
+    # rank + 4 numeric stat columns all carry the sentinel (>=5 occurrences).
+    assert html.count(f'data-order="{_MISSING_SORT_SENTINEL}"') >= 4
+    # The episodes column sorts by effective N, not as NaN.
+    assert 'data-order="3.1"' in html
 
 
 def test_lab_page_degrades_when_artifact_missing(tmp_path) -> None:
     data = load_dial_cells(_FakePaths(tmp_path), bucket=None)  # type: ignore[arg-type]
     assert not data.available
     assert data.error_status == "MISSING"
-    html = _render_lab_overview_page(data, selected_bucket="", selected_horizon=13)
+    html = _render_lab_overview_page(data, selected_bucket="")
     assert "Lab artifacts are not built yet" in html
 
 
@@ -151,7 +194,7 @@ def test_lab_page_flags_stale_schema(tmp_path) -> None:
     data = load_dial_cells(paths, horizon=13, bucket="gold_down")  # type: ignore[arg-type]
     assert not data.available
     assert data.error_status == "STALE"
-    html = _render_lab_overview_page(data, selected_bucket="gold_down", selected_horizon=13)
+    html = _render_lab_overview_page(data, selected_bucket="gold_down")
     assert "older version" in html
 
 

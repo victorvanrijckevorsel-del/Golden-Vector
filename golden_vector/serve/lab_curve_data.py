@@ -61,6 +61,9 @@ class LabCellsData:
     horizon: int = 13
     horizons: list[int] = field(default_factory=list)
     buckets: list[tuple[str, str]] = field(default_factory=list)
+    # The bucket actually loaded (requested-if-known -> default -> first). ONE
+    # resolver feeds both the rows and the page's dropdown/banner label.
+    selected_bucket: str = ""
     bucket_availability: dict[str, dict[str, int]] = field(default_factory=dict)
     rows: list[dict[str, Any]] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
@@ -196,6 +199,7 @@ def load_dial_cells(
         horizon=selected_horizon,
         horizons=horizons,
         buckets=bucket_pairs,
+        selected_bucket=str(selected_bucket or ""),
         bucket_availability=availability,
         rows=rows,
         meta=meta,

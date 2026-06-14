@@ -12,17 +12,23 @@ from html import escape
 from typing import Any
 from urllib.parse import quote
 
+from golden_vector.lab.conditional_dial import DIAL_HORIZONS_WEEKS
 from golden_vector.serve.column_help import help_term, help_th
-from golden_vector.serve.format_helpers import _fmt_numeric_td, _fmt_text
+from golden_vector.serve.format_helpers import (
+    _MISSING_SORT_SENTINEL,
+    _fmt_numeric_td,
+    _fmt_text,
+)
 from golden_vector.serve.lab_curve_data import LabCellsData
 from golden_vector.serve.page_shell import _page_shell
+
+_DEFAULT_HORIZON = 13 if 13 in DIAL_HORIZONS_WEEKS else DIAL_HORIZONS_WEEKS[0]
 
 
 def _render_lab_overview_page(
     data: LabCellsData,
     *,
     selected_bucket: str,
-    selected_horizon: int = 13,
 ) -> str:
     body = ["<h1>Lab — Gold Scenario Analogs</h1>"]
     body.append(
@@ -71,8 +77,11 @@ def _render_lab_overview_page(
 
     body.append(_render_filters(data, selected_bucket=selected_bucket, horizon=horizon))
 
-    usable = int(data.bucket_availability.get(str(horizon), {}).get(selected_bucket, 0))
+    # Derive usable/total from the SAME rows the table renders (NOT from meta), so
+    # the banner can never contradict the table (e.g. claim "no countable history"
+    # above ranked, clickable rows). bucket_availability stays a selector-label hint.
     total = len(data.rows)
+    usable = sum(1 for r in data.rows if not bool(r.get("gdx_insufficient_history")))
     # Always show the table. When some/all miners lack countable history, a slim
     # banner explains it; those rows render greyed + non-clickable (below).
     if usable < total:
@@ -165,21 +174,28 @@ def _render_thin_banner(
 
     scenario_label = dict(data.buckets).get(selected_bucket, selected_bucket)
     if usable <= 0:
+        if int(horizon) != _DEFAULT_HORIZON:
+            switch = (
+                f"Switch the look-ahead to {_DEFAULT_HORIZON} weeks (or pick another "
+                "gold scenario)"
+            )
+        else:
+            switch = "Pick another gold scenario"
         return (
             "<div class=\"flash flash-warning\">"
-            f"<strong>No miner has countable history at {int(horizon)} weeks for "
-            f"&ldquo;{escape(str(scenario_label))}&rdquo;.</strong> About three years of "
-            "weekly data leaves too few <em>independent</em> episodes over a window this "
-            "long to count anything reliably, so the rows below are shown for "
-            "completeness but can't be ranked or opened. Switch the look-ahead to "
-            "13 weeks (or pick another scenario) for counted, clickable results."
+            f"<strong>No miner has countable history against GDX at {int(horizon)} weeks "
+            f"for &ldquo;{escape(str(scenario_label))}&rdquo;.</strong> About three years "
+            "of weekly data leaves too few <em>independent</em> episodes over a window "
+            "this long to count anything reliably, so the rows below are shown for "
+            f"completeness but can't be ranked or opened. {switch} for counted, "
+            "clickable results."
             "</div>"
         )
     return (
         "<div class=\"flash\">"
-        f"{usable} of {total} miners have enough independent history at {int(horizon)} "
-        "weeks for this scenario. The greyed rows below don't, so they can't be ranked "
-        "or opened."
+        f"{usable} of {total} miners have enough independent history against GDX at "
+        f"{int(horizon)} weeks for this scenario. The greyed rows below don't, so they "
+        "can't be ranked or opened."
         "</div>"
     )
 
@@ -196,16 +212,25 @@ def _render_dial_row(row: dict[str, Any], *, selected_bucket: str = "", horizon:
     bucket = str(row.get("bucket") or selected_bucket)
     if bool(row.get("gdx_insufficient_history")):
         # No countable history -> the ticker is NOT a link (nothing to rank/open),
-        # shown greyed. One <td> per header column (no colspan): DataTables counts
-        # cells. The six stat columns show a muted dash; History carries the reason.
-        ticker_plain = f"<td class=\"hint lab-no-data\">{escape(ticker)}</td>"
-        dash = "<td class=\"hint\">—</td>"
+        # shown greyed with a non-colour "(no data)" cue. One <td> per header column
+        # (no colspan): DataTables counts cells. The 4 numeric stat columns use the
+        # sort-last sentinel so they can't interleave with ranked rows on re-sort;
+        # the 2 text range columns show a plain dash. History carries the reason.
+        ticker_plain = (
+            f"<td class=\"hint lab-no-data\">{escape(ticker)} "
+            "<span class=\"hint\">(no data)</span></td>"
+        )
+        num_dash = _fmt_numeric_td(None, decimals=1)  # data-order = sort-last sentinel
+        text_dash = "<td class=\"hint\">—</td>"
         return (
             "<tr class=\"lab-row-insufficient\">"
             f"{_fmt_numeric_td(row.get('rank_in_bucket'), decimals=0)}"
             f"{ticker_plain}"
-            f"{dash * 6}"
-            f"<td>{_fmt_text(_episodes_text(row))}</td>"
+            f"{num_dash}{num_dash}{num_dash}"  # P(beat shrunk), P(beat raw), P(beat GDXJ)
+            f"{text_dash}"  # 95% range
+            f"{num_dash}"  # Median alpha
+            f"{text_dash}"  # Alpha 10-90%
+            f"{_episodes_cell(row)}"
             "<td class=\"hint\">insufficient history</td>"
             "</tr>"
         )
@@ -221,10 +246,22 @@ def _render_dial_row(row: dict[str, Any], *, selected_bucket: str = "", horizon:
         f"<td>{_fmt_text(_range_text(row.get('gdx_wilson_low'), row.get('gdx_wilson_high'), as_percent=True))}</td>"
         f"{_fmt_numeric_td(row.get('median_alpha_gdx'), decimals=1, as_percent=True)}"
         f"<td>{_fmt_text(_range_text(row.get('alpha_q10_gdx'), row.get('alpha_q90_gdx'), as_percent=True))}</td>"
-        f"<td>{_fmt_text(_episodes_text(row))}</td>"
+        f"{_episodes_cell(row)}"
         "<td>ok</td>"
         "</tr>"
     )
+
+
+def _episodes_cell(row: dict[str, Any]) -> str:
+    """Weeks (effective) cell with a numeric sort key (effective N), so the
+    `sort_numeric` header actually sorts. NA -> sort-last sentinel."""
+
+    effective = row.get("gdx_effective_n")
+    has_eff = effective is not None and not (
+        isinstance(effective, float) and effective != effective
+    )
+    order = effective if has_eff else _MISSING_SORT_SENTINEL
+    return f"<td data-order=\"{order}\">{_fmt_text(_episodes_text(row))}</td>"
 
 
 def _gdxj_cell(row: dict[str, Any]) -> str:

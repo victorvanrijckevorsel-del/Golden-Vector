@@ -79,8 +79,8 @@ def dial_config_hash(horizons: list[int], benchmarks: list[str]) -> str:
         DIAL_SIGNAL_ID,
         {
             "schema_version": DIAL_SCHEMA_VERSION,
-            "horizons": [int(h) for h in horizons],
-            "benchmarks": [str(b).upper() for b in benchmarks],
+            "horizons": sorted({int(h) for h in horizons}),
+            "benchmarks": sorted({str(b).upper() for b in benchmarks}),
             "buckets": [[name, low, high] for name, low, high in DEFAULT_BUCKETS],
             "min_effective_n": MIN_EFFECTIVE_N,
             "eb_prior_strength": EB_PRIOR_STRENGTH,
@@ -408,8 +408,10 @@ def build_episode_artifact(
 
 
 def _nonoverlap_anchor_mask(ep: pd.DataFrame, *, horizon_weeks: int) -> list[bool]:
-    """Mark every h-th episode per ticker so serve can draw the INDEPENDENT
-    (non-overlapping) episodes larger — computed here, never inferred in serve."""
+    """Mark every h-th SURVIVING episode per ticker (positional, so anchors are
+    always >= h calendar weeks apart — conservative across any data gaps) so serve
+    can draw the INDEPENDENT (non-overlapping) episodes larger — computed here,
+    never inferred in serve."""
 
     h = int(horizon_weeks)
     flags = pd.Series(False, index=ep.index)
@@ -581,7 +583,10 @@ def cumulative_rebased(log_returns: pd.Series, *, base: float = 100.0) -> pd.Ser
     """
 
     clean = pd.to_numeric(log_returns, errors="coerce")
-    level = np.exp(clean.cumsum())
+    # skipna=False: an interior gap NA-propagates (post-gap levels become NaN and
+    # are dropped) rather than being silently bridged as a zero-return week — the
+    # repo rule is "degraded data is EXCLUDED, not bridged".
+    level = np.exp(clean.cumsum(skipna=False))
     valid = level.dropna()
     if valid.empty:
         return pd.Series([float("nan")] * len(level), index=log_returns.index, dtype="float64")

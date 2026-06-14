@@ -122,7 +122,13 @@ def _render_controls(curve: LabCurveData) -> str:
 
 
 def _render_headline(curve: LabCurveData) -> str:
-    scenario_points = [p for p in curve.points if p["is_scenario"]]
+    # Count over the SAME points Chart A plots (alpha present), so the headline's
+    # "counted weeks / above zero" can't drift from the dots shown below.
+    scenario_points = [
+        p
+        for p in curve.points
+        if p["is_scenario"] and p["alpha"] is not None and p["alpha"] == p["alpha"]
+    ]
     above = [p for p in scenario_points if p["beat"]]  # persisted decision, not re-derived
     if _benchmark_insufficient(curve) or len(scenario_points) == 0:
         return (

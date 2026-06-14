@@ -245,6 +245,36 @@ def test_loader_flags_stale_when_live_horizons_change(tmp_path) -> None:
     assert data.error_status == "STALE"
 
 
+def test_dial_horizon_set_is_pinned() -> None:
+    """Pin the live look-ahead set so a silent revert to the empty-52w design is
+    caught (the drift tests otherwise stamp arbitrary horizon lists)."""
+
+    assert DIAL_HORIZONS_WEEKS == [4, 8, 13, 26]
+    assert 52 not in DIAL_HORIZONS_WEEKS
+
+
+def test_dial_config_hash_is_order_and_set_invariant() -> None:
+    """Reordering the horizon/benchmark lists is a semantic no-op and must NOT
+    change the config hash (else a current artifact false-flags STALE)."""
+
+    assert dial_config_hash([4, 8, 13, 26], ["GDX", "GDXJ"]) == dial_config_hash(
+        [26, 13, 8, 4], ["GDXJ", "GDX"]
+    )
+    assert dial_config_hash([4, 8, 13, 26], ["GDX", "GDXJ"]) != dial_config_hash(
+        [4, 8, 13, 26, 52], ["GDX", "GDXJ"]
+    )
+
+
+def test_cumulative_rebased_does_not_bridge_interior_gaps() -> None:
+    """An interior NaN must NA-propagate (post-gap excluded), not be bridged as a
+    zero-return week — 'degraded data is EXCLUDED, not bridged'."""
+
+    out = cumulative_rebased(pd.Series([0.1, float("nan"), 0.05]))
+    assert abs(float(out.iloc[0]) - 100.0) < 1e-9
+    assert pd.isna(out.iloc[1])  # the gap itself
+    assert pd.isna(out.iloc[2])  # post-gap excluded, NOT exp(0.15)
+
+
 def test_variant_hashes_are_distinct_per_benchmark_horizon() -> None:
     """Benchmark x horizon multiplicity: every (benchmark, horizon) config is a
     distinct registered variant — one per pair, none colliding."""
