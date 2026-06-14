@@ -72,35 +72,42 @@ def _write(tmp_path: Path, frame: pd.DataFrame, *, horizons, benchmarks, min_eff
 
 def test_consistency_invariant_chart_share_equals_table_p_beat() -> None:
     """Share of highlighted, non-NA dots with alpha > 0 == cell raw p_beat, per
-    benchmark. A tie at exactly 0 must count as a MISS (beat is strictly > 0)."""
+    benchmark AND per horizon. A tie at exactly 0 must count as a MISS (beat is
+    strictly > 0). Parametrized across the look-ahead set so a future
+    forward_sum/anchor change can't break 4w/8w/26w undetected."""
 
     frame = parity_weekly_frame()
-    # Wide cells are GDX-anchored (ranked by GDX), so build both benchmarks
-    # together and check each benchmark's own p_beat column against its episodes.
+    horizons = [4, 8, 13]  # all yield usable cells on the synthetic frame at min_eff=2
+    # Wide cells are GDX-anchored, so build both benchmarks together; check each
+    # benchmark's own p_beat column against its episodes, per horizon.
     cells = build_dial_cells_wide(
-        frame, horizons=[13], benchmarks=["GDX", "GDXJ"], min_effective_n=2.0
+        frame, horizons=horizons, benchmarks=["GDX", "GDXJ"], min_effective_n=2.0
     )
-    for benchmark in ("GDX", "GDXJ"):
-        insuff_col = f"{benchmark.lower()}_insufficient_history"
-        usable = cells[~cells[insuff_col].fillna(True).astype(bool)]
-        assert not usable.empty
-        episodes = build_episode_frame(frame, horizon_weeks=13, benchmark=benchmark)
-        checked = 0
-        for _, cell in usable.iterrows():
-            sub = episodes[
-                (episodes["ticker"] == cell["ticker"])
-                & (episodes["gold_bucket"] == cell["bucket"])
-            ]
-            alphas = pd.to_numeric(sub["alpha"], errors="coerce").dropna()
-            if alphas.empty:
+    checked = 0
+    for horizon in horizons:
+        hz_cells = cells[cells["horizon_weeks"] == horizon]
+        for benchmark in ("GDX", "GDXJ"):
+            insuff_col = f"{benchmark.lower()}_insufficient_history"
+            usable = hz_cells[~hz_cells[insuff_col].fillna(True).astype(bool)]
+            if usable.empty:
                 continue
-            share = float((alphas > 0).mean())
-            p_beat = float(cell[f"p_beat_{benchmark.lower()}"])
-            # p_beat is persisted rounded to 4 decimals; the invariant holds to
-            # that rounding (the chart and table agree by construction).
-            assert abs(share - p_beat) < 1e-4, (cell["ticker"], cell["bucket"], share, p_beat)
-            checked += 1
-        assert checked > 0
+            episodes = build_episode_frame(frame, horizon_weeks=horizon, benchmark=benchmark)
+            for _, cell in usable.iterrows():
+                sub = episodes[
+                    (episodes["ticker"] == cell["ticker"])
+                    & (episodes["gold_bucket"] == cell["bucket"])
+                ]
+                alphas = pd.to_numeric(sub["alpha"], errors="coerce").dropna()
+                if alphas.empty:
+                    continue
+                share = float((alphas > 0).mean())
+                p_beat = float(cell[f"p_beat_{benchmark.lower()}"])
+                # p_beat is persisted rounded to 4 dp; invariant holds to that.
+                assert abs(share - p_beat) < 1e-4, (
+                    horizon, benchmark, cell["ticker"], cell["bucket"], share, p_beat
+                )
+                checked += 1
+    assert checked > 0
 
 
 def test_cells_are_derived_from_the_same_episode_spine() -> None:

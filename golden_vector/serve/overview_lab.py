@@ -39,23 +39,29 @@ def _render_lab_overview_page(
     )
 
     if not data.available:
-        if data.error_status == "CORRUPT":
-            body.append(
-                "<div class=\"flash flash-warning\">Lab artifact is corrupt and "
-                "could not be read. Rebuild it: "
-                "<code>python -m golden_vector.lab.conditional_dial</code>.</div>"
+        rebuild = "<code>python -m golden_vector.lab.conditional_dial</code>"
+        status = data.error_status
+        if status == "CORRUPT":
+            msg = f"Lab artifact is corrupt and could not be read. Rebuild it: {rebuild}."
+        elif status in ("META_MISSING", "META_CORRUPT"):
+            # Data is intact; only the metadata sidecar is bad — not a stale shape.
+            msg = (
+                "Lab data is present but its metadata is missing or unreadable, so "
+                f"freshness can't be verified. Rebuild it: {rebuild}."
             )
-        elif data.error_status == "STALE":
-            body.append(
-                "<div class=\"flash flash-warning\">Lab artifact was built by an older "
-                "version and is missing the multi-horizon / GDXJ columns. Rebuild it: "
-                "<code>python -m golden_vector.lab.conditional_dial</code>.</div>"
+        elif status == "STALE":
+            msg = (
+                "Lab artifact is out of date (older schema, or the configured "
+                f"look-aheads/benchmarks changed). Rebuild it: {rebuild}."
+            )
+        elif status == "EMPTY":
+            msg = (
+                "The Lab built but found no countable miners (empty universe). "
+                f"Check the input data, then rebuild: {rebuild}."
             )
         else:
-            body.append(
-                "<div class=\"flash flash-warning\">Lab artifacts are not built yet. "
-                "Run <code>python -m golden_vector.lab.conditional_dial</code> first.</div>"
-            )
+            msg = f"Lab artifacts are not built yet. Run {rebuild} first."
+        body.append(f"<div class=\"flash flash-warning\">{msg}</div>")
         return _page_shell(
             "Lab - Golden Vector Workspace", "".join(body), active_nav="lab"
         )

@@ -195,7 +195,38 @@ def test_lab_page_flags_stale_schema(tmp_path) -> None:
     assert not data.available
     assert data.error_status == "STALE"
     html = _render_lab_overview_page(data, selected_bucket="gold_down")
-    assert "older version" in html
+    assert "out of date" in html
+
+
+def test_lab_page_flags_missing_metadata_distinctly(tmp_path) -> None:
+    """Intact cells + a missing meta sidecar -> a metadata message, NOT the
+    'older schema / missing columns' stale message."""
+
+    paths = _write_artifacts(tmp_path)
+    (tmp_path / "lab" / DIAL_ARTIFACT_META_FILENAME).unlink()  # remove meta only
+    data = load_dial_cells(paths, horizon=13, bucket="gold_down")  # type: ignore[arg-type]
+    assert not data.available
+    assert data.error_status == "META_MISSING"
+    html = _render_lab_overview_page(data, selected_bucket="gold_down")
+    assert "metadata is missing or unreadable" in html
+    assert "out of date" not in html  # not misdiagnosed as stale
+
+
+def test_lab_page_flags_empty_universe_distinctly(tmp_path) -> None:
+    """A built-but-empty cells parquet -> EMPTY (not 'not built yet')."""
+
+    import pandas as pd
+
+    from golden_vector.lab.conditional_dial import CELLS_COLUMNS
+
+    lab = tmp_path / "lab"
+    lab.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(columns=CELLS_COLUMNS).to_parquet(lab / DIAL_CELLS_FILENAME, index=False)
+    data = load_dial_cells(_FakePaths(tmp_path), bucket="gold_down")  # type: ignore[arg-type]
+    assert not data.available
+    assert data.error_status == "EMPTY"
+    html = _render_lab_overview_page(data, selected_bucket="gold_down")
+    assert "empty universe" in html
 
 
 def test_lab_route_serves_table_and_drilldown(tmp_path) -> None:

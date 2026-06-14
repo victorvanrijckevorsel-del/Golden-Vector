@@ -90,14 +90,18 @@ class LabCurveData:
     error_status: str | None = None
 
 
-def _read_meta(paths: ProjectPaths) -> dict[str, Any]:
+def _read_meta(paths: ProjectPaths) -> tuple[dict[str, Any], str | None]:
+    """Return (meta, meta_status). meta_status is None (ok), "MISSING" (no file),
+    or "CORRUPT" (unreadable) — so a bad meta beside intact cells is reported as a
+    metadata problem, not falsely as 'data missing the multi-horizon columns'."""
+
     meta_path = lab_dir(paths) / DIAL_ARTIFACT_META_FILENAME
     if not meta_path.exists():
-        return {}
+        return {}, "MISSING"
     try:
-        return json.loads(meta_path.read_text(encoding="utf-8"))
+        return json.loads(meta_path.read_text(encoding="utf-8")), None
     except (json.JSONDecodeError, OSError):
-        return {}
+        return {}, "CORRUPT"
 
 
 def _load_frame(
@@ -116,7 +120,10 @@ def _load_frame(
     except Exception:
         return None, "CORRUPT"
     if frame.empty:
-        return None, "MISSING"
+        # Built + readable, but zero rows (e.g. empty universe) — distinct from
+        # "not built yet" so the page doesn't tell the operator to run a build
+        # that already ran.
+        return None, "EMPTY"
     if any(column not in frame.columns for column in required_columns):
         # Built by an older shape (missing the multi-horizon/benchmark columns).
         return None, "STALE"
@@ -155,12 +162,16 @@ def load_dial_cells(
 ) -> LabCellsData:
     """Wide overview rows for one (horizon, bucket), GDX-ranked."""
 
-    meta = _read_meta(paths)
+    meta, meta_status = _read_meta(paths)
     frame, status = _load_frame(
         paths, filename=DIAL_CELLS_FILENAME, required_columns=CELLS_COLUMNS
     )
     if frame is None:
         return LabCellsData(available=False, error_status=status)
+    if meta_status is not None:
+        # Cells are intact but the metadata is missing/unreadable — a metadata
+        # problem, not a stale-shape one.
+        return LabCellsData(available=False, error_status="META_" + meta_status)
     if not _artifact_is_current(meta):
         return LabCellsData(available=False, error_status="STALE")
 
@@ -220,7 +231,7 @@ def load_ticker_curve(
     if bench not in BENCHMARK_COLUMN_MAP:
         return LabCurveData(available=False, error_status="MISSING")
 
-    meta = _read_meta(paths)
+    meta, _meta_status = _read_meta(paths)
     if meta and bench not in configured_benchmarks(meta):
         return LabCurveData(available=False, error_status="STALE")
 
