@@ -1,0 +1,21 @@
+# Lab gold-profile characterization thresholds (the auto Defensive / Steady /
+# Pro-cyclical tilt label). Validated by GoldProfileConfig and stamped into the
+# Lab dial config hash, so editing any value forces a rebuild rather than silently
+# reinterpreting old labels.
+#
+# gold_tilt = equal-weighted mean P(beat, shrunk) over USABLE down buckets
+#             minus the equal-weighted mean over USABLE up buckets.
+#   tilt >=  tilt_threshold -> Defensive
+#   tilt <= -tilt_threshold -> Pro-cyclical
+#   |tilt| <  tilt_threshold -> Steady
+version: 1
+tilt_threshold: 0.10
+min_usable_down_buckets: 1
+min_usable_up_buckets: 1
+down_buckets:
+  - gold_down_big
+  - gold_down
+up_buckets:
+  - gold_up
+  - gold_up_big
+default_profile_horizon: 13

@@ -144,16 +144,67 @@ def _render_controls(curve: LabCurveData) -> str:
     )
 
 
+def _render_tilt_label(curve: LabCurveData) -> str:
+    """The auto gold-tilt characterization (v2). Serve ONLY chooses display text
+    from the persisted ``profile_label`` + ``profile_label_status`` — it never
+    re-derives the tilt or re-decides the threshold (the literal category words
+    live in the build, not here). Horizon-scoped wording, coverage basis shown."""
+
+    status = curve.profile_label_status
+    hz = int(curve.horizon)
+    bench = escape(curve.benchmark)
+    ticker = escape(curve.ticker)
+    if status == "OK" and curve.profile_label:
+        # Coverage basis = the TILT-PARTITION counts the build averaged over (read
+        # from the persisted artifact), not the structural chart counts.
+        down = curve.profile_basis_down
+        up = curve.profile_basis_up
+        dn, upm = curve.profile_down_mean, curve.profile_up_mean
+        tilt, thr = curve.profile_tilt, curve.profile_tilt_threshold
+        # Transparent derivation: the label sits directly above the numbers it comes
+        # from (down-side vs up-side beat rate -> tilt, against the threshold). These
+        # are persisted values formatted for display — no decision is made here.
+        derivation = ""
+        if None not in (dn, upm, tilt, thr):
+            derivation = (
+                f"down-side beat rate {float(dn) * 100:.0f}% vs up-side "
+                f"{float(upm) * 100:.0f}% (tilt {float(tilt):+.2f}, threshold "
+                f"{float(thr):.2f}); "
+            )
+        return (
+            "<p class=\"profile-tilt\"><strong>"
+            f"{hz}-week historical tilt: {escape(curve.profile_label)}</strong> "
+            f"<span class=\"hint\">{derivation}based on {down} usable down scenario(s) and "
+            f"{up} usable up scenario(s) at {hz}w vs {bench}. "
+            f"{escape(curve.profile_caveat)}</span></p>"
+        )
+    if status == "INSUFFICIENT_CROSS_SCENARIO_HISTORY":
+        return (
+            "<p class=\"profile-tilt hint\">Not enough cross-scenario history to "
+            f"characterize {ticker}'s {hz}-week tilt vs {bench} yet (needs countable "
+            "down AND up scenarios).</p>"
+        )
+    if status == "MISSING_COMPONENTS":
+        return (
+            "<p class=\"profile-tilt hint\">No countable down/up scenario history to "
+            f"characterize {ticker} at {hz}w vs {bench} yet.</p>"
+        )
+    # UNAVAILABLE: the profile artifact is absent/stale — degrade silently to the
+    # chart (no fabricated label).
+    return ""
+
+
 def _render_profile(curve: LabCurveData) -> str:
     """Hero: how the miner behaves vs the benchmark across ALL gold scenarios at
-    the selected horizon. The shape is the story (down-sloping = defensive); gaps
-    where a scenario had too little history. No auto-label here (that is v2)."""
+    the selected horizon, with the auto tilt-label (v2) above it. The shape is the
+    story; gaps where a scenario had too little history."""
 
     pts = curve.profile_points
     usable = [p for p in pts if p["usable"]]
     if not pts or not usable:
         return (
             "<section class=\"panel\"><h2>Gold profile</h2>"
+            f"{_render_tilt_label(curve)}"
             f"<p class=\"hint\">No countable cross-scenario history for "
             f"{escape(curve.ticker)} at {int(curve.horizon)} weeks yet.</p></section>"
         )
@@ -193,6 +244,7 @@ def _render_profile(curve: LabCurveData) -> str:
         "<section class=\"panel lab-profile\">"
         f"<h2>{escape(curve.ticker)} — how it behaved vs {escape(curve.benchmark)} as gold moved "
         f"({int(curve.horizon)}w)</h2>"
+        f"{_render_tilt_label(curve)}"
         f"{svg}"
         f"<p class=\"hint\">Each point = how often {escape(curve.ticker)} actually beat "
         f"{escape(curve.benchmark)} over the next {int(curve.horizon)} weeks in that gold "

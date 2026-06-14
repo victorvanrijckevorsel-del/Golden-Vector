@@ -261,7 +261,9 @@ def test_lab_route_serves_table_and_drilldown(tmp_path) -> None:
 
 def test_lab_serve_layer_has_no_dial_arithmetic() -> None:
     """The Lab pages render backend-resolved columns only: no counting,
-    shrinkage, interval math, rebasing, or rank decisions in serve."""
+    shrinkage, interval math, rebasing, or rank decisions in serve — and the
+    gold-tilt LABEL is read from the persisted artifact, never re-decided here (the
+    category words must not appear as serve literals, nor any tilt aggregation)."""
 
     for module in ("overview_lab.py", "lab_curve_data.py", "lab_curve_page.py"):
         source = Path(f"golden_vector/serve/{module}").read_text(encoding="utf-8")
@@ -270,6 +272,7 @@ def test_lab_serve_layer_has_no_dial_arithmetic() -> None:
             "build_dial_table",
             "build_episode_frame",
             "build_forward_return_panel",
+            "build_profile_artifact",  # the tilt/label is build-computed, never in serve
             "_assign_bucket",
             "_is_above(",  # beat decision must be read from the persisted column
             ".mean(",
@@ -285,6 +288,14 @@ def test_lab_serve_layer_has_no_dial_arithmetic() -> None:
             "EB_PRIOR",
             "cumcount",
             ".rank(",
+            # The Defensive/Steady/Pro-cyclical label is DECIDED in the build; serve
+            # only echoes the persisted gold_tilt_label string. Forbid the category
+            # words as source string-literals (the form a serve-side decision would
+            # take) — reading the persisted tilt_threshold column for display is fine.
+            '"Defensive"',
+            '"Pro-cyclical"',
+            '"Steady"',
+            "_gold_tilt_label(",  # the threshold->label decision helper is build-only
         ):
             assert forbidden not in source, f"{module}: {forbidden}"
 

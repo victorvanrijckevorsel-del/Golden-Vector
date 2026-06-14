@@ -2,11 +2,13 @@ import pytest
 from pydantic import ValidationError
 
 from golden_vector.contracts.config_models import (
+    GOLD_BUCKET_NAMES,
     AsymmetryThresholds,
     BenchmarksConfig,
     CandidateFinderConfig,
     ConfidenceThresholds,
     GammaThresholds,
+    GoldProfileConfig,
     HedgeReadinessConfig,
     HorizonsConfig,
     MarketDataConfig,
@@ -468,6 +470,48 @@ def test_tool_c_config_accepts_defaults():
 def test_tool_c_config_rejects_invalid_settings(override):
     with pytest.raises(ValidationError):
         ToolCConfig.model_validate({"version": 1, **override})
+
+
+def test_gold_profile_config_accepts_defaults():
+    config = GoldProfileConfig()
+
+    assert config.tilt_threshold == 0.10
+    assert config.min_usable_down_buckets == 1
+    assert config.min_usable_up_buckets == 1
+    assert config.down_buckets == ["gold_down_big", "gold_down"]
+    assert config.up_buckets == ["gold_up", "gold_up_big"]
+    assert config.default_profile_horizon == 13
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"tilt_threshold": 0.0},
+        {"tilt_threshold": -0.1},
+        {"tilt_threshold": 1.5},
+        {"min_usable_down_buckets": 0},
+        {"min_usable_up_buckets": 0},
+        {"default_profile_horizon": 0},
+        {"default_profile_horizon": -1},
+        {"down_buckets": []},
+        {"up_buckets": ["gold_up", "gold_up"]},  # repeated
+        {"down_buckets": ["gold_down"], "up_buckets": ["gold_down"]},  # not disjoint
+        {"down_buckets": ["gold_dwon_big", "gold_down"]},  # typo'd bucket name
+        {"up_buckets": ["not_a_bucket"]},  # unknown bucket name
+    ],
+)
+def test_gold_profile_config_rejects_invalid_settings(override):
+    with pytest.raises(ValidationError):
+        GoldProfileConfig.model_validate(override)
+
+
+def test_gold_profile_bucket_names_match_the_lab_canonical_set():
+    """Pin the contracts-layer GOLD_BUCKET_NAMES equal to the lab's canonical
+    bucket labels so the membership validator can never silently drift from the
+    real buckets."""
+    from golden_vector.lab.conditional_dial import BUCKET_LABELS
+
+    assert GOLD_BUCKET_NAMES == frozenset(BUCKET_LABELS)
 
 
 def test_tool_d_config_accepts_defaults():

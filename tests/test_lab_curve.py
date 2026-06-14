@@ -8,6 +8,7 @@ schema-stale guard, and the 6-variant multiplicity hash check.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from golden_vector.lab.conditional_dial import (
     DIAL_CELLS_FILENAME,
     DIAL_EPISODES_FILENAME,
     DIAL_HORIZONS_WEEKS,
+    DIAL_PROFILE_FILENAME,
     DIAL_RELSTRENGTH_FILENAME,
     DIAL_SCHEMA_VERSION,
     DIAL_SIGNAL_ID,
@@ -29,6 +31,7 @@ from golden_vector.lab.conditional_dial import (
     build_dial_cells_wide,
     build_episode_artifact,
     build_episode_frame,
+    build_profile_artifact,
     build_relstrength_artifact,
     cumulative_rebased,
     dial_config_hash,
@@ -50,11 +53,13 @@ def _write(tmp_path: Path, frame: pd.DataFrame, *, horizons, benchmarks, min_eff
     )
     episodes = build_episode_artifact(frame, horizons=horizons, benchmarks=benchmarks)
     relstrength = build_relstrength_artifact(frame, benchmarks=benchmarks)
+    profile = build_profile_artifact(cells, horizons=horizons, benchmarks=benchmarks)
     lab = tmp_path / "lab"
     lab.mkdir(parents=True, exist_ok=True)
     cells.to_parquet(lab / DIAL_CELLS_FILENAME, index=False)
     episodes.to_parquet(lab / DIAL_EPISODES_FILENAME, index=False)
     relstrength.to_parquet(lab / DIAL_RELSTRENGTH_FILENAME, index=False)
+    profile.to_parquet(lab / DIAL_PROFILE_FILENAME, index=False)
     meta = {
         "schema_version": DIAL_SCHEMA_VERSION,
         # The loader checks config_hash against the LIVE config, so a fixture must
@@ -712,6 +717,185 @@ def test_drilldown_unknown_scenario_is_flagged_not_thin_history() -> None:
     assert "Unknown gold scenario" in html
     assert "gold_sideways" in html
     assert "python -m golden_vector.lab.conditional_dial" not in html
+
+
+# ---- v2 gold-tilt label: loader reads the persisted artifact, render is honest --
+
+
+def test_loader_reads_persisted_tilt_label() -> None:
+    """The loader surfaces the build-computed label/status from dial_profile for the
+    page (a pure read — serve never recomputes the tilt)."""
+
+    paths, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    prof = pd.read_parquet(Path(paths.data_dir) / "lab" / DIAL_PROFILE_FILENAME)
+    row = prof[(prof["benchmark"] == "GDX") & (prof["horizon_weeks"] == 13)].iloc[0]
+    curve = load_ticker_curve(
+        paths, ticker=str(row["ticker"]), scenario_bucket="gold_down", horizon=13, benchmark="GDX"
+    )
+    assert curve.profile_label_status == str(row["label_status"])
+    if row["label_status"] == "OK":
+        assert curve.profile_label == str(row["gold_tilt_label"])
+        assert curve.profile_label in ("Defensive", "Steady", "Pro-cyclical")
+
+
+def test_loader_usable_counts_match_persisted_profile_no_drift() -> None:
+    """The serve usable-bucket count and the BUILD's persisted count come from the
+    SAME cell_bucket_is_usable rule — they must never disagree."""
+
+    paths, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    prof = pd.read_parquet(Path(paths.data_dir) / "lab" / DIAL_PROFILE_FILENAME)
+    row = prof[(prof["benchmark"] == "GDX") & (prof["horizon_weeks"] == 13)].iloc[0]
+    curve = load_ticker_curve(
+        paths, ticker=str(row["ticker"]), scenario_bucket="gold_down", horizon=13, benchmark="GDX"
+    )
+    assert curve.profile_usable_down == int(row["usable_down_bucket_count"])
+    assert curve.profile_usable_up == int(row["usable_up_bucket_count"])
+
+
+def test_loader_flags_stale_when_gold_profile_threshold_changes(tmp_path) -> None:
+    """Contract: editing a gold-profile threshold invalidates the artifact (the
+    profile config is stamped into the dial config hash)."""
+
+    from golden_vector.contracts.config_models import GoldProfileConfig
+
+    frame = parity_weekly_frame()
+    paths, _ = _write(tmp_path, frame, horizons=[13], benchmarks=["GDX", "GDXJ"])
+    meta_path = tmp_path / "lab" / DIAL_ARTIFACT_META_FILENAME
+    meta = json.loads(meta_path.read_text())
+    meta["config_hash"] = dial_config_hash(
+        DIAL_HORIZONS_WEEKS, DIAL_BENCHMARKS, GoldProfileConfig(tilt_threshold=0.25)
+    )
+    meta_path.write_text(json.dumps(meta))
+    data = load_dial_cells(paths, horizon=13, bucket="gold_down")
+    assert not data.available
+    assert data.error_status == "STALE"
+
+
+def _labelled_curve(status, label, *, down=2, up=2):
+    from golden_vector.serve.lab_curve_data import LabCurveData
+
+    pts = [
+        _profile_pt("gold_down_big", True, raw=0.9), _profile_pt("gold_down", True, raw=0.7),
+        _profile_pt("gold_flat", False),
+        _profile_pt("gold_up", True, raw=0.3), _profile_pt("gold_up_big", True, raw=0.1),
+    ]
+    return LabCurveData(
+        available=True, ticker="ZZZ", benchmark="GDX", horizon=13,
+        scenario_bucket="gold_down", scenario_label="Gold down 5% to 15%",
+        profile_points=pts, profile_usable_down=down, profile_usable_up=up,
+        profile_basis_down=down, profile_basis_up=up,
+        profile_down_mean=0.8, profile_up_mean=0.2, profile_tilt=0.6, profile_tilt_threshold=0.10,
+        profile_label=label, profile_label_status=status,
+        profile_caveat="counted history, survivor-only, exploratory — not a prediction.",
+    )
+
+
+def test_drilldown_renders_horizon_scoped_tilt_label_when_ok() -> None:
+    """OK label is horizon-scoped, shows the numeric derivation + coverage basis +
+    caveat, and never makes a bare 'this miner is defensive' identity claim."""
+
+    from golden_vector.serve.lab_curve_page import _render_profile
+
+    html = _render_profile(_labelled_curve("OK", "Defensive"))
+    assert "13-week historical tilt: Defensive" in html
+    assert "down-side beat rate 80% vs up-side 20% (tilt +0.60, threshold 0.10)" in html
+    assert "based on 2 usable down scenario(s) and 2 usable up scenario(s) at 13w" in html
+    assert "not a prediction" in html
+    assert "is defensive" not in html.lower()  # never a horizon-free identity claim
+
+
+def test_label_basis_uses_persisted_partition_count_not_structural() -> None:
+    """M1 fix: the coverage basis renders the BUILD's persisted usable-bucket count
+    (the tilt partition), not the structural chart count — so editing the config's
+    down/up buckets can't desync the stated basis from the tilt's real coverage."""
+
+    from golden_vector.serve.lab_curve_page import _render_profile
+
+    # Structural count says 2 down; the persisted tilt partition counted 3 (e.g. a
+    # config that folds gold_flat into the down side). The basis must show 3.
+    curve = _labelled_curve("OK", "Defensive", down=2, up=2)
+    curve = dataclasses.replace(curve, profile_basis_down=3, profile_basis_up=1)
+    html = _render_profile(curve)
+    assert "based on 3 usable down scenario(s) and 1 usable up scenario(s)" in html
+
+
+def test_drilldown_insufficient_tilt_label_is_honest() -> None:
+    from golden_vector.serve.lab_curve_page import _render_profile
+
+    html = _render_profile(
+        _labelled_curve("INSUFFICIENT_CROSS_SCENARIO_HISTORY", None, down=1, up=0)
+    )
+    assert "Not enough cross-scenario history to characterize" in html
+    assert "historical tilt:" not in html  # no fabricated label
+
+
+def test_drilldown_tilt_label_unavailable_degrades_to_chart() -> None:
+    """A missing/stale profile artifact (UNAVAILABLE) hides the label but the chart
+    still renders — optional enrichment, not a page failure."""
+
+    from golden_vector.serve.lab_curve_page import _render_profile
+
+    html = _render_profile(_labelled_curve("UNAVAILABLE", None))
+    assert "historical tilt" not in html  # no label
+    assert "lab-profile" in html  # the chart still renders
+
+
+def test_serve_echoes_the_persisted_label_verbatim() -> None:
+    """Serve renders EXACTLY the persisted gold_tilt_label string — it cannot be
+    substituting its own category word. An odd persisted label appears verbatim,
+    proving the word comes from the artifact, not a serve-side decision."""
+
+    from golden_vector.serve.lab_curve_page import _render_profile
+
+    html = _render_profile(_labelled_curve("OK", "Defensive-XYZ"))
+    assert "13-week historical tilt: Defensive-XYZ" in html
+
+
+def test_drilldown_profile_artifact_corrupt_or_short_degrades_to_unavailable() -> None:
+    """A present-but-malformed dial_profile (corrupt bytes / missing a required
+    column) degrades the LABEL to UNAVAILABLE; the chart + numbers still render (the
+    tilt label is optional enrichment, not load-bearing like the cells)."""
+
+    from golden_vector.serve.lab_curve_page import _render_lab_curve_page
+
+    paths, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    (Path(paths.data_dir) / "lab" / DIAL_PROFILE_FILENAME).write_bytes(b"not a parquet")
+    curve = load_ticker_curve(paths, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDX")
+    assert curve.profile_label_status == "UNAVAILABLE"
+    assert curve.available  # the page itself is unaffected
+    html = _render_lab_curve_page(curve)
+    assert "historical tilt" not in html  # label hidden
+    assert "lab-profile" in html  # chart still renders
+
+    paths2, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    pd.DataFrame({"ticker": ["AAA"]}).to_parquet(
+        Path(paths2.data_dir) / "lab" / DIAL_PROFILE_FILENAME, index=False
+    )
+    curve2 = load_ticker_curve(paths2, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDX")
+    assert curve2.profile_label_status == "UNAVAILABLE"
+    assert curve2.available
+
+
+def test_real_build_meta_registers_profile_artifact() -> None:
+    """Guards build_and_save's manifest wiring for the profile artifact on REAL
+    output: active once artifacts are built (e.g. after a rebuild), skipped in a
+    dataless environment. A build that stops emitting dial_profile, or drops it from
+    run_stamped_artifacts / latest_aliases, fails here."""
+
+    from golden_vector.app.paths import ProjectPaths
+    from golden_vector.lab.conditional_dial import PROFILE_COLUMNS
+    from golden_vector.lab.vintages import lab_dir
+
+    lab = lab_dir(ProjectPaths.discover())
+    meta_path = lab / DIAL_ARTIFACT_META_FILENAME
+    profile_path = lab / DIAL_PROFILE_FILENAME
+    if not meta_path.exists() or not profile_path.exists():
+        pytest.skip("real lab artifacts not built")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert "profile" in meta.get("run_stamped_artifacts", {})
+    assert meta.get("latest_aliases", {}).get("profile") == DIAL_PROFILE_FILENAME
+    assert "profile_rows" in meta
+    assert list(pd.read_parquet(profile_path).columns) == PROFILE_COLUMNS
 
 
 # A tmp dir for the loader-roundtrip tests that do not take the pytest fixture

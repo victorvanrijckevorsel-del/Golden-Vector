@@ -34,11 +34,14 @@ from golden_vector.lab.conditional_dial import (
     DIAL_CELLS_FILENAME,
     DIAL_EPISODES_FILENAME,
     DIAL_HORIZONS_WEEKS,
+    DIAL_PROFILE_FILENAME,
     DIAL_RELSTRENGTH_FILENAME,
     DIAL_SCHEMA_VERSION,
     DOWN_BUCKETS,
+    PROFILE_COLUMNS,
     RELSTRENGTH_COLUMNS,
     UP_BUCKETS,
+    cell_bucket_is_usable,
     dial_config_hash,
 )
 from golden_vector.lab.vintages import lab_dir
@@ -90,10 +93,29 @@ class LabCurveData:
     # The miner's behaviour across ALL gold scenarios at the selected horizon
     # (P(beat) per bucket, gaps where insufficient) — the gold-profile hero.
     profile_points: list[dict[str, Any]] = field(default_factory=list)
-    # Coverage counts (how many usable down / up scenarios) — counted in the
-    # data layer so the renderer never aggregates.
+    # STRUCTURAL coverage counts (how many usable down / up scenarios by the gold
+    # bounds) — for the CHART's slope wording. Derived via the shared
+    # cell_bucket_is_usable rule (one copy with the build).
     profile_usable_down: int = 0
     profile_usable_up: int = 0
+    # The TILT-PARTITION counts the build actually computed gold_tilt over (the
+    # config's down/up buckets) — read straight from the persisted artifact and
+    # shown as the label's coverage basis, so the basis can never disagree with the
+    # partition the tilt was averaged over even if the config buckets are edited.
+    profile_basis_down: int = 0
+    profile_basis_up: int = 0
+    # The auto gold-tilt characterization (v2) — ALL build-computed and read from
+    # dial_profile; serve only chooses display text from label + status, never
+    # re-derives the tilt or re-decides the threshold. status "UNAVAILABLE" means
+    # the profile artifact is absent/stale (label degrades; the chart still shows).
+    profile_label: str | None = None
+    profile_label_status: str = "UNAVAILABLE"
+    profile_tilt: float | None = None
+    profile_down_mean: float | None = None
+    profile_up_mean: float | None = None
+    profile_tilt_threshold: float | None = None
+    profile_used_buckets: str = ""
+    profile_caveat: str = ""
     cell: dict[str, Any] | None = None
     meta: dict[str, Any] = field(default_factory=dict)
     error_status: str | None = None
@@ -316,6 +338,15 @@ def load_ticker_curve(
     profile_points, usable_down, usable_up = _ticker_profile(
         cells_frame, ticker=ticker_u, horizon=horizon_i, benchmark=bench
     )
+    # The auto tilt-label (v2): a PURE READ of the build-computed dial_profile.
+    # Optional enrichment — a missing/stale profile artifact degrades the label to
+    # UNAVAILABLE (the chart still renders), it does not fail the page.
+    profile_frame, _profile_status = _load_frame(
+        paths, filename=DIAL_PROFILE_FILENAME, required_columns=PROFILE_COLUMNS
+    )
+    label = _ticker_profile_label(
+        profile_frame, ticker=ticker_u, horizon=horizon_i, benchmark=bench
+    )
     return LabCurveData(
         available=bool(points) or cell is not None,
         ticker=ticker_u,
@@ -329,6 +360,16 @@ def load_ticker_curve(
         profile_points=profile_points,
         profile_usable_down=usable_down,
         profile_usable_up=usable_up,
+        profile_label=label.get("gold_tilt_label"),
+        profile_label_status=str(label.get("label_status") or "UNAVAILABLE"),
+        profile_tilt=label.get("gold_tilt"),
+        profile_down_mean=label.get("down_mean_p_beat"),
+        profile_up_mean=label.get("up_mean_p_beat"),
+        profile_tilt_threshold=label.get("tilt_threshold"),
+        profile_basis_down=int(label.get("usable_down_bucket_count") or 0),
+        profile_basis_up=int(label.get("usable_up_bucket_count") or 0),
+        profile_used_buckets=str(label.get("used_buckets") or ""),
+        profile_caveat=str(label.get("caveat") or ""),
         cell=cell,
         meta=meta,
         error_status=None if (points or cell is not None) else "MISSING",
@@ -361,13 +402,8 @@ def _ticker_profile(
     for bucket in BUCKET_LABELS:  # configured scenario order: most-down -> most-up
         row = by_bucket.get(bucket)
         shrunk = row.get(f"p_beat_{b}_shrunk") if row else None
-        insufficient = bool(row.get(f"{b}_insufficient_history")) if row else True
-        usable = (
-            row is not None
-            and not insufficient
-            and shrunk is not None
-            and shrunk == shrunk  # not NaN
-        )
+        # ONE usability rule, shared with the build (no forked copy here).
+        usable = cell_bucket_is_usable(row, benchmark)
         if usable and bucket in DOWN_BUCKETS:
             usable_down += 1
         elif usable and bucket in UP_BUCKETS:
@@ -384,6 +420,36 @@ def _ticker_profile(
             }
         )
     return points, usable_down, usable_up
+
+
+def _ticker_profile_label(
+    frame: pd.DataFrame | None,
+    *,
+    ticker: str,
+    horizon: int,
+    benchmark: str,
+) -> dict[str, Any]:
+    """Pure read of the build-computed ``dial_profile`` row for this
+    (ticker, horizon, benchmark): the tilt label, status, and basis fields.
+
+    Returns an empty dict when the artifact is absent or has no matching row (the
+    caller maps that to label_status "UNAVAILABLE"). NaN placeholders are normalised
+    to real ``None`` so the renderer never prints a stray "nan"."""
+
+    if frame is None:
+        return {}
+    view = frame.loc[
+        (frame["ticker"].astype(str).str.upper() == str(ticker).upper())
+        & (frame["horizon_weeks"] == int(horizon))
+        & (frame["benchmark"].astype(str).str.upper() == str(benchmark).upper())
+    ]
+    if view.empty:
+        return {}
+    row = view.iloc[0].to_dict()
+    return {
+        key: (None if (value is None or (isinstance(value, float) and value != value)) else value)
+        for key, value in row.items()
+    }
 
 
 def _relstrength_points(

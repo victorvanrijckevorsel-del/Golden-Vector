@@ -20,9 +20,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from golden_vector.contracts.config_models import GoldProfileConfig
 
 from golden_vector.features.weekly_returns import BENCHMARK_COLUMN_MAP
 from golden_vector.lab.forward_returns import (
@@ -82,18 +87,46 @@ DIAL_SIGNAL_ID = "conditional_dial_analog"
 DIAL_SCHEMA_VERSION = 2
 
 
-def dial_config_hash(horizons: list[int], benchmarks: list[str]) -> str:
+@lru_cache(maxsize=1)
+def default_gold_profile_config() -> GoldProfileConfig:
+    """The live gold-profile config, loaded ONCE from ``config/lab_gold_profile.yaml``
+    and validated — the single source for both the build and the serve staleness
+    check, so neither can drift from the other. A missing file falls back to the
+    model defaults; a present-but-invalid file fails loud (validation raises)."""
+
+    import yaml
+
+    from golden_vector.app.paths import ProjectPaths
+    from golden_vector.contracts.config_models import GoldProfileConfig
+
+    try:
+        config_path = ProjectPaths.discover().config_path("lab_gold_profile.yaml")
+    except Exception:
+        return GoldProfileConfig()
+    if not config_path.exists():
+        return GoldProfileConfig()
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    return GoldProfileConfig.model_validate(raw)
+
+
+def dial_config_hash(
+    horizons: list[int],
+    benchmarks: list[str],
+    profile: GoldProfileConfig | None = None,
+) -> str:
     """One stable hash over the artifact's full config (schema + horizons +
-    benchmarks + buckets + floors).
+    benchmarks + buckets + floors + gold-profile thresholds).
 
     ONE copy: ``build_and_save`` stamps it into the meta; the serve loader
     recomputes it from live config and returns STALE on mismatch — so changing a
-    bucket threshold / ``MIN_EFFECTIVE_N`` / ``EB_PRIOR_STRENGTH`` (none of which
-    bump the schema version) still invalidates a stale artifact.
+    bucket threshold / ``MIN_EFFECTIVE_N`` / ``EB_PRIOR_STRENGTH`` / any gold-profile
+    threshold (none of which bump the schema version) still invalidates a stale
+    artifact.
     """
 
     from golden_vector.lab.ledger import variant_hash
 
+    profile = profile if profile is not None else default_gold_profile_config()
     return variant_hash(
         DIAL_SIGNAL_ID,
         {
@@ -103,6 +136,15 @@ def dial_config_hash(horizons: list[int], benchmarks: list[str]) -> str:
             "buckets": [[name, low, high] for name, low, high in DEFAULT_BUCKETS],
             "min_effective_n": MIN_EFFECTIVE_N,
             "eb_prior_strength": EB_PRIOR_STRENGTH,
+            "gold_profile": {
+                "version": int(profile.version),
+                "tilt_threshold": float(profile.tilt_threshold),
+                "min_usable_down_buckets": int(profile.min_usable_down_buckets),
+                "min_usable_up_buckets": int(profile.min_usable_up_buckets),
+                "down_buckets": sorted(profile.down_buckets),
+                "up_buckets": sorted(profile.up_buckets),
+                "default_profile_horizon": int(profile.default_profile_horizon),
+            },
         },
     )
 
@@ -662,6 +704,173 @@ DIAL_ARTIFACT_META_FILENAME = "dial_meta.json"
 DIAL_EPISODES_ARTIFACT = "dial_episodes"
 DIAL_CELLS_ARTIFACT = "dial_cells"
 DIAL_RELSTRENGTH_ARTIFACT = "dial_relstrength"
+DIAL_PROFILE_FILENAME = "dial_profile_latest.parquet"
+DIAL_PROFILE_ARTIFACT = "dial_profile"
+
+# The build decides these labels; serve never picks them (it renders the
+# persisted ``gold_tilt_label``). The serve no-arithmetic guardrail forbids these
+# literals in the serve Lab modules.
+GOLD_TILT_LABELS = ("Defensive", "Steady", "Pro-cyclical")
+# Machine-readable label statuses (serve chooses display text from these + the
+# persisted label only — never by re-deciding the threshold).
+PROFILE_LABEL_STATUSES = (
+    "OK",
+    "INSUFFICIENT_CROSS_SCENARIO_HISTORY",
+    "MISSING_COMPONENTS",
+)
+PROFILE_COLUMNS = [
+    "ticker",
+    "horizon_weeks",
+    "benchmark",
+    "gold_tilt",
+    "gold_tilt_label",
+    "label_status",
+    "down_mean_p_beat",
+    "up_mean_p_beat",
+    "usable_down_bucket_count",
+    "usable_up_bucket_count",
+    "used_buckets",
+    "tilt_threshold",
+    "min_usable_down_buckets",
+    "min_usable_up_buckets",
+    "config_hash",
+    "caveat",
+]
+PROFILE_CAVEAT = (
+    "gold_tilt = equal-weighted mean P(beat, shrunk) over usable down buckets minus "
+    "usable up buckets (equal bucket weight, NOT episode-weighted); counted history, "
+    "survivor-only, exploratory — not a prediction."
+)
+
+
+def cell_bucket_is_usable(row: Any, benchmark: str) -> bool:
+    """The ONE 'usable cell' rule shared by the profile build and the serve reader
+    (so the two can never drift): the benchmark's history is sufficient AND its
+    shrunk P(beat) is a real number. A missing flag/row is treated as not usable."""
+
+    if row is None:
+        return False
+    b = str(benchmark).lower()
+    insufficient = row.get(f"{b}_insufficient_history")
+    # NA-safe: pandas pd.NA would make ``bool(insufficient)`` / ``shrunk == shrunk``
+    # raise "boolean value of NA is ambiguous". A missing/NA flag means not usable
+    # (matches the docstring), never a crash.
+    if insufficient is None or pd.isna(insufficient) or bool(insufficient):
+        return False
+    shrunk = row.get(f"p_beat_{b}_shrunk")
+    return shrunk is not None and not pd.isna(shrunk)
+
+
+def _gold_tilt_label(tilt: float, threshold: float) -> str:
+    """tilt >= +T -> Defensive; tilt <= -T -> Pro-cyclical; else Steady."""
+    if tilt >= threshold:
+        return "Defensive"
+    if tilt <= -threshold:
+        return "Pro-cyclical"
+    return "Steady"
+
+
+def build_profile_artifact(
+    cells: pd.DataFrame,
+    *,
+    horizons: list[int],
+    benchmarks: list[str],
+    config: GoldProfileConfig | None = None,
+    config_hash: str | None = None,
+) -> pd.DataFrame:
+    """One row per (ticker, horizon, benchmark): the equal-weighted ``gold_tilt`` and
+    its Defensive/Steady/Pro-cyclical label — computed in the BUILD (serve only
+    reads). ``gold_tilt`` and ``gold_tilt_label`` are null unless ``label_status`` is
+    OK (>= the configured usable-bucket floor on BOTH sides).
+
+    Status meaning:
+    - MISSING_COMPONENTS: no down/up scenario cells for this ticker/horizon at all.
+    - INSUFFICIENT_CROSS_SCENARIO_HISTORY: cells exist but too few usable buckets on
+      a side to meet the floor.
+    - OK: both sides meet the floor; the tilt + label are emitted.
+    """
+
+    cfg = config if config is not None else default_gold_profile_config()
+    chash = (
+        config_hash
+        if config_hash is not None
+        else dial_config_hash(horizons, benchmarks, cfg)
+    )
+    if cells is None or cells.empty:
+        return pd.DataFrame(columns=PROFILE_COLUMNS)
+
+    records: list[dict[str, Any]] = []
+    for horizon in horizons:
+        hz = cells.loc[cells["horizon_weeks"] == int(horizon)]
+        for ticker, group in hz.groupby("ticker", sort=True):
+            by_bucket = {str(r["bucket"]): r for r in group.to_dict(orient="records")}
+            for bench in benchmarks:
+                b = str(bench).upper()
+                bl = b.lower()
+                down_vals: list[float] = []
+                up_vals: list[float] = []
+                used: list[str] = []
+                present_any = False
+                for bucket in cfg.down_buckets:
+                    row = by_bucket.get(bucket)
+                    if row is not None:
+                        present_any = True
+                    if cell_bucket_is_usable(row, b):
+                        down_vals.append(float(row[f"p_beat_{bl}_shrunk"]))
+                        used.append(bucket)
+                for bucket in cfg.up_buckets:
+                    row = by_bucket.get(bucket)
+                    if row is not None:
+                        present_any = True
+                    if cell_bucket_is_usable(row, b):
+                        up_vals.append(float(row[f"p_beat_{bl}_shrunk"]))
+                        used.append(bucket)
+                down_n = len(down_vals)
+                up_n = len(up_vals)
+                # Equal-weighted across usable buckets (NOT episode-weighted), so a
+                # common regime can't dominate a rare extreme one.
+                down_mean = sum(down_vals) / down_n if down_n else None
+                up_mean = sum(up_vals) / up_n if up_n else None
+                if not present_any:
+                    status = "MISSING_COMPONENTS"
+                elif (
+                    down_n >= cfg.min_usable_down_buckets
+                    and up_n >= cfg.min_usable_up_buckets
+                ):
+                    status = "OK"
+                else:
+                    status = "INSUFFICIENT_CROSS_SCENARIO_HISTORY"
+                if status == "OK":
+                    tilt: float | None = round(down_mean - up_mean, 6)
+                    label: str | None = _gold_tilt_label(tilt, cfg.tilt_threshold)
+                else:
+                    tilt = None
+                    label = None
+                records.append(
+                    {
+                        "ticker": str(ticker),
+                        "horizon_weeks": int(horizon),
+                        "benchmark": b,
+                        "gold_tilt": tilt,
+                        "gold_tilt_label": label,
+                        "label_status": status,
+                        "down_mean_p_beat": (
+                            round(down_mean, 6) if down_mean is not None else None
+                        ),
+                        "up_mean_p_beat": (
+                            round(up_mean, 6) if up_mean is not None else None
+                        ),
+                        "usable_down_bucket_count": int(down_n),
+                        "usable_up_bucket_count": int(up_n),
+                        "used_buckets": ",".join(used),
+                        "tilt_threshold": float(cfg.tilt_threshold),
+                        "min_usable_down_buckets": int(cfg.min_usable_down_buckets),
+                        "min_usable_up_buckets": int(cfg.min_usable_up_buckets),
+                        "config_hash": chash,
+                        "caveat": PROFILE_CAVEAT,
+                    }
+                )
+    return pd.DataFrame.from_records(records, columns=PROFILE_COLUMNS)
 
 
 def build_and_save(
@@ -722,7 +931,8 @@ def build_and_save(
             )
             variant_hashes[f"{str(bench).upper()}_{int(horizon)}w"] = record.variant_hash
     mark("register_variants_seconds", t_register)
-    config_hash = dial_config_hash(horizons, benchmarks)
+    gp_config = default_gold_profile_config()
+    config_hash = dial_config_hash(horizons, benchmarks, gp_config)
 
     t_read = time.perf_counter()
     gold_candidates = sorted(paths.raw_gold_dir.glob("*.parquet"))
@@ -765,6 +975,15 @@ def build_and_save(
     t_relstrength = time.perf_counter()
     relstrength = build_relstrength_artifact(weekly, benchmarks=benchmarks)
     mark("build_relstrength_seconds", t_relstrength)
+    t_profile = time.perf_counter()
+    profile = build_profile_artifact(
+        cells,
+        horizons=horizons,
+        benchmarks=benchmarks,
+        config=gp_config,
+        config_hash=config_hash,
+    )
+    mark("build_profile_seconds", t_profile)
 
     t_write = time.perf_counter()
     moment = datetime.now(timezone.utc)
@@ -773,13 +992,16 @@ def build_and_save(
         "cells": f"{DIAL_CELLS_ARTIFACT}_{stamp}.parquet",
         "episodes": f"{DIAL_EPISODES_ARTIFACT}_{stamp}.parquet",
         "relstrength": f"{DIAL_RELSTRENGTH_ARTIFACT}_{stamp}.parquet",
+        "profile": f"{DIAL_PROFILE_ARTIFACT}_{stamp}.parquet",
     }
     write_parquet_atomic(cells, target_dir / stamped["cells"])
     write_parquet_atomic(episodes, target_dir / stamped["episodes"])
     write_parquet_atomic(relstrength, target_dir / stamped["relstrength"])
+    write_parquet_atomic(profile, target_dir / stamped["profile"])
     write_parquet_atomic(cells, target_dir / DIAL_CELLS_FILENAME)
     write_parquet_atomic(episodes, target_dir / DIAL_EPISODES_FILENAME)
     write_parquet_atomic(relstrength, target_dir / DIAL_RELSTRENGTH_FILENAME)
+    write_parquet_atomic(profile, target_dir / DIAL_PROFILE_FILENAME)
     mark("write_artifacts_seconds", t_write)
 
     gdx_insufficient = (
@@ -825,6 +1047,7 @@ def build_and_save(
             "cells": DIAL_CELLS_FILENAME,
             "episodes": DIAL_EPISODES_FILENAME,
             "relstrength": DIAL_RELSTRENGTH_FILENAME,
+            "profile": DIAL_PROFILE_FILENAME,
         },
         "stage_timings": stage_timings,
         "input_provenance": {
@@ -852,6 +1075,15 @@ def build_and_save(
         "cells": int(len(cells)),
         "episodes": int(len(episodes)),
         "relstrength_rows": int(len(relstrength)),
+        "profile_rows": int(len(profile)),
+        "gold_profile_config": {
+            "tilt_threshold": float(gp_config.tilt_threshold),
+            "min_usable_down_buckets": int(gp_config.min_usable_down_buckets),
+            "min_usable_up_buckets": int(gp_config.min_usable_up_buckets),
+            "down_buckets": list(gp_config.down_buckets),
+            "up_buckets": list(gp_config.up_buckets),
+            "weighting": "equal_bucket",
+        },
         "usable_gdx_cells_by_horizon": usable_by_horizon,
         "usable_gdx_cells_by_horizon_bucket": usable_by_horizon_bucket,
         "legacy_artifacts": {

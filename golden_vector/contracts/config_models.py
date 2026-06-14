@@ -10,6 +10,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 SUPPORTED_CURRENCIES = {"USD", "CAD", "GBP", "AUD", "ZAR", "EUR", "SEK"}
 HORIZON_PATTERN = re.compile(r"^\d+[DMY]$")
 
+# Canonical gold-scenario bucket names (the lab's DEFAULT_BUCKETS). Declared here
+# in the contracts layer so GoldProfileConfig can reject a typo'd bucket name at
+# config-validation time without a contracts -> lab import. A test pins this set
+# equal to conditional_dial.BUCKET_LABELS so the two can never drift.
+GOLD_BUCKET_NAMES: frozenset[str] = frozenset(
+    {"gold_down_big", "gold_down", "gold_flat", "gold_up", "gold_up_big"}
+)
+
 # Single source of truth for the default option DTE bands; the liquidity
 # layer's fallback and the config default must never diverge.
 DEFAULT_OPTION_DTE_BANDS: dict[int, tuple[int, int]] = {
@@ -603,6 +611,85 @@ class ToolCConfig(StrictConfigModel):
     @property
     def upside_hit_rate_threshold(self) -> float:
         return self.upside_hit_rate_threshold_pct / 100.0
+
+
+class GoldProfileConfig(StrictConfigModel):
+    """Thresholds for the Lab per-miner gold-profile characterization — the auto
+    Defensive / Steady / Pro-cyclical tilt label.
+
+    ``gold_tilt`` = equal-weighted mean P(beat, shrunk) over the USABLE down
+    buckets minus the equal-weighted mean over the USABLE up buckets. A positive
+    tilt means the miner beat the benchmark more often when gold fell (defensive);
+    negative means more often when gold rose (pro-cyclical).
+
+    Validated + stamped into the Lab dial config hash, so changing any field forces
+    a rebuild rather than silently reinterpreting old labels.
+    """
+
+    version: int = 1
+    # |tilt| >= tilt_threshold -> Defensive (tilt>0) / Pro-cyclical (tilt<0);
+    # |tilt| < tilt_threshold -> Steady.
+    tilt_threshold: float = 0.10
+    min_usable_down_buckets: int = 1
+    min_usable_up_buckets: int = 1
+    down_buckets: list[str] = Field(
+        default_factory=lambda: ["gold_down_big", "gold_down"]
+    )
+    up_buckets: list[str] = Field(default_factory=lambda: ["gold_up", "gold_up_big"])
+    default_profile_horizon: int = 13
+
+    @field_validator("tilt_threshold")
+    @classmethod
+    def tilt_threshold_is_a_fraction(cls, value: float) -> float:
+        if not 0.0 < value <= 1.0:
+            raise ValueError("tilt_threshold must be a fraction in (0, 1]")
+        return float(value)
+
+    @field_validator("min_usable_down_buckets", "min_usable_up_buckets")
+    @classmethod
+    def at_least_one_bucket(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("min_usable_*_buckets must be at least 1")
+        return int(value)
+
+    @field_validator("default_profile_horizon")
+    @classmethod
+    def positive_horizon(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("default_profile_horizon must be positive")
+        return int(value)
+
+    @field_validator("down_buckets", "up_buckets")
+    @classmethod
+    def non_empty_unique_buckets(cls, value: list[str]) -> list[str]:
+        names = [str(v) for v in value]
+        if not names:
+            raise ValueError("down_buckets / up_buckets must be non-empty")
+        if len(set(names)) != len(names):
+            raise ValueError("down_buckets / up_buckets must not repeat a bucket")
+        return names
+
+    @model_validator(mode="after")
+    def down_and_up_are_disjoint(self) -> "GoldProfileConfig":
+        overlap = set(self.down_buckets) & set(self.up_buckets)
+        if overlap:
+            raise ValueError(
+                f"down_buckets and up_buckets must be disjoint; shared: {sorted(overlap)}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def buckets_are_known(self) -> "GoldProfileConfig":
+        # Fail loud on a typo'd bucket name: an unknown name would silently never
+        # match a cell and be dropped from the tilt mean + the usable-bucket floor,
+        # quietly reducing evidence or flipping a label with no error.
+        unknown = (set(self.down_buckets) | set(self.up_buckets)) - GOLD_BUCKET_NAMES
+        if unknown:
+            raise ValueError(
+                f"down_buckets / up_buckets contain unknown gold buckets: "
+                f"{sorted(unknown)}; valid names are {sorted(GOLD_BUCKET_NAMES)}"
+            )
+        return self
 
 
 class ToolDConfig(StrictConfigModel):
