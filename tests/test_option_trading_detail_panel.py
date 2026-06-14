@@ -91,7 +91,9 @@ def test_option_trading_detail_renders_watch_candidate_without_half_spread_colum
     assert "Last" in html
     assert "Mid" in html
     assert "1.88" in html
-    assert "8.6% OTM" in html
+    # OTM% column was dropped in the candidates redesign (redundant moneyness next
+    # to strike/delta); the watch note moved into the candidate-name hover.
+    assert "OTM" not in html
     assert "Watch" in html
     assert "midpoint may be optimistic" in html
     assert "Put Directional" in html
