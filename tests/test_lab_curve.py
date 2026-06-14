@@ -511,6 +511,209 @@ def test_drilldown_headline_shows_effn_and_shrunk_not_blank() -> None:
         assert re.search(r"Ranked/smoothed estimate: \d+\.\d%", html), (benchmark, "shrunk blank")
 
 
+def _profile_pt(bucket, usable, *, raw=0.6, shrunk=None):
+    """A hand-built profile point (lets render-level tests control raw vs shrunk)."""
+    return {
+        "bucket": bucket,
+        "label": bucket,
+        "usable": usable,
+        "p_beat_raw": raw if usable else None,
+        "p_beat_shrunk": (shrunk if shrunk is not None else raw) if usable else None,
+        "median_alpha": 0.0 if usable else None,
+        "effective_n": 9.0 if usable else None,
+    }
+
+
+def test_profile_render_shows_raw_not_shrunk_dot_and_bar() -> None:
+    """HIGH-bug RENDER guard (Codex MED): with raw and shrunk deliberately
+    DIFFERENT, the profile dot label AND the win-rate bar must show the RAW percent;
+    the shrunk value may appear only in the hover <title>. Catches a regression
+    where the SVG plots p_beat_shrunk again (the exact bug fixed in dfaf206)."""
+
+    from golden_vector.serve.lab_curve_data import LabCurveData
+    from golden_vector.serve.lab_curve_page import _render_profile, _render_winrate_bar
+
+    cell = {  # raw 90% vs shrunk 70% — a swap would be plainly visible
+        "p_beat_gdx": 0.90,
+        "p_beat_gdx_shrunk": 0.70,
+        "median_alpha_gdx": 0.05,
+        "gdx_effective_n": 9.0,
+        "gdx_insufficient_history": False,
+    }
+    pts = [
+        _profile_pt("gold_down_big", False),
+        _profile_pt("gold_down", True, raw=0.90, shrunk=0.70),
+        _profile_pt("gold_flat", False),
+        _profile_pt("gold_up", True, raw=0.40, shrunk=0.55),
+        _profile_pt("gold_up_big", False),
+    ]
+    curve = LabCurveData(
+        available=True, ticker="ZZZ", benchmark="GDX", horizon=13,
+        scenario_bucket="gold_down", scenario_label="Gold down 5% to 15%",
+        profile_points=pts, profile_usable_down=1, profile_usable_up=1, cell=cell,
+    )
+    profile_html = _render_profile(curve)
+    bar_html = _render_winrate_bar(curve)
+    # The gold_down dot's printed label is the RAW 90%, not the shrunk 70%.
+    assert ">90%<" in profile_html
+    assert ">70%<" not in profile_html  # shrunk is never a plotted dot label
+    assert "ranked/smoothed 70%" in profile_html  # it lives only in the hover title
+    # The win-rate bar (selected gold_down scenario) also shows the RAW 90%.
+    assert "90% of the time" in bar_html
+    assert "70% of the time" not in bar_html
+
+
+def test_profile_one_sided_up_does_not_claim_downside_resilience() -> None:
+    """MED fix (Codex): a profile with ONLY up-side scenarios usable — even with an
+    adjacent drawn segment — must not say it 'held up better when gold fell'; there
+    is no down bucket to support that read."""
+
+    from golden_vector.serve.lab_curve_data import LabCurveData
+    from golden_vector.serve.lab_curve_page import _render_profile
+
+    pts = [
+        _profile_pt("gold_down_big", False), _profile_pt("gold_down", False),
+        _profile_pt("gold_flat", False),
+        _profile_pt("gold_up", True), _profile_pt("gold_up_big", True),  # adjacent
+    ]
+    curve = LabCurveData(
+        available=True, ticker="ZZZ", benchmark="GDX", horizon=13,
+        scenario_bucket="gold_up", scenario_label="Gold up 5% to 15%",
+        profile_points=pts, profile_usable_down=0, profile_usable_up=2,
+    )
+    html = _render_profile(curve)
+    assert "down-then-up slope" not in html
+    assert "held up better when gold fell" not in html
+    assert "Only up-side gold scenarios" in html
+
+
+def test_profile_one_sided_down_does_not_claim_slope() -> None:
+    """Symmetric one-sided guard: only down-side usable must say so, not imply a
+    down-vs-up shape."""
+
+    from golden_vector.serve.lab_curve_data import LabCurveData
+    from golden_vector.serve.lab_curve_page import _render_profile
+
+    pts = [
+        _profile_pt("gold_down_big", True), _profile_pt("gold_down", True),  # adjacent
+        _profile_pt("gold_flat", False),
+        _profile_pt("gold_up", False), _profile_pt("gold_up_big", False),
+    ]
+    curve = LabCurveData(
+        available=True, ticker="ZZZ", benchmark="GDX", horizon=13,
+        scenario_bucket="gold_down", scenario_label="Gold down 5% to 15%",
+        profile_points=pts, profile_usable_down=2, profile_usable_up=0,
+    )
+    html = _render_profile(curve)
+    assert "down-then-up slope" not in html
+    assert "Only down-side gold scenarios" in html
+
+
+def test_profile_svg_never_bridges_a_gap() -> None:
+    """Visual-honesty pin (Codex MED): the profile SVG draws a connecting segment
+    ONLY between two adjacent usable buckets; a non-usable bucket between two usable
+    ones leaves a visible gap (no line spanning it)."""
+
+    from golden_vector.serve.lab_curve_page import _build_profile_svg
+
+    connector = "stroke=\"#2f6f6d\""  # the colour used ONLY for the connecting line
+    gapped = [  # usable, GAP, usable -> no adjacent usable pair -> zero connectors
+        _profile_pt("gold_down_big", True), _profile_pt("gold_down", False),
+        _profile_pt("gold_flat", True),
+        _profile_pt("gold_up", False), _profile_pt("gold_up_big", False),
+    ]
+    svg_gapped = _build_profile_svg(gapped, ticker="ZZZ", benchmark="GDX", horizon=13)
+    assert connector not in svg_gapped  # nothing bridges the gap
+    adjacent = [  # positive control: two adjacent usable buckets DO get a connector
+        _profile_pt("gold_down_big", True), _profile_pt("gold_down", True),
+        _profile_pt("gold_flat", False),
+        _profile_pt("gold_up", False), _profile_pt("gold_up_big", False),
+    ]
+    svg_adjacent = _build_profile_svg(adjacent, ticker="ZZZ", benchmark="GDX", horizon=13)
+    assert connector in svg_adjacent
+
+
+def test_down_up_bucket_partitions_are_derived_correctly() -> None:
+    """One-copy partition pin (Codex NIT): DOWN/UP are derived from the bucket
+    bounds; gold_flat belongs to neither and the two lists are disjoint."""
+
+    from golden_vector.lab.conditional_dial import DOWN_BUCKETS, UP_BUCKETS
+
+    assert set(DOWN_BUCKETS) == {"gold_down_big", "gold_down"}
+    assert set(UP_BUCKETS) == {"gold_up", "gold_up_big"}
+    assert "gold_flat" not in DOWN_BUCKETS and "gold_flat" not in UP_BUCKETS
+    assert not (set(DOWN_BUCKETS) & set(UP_BUCKETS))  # disjoint
+
+
+def test_drilldown_fails_loud_when_cells_artifact_is_bad() -> None:
+    """Codex MED (fail-loud): a missing/corrupt/stale dial_cells artifact — while
+    episodes exist — must surface a distinct CELLS_* status with a rebuild message,
+    never masquerade as 'no countable cross-scenario history' (an evidence gap)."""
+
+    from golden_vector.serve.lab_curve_page import _render_lab_curve_page
+
+    # MISSING: delete the cells artifact, keep episodes intact.
+    paths, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    (Path(paths.data_dir) / "lab" / DIAL_CELLS_FILENAME).unlink()
+    curve = load_ticker_curve(paths, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDX")
+    assert not curve.available
+    assert curve.error_status == "CELLS_MISSING"
+    html = _render_lab_curve_page(curve)
+    assert "scenario-cells artifact is missing" in html
+    assert "No countable cross-scenario history" not in html  # NOT the evidence-gap message
+
+    # CORRUPT: overwrite cells with non-parquet bytes.
+    paths2, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    (Path(paths2.data_dir) / "lab" / DIAL_CELLS_FILENAME).write_bytes(b"not a parquet file")
+    curve2 = load_ticker_curve(paths2, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDX")
+    assert not curve2.available
+    assert curve2.error_status == "CELLS_CORRUPT"
+
+    # STALE: cells present but missing required columns.
+    paths3, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    pd.DataFrame({"ticker": ["AAA"]}).to_parquet(
+        Path(paths3.data_dir) / "lab" / DIAL_CELLS_FILENAME, index=False
+    )
+    curve3 = load_ticker_curve(paths3, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDX")
+    assert not curve3.available
+    assert curve3.error_status == "CELLS_STALE"
+
+
+def test_drilldown_distinguishes_bad_metadata_from_stale() -> None:
+    """Codex LOW: a missing/corrupt dial_meta.json on the drill-down route must
+    report META_MISSING/META_CORRUPT (mirroring the overview), not collapse to a
+    misleading STALE."""
+
+    paths, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    (Path(paths.data_dir) / "lab" / DIAL_ARTIFACT_META_FILENAME).unlink()
+    curve = load_ticker_curve(paths, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDX")
+    assert not curve.available
+    assert curve.error_status == "META_MISSING"
+
+    paths2, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    (Path(paths2.data_dir) / "lab" / DIAL_ARTIFACT_META_FILENAME).write_text("{not valid json")
+    curve2 = load_ticker_curve(paths2, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDX")
+    assert not curve2.available
+    assert curve2.error_status == "META_CORRUPT"
+
+
+def test_drilldown_unknown_scenario_is_flagged_not_thin_history() -> None:
+    """Codex LOW: a mistyped ?scenario= must return UNKNOWN_SCENARIO with a clear
+    message naming the bad value, not render as 'not enough history' (and no
+    rebuild instruction, since a URL typo is not a build problem)."""
+
+    from golden_vector.serve.lab_curve_page import _render_lab_curve_page
+
+    paths, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    curve = load_ticker_curve(paths, ticker="AAA", scenario_bucket="gold_sideways", horizon=13, benchmark="GDX")
+    assert not curve.available
+    assert curve.error_status == "UNKNOWN_SCENARIO"
+    html = _render_lab_curve_page(curve)
+    assert "Unknown gold scenario" in html
+    assert "gold_sideways" in html
+    assert "python -m golden_vector.lab.conditional_dial" not in html
+
+
 # A tmp dir for the loader-roundtrip tests that do not take the pytest fixture
 # (keeps the assertion bodies flat and explicit).
 def tmp_path_for() -> Path:

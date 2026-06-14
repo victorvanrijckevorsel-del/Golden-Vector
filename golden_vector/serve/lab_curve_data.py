@@ -239,8 +239,20 @@ def load_ticker_curve(
     bench = str(benchmark).upper()
     if bench not in BENCHMARK_COLUMN_MAP:
         return LabCurveData(available=False, error_status="MISSING")
+    # Validate the requested scenario against the configured buckets up front, so a
+    # mistyped ?scenario= reads as "unknown scenario" rather than masquerading as
+    # "not enough history" (no matching cell -> blank win-rate bar + headline).
+    if str(scenario_bucket) not in BUCKET_LABELS:
+        return LabCurveData(
+            available=False,
+            ticker=str(ticker).upper(),
+            benchmark=bench,
+            horizon=int(horizon),
+            scenario_bucket=str(scenario_bucket),
+            error_status="UNKNOWN_SCENARIO",
+        )
 
-    meta, _meta_status = _read_meta(paths)
+    meta, meta_status = _read_meta(paths)
     if meta and bench not in configured_benchmarks(meta):
         return LabCurveData(available=False, error_status="STALE")
 
@@ -249,6 +261,11 @@ def load_ticker_curve(
     )
     if episodes is None:
         return LabCurveData(available=False, error_status=status)
+    if meta_status is not None:
+        # Intact episodes but missing/unreadable metadata — a metadata problem, not
+        # a stale-shape one (mirror the overview loader's distinct diagnosis, so the
+        # operator gets the right rebuild reason instead of a misleading STALE).
+        return LabCurveData(available=False, error_status="META_" + meta_status)
     if not _artifact_is_current(meta):
         return LabCurveData(available=False, error_status="STALE")
 
@@ -274,10 +291,24 @@ def load_ticker_curve(
         )
 
     # Read dial_cells ONCE per request; feed both the matching cell and the
-    # cross-scenario profile (avoids a triple read).
-    cells_frame, _cells_status = _load_frame(
+    # cross-scenario profile (avoids a triple read). The cells artifact drives the
+    # profile hero, the win-rate bar AND the headline numbers, so a missing/corrupt/
+    # stale/empty cells file (while episodes exist) is a broken build — fail loud
+    # with a distinct status, never misreport it as "no cross-scenario history"
+    # (which reads as an evidence gap, not an artifact gap).
+    cells_frame, cells_status = _load_frame(
         paths, filename=DIAL_CELLS_FILENAME, required_columns=CELLS_COLUMNS
     )
+    if cells_status is not None:
+        return LabCurveData(
+            available=False,
+            ticker=ticker_u,
+            benchmark=bench,
+            horizon=horizon_i,
+            scenario_bucket=str(scenario_bucket),
+            scenario_label=str(BUCKET_LABELS.get(str(scenario_bucket), scenario_bucket)),
+            error_status="CELLS_" + cells_status,
+        )
     cell = _matching_cell(cells_frame, ticker=ticker_u, bucket=str(scenario_bucket), horizon=horizon_i)
     relstrength_points, relstrength_status = _relstrength_points(
         paths, ticker=ticker_u, benchmark=bench, meta=meta

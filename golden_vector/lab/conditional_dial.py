@@ -47,6 +47,9 @@ BUCKET_LABELS: dict[str, str] = {
     "gold_up": "Gold up 5% to 15%",
     "gold_up_big": "Gold up more than 15%",
 }
+# Centralized (single-copy) but MANUAL short labels — the text is hand-written,
+# NOT derived from the bounds; a test pins them in lock-step with BUCKET_LABELS so
+# a new bucket forces an explicit entry rather than silently desyncing.
 BUCKET_SHORT_LABELS: dict[str, str] = {
     "gold_down_big": "down >15%",
     "gold_down": "down 5-15%",

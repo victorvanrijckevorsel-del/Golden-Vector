@@ -43,13 +43,33 @@ def _render_lab_curve_page(curve: LabCurveData) -> str:
     )
 
     if not curve.available:
+        status = str(curve.error_status)
         reason = {
             "CORRUPT": "Lab artifact is corrupt and could not be read.",
+            "EMPTY": "Lab artifact built but contains no rows (empty universe).",
             "STALE": "Lab artifact was built by an older version (missing this "
             "horizon/benchmark). Rebuild it.",
-        }.get(str(curve.error_status), "No persisted episodes for this ticker yet.")
-        body.append(f"<div class=\"flash flash-warning\">{escape(reason)} "
-                    "Rebuild: <code>python -m golden_vector.lab.conditional_dial</code>.</div>")
+            "META_MISSING": "Lab metadata file is missing — the artifact's health "
+            "can't be verified. Rebuild it.",
+            "META_CORRUPT": "Lab metadata file is unreadable. Rebuild it.",
+            "CELLS_MISSING": "Lab scenario-cells artifact is missing (the profile, "
+            "win-rate and headline numbers all come from it). Rebuild it.",
+            "CELLS_CORRUPT": "Lab scenario-cells artifact is corrupt and could not "
+            "be read. Rebuild it.",
+            "CELLS_EMPTY": "Lab scenario-cells artifact is empty (no rows). Rebuild it.",
+            "CELLS_STALE": "Lab scenario-cells artifact was built by an older "
+            "version (missing columns). Rebuild it.",
+            "UNKNOWN_SCENARIO": (
+                f"Unknown gold scenario “{curve.scenario_bucket}”. Choose one "
+                "of: gold_down_big, gold_down, gold_flat, gold_up, gold_up_big."
+            ),
+        }.get(status, "No persisted episodes for this ticker yet.")
+        # A mistyped scenario is a URL problem, not a build problem — don't tell the
+        # operator to rebuild for it.
+        rebuild = "" if status == "UNKNOWN_SCENARIO" else (
+            " Rebuild: <code>python -m golden_vector.lab.conditional_dial</code>."
+        )
+        body.append(f"<div class=\"flash flash-warning\">{escape(reason)}{rebuild}</div>")
         return _page_shell(title, "".join(body), active_nav="lab")
 
     body.append(_render_controls(curve))
@@ -139,21 +159,33 @@ def _render_profile(curve: LabCurveData) -> str:
         )
     down = curve.profile_usable_down  # counted in the loader, not here
     up = curve.profile_usable_up
-    # Only claim a "slope" if two adjacent scenarios are both usable (a line is
-    # actually drawn). Otherwise it's an isolated down-vs-up comparison.
+    # A "down-then-up slope" read requires BOTH a usable down AND a usable up
+    # scenario (else there is no down-vs-up to compare) AND an adjacent usable pair
+    # (a connecting line is actually drawn). A one-sided profile must NEVER imply
+    # "held up better when gold fell" — there is no down bucket to support it.
     has_segment = any(pts[i]["usable"] and pts[i + 1]["usable"] for i in range(len(pts) - 1))
-    if has_segment:
+    two_sided = down >= 1 and up >= 1
+    if two_sided and has_segment:
         shape = (
             "Above the 50% line = beat more often than not; a down-then-up slope means "
             "it held up better when gold fell."
         )
-    elif down >= 1 and up >= 1:
+    elif two_sided:
         shape = (
             "Above the 50% line = beat more often than not; compare the down dot(s) to the "
             "up dot(s) (the scenarios between had too little history to connect)."
         )
     else:
-        shape = "Above the 50% line = beat more often than not."
+        if down >= 1:
+            side_msg = "Only down-side gold scenarios had countable history here"
+        elif up >= 1:
+            side_msg = "Only up-side gold scenarios had countable history here"
+        else:
+            side_msg = "Only the flat gold scenario had countable history here"
+        shape = (
+            "Above the 50% line = beat more often than not. " + side_msg + ", so there "
+            "isn't enough to compare how it behaves when gold falls versus rises."
+        )
     svg = _build_profile_svg(
         pts, ticker=curve.ticker, benchmark=curve.benchmark, horizon=int(curve.horizon)
     )
