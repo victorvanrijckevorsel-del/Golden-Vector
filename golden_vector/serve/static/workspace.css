@@ -715,6 +715,8 @@
   font-weight: 700;
   color: #fff;
   font-size: 0.9rem;
+  /* legible on both the filled (teal) and unfilled (beige) parts, incl. 0% */
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.55);
 }
 .lab-curve-controls p { margin: 4px 0; }
 .benchmark-toggle {

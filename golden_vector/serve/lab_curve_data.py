@@ -36,7 +36,9 @@ from golden_vector.lab.conditional_dial import (
     DIAL_HORIZONS_WEEKS,
     DIAL_RELSTRENGTH_FILENAME,
     DIAL_SCHEMA_VERSION,
+    DOWN_BUCKETS,
     RELSTRENGTH_COLUMNS,
+    UP_BUCKETS,
     dial_config_hash,
 )
 from golden_vector.lab.vintages import lab_dir
@@ -88,6 +90,10 @@ class LabCurveData:
     # The miner's behaviour across ALL gold scenarios at the selected horizon
     # (P(beat) per bucket, gaps where insufficient) — the gold-profile hero.
     profile_points: list[dict[str, Any]] = field(default_factory=list)
+    # Coverage counts (how many usable down / up scenarios) — counted in the
+    # data layer so the renderer never aggregates.
+    profile_usable_down: int = 0
+    profile_usable_up: int = 0
     cell: dict[str, Any] | None = None
     meta: dict[str, Any] = field(default_factory=dict)
     error_status: str | None = None
@@ -267,11 +273,18 @@ def load_ticker_curve(
             }
         )
 
-    cell = _matching_cell(paths, ticker=ticker_u, bucket=str(scenario_bucket), horizon=horizon_i)
+    # Read dial_cells ONCE per request; feed both the matching cell and the
+    # cross-scenario profile (avoids a triple read).
+    cells_frame, _cells_status = _load_frame(
+        paths, filename=DIAL_CELLS_FILENAME, required_columns=CELLS_COLUMNS
+    )
+    cell = _matching_cell(cells_frame, ticker=ticker_u, bucket=str(scenario_bucket), horizon=horizon_i)
     relstrength_points, relstrength_status = _relstrength_points(
         paths, ticker=ticker_u, benchmark=bench, meta=meta
     )
-    profile_points = _ticker_profile(paths, ticker=ticker_u, horizon=horizon_i, benchmark=bench)
+    profile_points, usable_down, usable_up = _ticker_profile(
+        cells_frame, ticker=ticker_u, horizon=horizon_i, benchmark=bench
+    )
     return LabCurveData(
         available=bool(points) or cell is not None,
         ticker=ticker_u,
@@ -283,6 +296,8 @@ def load_ticker_curve(
         relstrength_points=relstrength_points,
         relstrength_status=relstrength_status,
         profile_points=profile_points,
+        profile_usable_down=usable_down,
+        profile_usable_up=usable_up,
         cell=cell,
         meta=meta,
         error_status=None if (points or cell is not None) else "MISSING",
@@ -290,21 +305,19 @@ def load_ticker_curve(
 
 
 def _ticker_profile(
-    paths: ProjectPaths,
+    frame: pd.DataFrame | None,
     *,
     ticker: str,
     horizon: int,
     benchmark: str,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], int, int]:
     """One row per gold scenario (down-big -> up-big) for this ticker/horizon: the
-    benchmark's P(beat) etc., with a `usable` flag. Pure read of dial_cells — no
-    aggregation; non-usable buckets render as honest gaps."""
+    benchmark's P(beat) etc., with a `usable` flag. Pure read of an already-loaded
+    dial_cells frame — no aggregation; non-usable buckets render as honest gaps.
+    Returns (points, usable_down_count, usable_up_count)."""
 
-    frame, _status = _load_frame(
-        paths, filename=DIAL_CELLS_FILENAME, required_columns=CELLS_COLUMNS
-    )
     if frame is None:
-        return []
+        return [], 0, 0
     b = str(benchmark).lower()
     view = frame.loc[
         (frame["ticker"].astype(str).str.upper() == str(ticker).upper())
@@ -312,6 +325,8 @@ def _ticker_profile(
     ]
     by_bucket = {str(record["bucket"]): record for record in view.to_dict(orient="records")}
     points: list[dict[str, Any]] = []
+    usable_down = 0
+    usable_up = 0
     for bucket in BUCKET_LABELS:  # configured scenario order: most-down -> most-up
         row = by_bucket.get(bucket)
         shrunk = row.get(f"p_beat_{b}_shrunk") if row else None
@@ -322,6 +337,10 @@ def _ticker_profile(
             and shrunk is not None
             and shrunk == shrunk  # not NaN
         )
+        if usable and bucket in DOWN_BUCKETS:
+            usable_down += 1
+        elif usable and bucket in UP_BUCKETS:
+            usable_up += 1
         points.append(
             {
                 "bucket": bucket,
@@ -333,7 +352,7 @@ def _ticker_profile(
                 "effective_n": (row.get(f"{b}_effective_n") if row else None),
             }
         )
-    return points
+    return points, usable_down, usable_up
 
 
 def _relstrength_points(
@@ -388,15 +407,12 @@ def _select_bucket(
 
 
 def _matching_cell(
-    paths: ProjectPaths,
+    frame: pd.DataFrame | None,
     *,
     ticker: str,
     bucket: str,
     horizon: int,
 ) -> dict[str, Any] | None:
-    frame, status = _load_frame(
-        paths, filename=DIAL_CELLS_FILENAME, required_columns=CELLS_COLUMNS
-    )
     if frame is None:
         return None
     view = frame.loc[

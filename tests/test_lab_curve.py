@@ -395,6 +395,77 @@ def test_drilldown_profile_renders_across_scenarios_with_gaps() -> None:
     assert "usable down scenario" in html  # coverage basis line, not "whole spectrum"
 
 
+def test_profile_and_winrate_share_the_same_raw_basis() -> None:
+    """HIGH fix: the profile dot and the win-rate bar must show the SAME number
+    for the selected scenario (both the counted/raw rate), not shrunk vs raw."""
+
+    paths, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    curve = load_ticker_curve(
+        paths, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDX"
+    )
+    if curve.cell is None or bool(curve.cell.get("gdx_insufficient_history")):
+        return  # nothing to compare on this synthetic cell
+    bar_raw = float(curve.cell["p_beat_gdx"])  # what the win-rate bar renders
+    profile = {p["bucket"]: p for p in curve.profile_points}
+    dot = profile["gold_down"]
+    assert dot["usable"]
+    assert abs(float(dot["p_beat_raw"]) - bar_raw) < 1e-12  # chart dot == bar
+
+
+def test_profile_slope_wording_is_gated_on_an_adjacent_pair() -> None:
+    """MED fix: only claim a 'down-then-up slope' when adjacent scenarios are both
+    usable (a line is drawn); non-adjacent down+up says 'compare the dots'."""
+
+    from golden_vector.serve.lab_curve_data import LabCurveData
+    from golden_vector.serve.lab_curve_page import _render_profile
+
+    def pt(bucket, usable, raw=0.6):
+        return {
+            "bucket": bucket, "label": bucket, "usable": usable,
+            "p_beat_raw": raw if usable else None,
+            "p_beat_shrunk": raw if usable else None,
+            "median_alpha": 0.0 if usable else None, "effective_n": 9.0 if usable else None,
+        }
+
+    # down_big usable, then a gap, then up usable -> NON-adjacent (no connecting line).
+    pts = [
+        pt("gold_down_big", True), pt("gold_down", False), pt("gold_flat", False),
+        pt("gold_up", True), pt("gold_up_big", False),
+    ]
+    curve = LabCurveData(
+        available=True, ticker="ZZZ", benchmark="GDX", horizon=13,
+        scenario_bucket="gold_down_big", scenario_label="Gold down more than 15%",
+        profile_points=pts, profile_usable_down=1, profile_usable_up=1,
+    )
+    html = _render_profile(curve)
+    assert "down-then-up slope" not in html
+    assert "compare the down" in html
+
+
+def test_profile_aria_label_names_the_real_benchmark() -> None:
+    """MED fix: the profile SVG aria-label interpolates the benchmark (was a
+    literal 'benchmark')."""
+
+    from golden_vector.serve.lab_curve_page import _render_lab_curve_page
+
+    paths, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    curve = load_ticker_curve(
+        paths, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDXJ"
+    )
+    html = _render_lab_curve_page(curve)
+    assert "aria-label=\"How often AAA beat GDXJ" in html
+    assert "scenarios have countable history" in html  # coverage stated in the alt text
+
+
+def test_bucket_short_labels_cover_all_buckets() -> None:
+    """One-copy: the short-label map must stay in lock-step with BUCKET_LABELS, so
+    a future 6th bucket forces an explicit update rather than a silent gap."""
+
+    from golden_vector.lab.conditional_dial import BUCKET_LABELS, BUCKET_SHORT_LABELS
+
+    assert set(BUCKET_SHORT_LABELS) == set(BUCKET_LABELS)
+
+
 def test_drilldown_render_has_forward_and_survivor_honesty() -> None:
     """The drill-down binds the honesty qualifiers into the page."""
 

@@ -47,6 +47,22 @@ BUCKET_LABELS: dict[str, str] = {
     "gold_up": "Gold up 5% to 15%",
     "gold_up_big": "Gold up more than 15%",
 }
+BUCKET_SHORT_LABELS: dict[str, str] = {
+    "gold_down_big": "down >15%",
+    "gold_down": "down 5-15%",
+    "gold_flat": "flat",
+    "gold_up": "up 5-15%",
+    "gold_up_big": "up >15%",
+}
+# Down/up scenario partitions, derived ONCE from the bucket bounds (one copy:
+# serve imports these instead of forking the lists): a bucket is "down" if its
+# whole range is <= 0 (high bound <= 0), "up" if >= 0 (low bound >= 0).
+DOWN_BUCKETS: tuple[str, ...] = tuple(
+    name for name, _low, high in DEFAULT_BUCKETS if high is not None and high <= 0
+)
+UP_BUCKETS: tuple[str, ...] = tuple(
+    name for name, low, _high in DEFAULT_BUCKETS if low is not None and low >= 0
+)
 DEFAULT_DIAL_BUCKET = "gold_down"
 MIN_EFFECTIVE_N = 8.0
 EB_PRIOR_STRENGTH = 10.0  # pseudo-episodes pulling each cell toward the pooled rate
