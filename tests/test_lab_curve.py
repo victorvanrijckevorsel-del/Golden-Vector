@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from golden_vector.lab.conditional_dial import (
     DEFAULT_BUCKETS,
@@ -24,6 +25,7 @@ from golden_vector.lab.conditional_dial import (
     DIAL_RELSTRENGTH_FILENAME,
     DIAL_SCHEMA_VERSION,
     DIAL_SIGNAL_ID,
+    build_dial_cells_from_episodes,
     build_dial_cells_wide,
     build_episode_artifact,
     build_episode_frame,
@@ -31,6 +33,7 @@ from golden_vector.lab.conditional_dial import (
     cumulative_rebased,
     dial_config_hash,
 )
+from golden_vector.lab.forward_returns import build_forward_return_panel
 from golden_vector.lab.ledger import variant_hash
 from golden_vector.serve.lab_curve_data import load_dial_cells, load_ticker_curve
 from tests.test_lab_dial_panel_parity import parity_weekly_frame
@@ -100,6 +103,44 @@ def test_consistency_invariant_chart_share_equals_table_p_beat() -> None:
         assert checked > 0
 
 
+def test_cells_are_derived_from_the_same_episode_spine() -> None:
+    """The publisher contract: build episodes once, then derive cells from that
+    exact spine. This prevents the overview table and drill-down dots drifting."""
+
+    frame = parity_weekly_frame()
+    direct = build_dial_cells_wide(
+        frame, horizons=[4, 13], benchmarks=["GDX", "GDXJ"], min_effective_n=2.0
+    )
+    episodes = build_episode_artifact(frame, horizons=[4, 13], benchmarks=["GDX", "GDXJ"])
+    derived = build_dial_cells_from_episodes(
+        episodes, horizons=[4, 13], benchmarks=["GDX", "GDXJ"], min_effective_n=2.0
+    )
+    pd.testing.assert_frame_equal(
+        direct.sort_index(axis=1).reset_index(drop=True),
+        derived.sort_index(axis=1).reset_index(drop=True),
+    )
+
+
+def test_forward_labels_reject_inconsistent_benchmark_calendar_values() -> None:
+    frame = parity_weekly_frame()
+    first_week = sorted(frame["week_period"].unique())[0]
+    mask = (frame["ticker"] == "AAA") & (frame["week_period"] == first_week)
+    frame.loc[mask, "gdx_log_ret"] = 0.123456
+
+    with pytest.raises(ValueError, match="Inconsistent gdx_log_ret"):
+        build_forward_return_panel(frame, horizons_weeks=[13])
+
+
+def test_episode_artifact_rejects_inconsistent_gold_calendar_values() -> None:
+    frame = parity_weekly_frame()
+    first_week = sorted(frame["week_period"].unique())[0]
+    mask = (frame["ticker"] == "AAA") & (frame["week_period"] == first_week)
+    frame.loc[mask, "gold_log_ret"] = 0.123456
+
+    with pytest.raises(ValueError, match="Inconsistent gold_log_ret"):
+        build_episode_artifact(frame, horizons=[13], benchmarks=["GDX"])
+
+
 def test_alpha_zero_tie_counts_as_miss() -> None:
     """beat is strictly alpha > 0, so an exact-zero alpha is NOT a beat."""
 
@@ -127,26 +168,24 @@ def test_consistency_invariant_holds_through_the_loader() -> None:
 
 
 def test_gdxj_degrades_per_week_independently() -> None:
-    """A ticker with GDX history but only late GDXJ data gets a SHORTER GDXJ
-    episode set + its own evidence; a full-history control stays full."""
+    """GDXJ inception/missingness is a calendar-level benchmark fact: every
+    ticker gets a shorter GDXJ evidence set when the benchmark lacks early weeks."""
 
     frame = parity_weekly_frame()
-    # Null out GDXJ for the first 150 weeks of one ticker only.
+    # Null out GDXJ for the first 150 calendar weeks.
     early = sorted(frame["week_period"].unique())[:150]
-    mask = (frame["ticker"] == "BBB") & (frame["week_period"].isin(early))
+    mask = frame["week_period"].isin(early)
     frame.loc[mask, "gdxj_log_ret"] = np.nan
 
     cells = build_dial_cells_wide(
         frame, horizons=[13], benchmarks=["GDX", "GDXJ"], min_effective_n=2.0
     )
-    bbb = cells[cells["ticker"] == "BBB"]
-    ctrl = cells[cells["ticker"] == "AAA"]
-    # GDXJ weeks shorter than GDX weeks for the degraded ticker.
-    assert (bbb["gdxj_n_weeks"].fillna(0) < bbb["gdx_n_weeks"].fillna(0)).any()
-    # Control ticker keeps full GDXJ history (no forced gap).
-    assert (ctrl["gdxj_n_weeks"].fillna(0) > 0).all()
-    # GDX (the required base) is untouched for the degraded ticker.
-    assert (bbb["gdx_n_weeks"].fillna(0) > 0).all()
+    # GDXJ weeks shorter than GDX weeks for every ticker where both are present.
+    comparable = cells[cells["gdxj_n_weeks"].fillna(0).gt(0)]
+    assert not comparable.empty
+    assert (comparable["gdxj_n_weeks"].fillna(0) < comparable["gdx_n_weeks"].fillna(0)).all()
+    # GDX (the required base) is untouched.
+    assert (cells["gdx_n_weeks"].fillna(0) > 0).all()
 
 
 def test_nonoverlap_anchor_cadence() -> None:

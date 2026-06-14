@@ -15,7 +15,12 @@ from typing import Any
 import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
-from golden_vector.lab.scorecard import SCORECARD_META_FILENAME, SCORECARD_TABLE_FILENAME
+from golden_vector.lab.scorecard import (
+    SCORECARD_META_FILENAME,
+    SCORECARD_REQUIRED_COLUMNS,
+    SCORECARD_SCHEMA_VERSION,
+    SCORECARD_TABLE_FILENAME,
+)
 from golden_vector.lab.vintages import lab_dir
 
 
@@ -36,9 +41,6 @@ def load_scorecard_data(paths: ProjectPaths) -> ScorecardData:
         frame = pd.read_parquet(table_path)
     except Exception:
         return ScorecardData(available=False, error_status="CORRUPT")
-    if frame.empty:
-        return ScorecardData(available=False, error_status="MISSING")
-
     meta: dict[str, Any] = {}
     meta_path = lab_dir(paths) / SCORECARD_META_FILENAME
     if meta_path.exists():
@@ -46,6 +48,15 @@ def load_scorecard_data(paths: ProjectPaths) -> ScorecardData:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             meta = {}
+    if frame.empty:
+        return ScorecardData(available=False, error_status="MISSING", meta=meta)
+    if any(column not in frame.columns for column in SCORECARD_REQUIRED_COLUMNS):
+        return ScorecardData(available=False, error_status="STALE", meta=meta)
+    schema_version = meta.get("schema_version")
+    if schema_version is not None and int(schema_version or 0) != SCORECARD_SCHEMA_VERSION:
+        return ScorecardData(available=False, error_status="STALE", meta=meta)
+    if schema_version is None:
+        meta = {**meta, "schema_version": SCORECARD_SCHEMA_VERSION, "legacy_schema_assumed": True}
 
     records = frame.to_dict(orient="records")
     backtest = [r for r in records if r.get("kind") == "backtest"]

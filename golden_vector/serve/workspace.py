@@ -66,6 +66,7 @@ from golden_vector.serve.candidate_finder_data import (
     parse_candidate_finder_scenario,
 )
 from golden_vector.serve.candidate_finder_page import render_candidate_finder_page
+from golden_vector.lab.conditional_dial import DEFAULT_DIAL_BUCKET
 from golden_vector.serve.lab_curve_data import load_dial_cells, load_ticker_curve
 from golden_vector.serve.lab_curve_page import _render_lab_curve_page
 from golden_vector.serve.scorecard_data import load_scorecard_data
@@ -364,7 +365,11 @@ def create_workspace_app(
                 if lab_data.available and lab_data.buckets:
                     known = {key for key, _ in lab_data.buckets}
                     if selected_bucket not in known:
-                        selected_bucket = lab_data.buckets[0][0]
+                        selected_bucket = (
+                            DEFAULT_DIAL_BUCKET
+                            if DEFAULT_DIAL_BUCKET in known
+                            else lab_data.buckets[0][0]
+                        )
                 return _html_response(
                     start_response,
                     _render_lab_overview_page(

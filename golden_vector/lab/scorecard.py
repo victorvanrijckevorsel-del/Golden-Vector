@@ -37,6 +37,25 @@ from golden_vector.lab.vintages import lab_dir
 
 SCORECARD_TABLE_FILENAME = "scorecard_latest.parquet"
 SCORECARD_META_FILENAME = "scorecard_latest_meta.json"
+SCORECARD_SCHEMA_VERSION = 1
+SCORECARD_REQUIRED_COLUMNS = (
+    "signal_id",
+    "claim",
+    "verdict",
+    "kind",
+    "n_folds",
+    "mean_ic",
+    "nw_t",
+    "share_folds_directional",
+    "tercile_spread_mean",
+    "tercile_spread_t",
+    "median_ceiling",
+    "fold_ic_autocorr",
+    "baseline_lines",
+    "gate_results",
+    "variant_hash",
+    "caveat",
+)
 
 # The backtest experiments that must be registered before they may publish.
 BACKTEST_SIGNAL_IDS = (
@@ -200,6 +219,7 @@ def build_scorecard(paths: ProjectPaths, *, now: datetime) -> tuple[pd.DataFrame
 
     frame = pd.DataFrame(rows)
     meta = {
+        "schema_version": SCORECARD_SCHEMA_VERSION,
         "built_at_utc": now.isoformat(),
         "n_folds_grid": len(grid),
         "leak_canary": {"honest_mean_ic": honest, "contaminated_mean_ic": contaminated,
@@ -231,6 +251,9 @@ def publish_scorecard(paths: ProjectPaths, *, now: datetime | None = None) -> Pa
 
     moment = now or datetime.now(timezone.utc)
     frame, meta = build_scorecard(paths, now=moment)
+    missing = [column for column in SCORECARD_REQUIRED_COLUMNS if column not in frame.columns]
+    if missing:
+        raise ValueError(f"Scorecard frame missing required columns: {missing}")
     target = lab_dir(paths)
     target.mkdir(parents=True, exist_ok=True)
     stamp = moment.strftime("%Y%m%dT%H%M%SZ")

@@ -28,6 +28,7 @@ from golden_vector.features.weekly_returns import BENCHMARK_COLUMN_MAP
 from golden_vector.lab.conditional_dial import (
     BUCKET_LABELS,
     CELLS_COLUMNS,
+    DEFAULT_DIAL_BUCKET,
     DIAL_ARTIFACT_META_FILENAME,
     DIAL_BENCHMARKS,
     DIAL_CELLS_FILENAME,
@@ -161,7 +162,7 @@ def load_dial_cells(
         return LabCellsData(available=False, error_status="STALE")
 
     horizons = sorted({int(h) for h in frame["horizon_weeks"].dropna().tolist()})
-    selected_horizon = int(horizon) if int(horizon) in horizons else (horizons[0] if horizons else int(horizon))
+    selected_horizon = _select_horizon(horizons, int(horizon))
     horizon_frame = frame.loc[frame["horizon_weeks"] == selected_horizon]
 
     bucket_pairs: list[tuple[str, str]] = []
@@ -183,7 +184,7 @@ def load_dial_cells(
         for hz, per in (meta.get("usable_gdx_cells_by_horizon_bucket") or {}).items()
     }
 
-    selected_bucket = bucket if (bucket in seen) else (bucket_pairs[0][0] if bucket_pairs else None)
+    selected_bucket = _select_bucket(bucket, seen, bucket_pairs)
     rows: list[dict[str, Any]] = []
     if selected_bucket is not None:
         view = horizon_frame.loc[horizon_frame["bucket"] == selected_bucket]
@@ -250,7 +251,7 @@ def load_ticker_curve(
 
     cell = _matching_cell(paths, ticker=ticker_u, bucket=str(scenario_bucket), horizon=horizon_i)
     relstrength_points, relstrength_status = _relstrength_points(
-        paths, ticker=ticker_u, benchmark=bench
+        paths, ticker=ticker_u, benchmark=bench, meta=meta
     )
     return LabCurveData(
         available=bool(points) or cell is not None,
@@ -273,6 +274,7 @@ def _relstrength_points(
     *,
     ticker: str,
     benchmark: str,
+    meta: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Weekly relative-strength line points for (ticker, benchmark) — Chart B.
 
@@ -280,6 +282,8 @@ def _relstrength_points(
     (MISSING/CORRUPT) from a healthy-but-empty result for a thin ticker, so the
     page can fail loud on a bad artifact instead of silently showing blank."""
 
+    if not _artifact_is_current(meta):
+        return [], "STALE"
     frame, status = _load_frame(
         paths, filename=DIAL_RELSTRENGTH_FILENAME, required_columns=RELSTRENGTH_COLUMNS
     )
@@ -294,6 +298,26 @@ def _relstrength_points(
         for record in view.to_dict(orient="records")
     ]
     return points, None
+
+
+def _select_horizon(horizons: list[int], requested: int) -> int:
+    if requested in horizons:
+        return requested
+    if 13 in horizons:
+        return 13
+    return horizons[0] if horizons else requested
+
+
+def _select_bucket(
+    requested: str | None,
+    known: set[str],
+    bucket_pairs: list[tuple[str, str]],
+) -> str | None:
+    if requested in known:
+        return requested
+    if DEFAULT_DIAL_BUCKET in known:
+        return DEFAULT_DIAL_BUCKET
+    return bucket_pairs[0][0] if bucket_pairs else None
 
 
 def _matching_cell(

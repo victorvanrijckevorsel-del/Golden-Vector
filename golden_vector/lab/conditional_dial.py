@@ -1,9 +1,9 @@
 """Conditional Dial analog table — the Lab's spine deliverable.
 
-For a USER-CHOSEN gold scenario bucket (e.g. "gold −5% to −15% over the
+For a USER-CHOSEN gold scenario bucket (e.g. "gold down 5% to 15% over the
 next 13 weeks"), count what each miner actually did across every historical
-episode where gold's forward 13-week return landed in that bucket:
-P(beat GDX), median alpha vs GDX, and the 10–90% alpha range.
+episode where gold's forward return landed in that bucket:
+P(beat GDX/GDXJ), median alpha, and the 10-90% alpha range.
 
 Honesty rules (from the Lab spec — these are contract, not style):
 - The scenario bucket is the USER'S hypothetical. Nothing here derives a
@@ -26,6 +26,7 @@ import pandas as pd
 
 from golden_vector.features.weekly_returns import BENCHMARK_COLUMN_MAP
 from golden_vector.lab.forward_returns import (
+    assert_calendar_values,
     build_forward_return_panel,
     forward_sum,
     reindex_contiguous_weeks,
@@ -46,6 +47,7 @@ BUCKET_LABELS: dict[str, str] = {
     "gold_up": "Gold up 5% to 15%",
     "gold_up_big": "Gold up more than 15%",
 }
+DEFAULT_DIAL_BUCKET = "gold_down"
 MIN_EFFECTIVE_N = 8.0
 EB_PRIOR_STRENGTH = 10.0  # pseudo-episodes pulling each cell toward the pooled rate
 
@@ -247,67 +249,40 @@ def build_episode_frame(
     gold_bucket.
     """
 
-    h = int(horizon_weeks)
-    bench = str(benchmark).upper()
-    if bench not in BENCHMARK_COLUMN_MAP:
-        raise ValueError(
-            f"Unknown benchmark {benchmark!r}; known: {sorted(BENCHMARK_COLUMN_MAP)}"
+    artifact = build_episode_artifact(
+        weekly_frame,
+        horizons=[int(horizon_weeks)],
+        benchmarks=[str(benchmark).upper()],
+        buckets=buckets,
+    )
+    if artifact.empty:
+        return pd.DataFrame(
+            columns=["ticker", "week_period", "gold_fwd_simple", "alpha", "beat", "gold_bucket"]
         )
-    bucket_defs = buckets if buckets is not None else DEFAULT_BUCKETS
-    panel = build_forward_return_panel(weekly_frame, horizons_weeks=[h])
-    alpha_col = f"fwd_alpha_{bench.lower()}_{h}w"
-    empty = pd.DataFrame(
-        columns=["ticker", "week_period", "gold_fwd_simple", "alpha", "beat", "gold_bucket"]
-    )
-    if panel.empty or alpha_col not in panel.columns:
-        return empty
-    gold = _gold_forward_simple(weekly_frame, horizon_weeks=h)
-    merged = panel[["ticker", "week_period", alpha_col]].merge(
-        gold, on=["ticker", "week_period"], how="inner"
-    )
-    frame = pd.DataFrame(
-        {
-            "ticker": merged["ticker"].astype(str),
-            "week_period": merged["week_period"],
-            "gold_fwd_simple": merged["gold_fwd_simple"],
-            "alpha": merged[alpha_col].astype("Float64"),
-        }
-    )
-    frame = frame.dropna(subset=["gold_fwd_simple", "alpha"])
-    if frame.empty:
-        return empty
-    frame["beat"] = (frame["alpha"] > 0).astype(float)
-    frame["gold_bucket"] = frame["gold_fwd_simple"].map(
-        lambda value: _assign_bucket(value, bucket_defs)
-    )
-    return frame.reset_index(drop=True)
+    return artifact[
+        ["ticker", "week_period", "gold_fwd_simple", "alpha", "beat", "gold_bucket"]
+    ].reset_index(drop=True)
 
 
-def _gold_forward_simple(weekly_frame: pd.DataFrame, *, horizon_weeks: int) -> pd.DataFrame:
-    """Forward h-week gold return as a SIMPLE return, per (ticker, week).
+def _gold_forward_by_week(
+    weekly_frame: pd.DataFrame,
+    *,
+    horizons: list[int],
+) -> pd.DataFrame:
+    """Calendar-level forward gold returns, computed once per horizon."""
 
-    Buckets are quoted in simple-return space (what a user means by "gold down
-    10%"), so convert from log space. Same reindex + ``forward_sum`` as the
-    panel, keeping week keys aligned for the inner merge in
-    ``build_episode_frame``.
-    """
-
-    pieces: list[pd.DataFrame] = []
-    for ticker, group in weekly_frame.groupby("ticker", sort=True):
-        ordered = reindex_contiguous_weeks(group)
-        gold_fwd = forward_sum(ordered["gold_log_ret"], int(horizon_weeks))
-        pieces.append(
-            pd.DataFrame(
-                {
-                    "ticker": str(ticker),
-                    "week_period": ordered["week_period"],
-                    "gold_fwd_simple": np.exp(gold_fwd.astype(float)) - 1.0,
-                }
-            )
-        )
-    if not pieces:
-        return pd.DataFrame(columns=["ticker", "week_period", "gold_fwd_simple"])
-    return pd.concat(pieces, ignore_index=True)
+    columns = ["week_period"] + [f"gold_fwd_simple_{int(h)}w" for h in horizons]
+    if weekly_frame.empty:
+        return pd.DataFrame(columns=columns)
+    source = weekly_frame[["week_period", "gold_log_ret"]].sort_values("week_period")
+    assert_calendar_values(source, columns=("gold_log_ret",))
+    calendar = source.groupby("week_period", as_index=False).first()
+    out = calendar[["week_period"]].copy()
+    for horizon in horizons:
+        h = int(horizon)
+        gold_fwd = forward_sum(calendar["gold_log_ret"], h)
+        out[f"gold_fwd_simple_{h}w"] = np.exp(gold_fwd.astype(float)) - 1.0
+    return out[columns]
 
 
 def _assign_bucket(
@@ -384,19 +359,46 @@ def build_episode_artifact(
     """Long-form per (ticker, horizon, benchmark, week) — the dots behind the
     dial. One row per episode; serve only filters + draws."""
 
+    horizon_list = [int(h) for h in horizons]
+    benchmark_list = [str(b).upper() for b in benchmarks]
+    for bench in benchmark_list:
+        if bench not in BENCHMARK_COLUMN_MAP:
+            raise ValueError(f"Unknown benchmark {bench!r}; known: {sorted(BENCHMARK_COLUMN_MAP)}")
     bucket_defs = buckets if buckets is not None else DEFAULT_BUCKETS
+    panel = build_forward_return_panel(weekly_frame, horizons_weeks=horizon_list)
+    gold_by_week = _gold_forward_by_week(weekly_frame, horizons=horizon_list)
+    if panel.empty or gold_by_week.empty:
+        return pd.DataFrame(columns=EPISODE_COLUMNS)
     pieces: list[pd.DataFrame] = []
-    for horizon in horizons:
+    for horizon in horizon_list:
         h = int(horizon)
-        for bench in benchmarks:
-            ep = build_episode_frame(
-                weekly_frame, horizon_weeks=h, benchmark=bench, buckets=bucket_defs
+        gold_col = f"gold_fwd_simple_{h}w"
+        if gold_col not in gold_by_week.columns:
+            continue
+        for bench in benchmark_list:
+            alpha_col = f"fwd_alpha_{bench.lower()}_{h}w"
+            if alpha_col not in panel.columns:
+                continue
+            merged = panel[["ticker", "week_period", alpha_col]].merge(
+                gold_by_week[["week_period", gold_col]], on="week_period", how="left"
             )
+            ep = pd.DataFrame(
+                {
+                    "ticker": merged["ticker"].astype(str),
+                    "week_period": merged["week_period"],
+                    "gold_fwd_simple": merged[gold_col].astype("Float64"),
+                    "alpha": merged[alpha_col].astype("Float64"),
+                }
+            )
+            ep = ep.dropna(subset=["gold_fwd_simple", "alpha"])
             if ep.empty:
                 continue
-            ep = ep.copy()
+            ep["beat"] = (ep["alpha"] > 0).astype(float)
+            ep["gold_bucket"] = ep["gold_fwd_simple"].map(
+                lambda value: _assign_bucket(value, bucket_defs)
+            )
             ep["horizon_weeks"] = h
-            ep["benchmark"] = str(bench).upper()
+            ep["benchmark"] = bench
             ep["week_date"] = _week_period_end_date(ep["week_period"])
             ep["is_nonoverlap_anchor"] = _nonoverlap_anchor_mask(ep, horizon_weeks=h)
             pieces.append(ep[EPISODE_COLUMNS])
@@ -422,8 +424,14 @@ def _nonoverlap_anchor_mask(ep: pd.DataFrame, *, horizon_weeks: int) -> list[boo
 def _week_period_end_date(week_periods: pd.Series) -> list[str]:
     """ISO date of each W-FRI week's end, for a real date axis on the chart."""
 
-    periods = pd.PeriodIndex(pd.Index(week_periods).astype(str), freq="W-FRI")
-    return [ts.date().isoformat() for ts in periods.end_time]
+    values = pd.Index(week_periods).astype(str)
+    unique_values = pd.Index(pd.unique(values))
+    periods = pd.PeriodIndex(unique_values, freq="W-FRI")
+    lookup = {
+        value: ts.date().isoformat()
+        for value, ts in zip(unique_values, periods.end_time, strict=True)
+    }
+    return [lookup[value] for value in values]
 
 
 def build_dial_cells_wide(
@@ -442,20 +450,52 @@ def build_dial_cells_wide(
     cells get NA rank and sort last.
     """
 
-    bucket_defs = buckets if buckets is not None else DEFAULT_BUCKETS
+    episodes = build_episode_artifact(
+        weekly_frame, horizons=horizons, benchmarks=benchmarks, buckets=buckets
+    )
+    return build_dial_cells_from_episodes(
+        episodes,
+        horizons=horizons,
+        benchmarks=benchmarks,
+        min_effective_n=min_effective_n,
+    )
+
+
+def build_dial_cells_from_episodes(
+    episodes: pd.DataFrame,
+    *,
+    horizons: list[int],
+    benchmarks: list[str],
+    min_effective_n: float = MIN_EFFECTIVE_N,
+) -> pd.DataFrame:
+    """Build the overview cells from the persisted episode spine.
+
+    This is the one aggregation path used by the publisher: chart dots and
+    overview cells consume the same `episodes` rows, so the table cannot drift
+    from the detail chart.
+    """
+
+    if episodes.empty:
+        return pd.DataFrame(columns=CELLS_COLUMNS)
+    horizon_list = [int(h) for h in horizons]
+    benchmark_list = [str(b).upper() for b in benchmarks]
     frames: list[pd.DataFrame] = []
-    for horizon in horizons:
+    for horizon in horizon_list:
         h = int(horizon)
         per_bench: dict[str, pd.DataFrame] = {}
-        for bench in benchmarks:
-            ep = build_episode_frame(
-                weekly_frame, horizon_weeks=h, benchmark=bench, buckets=bucket_defs
+        for bench in benchmark_list:
+            ep = episodes.loc[
+                (episodes["horizon_weeks"] == h)
+                & (episodes["benchmark"].astype(str).str.upper() == bench)
+            ].copy()
+            ep = (
+                ep.rename(columns={"gold_bucket": "bucket"})
+                .dropna(subset=["bucket", "alpha", "beat"])
             )
             if ep.empty:
-                per_bench[str(bench).upper()] = pd.DataFrame()
+                per_bench[bench] = pd.DataFrame()
                 continue
-            ep = ep.rename(columns={"gold_bucket": "bucket"}).dropna(subset=["bucket"])
-            per_bench[str(bench).upper()] = _dial_cells(
+            per_bench[bench] = _dial_cells(
                 ep, horizon_weeks=h, min_effective_n=min_effective_n
             )
         wide = _merge_benchmark_cells(per_bench)
@@ -595,6 +635,9 @@ DIAL_EPISODES_FILENAME = "dial_episodes_latest.parquet"
 DIAL_CELLS_FILENAME = "dial_cells_latest.parquet"
 DIAL_RELSTRENGTH_FILENAME = "dial_relstrength_latest.parquet"
 DIAL_ARTIFACT_META_FILENAME = "dial_meta.json"
+DIAL_EPISODES_ARTIFACT = "dial_episodes"
+DIAL_CELLS_ARTIFACT = "dial_cells"
+DIAL_RELSTRENGTH_ARTIFACT = "dial_relstrength"
 
 
 def build_and_save(
@@ -607,20 +650,21 @@ def build_and_save(
 
     Registers EVERY (benchmark, horizon) variant in the ledger BEFORE compute
     (multiple-testing discipline; ``n_trials`` is read back from the ledger,
-    never hardcoded), then writes:
-      - ``dial_cells_latest.parquet``      wide overview (GDX-ranked + GDXJ compare)
-      - ``dial_episodes_latest.parquet``   long-form chart detail (Chart A dots)
-      - ``dial_relstrength_latest.parquet`` weekly relative-strength line (Chart B)
-      - ``dial_meta.json``                 schema_version, config_hash, hashes, N
+    never hardcoded), then writes immutable run-stamped artifacts plus latest
+    aliases:
+      - ``dial_cells_<run_id>.parquet`` + ``dial_cells_latest.parquet``
+      - ``dial_episodes_<run_id>.parquet`` + ``dial_episodes_latest.parquet``
+      - ``dial_relstrength_<run_id>.parquet`` + ``dial_relstrength_latest.parquet``
+      - ``dial_meta.json`` with schema_version, config_hash, timings, provenance
     GDX-era weeks only (alpha labels need the benchmark); GDXJ degrades per-week.
     Returns the wide cells table.
     """
 
-    import glob
     import json
+    import time
     from datetime import datetime, timezone
 
-    from golden_vector.common.files import atomic_write_text
+    from golden_vector.common.files import atomic_write_text, optional_sha256_file
     from golden_vector.common.parquet import write_parquet_atomic
     from golden_vector.features.weekly_returns import build_weekly_return_frame
     from golden_vector.lab.ledger import n_trials, register_variant
@@ -631,7 +675,12 @@ def build_and_save(
     bucket_cfg = [[name, low, high] for name, low, high in DEFAULT_BUCKETS]
     target_dir = lab_dir(paths)
     target_dir.mkdir(parents=True, exist_ok=True)
+    stage_timings: dict[str, float] = {}
 
+    def mark(stage: str, start: float) -> None:
+        stage_timings[stage] = round(time.perf_counter() - start, 3)
+
+    t_register = time.perf_counter()
     # Register every (benchmark, horizon) variant BEFORE compute.
     variant_hashes: dict[str, str] = {}
     for bench in benchmarks:
@@ -648,32 +697,66 @@ def build_and_save(
                 lab_dir=target_dir, signal_id=DIAL_SIGNAL_ID, config=cfg
             )
             variant_hashes[f"{str(bench).upper()}_{int(horizon)}w"] = record.variant_hash
+    mark("register_variants_seconds", t_register)
     config_hash = dial_config_hash(horizons, benchmarks)
 
-    gold = pd.read_parquet(sorted(glob.glob(str(paths.raw_gold_dir / "*.parquet")))[0])
+    t_read = time.perf_counter()
+    gold_candidates = sorted(paths.raw_gold_dir.glob("*.parquet"))
+    if not gold_candidates:
+        raise FileNotFoundError(f"No raw gold parquet found in {paths.raw_gold_dir}")
+    gold_path = gold_candidates[0]
+    gold = pd.read_parquet(gold_path)
+    equity_paths = sorted(paths.intermediate_usd_equities_dir.glob("*.parquet"))
     histories = {
         path.stem: pd.read_parquet(path)
-        for path in sorted(paths.intermediate_usd_equities_dir.glob("*.parquet"))
+        for path in equity_paths
+    }
+    benchmark_paths = {
+        ticker: paths.benchmarks_dir / f"{ticker}.parquet"
+        for ticker in ("GDX", "GDXJ")
     }
     benchmark_histories = {
-        ticker: pd.read_parquet(paths.benchmarks_dir / f"{ticker}.parquet")
-        for ticker in ("GDX", "GDXJ")
-        if (paths.benchmarks_dir / f"{ticker}.parquet").exists()
+        ticker: pd.read_parquet(path)
+        for ticker, path in benchmark_paths.items()
+        if path.exists()
     }
+    mark("read_inputs_seconds", t_read)
+    t_weekly = time.perf_counter()
     weekly = build_weekly_return_frame(
         normalized_equity_histories=histories,
         gold_history=gold,
         benchmark_histories=benchmark_histories,
     )
     weekly = weekly[weekly["gdx_log_ret"].notna()]
+    mark("build_weekly_seconds", t_weekly)
 
-    cells = build_dial_cells_wide(weekly, horizons=horizons, benchmarks=benchmarks)
+    t_episodes = time.perf_counter()
     episodes = build_episode_artifact(weekly, horizons=horizons, benchmarks=benchmarks)
+    mark("build_episodes_seconds", t_episodes)
+    t_cells = time.perf_counter()
+    cells = build_dial_cells_from_episodes(
+        episodes, horizons=horizons, benchmarks=benchmarks
+    )
+    mark("build_cells_seconds", t_cells)
+    t_relstrength = time.perf_counter()
     relstrength = build_relstrength_artifact(weekly, benchmarks=benchmarks)
+    mark("build_relstrength_seconds", t_relstrength)
 
+    t_write = time.perf_counter()
+    moment = datetime.now(timezone.utc)
+    stamp = moment.strftime("%Y%m%dT%H%M%SZ")
+    stamped = {
+        "cells": f"{DIAL_CELLS_ARTIFACT}_{stamp}.parquet",
+        "episodes": f"{DIAL_EPISODES_ARTIFACT}_{stamp}.parquet",
+        "relstrength": f"{DIAL_RELSTRENGTH_ARTIFACT}_{stamp}.parquet",
+    }
+    write_parquet_atomic(cells, target_dir / stamped["cells"])
+    write_parquet_atomic(episodes, target_dir / stamped["episodes"])
+    write_parquet_atomic(relstrength, target_dir / stamped["relstrength"])
     write_parquet_atomic(cells, target_dir / DIAL_CELLS_FILENAME)
     write_parquet_atomic(episodes, target_dir / DIAL_EPISODES_FILENAME)
     write_parquet_atomic(relstrength, target_dir / DIAL_RELSTRENGTH_FILENAME)
+    mark("write_artifacts_seconds", t_write)
 
     gdx_insufficient = (
         cells["gdx_insufficient_history"].fillna(True).astype(bool)
@@ -698,7 +781,9 @@ def build_and_save(
                     (hz_mask & (cells["bucket"] == bucket_name) & usable_mask).sum()
                 )
             usable_by_horizon_bucket[str(int(horizon))] = per_bucket
-    built_at = datetime.now(timezone.utc).isoformat()
+    family_trials = n_trials(target_dir, signal_id=DIAL_SIGNAL_ID)
+    active_variant_count = len(variant_hashes)
+    built_at = moment.isoformat()
     meta = {
         "built_at_utc": built_at,
         "schema_version": DIAL_SCHEMA_VERSION,
@@ -707,7 +792,37 @@ def build_and_save(
         "horizons_weeks": [int(h) for h in horizons],
         "benchmarks": [str(b).upper() for b in benchmarks],
         "variant_hashes_by_benchmark_horizon": variant_hashes,
-        "n_trials": n_trials(target_dir, signal_id=DIAL_SIGNAL_ID),
+        "n_trials": family_trials,
+        "registered_family_trials": family_trials,
+        "active_variant_count": active_variant_count,
+        "retired_variant_count": max(0, family_trials - active_variant_count),
+        "run_stamped_artifacts": stamped,
+        "latest_aliases": {
+            "cells": DIAL_CELLS_FILENAME,
+            "episodes": DIAL_EPISODES_FILENAME,
+            "relstrength": DIAL_RELSTRENGTH_FILENAME,
+        },
+        "stage_timings": stage_timings,
+        "input_provenance": {
+            "raw_gold": {
+                "path": str(gold_path),
+                "sha256": optional_sha256_file(gold_path),
+                "rows": int(len(gold)),
+            },
+            "normalized_equities": {
+                "count": int(len(equity_paths)),
+                "rows": int(sum(len(frame) for frame in histories.values())),
+            },
+            "benchmarks": {
+                ticker: {
+                    "path": str(path),
+                    "sha256": optional_sha256_file(path),
+                    "rows": int(len(benchmark_histories.get(ticker, pd.DataFrame()))),
+                }
+                for ticker, path in benchmark_paths.items()
+                if path.exists()
+            },
+        },
         "weekly_rows": int(len(weekly)),
         "tickers": int(weekly["ticker"].nunique()),
         "cells": int(len(cells)),
@@ -715,6 +830,10 @@ def build_and_save(
         "relstrength_rows": int(len(relstrength)),
         "usable_gdx_cells_by_horizon": usable_by_horizon,
         "usable_gdx_cells_by_horizon_bucket": usable_by_horizon_bucket,
+        "legacy_artifacts": {
+            "dial_table_13w_latest.parquet": "Superseded by dial_cells_latest.parquet.",
+            "dial_table_13w_meta.json": "Superseded by dial_meta.json.",
+        },
         "caveat": "Exploratory, survivor-only universe (no dead-miner records yet); GDX-era weeks only.",
     }
     atomic_write_text(target_dir / DIAL_ARTIFACT_META_FILENAME, json.dumps(meta, indent=2))

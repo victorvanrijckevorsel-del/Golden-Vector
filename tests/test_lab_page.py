@@ -138,6 +138,14 @@ def test_lab_page_degrades_when_artifact_missing(tmp_path) -> None:
     assert "Lab artifacts are not built yet" in html
 
 
+def test_lab_loader_defaults_to_normal_downside_bucket(tmp_path) -> None:
+    paths = _write_artifacts(tmp_path)
+    data = load_dial_cells(paths, horizon=13, bucket=None)  # type: ignore[arg-type]
+    assert data.available
+    assert data.rows
+    assert {row["bucket"] for row in data.rows} == {"gold_down"}
+
+
 def test_lab_page_flags_stale_schema(tmp_path) -> None:
     paths = _write_artifacts(tmp_path, schema_version=DIAL_SCHEMA_VERSION - 1)
     data = load_dial_cells(paths, horizon=13, bucket="gold_down")  # type: ignore[arg-type]
