@@ -52,7 +52,9 @@ def _render_lab_curve_page(curve: LabCurveData) -> str:
         return _page_shell(title, "".join(body), active_nav="lab")
 
     body.append(_render_controls(curve))
+    body.append(_render_profile(curve))  # hero: behaviour across all gold scenarios
     body.append(_render_headline(curve))
+    body.append(_render_winrate_bar(curve))  # clear within-scenario summary
     body.append(_render_chart_a(curve))
     body.append(_render_chart_b(curve))
     body.append(_render_glossary(curve))
@@ -117,6 +119,140 @@ def _render_controls(curve: LabCurveData) -> str:
         f"<strong>Look-ahead:</strong> {int(curve.horizon)} weeks</p>"
         f"<p><strong>Benchmark:</strong> {' '.join(toggle)} "
         f"<span class=\"hint\">{escape(blurb)}</span></p>"
+        "</section>"
+    )
+
+
+_SCENARIO_SHORT = {
+    "gold_down_big": "down >15%",
+    "gold_down": "down 5-15%",
+    "gold_flat": "flat",
+    "gold_up": "up 5-15%",
+    "gold_up_big": "up >15%",
+}
+_DOWN_BUCKETS = ("gold_down_big", "gold_down")
+_UP_BUCKETS = ("gold_up", "gold_up_big")
+
+
+def _render_profile(curve: LabCurveData) -> str:
+    """Hero: how the miner behaves vs the benchmark across ALL gold scenarios at
+    the selected horizon. The shape is the story (down-sloping = defensive); gaps
+    where a scenario had too little history. No auto-label here (that is v2)."""
+
+    pts = curve.profile_points
+    usable = [p for p in pts if p["usable"]]
+    if not pts or not usable:
+        return (
+            "<section class=\"panel\"><h2>Gold profile</h2>"
+            f"<p class=\"hint\">No countable cross-scenario history for "
+            f"{escape(curve.ticker)} at {int(curve.horizon)} weeks yet.</p></section>"
+        )
+    down = sum(1 for p in usable if p["bucket"] in _DOWN_BUCKETS)
+    up = sum(1 for p in usable if p["bucket"] in _UP_BUCKETS)
+    svg = _build_profile_svg(pts, benchmark=curve.benchmark, horizon=int(curve.horizon))
+    return (
+        "<section class=\"panel lab-profile\">"
+        f"<h2>{escape(curve.ticker)} — how it behaved vs {escape(curve.benchmark)} as gold moved "
+        f"({int(curve.horizon)}w)</h2>"
+        f"{svg}"
+        f"<p class=\"hint\">Each point = how often {escape(curve.ticker)} beat "
+        f"{escape(curve.benchmark)} over the next {int(curve.horizon)} weeks in that gold "
+        "scenario — counted history, surviving miners only, exploratory (not a forecast). "
+        "Above the 50% line = beat more often than not; a down-then-up slope means it held "
+        f"up better when gold fell. Based on {down} usable down scenario(s) and {up} usable "
+        f"up scenario(s) at {int(curve.horizon)}w; empty slots had too few independent weeks "
+        "to count.</p>"
+        "</section>"
+    )
+
+
+def _build_profile_svg(points: list[dict[str, Any]], *, benchmark: str, horizon: int) -> str:
+    n = len(points)
+    width, height = 700, 220
+    left, right, top, bottom = 46, 18, 20, height - 38
+
+    def x_at(i: int) -> float:
+        return left if n <= 1 else left + i * (width - left - right) / (n - 1)
+
+    def y_at(pct: float) -> float:
+        return bottom - (pct / 100.0) * (bottom - top)
+
+    parts: list[str] = []
+    y50 = y_at(50.0)
+    parts.append(
+        f"<line x1=\"{left}\" y1=\"{y50:.1f}\" x2=\"{width - right}\" y2=\"{y50:.1f}\" "
+        "stroke=\"#cfc6b8\" stroke-dasharray=\"4 3\"/>"
+        f"<text x=\"{left - 4}\" y=\"{y50 + 3:.1f}\" text-anchor=\"end\" font-size=\"9\" "
+        "fill=\"#5f584e\">50%</text>"
+    )
+    for i in range(n - 1):
+        a, b = points[i], points[i + 1]
+        if a["usable"] and b["usable"]:
+            ya = y_at(float(a["p_beat_shrunk"]) * 100)
+            yb = y_at(float(b["p_beat_shrunk"]) * 100)
+            parts.append(
+                f"<line x1=\"{x_at(i):.1f}\" y1=\"{ya:.1f}\" x2=\"{x_at(i + 1):.1f}\" "
+                f"y2=\"{yb:.1f}\" stroke=\"#2f6f6d\" stroke-width=\"2\"/>"
+            )
+    for i, p in enumerate(points):
+        x = x_at(i)
+        if p["usable"]:
+            pct = float(p["p_beat_shrunk"]) * 100
+            y = y_at(pct)
+            color = "#1d6b32" if pct >= 50 else "#a45100"
+            raw = f"{float(p['p_beat_raw']) * 100:.0f}%" if p["p_beat_raw"] is not None else "-"
+            med = f"{float(p['median_alpha']) * 100:+.0f}%" if p["median_alpha"] is not None else "-"
+            eff = p["effective_n"]
+            eff_s = f"{float(eff):.1f}" if eff is not None and eff == eff else "-"
+            parts.append(
+                f"<circle cx=\"{x:.1f}\" cy=\"{y:.1f}\" r=\"5\" fill=\"{color}\">"
+                f"<title>{escape(p['label'])}: beat {escape(benchmark)} {pct:.0f}% "
+                f"(raw {raw}), median {med}, N={eff_s}</title></circle>"
+                f"<text x=\"{x:.1f}\" y=\"{y - 9:.1f}\" text-anchor=\"middle\" font-size=\"9\" "
+                f"fill=\"#3d3529\">{pct:.0f}%</text>"
+            )
+        else:
+            parts.append(
+                f"<text x=\"{x:.1f}\" y=\"{bottom - 4:.1f}\" text-anchor=\"middle\" "
+                "font-size=\"8\" fill=\"#b9b0a0\">no data</text>"
+            )
+        parts.append(
+            f"<text x=\"{x:.1f}\" y=\"{bottom + 16:.1f}\" text-anchor=\"middle\" "
+            f"font-size=\"9\" fill=\"#5f584e\">{escape(_SCENARIO_SHORT.get(p['bucket'], p['bucket']))}</text>"
+        )
+    parts.append(
+        f"<text x=\"{left}\" y=\"{top - 6:.1f}\" font-size=\"10\" fill=\"#5f584e\">"
+        f"P(beat {escape(benchmark)})  ·  gold falling &rarr; rising</text>"
+    )
+    return (
+        f"<svg class=\"option-chart-svg lab-profile-svg\" viewBox=\"0 0 {width} {height}\" "
+        "role=\"img\" aria-label=\"P(beat benchmark) across gold scenarios\">"
+        f"{''.join(parts)}</svg>"
+    )
+
+
+def _render_winrate_bar(curve: LabCurveData) -> str:
+    """Clear within-scenario summary: a filled bar = P(beat) for the selected
+    scenario, replacing the dense dots as the headline read."""
+
+    if _benchmark_insufficient(curve):
+        return ""
+    raw = _cell_field(curve, "p_beat")
+    if raw is None or raw != raw:
+        return ""
+    pct = float(raw) * 100
+    fill = min(100.0, max(0.0, pct))
+    med = _cell_field(curve, "median_alpha")
+    eff = _cell_field(curve, "effective_n")
+    med_s = f"{float(med) * 100:+.0f}%" if med is not None and med == med else "-"
+    eff_s = f"{float(eff):.1f}" if eff is not None and eff == eff else "-"
+    return (
+        "<section class=\"panel lab-winrate\">"
+        f"<p><strong>In {escape(curve.scenario_label)} weeks, {escape(curve.ticker)} beat "
+        f"{escape(curve.benchmark)} {pct:.0f}% of the time</strong> "
+        f"(median {med_s} vs {escape(curve.benchmark)}, N={eff_s} independent weeks).</p>"
+        f"<div class=\"winrate-bar\"><div class=\"winrate-fill\" style=\"width:{fill:.0f}%\"></div>"
+        f"<span class=\"winrate-label\">{pct:.0f}%</span></div>"
         "</section>"
     )
 

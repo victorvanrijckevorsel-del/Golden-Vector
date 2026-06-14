@@ -370,6 +370,31 @@ def test_chart_b_reports_missing_relstrength_artifact() -> None:
     assert "lab-dots-svg" in html
 
 
+def test_drilldown_profile_renders_across_scenarios_with_gaps() -> None:
+    """v1 gold profile: 5 scenario slots in order, usable flags from the cells,
+    rendered with the win-rate bar and an honest coverage basis line."""
+
+    from golden_vector.serve.lab_curve_page import _render_lab_curve_page
+
+    paths, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    curve = load_ticker_curve(
+        paths, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDX"
+    )
+    assert [p["bucket"] for p in curve.profile_points] == [
+        "gold_down_big", "gold_down", "gold_flat", "gold_up", "gold_up_big"
+    ]
+    assert any(p["usable"] for p in curve.profile_points)
+    # Non-usable buckets carry no number (honest gap), usable ones do.
+    for p in curve.profile_points:
+        if p["usable"]:
+            assert p["p_beat_shrunk"] is not None
+        else:
+            assert p["p_beat_shrunk"] is None
+    html = _render_lab_curve_page(curve)
+    assert "lab-profile" in html and "winrate-bar" in html
+    assert "usable down scenario" in html  # coverage basis line, not "whole spectrum"
+
+
 def test_drilldown_render_has_forward_and_survivor_honesty() -> None:
     """The drill-down binds the honesty qualifiers into the page."""
 

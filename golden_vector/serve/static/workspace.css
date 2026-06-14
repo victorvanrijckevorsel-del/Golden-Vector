@@ -696,6 +696,26 @@
 /* Lab: scenario-analog drill-down (which weeks beat the benchmark) */
 .lab-row-insufficient { opacity: 0.62; }
 .lab-row-insufficient .lab-no-data { font-style: italic; cursor: default; }
+.lab-profile-svg { width: 100%; max-width: 720px; height: auto; background: #fbf9f4; border-radius: 6px; }
+.lab-winrate { padding-top: 6px; }
+.lab-winrate p { margin: 0 0 8px; }
+.winrate-bar {
+  position: relative;
+  height: 26px;
+  background: #efe9dc;
+  border-radius: 6px;
+  overflow: hidden;
+  max-width: 480px;
+}
+.winrate-fill { height: 100%; background: #2f6f6d; }
+.winrate-label {
+  position: absolute;
+  top: 4px;
+  left: 10px;
+  font-weight: 700;
+  color: #fff;
+  font-size: 0.9rem;
+}
 .lab-curve-controls p { margin: 4px 0; }
 .benchmark-toggle {
   display: inline-block;

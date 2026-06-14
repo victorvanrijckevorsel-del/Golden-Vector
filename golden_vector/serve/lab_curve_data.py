@@ -85,6 +85,9 @@ class LabCurveData:
     # Chart B's own artifact health: None = ok (it may still be empty for a thin
     # ticker), "MISSING"/"CORRUPT" = the relstrength artifact itself is bad.
     relstrength_status: str | None = None
+    # The miner's behaviour across ALL gold scenarios at the selected horizon
+    # (P(beat) per bucket, gaps where insufficient) — the gold-profile hero.
+    profile_points: list[dict[str, Any]] = field(default_factory=list)
     cell: dict[str, Any] | None = None
     meta: dict[str, Any] = field(default_factory=dict)
     error_status: str | None = None
@@ -268,6 +271,7 @@ def load_ticker_curve(
     relstrength_points, relstrength_status = _relstrength_points(
         paths, ticker=ticker_u, benchmark=bench, meta=meta
     )
+    profile_points = _ticker_profile(paths, ticker=ticker_u, horizon=horizon_i, benchmark=bench)
     return LabCurveData(
         available=bool(points) or cell is not None,
         ticker=ticker_u,
@@ -278,10 +282,58 @@ def load_ticker_curve(
         points=points,
         relstrength_points=relstrength_points,
         relstrength_status=relstrength_status,
+        profile_points=profile_points,
         cell=cell,
         meta=meta,
         error_status=None if (points or cell is not None) else "MISSING",
     )
+
+
+def _ticker_profile(
+    paths: ProjectPaths,
+    *,
+    ticker: str,
+    horizon: int,
+    benchmark: str,
+) -> list[dict[str, Any]]:
+    """One row per gold scenario (down-big -> up-big) for this ticker/horizon: the
+    benchmark's P(beat) etc., with a `usable` flag. Pure read of dial_cells — no
+    aggregation; non-usable buckets render as honest gaps."""
+
+    frame, _status = _load_frame(
+        paths, filename=DIAL_CELLS_FILENAME, required_columns=CELLS_COLUMNS
+    )
+    if frame is None:
+        return []
+    b = str(benchmark).lower()
+    view = frame.loc[
+        (frame["ticker"].astype(str).str.upper() == str(ticker).upper())
+        & (frame["horizon_weeks"] == int(horizon))
+    ]
+    by_bucket = {str(record["bucket"]): record for record in view.to_dict(orient="records")}
+    points: list[dict[str, Any]] = []
+    for bucket in BUCKET_LABELS:  # configured scenario order: most-down -> most-up
+        row = by_bucket.get(bucket)
+        shrunk = row.get(f"p_beat_{b}_shrunk") if row else None
+        insufficient = bool(row.get(f"{b}_insufficient_history")) if row else True
+        usable = (
+            row is not None
+            and not insufficient
+            and shrunk is not None
+            and shrunk == shrunk  # not NaN
+        )
+        points.append(
+            {
+                "bucket": bucket,
+                "label": BUCKET_LABELS.get(bucket, bucket),
+                "usable": usable,
+                "p_beat_shrunk": shrunk if usable else None,
+                "p_beat_raw": (row.get(f"p_beat_{b}") if usable else None),
+                "median_alpha": (row.get(f"median_alpha_{b}") if usable else None),
+                "effective_n": (row.get(f"{b}_effective_n") if row else None),
+            }
+        )
+    return points
 
 
 def _relstrength_points(
