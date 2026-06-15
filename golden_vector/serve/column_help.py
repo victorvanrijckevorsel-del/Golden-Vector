@@ -648,14 +648,15 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         direction="Higher means a larger slice of your stock book.",
     ),
     "portfolio_nav_weight": ColumnHelp(
-        meaning="How big this position is as a share of your whole portfolio (net asset value, which also includes cash and hedges).",
+        meaning="How big this position is as a share of your whole portfolio's net asset value (NAV).",
         calculation="Position value ÷ total NAV.",
+        details="Today NAV is just your entered stock positions; broker cash and hedge value fold in once the import milestone lands.",
         direction="Higher means a larger slice of the whole portfolio.",
     ),
     "portfolio_gold_down_loss": ColumnHelp(
         meaning="A rough USD loss on this position if the gold price fell 10%.",
         calculation="Position value × gold down-beta × 10%, a straight-line estimate.",
-        details="Beta is floored at a small minimum so low- or negative-beta names still show a conservative loss, and the loss can never exceed the position's value.",
+        details="Only positions with a usable gold down-beta above the minimum gate are modeled; low- or negative-beta names are left blank (marked 'Low/negative beta') rather than force-modeled. The estimate can never exceed the position's value.",
         direction="Lower is safer — it is a smaller modeled loss.",
     ),
     "portfolio_loss_share": ColumnHelp(
@@ -669,7 +670,7 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         direction="Strong is best.",
     ),
     "portfolio_position_status": ColumnHelp(
-        meaning="Whether this position's data is complete enough to trust its risk figures.",
-        details="A degraded status means an input (price, beta, or the Tool D row) was missing or stale, so the gold-loss and resilience figures for that row are held back rather than shown as if reliable.",
+        meaning="Whether this position's valuation data (price, FX, currency, and manual-lot validity) is complete and current.",
+        details="A degraded status holds back this row's gold-down loss estimate. Beta availability and Tool D resilience are tracked separately — a position can read OK here yet still be missing a beta or a Tool D resilience reading.",
     ),
 }

@@ -736,5 +736,3 @@ def _survival_order_ladder(
 
 def _fmt_usd(value: float | None) -> str:
     return "n/a" if value is None else f"${value:,.0f}/oz"
-
-

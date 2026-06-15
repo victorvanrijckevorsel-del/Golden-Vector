@@ -310,8 +310,7 @@ def _render_table(frame, *, app_config=None) -> str:
         + help_th("Balance-Sheet Component", key="tool_d_balance_sheet_component", app_config=app_config, col_name="balance_sheet_component", sort_numeric=True, panel=True)
         + help_th("EV/EBITDA Context", key="tool_d_ev_ebitda_context", app_config=app_config, col_name="ev_ebitda", sort_numeric=True, panel=True)
         + help_th("FCF Yield Context", key="tool_d_fcf_yield_context", app_config=app_config, col_name="fcf_yield", sort_numeric=True, panel=True)
-        + 
-        "</tr></thead>"
+        + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
         "</table>"
     )

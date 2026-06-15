@@ -108,6 +108,7 @@
       panel.className = "help-panel";
       panel.setAttribute("role", "dialog");
       panel.setAttribute("aria-label", "Column explanation");
+      panel.setAttribute("tabindex", "-1"); // so focus can move in (non-modal dialog semantics)
       document.body.appendChild(panel);
     }
     return panel;
@@ -207,6 +208,9 @@
       openIcon = icon;
       icon.setAttribute("aria-expanded", "true");
       place(build(icon), icon);
+      if (panel) {
+        panel.focus(); // read the explanation immediately for keyboard/SR users; Esc returns focus to the icon
+      }
       return;
     }
     if (openIcon && !closestSel(event.target, ".help-panel")) {
