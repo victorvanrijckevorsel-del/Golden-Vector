@@ -79,6 +79,17 @@ LINE_COLUMNS = [
     "created_at",
     "updated_at",
     "note",
+    # schema v2: cost currency separated from quote currency + backend GBP + provenance
+    "quote_currency",
+    "cost_currency",
+    "cost_basis_total",
+    "raw_broker_symbol",
+    "source_name",
+    "cost_basis_as_of_date",
+    "value_gbp",
+    "cost_gbp_at_current_fx",
+    "pnl_gbp_at_current_fx",
+    "fx_issues_json",
 ]
 
 POSITION_COLUMNS = [
@@ -106,6 +117,12 @@ POSITION_COLUMNS = [
     *ANALYTICS_POSITION_COLUMNS,
     "position_status",
     "lot_count",
+    # schema v2
+    "quote_currency",
+    "cost_currency",
+    "value_gbp",
+    "cost_gbp_at_current_fx",
+    "pnl_gbp_at_current_fx",
 ]
 
 SUMMARY_COLUMNS = [
@@ -136,6 +153,10 @@ SUMMARY_COLUMNS = [
     "resilience_coverage_fraction",
     "currency_split_json",
     "as_of_date",
+    # schema v2
+    "total_value_gbp",
+    "total_cost_gbp_at_current_fx",
+    "total_pnl_gbp_at_current_fx",
 ]
 
 
@@ -588,6 +609,8 @@ def _missing_value(
         status_reason=reason,
         price_scale_factor=1.0,
         minor_unit_adjusted=False,
+        quote_currency=lot.buy_currency,
+        cost_currency=(lot.cost_currency or lot.buy_currency),
     )
 
 
@@ -631,6 +654,18 @@ def _lines_frame(
             "created_at": value.lot.created_at.isoformat(),
             "updated_at": value.lot.updated_at.isoformat(),
             "note": value.lot.note,
+            "quote_currency": value.quote_currency or value.lot.buy_currency,
+            "cost_currency": value.cost_currency or value.lot.cost_currency or value.lot.buy_currency,
+            "cost_basis_total": value.lot.cost_basis_total,
+            "raw_broker_symbol": value.lot.raw_broker_symbol,
+            "source_name": value.lot.source_name,
+            "cost_basis_as_of_date": (
+                value.lot.cost_basis_as_of_date.isoformat() if value.lot.cost_basis_as_of_date else None
+            ),
+            "value_gbp": value.value_gbp,
+            "cost_gbp_at_current_fx": value.cost_gbp_at_current_fx,
+            "pnl_gbp_at_current_fx": value.pnl_gbp_at_current_fx,
+            "fx_issues_json": json.dumps(list(value.fx_issues)),
         }
         for value in valuations
     ]
@@ -655,18 +690,33 @@ def _positions_frame(
         value_local = sum_optional_floats(value.value_local for value in values)
         value_usd = sum_optional_floats(value.value_usd for value in values)
         cost_usd = sum_optional_floats(value.cost_usd_at_current_fx for value in values)
-        pnl_local = (
-            value_local - cost_local
-            if value_local is not None
-            else None
-        )
-        pnl_pct = pnl_local / cost_local if pnl_local is not None and cost_local > 0 else None
+        value_gbp = sum_optional_floats(value.value_gbp for value in values)
+        cost_gbp = sum_optional_floats(value.cost_gbp_at_current_fx for value in values)
+        first = values[0]
+        quote_ccy = first.lot.buy_currency
+        cost_ccys = {
+            (value.lot.cost_currency or value.lot.buy_currency).strip().upper() for value in values
+        }
+        cost_ccy_label = next(iter(cost_ccys)) if len(cost_ccys) == 1 else "MIXED"
+        same_ccy = cost_ccys == {quote_ccy.strip().upper()}
+        if same_ccy:
+            pnl_local = value_local - cost_local if value_local is not None else None
+            pnl_pct = pnl_local / cost_local if pnl_local is not None and cost_local > 0 else None
+        else:
+            # Cost currency differs from (or is mixed vs) the quote currency:
+            # local P&L is not meaningful — USD/GBP P&L carry it instead.
+            pnl_local = None
+            pnl_pct = None
         pnl_usd = (
             value_usd - cost_usd
             if value_usd is not None and cost_usd is not None
             else None
         )
-        first = values[0]
+        pnl_gbp = (
+            value_gbp - cost_gbp
+            if value_gbp is not None and cost_gbp is not None
+            else None
+        )
         status = _combined_status(values)
         rows.append({
             "schema_version": PORTFOLIO_SCHEMA_VERSION,
@@ -692,6 +742,11 @@ def _positions_frame(
             "pnl_usd_at_current_fx": pnl_usd,
             "position_status": status,
             "lot_count": len(values),
+            "quote_currency": quote_ccy,
+            "cost_currency": cost_ccy_label,
+            "value_gbp": value_gbp,
+            "cost_gbp_at_current_fx": cost_gbp,
+            "pnl_gbp_at_current_fx": pnl_gbp,
         })
     return _with_metadata(pd.DataFrame(rows, columns=POSITION_COLUMNS), source_run_id, snapshot_refresh_run_id)
 
@@ -710,6 +765,13 @@ def _summary_frame(
     total_pnl_usd = (
         total_value_usd - total_cost_usd
         if valuations and total_cost_usd > 0
+        else None
+    )
+    total_value_gbp = sum_optional_floats(value.value_gbp for value in valuations)
+    total_cost_gbp = sum_optional_floats(value.cost_gbp_at_current_fx for value in valuations)
+    total_pnl_gbp = (
+        total_value_gbp - total_cost_gbp
+        if total_value_gbp is not None and total_cost_gbp is not None
         else None
     )
     split: dict[str, dict[str, float]] = {}
@@ -745,6 +807,9 @@ def _summary_frame(
                 "total_pnl_usd_at_current_fx": total_pnl_usd,
                 "currency_split_json": json.dumps(split, sort_keys=True),
                 "as_of_date": as_of_dates[-1] if as_of_dates else None,
+                "total_value_gbp": total_value_gbp,
+                "total_cost_gbp_at_current_fx": total_cost_gbp,
+                "total_pnl_gbp_at_current_fx": total_pnl_gbp,
             }
         ],
         columns=SUMMARY_COLUMNS,
