@@ -28,6 +28,37 @@ class ColumnHelp:
     calculation: str | None = None
     thresholds: Callable[[AppConfig], str] | None = None
     direction: str | None = None
+    # Deeper explanation shown only behind the panel's "Read more" (the meaning +
+    # formula are shown first; details/thresholds/direction expand on demand).
+    details: str | None = None
+
+
+def column_help_parts(key: str, *, app_config: AppConfig | None = None) -> dict[str, str] | None:
+    """Return the help broken into the click-panel's three sections:
+    ``meaning`` + ``formula`` (shown immediately) and ``more`` (behind "Read more":
+    the deeper details, the config-resolved thresholds, and the direction). Empty
+    sections are returned as "" so the renderer can omit them.
+    """
+
+    spec = COLUMN_HELP.get(key)
+    if spec is None:
+        return None
+    more: list[str] = []
+    if spec.details:
+        more.append(spec.details)
+    if spec.thresholds is not None and app_config is not None:
+        try:
+            more.append(spec.thresholds(app_config))
+        except Exception:
+            # Never fail a render because one tooltip can't resolve a config attr.
+            pass
+    if spec.direction:
+        more.append(spec.direction)
+    return {
+        "meaning": spec.meaning.strip(),
+        "formula": (spec.calculation or "").strip(),
+        "more": "\n".join(part.strip() for part in more if part and part.strip()),
+    }
 
 
 def column_help_text(key: str, *, app_config: AppConfig | None = None) -> str | None:
@@ -77,6 +108,33 @@ def help_term(
     )
 
 
+def help_icon(
+    label: str,
+    *,
+    key: str | None = None,
+    app_config: AppConfig | None = None,
+    text: str | None = None,
+) -> str:
+    """A small clickable ``ⓘ`` button carrying the help split into meaning / formula /
+    more, for the click-to-open explanation panel (``help-popover.js``). Returns ``""``
+    when there is nothing to explain. Use beside a header label; clicking it opens the
+    panel without triggering the header's sort (the script stops propagation)."""
+
+    parts = column_help_parts(key, app_config=app_config) if key else None
+    if parts is None and text:
+        parts = {"meaning": text, "formula": "", "more": ""}
+    if not parts or not parts.get("meaning"):
+        return ""
+    return (
+        "<button type=\"button\" class=\"help-icon\" aria-expanded=\"false\" "
+        f"aria-label=\"Explain {escape(label)}\" "
+        f"data-help-title=\"{escape(label)}\" "
+        f"data-help-meaning=\"{escape(parts['meaning'])}\" "
+        f"data-help-formula=\"{escape(parts.get('formula') or '')}\" "
+        f"data-help-more=\"{escape(parts.get('more') or '')}\">i</button>"
+    )
+
+
 def help_th(
     label: str,
     *,
@@ -85,15 +143,27 @@ def help_th(
     col_name: str | None = None,
     sort_numeric: bool = False,
     text: str | None = None,
+    panel: bool = False,
 ) -> str:
-    """Render a ``<th>`` whose label carries a registry-driven help popover."""
+    """Render a ``<th>`` whose label carries a registry-driven help affordance.
+
+    ``panel=False`` (default) keeps the legacy dotted hover tooltip. ``panel=True``
+    renders the header text plain plus a clickable ``ⓘ`` that opens the persistent
+    explanation panel (meaning + formula + Read more) — header-click still sorts.
+    """
 
     attrs: list[str] = []
     if col_name:
         attrs.append(f" data-col-name=\"{escape(col_name)}\"")
     if sort_numeric:
         attrs.append(" data-sort-numeric")
-    inner = help_term(label, key=key, app_config=app_config, text=text)
+    if panel:
+        icon = help_icon(label, key=key, app_config=app_config, text=text)
+        inner = (
+            f"{escape(label)}<span class=\"help-anchor\">{icon}</span>" if icon else escape(label)
+        )
+    else:
+        inner = help_term(label, key=key, app_config=app_config, text=text)
     return f"<th{''.join(attrs)}>{inner}</th>"
 
 
@@ -164,6 +234,13 @@ def _debt_stress_thresholds(config: AppConfig) -> str:
     return (
         "Danger band is Net Debt / EBITDA at or above "
         f"{config.tool_d.debt_stress_leverage_danger_threshold:g}x."
+    )
+
+
+def _tool_b_leverage_thresholds(config: AppConfig) -> str:
+    return (
+        "Measured on trailing (LTM) EBITDA. The screen fails this check above "
+        f"{config.screening_params.layer1_thresholds.leverage_max:g}x."
     )
 
 
@@ -283,13 +360,14 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         direction="Higher means more leveraged to gold (both up and down).",
     ),
     "tool_a_gamma": ColumnHelp(
-        meaning="How much the gold beta itself shifts between calm and volatile gold regimes.",
-        direction="Higher means the sensitivity is less stable across regimes.",
+        meaning="The gap between how the stock moves when gold falls and when gold rises — its down-gold beta minus its up-gold beta.",
+        calculation="Down-regime gold beta − up-regime gold beta.",
+        direction="Negative is favorable (it rises more with gold than it falls); positive means it falls harder than it rises. Lower is better.",
     ),
     "tool_a_asymmetry": ColumnHelp(
         meaning="Whether the stock reacts more to gold rising than to gold falling (or vice versa).",
-        calculation="Up-regime beta minus down-regime beta.",
-        direction="Positive means it captures more upside than downside.",
+        calculation="Up-regime gold beta ÷ down-regime gold beta (a ratio).",
+        direction="Above 1 means it captures more upside than downside; below 1 means more downside than upside. Higher is better.",
     ),
     "tool_a_confidence": ColumnHelp(
         meaning=(
@@ -311,12 +389,14 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     ),
     # ---- Tool C: Gold Downside / Upside ----
     "tool_c_downside_rank": ColumnHelp(
-        meaning="Rank by how the stock behaves when gold falls (1 = most resilient).",
-        direction="Lower rank number is more resilient on the downside.",
+        meaning="A 0–100 score for how the stock behaves when gold falls, versus peers — built from down-beta, downside volatility, relative weakness and downside hit-rate. (The Downside Rank and Downside Score columns both use this 0–100 scale.)",
+        calculation="Percentile of the blended downside-weakness components across the universe, ×100.",
+        direction="Higher means it falls harder when gold drops (more fragile); lower is more resilient. 0 = most resilient, 100 = most fragile. It is a percentile score, not a 1-2-3 ranking, and the table lists the most fragile names first by default.",
     ),
     "tool_c_upside_rank": ColumnHelp(
-        meaning="Rank by how the stock behaves when gold rises (1 = most upside capture).",
-        direction="Lower rank number captures more upside.",
+        meaning="A 0–100 score for how much upside the stock captures when gold rises, versus peers — built from up-beta, relative strength and upside hit-rate. (The Upside Rank and Upside Score columns both use this 0–100 scale.)",
+        calculation="Percentile of the blended upside-strength components across the universe, ×100.",
+        direction="Higher captures more upside when gold rises (0 = least, 100 = most). It is a percentile score, not a 1-2-3 ranking.",
     ),
     "tool_c_down_beta": ColumnHelp(
         meaning="The stock's gold beta measured using only weeks when gold fell.",
@@ -372,8 +452,8 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         direction="Higher means more cash generation for the price.",
     ),
     "tool_b_leverage": ColumnHelp(
-        meaning="Net debt divided by EBITDA — how many years of earnings it would take to repay debt.",
-        thresholds=_debt_stress_thresholds,
+        meaning="Net debt divided by trailing (LTM) EBITDA — roughly how many years of earnings it would take to repay debt.",
+        thresholds=_tool_b_leverage_thresholds,
         direction="Lower is safer.",
     ),
     "tool_b_reserve_life": ColumnHelp(
@@ -382,55 +462,100 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     ),
     # ---- Tool D: Corporate Resilience (moved from hard-coded titles) ----
     "tool_d_quality_rank": ColumnHelp(
-        meaning="Percentile rank of the transparent resilience components (survival, cost, fragility, balance sheet).",
-        direction="Lower rank number is more resilient.",
+        meaning="A 0–100 resilience score — where this miner sits across the universe on the four resilience components (survival, cost, fragility, balance sheet).",
+        calculation="Percentile rank of the average of the four resilience components, ×100. Only fully-scored, data-OK names are scored.",
+        direction="Higher is more resilient (0 = weakest, 100 = strongest); the table sorts highest-first. It is a percentile score, not a 1-2-3 ranking.",
     ),
     "tool_d_gold_used": ColumnHelp(
         meaning="The gold price used for every stress figure in this row.",
+        calculation="The stress gold price you selected (a raw input, not a calculation).",
     ),
     "tool_d_interest_cover": ColumnHelp(
         meaning="The gold price at which modeled EBITDA would just equal interest expense.",
+        calculation="Solve modeled EBITDA(gold) = interest expense, where EBITDA(gold) = slope×gold + intercept is fit from two gold points.",
         direction="Lower is safer — more room before earnings can't cover interest.",
     ),
     "tool_d_survival_distance": ColumnHelp(
-        meaning="How far today's gold price sits above the interest-cover line.",
-        calculation="(Gold used − interest-cover line) / gold used.",
+        meaning="How far the selected stress gold price (G) sits above the interest-cover line.",
+        calculation="(Gold used − interest-cover line) ÷ gold used, shown as a percent.",
         direction="Higher is safer.",
     ),
     "tool_d_breakeven": ColumnHelp(
         meaning="The gold price where mine margin reaches zero (AISC breakeven).",
+        calculation="Equals AISC per ounce (cash margin = gold − AISC = 0 there).",
         direction="Lower is safer.",
     ),
     "tool_d_fcf_breakeven": ColumnHelp(
         meaning="The gold price needed to cover AISC plus sustaining capex per ounce.",
+        calculation="AISC + sustaining capex per ounce (floored at AISC).",
         direction="Lower is safer.",
     ),
     "tool_d_debt_stress": ColumnHelp(
         meaning="The gold price where Net Debt / EBITDA reaches the danger band.",
+        calculation="The gold price where modeled EBITDA = net debt ÷ the danger leverage multiple.",
         thresholds=_debt_stress_thresholds,
         direction="Lower is safer.",
     ),
     "tool_d_cost_curve": ColumnHelp(
         meaning="Where this name's AISC sits across the universe (cost-curve percentile).",
+        calculation="This name's AISC ranked as a percentile across all miners, ×100.",
         direction="Lower percentile is a cheaper, more resilient producer.",
     ),
     "tool_d_fragility": ColumnHelp(
         meaning="Modeled EBITDA loss for a 10% gold fall, as a share of EBITDA at the selected gold price.",
+        calculation="(EBITDA slope × gold × 10%) ÷ forward EBITDA at the selected gold price.",
         direction="Lower means less fragile to a gold drop.",
     ),
     "tool_d_leverage": ColumnHelp(
         meaning="Net Debt / EBITDA at the selected gold price.",
+        calculation="Net debt ÷ forward EBITDA at the selected gold price (blank if EBITDA ≤ 0).",
         thresholds=_debt_stress_thresholds,
         direction="Lower is safer.",
     ),
     "tool_d_ev_ebitda_context": ColumnHelp(
-        meaning="EV/EBITDA shown for context only — it is not used in the resilience rank.",
+        meaning="EV/EBITDA shown for context only — it is not used in the resilience score.",
+        calculation="(Market cap + net debt) ÷ forward EBITDA at the selected gold price.",
         thresholds=_ev_ebitda_cap_thresholds,
         direction="Lower is cheaper.",
     ),
     "tool_d_fcf_yield_context": ColumnHelp(
-        meaning="FCF yield shown for context only — it is not used in the resilience rank.",
+        meaning="FCF yield shown for context only — it is not used in the resilience score.",
+        calculation="Free cash flow ÷ market value (from the spot valuation).",
         direction="Higher means more cash generation for the price.",
+    ),
+    "tool_d_failure_ladder": ColumnHelp(
+        meaning="The order in which this miner runs into trouble as gold falls — its survival lines from the highest gold price to the lowest.",
+        calculation="The breakeven, FCF-breakeven and interest-cover gold prices that exist for the name, sorted from highest to lowest.",
+        direction="A higher first rung means trouble starts sooner if gold drops.",
+    ),
+    "tool_d_resilience_flags": ColumnHelp(
+        meaning="Risk and missing-data tags that apply at the selected gold price.",
+        details="Possible tags: negative margin, leverage undefined (EBITDA ≤ 0), thin headroom (<10%), past the debt-stress line, or missing AISC / production / debt / interest inputs.",
+        direction="No flags is best; flags point to the specific stress or data gap.",
+    ),
+    "tool_d_data_status": ColumnHelp(
+        meaning="Whether the row has enough data to be scored and ranked.",
+        details="OK means fully scored; otherwise INSUFFICIENT_DATA (no production/AISC), INSUFFICIENT_INTEREST_DATA, or INSUFFICIENT_EBITDA_MODEL — those names are held out of the rank.",
+    ),
+    "tool_d_survival_component": ColumnHelp(
+        meaning="Score for how far the miner sits above its interest-cover line.",
+        calculation="Percentile rank of Distance-to-line across the universe, ×100 (higher distance scores higher).",
+        direction="Higher is more resilient.",
+    ),
+    "tool_d_cost_component": ColumnHelp(
+        meaning="Score rewarding low-cost (low-AISC) producers.",
+        calculation="Percentile rank of AISC across the universe, ×100, with low cost scoring higher.",
+        direction="Higher is more resilient.",
+    ),
+    "tool_d_fragility_component": ColumnHelp(
+        meaning="Score rewarding miners whose EBITDA is least fragile to a gold drop.",
+        calculation="Percentile rank of Fragility slope across the universe, ×100, with low fragility scoring higher.",
+        direction="Higher is more resilient.",
+    ),
+    "tool_d_balance_sheet_component": ColumnHelp(
+        meaning="Score rewarding lower Net Debt / EBITDA at the selected gold price.",
+        calculation="Percentile rank of Leverage @ G across the universe, ×100, with low leverage scoring higher.",
+        direction="Higher is more resilient.",
     ),
     # ---- Lab: Conditional Dial analog table ----
     "lab_p_beat_shrunk": ColumnHelp(

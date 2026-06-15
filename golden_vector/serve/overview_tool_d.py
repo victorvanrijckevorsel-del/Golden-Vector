@@ -273,7 +273,7 @@ def _render_table(frame, *, app_config=None) -> str:
             f"{_fmt_numeric_td(row.get('cost_curve_aisc_percentile'), decimals=1)}"
             f"{_fmt_numeric_td(row.get('fragility_ebitda_pct_per_10pct_gold'), decimals=1, as_percent=True)}"
             f"{_fmt_numeric_td(row.get('leverage_stressed_at_g'), decimals=2)}"
-            f"<td>{_fmt_text(row.get('survival_order_ladder'))}</td>"
+            f"<td class=\"tool-d-ladder\">{_fmt_text(row.get('survival_order_ladder'))}</td>"
             f"<td>{_fmt_text(row.get('tool_d_tags'))}</td>"
             f"<td>{_fmt_text(row.get('resilience_data_status'))}</td>"
             f"{_fmt_numeric_td(row.get('survival_distance_component'), decimals=1)}"
@@ -291,26 +291,25 @@ def _render_table(frame, *, app_config=None) -> str:
         "<table id=\"tool-d-table\" class=\"js-datatable\">"
         "<thead><tr>"
         "<th data-col-name=\"ticker\">Ticker</th>"
-        + help_th("Resilience Rank", key="tool_d_quality_rank", app_config=app_config, col_name="quality_rank", sort_numeric=True)
-        + help_th("Gold @ G", key="tool_d_gold_used", app_config=app_config, col_name="gold_price", sort_numeric=True)
-        + help_th("Interest-Cover Line", key="tool_d_interest_cover", app_config=app_config, col_name="interest_cover", sort_numeric=True)
-        + help_th("Distance To Line", key="tool_d_survival_distance", app_config=app_config, col_name="survival_distance", sort_numeric=True)
-        + help_th("Breakeven Gold", key="tool_d_breakeven", app_config=app_config, col_name="breakeven", sort_numeric=True)
-        + help_th("FCF Breakeven", key="tool_d_fcf_breakeven", app_config=app_config, col_name="fcf_breakeven", sort_numeric=True)
-        + help_th("Debt-Stress Line", key="tool_d_debt_stress", app_config=app_config, col_name="debt_stress", sort_numeric=True)
-        + help_th("Cost-Curve %ile", key="tool_d_cost_curve", app_config=app_config, col_name="cost_curve", sort_numeric=True)
-        + help_th("Fragility Slope", key="tool_d_fragility", app_config=app_config, col_name="fragility", sort_numeric=True)
-        + help_th("Leverage @ G", key="tool_d_leverage", app_config=app_config, col_name="leverage", sort_numeric=True)
-        + 
-        "<th data-col-name=\"ladder\">Failure Ladder</th>"
-        "<th data-col-name=\"tags\">Resilience Flags</th>"
-        "<th data-col-name=\"status\">Data Status</th>"
-        "<th data-col-name=\"survival_component\" data-sort-numeric>Survival Component</th>"
-        "<th data-col-name=\"cost_component\" data-sort-numeric>Cost Component</th>"
-        "<th data-col-name=\"fragility_component\" data-sort-numeric>Fragility Component</th>"
-        "<th data-col-name=\"balance_sheet_component\" data-sort-numeric>Balance-Sheet Component</th>"
-        + help_th("EV/EBITDA Context", key="tool_d_ev_ebitda_context", app_config=app_config, col_name="ev_ebitda", sort_numeric=True)
-        + help_th("FCF Yield Context", key="tool_d_fcf_yield_context", app_config=app_config, col_name="fcf_yield", sort_numeric=True)
+        + help_th("Resilience Score", key="tool_d_quality_rank", app_config=app_config, col_name="quality_rank", sort_numeric=True, panel=True)
+        + help_th("Gold @ G", key="tool_d_gold_used", app_config=app_config, col_name="gold_price", sort_numeric=True, panel=True)
+        + help_th("Interest-Cover Line", key="tool_d_interest_cover", app_config=app_config, col_name="interest_cover", sort_numeric=True, panel=True)
+        + help_th("Distance To Line", key="tool_d_survival_distance", app_config=app_config, col_name="survival_distance", sort_numeric=True, panel=True)
+        + help_th("Breakeven Gold", key="tool_d_breakeven", app_config=app_config, col_name="breakeven", sort_numeric=True, panel=True)
+        + help_th("FCF Breakeven", key="tool_d_fcf_breakeven", app_config=app_config, col_name="fcf_breakeven", sort_numeric=True, panel=True)
+        + help_th("Debt-Stress Line", key="tool_d_debt_stress", app_config=app_config, col_name="debt_stress", sort_numeric=True, panel=True)
+        + help_th("Cost-Curve %ile", key="tool_d_cost_curve", app_config=app_config, col_name="cost_curve", sort_numeric=True, panel=True)
+        + help_th("Fragility Slope", key="tool_d_fragility", app_config=app_config, col_name="fragility", sort_numeric=True, panel=True)
+        + help_th("Leverage @ G", key="tool_d_leverage", app_config=app_config, col_name="leverage", sort_numeric=True, panel=True)
+        + help_th("Failure Ladder", key="tool_d_failure_ladder", app_config=app_config, col_name="ladder", panel=True)
+        + help_th("Resilience Flags", key="tool_d_resilience_flags", app_config=app_config, col_name="tags", panel=True)
+        + help_th("Data Status", key="tool_d_data_status", app_config=app_config, col_name="status", panel=True)
+        + help_th("Survival Component", key="tool_d_survival_component", app_config=app_config, col_name="survival_component", sort_numeric=True, panel=True)
+        + help_th("Cost Component", key="tool_d_cost_component", app_config=app_config, col_name="cost_component", sort_numeric=True, panel=True)
+        + help_th("Fragility Component", key="tool_d_fragility_component", app_config=app_config, col_name="fragility_component", sort_numeric=True, panel=True)
+        + help_th("Balance-Sheet Component", key="tool_d_balance_sheet_component", app_config=app_config, col_name="balance_sheet_component", sort_numeric=True, panel=True)
+        + help_th("EV/EBITDA Context", key="tool_d_ev_ebitda_context", app_config=app_config, col_name="ev_ebitda", sort_numeric=True, panel=True)
+        + help_th("FCF Yield Context", key="tool_d_fcf_yield_context", app_config=app_config, col_name="fcf_yield", sort_numeric=True, panel=True)
         + 
         "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"

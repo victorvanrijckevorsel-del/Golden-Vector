@@ -509,12 +509,12 @@ def _tool_d_explanation(row: pd.Series) -> str:
     status = str(row.get("resilience_data_status") or "")
     if rank is None:
         return (
-            "Not ranked because the survival inputs are incomplete."
+            "Not scored because the survival inputs are incomplete."
             if status != "OK"
-            else "Not ranked because the resilience components are unavailable."
+            else "Not scored because the resilience components are unavailable."
         )
     return (
-        f"Resilience rank {rank:.1f} at gold ${gold:.0f}/oz; "
+        f"Resilience score {rank:.1f} at gold ${gold:.0f}/oz; "
         f"interest-cover line {_fmt_usd(interest_line)}, "
         f"debt-stress line {_fmt_usd(debt_line)}."
     )

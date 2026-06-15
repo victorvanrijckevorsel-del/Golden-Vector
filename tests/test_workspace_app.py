@@ -1878,7 +1878,7 @@ def test_workspace_tool_d_view_renders_corporate_resilience_page(tmp_path):
     assert response["status"].startswith("200")
     assert "Corporate Resilience" in response["body"]
     assert "tool-d-table" in response["body"]
-    assert "Resilience Rank" in response["body"]
+    assert "Resilience Score" in response["body"]
     assert "Interest-Cover Line" in response["body"]
     assert "Breakeven Gold" in response["body"]
     assert "/tool-d?gold_price=3400.00" in response["body"]

@@ -653,6 +653,77 @@
   display: block;
 }
 
+/* Click-to-explain: ⓘ trigger beside a header + the persistent panel it opens. */
+.help-anchor { display: inline-flex; margin-left: 5px; vertical-align: middle; }
+.help-icon {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid #b9b0a0;
+  background: #fbf9f4;
+  color: #5f584e;
+  font: italic 700 10px/14px Georgia, "Times New Roman", serif;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.help-icon:hover { background: #efe9dc; color: #3d3529; }
+.help-icon:focus-visible { outline: 2px solid #2f6f6d; outline-offset: 1px; }
+.help-icon[aria-expanded="true"] { background: #3d3529; color: #fbf9f4; border-color: #3d3529; }
+.help-panel {
+  position: fixed;
+  z-index: 1000;
+  display: none;
+  max-width: 340px;
+  background: #fffdf8;
+  border: 1px solid #cfc6b8;
+  border-radius: 8px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
+  padding: 12px 14px;
+  font: 0.82rem/1.5 Georgia, "Times New Roman", serif;
+  color: #3d3529;
+  text-align: left;
+  font-weight: 400;
+}
+.help-panel.is-visible { display: block; }
+.help-panel-title { font-weight: 700; margin-bottom: 4px; }
+.help-panel-meaning { margin: 0 0 8px; white-space: pre-line; }
+.help-panel-formula {
+  background: #f3eee3;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+}
+.help-panel-formula-label {
+  display: block;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #7a7263;
+  margin-bottom: 3px;
+}
+.help-panel-formula code {
+  font: 0.74rem/1.45 "Cascadia Code", Consolas, "Courier New", monospace;
+  color: #3d3529;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.help-readmore {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2f6f6d;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.help-readmore:focus-visible { outline: 2px solid #2f6f6d; outline-offset: 2px; }
+.help-panel-more { margin-top: 8px; white-space: pre-line; color: #5f584e; }
+
+/* Failure-Ladder cell: keep the survival lines on one row (the table already
+   scrolls horizontally) instead of wrapping into a tall tower. */
+.tool-d-ladder { white-space: nowrap; font-size: 0.82rem; }
+
 
 /* Scorecard verdict cards */
 .scorecard-card { margin-bottom: 12px; }
