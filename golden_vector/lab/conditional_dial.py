@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -87,12 +86,18 @@ DIAL_SIGNAL_ID = "conditional_dial_analog"
 DIAL_SCHEMA_VERSION = 2
 
 
-@lru_cache(maxsize=1)
 def default_gold_profile_config() -> GoldProfileConfig:
-    """The live gold-profile config, loaded ONCE from ``config/lab_gold_profile.yaml``
-    and validated — the single source for both the build and the serve staleness
-    check, so neither can drift from the other. A missing file falls back to the
-    model defaults; a present-but-invalid file fails loud (validation raises)."""
+    """The live gold-profile config, loaded + validated from
+    ``config/lab_gold_profile.yaml`` on EVERY call — the single source for both the
+    build and the serve staleness check.
+
+    Read UNCACHED on purpose: the serve staleness check computes the expected config
+    hash through this, so an edit to the YAML must be reflected immediately (the
+    artifact's stored hash then mismatches -> STALE) WITHOUT a process restart. A
+    stale in-memory cache would make a running server keep reporting an out-of-date
+    artifact as current — exactly the failure the config hash exists to prevent. The
+    file is tiny, so the per-call read is negligible. A missing file falls back to
+    the model defaults; a present-but-invalid file fails loud (validation raises)."""
 
     import yaml
 
@@ -707,6 +712,16 @@ DIAL_RELSTRENGTH_ARTIFACT = "dial_relstrength"
 DIAL_PROFILE_FILENAME = "dial_profile_latest.parquet"
 DIAL_PROFILE_ARTIFACT = "dial_profile"
 
+# The FULL dial artifact set: key -> (run-stamped prefix, latest-alias filename).
+# ONE place that knows the set, so a build can never half-wire (or silently drop) an
+# artifact — ``write_dial_artifacts`` requires exactly these keys.
+DIAL_ARTIFACT_SPECS: dict[str, tuple[str, str]] = {
+    "cells": (DIAL_CELLS_ARTIFACT, DIAL_CELLS_FILENAME),
+    "episodes": (DIAL_EPISODES_ARTIFACT, DIAL_EPISODES_FILENAME),
+    "relstrength": (DIAL_RELSTRENGTH_ARTIFACT, DIAL_RELSTRENGTH_FILENAME),
+    "profile": (DIAL_PROFILE_ARTIFACT, DIAL_PROFILE_FILENAME),
+}
+
 # The build decides these labels; serve never picks them (it renders the
 # persisted ``gold_tilt_label``). The serve no-arithmetic guardrail forbids these
 # literals in the serve Lab modules.
@@ -873,6 +888,42 @@ def build_profile_artifact(
     return pd.DataFrame.from_records(records, columns=PROFILE_COLUMNS)
 
 
+def write_dial_artifacts(
+    target_dir,
+    frames: dict[str, pd.DataFrame],
+    *,
+    stamp: str,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Write each dial artifact as an immutable run-stamped file PLUS a ``latest``
+    alias, in ONE place that knows the full artifact set.
+
+    Requires EXACTLY ``DIAL_ARTIFACT_SPECS`` keys and fails loud on a missing/extra
+    one, so a build can never silently stop emitting an artifact (a dropped
+    ``profile`` would otherwise go unnoticed because serve degrades the label to
+    UNAVAILABLE). Returns ``(run_stamped_artifacts, latest_aliases)`` for the meta.
+    """
+
+    from golden_vector.common.parquet import write_parquet_atomic
+
+    missing = set(DIAL_ARTIFACT_SPECS) - set(frames)
+    extra = set(frames) - set(DIAL_ARTIFACT_SPECS)
+    if missing or extra:
+        raise ValueError(
+            "write_dial_artifacts requires exactly "
+            f"{sorted(DIAL_ARTIFACT_SPECS)}; missing={sorted(missing)} "
+            f"extra={sorted(extra)}"
+        )
+    stamped: dict[str, str] = {}
+    aliases: dict[str, str] = {}
+    for key, (prefix, latest_name) in DIAL_ARTIFACT_SPECS.items():
+        stamped_name = f"{prefix}_{stamp}.parquet"
+        write_parquet_atomic(frames[key], target_dir / stamped_name)
+        write_parquet_atomic(frames[key], target_dir / latest_name)
+        stamped[key] = stamped_name
+        aliases[key] = latest_name
+    return stamped, aliases
+
+
 def build_and_save(
     paths,
     *,
@@ -898,7 +949,6 @@ def build_and_save(
     from datetime import datetime, timezone
 
     from golden_vector.common.files import atomic_write_text, optional_sha256_file
-    from golden_vector.common.parquet import write_parquet_atomic
     from golden_vector.features.weekly_returns import build_weekly_return_frame
     from golden_vector.lab.ledger import n_trials, register_variant
     from golden_vector.lab.vintages import lab_dir
@@ -988,20 +1038,16 @@ def build_and_save(
     t_write = time.perf_counter()
     moment = datetime.now(timezone.utc)
     stamp = moment.strftime("%Y%m%dT%H%M%SZ")
-    stamped = {
-        "cells": f"{DIAL_CELLS_ARTIFACT}_{stamp}.parquet",
-        "episodes": f"{DIAL_EPISODES_ARTIFACT}_{stamp}.parquet",
-        "relstrength": f"{DIAL_RELSTRENGTH_ARTIFACT}_{stamp}.parquet",
-        "profile": f"{DIAL_PROFILE_ARTIFACT}_{stamp}.parquet",
-    }
-    write_parquet_atomic(cells, target_dir / stamped["cells"])
-    write_parquet_atomic(episodes, target_dir / stamped["episodes"])
-    write_parquet_atomic(relstrength, target_dir / stamped["relstrength"])
-    write_parquet_atomic(profile, target_dir / stamped["profile"])
-    write_parquet_atomic(cells, target_dir / DIAL_CELLS_FILENAME)
-    write_parquet_atomic(episodes, target_dir / DIAL_EPISODES_FILENAME)
-    write_parquet_atomic(relstrength, target_dir / DIAL_RELSTRENGTH_FILENAME)
-    write_parquet_atomic(profile, target_dir / DIAL_PROFILE_FILENAME)
+    stamped, latest_aliases = write_dial_artifacts(
+        target_dir,
+        {
+            "cells": cells,
+            "episodes": episodes,
+            "relstrength": relstrength,
+            "profile": profile,
+        },
+        stamp=stamp,
+    )
     mark("write_artifacts_seconds", t_write)
 
     gdx_insufficient = (
@@ -1043,12 +1089,7 @@ def build_and_save(
         "active_variant_count": active_variant_count,
         "retired_variant_count": max(0, family_trials - active_variant_count),
         "run_stamped_artifacts": stamped,
-        "latest_aliases": {
-            "cells": DIAL_CELLS_FILENAME,
-            "episodes": DIAL_EPISODES_FILENAME,
-            "relstrength": DIAL_RELSTRENGTH_FILENAME,
-            "profile": DIAL_PROFILE_FILENAME,
-        },
+        "latest_aliases": latest_aliases,
         "stage_timings": stage_timings,
         "input_provenance": {
             "raw_gold": {

@@ -6,6 +6,7 @@ construction — null unless both sides clear the usable-bucket floor."""
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from golden_vector.contracts.config_models import GoldProfileConfig
 from golden_vector.lab.conditional_dial import (
@@ -244,6 +245,58 @@ def test_defensive_and_procyclical_survive_persist_and_read(tmp_path) -> None:
     assert defn["label_status"] == "OK" and defn["gold_tilt_label"] == "Defensive"
     assert pro["label_status"] == "OK" and pro["gold_tilt_label"] == "Pro-cyclical"
     assert defn["gold_tilt"] > 0 and pro["gold_tilt"] < 0  # real numbers, not NaN/None
+
+
+# ---- review fixes: in-process staleness + fail-loud artifact wiring -----------
+
+
+def test_editing_yaml_changes_the_config_hash_without_restart(tmp_path, monkeypatch) -> None:
+    """C1 (Codex MED): the config loader is UNCACHED, so editing
+    lab_gold_profile.yaml changes the live config hash in the SAME process — a
+    running server flips the artifact to STALE without a restart. (With the old
+    @lru_cache this returned the same hash and the edit was invisible until restart.)"""
+    import yaml
+
+    from tests.helpers import build_test_paths
+
+    from golden_vector.app.paths import ProjectPaths
+    from golden_vector.lab import conditional_dial as cd
+
+    paths = build_test_paths(tmp_path)
+    monkeypatch.setattr(ProjectPaths, "discover", classmethod(lambda cls: paths))
+    before = cd.dial_config_hash([13], ["GDX"])  # reads the copied default YAML (0.10)
+
+    yaml_path = paths.config_path("lab_gold_profile.yaml")
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    data["tilt_threshold"] = 0.25
+    yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    after = cd.dial_config_hash([13], ["GDX"])  # same process, no restart
+    assert before != after
+
+
+def test_write_dial_artifacts_requires_the_full_set(tmp_path) -> None:
+    """C2 (Codex MED): the artifact writer requires the WHOLE set and fails loud on a
+    missing one, so a build can never silently stop emitting dial_profile (serve
+    would otherwise just degrade the label to UNAVAILABLE with no error)."""
+    from golden_vector.lab.conditional_dial import (
+        DIAL_ARTIFACT_SPECS,
+        DIAL_PROFILE_FILENAME,
+        write_dial_artifacts,
+    )
+
+    frames = {key: pd.DataFrame({"x": [1]}) for key in DIAL_ARTIFACT_SPECS}
+    stamped, aliases = write_dial_artifacts(tmp_path, frames, stamp="20260101T000000Z")
+    for key in DIAL_ARTIFACT_SPECS:
+        assert (tmp_path / stamped[key]).exists()
+        assert (tmp_path / aliases[key]).exists()
+    assert aliases["profile"] == DIAL_PROFILE_FILENAME
+    assert "profile" in stamped
+
+    # Dropping the profile frame must raise, not silently write 3 artifacts.
+    incomplete = {key: frames[key] for key in DIAL_ARTIFACT_SPECS if key != "profile"}
+    with pytest.raises(ValueError):
+        write_dial_artifacts(tmp_path, incomplete, stamp="20260101T000000Z")
 
 
 def test_label_and_tilt_are_null_unless_status_ok() -> None:

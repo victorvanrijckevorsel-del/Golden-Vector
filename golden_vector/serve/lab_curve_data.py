@@ -42,6 +42,7 @@ from golden_vector.lab.conditional_dial import (
     RELSTRENGTH_COLUMNS,
     UP_BUCKETS,
     cell_bucket_is_usable,
+    default_gold_profile_config,
     dial_config_hash,
 )
 from golden_vector.lab.vintages import lab_dir
@@ -183,6 +184,15 @@ def _artifact_is_current(meta: dict[str, Any]) -> bool:
 def configured_benchmarks(meta: dict[str, Any]) -> list[str]:
     raw = meta.get("benchmarks") or DIAL_BENCHMARKS
     return [str(b).upper() for b in raw]
+
+
+def default_lab_horizon() -> int:
+    """The default look-ahead horizon for the Lab routes, sourced from the live
+    gold-profile config (``default_profile_horizon``) — one config-driven knob, not a
+    hardcoded ``13`` duplicated in each route. The loader still resolves an unbuilt
+    horizon gracefully, so a misconfigured value degrades rather than breaks."""
+
+    return int(default_gold_profile_config().default_profile_horizon)
 
 
 def load_dial_cells(

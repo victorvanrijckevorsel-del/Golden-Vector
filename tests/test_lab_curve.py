@@ -898,6 +898,21 @@ def test_real_build_meta_registers_profile_artifact() -> None:
     assert list(pd.read_parquet(profile_path).columns) == PROFILE_COLUMNS
 
 
+def test_default_lab_horizon_comes_from_config(monkeypatch) -> None:
+    """C3: the Lab default horizon is the config's default_profile_horizon, not a
+    hardcoded 13 duplicated in the routes."""
+
+    from golden_vector.contracts.config_models import GoldProfileConfig
+    from golden_vector.serve import lab_curve_data as lcd
+
+    monkeypatch.setattr(
+        lcd,
+        "default_gold_profile_config",
+        lambda: GoldProfileConfig(default_profile_horizon=8),
+    )
+    assert lcd.default_lab_horizon() == 8
+
+
 # A tmp dir for the loader-roundtrip tests that do not take the pytest fixture
 # (keeps the assertion bodies flat and explicit).
 def tmp_path_for() -> Path:

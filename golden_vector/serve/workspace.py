@@ -66,7 +66,11 @@ from golden_vector.serve.candidate_finder_data import (
     parse_candidate_finder_scenario,
 )
 from golden_vector.serve.candidate_finder_page import render_candidate_finder_page
-from golden_vector.serve.lab_curve_data import load_dial_cells, load_ticker_curve
+from golden_vector.serve.lab_curve_data import (
+    default_lab_horizon,
+    load_dial_cells,
+    load_ticker_curve,
+)
 from golden_vector.serve.lab_curve_page import _render_lab_curve_page
 from golden_vector.serve.scorecard_data import load_scorecard_data
 from golden_vector.serve.overview_lab import _render_lab_overview_page
@@ -353,10 +357,11 @@ def create_workspace_app(
             if method == "GET" and path == "/lab":
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 requested_bucket = query.get("bucket", [""])[0] or None
+                default_horizon = default_lab_horizon()
                 try:
-                    requested_horizon = int(query.get("horizon", ["13"])[0])
+                    requested_horizon = int(query.get("horizon", [str(default_horizon)])[0])
                 except (TypeError, ValueError):
-                    requested_horizon = 13
+                    requested_horizon = default_horizon
                 lab_data = load_dial_cells(
                     paths, horizon=requested_horizon, bucket=requested_bucket
                 )
@@ -375,10 +380,11 @@ def create_workspace_app(
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 scenario = query.get("scenario", ["gold_down"])[0] or "gold_down"
                 benchmark = (query.get("benchmark", ["GDX"])[0] or "GDX").upper()
+                default_horizon = default_lab_horizon()
                 try:
-                    horizon = int(query.get("horizon", ["13"])[0])
+                    horizon = int(query.get("horizon", [str(default_horizon)])[0])
                 except (TypeError, ValueError):
-                    horizon = 13
+                    horizon = default_horizon
                 curve = load_ticker_curve(
                     paths,
                     ticker=ticker,

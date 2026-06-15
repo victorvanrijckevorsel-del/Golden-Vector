@@ -259,6 +259,35 @@ def test_lab_route_serves_table_and_drilldown(tmp_path) -> None:
     assert "hindsight grouping" in drill_body
 
 
+def test_lab_route_default_horizon_comes_from_config(tmp_path, monkeypatch) -> None:
+    """C3 (Codex LOW): with no ?horizon=, the /lab route defaults to the config's
+    default_profile_horizon (set here to 8), not a hardcoded 13. Proves the config
+    knob is actually wired into the route."""
+    import yaml
+
+    from tests.helpers import build_test_paths
+    from tests.test_lab_dial_panel_parity import parity_weekly_frame
+    from tests.test_workspace_app import _call_wsgi_app, _repo_app_config
+
+    from golden_vector.app.paths import ProjectPaths
+    from golden_vector.serve.workspace import create_workspace_app
+
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    # Point the config loader at this workspace's config and set the default to 8.
+    yaml_path = paths.config_path("lab_gold_profile.yaml")
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    data["default_profile_horizon"] = 8
+    yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    monkeypatch.setattr(ProjectPaths, "discover", classmethod(lambda cls: paths))
+
+    _write_artifacts(Path(paths.data_dir), frame=parity_weekly_frame(), horizons=[8, 13])
+    app = create_workspace_app(paths, app_config=_repo_app_config(), tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/lab")  # no ?horizon=
+    assert str(response["status"]).startswith("200")
+    assert "value=\"8\" selected" in str(response["body"])  # 8w is the default-selected horizon
+
+
 def test_lab_serve_layer_has_no_dial_arithmetic() -> None:
     """The Lab pages render backend-resolved columns only: no counting,
     shrinkage, interval math, rebasing, or rank decisions in serve — and the
@@ -289,12 +318,13 @@ def test_lab_serve_layer_has_no_dial_arithmetic() -> None:
             "cumcount",
             ".rank(",
             # The Defensive/Steady/Pro-cyclical label is DECIDED in the build; serve
-            # only echoes the persisted gold_tilt_label string. Forbid the category
-            # words as source string-literals (the form a serve-side decision would
-            # take) — reading the persisted tilt_threshold column for display is fine.
-            '"Defensive"',
-            '"Pro-cyclical"',
-            '"Steady"',
+            # only echoes the persisted gold_tilt_label string. Forbid the bare
+            # category words in ANY form (quote-style independent) so a single-quoted
+            # or dynamically-built serve-side decision can't evade the scan — serve
+            # never needs these words in source (it renders curve.profile_label).
+            "Defensive",
+            "Pro-cyclical",
+            "Steady",
             "_gold_tilt_label(",  # the threshold->label decision helper is build-only
         ):
             assert forbidden not in source, f"{module}: {forbidden}"
