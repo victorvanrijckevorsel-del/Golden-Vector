@@ -10,11 +10,24 @@ import pytest
 
 from golden_vector.portfolio.models import PortfolioLot, TickerInfo
 from golden_vector.portfolio.pipeline import (
+    _combined_status,
     _lines_frame,
     _positions_frame,
     _summary_frame,
     _value_lot,
 )
+
+
+def _val(**lot_kw):
+    """Value a lot against the standard AUD snapshot + GBP FX (override fx via _fx)."""
+    fx = lot_kw.pop("fx_histories", None)
+    return _value_lot(
+        _lot(**lot_kw),
+        ticker_info=_INFO,
+        snapshot=_snapshot(),
+        max_fx_staleness_days=5,
+        fx_histories=_gbp_fx() if fx is None else fx,
+    )
 
 _NOW = datetime(2026, 6, 1, tzinfo=timezone.utc)
 _INFO = {"AAR.AX": TickerInfo(ticker="AAR.AX", currency="AUD", active=True)}
@@ -89,3 +102,48 @@ def test_summary_frame_has_gbp_totals():
         assert col in summary.columns
     assert row["total_cost_gbp_at_current_fx"] == pytest.approx(136.0)
     assert row["total_value_gbp"] is not None
+
+
+# ---- Codex Checkpoint-1 review fixes ----------------------------------------
+
+
+def test_same_currency_pnl_uses_cost_basis_total_not_shares_times_price():
+    # cost_basis_total (75) != shares*buy_price (100*2=200): the canonical cost wins.
+    line = _val(buy_currency="AUD", cost_currency="AUD", cost_basis_total=75.0, buy_price=2.0, shares=100.0)
+    assert line.cost_local == pytest.approx(75.0)
+    assert line.pnl_local == pytest.approx(30.0 - 75.0)          # value_local 100*0.30=30
+    assert line.cost_usd_at_current_fx == pytest.approx(75.0 * 0.66)
+    pos = _positions_frame([line], **_META).iloc[0]
+    assert pos["cost_local"] == pytest.approx(75.0)
+    assert pos["pnl_local"] == pytest.approx(-45.0)
+
+
+def test_position_with_missing_cost_fx_publishes_no_aggregate_cost_or_pnl():
+    ok = _val(id="a", buy_currency="AUD", cost_currency="AUD", cost_basis_total=100.0)
+    bad = _val(id="b", buy_currency="AUD", cost_currency="CAD", cost_basis_total=100.0)  # no CAD FX
+    assert bad.cost_usd_at_current_fx is None and "MISSING_COST_FX" in bad.status
+
+    pos = _positions_frame([ok, bad], **_META).iloc[0]
+    assert pd.isna(pos["cost_usd_at_current_fx"])   # not a partial sum
+    assert pd.isna(pos["pnl_usd_at_current_fx"])     # no fake gain
+
+    summary = _summary_frame([ok, bad], _positions_frame([ok, bad], **_META), **_META).iloc[0]
+    assert pd.isna(summary["total_cost_usd_at_current_fx"])
+    assert pd.isna(summary["total_pnl_usd_at_current_fx"])
+
+
+def test_summary_gbp_totals_are_all_or_null():
+    has_gbp = _val(id="a", buy_currency="AUD", cost_currency="AUD", cost_basis_total=100.0)
+    no_gbp = _val(id="b", buy_currency="AUD", cost_currency="AUD", cost_basis_total=100.0, fx_histories={})
+    summary = _summary_frame(
+        [has_gbp, no_gbp], _positions_frame([has_gbp, no_gbp], **_META), **_META
+    ).iloc[0]
+    assert pd.isna(summary["total_value_gbp"])       # one line lacks GBP -> whole book GBP nulled
+
+
+def test_combined_status_drops_ok_when_degraded():
+    ok = _val(buy_currency="AUD", cost_currency="AUD", cost_basis_total=100.0)
+    bad = _val(buy_currency="AUD", cost_currency="CAD", cost_basis_total=100.0)
+    combined = _combined_status([ok, bad])
+    assert "OK" not in combined.split("; ")
+    assert "MISSING_COST_FX" in combined

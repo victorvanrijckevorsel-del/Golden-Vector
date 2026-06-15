@@ -501,10 +501,12 @@ def _value_lot(
     else:
         cost_usd = cost_basis * cost_fx
 
-    # Local P&L is only meaningful when cost and quote currencies match.
+    # Local P&L is only meaningful when cost and quote currencies match. Use the
+    # canonical cost_basis (cost_basis_total when present), not the legacy
+    # shares*buy_price, so local/USD/GBP cost stay internally consistent.
     if cost_currency == quote_currency:
-        pnl_local = valued.market_value_local - lot.cost_local
-        pnl_pct = pnl_local / lot.cost_local if lot.cost_local > 0 else None
+        pnl_local = valued.market_value_local - cost_basis
+        pnl_pct = pnl_local / cost_basis if cost_basis > 0 else None
     else:
         pnl_local = None
         pnl_pct = None
@@ -539,7 +541,7 @@ def _value_lot(
         snapshot_date=snapshot_date,
         value_local=valued.market_value_local,
         value_usd=valued.market_value_usd,
-        cost_local=lot.cost_local,
+        cost_local=cost_basis,
         cost_usd_at_current_fx=cost_usd,
         pnl_local=pnl_local,
         pnl_fraction_local=pnl_pct,
@@ -600,7 +602,7 @@ def _missing_value(
         snapshot_date=None,
         value_local=None,
         value_usd=None,
-        cost_local=lot.cost_local,
+        cost_local=(lot.cost_basis_total if lot.cost_basis_total is not None else lot.cost_local),
         cost_usd_at_current_fx=None,
         pnl_local=None,
         pnl_fraction_local=None,
@@ -689,9 +691,26 @@ def _positions_frame(
         cost_local = sum(value.cost_local for value in values)
         value_local = sum_optional_floats(value.value_local for value in values)
         value_usd = sum_optional_floats(value.value_usd for value in values)
-        cost_usd = sum_optional_floats(value.cost_usd_at_current_fx for value in values)
-        value_gbp = sum_optional_floats(value.value_gbp for value in values)
-        cost_gbp = sum_optional_floats(value.cost_gbp_at_current_fx for value in values)
+        # All-or-null: a partial cost beside a full value would look like a fake
+        # gain, and a partial P&L is meaningless — so any missing leg nulls the
+        # aggregate rather than summing the resolvable subset.
+        value_complete = all(value.value_usd is not None for value in values)
+        cost_complete = all(value.cost_usd_at_current_fx is not None for value in values)
+        cost_usd = (
+            sum_optional_floats(value.cost_usd_at_current_fx for value in values)
+            if cost_complete
+            else None
+        )
+        gbp_complete = all(
+            value.value_gbp is not None and value.cost_gbp_at_current_fx is not None
+            for value in values
+        )
+        value_gbp = sum_optional_floats(value.value_gbp for value in values) if gbp_complete else None
+        cost_gbp = (
+            sum_optional_floats(value.cost_gbp_at_current_fx for value in values)
+            if gbp_complete
+            else None
+        )
         first = values[0]
         quote_ccy = first.lot.buy_currency
         cost_ccys = {
@@ -699,17 +718,17 @@ def _positions_frame(
         }
         cost_ccy_label = next(iter(cost_ccys)) if len(cost_ccys) == 1 else "MIXED"
         same_ccy = cost_ccys == {quote_ccy.strip().upper()}
-        if same_ccy:
+        if same_ccy and value_complete:
             pnl_local = value_local - cost_local if value_local is not None else None
             pnl_pct = pnl_local / cost_local if pnl_local is not None and cost_local > 0 else None
         else:
-            # Cost currency differs from (or is mixed vs) the quote currency:
-            # local P&L is not meaningful — USD/GBP P&L carry it instead.
+            # Cost currency differs/mixed, or some lot is unvalued: local P&L is
+            # not meaningful — USD/GBP P&L carry it instead.
             pnl_local = None
             pnl_pct = None
         pnl_usd = (
             value_usd - cost_usd
-            if value_usd is not None and cost_usd is not None
+            if value_complete and cost_complete and value_usd is not None and cost_usd is not None
             else None
         )
         pnl_gbp = (
@@ -761,17 +780,32 @@ def _summary_frame(
     portfolio_source_version: str,
 ) -> pd.DataFrame:
     total_value_usd = sum_optional_floats(value.value_usd for value in valuations) or 0.0
-    total_cost_usd = sum_optional_floats(value.cost_usd_at_current_fx for value in valuations) or 0.0
-    total_pnl_usd = (
-        total_value_usd - total_cost_usd
-        if valuations and total_cost_usd > 0
+    # All-or-null over the valued book: a partial cost beside full value would look
+    # like a fake gain, so any valued lot missing its cost nulls total cost + P&L.
+    valued = [value for value in valuations if value.value_usd is not None]
+    cost_complete = bool(valued) and all(
+        value.cost_usd_at_current_fx is not None for value in valued
+    )
+    total_cost_usd = (
+        sum_optional_floats(value.cost_usd_at_current_fx for value in valued)
+        if cost_complete
         else None
     )
-    total_value_gbp = sum_optional_floats(value.value_gbp for value in valuations)
-    total_cost_gbp = sum_optional_floats(value.cost_gbp_at_current_fx for value in valuations)
+    total_pnl_usd = (
+        total_value_usd - total_cost_usd if cost_complete and total_cost_usd is not None else None
+    )
+    gbp_complete = bool(valued) and all(
+        value.value_gbp is not None and value.cost_gbp_at_current_fx is not None for value in valued
+    )
+    total_value_gbp = (
+        sum_optional_floats(value.value_gbp for value in valued) if gbp_complete else None
+    )
+    total_cost_gbp = (
+        sum_optional_floats(value.cost_gbp_at_current_fx for value in valued) if gbp_complete else None
+    )
     total_pnl_gbp = (
         total_value_gbp - total_cost_gbp
-        if total_value_gbp is not None and total_cost_gbp is not None
+        if gbp_complete and total_value_gbp is not None and total_cost_gbp is not None
         else None
     )
     split: dict[str, dict[str, float]] = {}
@@ -841,7 +875,11 @@ def _snapshot_records_by_ticker(frame: pd.DataFrame) -> dict[str, dict[str, obje
 
 def _combined_status(values: list[LineValuation]) -> str:
     statuses = {value.status for value in values}
-    return "OK" if statuses == {"OK"} else "; ".join(sorted(statuses))
+    if statuses == {"OK"}:
+        return "OK"
+    # Drop "OK" when any lot is degraded, so the position status reads cleanly
+    # (e.g. "MISSING_COST_FX", not "MISSING_COST_FX; OK").
+    return "; ".join(sorted(status for status in statuses if status != "OK"))
 
 
 def _summary_status(values: list[LineValuation]) -> str:
