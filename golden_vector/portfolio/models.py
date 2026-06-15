@@ -8,7 +8,7 @@ from datetime import date, datetime
 from golden_vector.contracts.config_models import SUPPORTED_CURRENCIES
 
 PORTFOLIO_SCHEMA_VERSION = 5
-PORTFOLIO_STORE_SCHEMA_VERSION = 1
+PORTFOLIO_STORE_SCHEMA_VERSION = 2
 ALLOWED_PORTFOLIO_CURRENCIES = tuple(sorted(SUPPORTED_CURRENCIES))
 MAX_LOT_NOTE_LENGTH = 500
 
@@ -36,10 +36,27 @@ class PortfolioLot:
     note: str | None
     created_at: datetime
     updated_at: datetime
+    # --- schema v2 (expand phase) ---
+    # The cost basis can be recorded in a different currency than the ticker's
+    # quote currency (e.g. a GBP broker cost on an AUD-quoted stock). These are
+    # populated at construction and by the v1->v2 read-migration; the legacy
+    # buy_price/buy_currency stay until every consumer is migrated, then drop.
+    cost_currency: str | None = None
+    cost_basis_total: float | None = None
+    raw_broker_symbol: str | None = None
+    source_name: str = "manual"
+    source_file: str | None = None
+    cost_basis_as_of_date: date | None = None
 
     @property
     def cost_local(self) -> float:
         return self.shares * self.buy_price
+
+    @property
+    def cost_per_share(self) -> float:
+        if self.cost_basis_total is not None and self.shares:
+            return self.cost_basis_total / self.shares
+        return self.buy_price
 
 
 @dataclass(frozen=True)

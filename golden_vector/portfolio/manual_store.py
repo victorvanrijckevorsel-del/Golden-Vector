@@ -46,17 +46,7 @@ def add_lot(
 ) -> PortfolioLot:
     lot_input = validate_lot_input(raw, ticker_info=ticker_info)
     now = _utc_now()
-    lot = PortfolioLot(
-        id=_new_lot_id(),
-        ticker=lot_input.ticker,
-        shares=lot_input.shares,
-        buy_price=lot_input.buy_price,
-        buy_currency=lot_input.buy_currency,
-        buy_date=lot_input.buy_date,
-        note=lot_input.note,
-        created_at=now,
-        updated_at=now,
-    )
+    lot = _lot_from_input(_new_lot_id(), lot_input, created_at=now, updated_at=now)
     lots = [*load_lots(paths), lot]
     _write_lots(paths, lots)
     return lot
@@ -78,16 +68,8 @@ def edit_lot(
         if lot.id != clean_id:
             updated_lots.append(lot)
             continue
-        edited = PortfolioLot(
-            id=lot.id,
-            ticker=lot_input.ticker,
-            shares=lot_input.shares,
-            buy_price=lot_input.buy_price,
-            buy_currency=lot_input.buy_currency,
-            buy_date=lot_input.buy_date,
-            note=lot_input.note,
-            created_at=lot.created_at,
-            updated_at=_utc_now(),
+        edited = _lot_from_input(
+            lot.id, lot_input, created_at=lot.created_at, updated_at=_utc_now()
         )
         updated_lots.append(edited)
     if edited is None:
@@ -151,7 +133,10 @@ def _parse_store_payload(payload: object) -> list[PortfolioLot]:
     if not isinstance(payload, dict):
         raise PortfolioValidationError("Portfolio store must contain a JSON object.")
     schema_version = payload.get("schema_version")
-    if schema_version != PORTFOLIO_STORE_SCHEMA_VERSION:
+    # Accept v1 (migrated to v2 in memory below) and the current v2. v1 is never
+    # rewritten on read — only an explicit add/edit/delete persists v2 (with a
+    # one-time backup of the v1 file, see _backup_pre_v2_store).
+    if schema_version not in (1, PORTFOLIO_STORE_SCHEMA_VERSION):
         raise PortfolioValidationError(
             "Portfolio store schema is not supported. Export it before changing versions."
         )
@@ -164,16 +149,76 @@ def _parse_store_payload(payload: object) -> list[PortfolioLot]:
 def _parse_lot(item: object, *, index: int) -> PortfolioLot:
     if not isinstance(item, dict):
         raise PortfolioValidationError(f"Portfolio lot #{index} must be an object.")
+    ticker = normalize_ticker(item.get("ticker")) or _raise_invalid_lot(index, "ticker")
+    shares = _stored_positive_float(item.get("shares"), field=f"lot #{index} shares")
+    buy_price = _stored_positive_float(item.get("buy_price"), field=f"lot #{index} buy price")
+    buy_currency = _clean_currency(item.get("buy_currency"))
+    buy_date = _parse_buy_date(item.get("buy_date"))
+    # v2 fields: read when present, otherwise migrate from the v1 single-currency
+    # lot (cost currency == quote currency, cost = shares*price, as-of = buy date).
+    cost_currency = (
+        _clean_currency(item.get("cost_currency")) if item.get("cost_currency") else buy_currency
+    )
+    cost_basis_total = (
+        _stored_positive_float(item.get("cost_basis_total"), field=f"lot #{index} cost_basis_total")
+        if item.get("cost_basis_total") is not None
+        else shares * buy_price
+    )
+    cost_basis_as_of_date = (
+        _parse_buy_date(item.get("cost_basis_as_of_date"))
+        if item.get("cost_basis_as_of_date")
+        else buy_date
+    )
     return PortfolioLot(
         id=_clean_lot_id(item.get("id")),
-        ticker=normalize_ticker(item.get("ticker")) or _raise_invalid_lot(index, "ticker"),
-        shares=_stored_positive_float(item.get("shares"), field=f"lot #{index} shares"),
-        buy_price=_stored_positive_float(item.get("buy_price"), field=f"lot #{index} buy price"),
-        buy_currency=_clean_currency(item.get("buy_currency")),
-        buy_date=_parse_buy_date(item.get("buy_date")),
+        ticker=ticker,
+        shares=shares,
+        buy_price=buy_price,
+        buy_currency=buy_currency,
+        buy_date=buy_date,
         note=clean_string(item.get("note")),
         created_at=_parse_datetime(item.get("created_at"), field=f"lot #{index} created_at"),
         updated_at=_parse_datetime(item.get("updated_at"), field=f"lot #{index} updated_at"),
+        cost_currency=cost_currency,
+        cost_basis_total=cost_basis_total,
+        raw_broker_symbol=clean_string(item.get("raw_broker_symbol")) or ticker,
+        source_name=clean_string(item.get("source_name")) or "manual",
+        source_file=clean_string(item.get("source_file")),
+        cost_basis_as_of_date=cost_basis_as_of_date,
+    )
+
+
+def _lot_from_input(
+    lot_id: str,
+    lot_input: LotInput,
+    *,
+    created_at: datetime,
+    updated_at: datetime,
+) -> PortfolioLot:
+    """Build a v2 lot from a validated manual input.
+
+    Manual entry is single-currency today, so the cost currency equals the
+    ticker's quote currency (``lot_input.buy_currency``) and the cost-basis
+    as-of date is the buy date. The Snowball/importer path supplies a distinct
+    ``cost_currency`` and ``source``/``raw_broker_symbol``.
+    """
+
+    return PortfolioLot(
+        id=lot_id,
+        ticker=lot_input.ticker,
+        shares=lot_input.shares,
+        buy_price=lot_input.buy_price,
+        buy_currency=lot_input.buy_currency,
+        buy_date=lot_input.buy_date,
+        note=lot_input.note,
+        created_at=created_at,
+        updated_at=updated_at,
+        cost_currency=lot_input.buy_currency,
+        cost_basis_total=lot_input.shares * lot_input.buy_price,
+        raw_broker_symbol=lot_input.ticker,
+        source_name="manual",
+        source_file=None,
+        cost_basis_as_of_date=lot_input.buy_date,
     )
 
 
@@ -181,12 +226,35 @@ def _write_lots(
     paths: ProjectPaths,
     lots: list[PortfolioLot],
 ) -> None:
+    _backup_pre_v2_store(paths)
     payload = {
         "schema_version": PORTFOLIO_STORE_SCHEMA_VERSION,
         "lots": [_serialize_lot(lot) for lot in lots],
     }
     serialized = json.dumps(payload, indent=2, sort_keys=True)
     atomic_write_text(paths.manual_portfolio_lots_path, serialized)
+
+
+def _backup_pre_v2_store(paths: ProjectPaths) -> None:
+    """Back up the existing store once, before the first v2 write overwrites it.
+
+    No-op when there is no store yet or it is already v2. The backup lives beside
+    the store under the gitignored ``data/manual/portfolio/`` directory.
+    """
+
+    path = paths.manual_portfolio_lots_path
+    if not path.exists():
+        return
+    text = path.read_text(encoding="utf-8")
+    try:
+        existing_version = json.loads(text).get("schema_version")
+    except json.JSONDecodeError:
+        existing_version = None
+    if existing_version == PORTFOLIO_STORE_SCHEMA_VERSION:
+        return
+    stamp = _utc_now().strftime("%Y%m%dT%H%M%S")
+    backup = path.parent / f"manual_lots.backup-v{existing_version}-{stamp}.json"
+    atomic_write_text(backup, text)
 
 
 def _serialize_lot(lot: PortfolioLot) -> dict[str, object]:
@@ -200,6 +268,14 @@ def _serialize_lot(lot: PortfolioLot) -> dict[str, object]:
         "note": lot.note,
         "created_at": lot.created_at.isoformat(),
         "updated_at": lot.updated_at.isoformat(),
+        "cost_currency": lot.cost_currency,
+        "cost_basis_total": lot.cost_basis_total,
+        "raw_broker_symbol": lot.raw_broker_symbol,
+        "source_name": lot.source_name,
+        "source_file": lot.source_file,
+        "cost_basis_as_of_date": (
+            lot.cost_basis_as_of_date.isoformat() if lot.cost_basis_as_of_date else None
+        ),
     }
 
 
