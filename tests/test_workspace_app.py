@@ -1859,7 +1859,8 @@ def test_workspace_tool_c_view_renders_gold_downside_page(tmp_path):
     assert response["status"].startswith("200")
     assert "Gold Downside" in response["body"]
     assert "tool-c-table" in response["body"]
-    assert "Downside Rank" in response["body"]
+    assert "Downside Score" in response["body"]
+    assert "Downside Rank" not in response["body"]
     assert 'class="nav-tab active" href="/tool-c"' in response["body"]
 
 

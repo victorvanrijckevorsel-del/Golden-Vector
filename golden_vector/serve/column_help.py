@@ -393,12 +393,12 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     ),
     # ---- Tool C: Gold Downside / Upside ----
     "tool_c_downside_rank": ColumnHelp(
-        meaning="A 0–100 score for how the stock behaves when gold falls, versus peers — built from down-beta, downside volatility, relative weakness and downside hit-rate. (The Downside Rank and Downside Score columns both use this 0–100 scale.)",
+        meaning="A 0–100 score for how the stock behaves when gold falls, versus peers — built from down-beta, downside volatility, relative weakness and downside hit-rate.",
         calculation="Percentile of the blended downside-weakness components across the universe, ×100.",
         direction="Higher means it falls harder when gold drops (more fragile); lower is more resilient. 0 = most resilient, 100 = most fragile. It is a percentile score, not a 1-2-3 ranking, and the table lists the most fragile names first by default.",
     ),
     "tool_c_upside_rank": ColumnHelp(
-        meaning="A 0–100 score for how much upside the stock captures when gold rises, versus peers — built from up-beta, relative strength and upside hit-rate. (The Upside Rank and Upside Score columns both use this 0–100 scale.)",
+        meaning="A 0–100 score for how much upside the stock captures when gold rises, versus peers — built from up-beta, relative strength and upside hit-rate.",
         calculation="Percentile of the blended upside-strength components across the universe, ×100.",
         direction="Higher captures more upside when gold rises (0 = least, 100 = most). It is a percentile score, not a 1-2-3 ranking.",
     ),

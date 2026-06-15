@@ -45,9 +45,7 @@ def _render_tool_c_overview_page(
             "<tr>"
             f"<td><a href=\"/ticker/{escape(ticker)}\">{escape(ticker)}</a></td>"
             f"{_fmt_numeric_td(row.get('tool_c_downside_rank'), decimals=1)}"
-            f"{_fmt_numeric_td(row.get('tool_c_downside_score'), decimals=1)}"
             f"{_fmt_numeric_td(row.get('tool_c_upside_rank'), decimals=1)}"
-            f"{_fmt_numeric_td(row.get('tool_c_upside_score'), decimals=1)}"
             f"{_fmt_numeric_td(row.get('down_beta_core'), decimals=2)}"
             f"{_fmt_numeric_td(row.get('up_beta_core'), decimals=2)}"
             f"{_fmt_numeric_td(row.get('downside_hit_rate_10pct'), decimals=1, as_percent=True)}"
@@ -57,7 +55,7 @@ def _render_tool_c_overview_page(
             "</tr>"
         )
     if not rows_html:
-        rows_html.append("<tr><td colspan=\"11\" class=\"hint\">No Gold Downside rows found.</td></tr>")
+        rows_html.append("<tr><td colspan=\"9\" class=\"hint\">No Gold Downside rows found.</td></tr>")
 
     body = ["<h1>Gold Downside</h1>"]
     body.append(
@@ -89,10 +87,8 @@ def _render_tool_c_overview_page(
         "<table id=\"tool-c-table\" class=\"js-datatable\">"
         "<thead><tr>"
         "<th data-col-name=\"ticker\">Ticker</th>"
-        + help_th("Downside Rank", key="tool_c_downside_rank", app_config=app_config, col_name="downside_rank", sort_numeric=True)
-        + help_th("Downside Score", key="tool_c_downside_rank", app_config=app_config, col_name="downside_score", sort_numeric=True)
-        + help_th("Upside Rank", key="tool_c_upside_rank", app_config=app_config, col_name="upside_rank", sort_numeric=True)
-        + help_th("Upside Score", key="tool_c_upside_rank", app_config=app_config, col_name="upside_score", sort_numeric=True)
+        + help_th("Downside Score", key="tool_c_downside_rank", app_config=app_config, col_name="downside_rank", sort_numeric=True)
+        + help_th("Upside Score", key="tool_c_upside_rank", app_config=app_config, col_name="upside_rank", sort_numeric=True)
         + help_th("Down Beta", key="tool_c_down_beta", app_config=app_config, col_name="down_beta", sort_numeric=True)
         + help_th("Up Beta", key="tool_c_up_beta", app_config=app_config, col_name="up_beta", sort_numeric=True)
         + help_th("Down Hit Rate", key="tool_c_down_hit_rate", app_config=app_config, col_name="down_hit", sort_numeric=True)
