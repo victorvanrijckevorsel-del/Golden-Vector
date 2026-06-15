@@ -78,15 +78,28 @@ def test_help_th_renders_attributes_and_escapes():
     assert html.startswith("<th ")
     assert 'data-col-name="skew"' in html
     assert "data-sort-numeric" in html
-    # Transport is the dotted-underline help-term + data-help popover, not
-    # the native title= attribute.
-    assert 'class="help-term"' in html
-    assert "data-help=\"" in html
-    assert "title=" not in html
+    # Default transport is the clickable ⓘ panel (meaning/formula ride in
+    # data-help-* attributes), not the native title= attribute.
+    assert 'class="help-anchor"' in html
+    assert 'class="help-icon"' in html
+    assert "data-help-meaning=\"" in html
+    # No native HTML title= attribute (our own data-help-title is fine).
+    assert " title=\"" not in html
     assert ">Skew vs Benchmark<" in html
+
+    # panel=False keeps the legacy dotted-underline hover tooltip.
+    hover = help_th(
+        "Skew vs Benchmark",
+        key="skew_vs_benchmark",
+        app_config=config,
+        panel=False,
+    )
+    assert 'class="help-term"' in hover
+    assert "data-help=\"" in hover
 
     plain = help_th("Notes", col_name="notes")
     assert "help-term" not in plain
+    assert "help-icon" not in plain
     assert ">Notes</th>" in plain
 
 
@@ -188,12 +201,14 @@ def test_liquidity_table_headers_have_config_sourced_tooltips():
 
     html = _render_liquidity_measurements(measurements, app_config=config)
 
-    # Label now rides inside the dotted-underline help-term span.
-    assert "Tradable<span" in html or ">Tradable</span>" in html
-    assert "class=\"help-term\"" in html
+    # Labels now carry the clickable ⓘ explanation panel (meaning/formula in
+    # data-help-* attributes); header-click still sorts.
+    assert "class=\"help-anchor\"" in html
+    assert "class=\"help-icon\"" in html
+    assert "data-help-meaning=\"" in html
     spread = config.hedge_readiness.option_liquidity_tradable_spread_pct
     assert f"{spread * 100:g}%" in html
-    # Tooltip text is sourced from the registry, not duplicated in the template.
+    # Explanation text is sourced from the registry, not duplicated in the template.
     assert "valid bid/ask/mid" in html
 
 

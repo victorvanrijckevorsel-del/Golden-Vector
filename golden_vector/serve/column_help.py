@@ -1,16 +1,19 @@
-"""Site-wide column-help registry: hover explanations with config thresholds.
+"""Site-wide column-help registry: click-to-explain headers with config thresholds.
 
 One registry owns every header/metric explanation so the wording can never
 diverge across pages and templates never hard-code threshold numbers.
 Threshold values are resolved at render time from the loaded ``AppConfig`` —
-change the config and the tooltip changes with it.
+change the config and the explanation changes with it.
 
-Transport is a dotted-underlined ``.help-term`` span carrying the explanation
-in a ``data-help`` attribute; ``help-popover.js`` shows it in a single shared
-box on hover and keyboard focus (``workspace.css`` styles ``.help-term`` /
-``.help-pop``). The registry keeps the explanation in separate parts (meaning
-/ calculation / thresholds / direction) so wording never diverges and
-templates never hard-code threshold numbers.
+Default header transport (``help_th``) is a clickable ``ⓘ`` button that opens a
+persistent panel: meaning + formula first, with details/thresholds/direction
+behind "Read more" (``help-popover.js`` builds and positions it; ``workspace.css``
+styles ``.help-icon`` / ``.help-panel``). The click is captured before the header
+sort, so clicking the title still sorts. The legacy dotted-underline ``.help-term``
+hover span (``data-help`` attribute, shared ``.help-pop`` box) remains for inline,
+non-header affordances and for ``help_th(panel=False)``. The registry keeps the
+explanation in separate parts (meaning / calculation / thresholds / direction) so
+wording never diverges and templates never hard-code threshold numbers.
 """
 
 from __future__ import annotations
@@ -143,13 +146,14 @@ def help_th(
     col_name: str | None = None,
     sort_numeric: bool = False,
     text: str | None = None,
-    panel: bool = False,
+    panel: bool = True,
 ) -> str:
     """Render a ``<th>`` whose label carries a registry-driven help affordance.
 
-    ``panel=False`` (default) keeps the legacy dotted hover tooltip. ``panel=True``
-    renders the header text plain plus a clickable ``ⓘ`` that opens the persistent
-    explanation panel (meaning + formula + Read more) — header-click still sorts.
+    ``panel=True`` (default) renders the header text plain plus a clickable ``ⓘ``
+    that opens the persistent explanation panel (meaning + formula + Read more) —
+    header-click still sorts. ``panel=False`` keeps the legacy dotted hover tooltip
+    (the inline, non-header affordance still lives in ``help_term``).
     """
 
     attrs: list[str] = []
