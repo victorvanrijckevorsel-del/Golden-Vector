@@ -412,14 +412,19 @@ def _render_distribution(curve: LabCurveData) -> str:
 
     if _benchmark_insufficient(curve):
         return ""
+    # Plot in the SAME simple-return basis as the persisted median (alpha_simple),
+    # so ticks and the median marker share one axis. Same scenario-week set the
+    # headline counts (alpha_simple is non-null iff the log alpha is).
     scenario = [
         p
         for p in curve.points
-        if p["is_scenario"] and p["alpha"] is not None and p["alpha"] == p["alpha"]
+        if p["is_scenario"]
+        and p.get("alpha_simple") is not None
+        and p["alpha_simple"] == p["alpha_simple"]  # not NaN
     ]
     if len(scenario) < 2:
         return ""
-    median = _cell_field(curve, "median_alpha")
+    median = _cell_field(curve, "median_alpha")  # persisted, simple-return basis
     svg = _build_distribution_svg(scenario, median=median, benchmark=curve.benchmark)
     return (
         "<section class=\"panel lab-dist\">"
@@ -437,10 +442,12 @@ def _render_distribution(curve: LabCurveData) -> str:
 def _build_distribution_svg(
     scenario_points: list[dict[str, Any]], *, median: Any, benchmark: str
 ) -> str:
-    """A 1-D strip: x = per-week alpha, one tick per scenario week, zero baseline +
-    the persisted median marked. Time is collapsed on purpose."""
+    """A 1-D strip: x = per-week SIMPLE-return alpha (alpha_simple), one tick per
+    scenario week, zero baseline + the persisted (simple-return) median marked. Time
+    is collapsed on purpose. Ticks and median share ONE basis so the marker sits with
+    the ticks it summarizes."""
 
-    alphas = [float(p["alpha"]) for p in scenario_points]
+    alphas = [float(p["alpha_simple"]) for p in scenario_points]
     lo = min([*alphas, 0.0])  # always include zero so the baseline is on-axis
     hi = max([*alphas, 0.0])
     if lo == hi:
@@ -448,6 +455,7 @@ def _build_distribution_svg(
     width, height = 760, 92
     left, right, top = 42, 18, 16
     axis_y = 54
+    plot_left, plot_right = left, width - right
 
     def x_at(alpha: float) -> float:
         return left + (alpha - lo) / (hi - lo) * (width - left - right)
@@ -464,7 +472,7 @@ def _build_distribution_svg(
         "font-size=\"9\" fill=\"#5f584e\">0</text>"
     )
     for point in scenario_points:
-        alpha = float(point["alpha"])
+        alpha = float(point["alpha_simple"])
         x = x_at(alpha)
         color = _BEAT_COLOR if point["beat"] else _LAG_COLOR  # persisted decision
         parts.append(
@@ -474,7 +482,10 @@ def _build_distribution_svg(
         )
     median_label = ""
     if median is not None and median == median:
-        mx = x_at(float(median))
+        # Clamp into the plot box: the cell median is over the cell's episode set,
+        # which can differ slightly from the alpha-present scenario points shown, so
+        # never let the marker draw off-canvas (and silently vanish).
+        mx = max(plot_left, min(plot_right, x_at(float(median))))
         median_label = f"median {float(median) * 100:+.0f}%"
         parts.append(
             f"<path d=\"M {mx:.1f} {axis_y - 1:.1f} l -4 -7 l 8 0 z\" fill=\"#3d3529\">"
@@ -482,9 +493,14 @@ def _build_distribution_svg(
             f"<text x=\"{mx:.1f}\" y=\"{top + 2:.1f}\" text-anchor=\"middle\" font-size=\"8\" "
             f"fill=\"#3d3529\">{escape(median_label)}</text>"
         )
+    # Axis end-labels (suppress the lo label when it coincides with the zero tick,
+    # i.e. an all-positive spread, to avoid '0' and '+0%' colliding at the left edge).
+    if lo < 0:
+        parts.append(
+            f"<text x=\"{left}\" y=\"{axis_y + 19:.1f}\" text-anchor=\"start\" font-size=\"8\" "
+            f"fill=\"#7a7263\">{lo * 100:+.0f}%</text>"
+        )
     parts.append(
-        f"<text x=\"{left}\" y=\"{axis_y + 19:.1f}\" text-anchor=\"start\" font-size=\"8\" "
-        f"fill=\"#7a7263\">{lo * 100:+.0f}%</text>"
         f"<text x=\"{width - right}\" y=\"{axis_y + 19:.1f}\" text-anchor=\"end\" font-size=\"8\" "
         f"fill=\"#7a7263\">{hi * 100:+.0f}%</text>"
     )

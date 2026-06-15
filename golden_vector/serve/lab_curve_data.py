@@ -54,6 +54,7 @@ _EPISODE_REQUIRED = [
     "week_date",
     "gold_bucket",
     "alpha",
+    "alpha_simple",
     "beat",
     "is_nonoverlap_anchor",
 ]
@@ -315,7 +316,8 @@ def load_ticker_curve(
         points.append(
             {
                 "date": str(record.get("week_date") or ""),
-                "alpha": record.get("alpha"),
+                "alpha": record.get("alpha"),  # log gap: time-series dots + beat sign
+                "alpha_simple": record.get("alpha_simple"),  # simple return: strip basis
                 "beat": bool(record.get("beat")),
                 "is_scenario": bucket_value == str(scenario_bucket),
                 "is_anchor": bool(record.get("is_nonoverlap_anchor")),

@@ -83,7 +83,7 @@ DIAL_BENCHMARKS: list[str] = ["GDX", "GDXJ"]
 DIAL_SIGNAL_ID = "conditional_dial_analog"
 # Bumped from the GDX-only-13w artifact: long-form episodes + wide cells keyed
 # by horizon and benchmark. The loader fails STALE if an artifact predates this.
-DIAL_SCHEMA_VERSION = 2
+DIAL_SCHEMA_VERSION = 3  # v3: episodes carry alpha_simple (simple-return per-week)
 
 
 def default_gold_profile_config() -> GoldProfileConfig:
@@ -381,6 +381,7 @@ EPISODE_COLUMNS = [
     "gold_fwd_simple",
     "gold_bucket",
     "alpha",
+    "alpha_simple",
     "beat",
     "is_nonoverlap_anchor",
 ]
@@ -459,6 +460,12 @@ def build_episode_artifact(
             ep = ep.dropna(subset=["gold_fwd_simple", "alpha"])
             if ep.empty:
                 continue
+            # Per-week alpha in SIMPLE-return basis (exp(log gap) - 1), persisted so
+            # serve can plot the distribution strip on the SAME basis the cell median
+            # uses (median_alpha = median(exp(alpha)-1)) without an exp() at the render
+            # boundary. ONE normalize boundary for the per-week magnitude; the log
+            # `alpha` stays for the beat decision + the time-series dot chart.
+            ep["alpha_simple"] = (np.exp(ep["alpha"].astype(float)) - 1.0).astype("Float64")
             ep["beat"] = (ep["alpha"] > 0).astype(float)
             ep["gold_bucket"] = ep["gold_fwd_simple"].map(
                 lambda value: _assign_bucket(value, bucket_defs)

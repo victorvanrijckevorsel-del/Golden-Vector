@@ -326,6 +326,11 @@ def test_lab_serve_layer_has_no_dial_arithmetic() -> None:
             "Pro-cyclical",
             "Steady",
             "_gold_tilt_label(",  # the threshold->label decision helper is build-only
+            # Hand-rolled aggregation smells (a mean computed in serve). min()/max()
+            # for axis geometry stay allowed; a recomputed median/quantile is caught
+            # behaviorally by the distribution-strip persisted-median test.
+            "/ len(",
+            "/len(",
         ):
             assert forbidden not in source, f"{module}: {forbidden}"
 

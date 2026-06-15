@@ -901,47 +901,115 @@ def test_real_build_meta_registers_profile_artifact() -> None:
 # ---- v3: distribution strip (spread of scenario outcomes) + collapsed dots -----
 
 
-def test_distribution_strip_ticks_are_scenario_only_with_persisted_median() -> None:
-    """v3: each highlighted scenario week is a tick; the median marker is the
-    PERSISTED cell median (not recomputed in serve); non-scenario weeks are excluded."""
+def _strip_pt(date, a_simple, beat, *, scenario=True):
+    """A hand-built drill-down point for the strip (carries alpha_simple, the
+    simple-return per-week alpha the strip plots)."""
+    return {
+        "date": date, "alpha": None, "alpha_simple": a_simple, "beat": beat,
+        "is_scenario": scenario, "is_anchor": False,
+    }
 
+
+def _strip_curve(points, cell, *, benchmark="GDX"):
     from golden_vector.serve.lab_curve_data import LabCurveData
+
+    return LabCurveData(
+        available=True, ticker="ZZZ", benchmark=benchmark, horizon=13,
+        scenario_bucket="gold_down", scenario_label="Gold down 5% to 15%",
+        points=points, cell=cell,
+    )
+
+
+def test_distribution_strip_persisted_median_and_shared_basis() -> None:
+    """v3 fix (Codex/panel): ticks are plotted from alpha_simple and the marker from
+    the PERSISTED cell median — SAME basis. The marker is NOT recomputed from the
+    ticks (persisted median deliberately != median of the ticks), it shares the tick
+    axis (sits within the tick range), and non-scenario weeks are excluded."""
+
+    import re
+
     from golden_vector.serve.lab_curve_page import _render_distribution
 
     pts = [
-        {"date": "2020-01-01", "alpha": 0.20, "beat": True, "is_scenario": True, "is_anchor": True},
-        {"date": "2020-02-01", "alpha": -0.10, "beat": False, "is_scenario": True, "is_anchor": False},
-        {"date": "2020-03-01", "alpha": 0.05, "beat": True, "is_scenario": True, "is_anchor": False},
-        {"date": "2020-04-01", "alpha": 0.99, "beat": True, "is_scenario": False, "is_anchor": False},
+        _strip_pt("2020-01-01", 0.50, True),
+        _strip_pt("2020-02-01", -0.20, False),
+        _strip_pt("2020-03-01", 0.10, True),
+        _strip_pt("2020-04-01", 5.00, True, scenario=False),  # non-scenario -> excluded
     ]
-    cell = {"median_alpha_gdx": 0.05, "gdx_insufficient_history": False, "p_beat_gdx": 0.66}
-    curve = LabCurveData(
-        available=True, ticker="ZZZ", benchmark="GDX", horizon=13,
-        scenario_bucket="gold_down", scenario_label="Gold down 5% to 15%",
-        points=pts, cell=cell,
-    )
-    html = _render_distribution(curve)
+    # Persisted median -0.07 != median([0.50,-0.20,0.10]) = 0.10, so a serve-side
+    # recompute would print 'median +10%' instead of 'median -7%'.
+    cell = {"median_alpha_gdx": -0.07, "gdx_insufficient_history": False, "p_beat_gdx": 0.66}
+    html = _render_distribution(_strip_curve(pts, cell))
     assert "Spread of outcomes" in html and "lab-dist-svg" in html
-    assert "median +5%" in html  # the persisted cell median, formatted for display
-    # exactly the 3 scenario weeks get ticks (the 0.99 non-scenario week is excluded)
-    assert html.count("vs GDX</title>") == 3
+    assert "median -7%" in html  # the PERSISTED cell median
+    assert "median +10%" not in html  # NOT the recomputed tick median
+    assert html.count("vs GDX</title>") == 3  # scenario-only ticks
+    tick_xs = [float(x) for x in re.findall(r"<line x1=\"([\d.]+)\" y1=\"22.0\"", html)]
+    marker_x = float(re.search(r"<path d=\"M ([\d.]+) ", html).group(1))
+    assert len(tick_xs) == 3
+    assert min(tick_xs) <= marker_x <= max(tick_xs)  # marker shares the ticks' axis/basis
 
 
-def test_distribution_strip_absent_when_insufficient() -> None:
-    """No strip when the benchmark cell is insufficient (mirrors the headline guard)
-    or there are too few scenario weeks to show a spread."""
+def test_distribution_strip_clamps_out_of_range_median() -> None:
+    """F2: a persisted median outside the tick range is clamped into the plot box,
+    never drawn off-canvas where it would silently vanish (while aria still names it)."""
+
+    import re
+
+    from golden_vector.serve.lab_curve_page import _render_distribution
+
+    pts = [_strip_pt("a", 0.05, True), _strip_pt("b", -0.03, False)]
+    cell = {"median_alpha_gdx": 5.0, "gdx_insufficient_history": False, "p_beat_gdx": 0.5}
+    html = _render_distribution(_strip_curve(pts, cell))
+    marker_x = float(re.search(r"<path d=\"M ([\d.]+) ", html).group(1))
+    assert 42.0 <= marker_x <= 742.0  # clamped into [left, width-right]
+
+
+def test_distribution_strip_absent_when_insufficient_or_all_nan() -> None:
+    """No strip when the cell is insufficient, there are < 2 scenario weeks, or every
+    scenario alpha is NaN (collapses to < 2 usable)."""
 
     from golden_vector.serve.lab_curve_data import LabCurveData
     from golden_vector.serve.lab_curve_page import _render_distribution
 
-    insufficient = LabCurveData(available=True, ticker="ZZZ", benchmark="GDX", horizon=13, cell=None, points=[])
-    assert _render_distribution(insufficient) == ""
-    one_point = LabCurveData(
-        available=True, ticker="ZZZ", benchmark="GDX", horizon=13,
-        cell={"gdx_insufficient_history": False, "median_alpha_gdx": 0.0},
-        points=[{"date": "2020-01-01", "alpha": 0.1, "beat": True, "is_scenario": True, "is_anchor": True}],
-    )
-    assert _render_distribution(one_point) == ""  # < 2 scenario weeks
+    assert _render_distribution(
+        LabCurveData(available=True, ticker="ZZZ", benchmark="GDX", horizon=13, cell=None, points=[])
+    ) == ""
+    ok_cell = {"gdx_insufficient_history": False, "median_alpha_gdx": 0.0}
+    assert _render_distribution(_strip_curve([_strip_pt("a", 0.1, True)], ok_cell)) == ""  # < 2
+    all_nan = [_strip_pt("a", float("nan"), True), _strip_pt("b", float("nan"), False)]
+    assert _render_distribution(_strip_curve(all_nan, ok_cell)) == ""  # all NaN -> < 2 usable
+
+
+def test_distribution_strip_all_negative_keeps_zero_on_axis() -> None:
+    """An all-lagged scenario still renders a valid strip with the zero baseline on
+    the axis (the [*alphas, 0.0] guard) and lag-coloured ticks."""
+
+    from golden_vector.serve.lab_curve_page import _LAG_COLOR, _render_distribution
+
+    pts = [_strip_pt("a", -0.30, False), _strip_pt("b", -0.10, False), _strip_pt("c", -0.05, False)]
+    cell = {"median_alpha_gdx": -0.10, "gdx_insufficient_history": False, "p_beat_gdx": 0.0}
+    html = _render_distribution(_strip_curve(pts, cell))
+    assert "lab-dist-svg" in html
+    assert ">0</text>" in html  # zero baseline label present (stays on-axis)
+    assert _LAG_COLOR in html  # ticks carry the lag colour
+
+
+def test_distribution_strip_renders_for_gdxj() -> None:
+    """The strip reads the BENCHMARK-specific persisted median (median_alpha_gdxj) and
+    labels ticks 'vs GDXJ' — guards the per-column mapping that broke once."""
+
+    from golden_vector.serve.lab_curve_page import _render_distribution
+
+    pts = [_strip_pt("a", 0.20, True), _strip_pt("b", -0.05, False)]
+    cell = {
+        "median_alpha_gdxj": 0.04, "gdxj_insufficient_history": False, "p_beat_gdxj": 0.6,
+        "median_alpha_gdx": 0.99, "gdx_insufficient_history": False,  # gdx values must NOT be used
+    }
+    html = _render_distribution(_strip_curve(pts, cell, benchmark="GDXJ"))
+    assert html.count("vs GDXJ</title>") == 2
+    assert "median +4%" in html  # the gdxj column
+    assert "median +99%" not in html  # NOT the gdx column
 
 
 def test_chart_a_week_by_week_is_collapsed_under_details() -> None:
