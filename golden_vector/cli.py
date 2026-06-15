@@ -100,7 +100,12 @@ from golden_vector.model.tool_d import (
     compute_tool_d_outputs,
     latest_gold_price_from_history,
 )
-from golden_vector.portfolio.pipeline import build_portfolio_artifacts
+from golden_vector.portfolio.pipeline import build_portfolio_artifacts, build_ticker_info
+from golden_vector.portfolio.snowball_import import (
+    build_snowball_dry_run,
+    render_snowball_dry_run_report,
+    write_snowball_dry_run_report,
+)
 from golden_vector.screening.manual_data import (
     bootstrap_manual_screening_data,
     load_manual_screening_data,
@@ -405,6 +410,35 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    snowball_parser = subparsers.add_parser(
+        "portfolio-import-snowball",
+        help=(
+            "Dry-run a Snowball Holdings.csv import. Parses and maps rows, "
+            "but never overwrites the manual portfolio store."
+        ),
+    )
+    snowball_parser.add_argument(
+        "--file",
+        default=None,
+        help=(
+            "Snowball holdings CSV path. Defaults to "
+            "data/manual/portfolio/Snowball Holdings.csv."
+        ),
+    )
+    snowball_parser.add_argument(
+        "--report",
+        default=None,
+        help=(
+            "Private markdown report path. Defaults to "
+            "data/manual/portfolio/snowball_import_dry_run_report.md."
+        ),
+    )
+    snowball_parser.add_argument(
+        "--print",
+        action="store_true",
+        help="Also print the dry-run report to stdout.",
+    )
+
     manual_data_parser = subparsers.add_parser(
         "manual-data",
         help="Manage Tool B slow-moving manual company inputs in the local app store.",
@@ -637,6 +671,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "candidate-finder":
         return run_candidate_finder(paths, spec_path=args.spec, out_path=args.out)
 
+    if args.command == "portfolio-import-snowball":
+        return run_portfolio_import_snowball(
+            paths,
+            source_path=args.file,
+            report_path=args.report,
+            print_report=args.print,
+        )
+
     if args.command == "refresh":
         return run_refresh(
             paths,
@@ -710,6 +752,55 @@ def run_perf_profile(paths: ProjectPaths, *, json_output: bool = False) -> int:
         print(json.dumps(profile, indent=2, sort_keys=True, default=str))
     else:
         print(format_cached_perf_profile(profile))
+    return 0
+
+
+def run_portfolio_import_snowball(
+    paths: ProjectPaths,
+    *,
+    source_path: str | None,
+    report_path: str | None,
+    print_report: bool = False,
+) -> int:
+    source = (
+        Path(source_path)
+        if source_path
+        else paths.manual_portfolio_dir / "Snowball Holdings.csv"
+    )
+    report = (
+        Path(report_path)
+        if report_path
+        else paths.manual_portfolio_dir / "snowball_import_dry_run_report.md"
+    )
+    if not source.is_absolute():
+        source = paths.repo_root / source
+    if not report.is_absolute():
+        report = paths.repo_root / report
+    try:
+        app_config = load_app_config(paths).app
+        dry_run = build_snowball_dry_run(
+            paths=paths,
+            source_path=source,
+            ticker_info=build_ticker_info(app_config),
+        )
+        write_snowball_dry_run_report(dry_run, report)
+    except Exception as exc:
+        print(f"Snowball portfolio dry-run failed: {exc}")
+        return 1
+    if print_report:
+        print(render_snowball_dry_run_report(dry_run))
+    else:
+        print("Snowball portfolio dry-run complete.")
+        print(f"Report: {report}")
+        print(
+            "Rows: "
+            f"{len(dry_run.holdings)} parsed, "
+            f"{len(dry_run.mapped_rows)} mapped, "
+            f"{len(dry_run.import_ready_rows)} import-ready, "
+            f"{len(dry_run.review_rows)} review, "
+            f"{len(dry_run.blocked_rows)} blocked."
+        )
+        print("No portfolio store was changed.")
     return 0
 
 
