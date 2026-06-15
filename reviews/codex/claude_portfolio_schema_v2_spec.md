@@ -127,3 +127,27 @@ Do not reach step 6 before 1–5 exist (or the AUD majority of the book can't be
 3. §4 — is bumping `PORTFOLIO_SCHEMA_VERSION` to 6 with calm-stale rendering sufficient, or do any consumers need a hard migration of persisted artifacts on disk?
 4. Any remaining consumer of `buy_currency`/`cost_local`/single `currency` semantics (serve, `m4_artifacts.py`, exports, model-state) that this field set would still break?
 5. Is suppressing local P&L (null) for mixed-currency lots the right UX, or should the page show base/GBP P&L with an explicit "local P&L n/a (cost ≠ quote currency)" note?
+
+---
+
+## ADDENDUM — Codex confirm folded in (FINAL, build-ready)
+
+Codex confirm verdict: **READY WITH MINOR CHANGES** (`codex_review_portfolio_schema_v2_spec.md`). All clarifications below are accepted and verified first-hand against the code; this addendum supersedes the looser wording above where they conflict. **Emanuel confirmed GBP is the presentation base.**
+
+- **A1 (reword the hard rule).** The rule is: *do not overwrite/replace the real `manual_lots.json` from Snowball, and do not auto-rewrite v1 on read.* Normal manual add/edit/delete **remains allowed** after v2 ships, and the **first v2 write of any kind makes a timestamped backup** of the existing store first. (Supersedes the §0/§1/§7 "no write until the writer lands" phrasing, which only ever meant the Snowball full-replace.)
+- **A2 (input contract).** Canonical store field is **`cost_basis_total`** (in `cost_currency`). The **manual form accepts `cost_per_share`** and the backend converts to total **at the validation boundary** (`validate_lot_input`); the **Snowball importer writes the total directly**. Tests assert both paths so a per-share value can never be stored as a total.
+- **A3 (GBP formulas + status).** FX is `base_currency → USD`, so GBP uses the reciprocal `gbp_to_usd`: `value_gbp = value_usd / gbp_to_usd`, `cost_gbp_at_current_fx = cost_usd_at_current_fx / gbp_to_usd`, `pnl_gbp_at_current_fx = value_gbp − cost_gbp_at_current_fx`. If GBP FX is missing **only for presentation**, keep USD valuation valid and set the GBP fields null + a presentation warning. If **GBP is the cost currency** and GBP FX is missing, **degrade the line** (cost USD can't be computed).
+- **A4 (registry before the real writer).** Insert a step: implement **portfolio-only instrument handling** (ETFs/non-miners value but don't run Tool A/B/C/D), **or** make the writer **fail closed** while any non-cash Snowball row is unrepresented, unless Emanuel gives an explicit one-time exclusion. The atomic full-replace writer is **not** built until every Snowball row is representable or explicitly excluded — otherwise "replace the whole book" is dishonest.
+- **A5 (leg-specific FX status).** Add a backend-owned `fx_issues_json` (or leg-specific `line_status_reason`) distinguishing **quote FX / cost FX / GBP-presentation FX**. Tests: stale **cost** FX excludes P&L; stale **presentation-only** FX does **not** invalidate USD totals.
+- **A6 (raw_fx read detail).** Read `raw_fx.parquet` via the manifest, **validate** columns (`base_currency`, `date`, `fx_rate_to_usd`, `source_symbol`; `fx_pair` present), **split into `{base_currency: frame}`**, then `merge_fx_asof` (`normalize/calendar.py:26`). Do **not** infer currency from file names. (Verified: `standardize.py:74-101` keys FX by `base_currency`.)
+- **A7 (source enum, NIT).** `source_name` ∈ {`manual`, `snowball`, `hl`, `ibkr`, `unknown`} (future-proof; tests pin the known values).
+
+### Codex's open-question answers (accepted)
+Store `cost_basis_total` canonical (UI converts per-share→total at the boundary); drop stored `buy_currency`, derive quote from the universe; extend `LatestFoundationSnapshot.fx_histories` (not a one-off reader); bump to v6 + calm-stale + **rebuild artifacts** (no hard on-disk migration); suppress local P&L on mixed-currency with the explicit "local P&L n/a (cost ≠ trading currency)" note. Consumer grep set: `manual_store.py`, `models.py`, `pipeline.py`, `m4_artifacts.py`, `portfolio_page.py`, `snowball_import.py`, `reconciliation.py`, `reader.py`, `model_state.py`, `tests/test_portfolio_*`.
+
+### FINAL build sequence (two reviewed checkpoints, then a gated decision)
+- **Checkpoint 1 — schema + valuation spine:** `LatestFoundationSnapshot.fx_histories` (A6); v2 store read-migration + backup-on-first-write (A1/A2); v6 artifacts + columns + calm-stale handling; backend USD **and** GBP fields (A3); leg-specific FX status (A5); tests. **No Snowball writer.**
+- **Checkpoint 2 — Snowball dry-run v2:** Snowball currency = cost currency; name + scale guards; prove AUD/GBP rows representable; **still read-only**.
+- **Then decide** portfolio-only registry (A4) vs the atomic writer — and **do not build the real writer** until every Snowball row is representable or explicitly excluded.
+
+Each checkpoint ships through build → self-review → Codex code review → verify, and `manual_lots.json` is never replaced from Snowball until the final, signed-off, all-or-nothing writer.
