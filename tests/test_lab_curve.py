@@ -898,6 +898,69 @@ def test_real_build_meta_registers_profile_artifact() -> None:
     assert list(pd.read_parquet(profile_path).columns) == PROFILE_COLUMNS
 
 
+# ---- v3: distribution strip (spread of scenario outcomes) + collapsed dots -----
+
+
+def test_distribution_strip_ticks_are_scenario_only_with_persisted_median() -> None:
+    """v3: each highlighted scenario week is a tick; the median marker is the
+    PERSISTED cell median (not recomputed in serve); non-scenario weeks are excluded."""
+
+    from golden_vector.serve.lab_curve_data import LabCurveData
+    from golden_vector.serve.lab_curve_page import _render_distribution
+
+    pts = [
+        {"date": "2020-01-01", "alpha": 0.20, "beat": True, "is_scenario": True, "is_anchor": True},
+        {"date": "2020-02-01", "alpha": -0.10, "beat": False, "is_scenario": True, "is_anchor": False},
+        {"date": "2020-03-01", "alpha": 0.05, "beat": True, "is_scenario": True, "is_anchor": False},
+        {"date": "2020-04-01", "alpha": 0.99, "beat": True, "is_scenario": False, "is_anchor": False},
+    ]
+    cell = {"median_alpha_gdx": 0.05, "gdx_insufficient_history": False, "p_beat_gdx": 0.66}
+    curve = LabCurveData(
+        available=True, ticker="ZZZ", benchmark="GDX", horizon=13,
+        scenario_bucket="gold_down", scenario_label="Gold down 5% to 15%",
+        points=pts, cell=cell,
+    )
+    html = _render_distribution(curve)
+    assert "Spread of outcomes" in html and "lab-dist-svg" in html
+    assert "median +5%" in html  # the persisted cell median, formatted for display
+    # exactly the 3 scenario weeks get ticks (the 0.99 non-scenario week is excluded)
+    assert html.count("vs GDX</title>") == 3
+
+
+def test_distribution_strip_absent_when_insufficient() -> None:
+    """No strip when the benchmark cell is insufficient (mirrors the headline guard)
+    or there are too few scenario weeks to show a spread."""
+
+    from golden_vector.serve.lab_curve_data import LabCurveData
+    from golden_vector.serve.lab_curve_page import _render_distribution
+
+    insufficient = LabCurveData(available=True, ticker="ZZZ", benchmark="GDX", horizon=13, cell=None, points=[])
+    assert _render_distribution(insufficient) == ""
+    one_point = LabCurveData(
+        available=True, ticker="ZZZ", benchmark="GDX", horizon=13,
+        cell={"gdx_insufficient_history": False, "median_alpha_gdx": 0.0},
+        points=[{"date": "2020-01-01", "alpha": 0.1, "beat": True, "is_scenario": True, "is_anchor": True}],
+    )
+    assert _render_distribution(one_point) == ""  # < 2 scenario weeks
+
+
+def test_chart_a_week_by_week_is_collapsed_under_details() -> None:
+    """v3: the dense week-by-week dot scatter is tucked under a collapsed <details>
+    toggle (de-cluttered) but still fully present with its honesty captions."""
+
+    from golden_vector.serve.lab_curve_page import _render_lab_curve_page
+
+    paths, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    curve = load_ticker_curve(paths, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDX")
+    html = _render_lab_curve_page(curve)
+    assert "<details class=\"panel lab-curve-chart\">" in html  # collapsed, not a always-open section
+    assert "When did it happen?" in html  # the summary toggle
+    assert "lab-dots-svg" in html  # the dots chart is still there
+    assert "hindsight grouping" in html  # honesty caption preserved
+    # the new spread strip renders above it for this healthy scenario
+    assert "Spread of outcomes" in html and "lab-dist-svg" in html
+
+
 def test_default_lab_horizon_comes_from_config(monkeypatch) -> None:
     """C3: the Lab default horizon is the config's default_profile_horizon, not a
     hardcoded 13 duplicated in the routes."""

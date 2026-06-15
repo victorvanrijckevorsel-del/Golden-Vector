@@ -697,6 +697,10 @@
 .lab-row-insufficient { opacity: 0.62; }
 .lab-row-insufficient .lab-no-data { font-style: italic; cursor: default; }
 .lab-profile-svg { width: 100%; max-width: 720px; height: auto; background: #fbf9f4; border-radius: 6px; }
+.lab-dist-svg { width: 100%; max-width: 760px; height: auto; background: #fbf9f4; border-radius: 6px; }
+.lab-dist h2 { margin-bottom: 4px; }
+.lab-curve-chart > summary { cursor: pointer; font-weight: 600; }
+.lab-curve-chart[open] > summary { margin-bottom: 8px; }
 .lab-winrate { padding-top: 6px; }
 .lab-winrate p { margin: 0 0 8px; }
 .winrate-bar {

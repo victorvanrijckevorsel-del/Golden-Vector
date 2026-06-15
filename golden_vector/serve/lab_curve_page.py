@@ -76,7 +76,8 @@ def _render_lab_curve_page(curve: LabCurveData) -> str:
     body.append(_render_profile(curve))  # hero: behaviour across all gold scenarios
     body.append(_render_headline(curve))
     body.append(_render_winrate_bar(curve))  # clear within-scenario summary
-    body.append(_render_chart_a(curve))
+    body.append(_render_distribution(curve))  # spread of outcomes (magnitude)
+    body.append(_render_chart_a(curve))  # the week-by-week dots, collapsed
     body.append(_render_chart_b(curve))
     body.append(_render_glossary(curve))
     return _page_shell(title, "".join(body), active_nav="lab")
@@ -402,6 +403,102 @@ def _render_headline(curve: LabCurveData) -> str:
     )
 
 
+def _render_distribution(curve: LabCurveData) -> str:
+    """Distribution strip: each highlighted scenario week as a tick on a +/- axis, so
+    the SPREAD of outcomes (how big the wins/losses were) is visible, not just the
+    share that beat. Render-only — ticks are the raw persisted per-week alphas, the
+    median marker is the persisted cell median; NO binning, counting, or averaging
+    here (that would be serve-side analytics)."""
+
+    if _benchmark_insufficient(curve):
+        return ""
+    scenario = [
+        p
+        for p in curve.points
+        if p["is_scenario"] and p["alpha"] is not None and p["alpha"] == p["alpha"]
+    ]
+    if len(scenario) < 2:
+        return ""
+    median = _cell_field(curve, "median_alpha")
+    svg = _build_distribution_svg(scenario, median=median, benchmark=curve.benchmark)
+    return (
+        "<section class=\"panel lab-dist\">"
+        f"<h2>Spread of outcomes in {escape(curve.scenario_label)} weeks</h2>"
+        f"{svg}"
+        f"<p class=\"hint\">Each tick is one highlighted scenario week: how "
+        f"{escape(curve.ticker)} did vs {escape(curve.benchmark)} over the next "
+        f"{int(curve.horizon)} weeks (green = beat, red = lagged). The clustering shows "
+        "where most outcomes landed; the marker is the median. Counted history, "
+        "survivor-only, exploratory — not a forecast.</p>"
+        "</section>"
+    )
+
+
+def _build_distribution_svg(
+    scenario_points: list[dict[str, Any]], *, median: Any, benchmark: str
+) -> str:
+    """A 1-D strip: x = per-week alpha, one tick per scenario week, zero baseline +
+    the persisted median marked. Time is collapsed on purpose."""
+
+    alphas = [float(p["alpha"]) for p in scenario_points]
+    lo = min([*alphas, 0.0])  # always include zero so the baseline is on-axis
+    hi = max([*alphas, 0.0])
+    if lo == hi:
+        hi = lo + 0.01
+    width, height = 760, 92
+    left, right, top = 42, 18, 16
+    axis_y = 54
+
+    def x_at(alpha: float) -> float:
+        return left + (alpha - lo) / (hi - lo) * (width - left - right)
+
+    parts: list[str] = [
+        f"<line x1=\"{left}\" y1=\"{axis_y}\" x2=\"{width - right}\" y2=\"{axis_y}\" "
+        f"stroke=\"{_CONTEXT_COLOR}\"/>"
+    ]
+    zero_x = x_at(0.0)
+    parts.append(
+        f"<line x1=\"{zero_x:.1f}\" y1=\"{top}\" x2=\"{zero_x:.1f}\" y2=\"{axis_y + 7:.1f}\" "
+        f"stroke=\"{_ZERO_COLOR}\" stroke-dasharray=\"4 3\"/>"
+        f"<text x=\"{zero_x:.1f}\" y=\"{axis_y + 19:.1f}\" text-anchor=\"middle\" "
+        "font-size=\"9\" fill=\"#5f584e\">0</text>"
+    )
+    for point in scenario_points:
+        alpha = float(point["alpha"])
+        x = x_at(alpha)
+        color = _BEAT_COLOR if point["beat"] else _LAG_COLOR  # persisted decision
+        parts.append(
+            f"<line x1=\"{x:.1f}\" y1=\"{top + 6:.1f}\" x2=\"{x:.1f}\" y2=\"{axis_y:.1f}\" "
+            f"stroke=\"{color}\" stroke-opacity=\"0.5\"><title>{escape(str(point['date']))}: "
+            f"{alpha * 100:+.0f}% vs {escape(benchmark)}</title></line>"
+        )
+    median_label = ""
+    if median is not None and median == median:
+        mx = x_at(float(median))
+        median_label = f"median {float(median) * 100:+.0f}%"
+        parts.append(
+            f"<path d=\"M {mx:.1f} {axis_y - 1:.1f} l -4 -7 l 8 0 z\" fill=\"#3d3529\">"
+            f"<title>{escape(median_label)}</title></path>"
+            f"<text x=\"{mx:.1f}\" y=\"{top + 2:.1f}\" text-anchor=\"middle\" font-size=\"8\" "
+            f"fill=\"#3d3529\">{escape(median_label)}</text>"
+        )
+    parts.append(
+        f"<text x=\"{left}\" y=\"{axis_y + 19:.1f}\" text-anchor=\"start\" font-size=\"8\" "
+        f"fill=\"#7a7263\">{lo * 100:+.0f}%</text>"
+        f"<text x=\"{width - right}\" y=\"{axis_y + 19:.1f}\" text-anchor=\"end\" font-size=\"8\" "
+        f"fill=\"#7a7263\">{hi * 100:+.0f}%</text>"
+    )
+    aria = (
+        f"Spread of {len(scenario_points)} scenario-week outcomes vs {escape(benchmark)} "
+        f"from {lo * 100:+.0f}% to {hi * 100:+.0f}%"
+        + (f"; {median_label}." if median_label else ".")
+    )
+    return (
+        f"<svg class=\"option-chart-svg lab-dist-svg\" viewBox=\"0 0 {width} {height}\" "
+        f"role=\"img\" aria-label=\"{aria}\">{''.join(parts)}</svg>"
+    )
+
+
 def _render_chart_a(curve: LabCurveData) -> str:
     svg = _build_dots_svg(curve.points, horizon=int(curve.horizon), benchmark=curve.benchmark)
     highlight_caption = (
@@ -409,9 +506,11 @@ def _render_chart_a(curve: LabCurveData) -> str:
         f"over the FOLLOWING {int(curve.horizon)} weeks (a hindsight grouping you chose, "
         "not a signal available on that date)."
     )
+    # Collapsed by default: the dense week-by-week scatter is secondary to the
+    # profile + win-rate + spread above; available on demand without cluttering.
     return (
-        "<section class=\"panel lab-curve-chart\">"
-        "<h2>Forward performance vs benchmark, week by week</h2>"
+        "<details class=\"panel lab-curve-chart\">"
+        "<summary>When did it happen? — forward performance vs benchmark, week by week</summary>"
         f"{svg}"
         f"<p class=\"hint\">Each dot is one week: how {escape(curve.ticker)} did versus "
         f"{escape(curve.benchmark)} over the <strong>next {int(curve.horizon)} weeks</strong>. "
@@ -420,7 +519,7 @@ def _render_chart_a(curve: LabCurveData) -> str:
         f"<p class=\"hint\">{highlight_caption}</p>"
         f"<p class=\"hint\">The most recent {int(curve.horizon)} weeks have no dot — their "
         "forward window has not completed yet.</p>"
-        "</section>"
+        "</details>"
     )
 
 
