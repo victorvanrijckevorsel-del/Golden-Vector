@@ -458,21 +458,25 @@ def _import_status(issues: list[str]) -> str:
 def _existing_positions(paths: ProjectPaths) -> list[ExistingPortfolioPosition]:
     positions: dict[tuple[str, str], ExistingPortfolioPosition] = {}
     for lot in load_lots(paths):
-        key = (lot.ticker, lot.buy_currency)
+        # Report the canonical recorded cost in its true currency (matches the
+        # live pipeline), not shares*buy_price in the quote currency.
+        cost_currency = lot.cost_currency or lot.buy_currency
+        cost = lot.cost_basis_total if lot.cost_basis_total is not None else lot.cost_local
+        key = (lot.ticker, cost_currency)
         existing = positions.get(key)
         if existing is None:
             positions[key] = ExistingPortfolioPosition(
                 ticker=lot.ticker,
                 shares=lot.shares,
-                cost_local=lot.cost_local,
-                currency=lot.buy_currency,
+                cost_local=cost,
+                currency=cost_currency,
             )
             continue
         positions[key] = ExistingPortfolioPosition(
             ticker=lot.ticker,
             shares=existing.shares + lot.shares,
-            cost_local=existing.cost_local + lot.cost_local,
-            currency=lot.buy_currency,
+            cost_local=existing.cost_local + cost,
+            currency=cost_currency,
         )
     return sorted(positions.values(), key=lambda item: (item.ticker, item.currency))
 
