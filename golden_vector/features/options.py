@@ -10,6 +10,7 @@ import pandas as pd
 
 from golden_vector.features.black_scholes import strike_for_target_delta
 from golden_vector.features.options_chain import (
+    CALENDAR_DAYS_PER_YEAR,
     add_black_scholes_delta,
     as_float,
     compute_straddle_implied_move,
@@ -230,7 +231,9 @@ def _realized_vol(price_history: pd.DataFrame, *, window_days: int) -> float | N
     # days. Convert (252/365.25) so the realized leg covers the same span the
     # IV prices - a 90d option's realized vol uses ~62 trading rows, not 90
     # (which would span ~130 calendar days and lag regime shifts).
-    trading_rows = max(2, int(round(window_days * 252.0 / 365.25)))
+    trading_rows = max(
+        2, int(round(window_days * TRADING_DAYS_PER_YEAR / CALENDAR_DAYS_PER_YEAR))
+    )
     returns = returns.tail(trading_rows)
     # Honesty floor (audit M6): with a long window over short history,
     # tail() silently returns ALL history and the value is full-history vol

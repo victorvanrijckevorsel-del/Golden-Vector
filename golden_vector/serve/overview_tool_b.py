@@ -34,6 +34,7 @@ from golden_vector.serve.overview_helpers import (
     _render_filter_bar,
     _render_provenance_warnings,
     _render_refresh_summary,
+    note_counts_by_ticker,
 )
 from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.column_help import help_th
@@ -128,11 +129,7 @@ def _render_tool_b_overview_page(
     parquet is left untouched; overrides are scenario tools.
     """
     overrides = overrides or ScreeningOverrides()
-    note_counts = (
-        state.stock_notes.groupby("ticker").size().to_dict()
-        if not state.stock_notes.empty and "ticker" in state.stock_notes.columns
-        else {}
-    )
+    note_counts = note_counts_by_ticker(state.stock_notes)
 
     # Either use the latest persisted parquet, or recompute in memory if
     # the user passed any URL-param overrides.

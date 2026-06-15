@@ -9,12 +9,12 @@ from golden_vector.features.black_scholes import (
     black_scholes_call_price,
     black_scholes_put_price,
 )
+from golden_vector.common.options import OPTION_CONTRACT_MULTIPLIER
 from golden_vector.features.options_chain import CALENDAR_DAYS_PER_YEAR
 from golden_vector.hedge.candidate_puts import OptionCandidate
 from golden_vector.hedge.disclosures import EXTREME_DOWNSIDE_SCENARIO_CAVEAT
 
 DOWN_BETA_MIN_FOR_SCENARIO = 0.10
-OPTION_CONTRACT_MULTIPLIER = 100
 EXTREME_DOWNSIDE_SCENARIO_THRESHOLD = -0.15
 
 

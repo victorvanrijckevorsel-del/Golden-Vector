@@ -2016,6 +2016,36 @@ def test_workspace_tool_b_serve_layer_has_no_financial_arithmetic():
         assert forbidden not in source, forbidden
 
 
+def test_workspace_candidate_finder_serve_layer_has_no_forked_tool_b_d_math():
+    """Canon-required per-surface guardrail (previously missing): the Candidate Finder
+    serve layer DELEGATES to the one Tool B / Tool D models and never reimplements
+    their ratio/score formulas. The spot-vs-scenario tolerance + gold_price_basis
+    decision are sanctioned here exactly as on the Tool B page (it sets the rank basis
+    from the resolved spot, it does not compute Tool B/D math)."""
+    source = Path("golden_vector/serve/candidate_finder_data.py").read_text(encoding="utf-8")
+
+    # Must call the ONE backend compute path for each tool.
+    assert "compute_tool_b_in_memory" in source
+    assert "compute_tool_d_outputs" in source
+    # No forked Tool B / Tool D formula fragments may appear in serve. (.fillna( is
+    # NOT forbidden here — it is used only on boolean has_usable_* display masks.)
+    for forbidden in (
+        "production_oz *",
+        "* production_oz",
+        "- aisc_usd_per_oz",
+        "aisc_usd_per_oz -",
+        "net_debt_musd /",
+        "+ net_debt_musd",
+        "/ forward_ebitda_musd",
+        "/ ebitda",
+        "_linear_ebitda_model",
+        "_fcf_breakeven_gold",
+        "_debt_stress_gold",
+        ".combine_first(",
+    ):
+        assert forbidden not in source, forbidden
+
+
 def test_workspace_tool_b_dial_recompute_shows_timing_and_scenario_basis(tmp_path):
     """Moving the dial recomputes live: the page must show the instrumented
     timing message and state the scenario basis with spot alongside."""
@@ -2400,7 +2430,6 @@ def test_all_serve_modules_avoid_unsanctioned_analytics_tokens():
         "detail_panels.py": {"np.polyfit(", ".std("},
         # Gold-dial scenario recompute is a sanctioned product tradeoff.
         "candidate_finder_data.py": {".fillna("},
-        "overview_tool_a.py": {".fillna("},
     }
     forbidden_tokens = (
         "np.polyfit(",

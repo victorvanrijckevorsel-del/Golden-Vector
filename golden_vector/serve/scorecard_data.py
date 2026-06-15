@@ -34,20 +34,27 @@ class ScorecardData:
 
 
 def load_scorecard_data(paths: ProjectPaths) -> ScorecardData:
-    table_path = lab_dir(paths) / SCORECARD_TABLE_FILENAME
-    if not table_path.exists():
-        return ScorecardData(available=False, error_status="MISSING")
-    try:
-        frame = pd.read_parquet(table_path)
-    except Exception:
-        return ScorecardData(available=False, error_status="CORRUPT")
+    lab = lab_dir(paths)
+    # Read the meta FIRST — it is the atomic pointer, written last on publish. Resolve
+    # the table through meta['run_stamped_artifact'] (the immutable run-stamped file) so
+    # a half-finished re-publish (new latest alias, old meta) is read as the last
+    # COHERENT table-vs-meta pair, never a torn mix. Fall back to the mutable latest
+    # alias only when meta lacks the run-stamped entry (pre-manifest artifacts /
+    # fixtures). Mirrors the Lab dial reader (lab_curve_data._current_artifact_filename).
     meta: dict[str, Any] = {}
-    meta_path = lab_dir(paths) / SCORECARD_META_FILENAME
+    meta_path = lab / SCORECARD_META_FILENAME
     if meta_path.exists():
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             meta = {}
+    table_path = lab / str(meta.get("run_stamped_artifact") or SCORECARD_TABLE_FILENAME)
+    if not table_path.exists():
+        return ScorecardData(available=False, error_status="MISSING", meta=meta)
+    try:
+        frame = pd.read_parquet(table_path)
+    except Exception:
+        return ScorecardData(available=False, error_status="CORRUPT", meta=meta)
     if frame.empty:
         return ScorecardData(available=False, error_status="MISSING", meta=meta)
     if any(column not in frame.columns for column in SCORECARD_REQUIRED_COLUMNS):

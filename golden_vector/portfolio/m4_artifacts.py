@@ -7,6 +7,7 @@ import math
 import pandas as pd
 
 from golden_vector.common.numeric import optional_float, sum_optional_floats
+from golden_vector.common.options import OPTION_CONTRACT_MULTIPLIER
 from golden_vector.model.gold_shock import (
     DEFAULT_GOLD_DOWN_MIN_BETA,
     DEFAULT_GOLD_DOWN_SCENARIO_FRACTION,
@@ -14,7 +15,6 @@ from golden_vector.model.gold_shock import (
 )
 from golden_vector.portfolio.models import PORTFOLIO_SCHEMA_VERSION
 
-OPTION_CONTRACT_MULTIPLIER = 100
 GDX_BASIS_RISK_NOTE = (
     "GDX/GDXJ are sector proxies. They can under-cover high-beta small-caps; "
     "this is a modeled hedge size, not a recommendation."

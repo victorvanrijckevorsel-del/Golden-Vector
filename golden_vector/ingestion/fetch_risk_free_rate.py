@@ -32,4 +32,10 @@ def fetch_risk_free_rate(
     if pd.isna(close):
         raise ValueError(f"No close value returned for {symbol}.")
     rate = float(close)
-    return rate / 100.0 if rate > 1.0 else rate
+    # ^IRX (the 13-week T-bill yield index) is ALWAYS quoted as a percent — 5.25 means
+    # 5.25%, and 0.50 means 0.50% (decimal 0.005), NOT 50%. Convert to a decimal
+    # unconditionally. The old magnitude heuristic ("/100 only when > 1.0") silently
+    # 100x'd the rate in any low-rate regime where the yield printed below 1% (common
+    # 2010-15, 2020-21), corrupting every Black-Scholes delta/discount downstream.
+    # The unit is known from the feed; never infer it from the value's magnitude.
+    return rate / 100.0

@@ -395,6 +395,34 @@ def test_load_option_trading_data_builds_call_context_from_up_beta(tmp_path):
     assert detail.call_bundles[0].gold_beta_used == 1.1
 
 
+def test_option_trading_ladders_come_from_config_default_scenarios(tmp_path):
+    """The put/call P&L ladders are threaded from hedge_readiness.default_scenarios
+    (one config source) and the call ladder is its sign-mirror. Proven with a
+    NON-default ladder so a re-hardcoded ladder or broken config threading fails,
+    and pinning the call baseline as +0.0 (not -0.0) guards the negated-zero fix."""
+    import yaml
+
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    # A non-default downside ladder so the assertion can't pass on the shipped defaults.
+    hr_path = paths.config_path("hedge_readiness.yaml")
+    hr = yaml.safe_load(hr_path.read_text(encoding="utf-8"))
+    hr["default_scenarios"] = [0.0, -0.07, -0.12]
+    hr_path.write_text(yaml.safe_dump(hr), encoding="utf-8")
+
+    app_config = load_app_config(paths).app
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+    data = load_option_trading_data(paths, app_config=app_config)
+    detail = build_option_trading_detail_data(data, ticker="AEM", app_config=app_config)
+
+    # Call ladder = sign-mirror of the (non-default) config ladder, baseline +0.0.
+    assert [r.gold_pct_change for r in detail.call_bundles[0].rows] == [0.0, 0.07, 0.12]
+    assert repr(detail.call_bundles[0].rows[0].gold_pct_change) == "0.0"  # not "-0.0"
+    if detail.put_bundles:
+        assert [r.gold_pct_change for r in detail.put_bundles[0].rows] == [0.0, -0.07, -0.12]
+
+
 def test_load_option_trading_data_surfaces_benchmark_etf_option_rows(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)

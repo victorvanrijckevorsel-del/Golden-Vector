@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.numeric import percent_to_fraction
 from golden_vector.screening.manual_store import (
     COMPANY_INPUT_COLUMNS,
     FINANCIAL_DUAL_SOURCE_FIELDS,
@@ -248,9 +249,7 @@ def _normalize_rate(value: object) -> float | None:
         numeric = float(value)
     except (TypeError, ValueError):
         return None
-    if numeric > 1.0:
-        return numeric / 100.0
-    return numeric
+    return percent_to_fraction(numeric)
 
 
 def _normalize_text(value: object) -> str | None:

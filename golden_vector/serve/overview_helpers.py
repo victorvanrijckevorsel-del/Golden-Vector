@@ -15,6 +15,15 @@ from golden_vector.serve.format_helpers import (
 from golden_vector.serve.workspace_state import WorkspaceState
 
 
+def note_counts_by_ticker(notes: pd.DataFrame) -> dict[str, int]:
+    """Per-ticker note counts for the Notes badge — ONE copy shared by the Tool A and
+    Tool B overviews (a display count over already-loaded note rows, not model math),
+    so the same notebook can't show different badge counts on the two screens."""
+    if notes.empty or "ticker" not in notes.columns:
+        return {}
+    return notes.groupby("ticker").size().to_dict()
+
+
 def _render_provenance_warnings(state: WorkspaceState) -> str:
     notices: list[str] = []
 

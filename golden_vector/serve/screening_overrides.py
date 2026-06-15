@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
-from golden_vector.common.numeric import require_finite_number
+from golden_vector.common.numeric import percent_to_fraction, require_finite_number
 from golden_vector.contracts.config_models import (
     AppConfig,
     JurisdictionDiscounts,
@@ -199,6 +199,4 @@ def _percent_to_fraction(value: float, param_name: str) -> float:
     Discount/threshold values in our domain are all < 1 as fractions and
     typically 0-100 as percents, so this disambiguation is safe.
     """
-    if value > 1.0:
-        return value / 100.0
-    return value
+    return percent_to_fraction(value)

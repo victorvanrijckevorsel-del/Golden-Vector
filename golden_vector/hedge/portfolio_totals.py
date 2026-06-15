@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from golden_vector.common.options import OPTION_CONTRACT_MULTIPLIER
 from golden_vector.contracts.config_models import HedgeReadinessConfig
 from golden_vector.hedge._helpers import (
     row_float,
@@ -16,8 +17,6 @@ from golden_vector.hedge._helpers import (
 from golden_vector.hedge.candidate_puts import CandidatePut
 from golden_vector.hedge.holdings import Holding
 from golden_vector.model.gold_shock import compute_gold_shock_exposure
-
-OPTION_CONTRACT_MULTIPLIER = 100
 
 
 @dataclass(frozen=True)

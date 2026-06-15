@@ -7,6 +7,8 @@ from typing import Literal, cast
 
 import pandas as pd
 
+from golden_vector.common.numeric import optional_float as as_float
+from golden_vector.common.numeric import optional_int as as_int
 from golden_vector.features.black_scholes import black_scholes_delta
 
 CALENDAR_DAYS_PER_YEAR = 365.25
@@ -262,20 +264,6 @@ def midpoint(bid: object, ask: object) -> float | None:
     if bid_value is None or ask_value is None or bid_value <= 0 or ask_value <= 0:
         return None
     return (bid_value + ask_value) / 2.0
-
-
-def as_float(value: object) -> float | None:
-    numeric = pd.to_numeric(value, errors="coerce")
-    if pd.isna(numeric):
-        return None
-    return float(numeric)
-
-
-def as_int(value: object) -> int | None:
-    numeric = as_float(value)
-    if numeric is None:
-        return None
-    return int(numeric)
 
 
 def _empty_chain() -> pd.DataFrame:

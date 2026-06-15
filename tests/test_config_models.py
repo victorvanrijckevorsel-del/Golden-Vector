@@ -462,7 +462,6 @@ def test_tool_c_config_accepts_defaults():
         {"regime_rolling_weeks": 0},
         {"regime_min_weeks": 0},
         {"regime_rolling_weeks": 51, "regime_min_weeks": 52},
-        {"rolling_volatility_weeks": 0},
         {"downside_hit_rate_threshold_pct": 0},
         {"upside_hit_rate_threshold_pct": 0},
     ],

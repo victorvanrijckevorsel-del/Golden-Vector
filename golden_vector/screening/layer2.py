@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from golden_vector.common.numeric import optional_float as _numeric
+from golden_vector.common.numeric import percent_to_fraction
 
 
 def compute_layer2_metrics(
@@ -132,6 +133,4 @@ def _rate(value: object) -> float | None:
     numeric = _numeric(value)
     if numeric is None:
         return None
-    if numeric > 1.0:
-        return numeric / 100.0
-    return numeric
+    return percent_to_fraction(numeric)

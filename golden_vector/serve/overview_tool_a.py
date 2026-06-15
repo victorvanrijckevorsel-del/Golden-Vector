@@ -16,6 +16,7 @@ from golden_vector.serve.overview_helpers import (
     _render_filter_bar,
     _render_provenance_warnings,
     _render_refresh_summary,
+    note_counts_by_ticker,
 )
 from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.column_help import help_th
@@ -35,11 +36,7 @@ def _render_tool_a_overview_page(
     Shows only Tool A-relevant columns (delta, gamma, asymmetry, confidence,
     volatility, score, rank, profile). No Tool B noise.
     """
-    note_counts = (
-        state.stock_notes.groupby("ticker").size().to_dict()
-        if not state.stock_notes.empty and "ticker" in state.stock_notes.columns
-        else {}
-    )
+    note_counts = note_counts_by_ticker(state.stock_notes)
     tool_a_index = _frame_index_by_ticker(state.latest_tool_a)
     search_term = str(search or "").strip().upper()
 

@@ -7,6 +7,7 @@ from typing import Literal
 
 import pandas as pd
 
+from golden_vector.common.options import OPTION_CONTRACT_MULTIPLIER
 from golden_vector.hedge._helpers import (
     as_float,
     is_optionable_tier,
@@ -250,6 +251,10 @@ def build_option_trading_detail(
     sizing_request: OptionSizingRequest | None = None,
     target_horizons_days: tuple[int, ...] = (90, 180, 230, 550),  # callers pass config
     down_beta_min_for_scenario: float = 0.10,
+    # Put-side downside gold ladder; the serve caller threads
+    # hedge_readiness.default_scenarios so this page can't drift from the Hedge
+    # Readiness / Speculation ladders. The call ladder is the sign-mirror of this.
+    put_gold_scenarios: tuple[float, ...] = (0.0, -0.05, -0.10, -0.15, -0.20),
     risk_free_rate_is_fallback: bool = False,
     source_context: OptionTradingSourceContext | None = None,
 ) -> OptionTradingDetailData:
@@ -272,12 +277,18 @@ def build_option_trading_detail(
             confidence_label=confidence_label,
             risk_free_rate=risk_free_rate,
             gold_beta_min_for_scenario=down_beta_min_for_scenario,
-            gold_scenarios=(0.0, -0.05, -0.10, -0.15, -0.20),
+            gold_scenarios=put_gold_scenarios,
             quantity=1,
         )
         for candidate in put_candidates
         if candidate.liquidity_tier == "tradable"
     )
+    # Call ladder = the sign-mirror of the put ladder, so both derive from ONE
+    # source (config.default_scenarios). default_scenarios is validated put-side
+    # (<= 0); negating yields the valid >= 0 call moves. The "+ 0.0" normalizes
+    # the negated base case (-0.0 -> 0.0) so the rendered Gold Move cell shows
+    # "0.0%" rather than "-0.0%"; non-zero moves are unaffected.
+    call_gold_scenarios = tuple(-move + 0.0 for move in put_gold_scenarios)
     call_bundles = tuple(
         compute_scenario_bundle(
             candidate=candidate,
@@ -287,7 +298,7 @@ def build_option_trading_detail(
             risk_free_rate=risk_free_rate,
             strategy=OptionStrategy.LONG_CALL,
             gold_beta_min_for_scenario=down_beta_min_for_scenario,
-            gold_scenarios=(0.0, 0.05, 0.10, 0.15, 0.20),
+            gold_scenarios=call_gold_scenarios,
             quantity=1,
         )
         for candidate in call_candidates
@@ -390,7 +401,7 @@ def _bundle_for_request(
 def _premium_spend(candidate: OptionCandidate, contracts: int) -> float | None:
     if candidate.mid is None or candidate.mid < 0:
         return None
-    return candidate.mid * contracts * 100.0
+    return candidate.mid * contracts * OPTION_CONTRACT_MULTIPLIER
 
 
 def _rescale_bundle(
@@ -401,10 +412,10 @@ def _rescale_bundle(
         replace(
             row,
             net_pnl_at_expiry=(
-                row.pnl_per_contract_at_expiry * contracts * 100.0
+                row.pnl_per_contract_at_expiry * contracts * OPTION_CONTRACT_MULTIPLIER
             ),
             net_pnl_if_closed_today=(
-                row.pnl_per_contract_if_closed_today * contracts * 100.0
+                row.pnl_per_contract_if_closed_today * contracts * OPTION_CONTRACT_MULTIPLIER
             ),
         )
         for row in bundle.rows

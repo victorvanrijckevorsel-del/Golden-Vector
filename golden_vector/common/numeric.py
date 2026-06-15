@@ -8,7 +8,14 @@ import pandas as pd
 
 
 def optional_float(value: object) -> float | None:
-    """Return a float for scalar numeric input, otherwise ``None``."""
+    """Return a float for scalar numeric input, otherwise ``None``.
+
+    Note: this uses ``float()``, so it accepts Python underscore-grouped numeric
+    strings (``"1_000"`` -> 1000.0) that ``pd.to_numeric`` would reject. The
+    option-chain ``as_float`` alias relies on this; real feed/parquet inputs are
+    numeric scalars (never underscore strings), so the difference is dormant —
+    documented here so the consolidation's widening is intentional, not a surprise.
+    """
 
     if is_missing(value):
         return None
@@ -26,6 +33,18 @@ def optional_finite_float(value: object) -> float | None:
     if numeric is None or not math.isfinite(numeric):
         return None
     return numeric
+
+
+def percent_to_fraction(value: float) -> float:
+    """Convert a possibly-percent-scaled rate to a fraction using the screening
+    convention: a value > 1.0 is read as a percent (5 -> 0.05); a value already <= 1.0
+    is assumed to already be a fraction. ONE copy of this magnitude heuristic for the
+    screening / manual rate inputs (royalty, tax) where the typed unit is ambiguous.
+
+    Note: a feed whose unit is KNOWN (e.g. ^IRX is always a percent) must convert by
+    that known unit, NOT this magnitude heuristic — see fetch_risk_free_rate."""
+
+    return value / 100.0 if value > 1.0 else value
 
 
 def strict_optional_float(value: object) -> float | None:

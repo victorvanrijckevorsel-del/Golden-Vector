@@ -178,6 +178,10 @@ def build_option_trading_detail_data(
         down_beta_min_for_scenario=(
             app_config.hedge_readiness.down_beta_min_for_scenario
         ),
+        # One config source for the put/call P&L ladders — same as the Hedge
+        # Readiness + Speculation surfaces, so editing default_scenarios moves all
+        # three together instead of leaving this page on a stale hardcoded ladder.
+        put_gold_scenarios=tuple(app_config.hedge_readiness.default_scenarios),
     )
     LOGGER.debug(
         "option detail build for %s took %.3fs (request-time scenario compute "

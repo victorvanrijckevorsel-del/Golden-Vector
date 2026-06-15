@@ -142,6 +142,96 @@ def test_scorecard_page_renders_verdicts_and_caveats(tmp_path):
     assert ">Scorecard</a>" in html  # nav tab
 
 
+def test_scorecard_reader_resolves_run_stamped_via_meta_not_torn_latest(tmp_path):
+    """Spine audit: the reader resolves the table through meta['run_stamped_artifact']
+    (the atomic pointer), so a torn mutable latest alias from a half-finished
+    re-publish is ignored and the coherent run-stamped table is served."""
+    import pandas as pd
+
+    from golden_vector.lab.scorecard import (
+        SCORECARD_META_FILENAME,
+        SCORECARD_SCHEMA_VERSION,
+        SCORECARD_TABLE_FILENAME,
+    )
+    from golden_vector.serve.scorecard_data import load_scorecard_data
+
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    good = [
+        {"signal_id": "validation_e1b", "claim": "Tool A predicts forward beta",
+         "verdict": "SUPPORTED (exploratory)", "kind": "backtest", "n_folds": 44,
+         "mean_ic": 0.48, "nw_t": 18.3, "share_folds_directional": 1.0,
+         "tercile_spread_mean": 1.11, "tercile_spread_t": 11.3, "median_ceiling": 0.28,
+         "fold_ic_autocorr": 0.2, "baseline_lines": json.dumps([]),
+         "gate_results": json.dumps({}), "variant_hash": "abc", "caveat": "survivor-only"},
+    ]
+    stamped_name = "scorecard_20260101T000000Z.parquet"
+    pd.DataFrame(good).to_parquet(lab / stamped_name, index=False)  # immutable run-stamped
+    (lab / SCORECARD_META_FILENAME).write_text(json.dumps({
+        "schema_version": SCORECARD_SCHEMA_VERSION,
+        "run_stamped_artifact": stamped_name,
+        "built_at_utc": "2026-06-15T00:00:00+00:00",
+    }))
+    # The mutable latest alias is torn (half-written rebuild) — it must NOT be read.
+    (lab / SCORECARD_TABLE_FILENAME).write_bytes(b"torn half-written rebuild, not parquet")
+
+    class FakePaths:
+        data_dir = tmp_path
+
+    data = load_scorecard_data(FakePaths())  # type: ignore[arg-type]
+    assert data.available  # served the coherent run-stamped table via meta, not the torn alias
+    assert data.error_status is None
+    assert len(data.backtest_rows) == 1
+
+
+def test_scorecard_reader_follows_meta_over_a_valid_but_stale_latest_alias(tmp_path):
+    """Stronger than the torn-alias test: when BOTH a valid run-stamped file AND a
+    valid-but-DIFFERENT latest alias exist, the reader must FOLLOW meta to the
+    run-stamped file — proving it resolves through the pointer, not merely 'skips a
+    corrupt alias'."""
+    import pandas as pd
+
+    from golden_vector.lab.scorecard import (
+        SCORECARD_META_FILENAME,
+        SCORECARD_SCHEMA_VERSION,
+        SCORECARD_TABLE_FILENAME,
+    )
+    from golden_vector.serve.scorecard_data import load_scorecard_data
+
+    def _row(signal_id, claim):
+        return {
+            "signal_id": signal_id, "claim": claim, "verdict": "SUPPORTED", "kind": "backtest",
+            "n_folds": 44, "mean_ic": 0.48, "nw_t": 18.3, "share_folds_directional": 1.0,
+            "tercile_spread_mean": 1.11, "tercile_spread_t": 11.3, "median_ceiling": 0.28,
+            "fold_ic_autocorr": 0.2, "baseline_lines": json.dumps([]),
+            "gate_results": json.dumps({}), "variant_hash": "abc", "caveat": "survivor-only",
+        }
+
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    stamped_name = "scorecard_20260101T000000Z.parquet"
+    pd.DataFrame([_row("current_signal", "CURRENT run-stamped claim")]).to_parquet(
+        lab / stamped_name, index=False
+    )
+    # A VALID but STALE latest alias with DIFFERENT content (not garbage).
+    pd.DataFrame([_row("stale_signal", "STALE latest-alias claim")]).to_parquet(
+        lab / SCORECARD_TABLE_FILENAME, index=False
+    )
+    (lab / SCORECARD_META_FILENAME).write_text(json.dumps({
+        "schema_version": SCORECARD_SCHEMA_VERSION,
+        "run_stamped_artifact": stamped_name,
+    }))
+
+    class FakePaths:
+        data_dir = tmp_path
+
+    data = load_scorecard_data(FakePaths())  # type: ignore[arg-type]
+    assert data.available
+    # Followed meta -> run-stamped, NOT the valid-but-stale latest alias.
+    assert data.backtest_rows[0]["signal_id"] == "current_signal"
+    assert data.backtest_rows[0]["claim"] == "CURRENT run-stamped claim"
+
+
 def test_scorecard_page_formats_nan_diagnostics_as_blank(tmp_path):
     import pandas as pd
 

@@ -568,7 +568,6 @@ class ToolCConfig(StrictConfigModel):
     min_events: int = 8
     regime_rolling_weeks: int = 156
     regime_min_weeks: int = 52
-    rolling_volatility_weeks: int = 52
     downside_hit_rate_threshold_pct: float = -10.0
     upside_hit_rate_threshold_pct: float = 10.0
 
@@ -576,7 +575,6 @@ class ToolCConfig(StrictConfigModel):
         "min_events",
         "regime_rolling_weeks",
         "regime_min_weeks",
-        "rolling_volatility_weeks",
     )
     @classmethod
     def positive_ints(cls, value: int) -> int:

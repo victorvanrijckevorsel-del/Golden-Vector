@@ -15,7 +15,7 @@ from golden_vector.hedge.candidate_puts import (
     OptionCandidate,
     OptionCandidateSlot,
 )
-from golden_vector.features.options_chain import as_int
+from golden_vector.common.numeric import optional_int as as_int
 from golden_vector.hedge._helpers import as_float
 from golden_vector.hedge.option_artifact_builder import OptionArtifactBuildResult
 from golden_vector.hedge.option_availability import has_usable_option_slots
