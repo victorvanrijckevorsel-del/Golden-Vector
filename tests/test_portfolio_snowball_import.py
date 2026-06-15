@@ -64,8 +64,10 @@ def test_snowball_dry_run_maps_symbols_and_blocks_currency_gaps(tmp_path):
     assert rows["EDVl"].mapping_method == "lowercase_l_suffix"
     assert rows["EDVl"].import_status == "IMPORT_READY"
     assert rows["AAR"].mapped_ticker == "AAR.AX"
-    assert "currency_model_gap" in rows["AAR"].issues
-    assert rows["AAR"].import_status == "BLOCKED"
+    # v2: GBP cost on an AUD-quoted ticker is representable (cost currency differs
+    # from quote, but both are supported), so it is import-ready, not blocked.
+    assert "currency_model_gap" not in rows["AAR"].issues
+    assert rows["AAR"].import_status == "IMPORT_READY"
     assert rows["SBI"].mapped_ticker == "SRB.L"
     assert "manual_alias_review" in rows["SBI"].issues
     assert rows["SBI"].import_status == "REVIEW"
@@ -107,15 +109,29 @@ def test_snowball_candidate_payloads_only_include_current_schema_safe_rows(tmp_p
 
     payloads = candidate_manual_lot_payloads(dry_run)
 
+    # v2 payloads: cost_basis_total + cost_currency + provenance, no fabricated
+    # buy date/price. AAR (GBP cost on AUD quote) is now import-ready too.
     assert payloads == [
         {
             "ticker": "EDV.L",
             "shares": 2.0,
-            "buy_price": 25.0,
-            "buy_currency": "GBP",
-            "buy_date": "2026-06-15",
+            "cost_basis_total": 50.0,
+            "cost_currency": "GBP",
+            "raw_broker_symbol": "EDVl",
+            "source_name": "snowball",
+            "source_file": "Snowball Holdings.csv",
             "note": "Snowball dry-run import from EDVl",
-        }
+        },
+        {
+            "ticker": "AAR.AX",
+            "shares": 100.0,
+            "cost_basis_total": 20.0,
+            "cost_currency": "GBP",
+            "raw_broker_symbol": "AAR",
+            "source_name": "snowball",
+            "source_file": "Snowball Holdings.csv",
+            "note": "Snowball dry-run import from AAR",
+        },
     ]
 
 
@@ -143,8 +159,8 @@ def test_snowball_report_states_no_store_change_and_currency_model_gap(tmp_path)
     report = render_snowball_dry_run_report(dry_run)
 
     assert "This report is read-only. No portfolio store was changed." in report
-    assert "currency_model_gap" in report
-    assert "cost-currency/base-currency model" in report
+    assert "cost_currency" in report                # v2 finding describes the cost currency
+    assert "currency_model_gap" not in report       # no longer a blocking gap
 
 
 def _paths(tmp_path: Path) -> ProjectPaths:

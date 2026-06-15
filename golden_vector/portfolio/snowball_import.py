@@ -8,6 +8,7 @@ what would be safe or unsafe to import. It does not overwrite manual_lots.json.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.common.numeric import optional_float
 from golden_vector.common.strings import clean_string, normalize_ticker
 from golden_vector.portfolio.manual_store import load_lots
-from golden_vector.portfolio.models import TickerInfo
+from golden_vector.portfolio.models import ALLOWED_PORTFOLIO_CURRENCIES, TickerInfo
 
 REQUIRED_SNOWBALL_COLUMNS = (
     "Holding",
@@ -154,12 +155,12 @@ def render_snowball_dry_run_report(dry_run: SnowballDryRun) -> str:
         "## Key Safety Finding",
         "",
         (
-            "Snowball's `Currency` column is GBP for every row. For non-GBP "
-            "listings, this appears to be broker/base cost basis rather than the "
-            "security's quote currency. The current `manual_lots.json` schema "
-            "stores only one `buy_currency` and requires it to match the ticker's "
-            "configured quote currency, so those rows cannot be safely written "
-            "without adding a separate cost-currency/base-currency model."
+            "Snowball's `Currency` column is the COST currency (GBP here). Schema v2 "
+            "stores `cost_currency` separately from the ticker's quote currency and "
+            "converts the cost leg via its own FX, so a GBP cost basis on an "
+            "AUD/CAD-quoted ticker is now representable. A row is import-ready unless "
+            "the cost currency is unsupported, the ticker is unmapped/inactive, or "
+            "the company name does not match the mapped ticker (flagged for review)."
         ),
         "",
         "## Parsed Holdings",
@@ -214,11 +215,11 @@ def render_snowball_dry_run_report(dry_run: SnowballDryRun) -> str:
             "## Recommended Next Step",
             "",
             (
-                "Do not overwrite `manual_lots.json` yet. First decide whether the "
-                "portfolio store should be upgraded to store `cost_currency` "
-                "separately from quote currency. Once that exists, Snowball can "
-                "become the source of truth for current positions and HL can stay "
-                "as an audit/history source."
+                "Schema v2 (cost currency separate from quote currency) is in place. "
+                "This is still a read-only dry run — `manual_lots.json` was not "
+                "changed. The next step is the atomic full-replacement writer that "
+                "loads the import-ready rows after a human-approved diff; HL stays "
+                "as the transaction/history source."
             ),
             "",
         ]
@@ -236,9 +237,13 @@ def candidate_manual_lot_payloads(dry_run: SnowballDryRun) -> list[dict[str, obj
             {
                 "ticker": row.mapped_ticker,
                 "shares": row.shares,
-                "buy_price": row.cost_per_share_source_currency,
-                "buy_currency": row.source_currency,
-                "buy_date": "2026-06-15",
+                "cost_basis_total": row.cost_basis,
+                "cost_currency": row.source_currency,
+                "raw_broker_symbol": row.raw_symbol,
+                "source_name": "snowball",
+                "source_file": dry_run.source_path.name,
+                # cost_basis_as_of_date is set by the writer from the real export
+                # date — no fabricated buy date here.
                 "note": f"Snowball dry-run import from {row.raw_symbol}",
             }
         )
@@ -290,8 +295,14 @@ def _parse_snowball_frame(
             issues.append("unmapped_ticker")
         elif info is None or not info.active:
             issues.append("inactive_or_missing_universe_ticker")
-        elif currency != configured_currency:
-            issues.append("currency_model_gap")
+        # Snowball's Currency is the COST currency, which may legitimately differ
+        # from the ticker's quote currency (schema v2 converts cost via its own
+        # FX). So a cost!=quote gap is no longer a block — only an unsupported
+        # cost currency is.
+        if currency and currency not in ALLOWED_PORTFOLIO_CURRENCIES:
+            issues.append("unsupported_cost_currency")
+        if mapped_ticker is not None and info is not None and not _names_match(name, info.company):
+            issues.append("name_mismatch_review")
         if mapping_method == "manual_alias":
             issues.append("manual_alias_review")
         status = _import_status(issues)
@@ -380,6 +391,34 @@ def _with_duplicate_mapping_issues(
     return tuple(updated)
 
 
+_CORP_SUFFIX_TOKENS = {
+    "plc", "ltd", "limited", "inc", "incorporated", "corp", "corporation",
+    "nl", "sa", "ag", "co", "company", "group", "holdings", "the",
+}
+
+
+def _name_tokens(text: object) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", str(text or "").lower())
+        if len(token) >= 4 and token not in _CORP_SUFFIX_TOKENS
+    }
+
+
+def _names_match(snowball_name: object, universe_company: object) -> bool:
+    """Loose company-name agreement: a shared significant token (>=4 chars,
+    excluding legal-form words). Returns True when there is nothing to compare
+    against, so a missing universe company name never blocks a valid mapping."""
+
+    if not universe_company:
+        return True
+    snowball_tokens = _name_tokens(snowball_name)
+    company_tokens = _name_tokens(universe_company)
+    if not snowball_tokens or not company_tokens:
+        return True
+    return bool(snowball_tokens & company_tokens)
+
+
 def _import_status(issues: list[str]) -> str:
     blocking = {
         "missing_symbol",
@@ -388,11 +427,12 @@ def _import_status(issues: list[str]) -> str:
         "invalid_cost_basis",
         "unmapped_ticker",
         "inactive_or_missing_universe_ticker",
-        "currency_model_gap",
+        "unsupported_cost_currency",
     }
     review = {
         "manual_alias_review",
         "multiple_source_rows_same_ticker",
+        "name_mismatch_review",
     }
     issue_set = set(issues)
     if issue_set & blocking:
