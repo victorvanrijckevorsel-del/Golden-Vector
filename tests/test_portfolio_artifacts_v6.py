@@ -147,3 +147,28 @@ def test_combined_status_drops_ok_when_degraded():
     combined = _combined_status([ok, bad])
     assert "OK" not in combined.split("; ")
     assert "MISSING_COST_FX" in combined
+
+
+# ---- money-audit fixes -------------------------------------------------------
+
+
+def test_nan_cost_basis_does_not_fabricate_aggregate_gain():
+    ok = _val(id="a", buy_currency="AUD", cost_currency="AUD", cost_basis_total=100.0)
+    bad = _val(id="b", buy_currency="AUD", cost_currency="AUD", cost_basis_total=float("nan"))
+    assert bad.cost_usd_at_current_fx is None and "INVALID_COST_BASIS" in bad.status
+
+    pos = _positions_frame([ok, bad], **_META).iloc[0]
+    assert pd.isna(pos["cost_usd_at_current_fx"])
+    assert pd.isna(pos["pnl_usd_at_current_fx"])      # no fabricated gain from a dropped NaN cost
+
+    summary = _summary_frame([ok, bad], _positions_frame([ok, bad], **_META), **_META).iloc[0]
+    assert pd.isna(summary["total_pnl_usd_at_current_fx"])
+
+
+def test_mixed_cost_currency_position_nulls_local_cost():
+    gbp = _val(id="a", buy_currency="AUD", cost_currency="GBP", cost_basis_total=100.0)
+    aud = _val(id="b", buy_currency="AUD", cost_currency="AUD", cost_basis_total=100.0)
+    pos = _positions_frame([gbp, aud], **_META).iloc[0]
+    assert pos["cost_currency"] == "MIXED"
+    assert pd.isna(pos["cost_local"])                 # never sum GBP + AUD cost
+    assert pd.isna(pos["avg_cost_local"])

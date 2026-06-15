@@ -115,6 +115,26 @@ def test_missing_cost_fx_degrades_line():
     assert line.value_usd == pytest.approx(198.0)   # value leg still valid
 
 
+def test_stale_cost_fx_degrades_line():
+    # GBP cost history's latest bar is ~40 days before the snapshot (max 5) -> stale.
+    stale_gbp = {
+        "GBP": pd.DataFrame(
+            [{"base_currency": "GBP", "date": date(2026, 4, 26), "fx_rate_to_usd": 1.27, "source_symbol": "GBPUSD=X"}]
+        )
+    }
+    lot = _lot(buy_currency="AUD", cost_currency="GBP", cost_basis_total=136.0)
+    line = _value_lot(
+        lot,
+        ticker_info=_INFO,
+        snapshot=_snapshot(currency="AUD", price=0.30, fx=0.66),
+        max_fx_staleness_days=5,
+        fx_histories=stale_gbp,
+    )
+    assert line.cost_usd_at_current_fx is None        # stale cost FX excluded, not used
+    assert "MISSING_COST_FX" in line.status
+    assert line.value_usd is not None                 # value leg stays valid
+
+
 def test_missing_gbp_presentation_fx_does_not_degrade_usd():
     lot = _lot(buy_currency="AUD", cost_currency="AUD", cost_basis_total=200.0)
     line = _value_lot(

@@ -87,7 +87,7 @@ class LineValuation:
     snapshot_date: str | None
     value_local: float | None
     value_usd: float | None
-    cost_local: float
+    cost_local: float | None
     cost_usd_at_current_fx: float | None
     pnl_local: float | None
     pnl_fraction_local: float | None

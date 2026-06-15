@@ -163,6 +163,30 @@ def test_snowball_report_states_no_store_change_and_currency_model_gap(tmp_path)
     assert "currency_model_gap" not in report       # no longer a blocking gap
 
 
+def test_snowball_blocks_non_finite_shares_and_cost(tmp_path):
+    paths = _paths(tmp_path)
+    source = paths.manual_portfolio_dir / "Snowball Holdings.csv"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {"Holding": "EDVl", "Holdings' name": "Endeavour Mining PLC", "Shares": "inf", "Currency": "GBP", "Cost basis": "100"},
+            {"Holding": "PAFl", "Holdings' name": "Pan African Resources PLC", "Shares": "10", "Currency": "GBP", "Cost basis": "Infinity"},
+        ]
+    ).to_csv(source, index=False)
+    dry_run = build_snowball_dry_run(
+        paths=paths,
+        source_path=source,
+        ticker_info={
+            "EDV.L": TickerInfo(ticker="EDV.L", currency="GBP"),
+            "PAF.L": TickerInfo(ticker="PAF.L", currency="GBP"),
+        },
+    )
+    rows = {row.raw_symbol: row for row in dry_run.holdings}
+    assert rows["EDVl"].import_status == "BLOCKED" and "invalid_shares" in rows["EDVl"].issues
+    assert rows["PAFl"].import_status == "BLOCKED" and "invalid_cost_basis" in rows["PAFl"].issues
+    assert candidate_manual_lot_payloads(dry_run) == []   # poison rows never reach payloads
+
+
 def _paths(tmp_path: Path) -> ProjectPaths:
     return ProjectPaths(
         repo_root=tmp_path,

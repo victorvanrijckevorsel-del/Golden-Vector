@@ -176,11 +176,6 @@ def _parse_lot(item: object, *, index: int, store_version: int) -> PortfolioLot:
     else:
         # v2 is strict — never silently backfill money fields from legacy values.
         cost_currency = _clean_currency(item.get("cost_currency"))
-        if cost_currency not in ALLOWED_PORTFOLIO_CURRENCIES:
-            supported = ", ".join(ALLOWED_PORTFOLIO_CURRENCIES)
-            raise PortfolioValidationError(
-                f"Portfolio lot #{index}: cost_currency must be one of: {supported}."
-            )
         cost_basis_total = _stored_positive_float(
             item.get("cost_basis_total"), field=f"lot #{index} cost_basis_total"
         )
@@ -192,6 +187,15 @@ def _parse_lot(item: object, *, index: int, store_version: int) -> PortfolioLot:
         )
         source_file = clean_string(item.get("source_file"))
         cost_basis_as_of_date = _parse_buy_date(item.get("cost_basis_as_of_date"))
+
+    # cost_currency must be supported on BOTH paths: a v1 lot whose buy_currency
+    # is blank/unsupported must fail loud on first read, never migrate into an
+    # unreadable v2 record that bricks the whole store on the next save.
+    if cost_currency not in ALLOWED_PORTFOLIO_CURRENCIES:
+        supported = ", ".join(ALLOWED_PORTFOLIO_CURRENCIES)
+        raise PortfolioValidationError(
+            f"Portfolio lot #{index}: cost_currency must be one of: {supported}."
+        )
 
     return PortfolioLot(
         id=_clean_lot_id(item.get("id")),

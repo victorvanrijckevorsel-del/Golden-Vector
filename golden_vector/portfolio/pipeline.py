@@ -22,7 +22,7 @@ from golden_vector.app.model_state import (
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.common.files import optional_sha256_file
 from golden_vector.common.frames import latest_records_by_key
-from golden_vector.common.numeric import optional_float, sum_optional_floats
+from golden_vector.common.numeric import optional_finite_float, optional_float, sum_optional_floats
 from golden_vector.common.parquet import read_optional_parquet
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.portfolio.analytics import (
@@ -480,31 +480,43 @@ def _value_lot(
     snapshot_minor_adjusted = bool(snapshot.get("minor_unit_adjusted") or False)
     quote_currency = lot.buy_currency
     cost_currency = (lot.cost_currency or lot.buy_currency).strip().upper()
-    cost_basis = lot.cost_basis_total if lot.cost_basis_total is not None else lot.cost_local
+    # optional_finite_float -> None for NaN/inf so a non-finite stored cost can
+    # never reach the aggregates as a partial-cost fake gain.
+    cost_basis = optional_finite_float(
+        lot.cost_basis_total if lot.cost_basis_total is not None else lot.cost_local
+    )
     snapshot_date = _optional_string(snapshot.get("snapshot_date"))
     histories = fx_histories or {}
     fx_issues: list[str] = []
 
     # Cost -> USD via the COST currency's FX (not the quote FX). Same currency as
-    # the quote leg reuses the snapshot rate; USD is 1.0; otherwise look it up.
+    # the quote leg reuses the snapshot rate; USD is 1.0; otherwise look it up,
+    # bounded by max_fx_staleness_days so a stale-but-present rate degrades.
     if cost_currency == quote_currency:
         cost_fx = fx_rate
     elif cost_currency == "USD":
         cost_fx = 1.0
     else:
-        cost_fx = fx_rate_to_usd_asof(histories.get(cost_currency), snapshot_date)
-    if cost_fx is None or cost_fx <= 0:
+        cost_fx = fx_rate_to_usd_asof(
+            histories.get(cost_currency), snapshot_date, max_staleness_days=max_fx_staleness_days
+        )
+    if cost_basis is None:
+        cost_usd = None
+        fx_issues.append("cost_basis")
+        status_parts.append("INVALID_COST_BASIS")
+        reasons.append("Cost basis is missing or not a finite number.")
+    elif cost_fx is None or cost_fx <= 0:
         cost_usd = None
         fx_issues.append("cost_fx")
         status_parts.append("MISSING_COST_FX")
-        reasons.append(f"Cost-currency FX ({cost_currency}) is unavailable.")
+        reasons.append(f"Cost-currency FX ({cost_currency}) is unavailable or stale.")
     else:
         cost_usd = cost_basis * cost_fx
 
-    # Local P&L is only meaningful when cost and quote currencies match. Use the
-    # canonical cost_basis (cost_basis_total when present), not the legacy
-    # shares*buy_price, so local/USD/GBP cost stay internally consistent.
-    if cost_currency == quote_currency:
+    # Local P&L is only meaningful when cost and quote currencies match and the
+    # cost basis is finite. Use the canonical cost_basis (cost_basis_total when
+    # present), not the legacy shares*buy_price.
+    if cost_currency == quote_currency and cost_basis is not None:
         pnl_local = valued.market_value_local - cost_basis
         pnl_pct = pnl_local / cost_basis if cost_basis > 0 else None
     else:
@@ -519,7 +531,9 @@ def _value_lot(
     elif cost_currency == "GBP" and cost_fx:
         gbp_to_usd = cost_fx
     else:
-        gbp_to_usd = fx_rate_to_usd_asof(histories.get("GBP"), snapshot_date)
+        gbp_to_usd = fx_rate_to_usd_asof(
+            histories.get("GBP"), snapshot_date, max_staleness_days=max_fx_staleness_days
+        )
     if gbp_to_usd and gbp_to_usd > 0:
         value_gbp = valued.market_value_usd / gbp_to_usd
         cost_gbp = (cost_usd / gbp_to_usd) if cost_usd is not None else None
@@ -602,7 +616,9 @@ def _missing_value(
         snapshot_date=None,
         value_local=None,
         value_usd=None,
-        cost_local=(lot.cost_basis_total if lot.cost_basis_total is not None else lot.cost_local),
+        cost_local=optional_finite_float(
+            lot.cost_basis_total if lot.cost_basis_total is not None else lot.cost_local
+        ),
         cost_usd_at_current_fx=None,
         pnl_local=None,
         pnl_fraction_local=None,
@@ -688,9 +704,15 @@ def _positions_frame(
     rows: list[dict[str, object]] = []
     for ticker, values in sorted(grouped.items()):
         total_shares = sum(value.lot.shares for value in values)
-        cost_local = sum(value.cost_local for value in values)
         value_local = sum_optional_floats(value.value_local for value in values)
         value_usd = sum_optional_floats(value.value_usd for value in values)
+        first = values[0]
+        quote_ccy = first.lot.buy_currency
+        cost_ccys = {
+            (value.lot.cost_currency or value.lot.buy_currency).strip().upper() for value in values
+        }
+        cost_ccy_label = next(iter(cost_ccys)) if len(cost_ccys) == 1 else "MIXED"
+        same_ccy = cost_ccys == {quote_ccy.strip().upper()}
         # All-or-null: a partial cost beside a full value would look like a fake
         # gain, and a partial P&L is meaningless — so any missing leg nulls the
         # aggregate rather than summing the resolvable subset.
@@ -711,19 +733,20 @@ def _positions_frame(
             if gbp_complete
             else None
         )
-        first = values[0]
-        quote_ccy = first.lot.buy_currency
-        cost_ccys = {
-            (value.lot.cost_currency or value.lot.buy_currency).strip().upper() for value in values
-        }
-        cost_ccy_label = next(iter(cost_ccys)) if len(cost_ccys) == 1 else "MIXED"
-        same_ccy = cost_ccys == {quote_ccy.strip().upper()}
-        if same_ccy and value_complete:
+        # Local cost is one well-defined currency only when every lot's cost ccy
+        # equals the quote ccy AND each local cost is finite; otherwise NA (never
+        # sum unlike currencies). The USD/GBP legs carry cross-currency cost.
+        cost_local_ok = same_ccy and all(value.cost_local is not None for value in values)
+        cost_local = sum(value.cost_local for value in values) if cost_local_ok else None
+        avg_cost_local = (
+            cost_local / total_shares if cost_local is not None and total_shares > 0 else None
+        )
+        if cost_local is not None and value_complete:
             pnl_local = value_local - cost_local if value_local is not None else None
             pnl_pct = pnl_local / cost_local if pnl_local is not None and cost_local > 0 else None
         else:
-            # Cost currency differs/mixed, or some lot is unvalued: local P&L is
-            # not meaningful — USD/GBP P&L carry it instead.
+            # Cost currency differs/mixed/non-finite, or some lot is unvalued:
+            # local P&L is not meaningful — USD/GBP P&L carry it instead.
             pnl_local = None
             pnl_pct = None
         pnl_usd = (
@@ -747,7 +770,7 @@ def _positions_frame(
             "company": first.company,
             "currency": first.lot.buy_currency,
             "total_shares": total_shares,
-            "avg_cost_local": cost_local / total_shares if total_shares > 0 else None,
+            "avg_cost_local": avg_cost_local,
             "cost_local": cost_local,
             "current_price_local": first.current_price_local,
             "current_price_usd": first.current_price_usd,

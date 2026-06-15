@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
-from golden_vector.common.numeric import optional_float
+from golden_vector.common.numeric import optional_finite_float
 from golden_vector.common.strings import clean_string, normalize_ticker
 from golden_vector.portfolio.manual_store import load_lots
 from golden_vector.portfolio.models import ALLOWED_PORTFOLIO_CURRENCIES, TickerInfo
@@ -272,9 +272,9 @@ def _parse_snowball_frame(
     for raw in frame.to_dict(orient="records"):
         raw_symbol = clean_string(raw.get("Holding"))
         name = clean_string(raw.get("Holdings' name"))
-        shares = optional_float(raw.get("Shares"))
+        shares = optional_finite_float(raw.get("Shares"))
         currency = (clean_string(raw.get("Currency")) or "").upper()
-        cost_basis = optional_float(raw.get("Cost basis"))
+        cost_basis = optional_finite_float(raw.get("Cost basis"))
         if not raw_symbol and not name and shares is None and cost_basis is None:
             continue
         issues: list[str] = []

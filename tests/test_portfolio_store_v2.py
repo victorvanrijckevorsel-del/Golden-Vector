@@ -146,3 +146,12 @@ def test_edit_lot_blocks_imported_distinct_cost_lot_and_preserves_it(tmp_path):
     on_disk = json.loads(paths.manual_portfolio_lots_path.read_text())
     assert on_disk["lots"][0]["cost_currency"] == "GBP"
     assert on_disk["lots"][0]["source_name"] == "snowball"
+
+
+def test_v1_lot_with_unsupported_currency_fails_loud_not_bricks(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_store(paths, {"schema_version": 1, "lots": [{**_V1_LOT, "buy_currency": "XYZ"}]})
+    # Must fail loud on first read (clear error), never silently migrate into an
+    # unreadable v2 record that bricks the whole store on the next save.
+    with pytest.raises(PortfolioValidationError, match="cost_currency must be one of"):
+        load_lots(paths)

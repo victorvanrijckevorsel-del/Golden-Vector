@@ -57,12 +57,19 @@ def build_fx_lookup(frame: pd.DataFrame) -> pd.DataFrame:
     return lookup.reset_index(drop=True)
 
 
-def fx_rate_to_usd_asof(fx_history: pd.DataFrame | None, as_of: object) -> float | None:
+def fx_rate_to_usd_asof(
+    fx_history: pd.DataFrame | None,
+    as_of: object,
+    *,
+    max_staleness_days: float | None = None,
+) -> float | None:
     """Resolve one currency's ``->USD`` rate as of a date (backward, like
     ``merge_fx_asof``): the latest row on or before ``as_of``.
 
-    Returns None when the history is empty, unparseable, or has no row on/before
-    the date, or the rate is non-positive/non-finite. USD has no FX history by
+    Returns None when the history is empty, unparseable, has no row on/before the
+    date, the rate is non-positive/non-finite, OR (when ``max_staleness_days`` is
+    given) the chosen row is older than that bound — so a stale-but-present rate
+    degrades instead of silently valuing the cost leg. USD has no FX history by
     construction, so the caller must treat USD as rate 1.0 before calling this.
     """
 
@@ -77,9 +84,13 @@ def fx_rate_to_usd_asof(fx_history: pd.DataFrame | None, as_of: object) -> float
     eligible = lookup[lookup["fx_source_date"] <= target]
     if eligible.empty:
         return None
-    raw = eligible.sort_values("fx_source_date").iloc[-1]["fx_rate_to_usd"]
+    chosen = eligible.sort_values("fx_source_date").iloc[-1]
+    if max_staleness_days is not None:
+        age_days = (target - chosen["fx_source_date"]).days
+        if age_days > max_staleness_days:
+            return None
     try:
-        rate = float(raw)
+        rate = float(chosen["fx_rate_to_usd"])
     except (TypeError, ValueError):
         return None
     return rate if math.isfinite(rate) and rate > 0 else None
