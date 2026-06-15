@@ -463,9 +463,10 @@ def _value_lot(
     fx_staleness_days = optional_float(snapshot.get("fx_staleness_days"))
     status_parts: list[str] = []
     reasons: list[str] = []
-    if fx_staleness_days is not None and fx_staleness_days > max_fx_staleness_days:
+    quote_fx_stale = fx_staleness_days is not None and fx_staleness_days > max_fx_staleness_days
+    if quote_fx_stale:
         status_parts.append("STALE_FX")
-        reasons.append(f"FX source is {fx_staleness_days:g} days old.")
+        reasons.append(f"Quote FX source is {fx_staleness_days:g} days old.")
     if snapshot_status != "OK":
         status_parts.append(snapshot_status)
         reasons.append(f"Snapshot status is {snapshot_status}.")
@@ -489,10 +490,17 @@ def _value_lot(
     snapshot_date = _optional_string(snapshot.get("snapshot_date"))
     histories = fx_histories or {}
     fx_issues: list[str] = []
+    # Stale quote FX -> exclude USD/GBP value & P&L (degraded data is excluded, not
+    # flag-only); local figures stay. A distinct cost-currency FX is unaffected.
+    # USD lines never apply quote FX (rate is 1.0), so a stale quote-FX marker does
+    # NOT corrupt their USD value -- only NON-USD lines must exclude the USD/GBP legs.
+    quote_fx_excludes_value = quote_fx_stale and quote_currency != "USD"
+    value_usd = None if quote_fx_excludes_value else valued.market_value_usd
+    current_price_usd = None if quote_fx_excludes_value else valued.price_local_major * fx_rate
 
     # Cost -> USD via the COST currency's FX (not the quote FX). Same currency as
-    # the quote leg reuses the snapshot rate; USD is 1.0; otherwise look it up,
-    # bounded by max_fx_staleness_days so a stale-but-present rate degrades.
+    # the quote leg reuses the snapshot rate (null when that quote FX is stale);
+    # USD is 1.0; otherwise look it up, bounded by max_fx_staleness_days.
     if cost_currency == quote_currency:
         cost_fx = fx_rate
     elif cost_currency == "USD":
@@ -506,6 +514,10 @@ def _value_lot(
         fx_issues.append("cost_basis")
         status_parts.append("INVALID_COST_BASIS")
         reasons.append("Cost basis is missing or not a finite number.")
+    elif quote_fx_excludes_value and cost_currency == quote_currency:
+        # Same-currency cost uses the (stale) quote FX; STALE_FX already flags it,
+        # so exclude cost_usd without a redundant MISSING_COST_FX.
+        cost_usd = None
     elif cost_fx is None or cost_fx <= 0:
         cost_usd = None
         fx_issues.append("cost_fx")
@@ -524,11 +536,11 @@ def _value_lot(
         pnl_local = None
         pnl_pct = None
 
-    pnl_usd = (valued.market_value_usd - cost_usd) if cost_usd is not None else None
+    pnl_usd = (value_usd - cost_usd) if (value_usd is not None and cost_usd is not None) else None
 
     # GBP presentation (backend-computed): value_gbp = value_usd / GBPUSD.
     if quote_currency == "GBP":
-        gbp_to_usd = fx_rate
+        gbp_to_usd = None if quote_fx_excludes_value else fx_rate
     elif cost_currency == "GBP" and cost_fx:
         gbp_to_usd = cost_fx
     else:
@@ -536,9 +548,9 @@ def _value_lot(
             histories.get("GBP"), snapshot_date, max_staleness_days=max_fx_staleness_days
         )
     if gbp_to_usd and gbp_to_usd > 0:
-        value_gbp = valued.market_value_usd / gbp_to_usd
+        value_gbp = (value_usd / gbp_to_usd) if value_usd is not None else None
         cost_gbp = (cost_usd / gbp_to_usd) if cost_usd is not None else None
-        pnl_gbp = (value_gbp - cost_gbp) if cost_gbp is not None else None
+        pnl_gbp = (value_gbp - cost_gbp) if (value_gbp is not None and cost_gbp is not None) else None
     else:
         value_gbp = None
         cost_gbp = None
@@ -551,11 +563,11 @@ def _value_lot(
         lot=lot,
         company=company,
         current_price_local=valued.price_local_major,
-        current_price_usd=valued.price_local_major * fx_rate,
+        current_price_usd=current_price_usd,
         fx_rate_to_usd=fx_rate,
         snapshot_date=snapshot_date,
         value_local=valued.market_value_local,
-        value_usd=valued.market_value_usd,
+        value_usd=value_usd,
         cost_local=cost_basis,
         cost_usd_at_current_fx=cost_usd,
         pnl_local=pnl_local,

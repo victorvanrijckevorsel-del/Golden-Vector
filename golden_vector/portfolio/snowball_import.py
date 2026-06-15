@@ -122,8 +122,18 @@ def write_snowball_dry_run_report(
     dry_run: SnowballDryRun,
     report_path: Path,
 ) -> Path:
-    """Write a private Markdown dry-run report for cross-checking."""
+    """Write a private Markdown dry-run report for cross-checking.
 
+    Refuses to write to the portfolio store or any JSON path — the report is
+    read-only Markdown and must never overwrite manual_lots.json, even by a typo'd
+    --report argument.
+    """
+
+    if report_path.name == "manual_lots.json" or report_path.suffix.lower() == ".json":
+        raise ValueError(
+            f"Refusing to write the dry-run report to a store/JSON path: {report_path}. "
+            "The report is read-only Markdown; it must never overwrite the portfolio store."
+        )
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(render_snowball_dry_run_report(dry_run), encoding="utf-8")
     return report_path

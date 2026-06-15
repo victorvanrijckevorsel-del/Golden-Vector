@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.portfolio.models import TickerInfo
@@ -8,7 +9,28 @@ from golden_vector.portfolio.snowball_import import (
     build_snowball_dry_run,
     candidate_manual_lot_payloads,
     render_snowball_dry_run_report,
+    write_snowball_dry_run_report,
 )
+
+
+def test_write_report_refuses_to_overwrite_the_store(tmp_path):
+    paths = _paths(tmp_path)
+    store = paths.manual_portfolio_lots_path
+    store.parent.mkdir(parents=True, exist_ok=True)
+    store.write_text('{"schema_version": 2, "lots": []}', encoding="utf-8")
+    before = store.read_bytes()
+    source = paths.manual_portfolio_dir / "Snowball Holdings.csv"
+    pd.DataFrame(
+        [{"Holding": "EDVl", "Holdings' name": "Endeavour Mining PLC", "Shares": "1", "Currency": "GBP", "Cost basis": "10"}]
+    ).to_csv(source, index=False)
+    dry_run = build_snowball_dry_run(
+        paths=paths, source_path=source, ticker_info={"EDV.L": TickerInfo(ticker="EDV.L", currency="GBP")}
+    )
+
+    with pytest.raises(ValueError, match="Refusing to write"):
+        write_snowball_dry_run_report(dry_run, store)
+
+    assert store.read_bytes() == before   # store byte-identical, never overwritten
 
 
 def test_snowball_dry_run_maps_symbols_and_blocks_currency_gaps(tmp_path):

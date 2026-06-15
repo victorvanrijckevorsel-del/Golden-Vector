@@ -115,6 +115,26 @@ def test_missing_cost_fx_degrades_line():
     assert line.value_usd == pytest.approx(198.0)   # value leg still valid
 
 
+def test_stale_quote_fx_excludes_usd_and_gbp_pnl():
+    # A non-USD line whose QUOTE FX is stale must exclude USD/GBP value & P&L,
+    # not just flag it — local figures remain.
+    snap = _snapshot(currency="AUD", price=3.0, fx=0.66)
+    snap["fx_staleness_days"] = 40.0  # > max 5
+    line = _value_lot(
+        _lot(buy_currency="AUD", cost_currency="AUD", cost_basis_total=200.0),
+        ticker_info=_INFO,
+        snapshot=snap,
+        max_fx_staleness_days=5,
+        fx_histories={"GBP": _fx("GBP", 1.27)},
+    )
+    assert "STALE_FX" in line.status
+    assert line.value_usd is None
+    assert line.cost_usd_at_current_fx is None     # same-ccy cost used the stale quote FX
+    assert line.pnl_usd_at_current_fx is None
+    assert line.value_gbp is None
+    assert line.value_local is not None            # local value survives
+
+
 def test_stale_cost_fx_degrades_line():
     # GBP cost history's latest bar is ~40 days before the snapshot (max 5) -> stale.
     stale_gbp = {
