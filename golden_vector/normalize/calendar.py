@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 
@@ -53,6 +55,34 @@ def build_fx_lookup(frame: pd.DataFrame) -> pd.DataFrame:
     lookup = lookup.dropna(subset=["fx_rate_to_usd"])
     lookup = lookup.drop_duplicates(subset=["fx_source_date"], keep="last")
     return lookup.reset_index(drop=True)
+
+
+def fx_rate_to_usd_asof(fx_history: pd.DataFrame | None, as_of: object) -> float | None:
+    """Resolve one currency's ``->USD`` rate as of a date (backward, like
+    ``merge_fx_asof``): the latest row on or before ``as_of``.
+
+    Returns None when the history is empty, unparseable, or has no row on/before
+    the date, or the rate is non-positive/non-finite. USD has no FX history by
+    construction, so the caller must treat USD as rate 1.0 before calling this.
+    """
+
+    if fx_history is None or fx_history.empty:
+        return None
+    lookup = build_fx_lookup(fx_history)
+    if lookup.empty:
+        return None
+    target = pd.to_datetime(as_of, errors="coerce")
+    if pd.isna(target):
+        return None
+    eligible = lookup[lookup["fx_source_date"] <= target]
+    if eligible.empty:
+        return None
+    raw = eligible.sort_values("fx_source_date").iloc[-1]["fx_rate_to_usd"]
+    try:
+        rate = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return rate if math.isfinite(rate) and rate > 0 else None
 
 
 def merge_fx_asof(

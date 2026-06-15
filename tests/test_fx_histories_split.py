@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 from golden_vector.normalize.calendar import (
+    fx_rate_to_usd_asof,
     merge_fx_asof,
     split_fx_histories_by_base_currency,
 )
@@ -69,3 +70,12 @@ def test_split_output_feeds_merge_fx_asof_backward():
     merged = merge_fx_asof(frame, date_column="cost_basis_as_of_date", fx_history=histories["GBP"])
 
     assert float(merged.loc[0, "fx_rate_to_usd"]) == pytest.approx(1.27)
+
+
+def test_fx_rate_to_usd_asof_picks_backward_rate():
+    gbp = split_fx_histories_by_base_currency(_raw_fx())["GBP"]
+    assert fx_rate_to_usd_asof(gbp, date(2026, 6, 5)) == pytest.approx(1.27)   # backward of 06-08
+    assert fx_rate_to_usd_asof(gbp, date(2026, 6, 8)) == pytest.approx(1.29)   # exact match
+    assert fx_rate_to_usd_asof(gbp, date(2026, 5, 1)) is None                  # before any row
+    assert fx_rate_to_usd_asof(None, date(2026, 6, 5)) is None
+    assert fx_rate_to_usd_asof(gbp.iloc[0:0], date(2026, 6, 5)) is None         # empty history
