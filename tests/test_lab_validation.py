@@ -7,6 +7,8 @@ n_folds one, not the weekly effective_n (which would void every gate).
 
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -170,11 +172,21 @@ def _synthetic_panel_and_weekly(n_tickers=20, n_weeks=750, seed=5, panel_noise=0
     return panel, weekly, {"6M": 1.0, "12M": 1.0, "3Y": 1.0}
 
 
-def test_canary_label_as_feature_scores_near_perfect():
+@pytest.fixture(scope="module")
+def synthetic_default_payload():
+    """Build the default synthetic panel/weekly ONCE per module — it is the
+    expensive part (20 tickers x 750 weeks x 3 windows of rolling betas). Call
+    sites deep-copy it so one test's mutation can never leak into another,
+    which keeps them order- and xdist-safe."""
+
+    return _synthetic_panel_and_weekly()
+
+
+def test_canary_label_as_feature_scores_near_perfect(synthetic_default_payload):
     """If the rank IS the forward outcome, IC must be ~1 (the harness can
     measure a perfect signal)."""
 
-    panel, weekly, wmap = _synthetic_panel_and_weekly()
+    panel, weekly, wmap = copy.deepcopy(synthetic_default_payload)
     grid = [p for p in _test_grid(panel)][:6]
     # build forward betas and rank by them directly
     ics = []
@@ -204,12 +216,12 @@ def test_canary_shuffled_ranks_rarely_trip(monkeypatch):
     assert tripped <= 2
 
 
-def test_honest_experiment_scores_positive_on_synthetic_truth():
+def test_honest_experiment_scores_positive_on_synthetic_truth(synthetic_default_payload):
     """End-to-end: a panel whose delta tracks true beta must produce a
     positive, significant E1b on synthetic data (no survivorship, no noise
     confounds) — proves the engine wiring is correct."""
 
-    panel, weekly, wmap = _synthetic_panel_and_weekly()
+    panel, weekly, wmap = copy.deepcopy(synthetic_default_payload)
     grid = _test_grid(panel)
     verdict, folds = v._validity_experiment(
         signal_id="test", claim="t", panel=panel, ticker_weekly=weekly,
@@ -319,8 +331,8 @@ def test_build_as_of_grid_step_param_changes_cadence():
         assert (g52[1] - g52[0]).n >= 40
 
 
-def test_fixed_cohort_is_a_subset():
-    panel, weekly, wmap = _synthetic_panel_and_weekly()
+def test_fixed_cohort_is_a_subset(synthetic_default_payload):
+    panel, weekly, wmap = copy.deepcopy(synthetic_default_payload)
     cohort = v.fixed_cohort_panel(panel, before="2030-01-01")  # synthetic is 2012+
     assert cohort["ticker"].nunique() == panel["ticker"].nunique()
     empty = v.fixed_cohort_panel(panel, before="2000-01-01")  # before any data
