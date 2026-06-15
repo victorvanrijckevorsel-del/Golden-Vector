@@ -2,7 +2,8 @@
 
 Render-only. Every number comes from the persisted episode + cell artifacts via
 ``lab_curve_data``; this module draws an SVG of the forward-alpha dots and formats
-captions. No counting, rebasing, or rank math here.
+captions. No model aggregation, shrinkage, ratio, rebasing, or rank math here —
+only display-only counts (e.g. how many scenario weeks beat) over already-resolved rows.
 
 Chart A (the hero) plots one dot per week = that week's forward H-week alpha vs
 the chosen benchmark. The scenario weeks (the ones the table's % counts) are
@@ -484,9 +485,15 @@ def _build_distribution_svg(
     if median is not None and median == median:
         # Clamp into the plot box: the cell median is over the cell's episode set,
         # which can differ slightly from the alpha-present scenario points shown, so
-        # never let the marker draw off-canvas (and silently vanish).
-        mx = max(plot_left, min(plot_right, x_at(float(median))))
-        median_label = f"median {float(median) * 100:+.0f}%"
+        # never let the marker draw off-canvas (and silently vanish). When it IS
+        # outside the tick range, SAY so — a marker pinned to the edge must not be
+        # read as the true position.
+        raw_mx = x_at(float(median))
+        mx = max(plot_left, min(plot_right, raw_mx))
+        pinned = float(median) < lo or float(median) > hi
+        median_label = f"median {float(median) * 100:+.0f}%" + (
+            " (off scale)" if pinned else ""
+        )
         parts.append(
             f"<path d=\"M {mx:.1f} {axis_y - 1:.1f} l -4 -7 l 8 0 z\" fill=\"#3d3529\">"
             f"<title>{escape(median_label)}</title></path>"
@@ -545,10 +552,19 @@ def _scenario_phrase(curve: LabCurveData) -> str:
 
 
 def _build_dots_svg(points: list[dict[str, Any]], *, horizon: int, benchmark: str) -> str:
-    usable = [p for p in points if p["alpha"] is not None and p["alpha"] == p["alpha"]]
+    # Plot the SIMPLE-return per-week outperformance (alpha_simple) — the SAME basis
+    # as the distribution strip, win-rate bar, tilt label, and overview table, so the
+    # whole drill-down speaks one return basis. Beat colour stays the persisted
+    # decision (sign-invariant between log and simple, so the share above zero still
+    # equals the table's raw P(beat)).
+    usable = [
+        p
+        for p in points
+        if p.get("alpha_simple") is not None and p["alpha_simple"] == p["alpha_simple"]
+    ]
     if len(usable) < 2:
         return "<p class=\"hint\">Not enough episodes to plot yet.</p>"
-    alphas = [float(p["alpha"]) for p in usable]
+    alphas = [float(p["alpha_simple"]) for p in usable]
     lo = min(alphas)
     hi = max(alphas)
     if lo == hi:
@@ -599,7 +615,7 @@ def _build_dots_svg(points: list[dict[str, Any]], *, horizon: int, benchmark: st
         if point["is_scenario"]:
             continue
         cx = x_at(index)
-        cy = y_at(float(point["alpha"]))
+        cy = y_at(float(point["alpha_simple"]))
         parts.append(
             f"<circle cx=\"{cx:.1f}\" cy=\"{cy:.1f}\" r=\"1.4\" fill=\"{_CONTEXT_COLOR}\"/>"
         )
@@ -607,7 +623,7 @@ def _build_dots_svg(points: list[dict[str, Any]], *, horizon: int, benchmark: st
         if not point["is_scenario"]:
             continue
         cx = x_at(index)
-        alpha = float(point["alpha"])
+        alpha = float(point["alpha_simple"])
         cy = y_at(alpha)
         color = _BEAT_COLOR if point["beat"] else _LAG_COLOR  # persisted decision
         radius = 3.2 if point["is_anchor"] else 2.0
@@ -624,11 +640,11 @@ def _build_dots_svg(points: list[dict[str, Any]], *, horizon: int, benchmark: st
         )
     parts.append(
         f"<text x=\"{left}\" y=\"{top - 4}\" font-size=\"10\" fill=\"#5f584e\">"
-        f"alpha vs {escape(benchmark)} (next {int(horizon)} wks)</text>"
+        f"outperformance vs {escape(benchmark)} (next {int(horizon)} wks)</text>"
     )
     return (
         f"<svg class=\"option-chart-svg lab-dots-svg\" viewBox=\"0 0 {width} {height}\" "
-        "role=\"img\" aria-label=\"Forward alpha vs benchmark by week; scenario weeks highlighted\">"
+        "role=\"img\" aria-label=\"Forward outperformance vs benchmark by week; scenario weeks highlighted\">"
         f"{''.join(parts)}"
         "</svg>"
     )

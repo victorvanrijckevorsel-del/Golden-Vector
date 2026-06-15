@@ -10,9 +10,10 @@ manifest), with three distinct failure states a decision surface must not blur:
 - STALE    -> built by an older schema or without the configured horizons /
               benchmarks (rebuild to refresh shape)
 
-No arithmetic, no rank decisions: every number + the rank order come from the
-artifact. This module only filters by (ticker / scenario / horizon / benchmark)
-and validates inputs against the configured set.
+No model aggregation, shrinkage, ratio, or rank decisions: every published number
++ the rank order come from the artifact. This module filters by (ticker / scenario /
+horizon / benchmark), validates inputs against the configured set, and does only
+display-only counts (e.g. usable down/up buckets) over already-resolved rows.
 """
 
 from __future__ import annotations
@@ -137,6 +138,23 @@ def _read_meta(paths: ProjectPaths) -> tuple[dict[str, Any], str | None]:
         return {}, "CORRUPT"
 
 
+def _current_artifact_filename(meta: dict[str, Any], key: str, latest_filename: str) -> str:
+    """Resolve to the IMMUTABLE run-stamped file named by the published meta — the
+    atomic current-state pointer — falling back to the mutable ``*_latest`` alias only
+    when meta has no run_stamped entry (pre-manifest artifacts / hand-written test
+    fixtures).
+
+    Why: ``dial_meta.json`` is published (atomically) AFTER all run-stamped + latest
+    files are written. Resolving reads through the meta's run_stamped_artifacts means a
+    half-finished rebuild (new latest aliases on disk, meta not yet replaced) is read as
+    the LAST COHERENT set named by the still-old meta — never a torn mix of new+old
+    latest frames. One manifest pointer defines the current artifact set.
+    """
+
+    stamped = (meta.get("run_stamped_artifacts") or {}).get(key)
+    return str(stamped) if stamped else latest_filename
+
+
 def _load_frame(
     paths: ProjectPaths,
     *,
@@ -206,7 +224,9 @@ def load_dial_cells(
 
     meta, meta_status = _read_meta(paths)
     frame, status = _load_frame(
-        paths, filename=DIAL_CELLS_FILENAME, required_columns=CELLS_COLUMNS
+        paths,
+        filename=_current_artifact_filename(meta, "cells", DIAL_CELLS_FILENAME),
+        required_columns=CELLS_COLUMNS,
     )
     if frame is None:
         return LabCellsData(available=False, error_status=status)
@@ -234,7 +254,7 @@ def load_dial_cells(
 
     # Per-(horizon, bucket) availability (how many GDX cells carry numbers) drives
     # the selector labels + the empty-state contract. Counted in the BUILD and
-    # read from meta — serve never aggregates.
+    # read from meta — serve does no model aggregation.
     availability: dict[str, dict[str, int]] = {
         str(hz): {str(bkt): int(count) for bkt, count in per.items()}
         for hz, per in (meta.get("usable_gdx_cells_by_horizon_bucket") or {}).items()
@@ -290,7 +310,9 @@ def load_ticker_curve(
         return LabCurveData(available=False, error_status="STALE")
 
     episodes, status = _load_frame(
-        paths, filename=DIAL_EPISODES_FILENAME, required_columns=_EPISODE_REQUIRED
+        paths,
+        filename=_current_artifact_filename(meta, "episodes", DIAL_EPISODES_FILENAME),
+        required_columns=_EPISODE_REQUIRED,
     )
     if episodes is None:
         return LabCurveData(available=False, error_status=status)
@@ -331,7 +353,9 @@ def load_ticker_curve(
     # with a distinct status, never misreport it as "no cross-scenario history"
     # (which reads as an evidence gap, not an artifact gap).
     cells_frame, cells_status = _load_frame(
-        paths, filename=DIAL_CELLS_FILENAME, required_columns=CELLS_COLUMNS
+        paths,
+        filename=_current_artifact_filename(meta, "cells", DIAL_CELLS_FILENAME),
+        required_columns=CELLS_COLUMNS,
     )
     if cells_status is not None:
         return LabCurveData(
@@ -354,7 +378,9 @@ def load_ticker_curve(
     # Optional enrichment — a missing/stale profile artifact degrades the label to
     # UNAVAILABLE (the chart still renders), it does not fail the page.
     profile_frame, _profile_status = _load_frame(
-        paths, filename=DIAL_PROFILE_FILENAME, required_columns=PROFILE_COLUMNS
+        paths,
+        filename=_current_artifact_filename(meta, "profile", DIAL_PROFILE_FILENAME),
+        required_columns=PROFILE_COLUMNS,
     )
     label = _ticker_profile_label(
         profile_frame, ticker=ticker_u, horizon=horizon_i, benchmark=bench
@@ -480,7 +506,9 @@ def _relstrength_points(
     if not _artifact_is_current(meta):
         return [], "STALE"
     frame, status = _load_frame(
-        paths, filename=DIAL_RELSTRENGTH_FILENAME, required_columns=RELSTRENGTH_COLUMNS
+        paths,
+        filename=_current_artifact_filename(meta, "relstrength", DIAL_RELSTRENGTH_FILENAME),
+        required_columns=RELSTRENGTH_COLUMNS,
     )
     if frame is None:
         return [], status

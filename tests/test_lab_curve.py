@@ -963,6 +963,8 @@ def test_distribution_strip_clamps_out_of_range_median() -> None:
     html = _render_distribution(_strip_curve(pts, cell))
     marker_x = float(re.search(r"<path d=\"M ([\d.]+) ", html).group(1))
     assert 42.0 <= marker_x <= 742.0  # clamped into [left, width-right]
+    # A1: a pinned marker must SAY it is off scale, not pose as the true position.
+    assert "median +500% (off scale)" in html
 
 
 def test_distribution_strip_absent_when_insufficient_or_all_nan() -> None:
@@ -1027,6 +1029,121 @@ def test_chart_a_week_by_week_is_collapsed_under_details() -> None:
     assert "hindsight grouping" in html  # honesty caption preserved
     # the new spread strip renders above it for this healthy scenario
     assert "Spread of outcomes" in html and "lab-dist-svg" in html
+
+
+# ---- holistic-review fixes: one basis end-to-end + manifest-resolved reads ------
+
+
+def _dots_pt(date, alpha, alpha_simple, beat, *, scenario=True):
+    return {
+        "date": date, "alpha": alpha, "alpha_simple": alpha_simple, "beat": beat,
+        "is_scenario": scenario, "is_anchor": False,
+    }
+
+
+def test_dots_chart_plots_simple_return_not_log() -> None:
+    """B1 (holistic): the week-by-week dots now plot alpha_simple (simple return) —
+    the SAME basis as the strip/bar/label — not the raw log gap, so the whole page
+    speaks one basis. Uses an episode where log (0.50) and simple (0.65) clearly
+    diverge so a regression to log fails."""
+
+    from golden_vector.serve.lab_curve_data import LabCurveData
+    from golden_vector.serve.lab_curve_page import _render_chart_a
+
+    pts = [
+        _dots_pt("2020-01-01", 0.50, 0.65, True),
+        _dots_pt("2020-02-01", -0.20, -0.18, False),
+        _dots_pt("2020-03-01", 0.10, 0.105, True, scenario=False),
+    ]
+    curve = LabCurveData(
+        available=True, ticker="ZZZ", benchmark="GDX", horizon=13,
+        scenario_bucket="gold_down", scenario_label="Gold down 5% to 15%", points=pts,
+    )
+    html = _render_chart_a(curve)
+    assert "+65.0% vs GDX" in html  # simple-return alpha_simple
+    assert "+50.0% vs GDX" not in html  # NOT the log gap
+    assert "outperformance vs GDX" in html  # axis no longer says "alpha"
+
+
+def test_full_page_dots_and_strip_agree_on_one_basis() -> None:
+    """B1/B3 (holistic): on the full rendered page the dots and the distribution strip
+    show the SAME magnitude for the same episode (one simple-return basis), and the log
+    gap appears nowhere."""
+
+    from golden_vector.serve.lab_curve_data import LabCurveData
+    from golden_vector.serve.lab_curve_page import _render_lab_curve_page
+
+    pts = [
+        _dots_pt("2020-01-01", 0.50, 0.65, True),
+        _dots_pt("2020-02-01", -0.20, -0.18, False),
+    ]
+    cell = {
+        "p_beat_gdx": 0.50, "p_beat_gdx_shrunk": 0.50, "median_alpha_gdx": 0.65,
+        "gdx_effective_n": 9.0, "gdx_n_weeks": 18, "gdx_insufficient_history": False,
+        "gdx_wilson_low": 0.3, "gdx_wilson_high": 0.7,
+    }
+    curve = LabCurveData(
+        available=True, ticker="ZZZ", benchmark="GDX", horizon=13,
+        scenario_bucket="gold_down", scenario_label="Gold down 5% to 15%",
+        points=pts, cell=cell,
+    )
+    html = _render_lab_curve_page(curve)
+    assert "+65.0% vs GDX" in html  # dots tooltip (.1f), simple
+    assert "+65% vs GDX" in html  # strip tooltip (.0f), simple — same magnitude
+    assert "+50.0% vs GDX" not in html  # the log gap is shown nowhere on the page
+
+
+def test_thin_ticker_degrades_across_all_surfaces() -> None:
+    """B3: an insufficient cell suppresses the win-rate bar AND the spread strip while
+    the page still renders honestly (no confident headline)."""
+
+    from golden_vector.serve.lab_curve_data import LabCurveData
+    from golden_vector.serve.lab_curve_page import _render_lab_curve_page
+
+    pts = [_dots_pt("2020-01-01", 0.5, 0.65, True), _dots_pt("2020-02-01", -0.2, -0.18, False)]
+    cell = {"gdx_insufficient_history": True, "median_alpha_gdx": None, "p_beat_gdx": None}
+    curve = LabCurveData(
+        available=True, ticker="ZZZ", benchmark="GDX", horizon=13,
+        scenario_bucket="gold_down", scenario_label="Gold down 5% to 15%",
+        points=pts, cell=cell,
+    )
+    html = _render_lab_curve_page(curve)
+    assert "Spread of outcomes" not in html  # strip suppressed
+    assert "winrate-bar" not in html  # win-rate bar suppressed
+    assert "Not enough independent" in html  # honest degrade, no confident rate
+
+
+def test_loader_reads_run_stamped_artifact_via_meta_not_mutable_latest() -> None:
+    """B2 (holistic): serve resolves artifact paths through dial_meta.json's
+    run_stamped_artifacts (the atomic pointer), so a torn mutable latest alias from a
+    half-finished rebuild is never read — the loader serves the last COHERENT
+    run-stamped set."""
+
+    import shutil
+
+    paths, _ = _write(tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"])
+    lab = Path(paths.data_dir) / "lab"
+    stamp = "20260101T000000Z"
+    stamped: dict[str, str] = {}
+    for key, latest in (
+        ("cells", DIAL_CELLS_FILENAME),
+        ("episodes", DIAL_EPISODES_FILENAME),
+        ("relstrength", DIAL_RELSTRENGTH_FILENAME),
+        ("profile", DIAL_PROFILE_FILENAME),
+    ):
+        name = latest.replace("_latest", f"_{stamp}")
+        shutil.copy(lab / latest, lab / name)  # immutable run-stamped copy
+        stamped[key] = name
+    meta = json.loads((lab / DIAL_ARTIFACT_META_FILENAME).read_text())
+    meta["run_stamped_artifacts"] = stamped
+    (lab / DIAL_ARTIFACT_META_FILENAME).write_text(json.dumps(meta))
+    # Simulate a half-finished rebuild: the mutable latest cells alias is torn/garbage.
+    (lab / DIAL_CELLS_FILENAME).write_bytes(b"torn half-written rebuild, not parquet")
+
+    curve = load_ticker_curve(paths, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDX")
+    assert curve.available  # served the coherent run-stamped cells, ignored the torn latest
+    assert curve.error_status is None
+    assert curve.cell is not None
 
 
 def test_default_lab_horizon_comes_from_config(monkeypatch) -> None:
