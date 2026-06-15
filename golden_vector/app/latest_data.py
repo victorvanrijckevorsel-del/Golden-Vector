@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.ingestion.foundation import FoundationExecutionResult
+from golden_vector.normalize.calendar import split_fx_histories_by_base_currency
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,10 @@ class LatestFoundationSnapshot:
     normalized_equity_histories: dict[str, pd.DataFrame]
     normalized_market_snapshots: pd.DataFrame
     manifest_path: Path
+    # Per-base-currency FX-to-USD histories (e.g. {"GBP": ..., "AUD": ...}),
+    # loaded only when include_fx_histories=True. Empty otherwise. USD is absent
+    # (rate 1.0 by construction); a missing non-USD currency must fail/degrade.
+    fx_histories: dict[str, pd.DataFrame] = field(default_factory=dict)
 
 
 def write_latest_foundation_manifest(
@@ -90,6 +95,7 @@ def load_latest_foundation_snapshot(
     include_gold_history: bool = True,
     include_equity_histories: bool = True,
     include_market_snapshots: bool = True,
+    include_fx_histories: bool = False,
     requested_tickers: list[str] | None = None,
     manifest_path: Path | None = None,
 ) -> LatestFoundationSnapshot:
@@ -150,6 +156,19 @@ def load_latest_foundation_snapshot(
             else:
                 normalized_equity_histories[ticker] = ticker_frame.reset_index(drop=True)
 
+    fx_histories: dict[str, pd.DataFrame] = {}
+    if include_fx_histories:
+        raw_fx_rel = payload.get("raw_fx_snapshot_path")
+        if not raw_fx_rel:
+            raise ValueError(
+                "Foundation manifest has no raw_fx_snapshot_path; run `python main.py update-data` again."
+            )
+        raw_fx = read_required_parquet(
+            paths.resolve_repo_relative(str(raw_fx_rel)),
+            label="raw FX history",
+        )
+        fx_histories = split_fx_histories_by_base_currency(raw_fx)
+
     return LatestFoundationSnapshot(
         refresh_run_id=str(payload["refresh_run_id"]),
         snapshot_as_of_date=payload.get("snapshot_as_of_date"),
@@ -161,6 +180,7 @@ def load_latest_foundation_snapshot(
         normalized_equity_histories=normalized_equity_histories,
         normalized_market_snapshots=normalized_market_snapshots,
         manifest_path=manifest_path,
+        fx_histories=fx_histories,
     )
 
 

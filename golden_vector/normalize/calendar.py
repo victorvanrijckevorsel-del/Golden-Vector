@@ -6,6 +6,33 @@ import pandas as pd
 
 
 FX_LOOKUP_COLUMNS = ["fx_source_date", "fx_rate_to_usd", "fx_source_symbol"]
+FX_RAW_REQUIRED_COLUMNS = ["base_currency", "date", "fx_rate_to_usd", "source_symbol"]
+
+
+def split_fx_histories_by_base_currency(raw_fx: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Split a standardized raw-FX frame into one history per base currency.
+
+    Each value retains the ``date`` / ``fx_rate_to_usd`` / ``source_symbol``
+    columns that ``build_fx_lookup`` / ``merge_fx_asof`` expect, so a caller can
+    do ``merge_fx_asof(frame, date_column=..., fx_history=histories[ccy])``.
+
+    USD has no row here by construction (it is the quote side of every ``*USD``
+    pair) — callers treat a missing currency as rate 1.0 for USD and must
+    fail/degrade for any other missing currency rather than assume 1.0.
+    """
+
+    if raw_fx is None or raw_fx.empty:
+        return {}
+    missing = [column for column in FX_RAW_REQUIRED_COLUMNS if column not in raw_fx.columns]
+    if missing:
+        raise ValueError("raw FX frame is missing required columns: " + ", ".join(missing))
+    histories: dict[str, pd.DataFrame] = {}
+    for base_currency, group in raw_fx.groupby("base_currency"):
+        key = str(base_currency).strip().upper()
+        if not key:
+            continue
+        histories[key] = group.reset_index(drop=True)
+    return histories
 
 
 def build_fx_lookup(frame: pd.DataFrame) -> pd.DataFrame:
