@@ -15,7 +15,7 @@ from golden_vector.portfolio.models import ALLOWED_PORTFOLIO_CURRENCIES
 from golden_vector.portfolio.pipeline import build_ticker_info
 from golden_vector.portfolio.reader import PortfolioData, load_portfolio_data
 from golden_vector.serve.format_helpers import _fmt_number, _fmt_percent, _fmt_text
-from golden_vector.serve.column_help import help_term
+from golden_vector.serve.column_help import help_term, help_th
 from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.page_shell import _page_shell
 
@@ -374,11 +374,23 @@ def _render_positions(data: PortfolioData) -> str:
         "<section class=\"panel\">"
         "<h2>Positions</h2>"
         "<table class=\"js-datatable\"><thead><tr>"
-        "<th>Ticker</th><th>Company</th><th>Shares</th><th>Avg Cost</th>"
-        "<th>Current Price</th><th>Value</th><th>P&L</th><th>P&L %</th>"
-        "<th>Equity Weight</th><th>NAV Weight</th><th>Down Beta</th><th>Linear Loss @ Gold -10%</th>"
-        "<th>Loss Share</th><th>Resilience</th><th>Status</th><th>Lots</th>"
-        "</tr></thead><tbody>"
+        + help_th("Ticker")
+        + help_th("Company")
+        + help_th("Shares")
+        + help_th("Avg Cost", key="portfolio_avg_cost")
+        + help_th("Current Price")
+        + help_th("Value")
+        + help_th("P&L")
+        + help_th("P&L %", key="portfolio_pnl_pct")
+        + help_th("Equity Weight", key="portfolio_equity_weight")
+        + help_th("NAV Weight", key="portfolio_nav_weight")
+        + help_th("Down Beta", key="tool_c_down_beta")
+        + help_th("Linear Loss @ Gold -10%", key="portfolio_gold_down_loss")
+        + help_th("Loss Share", key="portfolio_loss_share")
+        + help_th("Resilience", key="portfolio_resilience")
+        + help_th("Status", key="portfolio_position_status")
+        + help_th("Lots")
+        + "</tr></thead><tbody>"
         f"{''.join(rows)}"
         "</tbody></table>"
         "<p class=\"hint\">Per-position P&L is local-currency. The gold-loss column is a positive USD loss estimate.</p>"

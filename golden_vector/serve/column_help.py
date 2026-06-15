@@ -632,4 +632,44 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "honestly read 'insufficient history'."
         ),
     ),
+    # ---- Portfolio: holdings (Positions) table ----
+    "portfolio_avg_cost": ColumnHelp(
+        meaning="Your average purchase price per share, in the position's own currency.",
+        calculation="Total cost of all lots ÷ total shares held.",
+    ),
+    "portfolio_pnl_pct": ColumnHelp(
+        meaning="Profit or loss on this position so far, as a percent of what you paid (in local currency).",
+        calculation="(Current value − cost) ÷ cost.",
+        direction="Higher is better.",
+    ),
+    "portfolio_equity_weight": ColumnHelp(
+        meaning="How big this position is as a share of your equity holdings only.",
+        calculation="Position value ÷ total value of all equity positions.",
+        direction="Higher means a larger slice of your stock book.",
+    ),
+    "portfolio_nav_weight": ColumnHelp(
+        meaning="How big this position is as a share of your whole portfolio (net asset value, which also includes cash and hedges).",
+        calculation="Position value ÷ total NAV.",
+        direction="Higher means a larger slice of the whole portfolio.",
+    ),
+    "portfolio_gold_down_loss": ColumnHelp(
+        meaning="A rough USD loss on this position if the gold price fell 10%.",
+        calculation="Position value × gold down-beta × 10%, a straight-line estimate.",
+        details="Beta is floored at a small minimum so low- or negative-beta names still show a conservative loss, and the loss can never exceed the position's value.",
+        direction="Lower is safer — it is a smaller modeled loss.",
+    ),
+    "portfolio_loss_share": ColumnHelp(
+        meaning="This position's share of the portfolio's total modeled loss if gold fell 10%.",
+        calculation="This position's gold-down loss ÷ the sum of that loss across all positions.",
+        direction="Higher means this position drives more of your downside.",
+    ),
+    "portfolio_resilience": ColumnHelp(
+        meaning="A plain-language band for how resilient the company is, taken from its Tool D resilience score.",
+        calculation="Strong resilience = score 75 or above, Average = 50 to 74, Weak = below 50; shows 'Unavailable'/'Missing Tool D' when there is no score.",
+        direction="Strong is best.",
+    ),
+    "portfolio_position_status": ColumnHelp(
+        meaning="Whether this position's data is complete enough to trust its risk figures.",
+        details="A degraded status means an input (price, beta, or the Tool D row) was missing or stale, so the gold-loss and resilience figures for that row are held back rather than shown as if reliable.",
+    ),
 }
