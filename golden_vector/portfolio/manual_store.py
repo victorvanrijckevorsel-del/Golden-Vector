@@ -68,6 +68,12 @@ def edit_lot(
         if lot.id != clean_id:
             updated_lots.append(lot)
             continue
+        if not _is_manual_quote_currency_lot(lot):
+            raise PortfolioValidationError(
+                "This imported position can't be edited from the manual form yet "
+                "(it has a distinct cost currency or non-manual source). Editing "
+                "imported lots arrives with the v2 portfolio UI."
+            )
         edited = _lot_from_input(
             lot.id, lot_input, created_at=lot.created_at, updated_at=_utc_now()
         )
@@ -143,10 +149,13 @@ def _parse_store_payload(payload: object) -> list[PortfolioLot]:
     raw_lots = payload.get("lots", [])
     if not isinstance(raw_lots, list):
         raise PortfolioValidationError("Portfolio store field 'lots' must be a list.")
-    return [_parse_lot(item, index=index) for index, item in enumerate(raw_lots, start=1)]
+    return [
+        _parse_lot(item, index=index, store_version=int(schema_version))
+        for index, item in enumerate(raw_lots, start=1)
+    ]
 
 
-def _parse_lot(item: object, *, index: int) -> PortfolioLot:
+def _parse_lot(item: object, *, index: int, store_version: int) -> PortfolioLot:
     if not isinstance(item, dict):
         raise PortfolioValidationError(f"Portfolio lot #{index} must be an object.")
     ticker = normalize_ticker(item.get("ticker")) or _raise_invalid_lot(index, "ticker")
@@ -154,21 +163,36 @@ def _parse_lot(item: object, *, index: int) -> PortfolioLot:
     buy_price = _stored_positive_float(item.get("buy_price"), field=f"lot #{index} buy price")
     buy_currency = _clean_currency(item.get("buy_currency"))
     buy_date = _parse_buy_date(item.get("buy_date"))
-    # v2 fields: read when present, otherwise migrate from the v1 single-currency
-    # lot (cost currency == quote currency, cost = shares*price, as-of = buy date).
-    cost_currency = (
-        _clean_currency(item.get("cost_currency")) if item.get("cost_currency") else buy_currency
-    )
-    cost_basis_total = (
-        _stored_positive_float(item.get("cost_basis_total"), field=f"lot #{index} cost_basis_total")
-        if item.get("cost_basis_total") is not None
-        else shares * buy_price
-    )
-    cost_basis_as_of_date = (
-        _parse_buy_date(item.get("cost_basis_as_of_date"))
-        if item.get("cost_basis_as_of_date")
-        else buy_date
-    )
+
+    if store_version == 1:
+        # v1 migration: cost currency == quote currency, cost = shares*price,
+        # raw symbol = ticker, manual source, as-of = buy date.
+        cost_currency = buy_currency
+        cost_basis_total = shares * buy_price
+        raw_broker_symbol = ticker
+        source_name = "manual"
+        source_file: str | None = None
+        cost_basis_as_of_date = buy_date
+    else:
+        # v2 is strict — never silently backfill money fields from legacy values.
+        cost_currency = _clean_currency(item.get("cost_currency"))
+        if cost_currency not in ALLOWED_PORTFOLIO_CURRENCIES:
+            supported = ", ".join(ALLOWED_PORTFOLIO_CURRENCIES)
+            raise PortfolioValidationError(
+                f"Portfolio lot #{index}: cost_currency must be one of: {supported}."
+            )
+        cost_basis_total = _stored_positive_float(
+            item.get("cost_basis_total"), field=f"lot #{index} cost_basis_total"
+        )
+        raw_broker_symbol = clean_string(item.get("raw_broker_symbol")) or _raise_invalid_lot(
+            index, "raw_broker_symbol"
+        )
+        source_name = clean_string(item.get("source_name")) or _raise_invalid_lot(
+            index, "source_name"
+        )
+        source_file = clean_string(item.get("source_file"))
+        cost_basis_as_of_date = _parse_buy_date(item.get("cost_basis_as_of_date"))
+
     return PortfolioLot(
         id=_clean_lot_id(item.get("id")),
         ticker=ticker,
@@ -181,9 +205,9 @@ def _parse_lot(item: object, *, index: int) -> PortfolioLot:
         updated_at=_parse_datetime(item.get("updated_at"), field=f"lot #{index} updated_at"),
         cost_currency=cost_currency,
         cost_basis_total=cost_basis_total,
-        raw_broker_symbol=clean_string(item.get("raw_broker_symbol")) or ticker,
-        source_name=clean_string(item.get("source_name")) or "manual",
-        source_file=clean_string(item.get("source_file")),
+        raw_broker_symbol=raw_broker_symbol,
+        source_name=source_name,
+        source_file=source_file,
         cost_basis_as_of_date=cost_basis_as_of_date,
     )
 
@@ -222,6 +246,17 @@ def _lot_from_input(
     )
 
 
+def _is_manual_quote_currency_lot(lot: PortfolioLot) -> bool:
+    """A lot the single-currency manual form can safely rebuild: a manual-source
+    lot whose cost currency equals its quote currency. Imported or
+    distinct-cost-currency lots must not be collapsed back to manual
+    quote-currency cost by an edit through the legacy form."""
+
+    return lot.source_name == "manual" and (
+        lot.cost_currency is None or lot.cost_currency == lot.buy_currency
+    )
+
+
 def _write_lots(
     paths: ProjectPaths,
     lots: list[PortfolioLot],
@@ -236,10 +271,12 @@ def _write_lots(
 
 
 def _backup_pre_v2_store(paths: ProjectPaths) -> None:
-    """Back up the existing store once, before the first v2 write overwrites it.
+    """Back up a valid pre-v2 store once, before the first v2 write overwrites it.
 
-    No-op when there is no store yet or it is already v2. The backup lives beside
-    the store under the gitignored ``data/manual/portfolio/`` directory.
+    No-op when there is no store yet or it is already v2. Malformed JSON never
+    reaches here in normal use because every public writer calls ``load_lots``
+    first, which fails loud on invalid JSON rather than overwriting it. The backup
+    lives beside the store under the gitignored ``data/manual/portfolio/`` dir.
     """
 
     path = paths.manual_portfolio_lots_path

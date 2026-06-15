@@ -26,12 +26,17 @@ def split_fx_histories_by_base_currency(raw_fx: pd.DataFrame) -> dict[str, pd.Da
     missing = [column for column in FX_RAW_REQUIRED_COLUMNS if column not in raw_fx.columns]
     if missing:
         raise ValueError("raw FX frame is missing required columns: " + ", ".join(missing))
+    # Normalize the currency code BEFORE grouping so harmless casing differences
+    # (e.g. "gbp" vs "GBP") collapse into one key instead of grouping apart and
+    # then overwriting each other under the upper-cased key.
+    working = raw_fx.copy()
+    working["_base_currency_key"] = working["base_currency"].astype("string").str.strip().str.upper()
     histories: dict[str, pd.DataFrame] = {}
-    for base_currency, group in raw_fx.groupby("base_currency"):
-        key = str(base_currency).strip().upper()
-        if not key:
+    for key, group in working.groupby("_base_currency_key"):
+        normalized = str(key).strip()
+        if not normalized or normalized.lower() == "nan":
             continue
-        histories[key] = group.reset_index(drop=True)
+        histories[normalized] = group.drop(columns=["_base_currency_key"]).reset_index(drop=True)
     return histories
 
 

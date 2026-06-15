@@ -7,7 +7,7 @@ from datetime import date
 
 import pytest
 
-from golden_vector.portfolio.manual_store import add_lot, load_lots
+from golden_vector.portfolio.manual_store import add_lot, edit_lot, load_lots
 from golden_vector.portfolio.models import PortfolioValidationError, TickerInfo
 from tests.helpers import build_test_paths
 
@@ -95,3 +95,54 @@ def test_unknown_store_version_rejected(tmp_path):
 
     with pytest.raises(PortfolioValidationError, match="not supported"):
         load_lots(paths)
+
+
+_V2_DISTINCT_LOT = {
+    **_V1_LOT,
+    "cost_currency": "GBP",          # GBP cost on an AUD-quoted ticker
+    "cost_basis_total": 136.0,
+    "raw_broker_symbol": "AAR",
+    "source_name": "snowball",
+    "source_file": "Snowball Holdings.csv",
+    "cost_basis_as_of_date": "2026-06-15",
+}
+
+
+@pytest.mark.parametrize(
+    "drop_field",
+    ["cost_currency", "cost_basis_total", "cost_basis_as_of_date", "raw_broker_symbol", "source_name"],
+)
+def test_v2_store_rejects_missing_required_field(tmp_path, drop_field):
+    paths = build_test_paths(tmp_path)
+    lot = {key: value for key, value in _V2_DISTINCT_LOT.items() if key != drop_field}
+    _write_store(paths, {"schema_version": 2, "lots": [lot]})
+
+    with pytest.raises(PortfolioValidationError):
+        load_lots(paths)  # v2 must reject malformed money fields, never backfill from v1
+
+
+def test_v2_store_rejects_unsupported_cost_currency(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_store(paths, {"schema_version": 2, "lots": [{**_V2_DISTINCT_LOT, "cost_currency": "XYZ"}]})
+
+    with pytest.raises(PortfolioValidationError, match="cost_currency"):
+        load_lots(paths)
+
+
+def test_edit_lot_blocks_imported_distinct_cost_lot_and_preserves_it(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_store(paths, {"schema_version": 2, "lots": [_V2_DISTINCT_LOT]})
+    info = {"AAR.AX": TickerInfo(ticker="AAR.AX", currency="AUD", active=True)}
+
+    with pytest.raises(PortfolioValidationError, match="imported position"):
+        edit_lot(
+            paths,
+            "lot-1",
+            {"ticker": "AAR.AX", "shares": "100", "buy_price": "2.0", "buy_currency": "AUD", "buy_date": "2020-01-01"},
+            ticker_info=info,
+        )
+
+    # The imported lot must survive the blocked edit unchanged.
+    on_disk = json.loads(paths.manual_portfolio_lots_path.read_text())
+    assert on_disk["lots"][0]["cost_currency"] == "GBP"
+    assert on_disk["lots"][0]["source_name"] == "snowball"

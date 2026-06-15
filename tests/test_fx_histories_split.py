@@ -47,6 +47,20 @@ def test_split_missing_required_columns_fails_loud():
         split_fx_histories_by_base_currency(bad)
 
 
+def test_split_normalizes_mixed_case_into_one_key():
+    raw = pd.DataFrame(
+        [
+            {"base_currency": "gbp", "date": date(2026, 6, 1), "fx_rate_to_usd": 1.27, "source_symbol": "GBPUSD=X"},
+            {"base_currency": "GBP", "date": date(2026, 6, 8), "fx_rate_to_usd": 1.29, "source_symbol": "GBPUSD=X"},
+        ]
+    )
+
+    histories = split_fx_histories_by_base_currency(raw)
+
+    assert set(histories) == {"GBP"}        # not split into "gbp" + "GBP"
+    assert len(histories["GBP"]) == 2       # no rows lost to a casing collision
+
+
 def test_split_output_feeds_merge_fx_asof_backward():
     histories = split_fx_histories_by_base_currency(_raw_fx())
     # A cost dated 2026-06-05 should pick up the 2026-06-01 GBP rate (backward as-of).
