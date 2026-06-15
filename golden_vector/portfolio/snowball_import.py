@@ -69,8 +69,14 @@ class SnowballDryRun:
     existing_positions: tuple[ExistingPortfolioPosition, ...]
 
     @property
-    def total_cost_basis(self) -> float:
-        return sum(row.cost_basis for row in self.holdings)
+    def import_ready_cost_basis_by_currency(self) -> dict[str, float]:
+        """Cost basis per COST currency over import-ready rows only — never sums
+        unlike currencies and never counts blocked/unmapped rows."""
+
+        totals: dict[str, float] = {}
+        for row in self.import_ready_rows:
+            totals[row.source_currency] = totals.get(row.source_currency, 0.0) + row.cost_basis
+        return totals
 
     @property
     def mapped_rows(self) -> tuple[SnowballHolding, ...]:
@@ -149,7 +155,14 @@ def render_snowball_dry_run_report(dry_run: SnowballDryRun) -> str:
         f"- Rows import-ready under the current store model: {len(ready)}",
         f"- Rows needing human review: {len(review)}",
         f"- Rows blocked: {len(blocked)}",
-        f"- Snowball total cost basis: GBP {dry_run.total_cost_basis:,.2f}",
+        "- Import-ready cost basis by currency: "
+        + (
+            "; ".join(
+                f"{ccy} {amount:,.2f}"
+                for ccy, amount in sorted(dry_run.import_ready_cost_basis_by_currency.items())
+            )
+            or "none"
+        ),
         f"- Existing manual-store positions: {len(existing)}",
         "",
         "## Key Safety Finding",

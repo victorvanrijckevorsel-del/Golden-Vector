@@ -460,7 +460,7 @@ def _render_lot_table(lots: list[dict[str, object]]) -> str:
         f"<td>{_fmt_text(row.get('buy_date'))}</td>"
         f"<td>{_fmt_number(row.get('shares'), decimals=3)}</td>"
         f"<td>{_fmt_money(row.get('buy_price'), row.get('buy_currency'))}</td>"
-        f"<td>{_fmt_money(row.get('cost_local'), row.get('buy_currency'))}</td>"
+        f"<td>{_fmt_money(row.get('cost_local'), row.get('cost_currency') or row.get('buy_currency'))}</td>"
         f"<td>{_fmt_text(row.get('note'))}</td>"
         "</tr>"
         for row in lots

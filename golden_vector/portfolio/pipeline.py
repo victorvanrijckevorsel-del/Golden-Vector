@@ -154,6 +154,7 @@ SUMMARY_COLUMNS = [
     "currency_split_json",
     "as_of_date",
     # schema v2
+    "cost_currency_split_json",
     "total_value_gbp",
     "total_cost_gbp_at_current_fx",
     "total_pnl_gbp_at_current_fx",
@@ -793,6 +794,35 @@ def _positions_frame(
     return _with_metadata(pd.DataFrame(rows, columns=POSITION_COLUMNS), source_run_id, snapshot_refresh_run_id)
 
 
+def _currency_split(valuations, *, key) -> dict[str, dict[str, float | None]]:
+    """Bucket valuations by ``key`` and aggregate value/cost/P&L per currency with
+    all-or-null cost: a bucket's cost and P&L are null unless every valued lot in
+    it has a cost (so a missing cost never reads as a partial sum / fake gain)."""
+
+    members: dict[str, list[LineValuation]] = defaultdict(list)
+    for value in valuations:
+        members[str(key(value))].append(value)
+    split: dict[str, dict[str, float | None]] = {}
+    for currency, members_in_bucket in members.items():
+        valued = [value for value in members_in_bucket if value.value_usd is not None]
+        value_usd = sum_optional_floats(value.value_usd for value in valued) or 0.0
+        cost_ok = bool(valued) and all(
+            value.cost_usd_at_current_fx is not None for value in valued
+        )
+        cost_usd = (
+            sum_optional_floats(value.cost_usd_at_current_fx for value in valued)
+            if cost_ok
+            else None
+        )
+        pnl_usd = (value_usd - cost_usd) if (cost_ok and cost_usd is not None) else None
+        split[currency] = {
+            "value_usd": value_usd,
+            "cost_usd_at_current_fx": cost_usd,
+            "pnl_usd_at_current_fx": pnl_usd,
+        }
+    return split
+
+
 def _summary_frame(
     valuations: list[LineValuation],
     positions: pd.DataFrame,
@@ -831,15 +861,14 @@ def _summary_frame(
         if gbp_complete and total_value_gbp is not None and total_cost_gbp is not None
         else None
     )
-    split: dict[str, dict[str, float]] = {}
-    for value in valuations:
-        bucket = split.setdefault(
-            value.lot.buy_currency,
-            {"value_usd": 0.0, "cost_usd_at_current_fx": 0.0, "pnl_usd_at_current_fx": 0.0},
-        )
-        bucket["value_usd"] += value.value_usd or 0.0
-        bucket["cost_usd_at_current_fx"] += value.cost_usd_at_current_fx or 0.0
-        bucket["pnl_usd_at_current_fx"] += value.pnl_usd_at_current_fx or 0.0
+    # Per-currency splits with the same all-or-null discipline as the totals: a
+    # bucket's cost/P&L is null unless every valued lot in it has a cost (never a
+    # partial cost beside full value). Value exposure splits by quote currency;
+    # cost/P&L also split by cost currency (which can differ from quote in v2).
+    quote_split = _currency_split(valuations, key=lambda value: value.lot.buy_currency)
+    cost_split = _currency_split(
+        valuations, key=lambda value: (value.lot.cost_currency or value.lot.buy_currency)
+    )
     status = _summary_status(valuations)
     as_of_dates = sorted(
         {
@@ -862,7 +891,8 @@ def _summary_frame(
                 "total_value_usd": total_value_usd,
                 "total_cost_usd_at_current_fx": total_cost_usd,
                 "total_pnl_usd_at_current_fx": total_pnl_usd,
-                "currency_split_json": json.dumps(split, sort_keys=True),
+                "currency_split_json": json.dumps(quote_split, sort_keys=True),
+                "cost_currency_split_json": json.dumps(cost_split, sort_keys=True),
                 "as_of_date": as_of_dates[-1] if as_of_dates else None,
                 "total_value_gbp": total_value_gbp,
                 "total_cost_gbp_at_current_fx": total_cost_gbp,

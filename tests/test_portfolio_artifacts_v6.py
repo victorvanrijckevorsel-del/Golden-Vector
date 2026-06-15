@@ -172,3 +172,18 @@ def test_mixed_cost_currency_position_nulls_local_cost():
     assert pos["cost_currency"] == "MIXED"
     assert pd.isna(pos["cost_local"])                 # never sum GBP + AUD cost
     assert pd.isna(pos["avg_cost_local"])
+
+
+def test_currency_split_is_all_or_null_and_splits_quote_vs_cost():
+    import json as _json
+    ok = _val(id="a", buy_currency="AUD", cost_currency="AUD", cost_basis_total=100.0)
+    bad = _val(id="b", buy_currency="AUD", cost_currency="CAD", cost_basis_total=100.0)  # MISSING_COST_FX
+    summary = _summary_frame([ok, bad], _positions_frame([ok, bad], **_META), **_META).iloc[0]
+
+    quote_split = _json.loads(summary["currency_split_json"])
+    assert quote_split["AUD"]["value_usd"] is not None
+    assert quote_split["AUD"]["cost_usd_at_current_fx"] is None      # bucket has a missing cost -> null
+    assert quote_split["AUD"]["pnl_usd_at_current_fx"] is None        # no understated partial sum
+
+    cost_split = _json.loads(summary["cost_currency_split_json"])
+    assert set(cost_split) == {"AUD", "CAD"}                          # split by COST currency
