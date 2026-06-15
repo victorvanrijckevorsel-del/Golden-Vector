@@ -159,15 +159,15 @@ def load_latest_foundation_snapshot(
     fx_histories: dict[str, pd.DataFrame] = {}
     if include_fx_histories:
         raw_fx_rel = payload.get("raw_fx_snapshot_path")
-        if not raw_fx_rel:
-            raise ValueError(
-                "Foundation manifest has no raw_fx_snapshot_path; run `python main.py update-data` again."
+        # Older manifests predate raw FX: degrade per-line (GBP/cost-FX legs go
+        # null) rather than abort the whole build. A declared-but-missing file
+        # still fails loud via read_required_parquet.
+        if raw_fx_rel:
+            raw_fx = read_required_parquet(
+                paths.resolve_repo_relative(str(raw_fx_rel)),
+                label="raw FX history",
             )
-        raw_fx = read_required_parquet(
-            paths.resolve_repo_relative(str(raw_fx_rel)),
-            label="raw FX history",
-        )
-        fx_histories = split_fx_histories_by_base_currency(raw_fx)
+            fx_histories = split_fx_histories_by_base_currency(raw_fx)
 
     return LatestFoundationSnapshot(
         refresh_run_id=str(payload["refresh_run_id"]),

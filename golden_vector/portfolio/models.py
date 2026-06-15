@@ -96,6 +96,17 @@ class LineValuation:
     status_reason: str | None
     price_scale_factor: float
     minor_unit_adjusted: bool
+    # --- schema v2: cost-currency leg + backend GBP presentation ---
+    # quote_currency is the ticker's trading currency; cost_currency is the
+    # currency the cost basis is recorded in. cost_usd_at_current_fx now uses the
+    # COST currency's FX. GBP fields are backend-computed (value_usd / GBPUSD).
+    # fx_issues names which FX leg degraded (quote_fx / cost_fx / gbp_presentation_fx).
+    quote_currency: str | None = None
+    cost_currency: str | None = None
+    value_gbp: float | None = None
+    cost_gbp_at_current_fx: float | None = None
+    pnl_gbp_at_current_fx: float | None = None
+    fx_issues: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

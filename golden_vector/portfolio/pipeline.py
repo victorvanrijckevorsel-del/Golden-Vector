@@ -12,6 +12,7 @@ import pandas as pd
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.latest_data import load_latest_foundation_snapshot
+from golden_vector.normalize.calendar import fx_rate_to_usd_asof
 from golden_vector.app.model_state import (
     load_current_model_state_manifest,
     read_current_model_parquet,
@@ -174,6 +175,7 @@ def build_portfolio_artifacts(
         include_gold_history=True,
         include_equity_histories=bool(requested_tickers),
         include_market_snapshots=True,
+        include_fx_histories=True,
         requested_tickers=requested_tickers,
         manifest_path=resolved_foundation_manifest_path,
     )
@@ -187,6 +189,7 @@ def build_portfolio_artifacts(
             ticker_info=ticker_info,
             snapshot=snapshots_by_ticker.get(lot.ticker),
             max_fx_staleness_days=app_config.qa.max_fx_staleness_days,
+            fx_histories=foundation.fx_histories,
         )
         for lot in lots
     ]
@@ -403,6 +406,7 @@ def _value_lot(
     ticker_info: dict[str, TickerInfo],
     snapshot: dict[str, object] | None,
     max_fx_staleness_days: int,
+    fx_histories: dict[str, pd.DataFrame] | None = None,
 ) -> LineValuation:
     info = ticker_info.get(lot.ticker)
     company = info.company if info is not None else None
@@ -453,10 +457,57 @@ def _value_lot(
     )
     snapshot_scale_factor = optional_float(snapshot.get("price_scale_factor"))
     snapshot_minor_adjusted = bool(snapshot.get("minor_unit_adjusted") or False)
-    cost_usd = lot.cost_local * fx_rate
-    pnl_local = valued.market_value_local - lot.cost_local
-    pnl_pct = pnl_local / lot.cost_local if lot.cost_local > 0 else None
-    pnl_usd = valued.market_value_usd - cost_usd
+    quote_currency = lot.buy_currency
+    cost_currency = (lot.cost_currency or lot.buy_currency).strip().upper()
+    cost_basis = lot.cost_basis_total if lot.cost_basis_total is not None else lot.cost_local
+    snapshot_date = _optional_string(snapshot.get("snapshot_date"))
+    histories = fx_histories or {}
+    fx_issues: list[str] = []
+
+    # Cost -> USD via the COST currency's FX (not the quote FX). Same currency as
+    # the quote leg reuses the snapshot rate; USD is 1.0; otherwise look it up.
+    if cost_currency == quote_currency:
+        cost_fx = fx_rate
+    elif cost_currency == "USD":
+        cost_fx = 1.0
+    else:
+        cost_fx = fx_rate_to_usd_asof(histories.get(cost_currency), snapshot_date)
+    if cost_fx is None or cost_fx <= 0:
+        cost_usd = None
+        fx_issues.append("cost_fx")
+        status_parts.append("MISSING_COST_FX")
+        reasons.append(f"Cost-currency FX ({cost_currency}) is unavailable.")
+    else:
+        cost_usd = cost_basis * cost_fx
+
+    # Local P&L is only meaningful when cost and quote currencies match.
+    if cost_currency == quote_currency:
+        pnl_local = valued.market_value_local - lot.cost_local
+        pnl_pct = pnl_local / lot.cost_local if lot.cost_local > 0 else None
+    else:
+        pnl_local = None
+        pnl_pct = None
+
+    pnl_usd = (valued.market_value_usd - cost_usd) if cost_usd is not None else None
+
+    # GBP presentation (backend-computed): value_gbp = value_usd / GBPUSD.
+    if quote_currency == "GBP":
+        gbp_to_usd = fx_rate
+    elif cost_currency == "GBP" and cost_fx:
+        gbp_to_usd = cost_fx
+    else:
+        gbp_to_usd = fx_rate_to_usd_asof(histories.get("GBP"), snapshot_date)
+    if gbp_to_usd and gbp_to_usd > 0:
+        value_gbp = valued.market_value_usd / gbp_to_usd
+        cost_gbp = (cost_usd / gbp_to_usd) if cost_usd is not None else None
+        pnl_gbp = (value_gbp - cost_gbp) if cost_gbp is not None else None
+    else:
+        value_gbp = None
+        cost_gbp = None
+        pnl_gbp = None
+        # Presentation-only: USD valuation stays valid, so do NOT degrade status.
+        fx_issues.append("gbp_presentation_fx")
+
     status = "; ".join(dict.fromkeys(status_parts)) if status_parts else "OK"
     return LineValuation(
         lot=lot,
@@ -464,7 +515,7 @@ def _value_lot(
         current_price_local=valued.price_local_major,
         current_price_usd=valued.price_local_major * fx_rate,
         fx_rate_to_usd=fx_rate,
-        snapshot_date=_optional_string(snapshot.get("snapshot_date")),
+        snapshot_date=snapshot_date,
         value_local=valued.market_value_local,
         value_usd=valued.market_value_usd,
         cost_local=lot.cost_local,
@@ -476,6 +527,12 @@ def _value_lot(
         status_reason=None if status == "OK" else " ".join(reasons),
         price_scale_factor=snapshot_scale_factor or valued.price_scale_factor,
         minor_unit_adjusted=snapshot_minor_adjusted or valued.minor_unit_adjusted,
+        quote_currency=quote_currency,
+        cost_currency=cost_currency,
+        value_gbp=value_gbp,
+        cost_gbp_at_current_fx=cost_gbp,
+        pnl_gbp_at_current_fx=pnl_gbp,
+        fx_issues=tuple(fx_issues),
     )
 
 
@@ -485,6 +542,7 @@ def _safe_value_lot(
     ticker_info: dict[str, TickerInfo],
     snapshot: dict[str, object] | None,
     max_fx_staleness_days: int,
+    fx_histories: dict[str, pd.DataFrame] | None = None,
 ) -> LineValuation:
     info = ticker_info.get(lot.ticker)
     company = info.company if info is not None else None
@@ -494,6 +552,7 @@ def _safe_value_lot(
             ticker_info=ticker_info,
             snapshot=snapshot,
             max_fx_staleness_days=max_fx_staleness_days,
+            fx_histories=fx_histories or {},
         )
     except ValueError as exc:
         return _missing_value(
