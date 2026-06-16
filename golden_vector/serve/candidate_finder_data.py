@@ -78,6 +78,12 @@ class CandidateFinderScenarioError(ValueError):
     """Raised when a Candidate Finder scenario request is invalid."""
 
 
+class CandidateFinderSourceError(RuntimeError):
+    """Raised when a resolved current Candidate Finder source artifact is corrupt or
+    unreadable. Fail loud rather than rendering a sparse ranking that silently drops
+    whole dimensions (audit M7)."""
+
+
 @dataclass(frozen=True)
 class CandidateFinderCacheKey:
     tool_a_refresh_run_ids: tuple[str, ...]
@@ -196,28 +202,30 @@ def load_candidate_finder_data(
     """Load the latest joined frame used by Candidate Finder screens."""
 
     model_state_manifest = load_current_model_state_manifest(paths)
-    tool_a_path = resolve_current_model_artifact_path(
-        paths,
-        "tool_a",
-        fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+    tool_a_path, tool_a_required = _resolve_finder_source(
+        paths, "tool_a", fallback_path=paths.latest_tool_a_snapshot_parquet_path
     )
-    tool_b_path = resolve_current_model_artifact_path(
-        paths,
-        "tool_b",
-        fallback_path=paths.latest_tool_b_snapshot_parquet_path,
+    tool_b_path, tool_b_required = _resolve_finder_source(
+        paths, "tool_b", fallback_path=paths.latest_tool_b_snapshot_parquet_path
     )
-    tool_c_path = resolve_current_model_artifact_path(
-        paths,
-        "tool_c",
-        fallback_path=paths.latest_tool_c_snapshot_parquet_path,
+    tool_c_path, tool_c_required = _resolve_finder_source(
+        paths, "tool_c", fallback_path=paths.latest_tool_c_snapshot_parquet_path
     )
-    tool_d_source_path = _tool_d_finder_source_path(paths)
-    tool_a_load = _read_optional_parquet(tool_a_path, label="Gold Sensitivity")
-    tool_b_load = _read_optional_parquet(tool_b_path, label="Corporate Finance")
+    tool_d_source_path, tool_d_required = _tool_d_finder_source(paths)
+    tool_a_load = _read_optional_parquet(
+        tool_a_path, label="Gold Sensitivity", required=tool_a_required
+    )
+    tool_b_load = _read_optional_parquet(
+        tool_b_path, label="Corporate Finance", required=tool_b_required
+    )
     tool_a = tool_a_load.frame
     tool_b = tool_b_load.frame
-    tool_c_load = _read_optional_parquet(tool_c_path, label="Gold Downside")
-    tool_d_load = _read_optional_parquet(tool_d_source_path, label="Corporate Resilience")
+    tool_c_load = _read_optional_parquet(
+        tool_c_path, label="Gold Downside", required=tool_c_required
+    )
+    tool_d_load = _read_optional_parquet(
+        tool_d_source_path, label="Corporate Resilience", required=tool_d_required
+    )
     tool_c = tool_c_load.frame
     option_data = load_option_trading_data(paths, app_config=app_config)
     manual_company, _, _, _ = load_store_tables(paths)
@@ -943,12 +951,23 @@ def _parse_timestamp(value: object) -> pd.Timestamp | None:
     return parsed
 
 
-def _read_optional_parquet(path: Path | None, *, label: str) -> CandidateFinderSourceLoad:
+def _read_optional_parquet(
+    path: Path | None, *, label: str, required: bool = False
+) -> CandidateFinderSourceLoad:
     if path is None or not path.exists():
         return CandidateFinderSourceLoad(frame=pd.DataFrame())
     try:
         frame = pd.read_parquet(path)
     except Exception as exc:
+        if required:
+            # A MANIFEST-resolved current artifact is corrupt/unreadable. A warning
+            # banner is not enough -- a missing dimension can leave the ranking
+            # looking usable but wrong, so fail loud and let the route render a
+            # friendly refresh page (audit M7).
+            raise CandidateFinderSourceError(
+                f"{label} current artifact at {path} could not be read: {exc}."
+            ) from exc
+        # Legacy/no-manifest fallback alias: tolerate with a warning (transition path).
         return CandidateFinderSourceLoad(
             frame=pd.DataFrame(),
             warning=f"{label} latest parquet could not be read: {exc}.",
@@ -1090,18 +1109,32 @@ def _spot_tool_b_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:
     )
 
 
-def _tool_d_finder_source_path(paths: ProjectPaths) -> Path | None:
-    spot_path = resolve_current_model_artifact_path(
-        paths,
-        "tool_d_spot",
-        fallback_path=paths.latest_tool_d_spot_snapshot_parquet_path,
+def _resolve_finder_source(
+    paths: ProjectPaths, name: str, *, fallback_path: Path | None
+) -> tuple[Path | None, bool]:
+    """Resolve a Candidate Finder source path and whether it is required.
+
+    A manifest-resolved current artifact is required: a corrupt read fails loud
+    (audit M7). A latest-alias fallback used only because there is no manifest entry
+    is a legacy/transition path: a corrupt read degrades to a warning, not a crash.
+    """
+
+    manifest_path = resolve_current_model_artifact_path(paths, name)
+    if manifest_path is not None:
+        return manifest_path, True
+    if fallback_path is not None and fallback_path.exists():
+        return fallback_path, False
+    return None, False
+
+
+def _tool_d_finder_source(paths: ProjectPaths) -> tuple[Path | None, bool]:
+    spot_path, spot_required = _resolve_finder_source(
+        paths, "tool_d_spot", fallback_path=paths.latest_tool_d_spot_snapshot_parquet_path
     )
     if spot_path is not None:
-        return spot_path
-    return resolve_current_model_artifact_path(
-        paths,
-        "tool_d",
-        fallback_path=paths.latest_tool_d_snapshot_parquet_path,
+        return spot_path, spot_required
+    return _resolve_finder_source(
+        paths, "tool_d", fallback_path=paths.latest_tool_d_snapshot_parquet_path
     )
 
 

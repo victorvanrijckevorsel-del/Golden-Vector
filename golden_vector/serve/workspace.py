@@ -62,6 +62,7 @@ from golden_vector.serve.option_refresh import (
 from golden_vector.serve.candidate_finder_data import (
     CandidateFinderData,
     CandidateFinderScenarioError,
+    CandidateFinderSourceError,
     load_candidate_finder_data,
     parse_candidate_finder_scenario,
 )
@@ -748,6 +749,18 @@ def create_workspace_app(
                     detail=(
                         "Run python main.py refresh, or save a portfolio lot again, "
                         f"to rebuild the portfolio artifacts. Details: {exc}"
+                    ),
+                ),
+                status="503 Service Unavailable",
+            )
+        except CandidateFinderSourceError as exc:
+            return _html_response(
+                start_response,
+                _render_error_page(
+                    "A Candidate Finder data source is corrupt or unreadable.",
+                    detail=(
+                        "Run python main.py refresh to rebuild the tool artifacts and the "
+                        f"current model-state manifest. Details: {exc}"
                     ),
                 ),
                 status="503 Service Unavailable",

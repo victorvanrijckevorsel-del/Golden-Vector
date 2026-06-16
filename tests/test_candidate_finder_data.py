@@ -11,6 +11,7 @@ from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.model_state import (
     load_current_model_state_manifest,
+    resolve_current_model_artifact_path,
     write_current_model_state_manifest,
 )
 from golden_vector.app.run_context import RunContext
@@ -31,6 +32,7 @@ from golden_vector.screening.schema import TOOL_B_OUTPUT_COLUMNS
 from golden_vector.serve.candidate_finder_data import (
     CandidateFinderScenario,
     CandidateFinderScenarioError,
+    CandidateFinderSourceError,
     TOOL_D_FINDER_FIELDS,
     candidate_finder_result_frame,
     clear_candidate_finder_cache,
@@ -701,6 +703,21 @@ def test_candidate_finder_data_ignores_corrupt_latest_alias_with_manifest(tmp_pa
 
     assert data.alignment.status == "OK"
     assert not any("Gold Sensitivity latest parquet could not be read" in item for item in screen.warnings)
+
+
+def test_candidate_finder_fails_loud_on_corrupt_manifest_resolved_source(tmp_path):
+    # A corrupt MANIFEST-resolved current artifact (not just a stray alias) must fail
+    # loud, never silently render a sparse ranking missing a whole dimension (M7).
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    resolved = resolve_current_model_artifact_path(paths, "tool_a")
+    assert resolved is not None  # the manifest points at a real current Tool A artifact
+    resolved.write_text("not parquet", encoding="utf-8")
+
+    with pytest.raises(CandidateFinderSourceError, match="could not be read"):
+        load_candidate_finder_data(paths, app_config=app_config)
 
 
 def test_candidate_finder_screen_filters_peer_pool_before_ranking(tmp_path):
