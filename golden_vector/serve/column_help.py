@@ -685,4 +685,30 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         meaning="Whether this position's valuation data (price, FX, currency, and manual-lot validity) is complete and current.",
         details="A degraded status holds back this row's gold-down loss estimate. Beta availability and Tool D resilience are tracked separately — a position can read OK here yet still be missing a beta or a Tool D resilience reading.",
     ),
+    "option_candidate_delta": ColumnHelp(
+        meaning=(
+            "The option's Black-Scholes delta — roughly how much its price moves per $1 "
+            "move in the stock, and the basis for the strike buckets (Near-ATM / Directional)."
+        ),
+        calculation=(
+            "Black-Scholes delta from spot, strike, time, the risk-free rate, and implied "
+            "volatility — assuming zero dividend yield / cost-of-carry."
+        ),
+        details=(
+            "That zero dividend/carry assumption biases the delta (and the modeled option prices "
+            "below) for dividend-paying miners or ETFs and long-dated options — treat them as "
+            "estimates, not live quotes."
+        ),
+    ),
+    "option_scenario_pnl": ColumnHelp(
+        meaning="Modeled profit/loss per share (and total) for the selected option under each gold-move scenario.",
+        calculation=(
+            "From Black-Scholes option prices (assuming zero dividend yield / carry) at the scenario "
+            "stock price; net figures scale by your contract count."
+        ),
+        details=(
+            "These are MODEL prices, not live market quotes — they can drift from executable prices, "
+            "more so for dividend payers and long-dated options."
+        ),
+    ),
 }

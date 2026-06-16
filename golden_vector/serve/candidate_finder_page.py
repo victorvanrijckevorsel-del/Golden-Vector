@@ -260,6 +260,16 @@ def _render_summary_cards(screen: CandidateFinderScreen) -> str:
     return f"<div class=\"metric-grid candidate-summary-grid\">{cards}</div>"
 
 
+def _builder_form_controls(data: CandidateFinderData) -> set[str]:
+    """Query parameters the Screen Builder form owns (and re-emits itself)."""
+
+    controls = {"custom", "options_side", "top_n", "criteria"}
+    for criterion in data.criteria_config.criteria:
+        controls.add(f"direction_{criterion.id}")
+        controls.add(f"weight_{criterion.id}")
+    return controls
+
+
 def _render_builder(
     data: CandidateFinderData,
     screen: CandidateFinderScreen,
@@ -293,6 +303,9 @@ def _render_builder(
         if active_custom
         else ""
     )
+    # Preserve query state the builder form does NOT own -- especially gold_price --
+    # so applying criteria does not silently reset an active gold scenario.
+    hidden = _hidden_query_inputs(query, exclude=_builder_form_controls(data))
     return f"""
 <section class="panel candidate-builder-panel">
   <div class="candidate-panel-heading">
@@ -302,6 +315,7 @@ def _render_builder(
   {custom_note}
   <form method="get" action="{escape(base_path, quote=True)}" class="candidate-finder-form">
     <input type="hidden" name="custom" value="1">
+    {hidden}
     <div class="candidate-form-row">
       <label>
         Universe

@@ -82,6 +82,18 @@ def test_candidate_finder_page_custom_query_preserves_side_direction_and_weight(
     assert "candidate-preset is-active" not in html
 
 
+def test_candidate_finder_builder_preserves_gold_price_scenario():
+    # Applying custom criteria must NOT reset an active gold scenario: the Screen
+    # Builder form carries gold_price forward as a hidden input (audit L2). The gold
+    # form renders gold_price as a visible number input, so a hidden one is uniquely
+    # the builder's preservation.
+    data = _candidate_finder_data()
+
+    html = render_candidate_finder_page(data, query={"custom": ["1"], "gold_price": ["3500"]})
+
+    assert '<input type="hidden" name="gold_price" value="3500">' in html
+
+
 def test_candidate_finder_page_renders_scenario_status_and_preserves_query():
     data = _candidate_finder_data()
     data = CandidateFinderData(

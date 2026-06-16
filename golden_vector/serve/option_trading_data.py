@@ -412,6 +412,8 @@ def parse_option_sizing_request(
     quantity_raw = _query_value(query, "quantity")
     quantity = _parse_int(quantity_raw)
     budget = _parse_float(_query_value(query, "budget"))
+    # The user touched a size control if any size param was present in the query.
+    size_explicit = bool(mode_raw or quantity_raw or _query_value(query, "budget"))
     if size_mode == "budget" and (budget is None or budget <= 0):
         notes.append("Invalid budget; defaulted to contract quantity mode.")
         size_mode = "contracts"
@@ -430,6 +432,7 @@ def parse_option_sizing_request(
         budget=budget,
         notes=tuple(notes),
         horizon_explicit=horizon_explicit,
+        size_explicit=size_explicit,
     )
 
 

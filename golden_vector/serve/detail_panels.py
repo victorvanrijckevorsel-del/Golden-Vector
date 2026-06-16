@@ -35,7 +35,7 @@ from golden_vector.serve.format_helpers import (
     _render_small_table,
     format_dte_suffix as _dte_suffix,
 )
-from golden_vector.serve.column_help import help_term
+from golden_vector.serve.column_help import help_term, help_th
 from golden_vector.serve.model_state_banner import render_option_freshness_box
 from golden_vector.serve.option_signal_charts import render_option_signal_charts
 from golden_vector.serve.option_signal_render import (
@@ -57,6 +57,36 @@ from golden_vector.serve.workspace_state import (
     _structural_history_matches_tool_a,
 )
 
+def _sizing_query_parts(sizing_request: object | None) -> list[str]:
+    """Serialize the option sizing request into URL query parts so window-tab
+    navigation preserves the user's calculator state (audit L3). Only meaningful,
+    non-default values are emitted to keep URLs clean."""
+
+    if sizing_request is None:
+        return []
+    parts: list[str] = []
+    side = str(getattr(sizing_request, "side", "") or "").strip()
+    if side and side != "put":  # "put" is the default landing side; omit it
+        parts.append(f"side={quote(side, safe='')}")
+    if getattr(sizing_request, "horizon_explicit", False):
+        parts.append(f"horizon={int(getattr(sizing_request, 'horizon_days', 0))}")
+    bucket = getattr(sizing_request, "bucket", None)
+    if bucket:
+        parts.append(f"bucket={quote(str(bucket), safe='')}")
+    if getattr(sizing_request, "size_explicit", False):
+        size_mode = str(getattr(sizing_request, "size_mode", "") or "").strip()
+        if size_mode == "budget":
+            parts.append("size_mode=budget")
+            budget = getattr(sizing_request, "budget", None)
+            if budget is not None:
+                parts.append(f"budget={quote(f'{float(budget):g}', safe='')}")
+        elif size_mode == "contracts":
+            quantity = getattr(sizing_request, "quantity", None)
+            if quantity is not None:
+                parts.append(f"quantity={int(quantity)}")
+    return parts
+
+
 def _render_window_switcher(
     *,
     ticker: str,
@@ -64,17 +94,20 @@ def _render_window_switcher(
     canonical: str,
     lens: str | None = None,
     anchor: str | None = None,
+    sizing_request: object | None = None,
 ) -> str:
     """Three-tab switcher at the top of the detail page: 6M / 12M / 3Y.
 
     Clicking a tab navigates to the same ticker with `?window=<id>`. Optional
     lens/anchor values keep tool-specific detail views stable while the user
-    switches structural windows.
+    switches structural windows; sizing_request preserves the Option Trading
+    calculator state (side/horizon/bucket/size_mode/quantity/budget).
     """
     tabs: list[str] = []
     base = f"/ticker/{quote(str(ticker), safe='')}"
     lens_value = str(lens or "").strip()
     anchor_value = str(anchor or "").strip()
+    sizing_parts = _sizing_query_parts(sizing_request)
     for window in _STRUCTURAL_WINDOWS:
         is_active = window == active
         is_canonical = window == canonical
@@ -84,6 +117,7 @@ def _render_window_switcher(
             query_parts.append(f"window={window.lower()}")
         if lens_value:
             query_parts.append(f"lens={quote(lens_value, safe='')}")
+        query_parts.extend(sizing_parts)
         query = f"?{'&'.join(query_parts)}" if query_parts else ""
         fragment = f"#{quote(anchor_value, safe='')}" if anchor_value else ""
         href = f"{base}{query}{fragment}"
@@ -578,7 +612,8 @@ def _render_option_candidate_side_section(
         f"<h4>{escape(title)}</h4>"
         "<table>"
         "<thead><tr>"
-        "<th>Candidate</th><th>Strike &middot; Expiry (DTE)</th><th>Delta</th>"
+        "<th>Candidate</th><th>Strike &middot; Expiry (DTE)</th>"
+        f"{help_th('Delta', key='option_candidate_delta')}"
         "<th>Mid</th><th>Spread</th><th>Liquidity</th><th>Actions</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
@@ -923,8 +958,10 @@ def _render_option_sizing_result(sizing: OptionSizingResult) -> str:
         f"<p>Selected: {escape(bundle.horizon)} {escape(selected_bucket)} {escape(label)}. "
         f"Contracts: {sizing.contracts}.{spend}{leftover}{escape(watch_warning)}</p>"
         "<table>"
-        "<thead><tr><th>Gold Move</th><th>Modeled Stock</th><th>P&amp;L/share Now</th>"
-        "<th>P&amp;L/share Expiry</th><th>Net P&amp;L Now</th><th>Net P&amp;L Expiry</th>"
+        "<thead><tr><th>Gold Move</th><th>Modeled Stock</th>"
+        f"{help_th('P&L/share Now', key='option_scenario_pnl')}"
+        f"{help_th('P&L/share Expiry', key='option_scenario_pnl')}"
+        "<th>Net P&amp;L Now</th><th>Net P&amp;L Expiry</th>"
         "<th>Model Note</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"

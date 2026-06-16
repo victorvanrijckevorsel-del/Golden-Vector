@@ -47,6 +47,9 @@ class OptionSizingRequest:
     # True when the user picked the horizon explicitly; False lets the
     # backend-stamped "Most liquid" default take over on the detail page.
     horizon_explicit: bool = False
+    # True when the user provided any size control (size_mode/quantity/budget); lets
+    # the window switcher preserve sizing state without emitting silent defaults.
+    size_explicit: bool = False
 
 
 @dataclass(frozen=True)

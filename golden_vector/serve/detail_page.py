@@ -72,6 +72,13 @@ def render_detail_page(
                 canonical=canonical_anchor,
                 lens=DETAIL_OPTION_TRADING_LENS_ID if option_lens_active else None,
                 anchor="option-trading" if option_lens_active else None,
+                sizing_request=(
+                    option_trading_detail.sizing.request
+                    if option_lens_active
+                    and option_trading_detail is not None
+                    and option_trading_detail.sizing is not None
+                    else None
+                ),
             )
         )
     elif option_lens_active:

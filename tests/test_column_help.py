@@ -64,6 +64,20 @@ def test_tooltip_without_config_still_shows_meaning_and_direction():
     assert "Lower is better." in text
 
 
+def test_option_delta_help_discloses_zero_dividend_assumption():
+    text = column_help_text("option_candidate_delta", app_config=None)
+    assert text is not None
+    assert "Black-Scholes" in text
+    assert "dividend" in text.lower()
+
+
+def test_option_scenario_pnl_help_clarifies_model_prices():
+    text = column_help_text("option_scenario_pnl", app_config=None)
+    assert text is not None
+    assert "Black-Scholes" in text
+    assert "dividend" in text.lower()
+
+
 def test_help_th_renders_attributes_and_escapes():
     config = _app_config()
 

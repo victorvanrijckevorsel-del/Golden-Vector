@@ -87,6 +87,61 @@ def test_window_switcher_has_no_mismatch_banner_when_active_equals_canonical():
     assert 'class="hint window-mismatch"' not in html
 
 
+def test_window_switcher_preserves_option_sizing_contracts_state():
+    # Clicking a window tab must keep the option sizing calculator state (audit L3).
+    from golden_vector.hedge.option_trading import OptionSizingRequest
+
+    req = OptionSizingRequest(
+        side="call", horizon_days=180, horizon_explicit=True,
+        bucket="directional", size_mode="contracts", quantity=7, size_explicit=True,
+    )
+    html = _render_window_switcher(
+        ticker="NEM", active="6M", canonical="12M",
+        lens="option-trading", anchor="option-trading", sizing_request=req,
+    )
+    assert "side=call" in html
+    assert "horizon=180" in html
+    assert "bucket=directional" in html
+    assert "quantity=7" in html
+
+
+def test_window_switcher_preserves_budget_mode_and_omits_quantity():
+    from golden_vector.hedge.option_trading import OptionSizingRequest
+
+    req = OptionSizingRequest(side="put", size_mode="budget", budget=500.0, size_explicit=True)
+    html = _render_window_switcher(
+        ticker="NEM", active="6M", canonical="12M", lens="option-trading", sizing_request=req,
+    )
+    assert "size_mode=budget" in html
+    assert "budget=500" in html
+    assert "quantity=" not in html  # contracts-only param omitted in budget mode
+
+
+def test_window_switcher_omits_non_explicit_horizon():
+    # A non-explicit horizon must NOT be pinned, so the backend most-liquid default
+    # still drives the detail page after a window switch.
+    from golden_vector.hedge.option_trading import OptionSizingRequest
+
+    req = OptionSizingRequest(side="put", horizon_days=90, horizon_explicit=False)
+    html = _render_window_switcher(
+        ticker="NEM", active="6M", canonical="12M", lens="option-trading", sizing_request=req,
+    )
+    assert "horizon=" not in html
+
+
+def test_window_switcher_omits_silent_default_sizing():
+    # A default sizing request (user touched nothing) must not pollute tab URLs.
+    from golden_vector.hedge.option_trading import OptionSizingRequest
+
+    html = _render_window_switcher(
+        ticker="NEM", active="6M", canonical="12M",
+        lens="option-trading", sizing_request=OptionSizingRequest(),
+    )
+    assert "side=" not in html
+    assert "quantity=" not in html
+    assert "horizon=" not in html
+
+
 # ---------------------------------------------------------------- T3 ----
 
 def test_detail_page_without_window_param_defaults_to_canonical_anchor(tmp_path):
