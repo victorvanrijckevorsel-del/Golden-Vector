@@ -15,6 +15,7 @@ from golden_vector.app.model_state import (
 )
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.common.files import sha256_file
+from golden_vector.common.options_schema import OPTIONS_FEATURE_REQUIRED_COLUMNS
 from golden_vector.common.parquet import read_optional_parquet, read_required_parquet
 from golden_vector.common.strings import normalize_ticker
 from golden_vector.hedge._helpers import as_float
@@ -111,6 +112,7 @@ def load_options_features(
         frame = read_required_parquet(
             feature_path,
             label=f"Options feature snapshot for {ticker}",
+            required_columns=OPTIONS_FEATURE_REQUIRED_COLUMNS,
         )
         if "run_id" in frame.columns and refresh_run_id:
             matching = frame[frame["run_id"].astype(str) == refresh_run_id]
