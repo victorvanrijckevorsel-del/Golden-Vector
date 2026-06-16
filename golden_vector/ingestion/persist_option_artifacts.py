@@ -63,3 +63,32 @@ def persist_option_artifact_frames(
     for path in written_paths:
         run_context.record_artifact(path)
     return written_paths
+
+
+def publish_option_artifact_latest_aliases(
+    *,
+    paths: ProjectPaths,
+    run_context: RunContext,
+    frames: dict[str, pd.DataFrame],
+) -> list[Path]:
+    """Flip the ``*_latest`` aliases for already-staged option artifact frames.
+
+    Call this ONLY after every run-stamped artifact AND the signal history have been
+    written successfully, so a mid-run failure (e.g. the signal-history shrink guard)
+    can never leave latest aliases ahead of a failed option build. This keeps the
+    option publish all-or-nothing: a failed run leaves the last good aliases intact.
+    """
+
+    missing = [name for name in OPTION_ARTIFACT_NAMES if name not in frames]
+    if missing:
+        raise ValueError(f"Missing option artifact frame(s): {', '.join(missing)}")
+
+    written_paths: list[Path] = []
+    for artifact_name in OPTION_ARTIFACT_NAMES:
+        frame = frames[artifact_name]
+        written_paths.append(
+            _write_parquet(frame, option_artifact_latest_path(paths, artifact_name))
+        )
+    for path in written_paths:
+        run_context.record_artifact(path)
+    return written_paths

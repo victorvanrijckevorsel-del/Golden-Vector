@@ -87,7 +87,10 @@ from golden_vector.ingestion.options_phase import (
     skipped_options_phase_summary,
 )
 from golden_vector.ingestion.persist_options import safe_options_file_name
-from golden_vector.ingestion.persist_option_artifacts import persist_option_artifact_frames
+from golden_vector.ingestion.persist_option_artifacts import (
+    persist_option_artifact_frames,
+    publish_option_artifact_latest_aliases,
+)
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
 from golden_vector.ingestion.yahoo_client import YahooClient
@@ -1975,12 +1978,22 @@ def run_option_artifacts_outcome(
             risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
             option_signals=option_signals,
         )
+        # All-or-nothing publish (audit H2): stage every artifact to run-stamped
+        # paths WITHOUT flipping latest aliases, persist signal history (which can
+        # raise via the shrink guard), and only THEN flip the latest aliases. A
+        # failure before the flip leaves the last good option state fully intact.
         persist_option_artifact_frames(
             paths=paths,
             run_context=run_context,
             frames=frames,
+            publish_latest_aliases=False,
         )
         persist_option_signal_history(paths=paths, history=option_signals.next_history)
+        publish_option_artifact_latest_aliases(
+            paths=paths,
+            run_context=run_context,
+            frames=frames,
+        )
 
         row_counts = {name: int(len(frame.index)) for name, frame in frames.items()}
         summary = {

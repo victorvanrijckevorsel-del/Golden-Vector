@@ -24,6 +24,7 @@ from golden_vector.hedge.option_artifact_builder import (
 )
 from golden_vector.hedge.option_artifact_sources import load_option_artifact_source_inputs
 from golden_vector.hedge.option_availability import has_usable_option_slots
+from golden_vector.contracts.option_artifacts import option_artifact_latest_path
 from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.serve.option_trading_data import (
@@ -722,6 +723,36 @@ def test_option_artifact_build_fails_loud_on_stale_feature_rows(tmp_path):
     # and publish a clean-looking overview. (Codex options-review H1.)
     exit_code = run_option_artifacts(paths, parent_refresh_id="parent-refresh")
     assert exit_code == 1
+
+
+def test_option_artifact_publish_is_all_or_nothing_on_signal_history_failure(tmp_path, monkeypatch):
+    # A good publish, then a run where the signal-history persist raises AFTER the
+    # frames are staged. The latest aliases must stay byte-identical to the last good
+    # run -- a failed run never leaves aliases ahead of a failed build. (Codex H2.)
+    import golden_vector.cli as cli_mod
+
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        publish_artifacts=False,
+    )
+    assert run_option_artifacts(paths, parent_refresh_id="parent-A") == 0
+    overview_alias = option_artifact_latest_path(paths, "option_trading_overview")
+    good_bytes = overview_alias.read_bytes()
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("signal-history shrink guard tripped")
+
+    monkeypatch.setattr(cli_mod, "persist_option_signal_history", _boom)
+
+    exit_code = run_option_artifacts(paths, parent_refresh_id="parent-B")
+
+    assert exit_code == 1
+    assert overview_alias.read_bytes() == good_bytes  # aliases never flipped past the failure
 
 
 def test_parse_option_sizing_request_budget_mode_ignores_unused_quantity(tmp_path):
