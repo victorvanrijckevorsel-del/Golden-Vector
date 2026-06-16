@@ -332,29 +332,28 @@ def _render_tool_b_overview_page(
     body.append(
         "<table id=\"tool-b-table\" class=\"js-datatable\">"
         "<thead><tr>"
-        "<th data-col-name=\"ticker\">Ticker</th>"
-        "<th data-col-name=\"verdict\">Verdict</th>"
+        + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
+        + help_th("Verdict", key="tool_b_verdict", app_config=app_config, col_name="verdict")
         + help_th("Checks Passed %", key="tool_b_score", app_config=app_config, col_name="score", sort_numeric=True)
-        + "<th data-col-name=\"rank\" data-sort-numeric>Rank</th>"
-        "<th data-col-name=\"share_price\" data-sort-numeric>Share Price</th>"
-        "<th data-col-name=\"market_cap\" data-sort-numeric>Market Cap</th>"
+        + help_th("Rank", key="tool_b_rank", app_config=app_config, col_name="rank", sort_numeric=True)
+        + help_th("Share Price", key="tool_b_share_price", app_config=app_config, col_name="share_price", sort_numeric=True)
+        + help_th("Market Cap", key="tool_b_market_cap", app_config=app_config, col_name="market_cap", sort_numeric=True)
         + help_th("Enterprise Value", key="tool_b_enterprise_value", app_config=app_config, col_name="enterprise_value", sort_numeric=True)
         + help_th("AISC", key="tool_b_aisc", app_config=app_config, col_name="aisc", sort_numeric=True)
         + help_th("Cash Margin/oz", key="tool_b_cash_margin", app_config=app_config, col_name="cash_margin", sort_numeric=True)
-        + "<th data-col-name=\"margin_pct\" data-sort-numeric>Margin %</th>"
+        + help_th("Margin %", key="tool_b_margin_pct", app_config=app_config, col_name="margin_pct", sort_numeric=True)
         + help_th("Forward EBITDA est.", key="tool_b_forward_ebitda", app_config=app_config, col_name="forward_ebitda", sort_numeric=True)
         + help_th("Forward P/E est.", key="tool_b_forward_pe", app_config=app_config, col_name="forward_pe", sort_numeric=True)
         + help_th("EV/EBITDA est.", key="tool_b_ev_ebitda", app_config=app_config, col_name="ev_ebitda", sort_numeric=True)
         + help_th("FCF Yield est.", key="tool_b_fcf_yield", app_config=app_config, col_name="fcf_yield", sort_numeric=True)
         + help_th("Net Debt/EBITDA", key="tool_b_leverage", app_config=app_config, col_name="leverage", sort_numeric=True)
         + help_th("Reserve Life", key="tool_b_reserve_life", app_config=app_config, col_name="reserve_life", sort_numeric=True)
-        + 
-        "<th data-col-name=\"financial_data\">Market Data</th>"
-        "<th data-col-name=\"differences\" data-sort-numeric>Differences</th>"
-        "<th data-col-name=\"layer1\">Layer 1</th>"
-        "<th data-col-name=\"notes\" data-sort-numeric>Notes</th>"
-        "<th data-col-name=\"check_summary\">Checks</th>"
-        "</tr></thead>"
+        + help_th("Market Data", key="tool_b_financial_data_status", app_config=app_config, col_name="financial_data")
+        + help_th("Differences", key="tool_b_divergent_field_count", app_config=app_config, col_name="differences", sort_numeric=True)
+        + help_th("Layer 1", key="tool_b_layer1_status", app_config=app_config, col_name="layer1")
+        + help_th("Notes", key="user_notes_count", app_config=app_config, col_name="notes", sort_numeric=True)
+        + help_th("Checks", key="tool_b_check_summary", app_config=app_config, col_name="check_summary")
+        + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
         "</table>"
     )

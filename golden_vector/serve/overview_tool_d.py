@@ -250,8 +250,12 @@ def _render_flip_section(frame) -> str:
     return (
         "<section class=\"panel\"><h2>Who Flips Under This Stress</h2>"
         "<table class=\"compact-table\"><thead><tr>"
-        "<th>Ticker</th><th>Flip</th><th>Interest-Cover Line</th><th>Leverage @ G</th><th>Headroom @ G</th>"
-        "</tr></thead>"
+        + help_th("Ticker", key="ticker_symbol", app_config=None)
+        + help_th("Flip", key="tool_d_resilience_flip", app_config=None)
+        + help_th("Interest-Cover Line", key="tool_d_interest_cover", app_config=None)
+        + help_th("Leverage @ G", key="tool_d_leverage", app_config=None)
+        + help_th("Headroom @ G", key="tool_d_headroom", app_config=None)
+        + "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table></section>"
     )
 

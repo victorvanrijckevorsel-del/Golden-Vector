@@ -46,7 +46,7 @@ def test_candidate_finder_page_renders_default_bull_screen():
     assert 'data-col-name="score" data-sort-numeric' in html
     assert 'data-col-name="criterion_up_beta" data-sort-numeric' in html
     assert 'data-col-name="criterion_down_beta" data-sort-numeric' not in html
-    assert "Score = your weighted-average percentile" in html
+    assert "weighted-average percentile across the criteria you chose" in html
     assert "Model build state needs attention" in html
     assert 'aria-label="Use FCF yield"' in html
     assert "Profit cushion per ounce vs the gold price." in html

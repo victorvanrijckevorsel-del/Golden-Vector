@@ -120,7 +120,11 @@ def _render_data_issues(data: PortfolioData) -> str:
         "<section class=\"panel\">"
         "<h2>Data issues to fix</h2>"
         f"<p class=\"hint\">Showing all {len(issues)} current data issues.</p>"
-        "<table><thead><tr><th>Ticker</th><th>Issue</th><th>Why it matters</th></tr></thead>"
+        "<table><thead><tr>"
+        + help_th("Ticker", key="ticker_symbol")
+        + help_th("Issue", key="portfolio_data_issue_code")
+        + help_th("Why it matters", key="portfolio_data_issue_message")
+        + "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
         "</section>"
     )
@@ -157,11 +161,20 @@ def _render_composition(data: PortfolioData) -> str:
         f"Current coverage: {_fmt_percent(summary.get('resilience_coverage_fraction'))}.</p>"
         "<div class=\"two-column\">"
         "<div><h3>Gold-beta exposure</h3>"
-        "<table><thead><tr><th>Bucket</th><th>Positions</th><th>Value</th><th>NAV weight</th></tr></thead>"
+        "<table><thead><tr>"
+        + help_th("Bucket", key="portfolio_exposure_bucket")
+        + help_th("Positions", key="portfolio_exposure_position_count")
+        + help_th("Value", key="portfolio_exposure_value_usd")
+        + help_th("NAV weight", key="portfolio_exposure_nav_weight")
+        + "</tr></thead>"
         f"<tbody>{''.join(exposure_rows)}</tbody></table></div>"
         "<div><h3>Currency split</h3>"
         "<p class=\"hint\">USD P&L at current FX blends security moves and currency moves.</p>"
-        "<table><thead><tr><th>Currency</th><th>Value</th><th>P&L at current FX</th></tr></thead>"
+        "<table><thead><tr>"
+        + help_th("Currency", key="portfolio_currency_code")
+        + help_th("Value", key="portfolio_currency_value_usd")
+        + help_th("P&L at current FX", key="portfolio_currency_pnl_usd")
+        + "</tr></thead>"
         f"<tbody>{''.join(currency_rows)}</tbody></table></div>"
         "</div>"
         "</section>"
@@ -210,9 +223,17 @@ def _render_hedge_sizing(data: PortfolioData) -> str:
     return (
         "<section class=\"panel\">"
         "<h2>Modeled GDX/GDXJ hedge size</h2>"
-        "<table><thead><tr><th>Proxy</th><th>Label</th><th>Status</th><th>Down beta</th>"
-        "<th>Proxy price</th><th>Effective exposure</th><th>Short notional</th>"
-        "<th>Modeled puts</th><th>Note</th></tr></thead>"
+        "<table><thead><tr>"
+        + help_th("Proxy", key="portfolio_hedge_proxy")
+        + help_th("Label", key="portfolio_hedge_proxy_label")
+        + help_th("Status", key="portfolio_hedge_status")
+        + help_th("Down beta", key="tool_c_down_beta")
+        + help_th("Proxy price", key="portfolio_hedge_proxy_price")
+        + help_th("Effective exposure", key="portfolio_hedge_effective_exposure")
+        + help_th("Short notional", key="portfolio_hedge_short_notional")
+        + help_th("Modeled puts", key="portfolio_hedge_modeled_puts")
+        + help_th("Note", key="portfolio_hedge_basis_note")
+        + "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
         f"<p class=\"hint\">{_fmt_text(note)}</p>"
         "</section>"
@@ -273,8 +294,13 @@ def _render_correlations(data: PortfolioData) -> str:
         f"<tbody>{''.join(heat_rows)}</tbody></table></div>"
         "<div><h3>Largest paired exposures</h3>"
         f"<details><summary>Show all {len(ranked.index)} paired exposures</summary>"
-        "<table><thead><tr><th>Pair</th><th>Book weight</th><th>Correlation</th>"
-        "<th>Overlap days</th><th>Status</th></tr></thead>"
+        "<table><thead><tr>"
+        + help_th("Pair", key="portfolio_corr_pair")
+        + help_th("Book weight", key="portfolio_corr_pair_weight")
+        + help_th("Correlation", key="portfolio_corr_correlation")
+        + help_th("Overlap days", key="portfolio_corr_overlap_days")
+        + help_th("Status", key="portfolio_corr_status")
+        + "</tr></thead>"
         f"<tbody>{''.join(pair_rows)}</tbody></table>"
         "</details></div>"
         "</div>"
@@ -316,7 +342,11 @@ def _render_value_history(data: PortfolioData) -> str:
         "aria-label=\"Covered portfolio market value over time\">"
         f"<polyline points=\"{escape(points)}\"></polyline>"
         "</svg>"
-        "<table><thead><tr><th>Date</th><th>Covered value</th><th>Book weight</th></tr></thead>"
+        "<table><thead><tr>"
+        + help_th("Date", key="portfolio_value_history_date")
+        + help_th("Covered value", key="portfolio_covered_market_value")
+        + help_th("Book weight", key="portfolio_covered_book_weight")
+        + "</tr></thead>"
         f"<tbody>{''.join(recent_rows)}</tbody></table>"
         "</section>"
     )
@@ -374,13 +404,13 @@ def _render_positions(data: PortfolioData) -> str:
         "<section class=\"panel\">"
         "<h2>Positions</h2>"
         "<table class=\"js-datatable\"><thead><tr>"
-        + help_th("Ticker")
+        + help_th("Ticker", key="ticker_symbol")
         + help_th("Company")
         + help_th("Shares")
         + help_th("Avg Cost", key="portfolio_avg_cost")
-        + help_th("Current Price")
-        + help_th("Value")
-        + help_th("P&L")
+        + help_th("Current Price", key="portfolio_current_price_local")
+        + help_th("Value", key="portfolio_value_local")
+        + help_th("P&L", key="portfolio_pnl_local")
         + help_th("P&L %", key="portfolio_pnl_pct")
         + help_th("Equity Weight", key="portfolio_equity_weight")
         + help_th("NAV Weight", key="portfolio_nav_weight")
@@ -466,7 +496,13 @@ def _render_lot_table(lots: list[dict[str, object]]) -> str:
         for row in lots
     ]
     return (
-        "<table><thead><tr><th>Date</th><th>Shares</th><th>Buy Price</th><th>Cost</th><th>Note</th></tr></thead>"
+        "<table><thead><tr>"
+        + help_th("Date", key="portfolio_lot_buy_date")
+        + help_th("Shares", key="portfolio_lot_shares")
+        + help_th("Buy Price", key="portfolio_lot_buy_price")
+        + help_th("Cost", key="portfolio_lot_cost")
+        + help_th("Note", key="portfolio_lot_note")
+        + "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
     )
 

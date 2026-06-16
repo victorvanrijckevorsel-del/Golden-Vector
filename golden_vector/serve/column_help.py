@@ -202,6 +202,13 @@ def _candidate_status_thresholds(config: AppConfig) -> str:
     )
 
 
+def _candidate_finder_coverage_thresholds(config: AppConfig) -> str:
+    return (
+        "Rank-eligible only when coverage is at or above "
+        f"{_percent(config.candidate_finder.min_criteria_fraction)} of the selected criteria."
+    )
+
+
 def _near_spot_thresholds(config: AppConfig) -> str:
     hedge = config.hedge_readiness
     return (
@@ -266,6 +273,550 @@ def _ev_ebitda_cap_thresholds(config: AppConfig) -> str:
 
 
 COLUMN_HELP: dict[str, ColumnHelp] = {
+    "tool_b_verdict": ColumnHelp(
+        meaning=(
+            "The screen's plain verdict for this name: STRONG_CANDIDATE, WATCHLIST, SCREEN_OUT, "
+            "or INCOMPLETE (missing inputs)."
+        ),
+        calculation=(
+            "INCOMPLETE if confidence or Layer 1 is incomplete; STRONG_CANDIDATE if Layer 1 "
+            "passes and forward P/E is below the strong cutoff; WATCHLIST if forward P/E is "
+            "below the watchlist cutoff; otherwise SCREEN_OUT."
+        ),
+    ),
+    "tool_b_rank": ColumnHelp(
+        meaning=(
+            "This name's place in the corporate-finance ranking, by how many quality checks it "
+            "passed."
+        ),
+        calculation=(
+            "Dense rank on the Checks Passed % score, highest score first, within each date and "
+            "gold-price assumption; names with no score are left unranked."
+        ),
+        direction="Rank 1 is the top (most checks passed); higher numbers rank lower.",
+    ),
+    "tool_b_share_price": ColumnHelp(
+        meaning="The company's share price in US dollars, taken from the latest market snapshot.",
+        calculation=(
+            "Raw market input (share_price_usd) from the foundation snapshot, not a "
+            "calculation."
+        ),
+    ),
+    "tool_b_market_cap": ColumnHelp(
+        meaning=(
+            "The company's total stock-market value (market capitalisation) in millions of US "
+            "dollars."
+        ),
+        calculation=(
+            "Raw market input (market_cap_musd) from the foundation snapshot, not a "
+            "calculation."
+        ),
+    ),
+    "tool_b_margin_pct": ColumnHelp(
+        meaning=(
+            "Cash margin per ounce as a percent of the gold price at the current gold "
+            "assumption."
+        ),
+        calculation="Cash margin per ounce (gold price minus AISC) divided by the gold price.",
+        direction=(
+            "Higher is better; the screen fails the margin check below the configured minimum."
+        ),
+    ),
+    "tool_b_financial_data_status": ColumnHelp(
+        meaning=(
+            "Whether the market (official) financial fields used for the comparison were fully "
+            "available for this name."
+        ),
+        calculation=(
+            "Rolls up the per-field official statuses: OK only when every dual-source field is "
+            "OK, otherwise the worst status by precedence (down to MISSING)."
+        ),
+    ),
+    "tool_b_divergent_field_count": ColumnHelp(
+        meaning=(
+            "How many financial fields where your manual input differs from the market "
+            "(official) value."
+        ),
+        calculation=(
+            "Count of dual-source fields where the official value is OK, our value came from "
+            "manual entry, and the two are not numerically equal."
+        ),
+    ),
+    "tool_b_layer1_status": ColumnHelp(
+        meaning=(
+            "The result of the Layer 1 mining-quality gate: PASS, FAIL, or INCOMPLETE when "
+            "required inputs are missing."
+        ),
+        calculation=(
+            "INCOMPLETE if any required mining input is missing; otherwise PASS when no "
+            "threshold check fails (AISC, margin, FCF yield, reserve life, leverage), else "
+            "FAIL."
+        ),
+        direction="PASS is best; INCOMPLETE means missing inputs.",
+    ),
+    "tool_b_check_summary": ColumnHelp(
+        meaning=(
+            "The per-check breakdown behind the score: how many of the visible checks passed "
+            "and each check's PASS/FAIL/N/A result."
+        ),
+        calculation=(
+            "passed/total followed by each check's status (Data complete, AISC, Margin, FCF "
+            "yield, Reserve life, Net Debt/EBITDA, Forward P/E)."
+        ),
+    ),
+    "tool_d_resilience_flip": ColumnHelp(
+        meaning=(
+            "Which survival statuses this name newly flips into at the stressed gold price (it "
+            "was fine at spot but crosses a line under the stress)."
+        ),
+        calculation=(
+            "Compares stressed-gold vs spot-gold values and flags transitions: "
+            "flips_margin_negative (margin <0 at G but >=0 at spot), flips_thin_margin "
+            "(breakeven headroom falls into 0-10% at G from >=10% at spot), "
+            "flips_leverage_undefined (forward EBITDA <=0 at G but >0 at spot), "
+            "flips_over_debt_stress_line (debt-stress gold line sits between G and spot with "
+            "worse leverage)."
+        ),
+        direction=(
+            "Empty / fewer is better - any flip means the name crosses a survival line only "
+            "under the stressed gold price; blank means it does not newly flip."
+        ),
+    ),
+    "tool_d_headroom": ColumnHelp(
+        meaning=(
+            "Cash-margin cushion above AISC breakeven at the selected stress gold price, as a "
+            "percent of the gold price."
+        ),
+        calculation="(gold price used - AISC per ounce) / gold price used, shown as a percent.",
+        direction=(
+            "Higher is safer - more cushion above the AISC breakeven before margin turns "
+            "negative."
+        ),
+    ),
+    "option_signal_horizon": ColumnHelp(
+        meaning=(
+            "The option signal horizon in days (e.g. 60d) — the days-to-expiry window the skew "
+            "is measured at."
+        ),
+        calculation="Horizons the persisted signal row carries, parsed from name_skew_<h>d keys.",
+    ),
+    "option_name_skew": ColumnHelp(
+        meaning=(
+            "This stock's own 25-delta volatility skew at the horizon — how much richer its "
+            "25-delta put implied volatility is than its 25-delta call implied volatility."
+        ),
+        calculation="25-delta put IV minus 25-delta call IV (iv_skew_<h>d) for the name itself.",
+        direction=(
+            "More positive means downside puts are priced richer than calls, so more crash risk "
+            "is priced in. Context, not a forecast."
+        ),
+    ),
+    "option_sector_skew": ColumnHelp(
+        meaning=(
+            "The sector benchmark ETF's (GDX/GDXJ) own 25-delta volatility skew at the horizon "
+            "— the baseline the name's skew is compared against."
+        ),
+        calculation=(
+            "25-delta put IV minus 25-delta call IV (iv_skew_<h>d) measured on the benchmark "
+            "ETF chain."
+        ),
+        direction=(
+            "More positive means the sector's downside puts are priced richer than calls. "
+            "Context, not a forecast."
+        ),
+    ),
+    "option_candidate_label": ColumnHelp(
+        meaning=(
+            "Which option candidate this row is — its side and strike bucket, e.g. Put Near-ATM "
+            "or Call Directional."
+        ),
+        calculation="Side (Put/Call) plus the bucket label (Near-ATM / Directional).",
+    ),
+    "option_expiry_dte": ColumnHelp(
+        meaning=(
+            "The option's listed expiry date and how many calendar days remain until it expires "
+            "(DTE = days to expiry)."
+        ),
+        calculation="Contract expiration date and days_to_expiry from the cached option chain.",
+    ),
+    "option_strike": ColumnHelp(
+        meaning="The option's strike price — the price at which the contract can be exercised.",
+        calculation="Strike of the selected option contract from the cached chain.",
+    ),
+    "option_mid_price": ColumnHelp(
+        meaning=(
+            "The option's mid price — the midpoint between the current bid and ask. A rough "
+            "per-share premium estimate, not a live executable quote."
+        ),
+        calculation="(bid + ask) / 2 from the cached option-chain snapshot.",
+    ),
+    "option_rel_spread": ColumnHelp(
+        meaning=(
+            "The option's relative bid/ask spread — how wide the quote is as a fraction of its "
+            "mid price. Wider spreads cost more to enter and exit."
+        ),
+        calculation="Relative spread = (ask - bid) / mid for this contract.",
+        direction="Lower is better.",
+    ),
+    "option_open_interest": ColumnHelp(
+        meaning=(
+            "Open interest for this contract — the number of contracts currently outstanding. A "
+            "liquidity proxy."
+        ),
+        calculation="Open interest reported on the cached option-chain snapshot for this contract.",
+        direction="Higher usually means deeper liquidity.",
+    ),
+    "option_proxy_basis_risk": ColumnHelp(
+        meaning=(
+            "Why a sector-ETF proxy contract is being shown instead of a single-name contract, "
+            "and the warning that the ETF does not track this stock one-for-one (basis risk)."
+        ),
+        calculation="The proxy-fallback reason string explaining the GDX/GDXJ substitution.",
+    ),
+    "option_strike_expiry": ColumnHelp(
+        meaning=(
+            "The candidate option's strike price together with its expiry date and days-to- "
+            "expiry (DTE)."
+        ),
+        calculation=(
+            "Strike plus the contract expiration date and days_to_expiry from the cached chain."
+        ),
+    ),
+    "option_actions": ColumnHelp(
+        meaning=(
+            "Quick actions for this candidate — Select to load it into the sizing calculator "
+            "(tradable rows only) and a link to open the Yahoo option chain for its expiry."
+        ),
+    ),
+    "option_scenario_gold_move": ColumnHelp(
+        meaning=(
+            "The hypothetical gold-price move for this scenario row, used to model the stock "
+            "and option outcome."
+        ),
+        calculation=(
+            "Each modeled percentage change in the gold price (gold_pct_change) in the scenario "
+            "grid."
+        ),
+    ),
+    "option_scenario_modeled_stock": ColumnHelp(
+        meaning=(
+            "The stock price implied by the scenario's gold move, used to reprice the option. A "
+            "model estimate, not a forecast."
+        ),
+        calculation="current_stock_price x (1 + scenario_beta x gold_pct_change), floored at 0.",
+    ),
+    "option_scenario_model_note": ColumnHelp(
+        meaning=(
+            "A caveat shown for extreme scenarios where the linear beta model is unreliable "
+            "(e.g. deep gold-down moves where operating/balance-sheet leverage can make the "
+            "stock move non-linearly)."
+        ),
+        calculation=(
+            "scenario_model_note flags scenarios at or below the extreme-downside threshold."
+        ),
+    ),
+    "tool_a_structural_window": ColumnHelp(
+        meaning=(
+            "The trailing time window (6M, 12M, or 3Y) over which these structural metrics were "
+            "estimated; marked Anchor (the ticker's canonical window) and/or Active (the window "
+            "currently selected)."
+        ),
+        calculation="One row per configured structural window.",
+    ),
+    "tool_a_r_squared": ColumnHelp(
+        meaning=(
+            "How well the gold-beta regression fits this window — the share of the stock's "
+            "weekly return variance explained by gold's weekly returns."
+        ),
+        calculation=(
+            "R-squared of weekly stock log-returns regressed on weekly gold log-returns over "
+            "the window."
+        ),
+        direction="Higher means a tighter, more reliable gold relationship.",
+    ),
+    "tool_a_window_weeks": ColumnHelp(
+        meaning=(
+            "The number of weekly observations used to estimate this window's metrics. Thin "
+            "samples are less trustworthy."
+        ),
+        calculation="Count of weeks in the trailing window (week_count).",
+        direction="More weeks generally mean a more reliable estimate.",
+    ),
+    "tool_a_window_status": ColumnHelp(
+        meaning=(
+            "Whether this window has enough weekly observations to be eligible (ELIGIBLE) or "
+            "too few (LOW_OBSERVATION)."
+        ),
+        calculation=(
+            "ELIGIBLE if week_count >= the minimum observations setting, otherwise "
+            "LOW_OBSERVATION."
+        ),
+        direction=(
+            "ELIGIBLE windows feed the published metrics; LOW_OBSERVATION windows are not "
+            "trusted."
+        ),
+    ),
+    "exploratory_horizon": ColumnHelp(
+        meaning=(
+            "The lookback horizon for this exploratory ladder row (e.g. 1y, 3y). Tactical "
+            "context only — it does not drive the Gold Sensitivity score."
+        ),
+        calculation="The parsed horizon id from the returns ladder.",
+    ),
+    "exploratory_equity_return": ColumnHelp(
+        meaning=(
+            "The stock's total simple return over the horizon (single period, start to end). "
+            "Tactical context only."
+        ),
+        calculation="(equity price at end / equity price at start) - 1 over the horizon.",
+    ),
+    "exploratory_gold_return": ColumnHelp(
+        meaning=(
+            "Gold's total simple return over the same horizon (single period, start to end). "
+            "Tactical context only."
+        ),
+        calculation="(gold price at end / gold price at start) - 1 over the horizon.",
+    ),
+    "exploratory_single_period_ratio": ColumnHelp(
+        meaning=(
+            "The stock's horizon return divided by gold's horizon return — a single-period "
+            "return ratio, NOT a structural beta, and it does not drive the Gold Sensitivity "
+            "score."
+        ),
+        calculation=(
+            "equity_return / gold_return over the horizon (suppressed when gold's move is near "
+            "zero)."
+        ),
+        direction="Higher means the stock moved more than gold over the period; descriptive only.",
+    ),
+    "exploratory_coverage_status": ColumnHelp(
+        meaning=(
+            "Whether the horizon had enough clean price history and a usable gold move to "
+            "compute a ratio: PASS or FAIL."
+        ),
+        calculation=(
+            "coverage_flag — PASS when both equity and gold return basis are available, "
+            "otherwise FAIL."
+        ),
+        direction="PASS rows are usable; FAIL rows lack sufficient history or basis.",
+    ),
+    "option_data_source": ColumnHelp(
+        meaning=(
+            "Where the cached option data came from — a provenance label (e.g. cached Yahoo "
+            "Finance data via yfinance)."
+        ),
+        calculation="Source label recorded on the option-trading source context.",
+    ),
+    "option_risk_free_rate": ColumnHelp(
+        meaning=(
+            "The risk-free interest rate used to discount the Black-Scholes scenario option "
+            "prices. Marked 'fallback' (0%) when it was missing from the options manifest."
+        ),
+        calculation="Risk-free rate from the options manifest, or a 0% fallback if absent.",
+    ),
+    "option_refresh_run": ColumnHelp(
+        meaning=(
+            "The refresh run id that produced this option snapshot — a provenance/audit "
+            "identifier."
+        ),
+        calculation="refresh_run_id recorded on the option-trading source context.",
+    ),
+    "portfolio_data_issue_code": ColumnHelp(
+        meaning=(
+            "A short machine code naming the kind of portfolio data problem found for this row "
+            "(e.g. missing_price, benchmark_beta_not_publishable)."
+        ),
+    ),
+    "portfolio_data_issue_message": ColumnHelp(
+        meaning="A plain-English explanation of why this data issue matters and what is wrong.",
+    ),
+    "portfolio_exposure_bucket": ColumnHelp(
+        meaning=(
+            "The gold-beta exposure category a position falls into: Measured beta, Low/negative "
+            "beta, Low-confidence beta, Missing beta, Missing price, or Degraded data."
+        ),
+        calculation=(
+            "Each position is assigned a bucket from its down-beta availability, confidence, "
+            "and price/data status, then positions are grouped by bucket."
+        ),
+    ),
+    "portfolio_exposure_position_count": ColumnHelp(
+        meaning="How many of your positions fall in this exposure bucket.",
+        calculation="Count of positions whose effective_exposure_bucket equals this bucket.",
+    ),
+    "portfolio_exposure_value_usd": ColumnHelp(
+        meaning="Combined current USD value of all positions in this exposure bucket.",
+        calculation="Sum of each position's value_usd within the bucket.",
+    ),
+    "portfolio_exposure_nav_weight": ColumnHelp(
+        meaning=(
+            "This exposure bucket's combined value as a share of your whole portfolio's net "
+            "asset value (NAV)."
+        ),
+        calculation="Bucket value_usd / total NAV.",
+    ),
+    "portfolio_currency_code": ColumnHelp(
+        meaning=(
+            "The trading currency the value and P&L below are denominated in (positions are "
+            "grouped by their buy/quote currency)."
+        ),
+    ),
+    "portfolio_currency_value_usd": ColumnHelp(
+        meaning="Combined current USD value of all positions held in this currency.",
+        calculation="Sum of each lot's value_usd within the currency bucket.",
+    ),
+    "portfolio_currency_pnl_usd": ColumnHelp(
+        meaning=(
+            "Unrealized profit/loss in USD for positions in this currency, valued at current "
+            "FX; it blends security moves and currency moves. Blank unless every valued lot in "
+            "the bucket has a recorded cost."
+        ),
+        calculation=(
+            "Bucket value_usd minus bucket cost_usd at current FX (null if any cost is "
+            "missing)."
+        ),
+        direction="Higher is better.",
+    ),
+    "portfolio_hedge_proxy": ColumnHelp(
+        meaning=(
+            "The sector ETF used as a hedging proxy for the book's measured gold exposure (e.g. "
+            "GDX or GDXJ)."
+        ),
+    ),
+    "portfolio_hedge_proxy_label": ColumnHelp(
+        meaning="The human-readable name of the hedging proxy ETF.",
+    ),
+    "portfolio_hedge_status": ColumnHelp(
+        meaning=(
+            "Whether a hedge size could be modeled for this proxy: OK, NO_MEASURED_EXPOSURE "
+            "(nothing to hedge), or UNAVAILABLE (the proxy's beta or price is "
+            "missing/unusable)."
+        ),
+        calculation=(
+            "Derived from the proxy's benchmark status, its down-beta, its price, and whether "
+            "the book has any measured gold exposure."
+        ),
+    ),
+    "portfolio_hedge_proxy_price": ColumnHelp(
+        meaning="The proxy ETF's latest USD share price used to size the hedge.",
+        calculation="Latest USD close from the cached benchmark history.",
+    ),
+    "portfolio_hedge_effective_exposure": ColumnHelp(
+        meaning=(
+            "The book's modeled USD gold exposure to be hedged — the total dollar loss your "
+            "covered positions would take if gold fell 10%."
+        ),
+        calculation=(
+            "Sum over covered positions of value_usd x down-beta x 10% (only positions whose "
+            "down-beta clears the minimum gate contribute)."
+        ),
+    ),
+    "portfolio_hedge_short_notional": ColumnHelp(
+        meaning=(
+            "The modeled dollar amount of the proxy ETF you would short to offset the book's "
+            "gold exposure."
+        ),
+        calculation="Effective gold exposure divided by the proxy's gold-down beta.",
+    ),
+    "portfolio_hedge_modeled_puts": ColumnHelp(
+        meaning=(
+            "The modeled number of put-option contracts on the proxy that would cover the short "
+            "notional."
+        ),
+        calculation="Round up of short notional / (proxy price x 100 shares per contract).",
+    ),
+    "portfolio_hedge_basis_note": ColumnHelp(
+        meaning=(
+            "A plain-English caveat that GDX/GDXJ are sector proxies that can under-cover high- "
+            "beta small-caps, and that this is a modeled hedge size, not a recommendation."
+        ),
+    ),
+    "portfolio_corr_pair": ColumnHelp(
+        meaning="The two covered holdings whose return correlation this row reports.",
+    ),
+    "portfolio_corr_pair_weight": ColumnHelp(
+        meaning="How much of your portfolio NAV these two holdings make up together.",
+        calculation="Sum of the two holdings' NAV weight fractions.",
+    ),
+    "portfolio_corr_correlation": ColumnHelp(
+        meaning=(
+            "How closely the two holdings' daily USD returns have moved together over their "
+            "overlapping history (-1 to +1)."
+        ),
+        calculation=(
+            "Pearson correlation of the two daily return series over their overlapping dates."
+        ),
+        direction=(
+            "Lower (less correlated) means more diversification; in a gold selloff correlations "
+            "often rise toward 1.0."
+        ),
+    ),
+    "portfolio_corr_overlap_days": ColumnHelp(
+        meaning=(
+            "The number of overlapping daily-return observations the correlation was computed "
+            "from."
+        ),
+        calculation=(
+            "Count of dates where both holdings have a return; the pair needs at least 30 to "
+            "report a correlation."
+        ),
+        direction="More overlapping days means a more trustworthy correlation.",
+    ),
+    "portfolio_corr_status": ColumnHelp(
+        meaning=(
+            "Whether the correlation for this pair could be computed: OK, INSUFFICIENT_HISTORY "
+            "(fewer than 30 overlapping days), or UNAVAILABLE."
+        ),
+    ),
+    "portfolio_value_history_date": ColumnHelp(
+        meaning="The historical date for this covered-portfolio market-value point.",
+    ),
+    "portfolio_covered_market_value": ColumnHelp(
+        meaning=(
+            "The USD market value on this date of today's holdings for the covered names (those "
+            "with price history) — a value series, not profit/loss."
+        ),
+        calculation=(
+            "On each date, sum across covered holdings of close_usd x current shares; only "
+            "dates where every included holding has a price are kept."
+        ),
+    ),
+    "portfolio_covered_book_weight": ColumnHelp(
+        meaning="What share of your portfolio NAV the covered (price-history) holdings represent.",
+        calculation=(
+            "Sum of the included holdings' NAV weight fractions, shown only when total NAV is "
+            "positive."
+        ),
+    ),
+    "portfolio_lot_buy_date": ColumnHelp(
+        meaning="The date you bought this individual lot.",
+    ),
+    "portfolio_lot_shares": ColumnHelp(
+        meaning="The number of shares bought in this lot.",
+    ),
+    "portfolio_lot_buy_price": ColumnHelp(
+        meaning="The price per share you paid for this lot, in the lot's buy currency.",
+    ),
+    "portfolio_lot_cost": ColumnHelp(
+        meaning="The total cost of this lot in its cost currency.",
+        calculation="Shares x buy price for the lot.",
+    ),
+    "portfolio_lot_note": ColumnHelp(
+        meaning="Any free-text note you saved against this lot.",
+    ),
+    "portfolio_current_price_local": ColumnHelp(
+        meaning="The latest snapshot share price for this position, in its own trading currency.",
+        calculation="Latest local-currency close from the most recent price snapshot.",
+    ),
+    "portfolio_value_local": ColumnHelp(
+        meaning="The current market value of this position, in its own trading currency.",
+        calculation="Total shares x current local price.",
+    ),
+    "portfolio_pnl_local": ColumnHelp(
+        meaning="Unrealized profit or loss on this position so far, in its own trading currency.",
+        calculation="Current local value minus local cost.",
+        direction="Higher is better.",
+    ),
     "tool_a_profile": ColumnHelp(
         meaning=(
             "A plain-language label for the shape of this stock's gold sensitivity — how "
@@ -294,6 +845,43 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         meaning="This stock's place in the Lab ranking.",
         calculation="Ranked by the shrunk probability of beating GDX across the lookback episodes.",
         direction="Rank 1 is the highest modelled probability of beating GDX.",
+    ),
+    "candidate_finder_coverage": ColumnHelp(
+        meaning="How many of your selected criteria have a value for this stock, shown as present / total.",
+        thresholds=_candidate_finder_coverage_thresholds,
+        direction="Higher is better; a row is rank-eligible only at or above the configured minimum.",
+    ),
+    "candidate_finder_top_n_hits": ColumnHelp(
+        meaning="How many of your selected criteria this stock lands in the top-N for.",
+        direction="Higher means the stock ranks highly across more of your chosen criteria.",
+    ),
+    "candidate_finder_status": ColumnHelp(
+        meaning=(
+            "Eligibility of this row: Eligible (ranked), No score (no criteria data), or "
+            "Low coverage (below the coverage minimum)."
+        ),
+        direction="Eligible is best; No-score and Low-coverage rows rank below eligible ones.",
+    ),
+    "candidate_finder_fit_score": ColumnHelp(
+        meaning=(
+            "Your weighted-average percentile across the criteria you chose (0-100) — how "
+            "well the stock fits your lens. Higher is a better fit; it is not a return forecast."
+        ),
+        calculation=(
+            "Sum of (criterion weight x percentile) over the criteria with data, divided by "
+            "the total weight of those criteria."
+        ),
+    ),
+    "candidate_finder_criterion_percentile": ColumnHelp(
+        meaning="This stock's 0-100 percentile versus peers for this single criterion.",
+        direction="Higher percentile means it ranks better on this criterion (after the criterion's chosen direction).",
+    ),
+    "candidate_finder_top_list_value": ColumnHelp(
+        meaning="The stock's raw value for this criterion (its underlying metric).",
+    ),
+    "candidate_finder_top_list_percentile": ColumnHelp(
+        meaning="Where this stock's value falls versus peers for this criterion, as a 0-100 percentile.",
+        direction="Higher percentile means it ranks better on this criterion (after the criterion's chosen direction).",
     ),
     "measured_contracts": ColumnHelp(
         meaning="Number of cached contracts with a usable two-sided quote (bid/ask/mid).",

@@ -7,6 +7,7 @@ from html import escape
 from urllib.parse import quote, urlencode
 
 from golden_vector.contracts.config_models import (
+    AppConfig,
     CandidateFinderConfig,
     CandidateFinderCriterion,
 )
@@ -20,7 +21,7 @@ from golden_vector.serve.candidate_finder_data import (
     CandidateFinderScreen,
     run_candidate_finder_screen,
 )
-from golden_vector.serve.column_help import help_term
+from golden_vector.serve.column_help import help_term, help_th
 from golden_vector.serve.format_helpers import _fmt_number, _fmt_numeric_td, _metric_card
 from golden_vector.serve.model_state_banner import (
     render_model_state_banner,
@@ -38,10 +39,6 @@ _PRESET_ALIASES = {
     "bullish_call": "bull",
     "strong_corporate_finance": "bull",
 }
-_SCORE_TOOLTIP = (
-    "Score = your weighted-average percentile across the criteria you chose "
-    "(0-100). Higher = better fit. Not a return forecast."
-)
 
 
 def render_candidate_finder_page(
@@ -50,6 +47,7 @@ def render_candidate_finder_page(
     query: Mapping[str, Sequence[str]] | None = None,
     base_path: str = "/candidate-finder",
     refresh_status: OptionRefreshStatus | None = None,
+    app_config: AppConfig | None = None,
 ) -> str:
     """Render the Candidate Finder workspace page."""
 
@@ -81,7 +79,7 @@ def render_candidate_finder_page(
             _render_summary_cards(screen),
             _render_builder(data, screen, query, base_path=base_path),
             _render_top_lists(screen),
-            _render_ranking_tables(screen),
+            _render_ranking_tables(screen, app_config=app_config),
             "</section>",
         )
     )
@@ -458,7 +456,7 @@ def _render_top_list_card(
   <p class="hint">{escape(criterion.description)} {direction} values rank higher. Weight {_fmt_weight(criterion.weight)}.</p>
   <table>
     <thead>
-      <tr><th>Ticker</th><th>Value</th><th>Percentile</th></tr>
+      <tr>{help_th("Ticker", key="ticker_symbol")}{help_th("Value", key="candidate_finder_top_list_value")}{help_th("Percentile", key="candidate_finder_top_list_percentile")}</tr>
     </thead>
     <tbody>{body}</tbody>
   </table>
@@ -466,14 +464,16 @@ def _render_top_list_card(
 """
 
 
-def _render_ranking_tables(screen: CandidateFinderScreen) -> str:
+def _render_ranking_tables(
+    screen: CandidateFinderScreen, *, app_config: AppConfig | None = None
+) -> str:
     eligible = [row for row in screen.ranking.rows if _is_ranked(row)]
     low_coverage = [row for row in screen.ranking.rows if not _is_ranked(row)]
     return f"""
 <section class="candidate-view-section">
   <h2>View 2: Fit Ranking</h2>
-  {_render_score_table("Eligible Ranking", eligible, screen.ranking.selected_criteria, "candidate-eligible-ranking")}
-  {_render_score_table("Low-Coverage Rows", low_coverage, screen.ranking.selected_criteria, "candidate-low-coverage-ranking")}
+  {_render_score_table("Eligible Ranking", eligible, screen.ranking.selected_criteria, "candidate-eligible-ranking", app_config=app_config)}
+  {_render_score_table("Low-Coverage Rows", low_coverage, screen.ranking.selected_criteria, "candidate-low-coverage-ranking", app_config=app_config)}
 </section>
 """
 
@@ -483,11 +483,16 @@ def _render_score_table(
     rows: Sequence[CandidateScore],
     criteria: Sequence[ResolvedCriterion],
     table_id: str,
+    *,
+    app_config: AppConfig | None = None,
 ) -> str:
     criterion_headers = "".join(
-        (
-            f"<th data-col-name=\"criterion_{escape(criterion.id, quote=True)}\" "
-            f"data-sort-numeric>{escape(criterion.label)}</th>"
+        help_th(
+            criterion.label,
+            key="candidate_finder_criterion_percentile",
+            app_config=app_config,
+            col_name=f"criterion_{criterion.id}",
+            sort_numeric=True,
         )
         for criterion in criteria
     )
@@ -528,14 +533,12 @@ def _render_score_table(
     <table id="{escape(table_id, quote=True)}" class="{table_class}">
       <thead>
         <tr>
-          <th data-col-name="ticker">Ticker</th>
-          <th data-col-name="score" data-sort-numeric>
-            <span class="score-help" title="{escape(_SCORE_TOOLTIP, quote=True)}">Fit Score</span>
-          </th>
-          <th data-col-name="coverage" data-sort-numeric>Coverage</th>
-          <th data-col-name="top_n_hits" data-sort-numeric>Top-N Hits</th>
+          {help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")}
+          {help_th("Fit Score", key="candidate_finder_fit_score", app_config=app_config, col_name="score", sort_numeric=True)}
+          {help_th("Coverage", key="candidate_finder_coverage", app_config=app_config, col_name="coverage", sort_numeric=True)}
+          {help_th("Top-N Hits", key="candidate_finder_top_n_hits", app_config=app_config, col_name="top_n_hits", sort_numeric=True)}
           {criterion_headers}
-          <th data-col-name="status">Status</th>
+          {help_th("Status", key="candidate_finder_status", app_config=app_config, col_name="status")}
         </tr>
       </thead>
       <tbody>{body}</tbody>

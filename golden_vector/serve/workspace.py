@@ -286,6 +286,7 @@ def create_workspace_app(
                         query=query,
                         base_path="/",
                         refresh_status=read_option_refresh_status(paths),
+                        app_config=app_config,
                     ),
                 )
 
@@ -452,6 +453,7 @@ def create_workspace_app(
                         query=query,
                         base_path="/candidate-finder",
                         refresh_status=read_option_refresh_status(paths),
+                        app_config=app_config,
                     ),
                 )
 
