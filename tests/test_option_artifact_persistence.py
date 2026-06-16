@@ -199,6 +199,50 @@ def test_stamp_per_horizon_candidate_status_and_roundtrip():
     assert json.loads(rows[0].per_horizon_status_json)["P"]["90"]["status"] == "tradable"
 
 
+def test_per_horizon_status_omits_failed_slots():
+    # A horizon whose only slot FAILED (candidate=None) must be OMITTED, not stamped as
+    # "none" carrying the failed slot's representative expiry (Codex verification fleet).
+    import json
+
+    from golden_vector.hedge.option_artifact_frames import _stamp_per_horizon_candidate_status
+
+    healthy = OptionCandidateSlot(
+        ticker="AEM",
+        option_type="P",
+        horizon_days=90,
+        target_delta=-0.25,
+        expiration="exp-90",
+        days_to_expiry=85,
+        status="accepted",
+        reason="ok",
+        candidate=_candidate("AEM", liquidity_tier="tradable"),
+        bucket="near_atm",
+        liquidity_tier="tradable",
+    )
+    failed = OptionCandidateSlot(
+        ticker="AEM",
+        option_type="P",
+        horizon_days=180,
+        target_delta=-0.25,
+        expiration="exp-180-stale",  # a representative expiry on a no-candidate slot
+        days_to_expiry=175,
+        status="no_tradable",
+        reason="no liquid contract",
+        candidate=None,
+        bucket="near_atm",
+        liquidity_tier=None,
+    )
+    frame = pd.DataFrame([{"ticker": "AEM", "put_status": "tradable", "call_status": "none"}])
+
+    stamped = _stamp_per_horizon_candidate_status(
+        frame, put_slots={"AEM": [healthy, failed]}, call_slots={}, display_horizons=(90, 180)
+    )
+    payload = json.loads(stamped.loc[0, "per_horizon_status_json"])
+    assert payload["P"]["90"]["status"] == "tradable"  # healthy control present
+    assert "180" not in payload["P"]  # failed-only horizon omitted, not faked
+    assert "exp-180-stale" not in stamped.loc[0, "per_horizon_status_json"]
+
+
 def test_persist_option_artifact_frames_writes_run_stamped_aliases(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()

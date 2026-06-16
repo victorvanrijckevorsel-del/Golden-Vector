@@ -418,21 +418,21 @@ def _per_horizon_side_status(
     only read the persisted slots for this horizon.
     """
 
-    matching = [slot for slot in ticker_slots if slot.horizon_days == horizon_days]
+    # Only slots that actually HOLD a candidate count: a failed slot (candidate=None,
+    # e.g. no_tradable / no_price) can still carry a representative expiry, which would
+    # otherwise be stamped as a misleading "none + expiry". With no real candidate at
+    # this horizon the entry is omitted entirely (Codex verification fleet).
+    matching = [
+        slot
+        for slot in ticker_slots
+        if slot.horizon_days == horizon_days and slot.candidate is not None
+    ]
     if not matching:
         return None
-    tiers = {
-        slot.candidate.liquidity_tier
-        for slot in matching
-        if slot.candidate is not None and slot.candidate.liquidity_tier
-    }
+    tiers = {slot.candidate.liquidity_tier for slot in matching if slot.candidate.liquidity_tier}
     status = "tradable" if "tradable" in tiers else "watch" if "watch" in tiers else "none"
     chosen = next(
-        (
-            slot
-            for slot in matching
-            if slot.candidate is not None and slot.candidate.liquidity_tier == status
-        ),
+        (slot for slot in matching if slot.candidate.liquidity_tier == status),
         matching[0],
     )
     return {"status": status, "expiration": chosen.expiration, "dte": chosen.days_to_expiry}

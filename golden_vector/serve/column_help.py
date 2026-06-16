@@ -198,7 +198,8 @@ def _candidate_status_thresholds(config: AppConfig) -> str:
     return (
         "The badge is the SELECTED contract's overall liquidity tier: Tradable when its "
         f"relative spread is within {_percent(hedge.option_liquidity_tradable_spread_pct)} "
-        "(with enough open interest and a usable two-sided quote), Watch up to "
+        "(with enough open interest, a mid premium of at least "
+        f"{hedge.option_liquidity_min_premium:g}, and a usable two-sided quote), Watch up to "
         f"{_percent(hedge.option_liquidity_watch_spread_pct)}, otherwise No liquid candidate. "
         "To be selected at all, a contract must first clear the per-bucket slot gates "
         "(bucket-specific spread, open interest, a minimum mid price, and usable implied "
