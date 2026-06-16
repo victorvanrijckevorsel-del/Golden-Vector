@@ -34,6 +34,11 @@ from golden_vector.contracts.option_artifacts import (
     OPTION_ARTIFACT_NAMES,
     OPTION_ARTIFACT_SCHEMA_VERSION,
 )
+
+# Artifacts the Option Trading screen actually renders. option_contract_metrics is
+# build/diagnostic only (largest option parquet), so the UI verifies its presence +
+# sha256 but never reads it into memory on a cache miss (audit M8).
+_SERVE_RENDERED_OPTION_ARTIFACTS = frozenset(OPTION_ARTIFACT_NAMES) - {"option_contract_metrics"}
 from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.hedge._helpers import as_float
 from golden_vector.hedge.option_artifact_builder import build_option_source_context
@@ -627,6 +632,11 @@ def _read_option_artifact_frames(paths: ProjectPaths) -> dict[str, pd.DataFrame]
                 )
             return None
         _verify_artifact_sha256(model_state=model_state, name=name, path=path)
+        if name not in _SERVE_RENDERED_OPTION_ARTIFACTS:
+            # option_contract_metrics is build/diagnostic only -- its presence and
+            # sha256 are verified above, but it is never rendered, so don't read the
+            # largest option parquet into memory on a UI cache miss. (audit M8)
+            continue
         try:
             frames[name] = read_required_parquet(
                 path,
