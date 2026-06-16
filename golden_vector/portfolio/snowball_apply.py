@@ -127,6 +127,7 @@ def _lot(
     ticker: str,
     shares: float,
     cost_total: float,
+    quote_currency: str,
     cost_currency: str,
     buy_date: _dt.date,
     note: str | None,
@@ -135,6 +136,11 @@ def _lot(
     source_file: str,
     now: _dt.datetime,
 ) -> PortfolioLot:
+    # buy_currency is the QUOTE currency (the market the ticker trades in, e.g. AUD for
+    # .AX) — the valuer matches it against the snapshot's price currency, so it must be
+    # the quote currency, NOT the cost currency. cost_currency / cost_basis_total carry
+    # the (possibly different) cost leg, e.g. a GBP cost on an AUD-quoted stock. buy_price
+    # is the legacy per-share field and is not used for P&L (cost_basis_total is).
     shares = float(shares)
     cost_total = float(cost_total)
     return PortfolioLot(
@@ -142,7 +148,7 @@ def _lot(
         ticker=ticker,
         shares=shares,
         buy_price=(cost_total / shares) if shares else 0.0,
-        buy_currency=cost_currency,
+        buy_currency=quote_currency,
         buy_date=buy_date,
         note=note,
         created_at=now,
@@ -183,6 +189,7 @@ def build_combined_gold_lots(
                 ticker=str(row.mapped_ticker),
                 shares=row.shares,
                 cost_total=row.cost_basis,
+                quote_currency=row.configured_currency or row.source_currency,
                 cost_currency=row.source_currency,
                 buy_date=snowball_as_of,
                 note=None,
@@ -202,6 +209,7 @@ def build_combined_gold_lots(
                 ticker=merge_ticker,
                 shares=shares,
                 cost_total=cost,
+                quote_currency=merge_rows[0].configured_currency or merge_rows[0].source_currency,
                 cost_currency=merge_rows[0].source_currency,
                 buy_date=snowball_as_of,
                 note=f"Merged Snowball rows {symbols} (same company).",
@@ -217,6 +225,9 @@ def build_combined_gold_lots(
                 ticker=hl.ticker,
                 shares=hl.shares,
                 cost_total=hl.cost_gbp,
+                # The HL ISA gold names (ALTN.L/AAZ.L/PAF.L) are London-listed, GBP-quoted,
+                # with a GBP cost — quote and cost currency coincide here.
+                quote_currency="GBP",
                 cost_currency="GBP",
                 buy_date=hl.buy_date or hl_as_of,
                 note="Hargreaves Lansdown ISA holding (separate account, added to IBKR).",

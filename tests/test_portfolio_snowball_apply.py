@@ -12,15 +12,15 @@ from golden_vector.portfolio.snowball_apply import (
 from golden_vector.portfolio.snowball_import import SnowballDryRun, SnowballHolding
 
 
-def _row(raw, ticker, shares, cost, status):
+def _row(raw, ticker, shares, cost, status, configured="GBP"):
     return SnowballHolding(
         raw_symbol=raw,
         name=raw,
         shares=shares,
-        source_currency="GBP",
+        source_currency="GBP",  # cost currency
         cost_basis=cost,
         mapped_ticker=ticker,
-        configured_currency="GBP",
+        configured_currency=configured,  # quote currency (AUD for .AX)
         mapping_method="config",
         import_status=status,
         issues=(),
@@ -33,6 +33,8 @@ def _dry_run() -> SnowballDryRun:
         holdings=(
             _row("EDVl", "EDV.L", 225, 5201.85, "IMPORT_READY"),
             _row("ALTNl", "ALTN.L", 998, 14414.46, "IMPORT_READY"),
+            # AUD-quoted ASX name with a GBP cost: quote currency must be AUD, cost GBP.
+            _row("CLA", "CLA.AX", 3256844, 21832.52, "IMPORT_READY", configured="AUD"),
             # SRB + SBI both map to SRB.L and are flagged REVIEW -> deterministic merge.
             _row("SRB", "SRB.L", 4391, 14997.41, "REVIEW"),
             _row("SBI", "SRB.L", 4566, 16167.04, "REVIEW"),
@@ -59,9 +61,16 @@ def test_build_combined_gold_lots_merges_srb_adds_isa_and_excludes_blocked():
     for lot in lots:
         by_ticker.setdefault(lot.ticker, []).append(lot)
 
-    # 2 import-ready + 1 merged SRB + 1 HL ISA = 4 lots; blocked AAL excluded.
-    assert len(lots) == 4
+    # 3 import-ready + 1 merged SRB + 1 HL ISA = 5 lots; blocked AAL excluded.
+    assert len(lots) == 5
     assert "AAL" not in {lot.raw_broker_symbol for lot in lots}
+
+    # AUD-quoted ASX name with a GBP cost: quote currency AUD (so the valuer matches the
+    # AUD price snapshot), cost currency GBP. This is the bug the first apply had.
+    cla = by_ticker["CLA.AX"][0]
+    assert cla.buy_currency == "AUD"
+    assert cla.cost_currency == "GBP"
+    assert round(float(cla.cost_basis_total), 2) == 21832.52
 
     # SRB+SBI merged into ONE SRB.L lot, shares and cost summed, Snowball-sourced.
     srb = by_ticker["SRB.L"]
