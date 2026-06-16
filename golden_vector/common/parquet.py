@@ -136,6 +136,18 @@ def write_parquet_atomic(frame: pd.DataFrame, path: Path, *, index: bool = False
     )
 
 
+def write_parquet_into(frame: pd.DataFrame, path: Path, *, index: bool = False) -> None:
+    """Write a Parquet file directly to ``path`` (no temp/replace).
+
+    Use only when an outer transaction owns the atomic swap -- e.g. as the staging
+    writer inside ``atomic_write_many`` -- so a group of files can be staged and
+    swapped together. Prefer ``write_parquet_atomic`` for standalone writes.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_parquet_with_metadata(frame, path, index=index)
+
+
 def _write_parquet_with_metadata(
     frame: pd.DataFrame,
     path: Path,

@@ -116,6 +116,79 @@ def test_atomic_write_file_keeps_existing_file_when_writer_fails(tmp_path):
     assert not list(tmp_path.glob("*.tmp"))
 
 
+def test_atomic_write_many_writes_all_on_success(tmp_path):
+    from golden_vector.common.files import atomic_write_many
+
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    written = atomic_write_many(
+        [
+            (a, lambda p: p.write_text("AA", encoding="utf-8")),
+            (b, lambda p: p.write_text("BB", encoding="utf-8")),
+        ]
+    )
+    assert set(written) == {a, b}
+    assert a.read_text(encoding="utf-8") == "AA"
+    assert b.read_text(encoding="utf-8") == "BB"
+    assert not list(tmp_path.glob(".*"))  # no leftover temp/backup siblings
+
+
+def test_atomic_write_many_staging_failure_leaves_targets_untouched(tmp_path):
+    from golden_vector.common.files import atomic_write_many
+
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    a.write_text("old-a", encoding="utf-8")
+    b.write_text("old-b", encoding="utf-8")
+
+    def boom(_p):
+        raise RuntimeError("writer boom")
+
+    with pytest.raises(RuntimeError, match="writer boom"):
+        atomic_write_many(
+            [
+                (a, lambda p: p.write_text("new-a", encoding="utf-8")),
+                (b, boom),  # staging fails -> nothing is swapped
+            ]
+        )
+    # No live target changed (a was only staged to a temp, never swapped).
+    assert a.read_text(encoding="utf-8") == "old-a"
+    assert b.read_text(encoding="utf-8") == "old-b"
+    assert not list(tmp_path.glob(".*"))
+
+
+def test_atomic_write_many_rolls_back_prior_contents_on_swap_failure(tmp_path, monkeypatch):
+    import golden_vector.common.files as files_mod
+    from golden_vector.common.files import atomic_write_many
+
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    a.write_text("old-a", encoding="utf-8")
+    b.write_text("old-b", encoding="utf-8")
+
+    real_replace = files_mod._replace_with_retry
+    calls = {"n": 0}
+
+    def flaky_replace(tmp, path):
+        # Fail the SECOND forward swap; allow the rollback restore (call 3) through.
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("swap boom")
+        return real_replace(tmp, path)
+
+    monkeypatch.setattr(files_mod, "_replace_with_retry", flaky_replace)
+
+    with pytest.raises(OSError, match="swap boom"):
+        atomic_write_many(
+            [
+                (a, lambda p: p.write_text("new-a", encoding="utf-8")),
+                (b, lambda p: p.write_text("new-b", encoding="utf-8")),
+            ]
+        )
+    # a was swapped then rolled back to its prior bytes; b never swapped. Neither
+    # target is left half-updated, and temps/backups are cleaned.
+    assert a.read_text(encoding="utf-8") == "old-a"
+    assert b.read_text(encoding="utf-8") == "old-b"
+    assert not list(tmp_path.glob(".*"))
+
+
 def test_collapsible_text_td_keeps_rows_even():
     from golden_vector.serve.format_helpers import collapsible_text_td
 

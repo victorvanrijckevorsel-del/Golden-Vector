@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -84,6 +85,68 @@ def atomic_write_file(path: Path, writer: Callable[[Path], None]) -> Path:
     finally:
         _cleanup_tmp_path(tmp_path)
     return path
+
+
+def atomic_write_many(
+    writes: list[tuple[Path, Callable[[Path], None]]],
+) -> list[Path]:
+    """Write several files all-or-nothing.
+
+    Two phases. (1) STAGE: every file is written to a unique sibling temp via the
+    caller's writer; if any writer raises here, no live target has changed, so the
+    previous state stays fully intact. (2) SWAP: each staged temp is atomically
+    moved onto its target; before overwriting an existing target its current bytes
+    are copied aside, so if any swap fails the already-swapped targets are rolled
+    back to their prior contents. The only unrecoverable window is a process kill
+    during the rollback itself -- far smaller than a file-by-file publish that can
+    leave a half-updated set. Use it to publish a group of artifacts (e.g. the
+    option ``*_latest`` aliases plus the accumulated signal history) as one
+    transaction so a mid-publish failure leaves the last good state intact.
+    """
+
+    # Phase 1 -- stage every file to a temp sibling. A writer failure here touches
+    # no live target, so the previous published state is untouched.
+    staged: list[tuple[Path, Path]] = []  # (tmp_path, final_path)
+    try:
+        for final_path, writer in writes:
+            final_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = _unique_tmp_path(final_path)
+            writer(tmp_path)
+            staged.append((tmp_path, final_path))
+    except BaseException:
+        for tmp_path, _ in staged:
+            _cleanup_tmp_path(tmp_path)
+        raise
+
+    # Phase 2 -- swap every staged temp onto its target, backing up the prior bytes
+    # so a mid-swap failure rolls every already-swapped target back.
+    swapped: list[tuple[Path, Path | None]] = []  # (final_path, backup_or_None)
+    backups: list[Path] = []
+    try:
+        for tmp_path, final_path in staged:
+            backup: Path | None = None
+            if final_path.exists():
+                backup = _unique_tmp_path(final_path)
+                shutil.copy2(final_path, backup)
+                backups.append(backup)
+            _replace_with_retry(tmp_path, final_path)
+            swapped.append((final_path, backup))
+    except BaseException:
+        for final_path, backup in reversed(swapped):
+            try:
+                if backup is not None:
+                    _replace_with_retry(backup, final_path)
+                else:
+                    final_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        for tmp_path, _ in staged:
+            _cleanup_tmp_path(tmp_path)
+        raise
+    finally:
+        for backup in backups:
+            _cleanup_tmp_path(backup)
+    return [final_path for _tmp_path, final_path in staged]
 
 
 def _replace_with_retry(tmp_path: Path, path: Path) -> None:

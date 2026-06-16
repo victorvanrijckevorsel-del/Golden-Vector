@@ -177,13 +177,19 @@ def load_option_signal_history(paths: _OptionSignalPaths) -> pd.DataFrame:
     return _normalize_history(frame)
 
 
-def persist_option_signal_history(
+def prepare_option_signal_history(
     *,
     paths: _OptionSignalPaths,
     history: pd.DataFrame,
-) -> None:
+) -> tuple[Path, pd.DataFrame]:
+    """Run the shrink guard and normalize the next history WITHOUT writing it.
+
+    Returns ``(target_path, normalized_frame)`` so the actual write can be STAGED
+    inside an atomic group swap (history + the option latest aliases publish as one
+    transaction). Raises if the new history would shrink the accumulated distinct
+    as-of dates, so the guard fires before any live file is touched.
+    """
     path = option_signal_history_path(paths)
-    path.parent.mkdir(parents=True, exist_ok=True)
     normalized = _normalize_history(history)
     # Shrink guard: the cumulative history may only grow in as-of dates.
     # Refusing a shrinking write turns any silent-wipe bug upstream into a
@@ -197,6 +203,16 @@ def persist_option_signal_history(
                 f"{next_dates} distinct as-of dates, file on disk has "
                 f"{existing_dates}. This would destroy accumulated IV history."
             )
+    return path, normalized
+
+
+def persist_option_signal_history(
+    *,
+    paths: _OptionSignalPaths,
+    history: pd.DataFrame,
+) -> None:
+    path, normalized = prepare_option_signal_history(paths=paths, history=history)
+    path.parent.mkdir(parents=True, exist_ok=True)
     write_parquet_atomic(normalized, path, index=False)
 
 

@@ -726,10 +726,14 @@ def test_option_artifact_build_fails_loud_on_stale_feature_rows(tmp_path):
 
 
 def test_option_artifact_publish_is_all_or_nothing_on_signal_history_failure(tmp_path, monkeypatch):
-    # A good publish, then a run where the signal-history persist raises AFTER the
-    # frames are staged. The latest aliases must stay byte-identical to the last good
-    # run -- a failed run never leaves aliases ahead of a failed build. (Codex H2.)
-    import golden_vector.cli as cli_mod
+    # A good publish, then a run where the atomic history+alias publish raises while
+    # staging (the signal-history shrink guard trips). Both the latest aliases AND
+    # the accumulated signal history must stay byte-identical to the last good run --
+    # a failed run never leaves aliases ahead of a failed build, nor advances the
+    # history past a failed alias flip. (Codex H2 + options-UI review HIGH: the
+    # publish is now atomic across history + aliases together.)
+    import golden_vector.ingestion.persist_option_artifacts as persist_mod
+    from golden_vector.hedge.option_signals import option_signal_history_path
 
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
@@ -742,17 +746,20 @@ def test_option_artifact_publish_is_all_or_nothing_on_signal_history_failure(tmp
     )
     assert run_option_artifacts(paths, parent_refresh_id="parent-A") == 0
     overview_alias = option_artifact_latest_path(paths, "option_trading_overview")
-    good_bytes = overview_alias.read_bytes()
+    good_alias_bytes = overview_alias.read_bytes()
+    history_path = option_signal_history_path(paths)
+    good_history_bytes = history_path.read_bytes()
 
     def _boom(*args, **kwargs):
         raise RuntimeError("signal-history shrink guard tripped")
 
-    monkeypatch.setattr(cli_mod, "persist_option_signal_history", _boom)
+    monkeypatch.setattr(persist_mod, "prepare_option_signal_history", _boom)
 
     exit_code = run_option_artifacts(paths, parent_refresh_id="parent-B")
 
     assert exit_code == 1
-    assert overview_alias.read_bytes() == good_bytes  # aliases never flipped past the failure
+    assert overview_alias.read_bytes() == good_alias_bytes  # aliases never flipped past the failure
+    assert history_path.read_bytes() == good_history_bytes  # history never advanced past the failure
 
 
 def test_parse_option_sizing_request_budget_mode_ignores_unused_quantity(tmp_path):

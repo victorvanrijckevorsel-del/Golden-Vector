@@ -74,7 +74,6 @@ from golden_vector.hedge.option_artifact_sources import load_option_artifact_sou
 from golden_vector.hedge.option_signals import (
     build_option_signal_artifacts,
     load_option_signal_history,
-    persist_option_signal_history,
 )
 from golden_vector.hedge.options_liquidity import slot_tier_counts
 from golden_vector.ingestion.foundation import execute_foundation_pipeline
@@ -89,7 +88,7 @@ from golden_vector.ingestion.options_phase import (
 from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.ingestion.persist_option_artifacts import (
     persist_option_artifact_frames,
-    publish_option_artifact_latest_aliases,
+    publish_option_artifacts_and_history_atomically,
 )
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
@@ -1978,21 +1977,24 @@ def run_option_artifacts_outcome(
             risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
             option_signals=option_signals,
         )
-        # All-or-nothing publish (audit H2): stage every artifact to run-stamped
-        # paths WITHOUT flipping latest aliases, persist signal history (which can
-        # raise via the shrink guard), and only THEN flip the latest aliases. A
-        # failure before the flip leaves the last good option state fully intact.
+        # All-or-nothing publish (audit H2 + Codex options-UI review HIGH): stage
+        # every artifact to run-stamped paths WITHOUT flipping latest aliases, then
+        # advance the signal history AND flip every latest alias as ONE atomic group
+        # (staged, then swapped together with rollback). The shrink guard runs while
+        # staging, so a failure anywhere leaves the previous history AND the previous
+        # aliases fully intact -- no half-flipped alias set, no history advanced
+        # ahead of a failed alias flip.
         persist_option_artifact_frames(
             paths=paths,
             run_context=run_context,
             frames=frames,
             publish_latest_aliases=False,
         )
-        persist_option_signal_history(paths=paths, history=option_signals.next_history)
-        publish_option_artifact_latest_aliases(
+        publish_option_artifacts_and_history_atomically(
             paths=paths,
             run_context=run_context,
             frames=frames,
+            history=option_signals.next_history,
         )
 
         row_counts = {name: int(len(frame.index)) for name, frame in frames.items()}
