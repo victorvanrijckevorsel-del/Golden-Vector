@@ -103,6 +103,11 @@ class OptionTradingRow:
     most_liquid_put_expiration: str | None = None
     most_liquid_call_horizon_days: int | None = None
     most_liquid_call_expiration: str | None = None
+    # Per-(side x display-horizon) candidate status, stamped at build time as a
+    # JSON string so the overview horizon selector (Part A) can show each
+    # horizon's Put/Call status + expiry without recomputing in serve. Shape:
+    # {"P": {"230": {"status","expiration","dte"}, ...}, "C": {...}}.
+    per_horizon_status_json: str | None = None
 
 
 @dataclass(frozen=True)

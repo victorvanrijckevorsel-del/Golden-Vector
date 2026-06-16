@@ -117,6 +117,12 @@ def build_option_artifact_frames(
             put_slots=built.candidate_slots,
             call_slots=built.call_candidate_slots,
         )
+        overview_frame = _stamp_per_horizon_candidate_status(
+            overview_frame,
+            put_slots=built.candidate_slots,
+            call_slots=built.call_candidate_slots,
+            display_horizons=tuple(sorted(dte_bands)),
+        )
     frames = {
         "option_contract_metrics": _contract_metrics_frame(contract_metrics),
         "option_liquidity_measurements": _liquidity_measurements_frame(
@@ -266,6 +272,9 @@ def overview_rows_from_frame(frame: pd.DataFrame) -> tuple[OptionTradingRow, ...
                 most_liquid_call_expiration=_optional_str(
                     record.get("most_liquid_call_expiration")
                 ),
+                per_horizon_status_json=_optional_str(
+                    record.get("per_horizon_status_json")
+                ),
             )
         )
     return tuple(rows)
@@ -395,6 +404,75 @@ def _stamp_most_liquid_defaults(
             exclude_tickers=benchmark_tickers,
             precomputed=per_side[side],
         )
+    return result
+
+
+def _per_horizon_side_status(
+    ticker_slots: list[OptionCandidateSlot], *, horizon_days: int
+) -> dict[str, object] | None:
+    """The displayed status + expiry for one (side, horizon), or None if no slot.
+
+    Mirrors ``option_trading._candidate_side_status``: the badge is the SELECTED
+    contract's overall liquidity tier (tradable beats watch beats none), NOT the raw
+    slot pass (Codex re-review). Selection still happened in the slot build — here we
+    only read the persisted slots for this horizon.
+    """
+
+    matching = [slot for slot in ticker_slots if slot.horizon_days == horizon_days]
+    if not matching:
+        return None
+    tiers = {
+        slot.candidate.liquidity_tier
+        for slot in matching
+        if slot.candidate is not None and slot.candidate.liquidity_tier
+    }
+    status = "tradable" if "tradable" in tiers else "watch" if "watch" in tiers else "none"
+    chosen = next(
+        (
+            slot
+            for slot in matching
+            if slot.candidate is not None and slot.candidate.liquidity_tier == status
+        ),
+        matching[0],
+    )
+    return {"status": status, "expiration": chosen.expiration, "dte": chosen.days_to_expiry}
+
+
+def _stamp_per_horizon_candidate_status(
+    overview_frame: pd.DataFrame,
+    *,
+    put_slots: dict[str, list[OptionCandidateSlot]],
+    call_slots: dict[str, list[OptionCandidateSlot]],
+    display_horizons: tuple[int, ...],
+) -> pd.DataFrame:
+    """Stamp a per-(side x display-horizon) status map onto the overview artifact.
+
+    Part A horizon selector: serve reads this map for the chosen horizon and renders
+    Put/Call status + expiry — no recomputation in serve, no new selection engine
+    (reuses the already-built candidate slots). Additive column, so no schema bump.
+    """
+
+    if overview_frame.empty or "ticker" not in overview_frame.columns:
+        return overview_frame
+    result = overview_frame.copy()
+    slots_by_upper = {
+        side: {str(ticker).upper(): slots for ticker, slots in slots_map.items()}
+        for side, slots_map in (("P", put_slots), ("C", call_slots))
+    }
+    payloads: list[str] = []
+    for ticker in result["ticker"]:
+        upper = str(ticker).upper()
+        per_side: dict[str, dict[str, object]] = {}
+        for side in ("P", "C"):
+            ticker_slots = slots_by_upper[side].get(upper, [])
+            by_horizon: dict[str, object] = {}
+            for horizon in display_horizons:
+                status = _per_horizon_side_status(ticker_slots, horizon_days=horizon)
+                if status is not None:
+                    by_horizon[str(horizon)] = status
+            per_side[side] = by_horizon
+        payloads.append(json.dumps(per_side))
+    result["per_horizon_status_json"] = payloads
     return result
 
 

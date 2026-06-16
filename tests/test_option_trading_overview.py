@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import json
+
+from golden_vector.app.config import load_app_config
 from golden_vector.hedge.option_trading import (
     OptionLiquidityMeasurement,
     OptionTradingOverviewData,
     OptionTradingRow,
     OptionTradingSourceContext,
 )
-from golden_vector.serve.overview_option_trading import _render_option_trading_overview_page
+from golden_vector.serve.overview_option_trading import (
+    _render_horizon_selector,
+    _render_option_trading_overview_page,
+    _resolve_selected_horizon,
+    _selected_side,
+)
+from tests.helpers import build_test_paths
 
 
 def test_option_trading_overview_renders_structured_rows_and_filters():
@@ -163,3 +172,110 @@ def test_option_trading_overview_hides_raw_thin_status_label():
 
     assert "No liquid candidate" in html
     assert ">none<" not in html
+
+
+# ---- Part A: overview horizon selector ----
+
+
+def _per_horizon_row() -> OptionTradingRow:
+    return OptionTradingRow(
+        ticker="AEM",
+        structural_delta_core=1.3,
+        down_beta_core=1.4,
+        up_beta_core=1.1,
+        confidence_label="HIGH",
+        confidence_score=0.9,
+        iv_percentile_cross_sectional=40.0,
+        iv_skew_signal=0.08,
+        iv_rv_ratio_signal=1.25,
+        optionability_tier="directly_hedgeable",
+        put_status="tradable",
+        call_status="tradable",
+        pnl_put_at_context=1.25,
+        pnl_call_at_context=2.50,
+        notes=("candidate ok",),
+        current_stock_price=174.96,
+        most_liquid_put_expiration="ML-PUT-EXP",
+        most_liquid_call_expiration="ML-CALL-EXP",
+        per_horizon_status_json=json.dumps(
+            {
+                "P": {"230": {"status": "watch", "expiration": "EXP-230", "dte": 225}},
+                "C": {},
+            }
+        ),
+    )
+
+
+def test_resolve_selected_horizon_validates_against_display_horizons():
+    assert _resolve_selected_horizon(None, (90, 180, 230)) == "most_liquid"
+    assert _resolve_selected_horizon("230", (90, 180, 230)) == "230"
+    assert _resolve_selected_horizon("999", (90, 180, 230)) == "most_liquid"  # not configured
+    assert _resolve_selected_horizon("most_liquid", (90, 180, 230)) == "most_liquid"
+
+
+def test_selected_side_reads_persisted_map_not_recomputed():
+    row = _per_horizon_row()
+    per = json.loads(row.per_horizon_status_json)
+    # Default = today's behaviour: overall status + most-liquid expiry.
+    assert _selected_side(row, "put", selected_horizon="most_liquid", per_horizon=per) == (
+        "tradable",
+        "ML-PUT-EXP",
+    )
+    # Specific horizon = that horizon's stamped status + expiry.
+    assert _selected_side(row, "put", selected_horizon="230", per_horizon=per) == (
+        "watch",
+        "EXP-230",
+    )
+    # A horizon with no stamped candidate is honestly "none", never faked.
+    assert _selected_side(row, "call", selected_horizon="230", per_horizon=per) == ("none", None)
+
+
+def test_horizon_selector_lists_configured_horizons():
+    html = _render_horizon_selector("230", (90, 180, 230, 550))
+    assert 'value="most_liquid"' in html
+    assert 'value="230" selected' in html
+    assert ">90d</option>" in html and ">550d</option>" in html
+
+
+def test_overview_horizon_selector_changes_only_status_columns(tmp_path):
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    horizon = sorted(app_config.hedge_readiness.display_horizons_days)[0]
+    row = OptionTradingRow(
+        ticker="AEM",
+        structural_delta_core=1.3,
+        down_beta_core=1.4,
+        up_beta_core=1.1,
+        confidence_label="HIGH",
+        confidence_score=0.9,
+        iv_percentile_cross_sectional=40.0,
+        iv_skew_signal=0.08,
+        iv_rv_ratio_signal=1.25,
+        optionability_tier="directly_hedgeable",
+        put_status="tradable",
+        call_status="tradable",
+        pnl_put_at_context=1.25,
+        pnl_call_at_context=2.50,
+        notes=("candidate ok",),
+        current_stock_price=174.96,
+        most_liquid_put_expiration="ML-PUT-EXP",
+        per_horizon_status_json=json.dumps(
+            {"P": {str(horizon): {"status": "watch", "expiration": "EXP-H", "dte": horizon - 5}}, "C": {}}
+        ),
+    )
+    overview = OptionTradingOverviewData(rows=(row,))
+
+    default_html = _render_option_trading_overview_page(overview, app_config=app_config)
+    # Default selection + the most-liquid expiry are shown; the per-horizon expiry is not.
+    assert 'value="most_liquid" selected' in default_html
+    assert "ML-PUT-EXP" in default_html
+    assert "EXP-H" not in default_html
+
+    horizon_html = _render_option_trading_overview_page(
+        overview, app_config=app_config, option_horizon=str(horizon)
+    )
+    # The selected horizon's stamped put expiry now shows; the signal columns are
+    # untouched by the selector (still rendered, horizon-agnostic).
+    assert f'value="{horizon}" selected' in horizon_html
+    assert "EXP-H" in horizon_html
+    assert "Skew vs Benchmark" in horizon_html and "IV %ile" in horizon_html

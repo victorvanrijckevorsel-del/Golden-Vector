@@ -426,6 +426,7 @@ def create_workspace_app(
                     paths,
                     app_config=app_config,
                 )
+                option_query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 return _html_response(
                     start_response,
                     _render_option_trading_overview_page(
@@ -433,6 +434,7 @@ def create_workspace_app(
                         option_signal_summary=option_trading_data.option_signal_summary,
                         model_state_manifest=load_current_model_state_manifest(paths),
                         app_config=app_config,
+                        option_horizon=(option_query.get("option_horizon", [None]) or [None])[0],
                     ),
                 )
 

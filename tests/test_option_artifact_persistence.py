@@ -134,6 +134,71 @@ def test_build_option_artifact_frames_stamps_tool_refresh_provenance():
         assert (frame["built_from_tool_b_refresh_id"].astype(str) == "tool-run-B").all(), name
 
 
+def test_stamp_per_horizon_candidate_status_and_roundtrip():
+    # Part A backend: the overview artifact carries each side's per-horizon status +
+    # expiry (derived from the candidate slots, tradable>watch>none) so serve can show
+    # any horizon without recomputing. Horizons with no slot are omitted, and the map
+    # roundtrips back onto the row via overview_rows_from_frame.
+    import json
+
+    from golden_vector.hedge.option_artifact_frames import (
+        _stamp_per_horizon_candidate_status,
+        overview_rows_from_frame,
+    )
+
+    def _put_slot(tier: str, horizon: int) -> OptionCandidateSlot:
+        candidate = OptionCandidate(
+            ticker="AEM",
+            horizon_days=horizon,
+            expiration=f"exp-{horizon}",
+            days_to_expiry=horizon - 5,
+            strike=95.0,
+            bid=3.0,
+            ask=3.2,
+            mid=3.1,
+            open_interest=100,
+            volume=5,
+            implied_volatility=0.4,
+            delta=-0.3,
+            delta_gap=0.05,
+            premium_pct_spot=0.031,
+            underlying_price=100.0,
+            option_type="P",
+            bucket="near_atm",
+            liquidity_tier=tier,
+        )
+        return OptionCandidateSlot(
+            ticker="AEM",
+            option_type="P",
+            horizon_days=horizon,
+            target_delta=-0.25,
+            expiration=candidate.expiration,
+            days_to_expiry=candidate.days_to_expiry,
+            status="accepted",
+            reason="x",
+            candidate=candidate,
+            bucket="near_atm",
+            liquidity_tier=tier,
+        )
+
+    put_slots = {"aem": [_put_slot("tradable", 90), _put_slot("watch", 230)]}
+    frame = pd.DataFrame([{"ticker": "AEM", "put_status": "tradable", "call_status": "none"}])
+
+    stamped = _stamp_per_horizon_candidate_status(
+        frame, put_slots=put_slots, call_slots={}, display_horizons=(90, 180, 230)
+    )
+    payload = json.loads(stamped.loc[0, "per_horizon_status_json"])
+    assert payload["P"]["90"] == {"status": "tradable", "expiration": "exp-90", "dte": 85}
+    assert payload["P"]["230"]["status"] == "watch"
+    assert "180" not in payload["P"]  # no slot at 180 -> omitted, not faked as "none"
+    assert payload["C"] == {}  # no call slots -> empty
+
+    # The map roundtrips back onto the row (serve reads it from here).
+    rows = overview_rows_from_frame(stamped)
+    assert rows[0].per_horizon_status_json is not None
+    assert json.loads(rows[0].per_horizon_status_json)["P"]["90"]["status"] == "tradable"
+
+
 def test_persist_option_artifact_frames_writes_run_stamped_aliases(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()

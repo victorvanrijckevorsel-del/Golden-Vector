@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from html import escape
 from urllib.parse import quote
 
@@ -35,13 +36,65 @@ from golden_vector.serve.option_signal_render import (
 )
 
 
+def _display_horizons(app_config: AppConfig | None) -> tuple[int, ...]:
+    if app_config is None:
+        return ()
+    return tuple(sorted(app_config.hedge_readiness.display_horizons_days))
+
+
+def _resolve_selected_horizon(option_horizon: str | None, display_horizons: tuple[int, ...]) -> str:
+    """The validated horizon selection: ``most_liquid`` (default) or a configured
+    display horizon. Anything unknown falls back to ``most_liquid``."""
+
+    candidate = str(option_horizon or "").strip().lower()
+    if candidate and candidate != MOST_LIQUID_HORIZON:
+        if candidate in {str(horizon) for horizon in display_horizons}:
+            return candidate
+    return MOST_LIQUID_HORIZON
+
+
+def _render_horizon_selector(selected_horizon: str, display_horizons: tuple[int, ...]) -> str:
+    """A GET form to pick which horizon the Put/Call status columns reflect.
+
+    Most-liquid (per side) is the default. Only the status columns follow the
+    selection; the Signal / Skew / IV / Cost columns stay on the global signal horizon.
+    """
+
+    options = [(MOST_LIQUID_HORIZON, "Most liquid (per side)")]
+    options.extend((str(horizon), f"{horizon}d") for horizon in display_horizons)
+    rendered = "".join(
+        f"<option value=\"{escape(value)}\"{' selected' if value == selected_horizon else ''}>"
+        f"{escape(label)}</option>"
+        for value, label in options
+    )
+    if selected_horizon == MOST_LIQUID_HORIZON:
+        caption = "Showing candidate status at: each name's most-liquid window (per side)."
+    else:
+        caption = f"Showing candidate status at: {selected_horizon}d (Put/Call columns only)."
+    return (
+        "<section class=\"panel\">"
+        "<form method=\"get\" action=\"/option-trading\" class=\"overview-filters-form\">"
+        "<label><span>Candidate horizon</span>"
+        f"<select name=\"option_horizon\">{rendered}</select></label>"
+        "<div class=\"overview-filters-actions\">"
+        f"<span class=\"hint\">{escape(caption)}</span>"
+        "<button type=\"submit\">Apply</button>"
+        "</div>"
+        "</form>"
+        "</section>"
+    )
+
+
 def _render_option_trading_overview_page(
     overview: OptionTradingOverviewData,
     *,
     option_signal_summary: pd.DataFrame | None = None,
     model_state_manifest: dict[str, object] | None = None,
     app_config: AppConfig | None = None,
+    option_horizon: str | None = None,
 ) -> str:
+    display_horizons = _display_horizons(app_config)
+    selected_horizon = _resolve_selected_horizon(option_horizon, display_horizons)
     snapshot_date = (
         overview.source_context.as_of_date
         if overview.source_context is not None
@@ -58,6 +111,7 @@ def _render_option_trading_overview_page(
         render_model_state_banner(model_state_manifest),
         render_option_freshness_box(model_state_manifest),
         _render_most_liquid_indicator(overview),
+        _render_horizon_selector(selected_horizon, display_horizons),
         _render_context_warnings(overview.source_context),
         "<details class=\"method-disclosure\"><summary>Method</summary>"
         "<p>Contracts are selected from cached Yahoo Finance option-chain data. "
@@ -91,7 +145,12 @@ def _render_option_trading_overview_page(
         )
 
     signals = _signal_by_ticker(option_signal_summary)
-    row_dicts = [_row_filter_dict(row, signal=signals.get(row.ticker)) for row in overview.rows]
+    row_dicts = [
+        _row_filter_dict(
+            row, signal=signals.get(row.ticker), selected_horizon=selected_horizon
+        )
+        for row in overview.rows
+    ]
     body.append(
         _render_filter_bar(
             target_table_id="option-trading-table",
@@ -115,7 +174,12 @@ def _render_option_trading_overview_page(
         )
     )
     rows_html = "".join(
-        _render_row(row, snapshot_date=snapshot_date, signal=signals.get(row.ticker))
+        _render_row(
+            row,
+            snapshot_date=snapshot_date,
+            signal=signals.get(row.ticker),
+            selected_horizon=selected_horizon,
+        )
         for row in overview.rows
     )
     body.append(
@@ -259,13 +323,74 @@ def _render_context_warnings(context: object | None) -> str:
     return f"<div class=\"flash option-context-warning\">{paragraphs}</div>"
 
 
+MOST_LIQUID_HORIZON = "most_liquid"
+
+
+def _parse_per_horizon(row: OptionTradingRow) -> dict[str, dict[str, dict[str, object]]]:
+    """The row's stamped per-(side x horizon) status map, or {} when absent/bad.
+
+    Serve only READS this backend-stamped map; it never recomputes status from chains.
+    """
+
+    if not row.per_horizon_status_json:
+        return {}
+    try:
+        parsed = json.loads(row.per_horizon_status_json)
+    except (ValueError, TypeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _selected_side(
+    row: OptionTradingRow,
+    side: str,
+    *,
+    selected_horizon: str,
+    per_horizon: dict[str, dict[str, dict[str, object]]],
+) -> tuple[str, str | None]:
+    """(displayed status, expiry) for one side at the selected horizon.
+
+    Default (``most_liquid``) keeps today's behaviour: the row's overall side status
+    plus its stamped most-liquid expiry. A specific horizon shows that horizon's
+    stamped status + expiry, or an honest "none" when the row has no candidate there.
+    """
+
+    if side == "put":
+        overall, ml_expiry, side_key = row.put_status, row.most_liquid_put_expiration, "P"
+    else:
+        overall, ml_expiry, side_key = row.call_status, row.most_liquid_call_expiration, "C"
+    if selected_horizon == MOST_LIQUID_HORIZON:
+        return overall, ml_expiry
+    cell = (per_horizon.get(side_key) or {}).get(selected_horizon)
+    if isinstance(cell, dict):
+        status = str(cell.get("status") or "none")
+        expiration = cell.get("expiration")
+        return status, str(expiration) if expiration else None
+    return "none", None
+
+
+def _status_cell(status: str, expiry: str | None) -> str:
+    label = _status_label(status)  # type: ignore[arg-type]
+    if expiry:
+        return f"<td>{label}<span class=\"hint cell-sub\">exp {escape(str(expiry))}</span></td>"
+    return f"<td>{label}</td>"
+
+
 def _render_row(
     row: OptionTradingRow,
     *,
     snapshot_date: str | None,
     signal: dict[str, object] | None,
+    selected_horizon: str = MOST_LIQUID_HORIZON,
 ) -> str:
     detail_href = f"/ticker/{quote(row.ticker, safe='')}?lens=option-trading#option-trading"
+    per_horizon = _parse_per_horizon(row)
+    put_status, put_expiry = _selected_side(
+        row, "put", selected_horizon=selected_horizon, per_horizon=per_horizon
+    )
+    call_status, call_expiry = _selected_side(
+        row, "call", selected_horizon=selected_horizon, per_horizon=per_horizon
+    )
     return (
         "<tr>"
         f"<td><a href=\"{escape(detail_href)}\">{escape(row.ticker)}</a></td>"
@@ -279,9 +404,9 @@ def _render_row(
         f"<td>{_signal_badge(signal, 'cost_label')}</td>"
         f"<td>{_signal_badge(signal, 'data_quality_label')}</td>"
         f"{_fmt_numeric_td(row.iv_percentile_cross_sectional, decimals=1)}"
-        f"<td>{_status_label(row.put_status)}</td>"
-        f"<td>{_status_label(row.call_status)}</td>"
-        f"<td>{_fmt_text(snapshot_date)}</td>"
+        + _status_cell(put_status, put_expiry)
+        + _status_cell(call_status, call_expiry)
+        + f"<td>{_fmt_text(snapshot_date)}</td>"
         + collapsible_text_td(list(row.notes))
         + "</tr>"
     )
@@ -291,12 +416,20 @@ def _row_filter_dict(
     row: OptionTradingRow,
     *,
     signal: dict[str, object] | None,
+    selected_horizon: str = MOST_LIQUID_HORIZON,
 ) -> dict[str, str]:
+    per_horizon = _parse_per_horizon(row)
+    put_status, _ = _selected_side(
+        row, "put", selected_horizon=selected_horizon, per_horizon=per_horizon
+    )
+    call_status, _ = _selected_side(
+        row, "call", selected_horizon=selected_horizon, per_horizon=per_horizon
+    )
     return {
         "direction_label": str(_signal_value(signal, "direction_label") or ""),
         "data_quality_label": str(_signal_value(signal, "data_quality_label") or ""),
-        "put_status": _status_text(row.put_status),
-        "call_status": _status_text(row.call_status),
+        "put_status": _status_text(put_status),  # type: ignore[arg-type]
+        "call_status": _status_text(call_status),  # type: ignore[arg-type]
         "confidence_label": row.confidence_label,
     }
 
