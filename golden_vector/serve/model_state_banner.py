@@ -35,11 +35,12 @@ def render_option_freshness_box(
             "<p class=\"hint option-freshness option-freshness-ok\">"
             f"{escape(message)}</p>"
         )
-    label = (
-        "Stored option snapshot"
-        if status == "CARRIED_FORWARD"
-        else "Option data unavailable"
-    )
+    if status == "CARRIED_FORWARD":
+        label = "Stored option snapshot"
+    elif status == "MISALIGNED":
+        label = "Option data misaligned"
+    else:
+        label = "Option data unavailable"
     return (
         "<div class=\"flash option-freshness option-freshness-stale\">"
         f"<p><strong>{escape(label)}.</strong> {escape(message)}</p>"

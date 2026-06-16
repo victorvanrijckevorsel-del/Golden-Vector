@@ -129,6 +129,35 @@ def _blocked_publish(paths, *, parent_refresh_id: str, market_session: str = "CL
     )
 
 
+def test_option_freshness_misaligned_when_artifacts_reference_other_refresh(tmp_path):
+    # Option artifacts are usable + current schema but reference an OLDER refresh than
+    # the current foundation/options run. Freshness must read MISALIGNED, never OK,
+    # so the box can't say "current" while the banner says WARN (audit M4).
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(paths, refresh_run_id="refresh-A", include_option_artifacts=False)
+    _write_option_artifacts(paths, refresh_run_id="older-refresh", source_run_id=DAY1_SOURCE_RUN_ID)
+
+    payload = write_current_model_state_manifest(
+        paths=paths, config_hash="config-hash", parent_refresh_id="parent-A"
+    )
+
+    domain = payload["freshness_domains"]["option_artifacts"]
+    assert domain["status"] == "MISALIGNED"
+    assert domain.get("alignment_warnings")
+    assert payload["alignment"]["status"] == "WARN"
+    assert payload["state"] == "incomplete"
+
+
+def test_option_freshness_ok_when_artifacts_aligned(tmp_path):
+    paths = build_test_paths(tmp_path)
+    payload = _publish_good_manifest(paths)
+
+    domain = payload["freshness_domains"]["option_artifacts"]
+    assert domain["status"] == "OK"
+    assert "alignment_warnings" not in domain
+
+
 def test_blocked_refresh_carries_forward_previous_option_artifacts(tmp_path):
     paths = build_test_paths(tmp_path)
     previous = _publish_good_manifest(paths)

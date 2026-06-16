@@ -76,10 +76,15 @@ PORTFOLIO_ALIGNMENT_ARTIFACTS: tuple[str, ...] = PORTFOLIO_ARTIFACTS
 OPTION_FRESHNESS_OK = "OK"
 OPTION_FRESHNESS_CARRIED_FORWARD = "CARRIED_FORWARD"
 OPTION_FRESHNESS_UNAVAILABLE = "UNAVAILABLE"
+# Usable + current-schema option artifacts that the alignment layer flags as
+# referencing a different refresh than the current foundation/options run. Not a
+# blocker (data is usable) but not "OK" either -- surfaces the split-brain (audit M4).
+OPTION_FRESHNESS_MISALIGNED = "MISALIGNED"
 OPTION_FRESHNESS_STATUSES = (
     OPTION_FRESHNESS_OK,
     OPTION_FRESHNESS_CARRIED_FORWARD,
     OPTION_FRESHNESS_UNAVAILABLE,
+    OPTION_FRESHNESS_MISALIGNED,
 )
 
 
@@ -332,6 +337,7 @@ def build_current_model_state_manifest(
         option_publish_block=option_publish_block,
         carry=carry,
         carry_failure=carry_failure,
+        option_warnings=list(alignment.get("option_artifact_warnings", [])),
     )
     option_domain = freshness_domains.get("option_artifacts", {})
     if option_domain.get("status") == OPTION_FRESHNESS_CARRIED_FORWARD:
@@ -451,6 +457,7 @@ def summarize_option_freshness(payload: dict[str, Any] | None) -> dict[str, Any]
     then keep their legacy behavior. The returned dict carries ``status``
     (OK | CARRIED_FORWARD | UNAVAILABLE), the snapshot date, and a ready-to-render
     plain-English ``message`` so every surface shows the same wording.
+    Status is one of OK | CARRIED_FORWARD | UNAVAILABLE | MISALIGNED.
     """
 
     if not isinstance(payload, dict):
@@ -495,6 +502,14 @@ def format_option_freshness_message(freshness: dict[str, Any]) -> str:
         if not reason:
             reason = "The latest refresh could not publish fresh option quotes."
         return f"{snapshot} {reason}"
+    if status == OPTION_FRESHNESS_MISALIGNED:
+        reason = _clean_string(freshness.get("reason")) or (
+            "Option artifacts reference a different refresh than the current model run; "
+            "run python main.py refresh to realign."
+        )
+        if as_of:
+            return f"Option data is from the snapshot of {as_of}, but it is misaligned: {reason}"
+        return f"Option data is misaligned: {reason}"
     return (
         "Option data is not available yet. "
         "Run python main.py refresh during US options market hours."
@@ -1012,6 +1027,9 @@ def _alignment(
         "option_artifact_refresh_run_ids": option_ids,
         "portfolio_artifact_refresh_run_ids": portfolio_ids,
         "warnings": warnings,
+        # Option-artifact alignment warnings, kept separate so option freshness can
+        # downgrade to MISALIGNED instead of OK when these fire (audit M4).
+        "option_artifact_warnings": list(option_warnings),
     }
     if options_carried_forward:
         result["options_carried_forward"] = True
@@ -1253,6 +1271,7 @@ def _freshness_domains(
     option_publish_block: OptionPublishBlock | None,
     carry: _OptionCarryForward | None,
     carry_failure: str | None,
+    option_warnings: list[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     core: dict[str, Any] = {
         "status": (
@@ -1282,6 +1301,16 @@ def _freshness_domains(
                 "as_of_date": _option_artifact_as_of_date(paths=paths, artifacts=artifacts)
                 or _clean_string(artifacts["options"].get("as_of_date")),
             }
+            # Audit M4: usable + current-schema, but alignment found the option
+            # artifacts reference a different refresh -> not OK. Surface MISALIGNED so
+            # the freshness box can't say "current" while the banner says WARN.
+            if option_warnings:
+                option_domain["status"] = OPTION_FRESHNESS_MISALIGNED
+                option_domain["reason"] = (
+                    "Option artifacts are usable but reference a different refresh than "
+                    "the current foundation/options run; run python main.py refresh to realign."
+                )
+                option_domain["alignment_warnings"] = list(option_warnings)
         elif required_usable:
             option_domain = {
                 "status": OPTION_FRESHNESS_UNAVAILABLE,
