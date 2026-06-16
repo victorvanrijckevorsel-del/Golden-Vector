@@ -55,6 +55,27 @@ CANDIDATE_FINDER_OPTION_COLUMNS: tuple[str, ...] = (
 )
 
 
+def tool_refresh_run_id(frame: pd.DataFrame | None) -> str:
+    """The foundation refresh id a Tool A/Tool B frame was built from.
+
+    Stamped onto every option artifact so the input provenance is auditable from
+    the artifact itself (Codex options-UI review M1: a persisted provenance contract
+    instead of a reconstructed mixed-refresh warning). Prefers
+    ``snapshot_refresh_run_id``, falls back to ``source_run_id``; ``""`` when unknown.
+    """
+
+    if frame is None or frame.empty:
+        return ""
+    for column in ("snapshot_refresh_run_id", "source_run_id"):
+        if column in frame.columns:
+            series = frame[column].dropna()
+            if not series.empty:
+                text = str(series.iloc[0]).strip()
+                if text and text.lower() != "nan":
+                    return text
+    return ""
+
+
 def build_option_artifact_frames(
     *,
     built: OptionArtifactBuildResult,
@@ -69,6 +90,8 @@ def build_option_artifact_frames(
     option_signals: OptionSignalArtifacts | None = None,
     dte_bands: dict[int, tuple[int, int]] | None = None,
     benchmark_tickers: tuple[str, ...] = (),
+    tool_a_refresh_id: str = "",
+    tool_b_refresh_id: str = "",
 ) -> dict[str, pd.DataFrame]:
     """Return all persisted option artifact frames for one option-artifact run."""
 
@@ -117,6 +140,8 @@ def build_option_artifact_frames(
             config_hash=config_hash,
             risk_free_rate=risk_free_rate,
             risk_free_rate_is_fallback=risk_free_rate_is_fallback,
+            tool_a_refresh_id=tool_a_refresh_id,
+            tool_b_refresh_id=tool_b_refresh_id,
         )
         for name, frame in frames.items()
     }
@@ -469,6 +494,8 @@ def _stamp_frame(
     config_hash: str | None,
     risk_free_rate: float,
     risk_free_rate_is_fallback: bool,
+    tool_a_refresh_id: str = "",
+    tool_b_refresh_id: str = "",
 ) -> pd.DataFrame:
     result = frame.copy()
     result["schema_version"] = OPTION_ARTIFACT_SCHEMA_VERSION
@@ -479,11 +506,18 @@ def _stamp_frame(
     result["config_hash"] = config_hash
     result["risk_free_rate"] = float(risk_free_rate)
     result["risk_free_rate_is_fallback"] = bool(risk_free_rate_is_fallback)
+    # M1 persisted provenance: durably record which Tool A / Tool B foundation
+    # refresh this option build read, so a mixed-refresh state is auditable from the
+    # artifact itself rather than reconstructed from mutable latest inputs.
+    result["built_from_tool_a_refresh_id"] = str(tool_a_refresh_id or "")
+    result["built_from_tool_b_refresh_id"] = str(tool_b_refresh_id or "")
     result.attrs["schema_version"] = OPTION_ARTIFACT_SCHEMA_VERSION
     result.attrs["snapshot_refresh_run_id"] = str(manifest.get("refresh_run_id") or "")
     result.attrs["source_run_id"] = source_run_id
     result.attrs["parent_refresh_id"] = parent_refresh_id
     result.attrs["config_hash"] = config_hash
+    result.attrs["built_from_tool_a_refresh_id"] = str(tool_a_refresh_id or "")
+    result.attrs["built_from_tool_b_refresh_id"] = str(tool_b_refresh_id or "")
     return result
 
 

@@ -69,6 +69,55 @@ def test_option_artifact_frames_preserve_finder_usable_contract():
     assert set(frames) == set(OPTION_ARTIFACT_NAMES)
 
 
+def test_tool_refresh_run_id_prefers_snapshot_then_source():
+    from golden_vector.hedge.option_artifact_frames import tool_refresh_run_id
+
+    assert tool_refresh_run_id(None) == ""
+    assert tool_refresh_run_id(pd.DataFrame()) == ""
+    assert (
+        tool_refresh_run_id(
+            pd.DataFrame([{"snapshot_refresh_run_id": "snap-1", "source_run_id": "src-1"}])
+        )
+        == "snap-1"
+    )
+    assert tool_refresh_run_id(pd.DataFrame([{"source_run_id": "src-1"}])) == "src-1"
+    assert tool_refresh_run_id(pd.DataFrame([{"ticker": "X"}])) == ""
+
+
+def test_build_option_artifact_frames_stamps_tool_refresh_provenance():
+    # M1: every published option artifact durably records which Tool A / Tool B
+    # foundation refresh the build read, so a mixed-refresh state is auditable from
+    # the artifact rather than reconstructed from mutable latest inputs.
+    built = OptionArtifactBuildResult(
+        overview=OptionTradingOverviewData(rows=(), liquidity_measurements=()),
+        candidate_grids={},
+        call_candidate_grids={},
+        candidate_slots={},
+        call_candidate_slots={},
+        liquidity_measurements=(),
+        source_context=OptionTradingSourceContext(refresh_run_id="options-run"),
+    )
+    frames = build_option_artifact_frames(
+        built=built,
+        contract_metrics=(),
+        options_features=pd.DataFrame([{"ticker": "AEM", "run_id": "options-run"}]),
+        manifest={"refresh_run_id": "options-run", "as_of_date": "2026-06-16"},
+        source_run_id="20260616T000000Z-option-artifacts",
+        parent_refresh_id="parent-refresh",
+        config_hash="config-hash",
+        risk_free_rate=0.04,
+        risk_free_rate_is_fallback=False,
+        tool_a_refresh_id="tool-run-A",
+        tool_b_refresh_id="tool-run-B",
+    )
+    for name, frame in frames.items():
+        assert "built_from_tool_a_refresh_id" in frame.columns, name
+        assert "built_from_tool_b_refresh_id" in frame.columns, name
+        # .all() on an empty series is True, so this holds for empty frames too.
+        assert (frame["built_from_tool_a_refresh_id"].astype(str) == "tool-run-A").all(), name
+        assert (frame["built_from_tool_b_refresh_id"].astype(str) == "tool-run-B").all(), name
+
+
 def test_persist_option_artifact_frames_writes_run_stamped_aliases(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()

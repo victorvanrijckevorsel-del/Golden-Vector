@@ -69,7 +69,10 @@ from golden_vector.hedge.option_artifact_builder import (
     scan_option_chains_for_artifacts,
     scan_option_contract_metrics,
 )
-from golden_vector.hedge.option_artifact_frames import build_option_artifact_frames
+from golden_vector.hedge.option_artifact_frames import (
+    build_option_artifact_frames,
+    tool_refresh_run_id,
+)
 from golden_vector.hedge.option_artifact_sources import load_option_artifact_source_inputs
 from golden_vector.hedge.option_signals import (
     build_option_signal_artifacts,
@@ -1976,6 +1979,8 @@ def run_option_artifacts_outcome(
             risk_free_rate=sources.risk_free_rate,
             risk_free_rate_is_fallback=sources.risk_free_rate_is_fallback,
             option_signals=option_signals,
+            tool_a_refresh_id=tool_refresh_run_id(sources.tool_a),
+            tool_b_refresh_id=tool_refresh_run_id(sources.tool_b),
         )
         # All-or-nothing publish (audit H2 + Codex options-UI review HIGH): stage
         # every artifact to run-stamped paths WITHOUT flipping latest aliases, then
