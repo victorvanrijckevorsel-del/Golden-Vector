@@ -123,5 +123,5 @@ def _badge_class(value: str) -> str:
         "LOW_LIQUIDITY": "badge-estimated",
         "SPARSE": "badge-estimated",
         "NO_BENCHMARK": "badge-missing",
-        "NO_BULLISH_CONFIRMATION": "badge-estimated",
+        "NO_UPSIDE_VOLUME_PULSE": "badge-estimated",
     }.get(value, "badge")

@@ -160,7 +160,7 @@ def test_option_signal_first_run_marks_oi_change_invalid(tmp_path):
     assert pd.isna(row["oi_change_call"])
 
 
-def test_option_signal_upside_read_requires_call_activity_confirmation(tmp_path):
+def test_option_signal_upside_read_requires_call_volume_pulse(tmp_path):
     app_config = load_app_config(build_test_paths(tmp_path)).app
     artifacts = build_option_signal_artifacts(
         app_config=app_config,
@@ -183,12 +183,12 @@ def test_option_signal_upside_read_requires_call_activity_confirmation(tmp_path)
 
     assert row["direction_candidate_label"] == "UPSIDE"
     assert row["direction_label"] == "NEUTRAL"
-    assert row["activity_label"] == "NO_BULLISH_CONFIRMATION"
-    assert "requires call-side activity confirmation" in row["direction_reason"]
+    assert row["activity_label"] == "NO_UPSIDE_VOLUME_PULSE"
+    assert "requires a call-side volume pulse" in row["direction_reason"]
     assert "unconfirmed upside" in row["headline"]
 
 
-def test_option_signal_upside_read_confirms_with_call_activity(tmp_path):
+def test_option_signal_upside_read_publishes_with_call_volume_pulse(tmp_path):
     app_config = load_app_config(build_test_paths(tmp_path)).app
     artifacts = build_option_signal_artifacts(
         app_config=app_config,
@@ -211,7 +211,7 @@ def test_option_signal_upside_read_confirms_with_call_activity(tmp_path):
 
     assert row["direction_candidate_label"] == "UPSIDE"
     assert row["direction_label"] == "UPSIDE"
-    assert row["activity_label"] == "CONFIRMS_UPSIDE"
+    assert row["activity_label"] == "UPSIDE_VOLUME_PULSE"
 
 
 def test_option_signal_iv_rank_requires_min_history(tmp_path):

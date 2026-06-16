@@ -569,11 +569,11 @@ def _confirmed_direction_label(direction_candidate: str, *, activity_label: str)
 
     Sector-relative residual skew removes the broad market downside bias, but
     a bullish call-rich read is still less common and easier to overstate from
-    quotes alone. Keep DOWNSIDE as a skew read; require call-side activity
+    quotes alone. Keep DOWNSIDE as a skew read; require a call-side volume pulse
     before publishing UPSIDE as the headline label.
     """
 
-    if direction_candidate == "UPSIDE" and activity_label != "CONFIRMS_UPSIDE":
+    if direction_candidate == "UPSIDE" and activity_label != "UPSIDE_VOLUME_PULSE":
         return "NEUTRAL"
     return direction_candidate
 
@@ -604,7 +604,7 @@ def _direction_reason(
         if direction_candidate == "UPSIDE":
             return (
                 f"{benchmark_symbol} sector calls are {-points:.1f} vol pts richer "
-                "than puts, but an upside read requires call-side activity confirmation."
+                "than puts, but an upside read requires a call-side volume pulse."
             )
         return f"{benchmark_symbol} sector skew is close to neutral ({points:.1f} vol pts)."
     if residual is None:
@@ -617,7 +617,7 @@ def _direction_reason(
     if direction_candidate == "UPSIDE":
         return (
             f"Calls are {-points:.1f} vol pts richer than the {benchmark_symbol} reference, "
-            "but an upside read requires call-side activity confirmation."
+            "but an upside read requires a call-side volume pulse."
         )
     return f"Sector-relative skew is close to neutral ({points:.1f} vol pts)."
 
@@ -646,30 +646,39 @@ def _activity_metrics(
         metrics=metrics,
         prior_metrics_by_contract=prior_metrics_by_contract,
     )
+    # This lane reads VOLUME relative to open interest (a "volume pulse"), not an
+    # actual open-interest build. High volume can be closing trades or churn, so it
+    # is deliberately NOT called "confirmation" of new positioning (audit H5).
     min_ratio = float(app_config.hedge_readiness.option_signal_activity_volume_to_oi_min)
     label = "QUIET"
-    reason = "No side has enough signal-area volume to confirm the skew read."
+    reason = "No side shows a signal-area volume pulse (volume high versus open interest)."
     if direction_candidate == "DOWNSIDE" and put_ratio is not None:
         if put_ratio >= min_ratio and put_ratio >= ACTIVITY_DOMINANCE_MULTIPLE * (call_ratio or 0.0):
-            label = "CONFIRMS_DOWNSIDE"
-            reason = f"Put volume is {put_ratio:.0%} of open interest in the signal area."
+            label = "DOWNSIDE_VOLUME_PULSE"
+            reason = (
+                f"Put volume is {put_ratio:.0%} of open interest in the signal area "
+                "(a volume pulse, not confirmed new positioning)."
+            )
     elif direction_candidate == "UPSIDE":
-        label = "NO_BULLISH_CONFIRMATION"
+        label = "NO_UPSIDE_VOLUME_PULSE"
         if call_ratio is None:
-            reason = "Upside skew needs call-side activity confirmation, but call open interest is unavailable."
+            reason = "Upside skew needs a call-side volume pulse, but call open interest is unavailable."
         elif call_ratio < min_ratio:
             reason = (
-                "Upside skew needs call-side activity confirmation; "
+                "Upside skew needs a call-side volume pulse; "
                 f"call volume is only {call_ratio:.0%} of open interest in the signal area."
             )
         elif call_ratio < ACTIVITY_DOMINANCE_MULTIPLE * (put_ratio or 0.0):
             reason = (
-                "Upside skew needs call-side activity confirmation; "
-                "call activity is not dominant versus put activity."
+                "Upside skew needs a call-side volume pulse; "
+                "call volume is not dominant versus put volume."
             )
         else:
-            label = "CONFIRMS_UPSIDE"
-            reason = f"Call volume is {call_ratio:.0%} of open interest in the signal area."
+            label = "UPSIDE_VOLUME_PULSE"
+            reason = (
+                f"Call volume is {call_ratio:.0%} of open interest in the signal area "
+                "(a volume pulse, not confirmed new positioning)."
+            )
     if direction_candidate == "UNAVAILABLE":
         label = "N/A"
         reason = "Activity is not interpreted without a valid direction lane."
