@@ -80,6 +80,8 @@ def build_option_artifact_frames(
             contract_metrics=contract_metrics,
             dte_bands=dte_bands,
             benchmark_tickers=benchmark_tickers,
+            put_slots=built.candidate_slots,
+            call_slots=built.call_candidate_slots,
         )
     frames = {
         "option_contract_metrics": _contract_metrics_frame(contract_metrics),
@@ -274,12 +276,33 @@ def _overview_frame(rows: tuple[OptionTradingRow, ...]) -> pd.DataFrame:
     return pd.DataFrame([_dataclass_row(row) for row in rows])
 
 
+def _accepted_expirations_by_side(
+    put_slots: dict[str, list[OptionCandidateSlot]],
+    call_slots: dict[str, list[OptionCandidateSlot]],
+) -> dict[str, set[tuple[str, str]]]:
+    """(ticker, expiration) pairs that have an ACCEPTED candidate slot, per side.
+
+    Used to keep the most-liquid default candidate-backed (audit M2): a very liquid
+    expiry with no Near-ATM/Directional candidate must not win the default window.
+    """
+
+    accepted: dict[str, set[tuple[str, str]]] = {"P": set(), "C": set()}
+    for side, slots_map in (("P", put_slots), ("C", call_slots)):
+        for ticker, slots in slots_map.items():
+            for slot in slots:
+                if slot.status == "accepted" and slot.candidate is not None and slot.expiration:
+                    accepted[side].add((str(ticker).upper(), str(slot.expiration)))
+    return accepted
+
+
 def _stamp_most_liquid_defaults(
     overview_frame: pd.DataFrame,
     *,
     contract_metrics: tuple[OptionContractMetrics, ...],
     dte_bands: dict[int, tuple[int, int]],
     benchmark_tickers: tuple[str, ...],
+    put_slots: dict[str, list[OptionCandidateSlot]],
+    call_slots: dict[str, list[OptionCandidateSlot]],
 ) -> pd.DataFrame:
     """Stamp backend-selected most-liquid defaults onto the overview artifact.
 
@@ -287,6 +310,10 @@ def _stamp_most_liquid_defaults(
     persisted — serve only reads them (C4 renders the switcher from these
     columns). Per-ticker defaults are side-aware; the group default is a
     per-ticker vote over single-stock miners.
+
+    Audit M2: the selector only considers expirations backed by an ACCEPTED
+    candidate slot for that side, so the detail page can never default to a
+    most-liquid window that has no usable Near-ATM/Directional candidate.
     """
 
     if overview_frame.empty or "ticker" not in overview_frame.columns:
@@ -297,11 +324,18 @@ def _stamp_most_liquid_defaults(
     # bands, and a stamped horizon the UI cannot render would poison the
     # most-liquid default (audit M4).
     metric_list = list(contract_metrics)
+    accepted_expirations = _accepted_expirations_by_side(put_slots, call_slots)
     per_side: dict[str, dict[str, MostLiquidSelection | None]] = {"P": {}, "C": {}}
     for side in ("P", "C"):
+        candidate_backed_metrics = [
+            metric
+            for metric in metric_list
+            if metric.option_type == side
+            and (str(metric.ticker).upper(), str(metric.expiration)) in accepted_expirations[side]
+        ]
         for ticker in tickers:
             per_side[side][ticker] = select_ticker_default_window(
-                metrics=metric_list,
+                metrics=candidate_backed_metrics,
                 ticker=ticker,
                 side=side,  # type: ignore[arg-type]
                 dte_bands=dte_bands,

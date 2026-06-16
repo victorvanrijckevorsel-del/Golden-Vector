@@ -19,6 +19,68 @@ from golden_vector.hedge.options_liquidity import OptionContractMetrics
 BANDS = {90: (75, 104), 230: (210, 320)}
 
 
+def _accepted_put_slot(*, ticker: str, expiration: str, horizon_days: int):
+    from golden_vector.hedge.candidate_puts import OptionCandidate, OptionCandidateSlot
+
+    candidate = OptionCandidate(
+        ticker=ticker, horizon_days=horizon_days, expiration=expiration,
+        days_to_expiry=horizon_days, strike=95.0, bid=1.9, ask=2.1, mid=2.0,
+        open_interest=200, volume=10, implied_volatility=0.35, delta=-0.25,
+        delta_gap=0.0, premium_pct_spot=0.02, underlying_price=100.0,
+        option_type="P", bucket="directional", liquidity_tier="tradable",
+    )
+    return OptionCandidateSlot(
+        ticker=ticker, option_type="P", horizon_days=horizon_days, target_delta=-0.25,
+        expiration=expiration, days_to_expiry=horizon_days, status="accepted",
+        reason="Selected.", candidate=candidate, bucket="directional", liquidity_tier="tradable",
+    )
+
+
+def test_most_liquid_default_requires_an_accepted_candidate_slot():
+    # The 90-DTE expiry is the most liquid (high OI, tight spread) but has NO accepted
+    # candidate slot; the 230-DTE expiry is less liquid but IS candidate-backed. The
+    # stamped most-liquid default must be the candidate-backed 230, never the liquid-
+    # but-unbacked 90. (Codex options-review M2.)
+    import pandas as pd
+
+    from golden_vector.hedge.option_artifact_frames import _stamp_most_liquid_defaults
+
+    metrics = (
+        _metric(ticker="NEM", side="P", expiration="2026-09-18", days_to_expiry=90, open_interest=5000, rel_spread=0.05),
+        _metric(ticker="NEM", side="P", expiration="2027-01-15", days_to_expiry=230, open_interest=200, rel_spread=0.12),
+    )
+    stamped = _stamp_most_liquid_defaults(
+        pd.DataFrame([{"ticker": "NEM"}]),
+        contract_metrics=metrics,
+        dte_bands=BANDS,
+        benchmark_tickers=(),
+        put_slots={"NEM": [_accepted_put_slot(ticker="NEM", expiration="2027-01-15", horizon_days=230)]},
+        call_slots={},
+    )
+    row = stamped.iloc[0]
+    assert row["most_liquid_put_horizon_days"] == 230
+    assert row["most_liquid_put_expiration"] == "2027-01-15"
+
+
+def test_most_liquid_default_is_none_when_no_expiry_has_an_accepted_slot():
+    import pandas as pd
+
+    from golden_vector.hedge.option_artifact_frames import _stamp_most_liquid_defaults
+
+    metrics = (
+        _metric(ticker="NEM", side="P", expiration="2026-09-18", days_to_expiry=90, open_interest=5000),
+    )
+    stamped = _stamp_most_liquid_defaults(
+        pd.DataFrame([{"ticker": "NEM"}]),
+        contract_metrics=metrics,
+        dte_bands=BANDS,
+        benchmark_tickers=(),
+        put_slots={},  # no accepted candidate anywhere
+        call_slots={},
+    )
+    assert stamped.iloc[0]["most_liquid_put_horizon_days"] is None
+
+
 def _metric(
     *,
     ticker: str = "NEM",
