@@ -10,6 +10,7 @@ from typing import Literal
 import pandas as pd
 
 from golden_vector.common.numeric import optional_float as _as_float
+from golden_vector.features.options_chain import midpoint
 from golden_vector.ingestion.yahoo_client import YahooClient
 
 OPTIONS_STATUS_SUCCESS = "SUCCESS"
@@ -247,7 +248,7 @@ def _standardize_option_side(
         }
     )
     standardized["mid"] = [
-        _midpoint(bid, ask)
+        midpoint(bid, ask)
         for bid, ask in zip(standardized["bid"], standardized["ask"], strict=False)
     ]
     standardized["moneyness"] = standardized["strike"] / float(underlying_price)
@@ -263,14 +264,6 @@ def _extract_underlying_price(fast_info: object) -> float | None:
         if value is not None and value > 0:
             return value
     return None
-
-
-def _midpoint(bid: object, ask: object) -> float | None:
-    bid_value = _as_float(bid)
-    ask_value = _as_float(ask)
-    if bid_value is None or ask_value is None or bid_value <= 0 or ask_value <= 0:
-        return None
-    return (bid_value + ask_value) / 2.0
 
 
 def _selected_expirations(

@@ -80,7 +80,7 @@ def _render_skew_curve_chart(points: Sequence[OptionSignalPoint]) -> str:
         "<h4>Skew Curve</h4>"
         f"{_render_skew_curve_svg(points)}"
         "<table><thead><tr>"
-        "<th>Horizon</th><th>Side</th><th>Delta</th><th>IV</th><th>Liquidity</th><th>Flags</th>"
+        "<th>Horizon</th><th>Side</th><th>Abs Delta</th><th>IV</th><th>Liquidity</th><th>Flags</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
         "</section>"

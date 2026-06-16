@@ -325,7 +325,10 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "Based on the implied-to-realized volatility ratio (IV/RV) and the IV rank "
             "versus this name's own stored history."
         ),
-        direction="CHEAP favors buying options; RICH means protection is expensive.",
+        direction=(
+            "CHEAP means options are low versus this model's IV/RV and IV-rank history "
+            "checks; RICH means they are high. It is context, not a trade recommendation."
+        ),
     ),
     "option_signal_quality": ColumnHelp(
         meaning="Whether the option signal for this row is built on good enough market data.",
