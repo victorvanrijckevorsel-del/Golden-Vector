@@ -14,7 +14,12 @@ from golden_vector.contracts.config_models import AppConfig
 from golden_vector.portfolio.models import ALLOWED_PORTFOLIO_CURRENCIES
 from golden_vector.portfolio.pipeline import build_ticker_info
 from golden_vector.portfolio.reader import PortfolioData, load_portfolio_data
-from golden_vector.serve.format_helpers import _fmt_number, _fmt_percent, _fmt_text
+from golden_vector.serve.format_helpers import (
+    _fmt_number,
+    _fmt_percent,
+    _fmt_text,
+    collapsible_text_td,
+)
 from golden_vector.serve.column_help import help_term, help_th
 from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.page_shell import _page_shell
@@ -217,7 +222,7 @@ def _render_hedge_sizing(data: PortfolioData) -> str:
             f"<td>{_fmt_money(row.get('effective_gold_exposure_usd'), 'USD')}</td>"
             f"<td>{size_text}</td>"
             f"<td>{contracts}</td>"
-            f"<td>{_fmt_text(reason)}</td>"
+            f"{collapsible_text_td(reason)}"
             "</tr>"
         )
     return (

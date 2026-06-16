@@ -114,3 +114,30 @@ def test_atomic_write_file_keeps_existing_file_when_writer_fails(tmp_path):
 
     assert target.read_text(encoding="utf-8") == "old"
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_collapsible_text_td_keeps_rows_even():
+    from golden_vector.serve.format_helpers import collapsible_text_td
+
+    # Empty -> dash; a single short note renders inline (no tower).
+    assert collapsible_text_td([]) == "<td>-</td>"
+    assert collapsible_text_td(None) == "<td>-</td>"
+    one = collapsible_text_td(["Put candidate is Watch tier."])
+    assert one == "<td>Put candidate is Watch tier.</td>"
+    assert "<details" not in one
+
+    # Several notes (the tall-tower case) collapse behind a click-to-expand summary,
+    # but the full text is still present (just not inline).
+    many = collapsible_text_td(
+        [
+            "Put candidate is Watch tier; spread may be expensive.",
+            "Call candidate is Watch tier; spread may be expensive.",
+        ]
+    )
+    assert "<details" in many and "<summary>" in many
+    assert "Call candidate is Watch tier" in many  # full text retained
+
+    # A long joined tag string also collapses; HTML is escaped.
+    tags = collapsible_text_td("steep_down_beta;frequent_deep_drops;persistent_relative_weakness;thin_history")
+    assert "<details" in tags
+    assert "<script>" not in collapsible_text_td(["<script>x</script> a very long note that exceeds the inline threshold for sure"])

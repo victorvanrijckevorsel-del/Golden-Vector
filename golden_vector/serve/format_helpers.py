@@ -140,6 +140,35 @@ def _fmt_text(value: Any) -> str:
     return escape(text) if text else "-"
 
 
+def collapsible_text_td(value: Any, *, threshold: int = 60) -> str:
+    """A table cell that keeps rows even-height: short text renders inline, but long
+    text (or several joined notes/tags) collapses behind a click-to-expand summary so
+    the cell never becomes a tall free-text tower. Accepts a string or a list/tuple of
+    strings (joined with '; ')."""
+
+    if isinstance(value, (list, tuple)):
+        items = [str(item).strip() for item in value if str(item).strip()]
+        text = "; ".join(items)
+    else:
+        if value is None:
+            text = ""
+        else:
+            try:
+                text = "" if pd.isna(value) else str(value).strip()
+            except (TypeError, ValueError):
+                text = str(value).strip()
+    if not text or text == "-":
+        return "<td>-</td>"
+    if len(text) <= threshold:
+        return f"<td>{escape(text)}</td>"
+    first = text.split(";")[0].strip()
+    summary = first if len(first) <= 52 else first[:51] + "…"
+    return (
+        "<td><details class=\"cell-notes\"><summary>"
+        f"{escape(summary)}</summary><span>{escape(text)}</span></details></td>"
+    )
+
+
 def _fmt_number(value: Any, *, decimals: int) -> str:
     if value is None:
         return "-"

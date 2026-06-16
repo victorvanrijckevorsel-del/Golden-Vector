@@ -5,7 +5,7 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
-from golden_vector.serve.format_helpers import _fmt_numeric_td, _fmt_text
+from golden_vector.serve.format_helpers import _fmt_numeric_td, collapsible_text_td
 from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.overview_helpers import (
     _render_provenance_warnings,
@@ -50,8 +50,8 @@ def _render_tool_c_overview_page(
             f"{_fmt_numeric_td(row.get('up_beta_core'), decimals=2)}"
             f"{_fmt_numeric_td(row.get('downside_hit_rate_10pct'), decimals=1, as_percent=True)}"
             f"{_fmt_numeric_td(row.get('upside_hit_rate_10pct'), decimals=1, as_percent=True)}"
-            f"<td>{_fmt_text(row.get('tool_c_downside_tags'))}</td>"
-            f"<td>{_fmt_text(row.get('tool_c_upside_tags'))}</td>"
+            f"{collapsible_text_td(row.get('tool_c_downside_tags'))}"
+            f"{collapsible_text_td(row.get('tool_c_upside_tags'))}"
             "</tr>"
         )
     if not rows_html:

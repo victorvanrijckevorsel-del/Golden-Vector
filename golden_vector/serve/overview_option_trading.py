@@ -24,6 +24,7 @@ from golden_vector.serve.format_helpers import (
     _fmt_numeric_td,
     _fmt_percent,
     _fmt_text,
+    collapsible_text_td,
 )
 from golden_vector.serve.overview_helpers import _collect_filter_options, _render_filter_bar
 from golden_vector.serve.page_shell import _page_shell
@@ -281,8 +282,8 @@ def _render_row(
         f"<td>{_status_label(row.put_status)}</td>"
         f"<td>{_status_label(row.call_status)}</td>"
         f"<td>{_fmt_text(snapshot_date)}</td>"
-        f"<td>{escape('; '.join(row.notes)) if row.notes else '-'}</td>"
-        "</tr>"
+        + collapsible_text_td(list(row.notes))
+        + "</tr>"
     )
 
 
