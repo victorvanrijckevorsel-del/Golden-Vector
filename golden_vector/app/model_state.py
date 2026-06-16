@@ -67,13 +67,11 @@ PORTFOLIO_ARTIFACTS: tuple[str, ...] = (
     "portfolio_value_history",
     "portfolio_reconciliation_export",
 )
-PORTFOLIO_ALIGNMENT_ARTIFACTS: tuple[str, ...] = (
-    "portfolio_lines",
-    "portfolio_positions",
-    "portfolio_summary",
-    "benchmark_betas",
-    "portfolio_reconciliation",
-)
+# Every artifact load_portfolio_data() requires must be alignment-checked, or the
+# status banner can read OK while the page reads a stale M4/export artifact from a
+# different foundation run. _refresh_alignment skips not-yet-present artifacts, so
+# covering the full required set never produces a false warning before first build.
+PORTFOLIO_ALIGNMENT_ARTIFACTS: tuple[str, ...] = PORTFOLIO_ARTIFACTS
 
 OPTION_FRESHNESS_OK = "OK"
 OPTION_FRESHNESS_CARRIED_FORWARD = "CARRIED_FORWARD"

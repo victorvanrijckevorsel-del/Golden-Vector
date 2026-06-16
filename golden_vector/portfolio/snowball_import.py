@@ -251,7 +251,15 @@ def render_snowball_dry_run_report(dry_run: SnowballDryRun) -> str:
 
 
 def candidate_manual_lot_payloads(dry_run: SnowballDryRun) -> list[dict[str, object]]:
-    """Return safe current-schema lot payloads for IMPORT_READY rows only."""
+    """PREVIEW ONLY -- the import-ready subset, for showing a human what *would*
+    import. It deliberately drops REVIEW/BLOCKED rows.
+
+    The full-replacement writer must NOT consume this alone: replacing a whole
+    broker book with only the easy rows is exactly the partial-import trap that
+    silently shrinks a portfolio. The writer must take a complete reconciliation
+    object (ready + review + blocked + removals) and refuse replacement until every
+    current holding is explicitly accounted for.
+    """
 
     payloads: list[dict[str, object]] = []
     for row in dry_run.import_ready_rows:

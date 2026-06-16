@@ -86,6 +86,19 @@ RECONCILIATION_EXPORT_COLUMNS = [
     "value_local",
     "pnl_local",
     "pnl_fraction_local",
+    # schema v2: quote vs cost currency + USD/GBP legs + FX issues, so a human
+    # signing off a GBP-cost / AUD-quoted row can tell the two currencies apart
+    # (local cost and local value can otherwise be in different currencies).
+    "quote_currency",
+    "cost_currency",
+    "cost_basis_total",
+    "cost_usd_at_current_fx",
+    "value_usd",
+    "pnl_usd_at_current_fx",
+    "cost_gbp_at_current_fx",
+    "value_gbp",
+    "pnl_gbp_at_current_fx",
+    "fx_issues_json",
     "canonical_total_shares",
     "canonical_avg_cost_local",
     "canonical_value_local",

@@ -189,6 +189,33 @@ def test_model_state_manifest_resolves_portfolio_csv_and_warns_on_stale_portfoli
     )
 
 
+def test_model_state_warns_when_only_an_m4_portfolio_artifact_is_stale(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(paths, refresh_run_id="refresh-A")
+    _write_portfolio_outputs(paths, refresh_run_id="refresh-A")   # all 9 aligned
+    # Re-stamp ONLY the M4 value-history artifact to an older foundation run; the
+    # 5 core artifacts stay aligned. Before M4 artifacts were alignment-checked this
+    # produced no warning -- the banner could read OK over a stale chart/export.
+    source_run_id = "20260601T000000Z-portfolio"
+    stale = pd.DataFrame(
+        [{"schema_version": 1, "snapshot_refresh_run_id": "older-foundation-run", "source_run_id": source_run_id}]
+    )
+    vh_latest = paths.latest_portfolio_value_history_path
+    write_parquet_atomic(
+        stale, vh_latest.parent / f"portfolio_value_history_latest_{source_run_id}.parquet", index=False
+    )
+    write_parquet_atomic(stale, vh_latest, index=False)
+
+    payload = build_current_model_state_manifest(paths=paths, config_hash="config-hash")
+
+    assert payload["state"] == "incomplete"
+    assert (
+        "portfolio_value_history references older-foundation-run while foundation is refresh-A."
+        in payload["warnings"]
+    )
+
+
 def test_current_model_readers_use_manifest_immutable_paths_after_aliases_change(tmp_path):
     paths = build_test_paths(tmp_path)
     _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")

@@ -7,7 +7,7 @@ from datetime import date
 
 import pytest
 
-from golden_vector.portfolio.manual_store import add_lot, edit_lot, load_lots
+from golden_vector.portfolio.manual_store import add_lot, delete_lot, edit_lot, load_lots
 from golden_vector.portfolio.models import PortfolioValidationError, TickerInfo
 from tests.helpers import build_test_paths
 
@@ -145,6 +145,20 @@ def test_edit_lot_blocks_imported_distinct_cost_lot_and_preserves_it(tmp_path):
     # The imported lot must survive the blocked edit unchanged.
     on_disk = json.loads(paths.manual_portfolio_lots_path.read_text())
     assert on_disk["lots"][0]["cost_currency"] == "GBP"
+    assert on_disk["lots"][0]["source_name"] == "snowball"
+
+
+def test_delete_lot_blocks_imported_distinct_cost_lot_and_preserves_it(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_store(paths, {"schema_version": 2, "lots": [_V2_DISTINCT_LOT]})
+
+    # The legacy delete route must refuse imported/distinct-cost lots too, not just
+    # edits -- otherwise the old manual page could shrink a real broker book.
+    with pytest.raises(PortfolioValidationError, match="imported position"):
+        delete_lot(paths, "lot-1")
+
+    on_disk = json.loads(paths.manual_portfolio_lots_path.read_text())
+    assert len(on_disk["lots"]) == 1                       # survived the blocked delete
     assert on_disk["lots"][0]["source_name"] == "snowball"
 
 

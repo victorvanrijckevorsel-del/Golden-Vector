@@ -8,6 +8,7 @@ from datetime import date, datetime, timezone
 import pandas as pd
 import pytest
 
+from golden_vector.portfolio.m4_artifacts import build_reconciliation_export_frame
 from golden_vector.portfolio.models import PortfolioLot, TickerInfo
 from golden_vector.portfolio.pipeline import (
     _combined_status,
@@ -102,6 +103,53 @@ def test_summary_frame_has_gbp_totals():
         assert col in summary.columns
     assert row["total_cost_gbp_at_current_fx"] == pytest.approx(136.0)
     assert row["total_value_gbp"] is not None
+
+
+def test_reconciliation_export_carries_v2_currency_context():
+    # The human-signoff CSV must disambiguate cost vs quote currency for a
+    # GBP-cost / AUD-quoted row, not just emit local figures in two currencies.
+    line = _distinct_line()
+    lines = _lines_frame([line], **_META)
+    positions = _positions_frame([line], **_META)
+    export = build_reconciliation_export_frame(
+        lines=lines,
+        positions=positions,
+        source_run_id="run",
+        snapshot_refresh_run_id="snap",
+    )
+    for col in [
+        "quote_currency", "cost_currency", "cost_basis_total",
+        "cost_usd_at_current_fx", "value_usd", "pnl_usd_at_current_fx",
+        "cost_gbp_at_current_fx", "value_gbp", "pnl_gbp_at_current_fx", "fx_issues_json",
+    ]:
+        assert col in export.columns
+    row = export.iloc[0]
+    assert row["quote_currency"] == "AUD"
+    assert row["cost_currency"] == "GBP"
+    assert row["cost_basis_total"] == pytest.approx(136.0)
+    assert row["cost_gbp_at_current_fx"] == pytest.approx(136.0)
+    assert row["value_usd"] is not None and not pd.isna(row["value_usd"])   # line-level USD
+
+
+def test_summary_as_of_date_reports_range_and_mixed_flag():
+    snap_late = {**_snapshot(), "snapshot_date": "2026-06-05"}
+    snap_early = {**_snapshot(), "snapshot_date": "2026-06-02"}
+    line_late = _value_lot(_lot(id="a"), ticker_info=_INFO, snapshot=snap_late, max_fx_staleness_days=5, fx_histories=_gbp_fx())
+    line_early = _value_lot(_lot(id="b"), ticker_info=_INFO, snapshot=snap_early, max_fx_staleness_days=5, fx_histories=_gbp_fx())
+    positions = _positions_frame([line_late, line_early], **_META)
+    row = _summary_frame([line_late, line_early], positions, **_META).iloc[0]
+    assert row["as_of_date_min"] == "2026-06-02"
+    assert row["as_of_date_max"] == "2026-06-05"
+    assert row["snapshot_date_status"] == "MIXED"
+    assert row["as_of_date"] == "2026-06-05"   # headline stays the latest date
+
+
+def test_summary_as_of_date_single_when_all_snapshots_match():
+    line = _distinct_line()
+    positions = _positions_frame([line], **_META)
+    row = _summary_frame([line], positions, **_META).iloc[0]
+    assert row["snapshot_date_status"] == "SINGLE"
+    assert row["as_of_date_min"] == row["as_of_date_max"] == "2026-06-05"
 
 
 # ---- Codex Checkpoint-1 review fixes ----------------------------------------

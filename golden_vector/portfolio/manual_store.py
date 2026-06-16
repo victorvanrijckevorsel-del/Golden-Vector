@@ -87,10 +87,19 @@ def edit_lot(
 def delete_lot(paths: ProjectPaths, lot_id: str) -> None:
     clean_id = _clean_lot_id(lot_id)
     lots = load_lots(paths)
-    updated_lots = [lot for lot in lots if lot.id != clean_id]
-    if len(updated_lots) == len(lots):
+    target = next((lot for lot in lots if lot.id == clean_id), None)
+    if target is None:
         raise PortfolioValidationError("Position lot not found.")
-    _write_lots(paths, updated_lots)
+    # Imported / distinct-cost-currency lots are blocked from the legacy delete
+    # route too (not just edit). Removing them one-by-one from the old manual page
+    # would silently shrink a full broker book before the v2 UI/writer arrives.
+    if not _is_manual_quote_currency_lot(target):
+        raise PortfolioValidationError(
+            "This imported position can't be deleted from the manual form yet "
+            "(it has a distinct cost currency or non-manual source). Managing "
+            "imported lots arrives with the v2 portfolio UI."
+        )
+    _write_lots(paths, [lot for lot in lots if lot.id != clean_id])
 
 
 def validate_lot_input(

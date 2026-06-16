@@ -158,6 +158,9 @@ SUMMARY_COLUMNS = [
     "total_value_gbp",
     "total_cost_gbp_at_current_fx",
     "total_pnl_gbp_at_current_fx",
+    "as_of_date_min",
+    "as_of_date_max",
+    "snapshot_date_status",
 ]
 
 
@@ -889,6 +892,17 @@ def _summary_frame(
             if value.snapshot_date
         }
     )
+    # Label the basis of the whole book: when per-ticker snapshots span more than
+    # one date, the headline date alone mislabels NAV/P&L. Surface min/max + a MIXED
+    # flag so the page can show the range, not a single confident date.
+    as_of_date_min = as_of_dates[0] if as_of_dates else None
+    as_of_date_max = as_of_dates[-1] if as_of_dates else None
+    if not as_of_dates:
+        snapshot_date_status = "NONE"
+    elif len(as_of_dates) > 1:
+        snapshot_date_status = "MIXED"
+    else:
+        snapshot_date_status = "SINGLE"
     frame = pd.DataFrame(
         [
             {
@@ -905,10 +919,13 @@ def _summary_frame(
                 "total_pnl_usd_at_current_fx": total_pnl_usd,
                 "currency_split_json": json.dumps(quote_split, sort_keys=True),
                 "cost_currency_split_json": json.dumps(cost_split, sort_keys=True),
-                "as_of_date": as_of_dates[-1] if as_of_dates else None,
+                "as_of_date": as_of_date_max,
                 "total_value_gbp": total_value_gbp,
                 "total_cost_gbp_at_current_fx": total_cost_gbp,
                 "total_pnl_gbp_at_current_fx": total_pnl_gbp,
+                "as_of_date_min": as_of_date_min,
+                "as_of_date_max": as_of_date_max,
+                "snapshot_date_status": snapshot_date_status,
             }
         ],
         columns=SUMMARY_COLUMNS,

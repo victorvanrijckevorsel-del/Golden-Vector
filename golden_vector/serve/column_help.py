@@ -634,11 +634,20 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     ),
     # ---- Portfolio: holdings (Positions) table ----
     "portfolio_avg_cost": ColumnHelp(
-        meaning="Your average purchase price per share, in the position's own currency.",
+        meaning=(
+            "Your average purchase price per share, in the position's own currency. "
+            "Shown only when you paid in that same currency; for a holding bought in a "
+            "different currency (e.g. GBP cost on an Australian-listed share) this is "
+            "intentionally blank and the USD/GBP figures are used instead."
+        ),
         calculation="Total cost of all lots ÷ total shares held.",
     ),
     "portfolio_pnl_pct": ColumnHelp(
-        meaning="Profit or loss on this position so far, as a percent of what you paid (in local currency).",
+        meaning=(
+            "Profit or loss on this position so far, as a percent of what you paid (in "
+            "local currency). Shown only when cost and trading currency match; for a "
+            "cross-currency holding it is intentionally blank — use the USD/GBP P&L."
+        ),
         calculation="(Current value − cost) ÷ cost.",
         direction="Higher is better.",
     ),
