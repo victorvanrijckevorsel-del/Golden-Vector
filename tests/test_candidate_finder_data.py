@@ -720,6 +720,23 @@ def test_candidate_finder_fails_loud_on_corrupt_manifest_resolved_source(tmp_pat
         load_candidate_finder_data(paths, app_config=app_config)
 
 
+def test_candidate_finder_fails_loud_on_manifest_source_missing_columns(tmp_path):
+    # A manifest-resolved current artifact that READS fine but is missing its core
+    # ranking columns must ALSO fail loud, not silently drop a whole dimension to
+    # all-null behind a warning (Codex options-UI review; extends M7 beyond Tool B).
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    resolved = resolve_current_model_artifact_path(paths, "tool_c")
+    assert resolved is not None  # the manifest points at a real current Tool C artifact
+    # Readable parquet, but ticker-only: the Tool C rank columns are gone.
+    pd.DataFrame({"ticker": ["NEM", "AEM"]}).to_parquet(resolved, index=False)
+
+    with pytest.raises(CandidateFinderSourceError, match="missing required ranking columns"):
+        load_candidate_finder_data(paths, app_config=app_config)
+
+
 def test_candidate_finder_screen_filters_peer_pool_before_ranking(tmp_path):
     clear_candidate_finder_cache()
     paths = build_test_paths(tmp_path)

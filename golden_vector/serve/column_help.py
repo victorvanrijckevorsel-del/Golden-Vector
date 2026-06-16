@@ -196,9 +196,14 @@ def _watch_thresholds(config: AppConfig) -> str:
 def _candidate_status_thresholds(config: AppConfig) -> str:
     hedge = config.hedge_readiness
     return (
-        "Tradable needs relative spread <= "
-        f"{_percent(hedge.option_liquidity_tradable_spread_pct)}; Watch is allowed up to "
-        f"{_percent(hedge.option_liquidity_watch_spread_pct)}; otherwise No liquid candidate."
+        "The best-fitting contract in each strike bucket (Near-ATM vs Directional) must clear "
+        "ALL of: relative spread, open interest, a minimum mid price, and usable implied "
+        "volatility — at the strict tier for Tradable, a looser tier for Watch. Spread caps are "
+        f"bucket-specific, from {_percent(hedge.option_near_atm_strict_max_spread_pct)} "
+        "(Tradable, Near-ATM) to "
+        f"{_percent(hedge.option_directional_watch_max_spread_pct)} (Watch, Directional), with "
+        "open-interest and minimum-mid floors alongside. If nothing clears the Watch tier, the "
+        "side is No liquid candidate."
     )
 
 
@@ -975,8 +980,10 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     "option_candidate_status": ColumnHelp(
         meaning=(
             "Whether this side (put or call) has a liquid option contract you could actually "
-            "trade: Tradable (tight spread, enough open interest), Watch (usable but wider or "
-            "thinner), or No liquid candidate."
+            "trade. The best-fitting contract in each strike bucket is checked against a slot "
+            "liquidity rule — relative spread, open interest, a minimum mid price, and usable "
+            "implied volatility — at two tiers: Tradable (strict), Watch (looser but usable), "
+            "or No liquid candidate."
         ),
         thresholds=_candidate_status_thresholds,
         direction="Tradable is best; Watch is usable with care; No liquid candidate means skip.",
@@ -1353,7 +1360,10 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     "option_candidate_delta": ColumnHelp(
         meaning=(
             "The option's Black-Scholes delta — roughly how much its price moves per $1 "
-            "move in the stock, and the basis for the strike buckets (Near-ATM / Directional)."
+            "move in the stock (and an approximate chance of finishing in-the-money). It is a "
+            "fit/shape signal used to pick the best contract WITHIN a strike bucket, not what "
+            "assigns the bucket: the Near-ATM / Directional buckets are set by how far "
+            "out-of-the-money the strike is."
         ),
         calculation=(
             "Black-Scholes delta from spot, strike, time, the risk-free rate, and implied "

@@ -141,3 +141,32 @@ def test_collapsible_text_td_keeps_rows_even():
     tags = collapsible_text_td("steep_down_beta;frequent_deep_drops;persistent_relative_weakness;thin_history")
     assert "<details" in tags
     assert "<script>" not in collapsible_text_td(["<script>x</script> a very long note that exceeds the inline threshold for sure"])
+
+
+def test_collapsible_text_td_drops_null_members():
+    import pandas as pd
+
+    from golden_vector.serve.format_helpers import collapsible_text_td
+
+    # Null-like members (None, pd.NA, NaN) must be dropped, never rendered as
+    # the literal "None" / "<NA>" / "nan".
+    mixed = collapsible_text_td([pd.NA, "ok", None, float("nan")])
+    assert mixed == "<td>ok</td>"
+    assert "None" not in mixed and "NA" not in mixed and "nan" not in mixed
+
+    # An all-null list collapses to the empty dash, same as []/None.
+    assert collapsible_text_td([None, pd.NA]) == "<td>-</td>"
+
+
+def test_option_note_tuple_loader_drops_null_members():
+    import pandas as pd
+
+    from golden_vector.hedge.option_artifact_frames import _tuple_value
+
+    # Python list with null members.
+    assert _tuple_value([None, "ok", pd.NA]) == ("ok",)
+    # JSON-null payload (the on-disk note form) must not surface "None".
+    assert _tuple_value('["ok", null, "two"]') == ("ok", "two")
+    # All-null / missing inputs stay empty.
+    assert _tuple_value([None, pd.NA]) == ()
+    assert _tuple_value(None) == ()

@@ -242,6 +242,7 @@ def _render_option_trading_panel(
     detail: OptionTradingDetailData | None,
     *,
     model_state_manifest: dict[str, object] | None = None,
+    app_config: AppConfig | None = None,
 ) -> str:
     body = [
         "<section id=\"option-trading\" class=\"panel\">",
@@ -276,7 +277,7 @@ def _render_option_trading_panel(
     body.append(_render_option_signal_card(detail))
     # Hero: the tradable candidates, then the sizing calculator for a selected
     # contract. Everything else is reference detail, collapsed below.
-    body.append(_render_option_candidate_matrix(detail))
+    body.append(_render_option_candidate_matrix(detail, app_config=app_config))
     if detail.risk_free_rate_is_fallback:
         body.append(
             "<p class=\"hint\">Risk-free rate was missing from the options manifest; "
@@ -286,7 +287,7 @@ def _render_option_trading_panel(
     body.append(_render_option_proxy_fallback(detail))
     chain_detail = "".join(
         [
-            _render_option_skew_overlay(detail),
+            _render_option_skew_overlay(detail, app_config=app_config),
             render_option_signal_charts(
                 detail.skew_curve_points,
                 detail.oi_strike_points,
@@ -396,7 +397,9 @@ def _signal_row_horizons(signal: dict[str, object]) -> list[int]:
     return sorted(horizons)
 
 
-def _render_option_skew_overlay(detail: OptionTradingDetailData) -> str:
+def _render_option_skew_overlay(
+    detail: OptionTradingDetailData, *, app_config: AppConfig | None = None
+) -> str:
     signal = detail.signal_row or {}
     if not signal:
         return ""
@@ -418,7 +421,7 @@ def _render_option_skew_overlay(detail: OptionTradingDetailData) -> str:
         + help_th("Horizon", key="option_signal_horizon")
         + help_th("Name", key="option_name_skew")
         + help_th("Sector", key="option_sector_skew")
-        + help_th("Residual", key="skew_vs_benchmark")
+        + help_th("Residual", key="skew_vs_benchmark", app_config=app_config)
         + "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
         "</section>"
@@ -571,7 +574,9 @@ def _render_option_liquidity_summary(detail: OptionTradingDetailData) -> str:
     )
 
 
-def _render_option_candidate_matrix(detail: OptionTradingDetailData) -> str:
+def _render_option_candidate_matrix(
+    detail: OptionTradingDetailData, *, app_config: AppConfig | None = None
+) -> str:
     put_slots = _ordered_side_slots(detail.put_slots)
     call_slots = _ordered_side_slots(detail.call_slots)
     if not put_slots and not call_slots:
@@ -587,8 +592,8 @@ def _render_option_candidate_matrix(detail: OptionTradingDetailData) -> str:
         "<p class=\"hint\">Each side shows near-ATM and directional candidates around the "
         "configured target horizons. The bold row is the tradable near-ATM pick. Hover a "
         "candidate name for bid/ask, open interest, and volume.</p>"
-        f"{_render_option_candidate_side_section('Puts', put_slots, ticker=detail.ticker)}"
-        f"{_render_option_candidate_side_section('Calls', call_slots, ticker=detail.ticker)}"
+        f"{_render_option_candidate_side_section('Puts', put_slots, ticker=detail.ticker, app_config=app_config)}"
+        f"{_render_option_candidate_side_section('Calls', call_slots, ticker=detail.ticker, app_config=app_config)}"
         "</section>"
     )
 
@@ -598,6 +603,7 @@ def _render_option_candidate_side_section(
     slots: list[OptionCandidateSlot],
     *,
     ticker: str,
+    app_config: AppConfig | None = None,
 ) -> str:
     if not slots:
         return (
@@ -633,7 +639,7 @@ def _render_option_candidate_side_section(
         + help_th("Delta", key="option_candidate_delta")
         + help_th("Mid", key="option_mid_price")
         + help_th("Spread", key="option_rel_spread")
-        + help_th("Liquidity", key="option_candidate_status")
+        + help_th("Liquidity", key="option_candidate_status", app_config=app_config)
         + help_th("Actions", key="option_actions")
         + "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"

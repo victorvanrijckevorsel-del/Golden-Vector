@@ -555,6 +555,18 @@ _MANUAL_RENAMES = {
     "updated_at_utc": "manual_updated_at_utc",
 }
 
+# Minimal core ranking columns a manifest-resolved CURRENT source must carry for
+# the Candidate Finder to trust it. Keyed by the read label. Tool B has its own
+# richer schema validator (validate_tool_b_output_schema); these anchor the other
+# three dimensions so a readable-but-wrong artifact 503s instead of silently
+# collapsing to a ticker-only frame (Codex options-UI review). Verified present in
+# the live tool_a / tool_c / tool_d artifacts.
+_FINDER_REQUIRED_SOURCE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "Gold Sensitivity": ("down_beta_core", "up_beta_core", "structural_delta_core"),
+    "Gold Downside": ("tool_c_downside_rank", "tool_c_upside_rank"),
+    "Corporate Resilience": ("tool_d_quality_rank",),
+}
+
 
 def _prepare_source(frame: pd.DataFrame, *, rename: dict[str, str]) -> pd.DataFrame:
     if frame.empty:
@@ -977,6 +989,25 @@ def _read_optional_parquet(
             frame,
             label="Candidate Finder Corporate Finance artifact",
         )
+    elif required and label in _FINDER_REQUIRED_SOURCE_COLUMNS:
+        # A MANIFEST-resolved current Tool A/C/D artifact that READS but is missing
+        # its core ranking columns would otherwise flow through _prepare_source,
+        # collapse to a ticker-only frame, and leave a whole dimension silently
+        # null behind only a warning. That is the same "looks usable but wrong"
+        # failure M7 closed for unreadable sources -- so fail loud here too and let
+        # the route render the friendly refresh page (Codex options-UI review).
+        missing_columns = [
+            column
+            for column in _FINDER_REQUIRED_SOURCE_COLUMNS[label]
+            if column not in frame.columns
+        ]
+        if missing_columns:
+            raise CandidateFinderSourceError(
+                f"{label} current artifact at {path} is missing required ranking "
+                f"columns ({', '.join(missing_columns)}); a manifest-resolved current "
+                "source must carry them or the Candidate Finder would silently drop a "
+                "whole dimension."
+            )
     return CandidateFinderSourceLoad(frame=frame)
 
 

@@ -147,7 +147,13 @@ def collapsible_text_td(value: Any, *, threshold: int = 60) -> str:
     strings (joined with '; ')."""
 
     if isinstance(value, (list, tuple)):
-        items = [str(item).strip() for item in value if str(item).strip()]
+        # Drop null-like members (None, pd.NA, NaN) before stringifying so they
+        # never render as the literal "None" / "<NA>".
+        items = [
+            str(item).strip()
+            for item in value
+            if not _is_na(item) and str(item).strip()
+        ]
         text = "; ".join(items)
     else:
         if value is None:

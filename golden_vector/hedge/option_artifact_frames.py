@@ -630,17 +630,29 @@ def _slot_status(value: object) -> CandidateSlotStatus | None:
 def _tuple_value(value: object) -> tuple[str, ...]:
     if _is_missing(value):
         return ()
-    if isinstance(value, tuple):
-        return tuple(str(item) for item in value)
-    if isinstance(value, list):
-        return tuple(str(item) for item in value)
+    if isinstance(value, (tuple, list)):
+        return _clean_members(value)
     try:
         parsed = json.loads(str(value))
     except (TypeError, ValueError, json.JSONDecodeError):
         return ()
     if not isinstance(parsed, list):
         return ()
-    return tuple(str(item) for item in parsed)
+    return _clean_members(parsed)
+
+
+def _clean_members(items: object) -> tuple[str, ...]:
+    """Stringify a sequence's members, dropping null-like entries (``None``,
+    ``pd.NA``, NaN, JSON ``null``) so they never reach the display layer as the
+    literal strings ``"None"`` / ``"<NA>"``."""
+    cleaned: list[str] = []
+    for item in items:  # type: ignore[union-attr]
+        if _is_missing(item):
+            continue
+        text = str(item).strip()
+        if text:
+            cleaned.append(text)
+    return tuple(cleaned)
 
 
 def _is_missing(value: object) -> bool:

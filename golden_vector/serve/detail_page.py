@@ -108,6 +108,7 @@ def render_detail_page(
         _render_option_trading_panel(
             option_trading_detail,
             model_state_manifest=model_state_manifest,
+            app_config=app_config,
         )
         if option_lens_active
         else _render_option_trading_link_panel(ticker)

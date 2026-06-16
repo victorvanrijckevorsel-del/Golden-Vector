@@ -1963,6 +1963,54 @@ def test_workspace_tool_d_flip_section_renders_all_backend_rows(tmp_path, monkey
     assert "FLIP14" in response["body"]
 
 
+def test_threshold_backed_help_calls_always_receive_app_config():
+    # A help_th/help_icon/help_term call whose key carries a config-driven threshold
+    # silently drops the threshold sentence when app_config is not passed (the panel
+    # only resolves thresholds when app_config is present). This guard fails loud if
+    # any serve render path calls such a key without app_config, so the "live
+    # site-wide thresholds" claim stays true (Codex options-UI review LOW).
+    import re
+
+    from golden_vector.serve.column_help import COLUMN_HELP
+
+    threshold_keys = {
+        key for key, spec in COLUMN_HELP.items() if spec.thresholds is not None
+    }
+    assert threshold_keys  # the registry has threshold-backed entries
+
+    call_re = re.compile(r"help_(?:th|icon|term)\s*\(")
+    offenders: list[str] = []
+    for module in sorted(Path("golden_vector/serve").glob("*.py")):
+        if module.name == "column_help.py":
+            continue
+        source = module.read_text(encoding="utf-8")
+        for match in call_re.finditer(source):
+            depth = 0
+            end = match.end() - 1
+            for index in range(match.end() - 1, len(source)):
+                char = source[index]
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                    if depth == 0:
+                        end = index
+                        break
+            call = source[match.start() : end + 1]
+            key_match = re.search(r'key\s*=\s*"([a-z0-9_]+)"', call)
+            if (
+                key_match
+                and key_match.group(1) in threshold_keys
+                and "app_config" not in call
+            ):
+                line = source[: match.start()].count("\n") + 1
+                offenders.append(f"{module.name}:{line} key={key_match.group(1)}")
+    assert not offenders, (
+        "threshold-backed help calls missing app_config (their threshold sentence "
+        "will silently drop): " + "; ".join(offenders)
+    )
+
+
 def test_workspace_tool_d_serve_layer_has_no_resilience_arithmetic():
     source = Path("golden_vector/serve/overview_tool_d.py").read_text(encoding="utf-8")
 
