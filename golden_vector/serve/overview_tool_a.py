@@ -117,18 +117,17 @@ def _render_tool_a_overview_page(
     body.append(
         "<table id=\"tool-a-table\" class=\"js-datatable\">"
         "<thead><tr>"
-        "<th data-col-name=\"ticker\">Ticker</th>"
-        "<th data-col-name=\"profile\">Profile</th>"
+        + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
+        + help_th("Profile", key="tool_a_profile", app_config=app_config, col_name="profile")
         + help_th("Δ Core", key="tool_a_delta", app_config=app_config, col_name="delta", sort_numeric=True)
         + help_th("Gamma", key="tool_a_gamma", app_config=app_config, col_name="gamma", sort_numeric=True)
         + help_th("Asymmetry", key="tool_a_asymmetry", app_config=app_config, col_name="asymmetry", sort_numeric=True)
         + help_th("Confidence", key="tool_a_confidence", app_config=app_config, col_name="confidence")
         + help_th("Volatility", key="tool_a_volatility", app_config=app_config, col_name="volatility")
         + help_th("Gold Sensitivity Score", key="tool_a_score", app_config=app_config, col_name="score", sort_numeric=True)
-        + 
-        "<th data-col-name=\"rank\" data-sort-numeric>Rank</th>"
-        "<th data-col-name=\"notes\" data-sort-numeric>Notes</th>"
-        "</tr></thead>"
+        + help_th("Rank", key="tool_a_rank", app_config=app_config, col_name="rank", sort_numeric=True)
+        + help_th("Notes", key="user_notes_count", app_config=app_config, col_name="notes", sort_numeric=True)
+        + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
         "</table>"
     )

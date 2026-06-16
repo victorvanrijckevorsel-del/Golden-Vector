@@ -86,17 +86,16 @@ def _render_tool_c_overview_page(
     body.append(
         "<table id=\"tool-c-table\" class=\"js-datatable\">"
         "<thead><tr>"
-        "<th data-col-name=\"ticker\">Ticker</th>"
+        + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
         + help_th("Downside Score", key="tool_c_downside_rank", app_config=app_config, col_name="downside_rank", sort_numeric=True)
         + help_th("Upside Score", key="tool_c_upside_rank", app_config=app_config, col_name="upside_rank", sort_numeric=True)
         + help_th("Down Beta", key="tool_c_down_beta", app_config=app_config, col_name="down_beta", sort_numeric=True)
         + help_th("Up Beta", key="tool_c_up_beta", app_config=app_config, col_name="up_beta", sort_numeric=True)
         + help_th("Down Hit Rate", key="tool_c_down_hit_rate", app_config=app_config, col_name="down_hit", sort_numeric=True)
         + help_th("Up Hit Rate", key="tool_c_up_hit_rate", app_config=app_config, col_name="up_hit", sort_numeric=True)
-        + 
-        "<th data-col-name=\"down_tags\">Down Tags</th>"
-        "<th data-col-name=\"up_tags\">Up Tags</th>"
-        "</tr></thead>"
+        + help_th("Down Tags", key="tool_c_downside_tags", app_config=app_config, col_name="down_tags")
+        + help_th("Up Tags", key="tool_c_upside_tags", app_config=app_config, col_name="up_tags")
+        + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
         "</table>"
     )

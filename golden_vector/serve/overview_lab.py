@@ -109,8 +109,8 @@ def _render_lab_overview_page(
     body.append(
         "<table id=\"lab-dial-table\" class=\"js-datatable\">"
         "<thead><tr>"
-        "<th data-col-name=\"rank\" data-sort-numeric>Rank</th>"
-        "<th data-col-name=\"ticker\">Ticker</th>"
+        + help_th("Rank", key="lab_rank", col_name="rank", sort_numeric=True)
+        + help_th("Ticker", key="ticker_symbol", col_name="ticker")
         + help_th("P(beat GDX), shrunk", key="lab_p_beat_shrunk", col_name="p_beat", sort_numeric=True)
         + help_th("P(beat GDX), raw", key="lab_p_beat_raw", col_name="p_beat_raw", sort_numeric=True)
         + help_th("P(beat GDXJ), shrunk", key="lab_p_beat_gdxj", col_name="p_beat_gdxj", sort_numeric=True)

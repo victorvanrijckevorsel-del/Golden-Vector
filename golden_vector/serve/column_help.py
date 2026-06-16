@@ -266,6 +266,35 @@ def _ev_ebitda_cap_thresholds(config: AppConfig) -> str:
 
 
 COLUMN_HELP: dict[str, ColumnHelp] = {
+    "tool_a_profile": ColumnHelp(
+        meaning=(
+            "A plain-language label for the shape of this stock's gold sensitivity — how "
+            "convex, asymmetric, or delta-driven its response to gold is — summarised from "
+            "its betas, gamma, and asymmetry."
+        ),
+    ),
+    "tool_a_rank": ColumnHelp(
+        meaning="This stock's place in the Gold Sensitivity ranking.",
+        calculation="Dense rank on the Gold Sensitivity Score; low-confidence names are held out of the ranking.",
+        direction="Rank 1 is the top of the ranking (highest Gold Sensitivity Score); higher numbers rank lower.",
+    ),
+    "user_notes_count": ColumnHelp(
+        meaning="How many notes you have saved on this ticker.",
+    ),
+    "tool_c_downside_tags": ColumnHelp(
+        meaning=(
+            "Short flags describing this stock's downside-to-gold behaviour — for example a "
+            "steep down beta, frequent deep drops, or persistent relative weakness."
+        ),
+    ),
+    "tool_c_upside_tags": ColumnHelp(
+        meaning="Short flags describing this stock's upside-to-gold behaviour on weeks when gold rises.",
+    ),
+    "lab_rank": ColumnHelp(
+        meaning="This stock's place in the Lab ranking.",
+        calculation="Ranked by the shrunk probability of beating GDX across the lookback episodes.",
+        direction="Rank 1 is the highest modelled probability of beating GDX.",
+    ),
     "measured_contracts": ColumnHelp(
         meaning="Number of cached contracts with a usable two-sided quote (bid/ask/mid).",
         direction="Higher means broader measurable coverage. Context only.",
