@@ -126,7 +126,7 @@ def _render_tool_d_overview_page(
             active_gold=active_gold,
         )
     )
-    body.append(_render_flip_section(flip_rows))
+    body.append(_render_flip_section(flip_rows, app_config=app_config))
     body.append(_render_table(frame, app_config=app_config))
     return _page_shell(
         "Corporate Resilience - Golden Vector Workspace",
@@ -228,7 +228,7 @@ def _render_scenario_form(
     )
 
 
-def _render_flip_section(frame) -> str:
+def _render_flip_section(frame, *, app_config: AppConfig | None = None) -> str:
     if frame.empty:
         return (
             "<section class=\"panel\"><h2>Who Flips Under This Stress</h2>"
@@ -250,11 +250,11 @@ def _render_flip_section(frame) -> str:
     return (
         "<section class=\"panel\"><h2>Who Flips Under This Stress</h2>"
         "<table class=\"compact-table\"><thead><tr>"
-        + help_th("Ticker", key="ticker_symbol", app_config=None)
-        + help_th("Flip", key="tool_d_resilience_flip", app_config=None)
-        + help_th("Interest-Cover Line", key="tool_d_interest_cover", app_config=None)
-        + help_th("Leverage @ G", key="tool_d_leverage", app_config=None)
-        + help_th("Headroom @ G", key="tool_d_headroom", app_config=None)
+        + help_th("Ticker", key="ticker_symbol", app_config=app_config)
+        + help_th("Flip", key="tool_d_resilience_flip", app_config=app_config)
+        + help_th("Interest-Cover Line", key="tool_d_interest_cover", app_config=app_config)
+        + help_th("Leverage @ G", key="tool_d_leverage", app_config=app_config)
+        + help_th("Headroom @ G", key="tool_d_headroom", app_config=app_config)
         + "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table></section>"
     )

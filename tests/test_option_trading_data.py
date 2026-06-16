@@ -762,6 +762,42 @@ def test_option_artifact_publish_is_all_or_nothing_on_signal_history_failure(tmp
     assert history_path.read_bytes() == good_history_bytes  # history never advanced past the failure
 
 
+def test_option_artifact_publish_refuses_while_refresh_lock_held(tmp_path):
+    # Single-writer guard: while another run holds the refresh lock, a standalone
+    # option publish must refuse and republish nothing, so two publishes can never
+    # interleave their grouped alias/history swaps. (Codex re-review HIGH.)
+    from golden_vector.serve.option_refresh import (
+        acquire_refresh_lock,
+        complete_options_refresh,
+    )
+
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    _write_option_inputs(
+        paths,
+        refresh_run_id="options-run",
+        tool_refresh_run_id="tool-run",
+        publish_artifacts=False,
+    )
+    assert run_option_artifacts(paths, parent_refresh_id="parent-A") == 0
+    overview_alias = option_artifact_latest_path(paths, "option_trading_overview")
+    good_bytes = overview_alias.read_bytes()
+
+    held = acquire_refresh_lock(paths, command=["refresh"])
+    assert held.started and not held.already_running
+    try:
+        exit_code = run_option_artifacts(paths, parent_refresh_id="parent-B")
+    finally:
+        complete_options_refresh(paths, job_id=held.status.job_id, return_code=0)
+
+    assert exit_code != 0  # refused while the lock was held
+    assert overview_alias.read_bytes() == good_bytes  # nothing republished under the lock
+
+    # With the lock released, a publish succeeds again.
+    assert run_option_artifacts(paths, parent_refresh_id="parent-C") == 0
+
+
 def test_parse_option_sizing_request_budget_mode_ignores_unused_quantity(tmp_path):
     paths = build_test_paths(tmp_path)
     app_config = load_app_config(paths).app

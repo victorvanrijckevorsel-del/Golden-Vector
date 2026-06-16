@@ -561,10 +561,13 @@ _MANUAL_RENAMES = {
 # three dimensions so a readable-but-wrong artifact 503s instead of silently
 # collapsing to a ticker-only frame (Codex options-UI review). Verified present in
 # the live tool_a / tool_c / tool_d artifacts.
+# ``ticker`` is the join key: without it _prepare_source collapses the source to an
+# empty ticker-only frame and the dimension silently vanishes, so it is required too
+# (Codex re-review).
 _FINDER_REQUIRED_SOURCE_COLUMNS: dict[str, tuple[str, ...]] = {
-    "Gold Sensitivity": ("down_beta_core", "up_beta_core", "structural_delta_core"),
-    "Gold Downside": ("tool_c_downside_rank", "tool_c_upside_rank"),
-    "Corporate Resilience": ("tool_d_quality_rank",),
+    "Gold Sensitivity": ("ticker", "down_beta_core", "up_beta_core", "structural_delta_core"),
+    "Gold Downside": ("ticker", "tool_c_downside_rank", "tool_c_upside_rank"),
+    "Corporate Resilience": ("ticker", "tool_d_quality_rank"),
 }
 
 

@@ -300,8 +300,8 @@ def _render_option_trading_panel(
             "<details class=\"method-disclosure\"><summary>Method</summary>"
             "<p>Contracts are selected during refresh from cached Yahoo Finance "
             "option-chain artifacts. "
-            "Tradable rows passed stricter spread and open-interest checks. Watch rows "
-            "passed one relaxed check and can be expensive to enter or exit.</p>"
+            "Tradable rows passed the stricter spread and open-interest checks. Watch rows "
+            "passed the relaxed checks and can be expensive to enter or exit.</p>"
             "<p>Open interest is existing open contracts. Volume is today's trading. "
             "Spread is ask minus bid divided by mid; lower is usually better.</p>"
             "</details>",

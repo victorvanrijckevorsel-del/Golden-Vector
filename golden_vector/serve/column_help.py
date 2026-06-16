@@ -196,14 +196,14 @@ def _watch_thresholds(config: AppConfig) -> str:
 def _candidate_status_thresholds(config: AppConfig) -> str:
     hedge = config.hedge_readiness
     return (
-        "The best-fitting contract in each strike bucket (Near-ATM vs Directional) must clear "
-        "ALL of: relative spread, open interest, a minimum mid price, and usable implied "
-        "volatility — at the strict tier for Tradable, a looser tier for Watch. Spread caps are "
-        f"bucket-specific, from {_percent(hedge.option_near_atm_strict_max_spread_pct)} "
-        "(Tradable, Near-ATM) to "
-        f"{_percent(hedge.option_directional_watch_max_spread_pct)} (Watch, Directional), with "
-        "open-interest and minimum-mid floors alongside. If nothing clears the Watch tier, the "
-        "side is No liquid candidate."
+        "The badge is the SELECTED contract's overall liquidity tier: Tradable when its "
+        f"relative spread is within {_percent(hedge.option_liquidity_tradable_spread_pct)} "
+        "(with enough open interest and a usable two-sided quote), Watch up to "
+        f"{_percent(hedge.option_liquidity_watch_spread_pct)}, otherwise No liquid candidate. "
+        "To be selected at all, a contract must first clear the per-bucket slot gates "
+        "(bucket-specific spread, open interest, a minimum mid price, and usable implied "
+        "volatility, at a strict or relaxed tier) — so a contract can clear a wider bucket cap "
+        "yet still show Watch by its overall tier."
     )
 
 
@@ -980,10 +980,10 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     "option_candidate_status": ColumnHelp(
         meaning=(
             "Whether this side (put or call) has a liquid option contract you could actually "
-            "trade. The best-fitting contract in each strike bucket is checked against a slot "
-            "liquidity rule — relative spread, open interest, a minimum mid price, and usable "
-            "implied volatility — at two tiers: Tradable (strict), Watch (looser but usable), "
-            "or No liquid candidate."
+            "trade. Contracts are first selected into a strike bucket by a slot rule "
+            "(bucket-specific relative spread, open interest, a minimum mid price, and usable "
+            "implied volatility); the badge then reports the SELECTED contract's overall "
+            "liquidity tier: Tradable, Watch, or No liquid candidate."
         ),
         thresholds=_candidate_status_thresholds,
         direction="Tradable is best; Watch is usable with care; No liquid candidate means skip.",

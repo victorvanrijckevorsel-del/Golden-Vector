@@ -60,20 +60,31 @@ def tool_refresh_run_id(frame: pd.DataFrame | None) -> str:
 
     Stamped onto every option artifact so the input provenance is auditable from
     the artifact itself (Codex options-UI review M1: a persisted provenance contract
-    instead of a reconstructed mixed-refresh warning). Prefers
-    ``snapshot_refresh_run_id``, falls back to ``source_run_id``; ``""`` when unknown.
+    instead of a reconstructed mixed-refresh warning).
+
+    Uses ONLY ``snapshot_refresh_run_id`` — the foundation refresh id. It does NOT
+    fall back to ``source_run_id`` (a tool RUN id, different semantics — conflating
+    them would mislabel the provenance). If the frame carries more than one distinct
+    foundation refresh id it is a genuinely mixed input, recorded as
+    ``"mixed:<id1>,<id2>,..."`` rather than a clean-looking single id (Codex
+    re-review: do not hide a mixed-refresh input behind the first value). Returns
+    ``""`` when unknown.
     """
 
-    if frame is None or frame.empty:
+    if frame is None or frame.empty or "snapshot_refresh_run_id" not in frame.columns:
         return ""
-    for column in ("snapshot_refresh_run_id", "source_run_id"):
-        if column in frame.columns:
-            series = frame[column].dropna()
-            if not series.empty:
-                text = str(series.iloc[0]).strip()
-                if text and text.lower() != "nan":
-                    return text
-    return ""
+    values = sorted(
+        {
+            text
+            for value in frame["snapshot_refresh_run_id"].dropna()
+            if (text := str(value).strip()) and text.lower() != "nan"
+        }
+    )
+    if not values:
+        return ""
+    if len(values) == 1:
+        return values[0]
+    return "mixed:" + ",".join(values)
 
 
 def build_option_artifact_frames(

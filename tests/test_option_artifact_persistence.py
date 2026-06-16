@@ -69,18 +69,34 @@ def test_option_artifact_frames_preserve_finder_usable_contract():
     assert set(frames) == set(OPTION_ARTIFACT_NAMES)
 
 
-def test_tool_refresh_run_id_prefers_snapshot_then_source():
+def test_tool_refresh_run_id_uses_snapshot_only_and_marks_mixed():
     from golden_vector.hedge.option_artifact_frames import tool_refresh_run_id
 
     assert tool_refresh_run_id(None) == ""
     assert tool_refresh_run_id(pd.DataFrame()) == ""
+    # One distinct foundation refresh id across rows -> that id (source_run_id ignored).
     assert (
         tool_refresh_run_id(
-            pd.DataFrame([{"snapshot_refresh_run_id": "snap-1", "source_run_id": "src-1"}])
+            pd.DataFrame(
+                [
+                    {"snapshot_refresh_run_id": "snap-1", "source_run_id": "src-1"},
+                    {"snapshot_refresh_run_id": "snap-1", "source_run_id": "src-2"},
+                ]
+            )
         )
         == "snap-1"
     )
-    assert tool_refresh_run_id(pd.DataFrame([{"source_run_id": "src-1"}])) == "src-1"
+    # NO source_run_id fallback: a tool run id is the wrong semantics, so report unknown.
+    assert tool_refresh_run_id(pd.DataFrame([{"source_run_id": "src-1"}])) == ""
+    # Genuinely mixed inputs are surfaced, not hidden behind the first value.
+    assert (
+        tool_refresh_run_id(
+            pd.DataFrame(
+                [{"snapshot_refresh_run_id": "snap-2"}, {"snapshot_refresh_run_id": "snap-1"}]
+            )
+        )
+        == "mixed:snap-1,snap-2"
+    )
     assert tool_refresh_run_id(pd.DataFrame([{"ticker": "X"}])) == ""
 
 

@@ -1998,16 +1998,20 @@ def test_threshold_backed_help_calls_always_receive_app_config():
                         break
             call = source[match.start() : end + 1]
             key_match = re.search(r'key\s*=\s*"([a-z0-9_]+)"', call)
+            # A real config must be passed: missing app_config OR app_config=None both
+            # drop the threshold sentence, so reject both (Codex re-review: the earlier
+            # guard accepted app_config=None and let Tool D's flip table slip through).
+            has_real_app_config = re.search(r"app_config\s*=\s*(?!None\b)\S", call)
             if (
                 key_match
                 and key_match.group(1) in threshold_keys
-                and "app_config" not in call
+                and not has_real_app_config
             ):
                 line = source[: match.start()].count("\n") + 1
                 offenders.append(f"{module.name}:{line} key={key_match.group(1)}")
     assert not offenders, (
-        "threshold-backed help calls missing app_config (their threshold sentence "
-        "will silently drop): " + "; ".join(offenders)
+        "threshold-backed help calls without a real app_config (their threshold "
+        "sentence will silently drop): " + "; ".join(offenders)
     )
 
 

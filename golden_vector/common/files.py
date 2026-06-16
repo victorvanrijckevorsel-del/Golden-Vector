@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import shutil
 import time
@@ -10,6 +11,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+LOGGER = logging.getLogger(__name__)
 
 
 def repo_relative(paths: Any, path: Path) -> str:
@@ -90,18 +93,25 @@ def atomic_write_file(path: Path, writer: Callable[[Path], None]) -> Path:
 def atomic_write_many(
     writes: list[tuple[Path, Callable[[Path], None]]],
 ) -> list[Path]:
-    """Write several files all-or-nothing.
+    """Write several files as a near-atomic group, with rollback on a caught error.
 
     Two phases. (1) STAGE: every file is written to a unique sibling temp via the
     caller's writer; if any writer raises here, no live target has changed, so the
-    previous state stays fully intact. (2) SWAP: each staged temp is atomically
-    moved onto its target; before overwriting an existing target its current bytes
-    are copied aside, so if any swap fails the already-swapped targets are rolled
-    back to their prior contents. The only unrecoverable window is a process kill
-    during the rollback itself -- far smaller than a file-by-file publish that can
-    leave a half-updated set. Use it to publish a group of artifacts (e.g. the
-    option ``*_latest`` aliases plus the accumulated signal history) as one
-    transaction so a mid-publish failure leaves the last good state intact.
+    previous state stays fully intact. (2) SWAP: each staged temp is atomically moved
+    onto its target; before overwriting an existing target its current bytes are
+    copied aside, so if a swap RAISES the already-swapped targets are restored
+    (best-effort -- a restore that itself fails is logged and swallowed, not
+    re-raised, so the original error is preserved).
+
+    This is NOT crash-proof. An OS-level kill DURING the forward swap loop bypasses
+    rollback and can leave a partially-swapped set on disk. Order the writes so the
+    most destructive / accumulating target (e.g. the option signal history) swaps
+    LAST: the worst mid-swap kill then leaves the OLD accumulated state plus a mixed
+    set of derived aliases (recoverable by re-running) -- never an advanced history
+    with stale aliases. For true crash-atomicity use a single manifest/pointer swap
+    instead of N independent target swaps. Within a single process this gives
+    all-or-nothing under CAUGHT exceptions (a writer or guard raising), which is the
+    common failure; pair it with a single-writer lock to exclude concurrent swaps.
     """
 
     # Phase 1 -- stage every file to a temp sibling. A writer failure here touches
@@ -138,8 +148,14 @@ def atomic_write_many(
                     _replace_with_retry(backup, final_path)
                 else:
                     final_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+            except OSError as restore_error:
+                # Best-effort rollback: surface the failure (this target is now stale)
+                # but keep restoring the rest and preserve the original exception.
+                LOGGER.warning(
+                    "atomic_write_many rollback could not restore %s: %s",
+                    final_path,
+                    restore_error,
+                )
         for tmp_path, _ in staged:
             _cleanup_tmp_path(tmp_path)
         raise

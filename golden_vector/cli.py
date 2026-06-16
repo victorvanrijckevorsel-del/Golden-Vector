@@ -1872,6 +1872,67 @@ def run_option_artifacts_outcome(
     paths: ProjectPaths,
     *,
     parent_refresh_id: str | None,
+    lock_held: bool = False,
+) -> OptionArtifactsOutcome:
+    """Publish option artifacts under the single-writer refresh lock.
+
+    ``lock_held=True`` is for callers that ALREADY hold the refresh lock (the full
+    ``refresh`` pipeline runs this as a step) — they skip re-acquiring so the
+    in-process call does not deadlock against itself. Every other caller acquires
+    the lock here so a standalone or concurrent option publish can never interleave
+    its grouped alias/history swap with another publish (Codex re-review HIGH). A
+    failure to acquire returns FAILED and publishes nothing.
+    """
+
+    if lock_held:
+        return _run_option_artifacts_unlocked(paths, parent_refresh_id=parent_refresh_id)
+
+    lock = acquire_refresh_lock(
+        paths,
+        command=["option-artifacts"],
+        adopted_job_id=os.environ.get(REFRESH_JOB_ID_ENV),
+    )
+    if lock.already_running:
+        status = lock.status
+        pid = f", PID {status.process_id}" if status.process_id is not None else ""
+        LOGGER.error(
+            "Option artifact publish skipped: a refresh/publish is already running%s.",
+            pid,
+        )
+        return OptionArtifactsOutcome(
+            status="FAILED",
+            blockers=("refresh_already_running",),
+            market_session=_market_session_now(),
+        )
+    if not lock.started or lock.status.job_id is None:
+        LOGGER.error("Could not acquire the option publish lock; aborting to avoid a conflict.")
+        return OptionArtifactsOutcome(
+            status="FAILED",
+            blockers=("publish_lock_unavailable",),
+            market_session=_market_session_now(),
+        )
+    outcome: OptionArtifactsOutcome | None = None
+    error_summary: str | None = None
+    try:
+        outcome = _run_option_artifacts_unlocked(paths, parent_refresh_id=parent_refresh_id)
+        return outcome
+    except Exception as exc:
+        error_summary = str(exc)
+        raise
+    finally:
+        if not lock.adopted and lock.status.job_id is not None:
+            complete_options_refresh(
+                paths,
+                job_id=lock.status.job_id,
+                return_code=0 if (outcome is not None and outcome.status == "OK") else 1,
+                error_summary=error_summary,
+            )
+
+
+def _run_option_artifacts_unlocked(
+    paths: ProjectPaths,
+    *,
+    parent_refresh_id: str | None,
 ) -> OptionArtifactsOutcome:
     run_context: RunContext | None = None
 
@@ -3449,6 +3510,7 @@ def _run_refresh_unlocked(
         option_outcome = run_option_artifacts_outcome(
             paths,
             parent_refresh_id=parent_refresh_id,
+            lock_held=True,  # the refresh already holds the single-writer lock
         )
         record_step(
             "option_artifacts",

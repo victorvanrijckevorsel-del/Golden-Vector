@@ -737,6 +737,25 @@ def test_candidate_finder_fails_loud_on_manifest_source_missing_columns(tmp_path
         load_candidate_finder_data(paths, app_config=app_config)
 
 
+def test_candidate_finder_fails_loud_on_manifest_source_missing_ticker(tmp_path):
+    # The join key matters too: a current artifact WITH ranking columns but no
+    # `ticker` would collapse to an empty ticker-only frame in _prepare_source and
+    # silently drop the whole dimension. It must 503 instead (Codex re-review).
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+    resolved = resolve_current_model_artifact_path(paths, "tool_c")
+    assert resolved is not None
+    # Readable parquet with the rank columns but the join key (ticker) dropped.
+    pd.DataFrame(
+        {"tool_c_downside_rank": [10.0, 20.0], "tool_c_upside_rank": [30.0, 40.0]}
+    ).to_parquet(resolved, index=False)
+
+    with pytest.raises(CandidateFinderSourceError, match="missing required ranking columns"):
+        load_candidate_finder_data(paths, app_config=app_config)
+
+
 def test_candidate_finder_screen_filters_peer_pool_before_ranking(tmp_path):
     clear_candidate_finder_cache()
     paths = build_test_paths(tmp_path)

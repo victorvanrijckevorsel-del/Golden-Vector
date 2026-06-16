@@ -363,8 +363,9 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
         call_order.append(f"tool-d@{gold_price}")
         return 0
 
-    def fake_option_artifacts(_paths, *, parent_refresh_id):
+    def fake_option_artifacts(_paths, *, parent_refresh_id, lock_held=False):
         call_order.append("option-artifacts")
+        assert lock_held is True  # the refresh holds the lock; the step must not re-acquire
         assert parent_refresh_id is not None
         return OptionArtifactsOutcome(status="OK")
 
@@ -540,8 +541,9 @@ def test_refresh_option_artifact_failure_keeps_previous_manifest(
         _write_tool_d(_paths, refresh_run_id="refresh-new")
         return 0
 
-    def fake_option_artifacts(_paths, *, parent_refresh_id):
+    def fake_option_artifacts(_paths, *, parent_refresh_id, lock_held=False):
         call_order.append("option-artifacts")
+        assert lock_held is True  # the refresh holds the lock; the step must not re-acquire
         assert parent_refresh_id is not None
         return OptionArtifactsOutcome(status="FAILED")
 
