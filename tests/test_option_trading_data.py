@@ -702,11 +702,10 @@ def test_option_artifact_build_reuses_precomputed_chain_scans(tmp_path, monkeypa
     )
 
 
-def test_load_option_trading_data_ignores_stale_feature_rows(tmp_path):
+def test_option_artifact_build_fails_loud_on_stale_feature_rows(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
-    app_config = load_app_config(paths).app
     _write_option_inputs(
         paths,
         refresh_run_id="options-run",
@@ -717,13 +716,12 @@ def test_load_option_trading_data_ignores_stale_feature_rows(tmp_path):
     stale = pd.read_parquet(feature_path)
     stale["run_id"] = "older-options-run"
     stale.to_parquet(feature_path, index=False)
-    _publish_option_artifacts(paths)
 
-    data = load_option_trading_data(paths, app_config=app_config)
-
-    assert "AEM" not in set(data.options_features["ticker"])
-    assert {row.ticker for row in data.overview.rows} == {"GDX", "GDXJ"}
-    assert data.overview.reason is None
+    # AEM is in the current manifest (no ERROR marker) but its feature file carries
+    # no row for the current run -> the build must FAIL LOUD, never silently drop AEM
+    # and publish a clean-looking overview. (Codex options-review H1.)
+    exit_code = run_option_artifacts(paths, parent_refresh_id="parent-refresh")
+    assert exit_code == 1
 
 
 def test_parse_option_sizing_request_budget_mode_ignores_unused_quantity(tmp_path):

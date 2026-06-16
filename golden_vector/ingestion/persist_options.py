@@ -28,6 +28,10 @@ class OptionsSnapshotRecord:
     snapshot_path: Path
     sha256: str
     message: str | None = None
+    # "OK" when this run produced a feature row for the ticker; "ERROR" when the raw
+    # snapshot persisted but feature computation failed. Recording the ERROR ticker
+    # (instead of dropping it) lets readers tell "errored" from "not in this run".
+    feature_status: str = "OK"
 
     def manifest_entry(self, paths: ProjectPaths) -> dict[str, object]:
         return {
@@ -37,6 +41,7 @@ class OptionsSnapshotRecord:
             "snapshot_path": _repo_relative(paths, self.snapshot_path),
             "sha256": self.sha256,
             "message": self.message,
+            "feature_status": self.feature_status,
         }
 
 

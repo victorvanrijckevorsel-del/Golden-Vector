@@ -271,6 +271,38 @@ def test_directional_bucket_allows_12_to_22_percent_otm_when_liquid():
     assert directional.candidate.liquidity_tier == "tradable"
 
 
+def test_strict_directional_accept_preserves_real_watch_tier_not_forced_tradable():
+    # Spread ~29% is inside the directional STRICT cap (35%) but above the global
+    # tradable spread (20%). The contract is strict-accepted but its real liquidity
+    # tier is "watch"; it must NOT be force-labelled tradable, or has_usable_option_
+    # slots() would advertise a 25-35% spread contract as tradable. (Codex H4.)
+    from golden_vector.hedge.option_availability import has_usable_option_slots
+
+    slots = build_bucket_slots(
+        option_type="P",
+        ticker="NEM",
+        chain=pd.DataFrame(
+            [
+                _option("2026-07-23", "P", 83.0, 3.00, 4.00, 500, 20),  # mid 3.5, spread 0.286
+            ]
+        ),
+        underlying_price=100.0,
+        risk_free_rate=0.04,
+        target_horizons_days=(60,),
+        settings=OptionLiquiditySettings(dte_bands={60: (46, 75)}),
+        as_of_date=date(2026, 5, 29),
+    )
+
+    directional = next(slot for slot in slots if slot.bucket == "directional")
+
+    assert directional.status == "accepted"
+    assert directional.candidate is not None
+    assert directional.candidate.rel_spread == pytest.approx(1.0 / 3.5, rel=1e-3)
+    assert directional.candidate.liquidity_tier == "watch"   # not forced "tradable"
+    assert directional.liquidity_tier == "watch"
+    assert not has_usable_option_slots([directional])
+
+
 def test_build_bucket_slots_accepts_single_relaxed_watch_candidate():
     slots = build_bucket_slots(
         option_type="P",

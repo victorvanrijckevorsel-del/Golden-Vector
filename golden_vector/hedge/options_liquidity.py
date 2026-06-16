@@ -586,12 +586,16 @@ def _slot_for_bucket(
     )
     if strict_candidates:
         metric = strict_candidates[0]
+        # Use the contract's REAL liquidity tier, not a forced "tradable". A strict
+        # bucket cap (Near-ATM 25%, Directional 35%) exceeds the global tradable
+        # spread (20%), so a strict-accepted contract can genuinely be only "watch".
+        # Forcing "tradable" would let has_usable_option_slots() advertise a 25-35%
+        # spread contract as tradable.
         candidate = _candidate_from_metric(
             metric,
             horizon_days=horizon_days,
             bucket=bucket,
             settings=settings,
-            liquidity_tier="tradable",
         )
         return OptionCandidateSlot(
             ticker=ticker,
@@ -613,9 +617,10 @@ def _slot_for_bucket(
                     settings=settings,
                     pass_type="strict",
                 )
+                and item.liquidity_tier == "tradable"
             ),
             bucket=bucket,
-            liquidity_tier="tradable",
+            liquidity_tier=candidate.liquidity_tier,
         )
 
     watch_candidates = _rank_slot_candidates(

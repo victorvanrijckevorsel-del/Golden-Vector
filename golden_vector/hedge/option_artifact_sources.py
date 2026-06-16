@@ -103,6 +103,10 @@ def load_options_features(
         ticker = normalize_ticker(item.get("ticker"))
         if not ticker:
             continue
+        # A ticker whose feature computation failed this run is recorded with an
+        # explicit ERROR marker and has no feature row -- skip it rather than fail.
+        if str(item.get("feature_status") or "OK").strip().upper() == "ERROR":
+            continue
         feature_path = paths.options_features_dir / f"{safe_options_file_name(ticker)}.parquet"
         frame = read_required_parquet(
             feature_path,
@@ -110,8 +114,17 @@ def load_options_features(
         )
         if "run_id" in frame.columns and refresh_run_id:
             matching = frame[frame["run_id"].astype(str) == refresh_run_id]
-            if not matching.empty:
-                rows.append(matching.iloc[-1])
+            if matching.empty:
+                # The manifest says this ticker is part of the current run, but its
+                # (mutable) feature file carries no row for refresh_run_id -- the file
+                # is stale/overwritten. Fail loud rather than silently drop a ticker
+                # from the current candidate/signal universe.
+                raise ValueError(
+                    f"Options feature snapshot for {ticker} has no row for refresh run "
+                    f"{refresh_run_id}; the feature file is stale or was not rebuilt "
+                    f"this run. Re-run the options phase."
+                )
+            rows.append(matching.iloc[-1])
             continue
         rows.append(frame.iloc[-1])
     if not rows:
@@ -135,8 +148,15 @@ def _read_options_manifest(
         )
     try:
         payload = json.loads(paths.latest_options_manifest_path.read_text(encoding="utf-8"))
-    except Exception:
+    except FileNotFoundError:
         return None
+    except (json.JSONDecodeError, OSError, ValueError) as exc:
+        # A corrupt/unreadable manifest is NOT the same as absence: failing it
+        # closed prevents the builder silently treating a broken current state as
+        # "no options yet".
+        raise ValueError(
+            f"Options manifest at {paths.latest_options_manifest_path} is unreadable: {exc}"
+        ) from exc
     return payload if isinstance(payload, dict) else None
 
 

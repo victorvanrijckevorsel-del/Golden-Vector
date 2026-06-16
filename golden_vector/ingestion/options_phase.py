@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from time import perf_counter
@@ -142,6 +142,8 @@ def run_options_ingestion_phase(
                 target.yahoo_symbol,
                 result.message,
             )
+        # Persist the raw snapshot first. If snapshot persistence itself fails there
+        # is genuinely nothing to record, so emit an error event and move on.
         try:
             snapshot_frame = build_options_snapshot_frame(
                 frame=result.frame,
@@ -159,6 +161,27 @@ def run_options_ingestion_phase(
                 options_available=result.options_available,
                 message=result.message,
             )
+        except Exception as exc:  # noqa: BLE001 - per-ticker best effort by design.
+            status_counts[OPTIONS_STATUS_ERROR] = (
+                status_counts.get(OPTIONS_STATUS_ERROR, 0) + 1
+            )
+            collection_events.append(
+                {
+                    "ticker": target.ticker,
+                    "source_symbol": target.yahoo_symbol,
+                    "vehicle_type": target.vehicle_type,
+                    "status": OPTIONS_STATUS_ERROR,
+                    "message": str(exc),
+                }
+            )
+            LOGGER.warning("Options snapshot persistence failed for %s: %s", target.ticker, exc)
+            continue
+
+        # Feature computation is a separate stage. If it fails, the raw snapshot is
+        # already persisted, so keep the ticker in the manifest with an explicit
+        # ERROR marker (H3) -- never let a per-ticker feature failure make the ticker
+        # silently vanish from the run. The feature loader skips ERROR records.
+        try:
             feature_row = _compute_feature_row(
                 snapshot_record=record,
                 snapshot_frame=snapshot_frame,
@@ -190,7 +213,8 @@ def run_options_ingestion_phase(
                     "message": str(exc),
                 }
             )
-            LOGGER.warning("Options pipeline failed for %s: %s", target.ticker, exc)
+            LOGGER.warning("Options feature computation failed for %s: %s", target.ticker, exc)
+            snapshot_records.append(replace(record, feature_status=OPTIONS_STATUS_ERROR))
             continue
 
         status_counts[result.status] = status_counts.get(result.status, 0) + 1
