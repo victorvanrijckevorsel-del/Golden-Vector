@@ -193,6 +193,15 @@ def _watch_thresholds(config: AppConfig) -> str:
     )
 
 
+def _candidate_status_thresholds(config: AppConfig) -> str:
+    hedge = config.hedge_readiness
+    return (
+        "Tradable needs relative spread <= "
+        f"{_percent(hedge.option_liquidity_tradable_spread_pct)}; Watch is allowed up to "
+        f"{_percent(hedge.option_liquidity_watch_spread_pct)}; otherwise No liquid candidate."
+    )
+
+
 def _near_spot_thresholds(config: AppConfig) -> str:
     hedge = config.hedge_readiness
     return (
@@ -318,6 +327,45 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         ),
         thresholds=_skew_thresholds,
         direction="Positive means puts are priced richer than calls. Context, not a forecast.",
+    ),
+    "ticker_symbol": ColumnHelp(
+        meaning="The company's stock ticker symbol. Click it to open that name's detail page.",
+    ),
+    "option_stock_price": ColumnHelp(
+        meaning="The stock's share price at the time of the cached options snapshot (screening data, not a live quote).",
+        calculation="Underlying price recorded on the option-chain snapshot used for this screen.",
+    ),
+    "option_direction_signal": ColumnHelp(
+        meaning=(
+            "The option market's directional read for this stock — DOWNSIDE (puts priced "
+            "richer than calls), UPSIDE (calls priced richer), or NEUTRAL — from its "
+            "25-delta skew versus its gold-miner benchmark."
+        ),
+        thresholds=_skew_thresholds,
+        direction=(
+            "Context, not a forecast. UPSIDE is only published when call-side option volume "
+            "also shows a pulse (the evidence bar is higher for a bullish read)."
+        ),
+    ),
+    "option_activity": ColumnHelp(
+        meaning=(
+            "Whether option volume is elevated relative to open interest on one side — a "
+            "'volume pulse'. It flags attention, not confirmed new positioning (high volume "
+            "can be traders closing as easily as opening)."
+        ),
+        direction="Context only; it can support a skew read but does not confirm positioning.",
+    ),
+    "option_candidate_status": ColumnHelp(
+        meaning=(
+            "Whether this side (put or call) has a liquid option contract you could actually "
+            "trade: Tradable (tight spread, enough open interest), Watch (usable but wider or "
+            "thinner), or No liquid candidate."
+        ),
+        thresholds=_candidate_status_thresholds,
+        direction="Tradable is best; Watch is usable with care; No liquid candidate means skip.",
+    ),
+    "option_notes": ColumnHelp(
+        meaning="Plain-English caveats for this row — for example why a candidate is only Watch tier, or why the data is degraded.",
     ),
     "option_cost_signal": ColumnHelp(
         meaning="Whether option protection currently looks cheap or rich for this name.",

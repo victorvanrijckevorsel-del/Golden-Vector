@@ -120,12 +120,12 @@ def _render_option_trading_overview_page(
     body.append(
         "<table id=\"option-trading-table\" class=\"js-datatable\">"
         "<thead><tr>"
-        "<th data-col-name=\"ticker\">Ticker</th>"
-        "<th data-col-name=\"stock_price\" data-sort-numeric>Stock Price</th>"
-        "<th data-col-name=\"down_beta\" data-sort-numeric>Down Beta</th>"
-        "<th data-col-name=\"up_beta\" data-sort-numeric>Up Beta</th>"
-        "<th data-col-name=\"confidence\">Gold Sensitivity Confidence</th>"
-        "<th data-col-name=\"direction\">Signal</th>"
+        + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
+        + help_th("Stock Price", key="option_stock_price", app_config=app_config, col_name="stock_price", sort_numeric=True)
+        + help_th("Down Beta", key="tool_c_down_beta", app_config=app_config, col_name="down_beta", sort_numeric=True)
+        + help_th("Up Beta", key="tool_c_up_beta", app_config=app_config, col_name="up_beta", sort_numeric=True)
+        + help_th("Gold Sensitivity Confidence", key="tool_a_confidence", app_config=app_config, col_name="confidence")
+        + help_th("Signal", key="option_direction_signal", app_config=app_config, col_name="direction")
         + help_th(
             "Skew vs Benchmark",
             key="skew_vs_benchmark",
@@ -133,7 +133,7 @@ def _render_option_trading_overview_page(
             col_name="skew",
             sort_numeric=True,
         )
-        + "<th data-col-name=\"activity\">Activity</th>"
+        + help_th("Activity", key="option_activity", app_config=app_config, col_name="activity")
         + help_th(
             "Option Cost Signal",
             key="option_cost_signal",
@@ -153,16 +153,16 @@ def _render_option_trading_overview_page(
             col_name="iv",
             sort_numeric=True,
         )
-        + "<th data-col-name=\"put_status\">Put Status</th>"
-        "<th data-col-name=\"call_status\">Call Status</th>"
+        + help_th("Put Status", key="option_candidate_status", app_config=app_config, col_name="put_status")
+        + help_th("Call Status", key="option_candidate_status", app_config=app_config, col_name="call_status")
         + help_th(
             "Option Snapshot Date",
             key="option_snapshot_date",
             app_config=app_config,
             col_name="snapshot",
         )
-        + "<th data-col-name=\"notes\">Notes</th>"
-        "</tr></thead>"
+        + help_th("Notes", key="option_notes", app_config=app_config, col_name="notes")
+        + "</tr></thead>"
         f"<tbody>{rows_html}</tbody>"
         "</table>"
     )
