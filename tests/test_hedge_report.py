@@ -306,6 +306,11 @@ def test_run_hedge_readiness_ignores_stale_feature_rows(tmp_path):
     assert exit_code == 0
     markdown = (paths.output_hedge_readiness_dir / "latest.md").read_text(encoding="utf-8")
     assert "| Directly hedgeable | 0 |" in markdown
+    # Audit M12: the report must clarify that 'directly hedgeable' is chain coverage,
+    # not tradable-candidate viability, so the optionability count can't read as a
+    # hedgeability guarantee.
+    assert "Optionability reflects option-chain coverage" in markdown
+    assert "not tradable-candidate viability" in markdown
     assert "- Raw option snapshots: 2" in markdown
     assert "- Options feature rows: 1" in markdown
     sensitivity_block = markdown.split("## Sensitivity Ranking", 1)[1].split(

@@ -548,6 +548,14 @@ def _render_snapshot_summary(summary: SnapshotSummaryData) -> list[str]:
         f"| Tool B snapshot refresh | {_fmt_run_ids(alignment.tool_b_refresh_run_ids)} |",
         f"| Analytical context alignment | {alignment.status} |",
         "",
+        # Audit M12: 'directly hedgeable' here means the option CHAIN has adequate
+        # coverage (open interest + core put-IV) -- NOT that a tradable candidate
+        # exists. The stricter Near-ATM/Directional liquidity gates decide that, so a
+        # name can be 'directly hedgeable' yet have no liquid put/call candidate.
+        "Optionability reflects option-chain coverage (open interest + core put-IV), "
+        "not tradable-candidate viability. A 'directly hedgeable' name can still have "
+        "no liquid put/call candidate — see the per-side candidate status for that.",
+        "",
     ]
     if summary.risk_free_rate_is_fallback:
         lines.extend(
