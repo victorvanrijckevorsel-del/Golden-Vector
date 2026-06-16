@@ -123,6 +123,8 @@ POSITION_COLUMNS = [
     "value_gbp",
     "cost_gbp_at_current_fx",
     "pnl_gbp_at_current_fx",
+    "avg_cost_gbp",
+    "pnl_fraction_gbp",
 ]
 
 SUMMARY_COLUMNS = [
@@ -775,6 +777,18 @@ def _positions_frame(
             if value_gbp is not None and cost_gbp is not None
             else None
         )
+        # GBP presentation of cost/P&L for every position, so the per-row cost and P&L
+        # are shown even when the cost currency differs from the quote currency (e.g. a
+        # GBP cost on an AUD-quoted .AX name, where the local-currency figures are NA).
+        # For same-currency (GBP) names these equal the local figures.
+        avg_cost_gbp = (
+            cost_gbp / total_shares if cost_gbp is not None and total_shares > 0 else None
+        )
+        pnl_fraction_gbp = (
+            pnl_gbp / cost_gbp
+            if pnl_gbp is not None and cost_gbp is not None and cost_gbp > 0
+            else None
+        )
         status = _combined_status(values)
         rows.append({
             "schema_version": PORTFOLIO_SCHEMA_VERSION,
@@ -805,6 +819,8 @@ def _positions_frame(
             "value_gbp": value_gbp,
             "cost_gbp_at_current_fx": cost_gbp,
             "pnl_gbp_at_current_fx": pnl_gbp,
+            "avg_cost_gbp": avg_cost_gbp,
+            "pnl_fraction_gbp": pnl_fraction_gbp,
         })
     return _with_metadata(pd.DataFrame(rows, columns=POSITION_COLUMNS), source_run_id, snapshot_refresh_run_id)
 

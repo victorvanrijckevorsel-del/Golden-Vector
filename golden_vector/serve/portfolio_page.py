@@ -390,11 +390,16 @@ def _render_positions(data: PortfolioData) -> str:
             f"<td><a href=\"/ticker/{escape(ticker)}\">{escape(ticker)}</a></td>"
             f"<td>{_fmt_text(row.get('company'))}</td>"
             f"<td>{_fmt_number(row.get('total_shares'), decimals=3)}</td>"
-            f"<td>{_fmt_money(row.get('avg_cost_local'), row.get('currency'))}</td>"
+            # Cost and P&L render in GBP (the reporting currency) for every row, so a
+            # GBP-cost / AUD-quoted .AX holding shows its cost and P&L instead of a dash;
+            # value and current price stay in the stock's trading currency. The backend
+            # resolves the GBP figures (avg_cost_gbp / pnl_gbp / pnl_fraction_gbp) — serve
+            # only formats them.
+            f"<td>{_fmt_money(row.get('avg_cost_gbp'), 'GBP')}</td>"
             f"<td>{_fmt_money(row.get('current_price_local'), row.get('currency'))}</td>"
             f"<td>{_fmt_money(row.get('value_local'), row.get('currency'))}</td>"
-            f"<td>{_fmt_money(row.get('pnl_local'), row.get('currency'))}</td>"
-            f"<td>{_fmt_percent(row.get('pnl_fraction_local'))}</td>"
+            f"<td>{_fmt_money(row.get('pnl_gbp_at_current_fx'), 'GBP')}</td>"
+            f"<td>{_fmt_percent(row.get('pnl_fraction_gbp'))}</td>"
             f"<td>{_fmt_percent(row.get('equity_weight_fraction'))}</td>"
             f"<td>{_fmt_percent(row.get('nav_weight_fraction'))}</td>"
             f"<td>{_fmt_number(row.get('down_beta_core'), decimals=2)}</td>"
@@ -428,7 +433,9 @@ def _render_positions(data: PortfolioData) -> str:
         + "</tr></thead><tbody>"
         f"{''.join(rows)}"
         "</tbody></table>"
-        "<p class=\"hint\">Per-position P&L is local-currency. The gold-loss column is a positive USD loss estimate.</p>"
+        "<p class=\"hint\">Cost and P&L are shown in GBP (the reporting currency); value and "
+        "current price are in each stock's trading currency (e.g. AUD for .AX). The gold-loss "
+        "column is a positive USD loss estimate.</p>"
         "</section>"
     )
 

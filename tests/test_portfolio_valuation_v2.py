@@ -99,6 +99,37 @@ def test_distinct_cost_currency_uses_cost_fx_and_suppresses_local_pnl():
     assert line.fx_issues == ()
 
 
+def test_position_frame_exposes_gbp_cost_and_pnl_for_distinct_cost_currency():
+    # GBP-cost / AUD-quote position: local cost/P&L are NA, so the position frame must
+    # surface avg_cost_gbp + pnl_fraction_gbp (+ cost/pnl in GBP) for the page to render
+    # them instead of a dash.
+    from golden_vector.portfolio.pipeline import _positions_frame
+
+    lot = _lot(buy_currency="AUD", cost_currency="GBP", cost_basis_total=136.0, shares=100.0)
+    line = _value_lot(
+        lot,
+        ticker_info=_INFO,
+        snapshot=_snapshot(currency="AUD", price=0.30, fx=0.66),
+        max_fx_staleness_days=5,
+        fx_histories={"GBP": _fx("GBP", 1.27)},
+    )
+    pos = _positions_frame(
+        [line],
+        source_run_id="r",
+        snapshot_refresh_run_id="s",
+        source_hash=None,
+        portfolio_source_version="v",
+    )
+    row = pos.iloc[0]
+    assert pd.isna(row["pnl_local"])  # local P&L NA when cost currency != quote currency
+    assert pd.isna(row["avg_cost_local"])
+    assert row["avg_cost_gbp"] == pytest.approx(136.0 / 100.0)  # GBP cost per share
+    assert row["cost_gbp_at_current_fx"] == pytest.approx(136.0)
+    value_gbp = (100 * 0.30 * 0.66) / 1.27
+    assert row["pnl_gbp_at_current_fx"] == pytest.approx(value_gbp - 136.0)
+    assert row["pnl_fraction_gbp"] == pytest.approx((value_gbp - 136.0) / 136.0)
+
+
 def test_missing_cost_fx_degrades_line():
     lot = _lot(buy_currency="AUD", cost_currency="CAD", cost_basis_total=100.0)
     line = _value_lot(
