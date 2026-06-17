@@ -100,25 +100,37 @@ def _build_dual_bar_svg(
     )
 
 
+_BENCHMARK_COLORS = {"GDX": "#1d4b73", "GDXJ": "#3f7cae"}
+_STOCK_COLOR = "#b26700"
+
+
+def _benchmark_color(label: str, index: int) -> str:
+    return _BENCHMARK_COLORS.get(label.upper(), "#3f7cae" if index % 2 else "#1d4b73")
+
+
 def _build_beta_strip_svg(
     *,
     axis_label: str,
     domain: tuple[float, float] | None,
-    markers: list[dict[str, object]],
+    universe_positions: list[float],
+    subject_pos: float | None,
+    subject_label: str,
+    benchmark_positions: list[float],
 ) -> str:
-    """Render a 1-D distribution strip from BACKEND-resolved positions.
+    """Render a slim "where does this stock rank" strip from BACKEND-resolved positions.
 
-    Each marker carries a pre-computed ``pos`` in 0..1 (where it sits along the universe axis);
-    this builder only maps that fraction to a pixel and draws the tick + label. No ranking,
-    percentile, or domain math happens here — those are resolved in the model layer.
+    The full miner universe is drawn as a faint "rug" of ticks (so the distribution is visible),
+    the stock is the one labelled orange marker, and GDX/GDXJ are small dashed ticks (their exact
+    values live on the grouped Up-vs-Down bar, so they are intentionally not labelled here to avoid
+    clutter). Every position is a pre-computed 0..1 fraction; this builder only maps it to a pixel.
     """
 
-    if domain is None or not markers:
+    if domain is None:
         return "<p>No comparison data available.</p>"
-    width = 360
-    height = 116
-    padding = 36
-    track_y = 58
+    width = 420
+    height = 92
+    padding = 40
+    track_y = 50
     span = width - (2 * padding)
 
     def px(pos: float) -> float:
@@ -127,39 +139,123 @@ def _build_beta_strip_svg(
     low, high = domain
     parts = [
         f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#fffdf8\" rx=\"12\" ry=\"12\" />",
-        f"<text x=\"{padding}\" y=\"20\" font-size=\"12\" fill=\"#6f685c\">{escape(axis_label)}</text>",
+        f"<text x=\"{padding}\" y=\"18\" font-size=\"12\" fill=\"#6f685c\">{escape(axis_label)}</text>",
         f"<line x1=\"{padding}\" y1=\"{track_y}\" x2=\"{width - padding}\" y2=\"{track_y}\" stroke=\"#cdbfa6\" stroke-width=\"3\" stroke-linecap=\"round\" />",
-        f"<text x=\"{padding}\" y=\"{track_y + 24}\" font-size=\"11\" fill=\"#9a917f\">{low:,.2f}</text>",
-        f"<text x=\"{width - padding}\" y=\"{track_y + 24}\" text-anchor=\"end\" font-size=\"11\" fill=\"#9a917f\">{high:,.2f}</text>",
+        f"<text x=\"{padding}\" y=\"{track_y + 26}\" font-size=\"11\" fill=\"#9a917f\">{low:,.2f}</text>",
+        f"<text x=\"{width - padding}\" y=\"{track_y + 26}\" text-anchor=\"end\" font-size=\"11\" fill=\"#9a917f\">{high:,.2f}</text>",
     ]
-    for marker in markers:
-        pos = marker.get("pos")
-        if pos is None:
-            continue
+    # Universe rug: one faint tick per scored miner (shows the distribution).
+    for pos in universe_positions:
         x = px(float(pos))
-        is_subject = bool(marker.get("is_subject"))
-        label = escape(str(marker.get("label", "")))
-        value = marker.get("value")
-        value_text = f"{float(value):,.2f}" if value is not None else "n/a"
-        if is_subject:
-            parts.append(
-                f"<line x1=\"{x:.1f}\" y1=\"{track_y - 16}\" x2=\"{x:.1f}\" y2=\"{track_y + 16}\" stroke=\"#b26700\" stroke-width=\"2\" />"
-            )
-            parts.append(
-                f"<circle cx=\"{x:.1f}\" cy=\"{track_y:.1f}\" r=\"5\" fill=\"#b26700\" />"
-            )
-            parts.append(
-                f"<text x=\"{x:.1f}\" y=\"{track_y - 22}\" text-anchor=\"middle\" font-size=\"11\" fill=\"#1f1d1a\">{label} {value_text}</text>"
-            )
-        else:
-            parts.append(
-                f"<line x1=\"{x:.1f}\" y1=\"{track_y - 10}\" x2=\"{x:.1f}\" y2=\"{track_y + 10}\" stroke=\"#1d4b73\" stroke-width=\"2\" stroke-dasharray=\"3 2\" />"
-            )
-            parts.append(
-                f"<text x=\"{x:.1f}\" y=\"{track_y + 38}\" text-anchor=\"middle\" font-size=\"11\" fill=\"#3a536b\">{label} {value_text}</text>"
-            )
+        parts.append(
+            f"<line x1=\"{x:.1f}\" y1=\"{track_y - 7}\" x2=\"{x:.1f}\" y2=\"{track_y + 7}\" stroke=\"#d2c4a6\" stroke-width=\"1\" opacity=\"0.7\" />"
+        )
+    # GDX/GDXJ context ticks (dashed, unlabelled — values are on the grouped bar).
+    for pos in benchmark_positions:
+        x = px(float(pos))
+        parts.append(
+            f"<line x1=\"{x:.1f}\" y1=\"{track_y - 11}\" x2=\"{x:.1f}\" y2=\"{track_y + 11}\" stroke=\"#1d4b73\" stroke-width=\"2\" stroke-dasharray=\"3 2\" />"
+        )
+    # The stock: the one labelled marker.
+    if subject_pos is not None:
+        x = px(float(subject_pos))
+        parts.append(
+            f"<line x1=\"{x:.1f}\" y1=\"{track_y - 15}\" x2=\"{x:.1f}\" y2=\"{track_y + 15}\" stroke=\"{_STOCK_COLOR}\" stroke-width=\"2\" />"
+        )
+        parts.append(f"<circle cx=\"{x:.1f}\" cy=\"{track_y:.1f}\" r=\"5\" fill=\"{_STOCK_COLOR}\" />")
+        # Keep the label inside the canvas at the extremes.
+        anchor = "middle"
+        if x < padding + 40:
+            anchor = "start"
+        elif x > width - padding - 40:
+            anchor = "end"
+        parts.append(
+            f"<text x=\"{x:.1f}\" y=\"{track_y - 21}\" text-anchor=\"{anchor}\" font-size=\"11.5\" fill=\"#1f1d1a\">{escape(subject_label)}</text>"
+        )
     return (
         f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"{escape(axis_label)} distribution\">"
+        f"{''.join(parts)}"
+        "</svg>"
+    )
+
+
+def _build_grouped_beta_bar_svg(
+    *,
+    groups: list[dict[str, object]],
+    title: str | None = None,
+) -> str:
+    """Grouped bar chart: each group (e.g. Up-Gold / Down-Gold) holds the stock + GDX + GDXJ bars,
+    side by side, so the stock's beta reads directly against the ETFs on the SAME window.
+
+    ``groups`` is a list of ``{"label": str, "bars": [{"label","value","color"}, ...]}``. Bars carry
+    backend-resolved beta values; this builder only scales them to pixel heights.
+    """
+
+    if not groups:
+        return "<p>No beta data available.</p>"
+    width = 460
+    height = 250
+    padding = 26
+    plot_top = 44
+    plot_bottom = height - 46
+    all_values = [
+        float(bar["value"])
+        for group in groups
+        for bar in group["bars"]
+        if bar.get("value") is not None
+    ]
+    if not all_values:
+        return "<p>No beta data available.</p>"
+    max_abs = max([abs(v) for v in all_values] + [0.25])
+    has_negative = any(v < 0 for v in all_values)
+    baseline = plot_bottom if not has_negative else (plot_top + plot_bottom) / 2
+    bar_w = 30
+    gap = 8
+    group_centers = [width * (i + 1) / (len(groups) + 1) for i in range(len(groups))]
+
+    def bar_height(value: float) -> float:
+        return (abs(value) / max_abs) * (baseline - plot_top if value >= 0 else plot_bottom - baseline)
+
+    parts = [
+        f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#fffdf8\" rx=\"12\" ry=\"12\" />",
+        f"<line x1=\"{padding}\" y1=\"{baseline:.1f}\" x2=\"{width - padding}\" y2=\"{baseline:.1f}\" stroke=\"#bfb5a2\" stroke-width=\"1\" />",
+    ]
+    if title:
+        parts.append(
+            f"<text x=\"{width / 2:.0f}\" y=\"20\" text-anchor=\"middle\" font-size=\"12\" fill=\"#6f685c\">{escape(title)}</text>"
+        )
+    for center, group in zip(group_centers, groups, strict=False):
+        bars = group["bars"]
+        total_w = len(bars) * bar_w + (len(bars) - 1) * gap
+        start = center - total_w / 2
+        for i, bar in enumerate(bars):
+            value = bar.get("value")
+            x = start + i * (bar_w + gap)
+            label = escape(str(bar.get("label", "")))
+            color = str(bar.get("color", "#1d4b73"))
+            if value is None:
+                parts.append(
+                    f"<text x=\"{x + bar_w / 2:.1f}\" y=\"{baseline - 6:.1f}\" text-anchor=\"middle\" font-size=\"10\" fill=\"#9a917f\">n/a</text>"
+                )
+                continue
+            value = float(value)
+            bh = bar_height(value)
+            y = baseline - bh if value >= 0 else baseline
+            parts.append(
+                f"<rect x=\"{x:.1f}\" y=\"{y:.1f}\" width=\"{bar_w}\" height=\"{bh:.1f}\" fill=\"{color}\" opacity=\"0.9\" rx=\"5\" ry=\"5\" />"
+            )
+            value_y = (y - 6) if value >= 0 else (y + bh + 14)
+            parts.append(
+                f"<text x=\"{x + bar_w / 2:.1f}\" y=\"{value_y:.1f}\" text-anchor=\"middle\" font-size=\"11\" fill=\"#1f1d1a\">{value:,.2f}</text>"
+            )
+            parts.append(
+                f"<text x=\"{x + bar_w / 2:.1f}\" y=\"{height - 26:.1f}\" text-anchor=\"middle\" font-size=\"9.5\" fill=\"#8a8170\">{label}</text>"
+            )
+        parts.append(
+            f"<text x=\"{center:.1f}\" y=\"{height - 10:.1f}\" text-anchor=\"middle\" font-size=\"12\" fill=\"#5f594c\">{escape(str(group['label']))}</text>"
+        )
+    return (
+        f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Up versus down beta vs benchmarks\">"
         f"{''.join(parts)}"
         "</svg>"
     )

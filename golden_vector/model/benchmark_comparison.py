@@ -60,6 +60,10 @@ class BetaUniverseComparison:
     subject: BetaMarker | None
     benchmarks: tuple[BetaMarker, ...]
     note: str | None = None
+    # 0..1 positions of EVERY scored miner along the axis, for the universe "rug" on the strip
+    # (lets the page show the whole distribution instead of three crammed markers).
+    down_universe_positions: tuple[float, ...] = ()
+    up_universe_positions: tuple[float, ...] = ()
 
 
 def _column_values(frame: pd.DataFrame | None, column: str) -> list[float]:
@@ -235,6 +239,13 @@ def resolve_beta_universe_comparison(
         if down_value is not None or up_value is not None
     )
 
+    down_universe_positions = tuple(
+        p for p in (_position(v, down_domain) for v in universe_down) if p is not None
+    )
+    up_universe_positions = tuple(
+        p for p in (_position(v, up_domain) for v in universe_up) if p is not None
+    )
+
     return BetaUniverseComparison(
         window_id=key,
         window_label=label,
@@ -246,6 +257,8 @@ def resolve_beta_universe_comparison(
         subject=subject_marker,
         benchmarks=benchmark_markers,
         note=None,
+        down_universe_positions=down_universe_positions,
+        up_universe_positions=up_universe_positions,
     )
 
 

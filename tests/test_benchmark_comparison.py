@@ -163,23 +163,33 @@ def test_by_window_resolves_every_selectable_window():
     assert all(out[w].available for w in out)
 
 
-def test_strip_chart_renders_subject_and_benchmark_markers():
-    markers = [
-        {"label": "SUBJ", "pos": 0.6, "value": 1.0, "is_subject": True},
-        {"label": "GDX", "pos": 0.8, "value": 1.3, "is_subject": False},
-    ]
-    svg = _build_beta_strip_svg(axis_label="Down beta (6-month)", domain=(0.5, 2.0), markers=markers)
-    assert "<svg" in svg
-    assert "SUBJ" in svg and "GDX" in svg
-    assert "stroke-dasharray" in svg  # benchmark tick is dashed
-    assert "circle" in svg  # subject dot
-
-
-def test_strip_chart_degrades_without_domain_or_markers():
-    assert "No comparison data" in _build_beta_strip_svg(axis_label="x", domain=None, markers=[])
-    assert "No comparison data" in _build_beta_strip_svg(
-        axis_label="x", domain=(0.0, 1.0), markers=[]
+def test_strip_chart_renders_universe_rug_and_only_labels_the_stock():
+    svg = _build_beta_strip_svg(
+        axis_label="Down beta (6-month)",
+        domain=(0.5, 2.0),
+        universe_positions=[0.1, 0.35, 0.6, 0.9],
+        subject_pos=0.6,
+        subject_label="SUBJ 1.33 · 60th percentile",
+        benchmark_positions=[0.72, 0.85],
     )
+    assert "<svg" in svg
+    assert "SUBJ 1.33" in svg  # the one labelled marker
+    assert "GDX" not in svg and "GDXJ" not in svg  # ETFs are unlabelled ticks here (values on the bar)
+    assert "stroke-dasharray" in svg  # GDX/GDXJ context ticks are dashed
+    assert "circle" in svg  # subject dot
+    assert svg.count("<line") >= 4 + 2 + 1  # 4 rug ticks + 2 benchmark ticks + subject tick (+ axis)
+
+
+def test_strip_chart_degrades_without_domain():
+    out = _build_beta_strip_svg(
+        axis_label="x",
+        domain=None,
+        universe_positions=[],
+        subject_pos=None,
+        subject_label="",
+        benchmark_positions=[],
+    )
+    assert "No comparison data" in out
 
 
 def test_by_window_keys_carry_correct_window_id_and_distinct_percentiles():
@@ -252,25 +262,62 @@ def test_degraded_row_excluded_but_healthy_control_retained_and_changes_percenti
     assert degraded.subject.down_percentile == 75.0
 
 
-def test_render_panel_shows_window_label_percentile_and_benchmark_numbers():
+def test_universe_positions_cover_every_member_in_unit_interval():
+    c = resolve_beta_universe_comparison(ticker="SUBJ", window_id="6M", universe_df=_universe(), benchmark_df=_benchmarks())
+    assert len(c.down_universe_positions) == c.universe_down_n == 5
+    assert len(c.up_universe_positions) == c.universe_up_n == 5
+    assert all(0.0 <= p <= 1.0 for p in c.down_universe_positions)
+
+
+def test_render_comparison_panel_shows_window_label_percentile_and_rug():
     c = resolve_beta_universe_comparison(ticker="SUBJ", window_id="3Y", universe_df=_universe(), benchmark_df=_benchmarks())
     html = _render_beta_comparison_panel(c, ticker="SUBJ", active_window="3Y")
-    assert "How its gold beta compares" in html
+    assert "ranks vs the miner universe" in html
     assert "3-year" in html  # window label rendered
     assert "percentile" in html  # subject percentile text rendered
-    assert "GDX down" in html and "GDXJ down" in html  # benchmark reference numbers
     assert "orange marker" in html  # legend
     assert "<svg" in html  # both strips present
 
 
-def test_render_panel_unavailable_and_subject_absent_paths():
+def test_render_comparison_panel_unavailable_and_subject_absent_paths():
     # Fully unavailable (no data resolved yet)
-    assert "No GDX/GDXJ" in _render_beta_comparison_panel(None, ticker="SUBJ", active_window="6M")
-    # Subject not in the universe -> still renders, with the explanatory message
+    assert "No universe comparison" in _render_beta_comparison_panel(None, ticker="SUBJ", active_window="6M")
+    # Subject not in the universe -> still renders, with the explanatory message + universe spread
     c = resolve_beta_universe_comparison(ticker="ZZZ", window_id="6M", universe_df=_universe(), benchmark_df=_benchmarks())
     html = _render_beta_comparison_panel(c, ticker="ZZZ", active_window="6M")
     assert "not in the scored miner universe" in html
-    assert "GDX down" in html  # benchmarks still shown
+    assert "<svg" in html  # universe spread still drawn
+
+
+def test_render_up_down_panel_groups_stock_with_benchmarks():
+    """Emanuel's fix: GDX/GDXJ up/down betas must sit NEXT TO the stock on the Up vs Down chart,
+    on the same window, as grouped bars."""
+    from golden_vector.serve.detail_panels import _render_up_down_beta_panel
+
+    c = resolve_beta_universe_comparison(ticker="SUBJ", window_id="12M", universe_df=_universe(), benchmark_df=_benchmarks())
+    html = _render_up_down_beta_panel(
+        {"anchor_window_id": "12M"},
+        anchor_metric={"up_beta": c.subject.up_beta, "down_beta": c.subject.down_beta},
+        active_window="12M",
+        comparison=c,
+    )
+    assert "GDX" in html and "GDXJ" in html  # benchmarks present as bars
+    assert "Up-Gold" in html and "Down-Gold" in html
+    assert "1.60" in html  # SUBJ down beta @ 12M
+    assert "1.40" in html  # GDX down beta @ 12M
+
+
+def test_up_down_panel_without_comparison_falls_back_to_stock_only():
+    from golden_vector.serve.detail_panels import _render_up_down_beta_panel
+
+    html = _render_up_down_beta_panel(
+        {"anchor_window_id": "12M"},
+        anchor_metric={"up_beta": 1.1, "down_beta": 1.3},
+        active_window="12M",
+        comparison=None,
+    )
+    assert "GDX" not in html  # no benchmark bars when comparison is unavailable
+    assert "<svg" in html  # still shows the stock's up/down bars
 
 
 def test_comparison_math_is_not_duplicated_in_the_serve_layer():
