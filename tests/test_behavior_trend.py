@@ -80,7 +80,7 @@ def test_clear_improvement_labels_improving() -> None:
 def test_flat_cell_is_stable() -> None:
     eps = _cell("FLIP", "gold_down", [1] * 12)
     row = _row(_trend(eps))
-    assert row["trend_status"] == "OK" and row["trend_label"] == "STABLE"
+    assert row["trend_status"] == "OK" and row["trend_label"] == "NO_CHANGE_DETECTED"
 
 
 def test_thin_recent_window_is_insufficient() -> None:
@@ -106,7 +106,7 @@ def test_alpha_trend_deteriorates_while_beat_is_flat() -> None:
     alphas = [0.30, 0.25, 0.20, 0.15, 0.10, 0.05, 0.0, -0.05, -0.10, -0.15, -0.20, -0.25]
     eps = _cell("FLIP", "gold_down", [1] * 12, alphas=alphas)
     row = _row(_trend(eps))
-    assert row["trend_label"] == "STABLE"  # beat rate flat
+    assert row["trend_label"] == "NO_CHANGE_DETECTED"  # beat rate flat
     assert row["alpha_slope_per_year"] < 0
     assert row["alpha_trend_label"] == "ALPHA_DETERIORATING"
 
@@ -203,7 +203,7 @@ def test_fdr_suppresses_borderline_movers_in_a_family() -> None:
         (borderline["trend_p_value"] <= 0.05) & (borderline["trend_q_value"] > 0.10)
     ]
     assert len(suppressed) >= 1  # raw-significant but FDR-corrected away...
-    assert (suppressed["trend_label"] == "STABLE").all()  # ...so NOT labelled a mover
+    assert (suppressed["trend_label"] == "NO_CHANGE_DETECTED").all()  # ...so NOT labelled a mover
 
 
 # --- joint gate: MK sign agreement -----------------------------------------
@@ -212,10 +212,10 @@ def test_beat_label_requires_mk_sign_agreement() -> None:
     cfg = CaptureBehaviorConfig()
     assert _beat_label(delta=0.30, tau=0.5, q_value=0.01, config=cfg) == "IMPROVING"
     assert _beat_label(delta=-0.30, tau=-0.5, q_value=0.01, config=cfg) == "DETERIORATING"
-    assert _beat_label(delta=0.30, tau=-0.5, q_value=0.01, config=cfg) == "STABLE"  # signs disagree
-    assert _beat_label(delta=0.30, tau=0.0, q_value=0.01, config=cfg) == "STABLE"  # tau == 0
-    assert _beat_label(delta=0.30, tau=0.5, q_value=0.50, config=cfg) == "STABLE"  # q > q_fdr
-    assert _beat_label(delta=0.10, tau=0.5, q_value=0.01, config=cfg) == "STABLE"  # |delta| < thr
+    assert _beat_label(delta=0.30, tau=-0.5, q_value=0.01, config=cfg) == "NO_CHANGE_DETECTED"  # signs disagree
+    assert _beat_label(delta=0.30, tau=0.0, q_value=0.01, config=cfg) == "NO_CHANGE_DETECTED"  # tau == 0
+    assert _beat_label(delta=0.30, tau=0.5, q_value=0.50, config=cfg) == "NO_CHANGE_DETECTED"  # q > q_fdr
+    assert _beat_label(delta=0.10, tau=0.5, q_value=0.01, config=cfg) == "NO_CHANGE_DETECTED"  # |delta| < thr
 
 
 # --- anchors-only windows + horizon deflation ------------------------------
@@ -266,7 +266,7 @@ def test_alpha_trend_improving_stable_insufficient() -> None:
     imp = _row(_trend(_cell("UP", "gold_down", [1] * 12, alphas=rising)), "UP")
     assert imp["alpha_slope_per_year"] > 0 and imp["alpha_trend_label"] == "ALPHA_IMPROVING"
     stab = _row(_trend(_cell("ST", "gold_down", [1] * 12, alphas=[0.05] * 12)), "ST")
-    assert stab["alpha_trend_label"] == "ALPHA_STABLE"
+    assert stab["alpha_trend_label"] == "ALPHA_NO_CHANGE"
     thin = _row(_trend(_cell("TH", "gold_down", [1, 0, 1, 0, 1, 0])), "TH")  # na=6 < min_anchors
     assert thin["alpha_trend_label"] == "INSUFFICIENT"
 
@@ -285,3 +285,49 @@ def test_mde_uses_per_side_anchor_counts() -> None:
     row = _row(_trend(_cell("M", "gold_down", [1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0])), "M")
     expected = round(mde_proportion_pp(row["recent_anchor_n"], row["older_anchor_n"]), 2)
     assert math.isclose(row["mde_80pct_pp"], expected)
+
+
+# --- FDR family scope stamping + alpha FDR ---------------------------------
+
+def test_config_rejects_bad_domains() -> None:
+    import pydantic
+
+    for kwargs in (
+        {"trend_window_basis": "calendar"},  # only event_time implemented
+        {"min_recent_effective_n": -1.0},
+        {"eb_prior_strength": -10.0},
+        {"trend_delta_threshold": -0.2},
+        {"decay_half_life_episodes": 0.0},  # zero half-life would crash decay_weights later
+        {"recent_prior_min_pool_tickers": 0.0},
+    ):
+        with pytest.raises(pydantic.ValidationError):
+            CaptureBehaviorConfig(**kwargs)
+
+
+def test_fdr_scope_and_family_size_are_stamped() -> None:
+    eps = pd.concat(
+        [
+            _cell("A", "gold_down", [1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0]),
+            _cell("B", "gold_down", [1] * 12),
+        ],
+        ignore_index=True,
+    )
+    rows = _trend(eps)
+    ok = rows[rows["trend_status"] == "OK"]
+    assert (ok["trend_fdr_scope"] == "benchmark+horizon+gold_bucket").all()
+    assert (ok["trend_fdr_family_size"] == 2).all()  # the scenario-local family size
+
+
+def test_alpha_trend_is_fdr_corrected_and_stats_persisted() -> None:
+    # A strong alpha mover amid flat-alpha cells: the mover survives BH (label set, q/tau/z
+    # persisted); flat-alpha peers are not movers. Proves alpha is now FDR-gated, not raw.
+    falling = [0.30, 0.25, 0.20, 0.15, 0.10, 0.05, 0.0, -0.05, -0.10, -0.15, -0.20, -0.25]
+    frames = [_cell("MOVER", "gold_down", [1] * 12, alphas=falling)]
+    for i in range(20):
+        frames.append(_cell(f"F{i:02d}", "gold_down", [1] * 12, alphas=[0.05] * 12))
+    table = _trend(pd.concat(frames, ignore_index=True))
+    mover = table[table["ticker"] == "MOVER"].iloc[0]
+    assert mover["alpha_trend_label"] == "ALPHA_DETERIORATING"
+    assert mover["alpha_trend_q_value"] is not None and mover["alpha_trend_tau"] < 0
+    flats = table[table["ticker"].str.startswith("F")]
+    assert (flats["alpha_trend_label"] == "ALPHA_NO_CHANGE").all()

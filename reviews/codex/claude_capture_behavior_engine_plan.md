@@ -561,3 +561,24 @@ raw spine (one hash) and a behavior layer (second hash, which also tracks the sp
 pre-expansion and are computed on a benchmark-independent stock-return source; archetype cutoffs are
 data-derived in Phase 1. None of this changes the user-facing lenses in §0 — it hardens the contracts
 before any code is written.
+
+---
+
+## 14. Scope correction (2026-06-17, after Codex Phases 0–3 review)
+
+**Capture-trend is explicitly DEFERRED.** The original §4.2/§6 listed recent/older/decay *capture*
+(vs gold) trend fields alongside the beat/alpha trend. Phases 1–3 shipped: capture *levels* +
+archetype (Phase 1), peer ranks (Phase 2), and beat + alpha *trend* (Phase 3). The descriptive
+capture-*trend* (is the down/up capture itself drifting over time) is **not** built and is deferred to
+a post-UI follow-up — it is descriptive-only, never feeds a gate, and is lower value than shipping the
+UI. `dial_capture` therefore carries capture LEVELS only; `dial_behavior_trend` carries beat + alpha
+trend. This note supersedes the capture-trend mentions in §4.2/§6 so the plan and the shipped schema
+agree.
+
+Other Codex-review corrections folded into the engine (see
+`reviews/codex/codex_review_capture_behavior_engine_phases_0_3.md` + the resolutions below): source-
+spine provenance stamped in `behavior_meta`; alpha label now FDR + sign-agreement gated (not raw p);
+hard archetype only at the default capture horizon + a confirmed-only `archetype` vs raw
+`archetype_all_rows`; invalid-denominator status; `STABLE → NO_CHANGE_DETECTED`; FDR family scope/size
+stamped; deeper config validators; run-stamp immutability guard + microsecond stamps; Parquet-level
+context metadata; `default_trend_horizon` build check.

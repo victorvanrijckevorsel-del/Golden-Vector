@@ -24,11 +24,14 @@ from golden_vector.lab.behavior_engine import (
 )
 
 # Cutoffs + floors chosen so the synthetic ratios below classify unambiguously.
+# default_capture_horizon=1 so the synthetic h=1 cells receive an archetype (archetypes
+# are only emitted at the default capture horizon).
 _CFG = CaptureBehaviorConfig(
     hedge_down_capture_max=1.0,
     torque_up_capture_min=1.5,
     min_direction_effective_n=1.0,
     min_anchor_episodes=6,
+    default_capture_horizon=1,
 )
 
 
@@ -207,18 +210,22 @@ def test_anchor_disagreement_flags_unconfirmed_not_abstains() -> None:
     # All-rows down-capture 0.75 (hedgey) -> CONVEX; anchors-only 2.0 (not hedgey) -> TORQUE.
     assert row["down_capture_mean"] <= _CFG.hedge_down_capture_max
     assert row["down_capture_anchor"] > _CFG.hedge_down_capture_max
-    assert row["capture_status"] == "OK" and row["archetype"] == "CONVEX"
+    assert row["capture_status"] == "OK"
+    # The raw label is kept under archetype_all_rows; the confirmed `archetype` is NULL
+    # because the independent anchors disagree (display-safe — UI can't show it as settled).
+    assert row["archetype_all_rows"] == "CONVEX" and row["archetype"] is None
     assert row["archetype_confidence"] == "unconfirmed_disagrees"
     assert bool(row["archetype_anchor_agrees"]) is False
 
 
-def test_no_anchor_emits_archetype_flagged_thin_anchor() -> None:
+def test_no_anchor_is_unconfirmed_and_archetype_withheld() -> None:
     eps = _episodes(
         _rows("NOA", "gold_down", -0.10, -0.05, n=8, anchor=False),
         _rows("NOA", "gold_up", 0.10, 0.20, n=8, anchor=False),
     )
     row = _row_for(_build(eps))
-    assert row["capture_status"] == "OK" and row["archetype"] == "CONVEX"
+    assert row["capture_status"] == "OK"
+    assert row["archetype_all_rows"] == "CONVEX" and row["archetype"] is None
     assert row["archetype_confidence"] == "unconfirmed_thin_anchor"
     assert row["archetype_anchor"] is None and row["archetype_anchor_agrees"] is None
 
@@ -397,3 +404,33 @@ def test_build_and_save_off_list_default_horizon_fails_loud(tmp_path) -> None:
     # default_capture_horizon (13, from disk config) is not in [4] -> loud failure.
     with pytest.raises(ValueError):
         build_and_save(_FakePaths(tmp_path), horizons=[4])
+
+
+def test_archetype_only_emitted_at_default_capture_horizon() -> None:
+    # _CFG.default_capture_horizon == 1, so an h=4 cell keeps its NUMBERS but gets no box
+    # (the cutoffs are only grounded at the default horizon).
+    eps = _episodes(
+        _rows("CVX4", "gold_down", -0.10, -0.05, n=8, h=4),
+        _rows("CVX4", "gold_up", 0.10, 0.20, n=8, h=4),
+    )
+    row = _row_for(_build(eps, horizons=(4,)), "CVX4", h=4)
+    assert row["capture_status"] == "OK"
+    assert math.isclose(row["down_capture_mean"], 0.5)  # numbers present at every horizon
+    assert row["archetype"] is None and row["archetype_all_rows"] is None  # no box off-default
+
+
+def test_invalid_gold_denominator_abstains() -> None:
+    # A "down" side whose gold returns average to ~0 (corrupt/custom data) has no capture;
+    # status flags it explicitly instead of shipping OK with a null archetype.
+    down = pd.DataFrame(
+        {
+            "ticker": ["BAD"] * 8, "horizon_weeks": [1] * 8, "benchmark": ["GDX"] * 8,
+            "gold_bucket": ["gold_down"] * 8,
+            "gold_fwd_simple": [0.10, -0.10] * 4,  # mean 0 -> invalid denominator
+            "stock_fwd_simple": [-0.05] * 8, "is_nonoverlap_anchor": [True] * 8,
+        }
+    )
+    eps = _episodes(down, _rows("BAD", "gold_up", 0.10, 0.20, n=8))
+    row = _row_for(_build(eps), "BAD")
+    assert row["capture_status"] == "INVALID_DOWN_DENOMINATOR"
+    assert row["down_capture_mean"] is None and row["archetype"] is None

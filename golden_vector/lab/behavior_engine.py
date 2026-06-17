@@ -67,7 +67,14 @@ BEHAVIOR_META_FILENAME = "behavior_meta.json"
 CAPTURE_SOURCE_BENCHMARK = "GDX"
 
 ARCHETYPES = ("CONVEX", "HEDGE", "TORQUE", "DEAD_WEIGHT")
-CAPTURE_STATUSES = ("OK", "THIN_DOWN", "THIN_UP", "THIN_BOTH")
+CAPTURE_STATUSES = (
+    "OK",
+    "THIN_DOWN",
+    "THIN_UP",
+    "THIN_BOTH",
+    "INVALID_DOWN_DENOMINATOR",
+    "INVALID_UP_DENOMINATOR",
+)
 # How well the independent-anchor sample confirms the all-rows archetype (diagnostic,
 # never a veto — see the demote note in compute_capture_table).
 ARCHETYPE_CONFIDENCES = ("confirmed", "unconfirmed_disagrees", "unconfirmed_thin_anchor")
@@ -102,6 +109,7 @@ CAPTURE_COLUMNS = [
     "up_anchor_n",
     # synthesis
     "convexity",
+    "archetype_all_rows",
     "archetype",
     "archetype_anchor",
     "archetype_anchor_agrees",
@@ -278,9 +286,15 @@ def compute_capture_table(
 
     Capture is benchmark-independent, so it is computed on the GDX rows only (the
     widest-coverage source of the miner's own return); ``benchmark`` is dropped from
-    the grain. The archetype abstains (INSUFFICIENT) when a side is below the
-    effective-N floor OR when the independent-anchor capture disagrees with the
-    all-rows archetype (overlap-robustness gate).
+    the grain. The capture NUMBERS are emitted at every horizon. The ARCHETYPE box is
+    only emitted at ``config.default_capture_horizon`` (the horizon its tercile cutoffs
+    are grounded on); other horizons keep the numbers but no box. ``archetype_all_rows``
+    is the raw all-rows label; the display-safe ``archetype`` is populated ONLY when the
+    independent-anchor capture CONFIRMS it (``archetype_confidence == 'confirmed'``) —
+    an unconfirmed or anchor-disagreeing cell ships numbers + ``archetype_all_rows`` but
+    a null ``archetype`` so the UI can never present it as settled. A side that clears
+    the N floor but has no finite capture (zero/invalid gold denominator) abstains with
+    an INVALID_*_DENOMINATOR status.
     """
 
     required = {
@@ -342,27 +356,42 @@ def compute_capture_table(
 
             down_thin = float(d["effective_n"] or 0.0) < floor
             up_thin = float(u["effective_n"] or 0.0) < floor
+            # A side that clears the N floor but has no finite capture = bad denominator.
+            down_bad = (not down_thin) and d["capture_mean"] is None
+            up_bad = (not up_thin) and u["capture_mean"] is None
             confidence: str | None = None
+            archetype_all: str | None = None
+            archetype: str | None = None
+            arch_anc_out: str | None = None
+            agrees_out: bool | None = None
             if down_thin and up_thin:
-                status, archetype = "THIN_BOTH", None
+                status = "THIN_BOTH"
             elif down_thin:
-                status, archetype = "THIN_DOWN", None
+                status = "THIN_DOWN"
             elif up_thin:
-                status, archetype = "THIN_UP", None
+                status = "THIN_UP"
+            elif down_bad:
+                status = "INVALID_DOWN_DENOMINATOR"
+            elif up_bad:
+                status = "INVALID_UP_DENOMINATOR"
             else:
-                # The all-rows capture IS the archetype — its effective_n already
-                # deflates for overlap (overlap inflates VARIANCE, not bias). The
-                # independent-anchor capture is a DIAGNOSTIC cross-check, NOT a veto:
-                # a tercile-boundary disagreement between two small samples is
-                # ambiguity, not corruption. (Phase-1 review HIGH: a hard abstain here
-                # blanked well-powered cells; demoted to a confidence flag.)
-                status, archetype = "OK", arch_all
-                if anchor_n < int(config.min_anchor_episodes) or arch_anc is None:
-                    confidence = "unconfirmed_thin_anchor"
-                elif agrees:
-                    confidence = "confirmed"
-                else:
-                    confidence = "unconfirmed_disagrees"
+                status = "OK"
+                # Archetypes are only emitted at the default capture horizon — the one
+                # the tercile cutoffs are grounded on. Other horizons keep the numbers.
+                if h == int(config.default_capture_horizon):
+                    archetype_all = arch_all
+                    arch_anc_out, agrees_out = arch_anc, agrees
+                    # The independent-anchor capture is a cross-check: the DISPLAY-SAFE
+                    # `archetype` is populated ONLY when anchors confirm. archetype_all_rows
+                    # keeps the raw label so nothing is lost, but the bold box can never
+                    # show an unconfirmed/anchor-disagreeing label as settled.
+                    if anchor_n < int(config.min_anchor_episodes) or arch_anc is None:
+                        confidence = "unconfirmed_thin_anchor"
+                    elif agrees:
+                        confidence = "confirmed"
+                    else:
+                        confidence = "unconfirmed_disagrees"
+                    archetype = archetype_all if confidence == "confirmed" else None
 
             convexity = (
                 u["capture_mean"] - d["capture_mean"]
@@ -392,9 +421,10 @@ def compute_capture_table(
                     "up_capture_anchor": _round(u_anc["capture_mean"]),
                     "up_anchor_n": u_anc["n_weeks"],
                     "convexity": _round(convexity),
+                    "archetype_all_rows": archetype_all,
                     "archetype": archetype,
-                    "archetype_anchor": arch_anc,
-                    "archetype_anchor_agrees": agrees,
+                    "archetype_anchor": arch_anc_out,
+                    "archetype_anchor_agrees": agrees_out,
                     "archetype_confidence": confidence,
                     "capture_status": status,
                     "caveat": CAPTURE_CAVEAT,
@@ -416,7 +446,9 @@ def capture_distribution(table: pd.DataFrame, *, horizon: int) -> dict[str, dict
     """
 
     out: dict[str, dict[str, float]] = {}
-    hz = table[table["horizon_weeks"] == int(horizon)]
+    # Ground on LABEL-ELIGIBLE (OK) rows only — the population the archetype actually
+    # partitions — so the reported cutoffs match the cells they classify (Codex review).
+    hz = table[(table["horizon_weeks"] == int(horizon)) & (table["capture_status"] == "OK")]
     # Include p33 / p67 so the persisted distribution literally contains the quantiles
     # the archetype cutoffs are grounded on (auditable data-grounding, Codex review #10).
     quants = [0.1, 0.25, 0.33, 0.5, 0.67, 0.75, 0.9]
@@ -559,22 +591,26 @@ def compute_peer_snapshot(
 # --- Behaviour trend (Phase 3) ---
 TREND_ARTIFACT = "dial_behavior_trend"
 TREND_FILENAME = "dial_behavior_trend_latest.parquet"
-TREND_LABELS = ("IMPROVING", "DETERIORATING", "STABLE", "INSUFFICIENT_EVIDENCE")
+TREND_LABELS = ("IMPROVING", "DETERIORATING", "NO_CHANGE_DETECTED", "INSUFFICIENT_EVIDENCE")
 ALPHA_TREND_LABELS = (
     "ALPHA_IMPROVING",
     "ALPHA_DETERIORATING",
-    "ALPHA_STABLE",
+    "ALPHA_NO_CHANGE",
     "INSUFFICIENT",
 )
 TREND_STATUSES = ("OK", "THIN_ALL", "THIN_ANCHORS", "THIN_RECENT", "THIN_OLDER")
+# The FDR family scope stamped on every trend row (so a reader can never mistake a
+# scenario-local mover for a global winner).
+TREND_FDR_SCOPE = "benchmark+horizon+gold_bucket"
 TREND_CAVEAT = (
     "behaviour trend = recent vs older split on the cell's INDEPENDENT (non-overlap "
-    "anchor) episodes in EVENT time; beat-rate label gated by effective-N floors, a "
-    "two-proportion test with Benjamini-Hochberg FDR (per scenario), and Mann-Kendall "
-    "sign agreement. alpha (size) trend is the leading indicator and uses a RAW "
-    "Mann-Kendall p (uncorrected, more sensitive by design). Counted history, "
-    "survivor-only, exploratory — NOT a forecast. Most cells correctly read "
-    "INSUFFICIENT_EVIDENCE."
+    "anchor) episodes in EVENT time. BOTH the beat-rate and the alpha (size) labels are "
+    "gated by effective-N floors, Benjamini-Hochberg FDR within the SCENARIO-LOCAL "
+    "family (benchmark+horizon+bucket — NOT global, so a label means 'changed within "
+    "this scenario', not 'global winner'), and sign agreement; alpha additionally needs "
+    "a Theil-Sen slope past threshold. NO_CHANGE_DETECTED means the gates did not detect "
+    "a change (often underpowered — see mde_80pct_pp), NOT proven stable. Counted "
+    "history, survivor-only, exploratory — NOT a forecast."
 )
 TREND_COLUMNS = [
     "schema_version",
@@ -608,9 +644,14 @@ TREND_COLUMNS = [
     "trend_mk_p",
     "trend_p_value",
     "trend_q_value",
+    "trend_fdr_scope",
+    "trend_fdr_family_size",
     "mde_80pct_pp",
     "alpha_slope_per_year",
     "alpha_trend_mk_p",
+    "alpha_trend_tau",
+    "alpha_trend_mk_z",
+    "alpha_trend_q_value",
     "alpha_trend_label",
     "trend_label",
     "trend_status",
@@ -767,17 +808,19 @@ def compute_trend_table(
     if not records:
         return pd.DataFrame(columns=TREND_COLUMNS)
     df = pd.DataFrame.from_records(records, columns=TREND_COLUMNS)
-    df["trend_q_value"] = df["trend_q_value"].astype("object")
-    # Benjamini-Hochberg FDR WITHIN each (benchmark, horizon, bucket) — that is the
-    # natural family: the cross-sectional scan "which miners changed in THIS scenario?"
-    # (one test per ticker). A global FDR across all benchmarks/horizons/buckets mixes
-    # unrelated questions and is needlessly strict.
+    for col in ("trend_q_value", "trend_fdr_family_size", "alpha_trend_q_value"):
+        df[col] = df[col].astype("object")
+    fam_keys = ["benchmark", "horizon_weeks", "gold_bucket"]
+
+    # --- Beat-trend FDR WITHIN each (benchmark, horizon, bucket) family — the natural
+    # cross-sectional scan "which miners changed in THIS scenario?" (one test per
+    # ticker). Scope + family size are stamped on every row so a reader can never read a
+    # scenario-local mover as a global winner. ---
     ok = df["trend_status"] == "OK"
-    for _key, grp in df[ok].groupby(["benchmark", "horizon_weeks", "gold_bucket"]):
-        _, q_values = benjamini_hochberg(
-            grp["trend_p_value"].to_numpy(dtype=float), config.q_fdr
-        )
+    for _key, grp in df[ok].groupby(fam_keys):
+        _, q_values = benjamini_hochberg(grp["trend_p_value"].to_numpy(dtype=float), config.q_fdr)
         df.loc[grp.index, "trend_q_value"] = [round(float(q), 6) for q in q_values]
+        df.loc[grp.index, "trend_fdr_family_size"] = int(len(grp))
     for idx in df.index[ok]:
         df.at[idx, "trend_label"] = _beat_label(
             delta=df.at[idx, "trend_delta"],
@@ -786,20 +829,53 @@ def compute_trend_table(
             config=config,
         )
     df.loc[~ok, "trend_label"] = "INSUFFICIENT_EVIDENCE"
+
+    # --- Alpha-trend FDR: the alpha (leading) label is held to the SAME multiplicity
+    # bar as beat (BH within the scenario family) + a Theil-Sen/MK sign-agreement gate.
+    # Its power floor is its OWN anchor count, independent of the beat split. ---
+    alpha_ok = df["alpha_slope_per_year"].notna() & (df["n_anchors"] >= config.min_anchors)
+    for _key, grp in df[alpha_ok].groupby(fam_keys):
+        _, q_values = benjamini_hochberg(
+            grp["alpha_trend_mk_p"].to_numpy(dtype=float), config.q_fdr
+        )
+        df.loc[grp.index, "alpha_trend_q_value"] = [round(float(q), 6) for q in q_values]
+    for idx in df.index[alpha_ok]:
+        df.at[idx, "alpha_trend_label"] = _alpha_label(
+            slope=df.at[idx, "alpha_slope_per_year"],
+            tau=df.at[idx, "alpha_trend_tau"],
+            q_value=df.at[idx, "alpha_trend_q_value"],
+            config=config,
+        )
+    df.loc[~alpha_ok, "alpha_trend_label"] = "INSUFFICIENT"
     return df
 
 
 def _beat_label(*, delta, tau, q_value, config: CaptureBehaviorConfig) -> str:
     """IMPROVING / DETERIORATING only when the effect clears the threshold, survives FDR,
-    AND the Mann-Kendall trend agrees in sign; otherwise STABLE."""
+    AND the Mann-Kendall trend agrees in sign; otherwise NO_CHANGE_DETECTED (which means
+    'no change detected at this power', not 'proven stable')."""
 
     if delta is None or tau is None or q_value is None or pd.isna(delta) or pd.isna(tau):
-        return "STABLE"
+        return "NO_CHANGE_DETECTED"
     significant = q_value <= config.q_fdr and abs(delta) >= config.trend_delta_threshold
     sign_agrees = (delta > 0) == (tau > 0) and tau != 0
     if significant and sign_agrees:
         return "IMPROVING" if delta > 0 else "DETERIORATING"
-    return "STABLE"
+    return "NO_CHANGE_DETECTED"
+
+
+def _alpha_label(*, slope, tau, q_value, config: CaptureBehaviorConfig) -> str:
+    """ALPHA_IMPROVING / ALPHA_DETERIORATING only when the Theil-Sen slope clears its
+    threshold, the Mann-Kendall p survives FDR, AND the slope and MK tau agree in sign;
+    otherwise ALPHA_NO_CHANGE."""
+
+    if slope is None or tau is None or q_value is None or pd.isna(slope) or pd.isna(tau):
+        return "ALPHA_NO_CHANGE"
+    significant = q_value <= config.q_fdr and abs(slope) >= config.alpha_slope_threshold
+    sign_agrees = (slope > 0) == (tau > 0) and tau != 0
+    if significant and sign_agrees:
+        return "ALPHA_IMPROVING" if slope > 0 else "ALPHA_DETERIORATING"
+    return "ALPHA_NO_CHANGE"
 
 
 def _trend_record(
@@ -843,10 +919,10 @@ def _trend_record(
         t_days = pd.to_datetime(d["anc"]["week_date"]).astype("int64") / (1e9 * 86400.0)
         t_years = ((t_days - t_days.min()) / 365.25).to_numpy()
         slope = theil_sen(t_years, d["anc_alpha"])
-        alpha_mk_p = mann_kendall(d["anc_alpha"])["p_value"]
+        alpha_mk = mann_kendall(d["anc_alpha"])
     else:
         slope = None
-        alpha_mk_p = 1.0
+        alpha_mk = {"p_value": 1.0, "tau": 0.0, "z": 0.0}
     raw_p = (
         two_proportion_p(d["rec_mean"], rec_eff, d["old_mean"], old_eff)
         if d["rec_mean"] is not None and d["old_mean"] is not None
@@ -863,15 +939,6 @@ def _trend_record(
         status = "THIN_OLDER"
     else:
         status = "OK"
-    # The alpha (leading) trend has its OWN power floor (the anchor count) — it must NOT
-    # be blanked by the BEAT recent/older split status, or the indicator meant to LEAD
-    # the beat rate gets suppressed by the very thing it leads (review finding).
-    if slope is None or na < config.min_anchors:
-        alpha_label = "INSUFFICIENT"
-    elif alpha_mk_p <= config.alpha_trend_p_threshold and abs(slope) >= config.alpha_slope_threshold:
-        alpha_label = "ALPHA_IMPROVING" if slope > 0 else "ALPHA_DETERIORATING"
-    else:
-        alpha_label = "ALPHA_STABLE"
     return {
         "schema_version": BEHAVIOR_SCHEMA_VERSION,
         "behavior_config_hash": behavior_hash,
@@ -908,10 +975,15 @@ def _trend_record(
         "trend_mk_p": _round(mk["p_value"]),
         "trend_p_value": _round(raw_p) if raw_p is not None else 1.0,
         "trend_q_value": None,
+        "trend_fdr_scope": TREND_FDR_SCOPE,
+        "trend_fdr_family_size": None,
         "mde_80pct_pp": _round(mde, 2),
         "alpha_slope_per_year": _round(slope),
-        "alpha_trend_mk_p": _round(alpha_mk_p),
-        "alpha_trend_label": alpha_label,
+        "alpha_trend_mk_p": _round(alpha_mk["p_value"]),
+        "alpha_trend_tau": _round(alpha_mk["tau"]),
+        "alpha_trend_mk_z": _round(alpha_mk["z"]),
+        "alpha_trend_q_value": None,
+        "alpha_trend_label": None,
         "trend_label": None,
         "trend_status": status,
         "caveat": TREND_CAVEAT,
@@ -941,12 +1013,37 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
     behaviour hash, the spine schema it was built from, timings and provenance.
     """
 
-    from golden_vector.common.files import atomic_write_text
+    from golden_vector.common.files import atomic_write_text, optional_sha256_file
     from golden_vector.common.parquet import write_run_stamped_set
     from golden_vector.lab.vintages import lab_dir
 
     target_dir = lab_dir(paths)
-    episode_path = target_dir / DIAL_EPISODES_FILENAME
+    # Resolve the spine through the published dial_meta pointer so we consume the IMMUTABLE
+    # run-stamped episode file (not the mutable latest alias) and can stamp its EXACT
+    # identity — a later dial rebuild with the same schema must not leave behaviour
+    # artifacts silently looking current. (No dial meta -> hand-built test fixture.)
+    spine_meta_path = target_dir / DIAL_ARTIFACT_META_FILENAME
+    source_spine: dict[str, object] = {}
+    episode_filename = DIAL_EPISODES_FILENAME
+    if spine_meta_path.exists():
+        spine_meta = json.loads(spine_meta_path.read_text(encoding="utf-8"))
+        spine_schema = int(spine_meta.get("schema_version") or 0)
+        if spine_schema != DIAL_SCHEMA_VERSION:
+            raise ValueError(
+                f"dial spine schema_version {spine_schema} != expected {DIAL_SCHEMA_VERSION}; "
+                "rebuild the dial spine before the behaviour layer."
+            )
+        episode_filename = (
+            (spine_meta.get("run_stamped_artifacts") or {}).get("episodes")
+            or DIAL_EPISODES_FILENAME
+        )
+        source_spine = {
+            "dial_built_at_utc": spine_meta.get("built_at_utc"),
+            "dial_config_hash": spine_meta.get("config_hash"),
+            "dial_schema_version": spine_schema,
+            "episodes_artifact": episode_filename,
+        }
+    episode_path = target_dir / episode_filename
     if not episode_path.exists():
         raise FileNotFoundError(
             f"dial_capture build needs the spine at {episode_path}; build the dial first."
@@ -954,29 +1051,20 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
     t_read = time.perf_counter()
     episodes = pd.read_parquet(episode_path)
     read_seconds = round(time.perf_counter() - t_read, 3)
-
-    # Provenance guard: the behaviour hash stamps DIAL_SCHEMA_VERSION as the spine it was
-    # derived from, so verify the on-disk spine actually IS that schema (fail loud on a
-    # semantics-only bump that kept the same columns). Skipped only when no dial meta
-    # exists (hand-built test fixtures).
-    spine_meta_path = target_dir / DIAL_ARTIFACT_META_FILENAME
-    if spine_meta_path.exists():
-        spine_schema = int(
-            json.loads(spine_meta_path.read_text(encoding="utf-8")).get("schema_version") or 0
-        )
-        if spine_schema != DIAL_SCHEMA_VERSION:
-            raise ValueError(
-                f"dial spine schema_version {spine_schema} != expected {DIAL_SCHEMA_VERSION}; "
-                "rebuild the dial spine before the behaviour layer."
-            )
+    source_spine["episodes_rows"] = int(len(episodes))
+    source_spine["episodes_sha256"] = optional_sha256_file(episode_path)
 
     cfg = default_capture_behavior_config()
     horizon_list = [int(h) for h in (horizons if horizons is not None else DIAL_HORIZONS_WEEKS)]
-    if cfg.default_capture_horizon not in horizon_list:
-        raise ValueError(
-            f"default_capture_horizon {cfg.default_capture_horizon} is not in the built "
-            f"horizons {horizon_list}; the grounded capture distribution would be empty."
-        )
+    for label, default_h in (
+        ("default_capture_horizon", cfg.default_capture_horizon),
+        ("default_trend_horizon", cfg.default_trend_horizon),
+    ):
+        if default_h not in horizon_list:
+            raise ValueError(
+                f"{label} {default_h} is not in the built horizons {horizon_list}; "
+                "the grounded distribution / default view would be empty."
+            )
     chash = behavior_config_hash(cfg, spine_schema_version=DIAL_SCHEMA_VERSION)
 
     t_build = time.perf_counter()
@@ -1000,16 +1088,20 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
     )
     trend_seconds = round(time.perf_counter() - t_trend, 3)
 
+    # Stamp Parquet-level context metadata so the shared checked-read path can validate
+    # artifact identity from the file itself, not just the columns.
+    frames = {"capture": table, "peer_points": peer_points, "peer": peer_snapshot, "trend": trend}
+    for frame in frames.values():
+        frame.attrs["schema_version"] = BEHAVIOR_SCHEMA_VERSION
+        frame.attrs["behavior_config_hash"] = chash
+
     moment = datetime.now(timezone.utc)
-    stamp = moment.strftime("%Y%m%dT%H%M%SZ")
+    stamp = moment.strftime("%Y%m%dT%H%M%S%fZ")  # microsecond precision: immutable names
     # All-or-nothing publish (every run-stamped file first, then every latest alias,
     # with a missing/extra-key guard); the meta is written last so a crash mid-publish
     # leaves the previous good state intact.
     stamped, latest_aliases = write_run_stamped_set(
-        target_dir,
-        {"capture": table, "peer_points": peer_points, "peer": peer_snapshot, "trend": trend},
-        BEHAVIOR_ARTIFACT_SPECS,
-        stamp=stamp,
+        target_dir, frames, BEHAVIOR_ARTIFACT_SPECS, stamp=stamp
     )
 
     status_counts = (
@@ -1025,6 +1117,7 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
         "schema_version": BEHAVIOR_SCHEMA_VERSION,
         "behavior_config_hash": chash,
         "spine_schema_version": DIAL_SCHEMA_VERSION,
+        "source_spine": source_spine,
         "signal_id": BEHAVIOR_SIGNAL_ID,
         "source_benchmark": CAPTURE_SOURCE_BENCHMARK,
         "horizons_weeks": horizon_list,

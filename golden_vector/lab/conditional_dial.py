@@ -1029,7 +1029,7 @@ def build_and_save(
 
     t_write = time.perf_counter()
     moment = datetime.now(timezone.utc)
-    stamp = moment.strftime("%Y%m%dT%H%M%SZ")
+    stamp = moment.strftime("%Y%m%dT%H%M%S%fZ")  # microsecond precision: immutable names
     stamped, latest_aliases = write_dial_artifacts(
         target_dir,
         {

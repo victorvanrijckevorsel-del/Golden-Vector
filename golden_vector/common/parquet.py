@@ -18,6 +18,7 @@ PARQUET_CONTEXT_METADATA_KEYS = (
     "source_run_id",
     "parent_refresh_id",
     "config_hash",
+    "behavior_config_hash",
     "risk_free_rate",
     "risk_free_rate_is_fallback",
 )
@@ -164,7 +165,13 @@ def write_run_stamped_set(
     aliases: dict[str, str] = {}
     for key, (prefix, latest_name) in specs.items():
         stamped_name = f"{prefix}_{stamp}.parquet"
-        write_parquet_atomic(frames[key], target_dir / stamped_name)
+        stamped_path = target_dir / stamped_name
+        if stamped_path.exists():
+            raise FileExistsError(
+                f"run-stamped artifact {stamped_name} already exists; refusing to "
+                "overwrite an immutable file (two builds in the same instant?)."
+            )
+        write_parquet_atomic(frames[key], stamped_path)
         stamped[key] = stamped_name
         aliases[key] = latest_name
     for key, (_prefix, latest_name) in specs.items():

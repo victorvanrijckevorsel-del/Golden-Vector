@@ -734,7 +734,6 @@ class CaptureBehaviorConfig(StrictConfigModel):
     # prior (else fall back to neutral 0.5). A ticker count, not an effective N.
     recent_prior_min_pool_tickers: float = 10.0
     alpha_slope_threshold: float = 0.01
-    alpha_trend_p_threshold: float = 0.10
     default_trend_horizon: int = 8
 
     # --- Peer ranking (Phase 2) ---
@@ -769,11 +768,11 @@ class CaptureBehaviorConfig(StrictConfigModel):
             raise ValueError("recent_anchor_fraction must be in (0, 1)")
         return float(value)
 
-    @field_validator("q_fdr", "alpha_trend_p_threshold")
+    @field_validator("q_fdr")
     @classmethod
     def q_is_a_fraction(cls, value: float) -> float:
         if not 0.0 < value <= 1.0:
-            raise ValueError("q_fdr / alpha_trend_p_threshold must be a fraction in (0, 1]")
+            raise ValueError("q_fdr must be a fraction in (0, 1]")
         return float(value)
 
     @field_validator("min_anchors", "min_peer_count", "min_anchor_episodes")
@@ -799,12 +798,46 @@ class CaptureBehaviorConfig(StrictConfigModel):
             raise ValueError("peer percentile cutoffs must be within [0, 100]")
         return float(value)
 
+    @field_validator("trend_window_basis")
+    @classmethod
+    def only_event_time(cls, value: str) -> str:
+        # The engine always runs event-time logic; reject any other value rather than
+        # silently ignore it (a calendar window was measured to be empty on the hedge side).
+        if value != "event_time":
+            raise ValueError("trend_window_basis must be 'event_time' (the only implementation)")
+        return value
+
     @model_validator(mode="after")
     def bottom_below_top(self) -> "CaptureBehaviorConfig":
         if self.bottom_peer_percentile_cutoff >= self.top_peer_percentile_cutoff:
             raise ValueError(
                 "bottom_peer_percentile_cutoff must be below top_peer_percentile_cutoff"
             )
+        return self
+
+    @model_validator(mode="after")
+    def threshold_domains_are_sane(self) -> "CaptureBehaviorConfig":
+        # Floors/half-life/pool must be strictly positive (a zero half-life later crashes
+        # decay_weights); strengths/effect thresholds must be non-negative.
+        strictly_positive = {
+            "min_direction_effective_n": self.min_direction_effective_n,
+            "min_all_effective_n": self.min_all_effective_n,
+            "min_recent_effective_n": self.min_recent_effective_n,
+            "min_older_effective_n": self.min_older_effective_n,
+            "decay_half_life_episodes": self.decay_half_life_episodes,
+            "recent_prior_min_pool_tickers": self.recent_prior_min_pool_tickers,
+        }
+        for name, value in strictly_positive.items():
+            if value <= 0:
+                raise ValueError(f"{name} must be > 0")
+        non_negative = {
+            "eb_prior_strength": self.eb_prior_strength,
+            "trend_delta_threshold": self.trend_delta_threshold,
+            "alpha_slope_threshold": self.alpha_slope_threshold,
+        }
+        for name, value in non_negative.items():
+            if value < 0:
+                raise ValueError(f"{name} must be >= 0")
         return self
 
 
