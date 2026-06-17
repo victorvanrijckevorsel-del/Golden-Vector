@@ -1034,9 +1034,21 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     "tool_a_delta": ColumnHelp(
         meaning=(
             "How much this stock tends to move for each 1% move in the gold price "
-            "— its gold beta over the core window."
+            "— its gold beta over the core window (all weeks, up and down)."
         ),
-        calculation="Slope of weekly stock returns regressed on weekly gold returns.",
+        calculation=(
+            "The slope β of a straight line fit to the weekly data: stock_weekly_return = "
+            "α + β × gold_weekly_return (an ordinary least-squares regression of weekly stock "
+            "log-returns on weekly gold log-returns). The same line gives the alpha (intercept) "
+            "and the R² (fit quality)."
+        ),
+        details=(
+            "Units: roughly the % the stock moves per 1% weekly gold move (1.5 ≈ moves 1.5% per "
+            "1% gold). Usually positive for miners, often ~1–2.5×. It CAN be negative — meaning "
+            "the stock tends to move OPPOSITE to gold. Down beta and up beta split this same "
+            "regression by whether gold fell or rose; gamma (down − up) is the asymmetry. Shorter "
+            "windows (6M) are noisier than longer ones (3Y)."
+        ),
         direction="Higher means more leveraged to gold (both up and down).",
     ),
     "tool_a_gamma": ColumnHelp(
@@ -1079,11 +1091,40 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         direction="Higher captures more upside when gold rises (0 = least, 100 = most). It is a percentile score, not a 1-2-3 ranking.",
     ),
     "tool_c_down_beta": ColumnHelp(
-        meaning="The stock's gold beta measured using only weeks when gold fell.",
-        direction="Lower means it falls less than gold on down weeks.",
+        meaning=(
+            "How much the stock moves per 1% gold move, measured on the weeks when gold FELL "
+            "— its gold beta in down markets."
+        ),
+        calculation=(
+            "The slope β of the line stock_weekly_return = α + β × gold_weekly_return, fit using "
+            "only the weeks gold's weekly return was negative (the same regression as the Delta, "
+            "restricted to down weeks). α is the alpha; R² is the fit quality."
+        ),
+        details=(
+            "Units: ≈ % the stock moves per 1% gold move on down weeks. Usually positive for "
+            "miners (they amplify gold's fall, often ~1–2.5×); it CAN be negative — meaning the "
+            "stock tends to rise when gold falls. If the down beta is bigger than the up beta, the "
+            "stock falls more with gold than it rises (a fragile, asymmetric profile). Shorter "
+            "windows (6M) are noisier than longer ones (3Y)."
+        ),
+        direction="Lower means it falls less than gold on down weeks (more resilient).",
     ),
     "tool_c_up_beta": ColumnHelp(
-        meaning="The stock's gold beta measured using only weeks when gold rose.",
+        meaning=(
+            "How much the stock moves per 1% gold move, measured on the weeks when gold ROSE "
+            "— its gold beta in up markets."
+        ),
+        calculation=(
+            "The slope β of the line stock_weekly_return = α + β × gold_weekly_return, fit using "
+            "only the weeks gold's weekly return was positive (the same regression as the Delta, "
+            "restricted to up weeks). α is the alpha; R² is the fit quality."
+        ),
+        details=(
+            "Units: ≈ % the stock moves per 1% gold move on up weeks. Usually positive for miners "
+            "(often ~1–2.5×); it CAN be negative — meaning the stock tends to fall when gold rises. "
+            "Compare with the down beta: down bigger than up means it falls more than it rises with "
+            "gold (fragile). Shorter windows (6M) are noisier than longer ones (3Y)."
+        ),
         direction="Higher means it rises more than gold on up weeks.",
     ),
     "tool_c_down_hit_rate": ColumnHelp(

@@ -268,3 +268,21 @@ def test_tool_overview_registry_keys_resolve():
     # Config-sourced threshold sentences actually appear.
     assert "x" in column_help_text("tool_b_leverage", app_config=config)
     assert "%" in column_help_text("tool_c_down_hit_rate", app_config=config)
+
+
+def test_beta_help_keys_explain_formula_and_negative_sign():
+    """The gold-beta explanations must carry the regression formula and state that the beta
+    CAN be negative (the reported gap: no formula, unclear whether it can be negative). These
+    live in the central registry, so the check covers every beta surface at once."""
+    from golden_vector.serve.column_help import COLUMN_HELP
+
+    for key in ("tool_a_delta", "tool_c_down_beta", "tool_c_up_beta"):
+        spec = COLUMN_HELP[key]
+        calc = (spec.calculation or "").lower()
+        details = (spec.details or "").lower()
+        assert "regression" in calc or "slope" in calc, f"{key} help is missing the formula"
+        assert "gold" in calc, f"{key} formula must reference gold"
+        assert "negative" in details, f"{key} must state the beta can be negative"
+    # Down/up beta name their regime in beginner wording (weeks gold fell / rose).
+    assert "fell" in COLUMN_HELP["tool_c_down_beta"].meaning.lower()
+    assert "rose" in COLUMN_HELP["tool_c_up_beta"].meaning.lower()

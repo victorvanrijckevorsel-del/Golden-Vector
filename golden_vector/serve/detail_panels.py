@@ -1542,7 +1542,11 @@ def _render_scatter_panel(
     )
     return (
         "<section class=\"panel nested-panel\">"
-        f"<h3>Weekly Return Scatter</h3><p class=\"hint\">{escape(ticker)} weekly log returns vs gold weekly log returns over the {escape(active_window)} trailing sample.</p>"
+        f"<h3>Weekly Return Scatter</h3><p class=\"hint\">Each dot is one week over the "
+        f"{escape(active_window)} sample: x = gold's weekly return, y = {escape(ticker)}'s. The "
+        "line's slope is the gold beta (how much the stock moves per 1% gold move); how tightly "
+        "the dots hug the line is the R² (reliability). Top-right = both rose, bottom-left = both "
+        "fell.</p>"
         f"{svg}"
         "</section>"
     )
@@ -1571,7 +1575,10 @@ def _render_up_down_beta_panel(
     return (
         "<section class=\"panel nested-panel\">"
         "<h3>Up vs Down Beta</h3>"
-        f"<p class=\"hint\">This shows the {escape(active_window)} regime split. Positive gamma means down-gold sensitivity is stronger than up-gold sensitivity.</p>"
+        f"<p class=\"hint\">The same stock's gold beta measured separately on weeks gold rose "
+        f"(up beta) vs weeks gold fell (down beta), over the {escape(active_window)} sample. A "
+        "taller down bar than up bar (positive gamma) means it falls more with gold than it rises "
+        "— a fragile, asymmetric profile. Either beta can be negative (moves opposite to gold).</p>"
         f"{svg}"
         "</section>"
     )
