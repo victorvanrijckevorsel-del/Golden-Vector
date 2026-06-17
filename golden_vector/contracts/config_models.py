@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Literal
 
@@ -686,6 +687,118 @@ class GoldProfileConfig(StrictConfigModel):
             raise ValueError(
                 f"down_buckets / up_buckets contain unknown gold buckets: "
                 f"{sorted(unknown)}; valid names are {sorted(GOLD_BUCKET_NAMES)}"
+            )
+        return self
+
+
+class CaptureBehaviorConfig(StrictConfigModel):
+    """Thresholds for the Lab Capture & Behaviour engine (symmetric: gold-down AND
+    gold-up). Validated + folded into the behavior_config_hash so any edit forces a
+    rebuild of the behaviour artifacts (NOT the raw dial spine — that keeps its own
+    hash, so a label-threshold edit never makes raw episodes/cells/profile look stale).
+
+    Decisions locked 2026-06-17: capture is measured vs GOLD only; the offense
+    headline default is Convex; capture levels default to 13w, behaviour-change
+    (trend) labels to 8w. ``hedge_down_capture_max`` / ``torque_up_capture_min`` are
+    DATA-GROUNDED from the cross-sectional capture distribution (see
+    behavior_engine.capture_distribution), not picked by feel.
+    """
+
+    version: int = 1
+
+    # --- Capture / archetype (gold frame; Phase 1) ---
+    # A miner is "hedgey" if its down-capture (share of gold's drop it takes) is at or
+    # below this, "torquey" if its up-capture is at or above torque_up_capture_min.
+    # Relative-to-universe cutoffs (every miner is high-beta), set from the measured
+    # cross-sectional distribution at the default capture horizon.
+    hedge_down_capture_max: float = 1.61  # 13w cross-sectional down-capture p33 (bottom third = hedgey)
+    torque_up_capture_min: float = 2.17  # 13w cross-sectional up-capture p67 (top third = torquey)
+    min_direction_effective_n: float = 6.0  # per-side floor; below it the side abstains
+    # Independent anchors required on BOTH sides for the overlap cross-check to be
+    # confirmable; below this the archetype is emitted but flagged unconfirmed_thin_anchor.
+    min_anchor_episodes: int = 6
+    default_capture_horizon: int = 13
+
+    # --- Trend / behaviour-change (event-time; Phase 3) ---
+    trend_window_basis: str = "event_time"  # recent vs older split on independent anchors
+    recent_anchor_fraction: float = 0.5
+    decay_half_life_episodes: float = 6.0
+    min_all_effective_n: float = 8.0
+    min_recent_effective_n: float = 6.0
+    min_older_effective_n: float = 6.0
+    min_anchors: int = 8
+    trend_delta_threshold: float = 0.20
+    q_fdr: float = 0.10
+    eb_prior_strength: float = 10.0
+    recent_prior_min_pool_effective_n: float = 10.0
+    alpha_slope_threshold: float = 0.01
+    default_trend_horizon: int = 8
+
+    # --- Peer ranking (Phase 2) ---
+    min_peer_count: int = 20
+    top_peer_percentile_cutoff: float = 75.0
+    bottom_peer_percentile_cutoff: float = 25.0
+
+    @field_validator(
+        "hedge_down_capture_max",
+        "torque_up_capture_min",
+        "min_direction_effective_n",
+        "decay_half_life_episodes",
+        "min_all_effective_n",
+        "min_recent_effective_n",
+        "min_older_effective_n",
+        "eb_prior_strength",
+        "recent_prior_min_pool_effective_n",
+        "alpha_slope_threshold",
+    )
+    @classmethod
+    def finite_numbers(cls, value: float) -> float:
+        if not math.isfinite(float(value)):
+            raise ValueError("capture/behaviour thresholds must be finite numbers")
+        return float(value)
+
+    @field_validator("recent_anchor_fraction")
+    @classmethod
+    def fraction_strictly_inside_unit(cls, value: float) -> float:
+        if not 0.0 < value < 1.0:
+            raise ValueError("recent_anchor_fraction must be in (0, 1)")
+        return float(value)
+
+    @field_validator("q_fdr")
+    @classmethod
+    def q_is_a_fraction(cls, value: float) -> float:
+        if not 0.0 < value <= 1.0:
+            raise ValueError("q_fdr must be a fraction in (0, 1]")
+        return float(value)
+
+    @field_validator("min_anchors", "min_peer_count", "min_anchor_episodes")
+    @classmethod
+    def at_least_two(cls, value: int) -> int:
+        if value < 2:
+            raise ValueError(
+                "min_anchors / min_peer_count / min_anchor_episodes must be at least 2"
+            )
+        return int(value)
+
+    @field_validator("default_capture_horizon", "default_trend_horizon")
+    @classmethod
+    def positive_horizon(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("default horizons must be positive")
+        return int(value)
+
+    @field_validator("top_peer_percentile_cutoff", "bottom_peer_percentile_cutoff")
+    @classmethod
+    def percentile_in_range(cls, value: float) -> float:
+        if not 0.0 <= value <= 100.0:
+            raise ValueError("peer percentile cutoffs must be within [0, 100]")
+        return float(value)
+
+    @model_validator(mode="after")
+    def bottom_below_top(self) -> "CaptureBehaviorConfig":
+        if self.bottom_peer_percentile_cutoff >= self.top_peer_percentile_cutoff:
+            raise ValueError(
+                "bottom_peer_percentile_cutoff must be below top_peer_percentile_cutoff"
             )
         return self
 

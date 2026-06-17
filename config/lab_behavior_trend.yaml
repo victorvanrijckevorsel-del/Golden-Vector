@@ -1,0 +1,35 @@
+# Lab Capture & Behaviour engine — symmetric (gold-down AND gold-up) config.
+# Validated by contracts.config_models.CaptureBehaviorConfig and folded into the
+# behavior_config_hash (separate from the raw dial spine hash). Decisions locked
+# 2026-06-17: capture vs GOLD only; offense default Convex; 13w capture / 8w trend.
+version: 1
+
+# --- Capture / archetype (gold frame; Phase 1) ---
+# DATA-GROUNDED from the cross-sectional capture distribution at 13w (see
+# behavior_engine.capture_distribution); relative-to-universe because every miner
+# is high-beta. Finalised after the Phase-1 measurement.
+hedge_down_capture_max: 1.61  # 13w cross-sectional down-capture p33 (bottom third = hedgey)
+torque_up_capture_min: 2.17  # 13w cross-sectional up-capture p67 (top third = torquey)
+min_direction_effective_n: 6.0
+min_anchor_episodes: 6  # independent anchors per side for the overlap cross-check to confirm
+default_capture_horizon: 13
+
+# --- Trend / behaviour-change (event-time; Phase 3) ---
+trend_window_basis: event_time
+recent_anchor_fraction: 0.5
+decay_half_life_episodes: 6.0
+min_all_effective_n: 8.0
+min_recent_effective_n: 6.0
+min_older_effective_n: 6.0
+min_anchors: 8
+trend_delta_threshold: 0.20
+q_fdr: 0.10
+eb_prior_strength: 10.0
+recent_prior_min_pool_effective_n: 10.0
+alpha_slope_threshold: 0.01
+default_trend_horizon: 8
+
+# --- Peer ranking (Phase 2) ---
+min_peer_count: 20
+top_peer_percentile_cutoff: 75.0
+bottom_peer_percentile_cutoff: 25.0
