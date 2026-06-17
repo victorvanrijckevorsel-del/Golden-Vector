@@ -35,13 +35,26 @@ from golden_vector.common.numeric import optional_finite_float
 from golden_vector.contracts.config_models import CaptureBehaviorConfig
 from golden_vector.lab.conditional_dial import (
     DEFAULT_BUCKETS,
+    DIAL_ARTIFACT_META_FILENAME,
+    DIAL_BENCHMARKS,
     DIAL_EPISODES_FILENAME,
     DIAL_HORIZONS_WEEKS,
     DIAL_SCHEMA_VERSION,
     DOWN_BUCKETS,
     UP_BUCKETS,
 )
-from golden_vector.lab.statistics import peer_percentile
+from golden_vector.lab.statistics import (
+    benjamini_hochberg,
+    decay_effective_n,
+    decay_weights,
+    eb_shrink,
+    mann_kendall,
+    mde_proportion_pp,
+    peer_percentile,
+    theil_sen,
+    two_proportion_p,
+    weighted_median,
+)
 from golden_vector.lab.walk_forward import effective_n
 
 BEHAVIOR_SIGNAL_ID = "capture_behavior_engine"
@@ -543,6 +556,368 @@ def compute_peer_snapshot(
     return pd.DataFrame.from_records(records, columns=PEER_COLUMNS)
 
 
+# --- Behaviour trend (Phase 3) ---
+TREND_ARTIFACT = "dial_behavior_trend"
+TREND_FILENAME = "dial_behavior_trend_latest.parquet"
+TREND_LABELS = ("IMPROVING", "DETERIORATING", "STABLE", "INSUFFICIENT_EVIDENCE")
+ALPHA_TREND_LABELS = (
+    "ALPHA_IMPROVING",
+    "ALPHA_DETERIORATING",
+    "ALPHA_STABLE",
+    "INSUFFICIENT",
+)
+TREND_STATUSES = ("OK", "THIN_ALL", "THIN_ANCHORS", "THIN_RECENT", "THIN_OLDER")
+TREND_CAVEAT = (
+    "behaviour trend = recent vs older split on the cell's INDEPENDENT (non-overlap "
+    "anchor) episodes in EVENT time; beat-rate label gated by effective-N floors, a "
+    "two-proportion test with Benjamini-Hochberg FDR (per scenario), and Mann-Kendall "
+    "sign agreement. alpha (size) trend is the leading indicator and uses a RAW "
+    "Mann-Kendall p (uncorrected, more sensitive by design). Counted history, "
+    "survivor-only, exploratory — NOT a forecast. Most cells correctly read "
+    "INSUFFICIENT_EVIDENCE."
+)
+TREND_COLUMNS = [
+    "schema_version",
+    "behavior_config_hash",
+    "ticker",
+    "benchmark",
+    "horizon_weeks",
+    "gold_bucket",
+    "all_n_rows",
+    "all_effective_n",
+    "all_p_beat_raw",
+    "all_p_beat_shrunk",
+    "all_alpha_median",
+    "recent_anchor_n",
+    "recent_p_beat_raw",
+    "recent_p_beat_shrunk",
+    "recent_alpha_median",
+    "recent_prior_source",
+    "older_anchor_n",
+    "older_p_beat_raw",
+    "older_p_beat_shrunk",
+    "older_alpha_median",
+    "decay_effective_n",
+    "decay_p_beat_raw",
+    "decay_p_beat_shrunk",
+    "decay_alpha_median",
+    "n_anchors",
+    "trend_delta",
+    "trend_tau",
+    "trend_mk_z",
+    "trend_mk_p",
+    "trend_p_value",
+    "trend_q_value",
+    "mde_80pct_pp",
+    "alpha_slope_per_year",
+    "alpha_trend_mk_p",
+    "alpha_trend_label",
+    "trend_label",
+    "trend_status",
+    "caveat",
+]
+
+# The FULL behaviour artifact set, published all-or-nothing (one place that knows the
+# set, so a build can never half-wire it — mirrors DIAL_ARTIFACT_SPECS).
+BEHAVIOR_ARTIFACT_SPECS: dict[str, tuple[str, str]] = {
+    "capture": (CAPTURE_ARTIFACT, CAPTURE_FILENAME),
+    "peer_points": (PEER_POINTS_ARTIFACT, PEER_POINTS_FILENAME),
+    "peer": (PEER_ARTIFACT, PEER_FILENAME),
+    "trend": (TREND_ARTIFACT, TREND_FILENAME),
+}
+
+
+def _recency_weights(n_points: int, half_life: float):
+    """Event-time decay weights for ``n_points`` time-ordered (oldest-first) anchors —
+    the newest anchor weighs 1.0 and each step back halves every ``half_life`` episodes.
+    """
+
+    ages = [float(n_points - 1 - i) for i in range(n_points)]
+    return decay_weights(ages, half_life)
+
+
+def _loo_mean(means: dict[str, float | None], ticker: str) -> tuple[float | None, int]:
+    """Leave-one-out mean of per-ticker window means (equal ticker weight) + the peer
+    count it averaged over. ONE copy of the LOO averaging (used by both prior helpers)."""
+
+    others = [
+        v for t, v in means.items() if t != ticker and v is not None and not pd.isna(v)
+    ]
+    return (sum(others) / len(others), len(others)) if others else (None, 0)
+
+
+def _loo_prior(means: dict[str, float | None], ticker: str) -> float | None:
+    """Leave-one-out all-history peer prior."""
+
+    return _loo_mean(means, ticker)[0]
+
+
+def _window_prior(
+    means: dict[str, float | None], ticker: str, min_pool_tickers: float
+) -> tuple[float, str]:
+    """Window-matched cross-sectional peer prior (leave-one-out). Falls back to the
+    neutral 0.5 when fewer than ``min_pool_tickers`` peer tickers contribute a window
+    mean (so the prior rests on a real cross-section, not one or two names)."""
+
+    mean, n_peers = _loo_mean(means, ticker)
+    if mean is not None and n_peers >= min_pool_tickers:
+        return mean, "cross_sectional"
+    return 0.5, "neutral_0.5"
+
+
+def compute_trend_table(
+    episodes: pd.DataFrame,
+    *,
+    horizons: list[int],
+    benchmarks: list[str],
+    config: CaptureBehaviorConfig,
+    behavior_hash: str,
+) -> pd.DataFrame:
+    """One row per (ticker, benchmark, horizon, gold_bucket): the behaviour-change layer.
+
+    Recent vs older is split on the cell's INDEPENDENT anchors in EVENT time (not
+    calendar — gold rarely fell in 2022-2026, so a calendar window would be empty on the
+    hedge side). Each window shrinks toward its OWN window-matched peer pool (leave-one-
+    out) so the priors cancel in the delta and a real divergence survives. The beat label
+    fires only when ALL hold: effective-N floors, |delta| >= threshold, BH-FDR q <= q_fdr
+    on the two-proportion p, and Mann-Kendall (on anchors) agrees in sign — else
+    INSUFFICIENT_EVIDENCE. Alpha (size) trend is a separate leading indicator.
+    """
+
+    required = {
+        "ticker",
+        "benchmark",
+        "horizon_weeks",
+        "gold_bucket",
+        "week_period",
+        "week_date",
+        "beat",
+        "alpha_simple",
+        "is_nonoverlap_anchor",
+    }
+    missing = required - set(episodes.columns)
+    if missing:
+        raise ValueError(
+            f"dial_behavior_trend build needs episode columns {sorted(missing)} "
+            "(rebuild the dial spine to schema v4)."
+        )
+    directional = list(DOWN_BUCKETS) + list(UP_BUCKETS)
+    records: list[dict[str, object]] = []
+    for benchmark in [str(b).upper() for b in benchmarks]:
+        bsub = episodes[episodes["benchmark"].astype(str).str.upper() == benchmark]
+        for horizon in horizons:
+            h = int(horizon)
+            hsub = bsub[bsub["horizon_weeks"] == h]
+            for bucket in directional:
+                sub = hsub[hsub["gold_bucket"] == bucket]
+                if sub.empty:
+                    continue
+                per: dict[str, dict] = {}
+                for ticker, g in sub.groupby("ticker", sort=True):
+                    g = g.sort_values("week_period")
+                    beat = pd.to_numeric(g["beat"], errors="coerce")
+                    # Drop NA beats ONCE (consistent with the capture side) so a NA row
+                    # never inflates a window count or poisons a window mean with NaN.
+                    anc = g[g["is_nonoverlap_anchor"].astype(bool)].sort_values("week_period")
+                    anc_beat_all = pd.to_numeric(anc["beat"], errors="coerce")
+                    anc = anc[anc_beat_all.notna()]
+                    anc_beat = pd.to_numeric(anc["beat"], errors="coerce").to_numpy()
+                    anc_alpha = pd.to_numeric(anc["alpha_simple"], errors="coerce").to_numpy()
+                    na = int(len(anc))
+                    n_rec = int(round(na * config.recent_anchor_fraction))
+                    cut = na - n_rec
+                    per[str(ticker)] = {
+                        "g": g,
+                        "anc": anc,
+                        "anc_beat": anc_beat,
+                        "anc_alpha": anc_alpha,
+                        "na": na,
+                        "all_n": int(beat.notna().sum()),
+                        "all_mean": optional_finite_float(beat.mean()) if beat.notna().any() else None,
+                        "all_alpha": pd.to_numeric(g["alpha_simple"], errors="coerce"),
+                        "rec_beat": anc_beat[cut:],
+                        "old_beat": anc_beat[:cut],
+                        "rec_alpha": anc_alpha[cut:],
+                        "old_alpha": anc_alpha[:cut],
+                        "rec_mean": optional_finite_float(anc_beat[cut:].mean()) if n_rec else None,
+                        "old_mean": optional_finite_float(anc_beat[:cut].mean()) if cut else None,
+                    }
+                all_means = {t: d["all_mean"] for t, d in per.items()}
+                rec_means = {t: d["rec_mean"] for t, d in per.items()}
+                old_means = {t: d["old_mean"] for t, d in per.items()}
+                for ticker, d in per.items():
+                    records.append(
+                        _trend_record(
+                            ticker=ticker,
+                            benchmark=benchmark,
+                            horizon=h,
+                            bucket=bucket,
+                            d=d,
+                            all_prior=_loo_prior(all_means, ticker),
+                            rec_prior=_window_prior(
+                                rec_means, ticker, config.recent_prior_min_pool_tickers
+                            ),
+                            old_prior=_window_prior(
+                                old_means, ticker, config.recent_prior_min_pool_tickers
+                            ),
+                            config=config,
+                            behavior_hash=behavior_hash,
+                        )
+                    )
+    if not records:
+        return pd.DataFrame(columns=TREND_COLUMNS)
+    df = pd.DataFrame.from_records(records, columns=TREND_COLUMNS)
+    df["trend_q_value"] = df["trend_q_value"].astype("object")
+    # Benjamini-Hochberg FDR WITHIN each (benchmark, horizon, bucket) — that is the
+    # natural family: the cross-sectional scan "which miners changed in THIS scenario?"
+    # (one test per ticker). A global FDR across all benchmarks/horizons/buckets mixes
+    # unrelated questions and is needlessly strict.
+    ok = df["trend_status"] == "OK"
+    for _key, grp in df[ok].groupby(["benchmark", "horizon_weeks", "gold_bucket"]):
+        _, q_values = benjamini_hochberg(
+            grp["trend_p_value"].to_numpy(dtype=float), config.q_fdr
+        )
+        df.loc[grp.index, "trend_q_value"] = [round(float(q), 6) for q in q_values]
+    for idx in df.index[ok]:
+        df.at[idx, "trend_label"] = _beat_label(
+            delta=df.at[idx, "trend_delta"],
+            tau=df.at[idx, "trend_tau"],
+            q_value=df.at[idx, "trend_q_value"],
+            config=config,
+        )
+    df.loc[~ok, "trend_label"] = "INSUFFICIENT_EVIDENCE"
+    return df
+
+
+def _beat_label(*, delta, tau, q_value, config: CaptureBehaviorConfig) -> str:
+    """IMPROVING / DETERIORATING only when the effect clears the threshold, survives FDR,
+    AND the Mann-Kendall trend agrees in sign; otherwise STABLE."""
+
+    if delta is None or tau is None or q_value is None or pd.isna(delta) or pd.isna(tau):
+        return "STABLE"
+    significant = q_value <= config.q_fdr and abs(delta) >= config.trend_delta_threshold
+    sign_agrees = (delta > 0) == (tau > 0) and tau != 0
+    if significant and sign_agrees:
+        return "IMPROVING" if delta > 0 else "DETERIORATING"
+    return "STABLE"
+
+
+def _trend_record(
+    *, ticker, benchmark, horizon, bucket, d, all_prior, rec_prior, old_prior, config, behavior_hash
+) -> dict[str, object]:
+    h = int(horizon)
+    eb = config.eb_prior_strength
+    all_eff = effective_n(d["all_n"], label_horizon_weeks=h) if d["all_n"] else 0.0
+    all_shrunk = (
+        eb_shrink(d["all_mean"], all_eff, all_prior if all_prior is not None else 0.5, eb)
+        if d["all_mean"] is not None
+        else None
+    )
+    rec_eff = float(len(d["rec_beat"]))
+    old_eff = float(len(d["old_beat"]))
+    rec_prior_val, rec_src = rec_prior
+    old_prior_val, _old_src = old_prior
+    rec_shrunk = eb_shrink(d["rec_mean"], rec_eff, rec_prior_val, eb) if d["rec_mean"] is not None else None
+    old_shrunk = eb_shrink(d["old_mean"], old_eff, old_prior_val, eb) if d["old_mean"] is not None else None
+    trend_delta = (
+        rec_shrunk - old_shrunk if rec_shrunk is not None and old_shrunk is not None else None
+    )
+    # Decay over the independent anchors (Kish ESS, no /h — anchors are independent).
+    na = d["na"]
+    if na:
+        w = _recency_weights(na, config.decay_half_life_episodes)
+        wsum = float(w.sum())
+        decay_p_raw = float((w * d["anc_beat"]).sum() / wsum) if wsum > 0 else None
+        decay_eff = decay_effective_n(w, label_horizon_weeks=1)
+        decay_shrunk = (
+            eb_shrink(decay_p_raw, decay_eff, all_prior if all_prior is not None else 0.5, eb)
+            if decay_p_raw is not None
+            else None
+        )
+        decay_alpha_med = weighted_median(d["anc_alpha"], w)
+    else:
+        decay_p_raw = decay_eff = decay_shrunk = decay_alpha_med = None
+    mk = mann_kendall(d["anc_beat"])
+    # Alpha (size) trend: Theil-Sen slope per year + Mann-Kendall, both on anchors only.
+    if na >= 2:
+        t_days = pd.to_datetime(d["anc"]["week_date"]).astype("int64") / (1e9 * 86400.0)
+        t_years = ((t_days - t_days.min()) / 365.25).to_numpy()
+        slope = theil_sen(t_years, d["anc_alpha"])
+        alpha_mk_p = mann_kendall(d["anc_alpha"])["p_value"]
+    else:
+        slope = None
+        alpha_mk_p = 1.0
+    raw_p = (
+        two_proportion_p(d["rec_mean"], rec_eff, d["old_mean"], old_eff)
+        if d["rec_mean"] is not None and d["old_mean"] is not None
+        else 1.0
+    )
+    mde = mde_proportion_pp(rec_eff, old_eff)
+    if all_eff < config.min_all_effective_n:
+        status = "THIN_ALL"
+    elif na < config.min_anchors:
+        status = "THIN_ANCHORS"
+    elif rec_eff < config.min_recent_effective_n:
+        status = "THIN_RECENT"
+    elif old_eff < config.min_older_effective_n:
+        status = "THIN_OLDER"
+    else:
+        status = "OK"
+    # The alpha (leading) trend has its OWN power floor (the anchor count) — it must NOT
+    # be blanked by the BEAT recent/older split status, or the indicator meant to LEAD
+    # the beat rate gets suppressed by the very thing it leads (review finding).
+    if slope is None or na < config.min_anchors:
+        alpha_label = "INSUFFICIENT"
+    elif alpha_mk_p <= config.alpha_trend_p_threshold and abs(slope) >= config.alpha_slope_threshold:
+        alpha_label = "ALPHA_IMPROVING" if slope > 0 else "ALPHA_DETERIORATING"
+    else:
+        alpha_label = "ALPHA_STABLE"
+    return {
+        "schema_version": BEHAVIOR_SCHEMA_VERSION,
+        "behavior_config_hash": behavior_hash,
+        "ticker": str(ticker),
+        "benchmark": str(benchmark),
+        "horizon_weeks": h,
+        "gold_bucket": str(bucket),
+        "all_n_rows": d["all_n"],
+        "all_effective_n": round(all_eff, 2),
+        "all_p_beat_raw": _round(d["all_mean"]),
+        "all_p_beat_shrunk": _round(all_shrunk),
+        "all_alpha_median": _round(float(d["all_alpha"].median()) if d["all_n"] else None),
+        "recent_anchor_n": int(len(d["rec_beat"])),
+        "recent_p_beat_raw": _round(d["rec_mean"]),
+        "recent_p_beat_shrunk": _round(rec_shrunk),
+        "recent_alpha_median": _round(
+            float(pd.Series(d["rec_alpha"]).median()) if len(d["rec_alpha"]) else None
+        ),
+        "recent_prior_source": rec_src,
+        "older_anchor_n": int(len(d["old_beat"])),
+        "older_p_beat_raw": _round(d["old_mean"]),
+        "older_p_beat_shrunk": _round(old_shrunk),
+        "older_alpha_median": _round(
+            float(pd.Series(d["old_alpha"]).median()) if len(d["old_alpha"]) else None
+        ),
+        "decay_effective_n": round(float(decay_eff), 2) if decay_eff is not None else None,
+        "decay_p_beat_raw": _round(decay_p_raw),
+        "decay_p_beat_shrunk": _round(decay_shrunk),
+        "decay_alpha_median": _round(decay_alpha_med),
+        "n_anchors": na,
+        "trend_delta": _round(trend_delta),
+        "trend_tau": _round(mk["tau"]),
+        "trend_mk_z": _round(mk["z"]),
+        "trend_mk_p": _round(mk["p_value"]),
+        "trend_p_value": _round(raw_p) if raw_p is not None else 1.0,
+        "trend_q_value": None,
+        "mde_80pct_pp": _round(mde, 2),
+        "alpha_slope_per_year": _round(slope),
+        "alpha_trend_mk_p": _round(alpha_mk_p),
+        "alpha_trend_label": alpha_label,
+        "trend_label": None,
+        "trend_status": status,
+        "caveat": TREND_CAVEAT,
+    }
+
+
 def build_capture(
     episodes: pd.DataFrame,
     *,
@@ -567,7 +942,7 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
     """
 
     from golden_vector.common.files import atomic_write_text
-    from golden_vector.common.parquet import write_parquet_atomic
+    from golden_vector.common.parquet import write_run_stamped_set
     from golden_vector.lab.vintages import lab_dir
 
     target_dir = lab_dir(paths)
@@ -579,6 +954,21 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
     t_read = time.perf_counter()
     episodes = pd.read_parquet(episode_path)
     read_seconds = round(time.perf_counter() - t_read, 3)
+
+    # Provenance guard: the behaviour hash stamps DIAL_SCHEMA_VERSION as the spine it was
+    # derived from, so verify the on-disk spine actually IS that schema (fail loud on a
+    # semantics-only bump that kept the same columns). Skipped only when no dial meta
+    # exists (hand-built test fixtures).
+    spine_meta_path = target_dir / DIAL_ARTIFACT_META_FILENAME
+    if spine_meta_path.exists():
+        spine_schema = int(
+            json.loads(spine_meta_path.read_text(encoding="utf-8")).get("schema_version") or 0
+        )
+        if spine_schema != DIAL_SCHEMA_VERSION:
+            raise ValueError(
+                f"dial spine schema_version {spine_schema} != expected {DIAL_SCHEMA_VERSION}; "
+                "rebuild the dial spine before the behaviour layer."
+            )
 
     cfg = default_capture_behavior_config()
     horizon_list = [int(h) for h in (horizons if horizons is not None else DIAL_HORIZONS_WEEKS)]
@@ -595,24 +985,32 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
     )
     build_seconds = round(time.perf_counter() - t_build, 3)
 
-    moment = datetime.now(timezone.utc)
-    stamp = moment.strftime("%Y%m%dT%H%M%SZ")
-    stamped_name = f"{CAPTURE_ARTIFACT}_{stamp}.parquet"
-    write_parquet_atomic(table, target_dir / stamped_name)
-    write_parquet_atomic(table, target_dir / CAPTURE_FILENAME)
-
-    # Peer ranking (Phase 2) — benchmark-independent per-episode ranks + per-direction
-    # snapshot, derived from the SAME spine under the SAME behaviour hash.
+    # Peer ranking (Phase 2) + behaviour trend (Phase 3), from the SAME spine + hash.
     t_peer = time.perf_counter()
     peer_points = compute_peer_points(episodes, behavior_hash=chash)
     peer_snapshot = compute_peer_snapshot(peer_points, behavior_hash=chash, config=cfg)
     peer_seconds = round(time.perf_counter() - t_peer, 3)
-    peer_points_name = f"{PEER_POINTS_ARTIFACT}_{stamp}.parquet"
-    peer_name = f"{PEER_ARTIFACT}_{stamp}.parquet"
-    write_parquet_atomic(peer_points, target_dir / peer_points_name)
-    write_parquet_atomic(peer_points, target_dir / PEER_POINTS_FILENAME)
-    write_parquet_atomic(peer_snapshot, target_dir / peer_name)
-    write_parquet_atomic(peer_snapshot, target_dir / PEER_FILENAME)
+    t_trend = time.perf_counter()
+    trend = compute_trend_table(
+        episodes,
+        horizons=horizon_list,
+        benchmarks=DIAL_BENCHMARKS,
+        config=cfg,
+        behavior_hash=chash,
+    )
+    trend_seconds = round(time.perf_counter() - t_trend, 3)
+
+    moment = datetime.now(timezone.utc)
+    stamp = moment.strftime("%Y%m%dT%H%M%SZ")
+    # All-or-nothing publish (every run-stamped file first, then every latest alias,
+    # with a missing/extra-key guard); the meta is written last so a crash mid-publish
+    # leaves the previous good state intact.
+    stamped, latest_aliases = write_run_stamped_set(
+        target_dir,
+        {"capture": table, "peer_points": peer_points, "peer": peer_snapshot, "trend": trend},
+        BEHAVIOR_ARTIFACT_SPECS,
+        stamp=stamp,
+    )
 
     status_counts = (
         table["capture_status"].value_counts().to_dict() if not table.empty else {}
@@ -630,20 +1028,13 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
         "signal_id": BEHAVIOR_SIGNAL_ID,
         "source_benchmark": CAPTURE_SOURCE_BENCHMARK,
         "horizons_weeks": horizon_list,
-        "run_stamped_artifacts": {
-            "capture": stamped_name,
-            "peer_points": peer_points_name,
-            "peer": peer_name,
-        },
-        "latest_aliases": {
-            "capture": CAPTURE_FILENAME,
-            "peer_points": PEER_POINTS_FILENAME,
-            "peer": PEER_FILENAME,
-        },
+        "run_stamped_artifacts": stamped,
+        "latest_aliases": latest_aliases,
         "stage_timings": {
             "read_episodes_seconds": read_seconds,
             "build_capture_seconds": build_seconds,
             "build_peer_seconds": peer_seconds,
+            "build_trend_seconds": trend_seconds,
         },
         "rows": int(len(table)),
         "capture_status_counts": {str(k): int(v) for k, v in status_counts.items()},
@@ -659,6 +1050,23 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
                 for k, v in peer_snapshot["peer_status"].value_counts().to_dict().items()
             }
             if not peer_snapshot.empty
+            else {}
+        ),
+        "trend_rows": int(len(trend)),
+        "trend_label_counts": (
+            {
+                str(k): int(v)
+                for k, v in trend["trend_label"].value_counts(dropna=False).to_dict().items()
+            }
+            if not trend.empty
+            else {}
+        ),
+        "alpha_trend_label_counts": (
+            {
+                str(k): int(v)
+                for k, v in trend["alpha_trend_label"].value_counts(dropna=False).to_dict().items()
+            }
+            if not trend.empty
             else {}
         ),
         "config": cfg.model_dump(),

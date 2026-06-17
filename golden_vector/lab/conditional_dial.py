@@ -910,25 +910,10 @@ def write_dial_artifacts(
     UNAVAILABLE). Returns ``(run_stamped_artifacts, latest_aliases)`` for the meta.
     """
 
-    from golden_vector.common.parquet import write_parquet_atomic
+    from golden_vector.common.parquet import write_run_stamped_set
 
-    missing = set(DIAL_ARTIFACT_SPECS) - set(frames)
-    extra = set(frames) - set(DIAL_ARTIFACT_SPECS)
-    if missing or extra:
-        raise ValueError(
-            "write_dial_artifacts requires exactly "
-            f"{sorted(DIAL_ARTIFACT_SPECS)}; missing={sorted(missing)} "
-            f"extra={sorted(extra)}"
-        )
-    stamped: dict[str, str] = {}
-    aliases: dict[str, str] = {}
-    for key, (prefix, latest_name) in DIAL_ARTIFACT_SPECS.items():
-        stamped_name = f"{prefix}_{stamp}.parquet"
-        write_parquet_atomic(frames[key], target_dir / stamped_name)
-        write_parquet_atomic(frames[key], target_dir / latest_name)
-        stamped[key] = stamped_name
-        aliases[key] = latest_name
-    return stamped, aliases
+    # One copy of the all-or-nothing publish (shared with the behaviour engine).
+    return write_run_stamped_set(target_dir, frames, DIAL_ARTIFACT_SPECS, stamp=stamp)
 
 
 def build_and_save(

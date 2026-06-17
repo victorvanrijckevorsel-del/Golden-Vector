@@ -25,8 +25,9 @@ min_anchors: 8
 trend_delta_threshold: 0.20
 q_fdr: 0.10
 eb_prior_strength: 10.0
-recent_prior_min_pool_effective_n: 10.0
+recent_prior_min_pool_tickers: 10  # min peer tickers for the cross-sectional prior (else neutral 0.5)
 alpha_slope_threshold: 0.01
+alpha_trend_p_threshold: 0.10
 default_trend_horizon: 8
 
 # --- Peer ranking (Phase 2) ---

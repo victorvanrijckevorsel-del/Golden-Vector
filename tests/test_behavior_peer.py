@@ -184,20 +184,24 @@ class _FakePaths:
 
 
 def _multi_ticker_spine(lab: Path) -> None:
+    # Full v4 spine with 3 peers sharing weeks (peer + capture + trend all read it).
+    dates = pd.date_range("2010-01-01", periods=80, freq="W-FRI")
     frames = []
     for i, ticker in enumerate(("AAA", "BBB", "CCC")):
-        for j in range(80):
+        for bucket, gold, stock0 in (("gold_down", -0.10, -0.05), ("gold_up", 0.10, 0.20)):
+            stock = stock0 * (1 + i * 0.1)
+            alpha_simple = stock - gold
             frames.append(
                 pd.DataFrame(
                     {
-                        "ticker": [ticker],
-                        "horizon_weeks": [13],
-                        "benchmark": ["GDX"],
-                        "gold_bucket": ["gold_down" if j % 2 else "gold_up"],
-                        "week_period": [f"WK{j}"],
-                        "gold_fwd_simple": [-0.10 if j % 2 else 0.10],
-                        "stock_fwd_simple": [(-0.05 if j % 2 else 0.20) * (1 + i * 0.1)],
-                        "is_nonoverlap_anchor": [True],
+                        "ticker": [ticker] * 80, "horizon_weeks": [13] * 80, "benchmark": ["GDX"] * 80,
+                        "gold_bucket": [bucket] * 80,
+                        "week_period": [str(p) for p in dates.to_period("W-FRI")],
+                        "week_date": [d.date().isoformat() for d in dates],
+                        "gold_fwd_simple": [gold] * 80, "stock_fwd_simple": [stock] * 80,
+                        "alpha": [0.0] * 80, "alpha_simple": [alpha_simple] * 80,
+                        "beat": [1.0 if alpha_simple > 0 else 0.0] * 80,
+                        "is_nonoverlap_anchor": [True] * 80,
                     }
                 )
             )

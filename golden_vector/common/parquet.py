@@ -136,6 +136,42 @@ def write_parquet_atomic(frame: pd.DataFrame, path: Path, *, index: bool = False
     )
 
 
+def write_run_stamped_set(
+    target_dir: Path,
+    frames: Mapping[str, pd.DataFrame],
+    specs: Mapping[str, tuple[str, str]],
+    *,
+    stamp: str,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Publish a SET of run-stamped artifacts all-or-nothing.
+
+    ``specs`` maps each key to ``(run_stamped_prefix, latest_filename)``. Fails LOUD if
+    ``frames`` keys != ``specs`` keys, so a build can never silently stop emitting an
+    artifact (half-wired publish). Writes EVERY immutable run-stamped file first, then
+    flips EVERY ``latest`` alias — the caller writes the published meta last, so a crash
+    mid-publish leaves the previous meta (and the files it points to) intact. Returns
+    ``({key: stamped_filename}, {key: latest_filename})`` for that meta.
+    """
+
+    missing = set(specs) - set(frames)
+    extra = set(frames) - set(specs)
+    if missing or extra:
+        raise ValueError(
+            f"artifact set requires exactly {sorted(specs)}; "
+            f"missing={sorted(missing)} extra={sorted(extra)}"
+        )
+    stamped: dict[str, str] = {}
+    aliases: dict[str, str] = {}
+    for key, (prefix, latest_name) in specs.items():
+        stamped_name = f"{prefix}_{stamp}.parquet"
+        write_parquet_atomic(frames[key], target_dir / stamped_name)
+        stamped[key] = stamped_name
+        aliases[key] = latest_name
+    for key, (_prefix, latest_name) in specs.items():
+        write_parquet_atomic(frames[key], target_dir / latest_name)
+    return stamped, aliases
+
+
 def write_parquet_into(frame: pd.DataFrame, path: Path, *, index: bool = False) -> None:
     """Write a Parquet file directly to ``path`` (no temp/replace).
 

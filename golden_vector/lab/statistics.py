@@ -36,8 +36,14 @@ __all__ = [
     "theil_sen",
     "benjamini_hochberg",
     "peer_percentile",
+    "two_proportion_p",
+    "mde_proportion_pp",
     "weighted_median",
 ]
+
+# Standard-normal quantiles for the default two-sided alpha=0.05 / power=0.80 MDE.
+_Z_ALPHA_TWO_SIDED_95 = 1.959963985
+_Z_POWER_80 = 0.841621234
 
 
 def wilson_interval(p: float, n: float, z: float = 1.96) -> tuple[float, float]:
@@ -222,6 +228,45 @@ def benjamini_hochberg(
     q_values[idx] = adjusted
     rejected[idx] = adjusted <= q
     return rejected, q_values
+
+
+def two_proportion_p(p1: float, n1: float, p2: float, n2: float) -> float:
+    """Two-sided two-proportion z-test p-value (pooled SE), on EFFECTIVE sample sizes.
+
+    Feed effective N (independent episode counts), never the raw weekly count. Returns
+    1.0 (no evidence of a difference) when either side is empty or the pooled SE is zero.
+    """
+
+    if n1 <= 0 or n2 <= 0:
+        return 1.0
+    p_pool = (p1 * n1 + p2 * n2) / (n1 + n2)
+    se = math.sqrt(p_pool * (1.0 - p_pool) * (1.0 / n1 + 1.0 / n2))
+    if se == 0:
+        return 1.0
+    z = (p1 - p2) / se
+    return math.erfc(abs(z) / math.sqrt(2.0))
+
+
+def mde_proportion_pp(
+    n1: float,
+    n2: float,
+    *,
+    p: float = 0.5,
+    z_alpha: float = _Z_ALPHA_TWO_SIDED_95,
+    z_power: float = _Z_POWER_80,
+) -> float | None:
+    """Minimum detectable difference between two proportions, in PERCENTAGE POINTS.
+
+    The smallest recent-vs-older gap this cell could catch at the given power (default
+    80%) and two-sided alpha (default 5%). Uses ``p=0.5`` (max variance => conservative)
+    and the smaller (effective) side. ``None`` if either side is empty. This is the
+    honesty number that lets the UI say "could only have caught a change bigger than X".
+    """
+
+    n = min(float(n1), float(n2))
+    if n <= 0:
+        return None
+    return 100.0 * (z_alpha + z_power) * math.sqrt(2.0 * p * (1.0 - p) / n)
 
 
 def peer_percentile(values: Sequence[float]) -> np.ndarray:

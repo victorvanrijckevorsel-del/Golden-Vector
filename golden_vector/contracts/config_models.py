@@ -730,8 +730,11 @@ class CaptureBehaviorConfig(StrictConfigModel):
     trend_delta_threshold: float = 0.20
     q_fdr: float = 0.10
     eb_prior_strength: float = 10.0
-    recent_prior_min_pool_effective_n: float = 10.0
+    # Minimum number of PEER TICKERS contributing a window mean for the cross-sectional
+    # prior (else fall back to neutral 0.5). A ticker count, not an effective N.
+    recent_prior_min_pool_tickers: float = 10.0
     alpha_slope_threshold: float = 0.01
+    alpha_trend_p_threshold: float = 0.10
     default_trend_horizon: int = 8
 
     # --- Peer ranking (Phase 2) ---
@@ -750,7 +753,7 @@ class CaptureBehaviorConfig(StrictConfigModel):
         "min_recent_effective_n",
         "min_older_effective_n",
         "eb_prior_strength",
-        "recent_prior_min_pool_effective_n",
+        "recent_prior_min_pool_tickers",
         "alpha_slope_threshold",
     )
     @classmethod
@@ -766,11 +769,11 @@ class CaptureBehaviorConfig(StrictConfigModel):
             raise ValueError("recent_anchor_fraction must be in (0, 1)")
         return float(value)
 
-    @field_validator("q_fdr")
+    @field_validator("q_fdr", "alpha_trend_p_threshold")
     @classmethod
     def q_is_a_fraction(cls, value: float) -> float:
         if not 0.0 < value <= 1.0:
-            raise ValueError("q_fdr must be a fraction in (0, 1]")
+            raise ValueError("q_fdr / alpha_trend_p_threshold must be a fraction in (0, 1]")
         return float(value)
 
     @field_validator("min_anchors", "min_peer_count", "min_anchor_episodes")

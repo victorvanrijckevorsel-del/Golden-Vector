@@ -14,9 +14,11 @@ from golden_vector.lab.statistics import (
     decay_weights,
     eb_shrink,
     mann_kendall,
+    mde_proportion_pp,
     peer_percentile,
     pooled_prior,
     theil_sen,
+    two_proportion_p,
     weighted_median,
     wilson_interval,
 )
@@ -160,3 +162,36 @@ def test_lab_and_model_weighted_median_share_one_implementation() -> None:
         {"a": 1.0, "b": 2.0, "c": 3.0, "d": None}, weights={"a": 1, "b": 1, "c": 1}
     ) == 2.0
     assert model_weighted_median({}, weights={}) is None
+
+
+# --- two_proportion_p / mde_proportion_pp ----------------------------------
+
+def test_two_proportion_p_detects_difference_and_handles_equal() -> None:
+    # A big gap on a decent sample is significant; identical rates are not.
+    assert two_proportion_p(0.9, 30, 0.2, 30) < 0.001
+    assert two_proportion_p(0.5, 20, 0.5, 20) == 1.0
+    assert two_proportion_p(0.9, 0, 0.2, 30) == 1.0  # empty side -> no evidence
+    # On a thin sample even a large gap is not significant.
+    assert two_proportion_p(0.8, 3, 0.2, 3) > 0.05
+
+
+def test_mde_proportion_pp_shrinks_with_n() -> None:
+    big = mde_proportion_pp(6, 6)
+    small = mde_proportion_pp(60, 60)
+    assert big > small > 0  # thinner sample -> larger minimum detectable effect
+    assert mde_proportion_pp(0, 10) is None
+    # At ~6 effective per side only a very large gap is detectable.
+    assert big > 50.0
+
+
+def test_stats_edge_branches() -> None:
+    # Partial ties hit the tie-corrected variance path (distinct from strictly monotone).
+    mk = mann_kendall([1, 1, 2, 2, 3, 3, 3])
+    assert mk["tau"] > 0 and mk["var_s"] > 0
+    # decay_effective_n drops a non-finite weight (Kish over the finite ones; h=1 => no /h).
+    assert math.isclose(decay_effective_n([1.0, float("nan"), 1.0, 1.0], label_horizon_weeks=1), 3.0)
+    # two_proportion_p is symmetric under swapping the two groups.
+    assert math.isclose(two_proportion_p(0.8, 12, 0.3, 10), two_proportion_p(0.3, 10, 0.8, 12))
+    # Benjamini-Hochberg on an all-NaN family: nothing rejected, all q == 1.
+    rejected, q_values = benjamini_hochberg([float("nan"), float("nan")], q=0.10)
+    assert not rejected.any() and (q_values == 1.0).all()

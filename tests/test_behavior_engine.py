@@ -335,11 +335,25 @@ def test_capture_distribution_empty_table_is_safe() -> None:
 # --- build_and_save (compute -> persist) -----------------------------------
 
 def _write_spine(lab: Path) -> None:
-    # horizon 13 with enough rows to clear the 6.0 production floor (n/13 >= 6).
-    frames = [
-        _rows("BIG", "gold_down", -0.10, -0.05, n=80, h=13),
-        _rows("BIG", "gold_up", 0.10, 0.25, n=80, h=13),
-    ]
+    # Full v4 spine (capture + peer + trend all read it): horizon 13, enough rows for capture.
+    dates = pd.date_range("2010-01-01", periods=80, freq="W-FRI")
+    frames = []
+    for bucket, gold, stock in (("gold_down", -0.10, -0.05), ("gold_up", 0.10, 0.25)):
+        alpha_simple = stock - gold
+        frames.append(
+            pd.DataFrame(
+                {
+                    "ticker": ["BIG"] * 80, "horizon_weeks": [13] * 80, "benchmark": ["GDX"] * 80,
+                    "gold_bucket": [bucket] * 80,
+                    "week_period": [str(p) for p in dates.to_period("W-FRI")],
+                    "week_date": [d.date().isoformat() for d in dates],
+                    "gold_fwd_simple": [gold] * 80, "stock_fwd_simple": [stock] * 80,
+                    "alpha": [0.0] * 80, "alpha_simple": [alpha_simple] * 80,
+                    "beat": [1.0 if alpha_simple > 0 else 0.0] * 80,
+                    "is_nonoverlap_anchor": [True] * 80,
+                }
+            )
+        )
     pd.concat(frames, ignore_index=True).to_parquet(lab / DIAL_EPISODES_FILENAME, index=False)
 
 
