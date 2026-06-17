@@ -494,7 +494,7 @@ def create_workspace_app(
 
                 if method == "GET" and action is None:
                     state = _load_workspace_state(paths, normalized_tickers)
-                    tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker)
+                    tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker, universe_tool_a=state.latest_tool_a)
                     flash = _flash_message(query.get("saved", [""])[0])
                     # Resolve the active structural window for this page
                     # render. Defaults to the ticker's canonical anchor.
@@ -573,7 +573,7 @@ def create_workspace_app(
                             upsert_company_input(paths, ticker=ticker, values=company_values)
                         except ValueError as exc:
                             state = _load_workspace_state(paths, normalized_tickers)
-                            tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker)
+                            tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker, universe_tool_a=state.latest_tool_a)
                             return _html_response(
                                 start_response,
                                 render_detail_page(
@@ -610,7 +610,7 @@ def create_workspace_app(
                             )
                         except ValueError as exc:
                             state = _load_workspace_state(paths, normalized_tickers)
-                            tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker)
+                            tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker, universe_tool_a=state.latest_tool_a)
                             return _html_response(
                                 start_response,
                                 render_detail_page(
@@ -661,7 +661,7 @@ def create_workspace_app(
                             )
                         except ValueError as exc:
                             state = _load_workspace_state(paths, normalized_tickers)
-                            tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker)
+                            tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker, universe_tool_a=state.latest_tool_a)
                             return _html_response(
                                 start_response,
                                 render_detail_page(
@@ -693,7 +693,7 @@ def create_workspace_app(
                             )
                         except ValueError as exc:
                             state = _load_workspace_state(paths, normalized_tickers)
-                            tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker)
+                            tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker, universe_tool_a=state.latest_tool_a)
                             return _html_response(
                                 start_response,
                                 render_detail_page(

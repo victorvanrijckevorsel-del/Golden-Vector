@@ -36,6 +36,14 @@ BENCHMARK_BETA_COLUMNS = [
     "benchmark_price_date",
     "down_beta_core",
     "up_beta_core",
+    # Per-window betas (same OLS basis as the miner universe in tool_a_latest), so the
+    # detail-page comparison can hold GDX/GDXJ, the stock, and the universe to ONE window.
+    "down_beta_6m",
+    "up_beta_6m",
+    "down_beta_12m",
+    "up_beta_12m",
+    "down_beta_3y",
+    "up_beta_3y",
     "confidence_label",
     "confidence_score",
     "score_eligible",
@@ -183,6 +191,15 @@ def _benchmark_row(
     confidence = str(row.get("confidence_label") or "").upper() if row else None
     down_beta = optional_float(row.get("down_beta_core")) if row else None
     up_beta = optional_float(row.get("up_beta_core")) if row else None
+    # Per-window betas already live on the tool-a output row; carry them through so the
+    # comparison can match the active window (one bad window degrades to None, not a crash).
+    per_window = {
+        f"{side}_beta_{window}": (
+            optional_float(row.get(f"{side}_beta_{window}")) if row else None
+        )
+        for window in ("6m", "12m", "3y")
+        for side in ("down", "up")
+    }
     score_eligible = (
         is_score_eligible(row.get("score_eligible"), default=False)
         if row is not None
@@ -213,6 +230,7 @@ def _benchmark_row(
         "benchmark_price_date": price_record.get("date") if price_record else None,
         "down_beta_core": down_beta,
         "up_beta_core": up_beta,
+        **per_window,
         "confidence_label": confidence,
         "confidence_score": optional_float(row.get("confidence_score")) if row else None,
         "score_eligible": score_eligible,

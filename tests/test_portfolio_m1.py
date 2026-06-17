@@ -623,6 +623,23 @@ def test_portfolio_pipeline_writes_benchmark_betas_without_universe_pollution(tm
     assert data.benchmark_betas["anchor_window_id"].notna().any()
     assert data.benchmark_betas["n_weeks"].max() > 0
     assert data.benchmark_betas["down_beta_core"].notna().any()
+    # Per-window betas are persisted so the detail-page comparison can match the active window
+    # (stock + GDX/GDXJ + universe all on ONE window).
+    for column in (
+        "down_beta_6m",
+        "up_beta_6m",
+        "down_beta_12m",
+        "up_beta_12m",
+        "down_beta_3y",
+        "up_beta_3y",
+    ):
+        assert column in data.benchmark_betas.columns, column
+    assert (
+        data.benchmark_betas[["down_beta_6m", "down_beta_12m", "down_beta_3y"]]
+        .notna()
+        .any()
+        .any()
+    )
     assert data.reconciliation["status"].tolist() == [
         "MANUAL_ENTRY_NO_BROKER_TOTALS",
         "MANUAL_ENTRY_NO_BROKER_PRICES",

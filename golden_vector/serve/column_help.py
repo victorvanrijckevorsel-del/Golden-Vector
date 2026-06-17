@@ -1127,6 +1127,23 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         ),
         direction="Higher means it rises more than gold on up weeks.",
     ),
+    "benchmark_gold_beta": ColumnHelp(
+        meaning=(
+            "Where this stock's gold beta sits versus GDX, GDXJ, and the whole miner universe — "
+            "all measured over the SAME window you pick, so the numbers are directly comparable."
+        ),
+        calculation=(
+            "Each beta is the same OLS slope (stock_weekly_return = α + β × gold_weekly_return). "
+            "GDX/GDXJ betas are computed over the selected window in the backend; the percentile is "
+            "the share of the scored miners whose beta is at or below this stock's, for that window."
+        ),
+        details=(
+            "Switching the window re-bases all three (stock, ETFs, universe) together — never mix "
+            "windows. The orange marker is this stock; dashed blue ticks are the ETFs; the bar spans "
+            "the miner universe. A beta can be negative (moves opposite to gold)."
+        ),
+        direction="Higher = more gold-sensitive than the benchmark/peers for that window.",
+    ),
     "tool_c_down_hit_rate": ColumnHelp(
         meaning="Share of big gold-down weeks where the stock also fell sharply.",
         thresholds=_hit_rate_thresholds,

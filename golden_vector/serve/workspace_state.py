@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -17,9 +17,14 @@ from golden_vector.app.model_state import (
     resolve_current_model_artifact_path,
 )
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.parquet import read_optional_parquet
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.features.horizons import build_core_horizons
 from golden_vector.features.returns import compute_horizon_returns_for_ticker
+from golden_vector.model.benchmark_comparison import (
+    BetaUniverseComparison,
+    resolve_beta_universe_comparisons_by_window,
+)
 from golden_vector.model.structural import build_structural_weekly_series
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.schema import validate_tool_b_output_schema
@@ -52,6 +57,11 @@ class ToolADetailState:
     exploratory_horizons: pd.DataFrame
     structural_history_load: "StructuralHistoryLoad"
     foundation_error: str | None = None
+    # Backend-resolved, per-window comparison of this stock vs GDX/GDXJ vs the miner universe.
+    # Keyed by window id ("6M"/"12M"/"3Y"); the panel only formats the resolved markers.
+    benchmark_comparison_by_window: dict[str, BetaUniverseComparison] = field(
+        default_factory=dict
+    )
 
 
 def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> WorkspaceState:
@@ -150,6 +160,7 @@ def _load_tool_a_detail(
     *,
     app_config: AppConfig,
     ticker: str,
+    universe_tool_a: pd.DataFrame | None = None,
 ) -> ToolADetailState:
     try:
         foundation_manifest_path = resolve_current_foundation_manifest_path(
@@ -220,7 +231,52 @@ def _load_tool_a_detail(
         exploratory_horizons=exploratory_horizons,
         structural_history_load=_safe_load_structural_history(paths, ticker),
         foundation_error=None,
+        benchmark_comparison_by_window=_resolve_benchmark_comparison(
+            paths, ticker, universe_df=universe_tool_a
+        ),
     )
+
+
+def _resolve_benchmark_comparison(
+    paths: ProjectPaths,
+    ticker: str,
+    *,
+    universe_df: pd.DataFrame | None = None,
+) -> dict[str, BetaUniverseComparison]:
+    """Resolve the per-window stock-vs-GDX/GDXJ-vs-universe comparison from persisted artifacts.
+
+    The caller passes the already-loaded ``latest_tool_a`` frame (the detail route loads it for
+    WorkspaceState anyway) so we never re-read that parquet per request; only the tiny 2-row
+    benchmark file is read here. Any failure (missing universe/benchmark parquet) degrades to an
+    empty dict so the detail page still renders. All beta math happens in the model resolver.
+    """
+
+    try:
+        universe = (
+            universe_df
+            if universe_df is not None
+            else read_current_model_parquet(
+                paths,
+                "tool_a",
+                fallback_path=paths.latest_tool_a_snapshot_parquet_path,
+            )
+        )
+        benchmark_path = resolve_current_model_artifact_path(
+            paths,
+            "benchmark_betas",
+            fallback_path=paths.latest_benchmark_betas_path,
+        )
+        benchmark = (
+            read_optional_parquet(benchmark_path) if benchmark_path is not None else None
+        )
+        return resolve_beta_universe_comparisons_by_window(
+            ticker=ticker,
+            window_ids=_STRUCTURAL_WINDOWS,
+            universe_df=universe,
+            benchmark_df=benchmark,
+        )
+    except Exception:  # noqa: BLE001 - comparison is optional; never break the detail page.
+        return {}
 
 def _load_published_structural_metrics(
     paths: ProjectPaths,

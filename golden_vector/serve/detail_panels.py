@@ -22,6 +22,7 @@ from golden_vector.hedge.scenarios import scenario_model_note
 from golden_vector.model.structural import build_trailing_window_rows
 from golden_vector.serve.charts import (
     _build_beta_history_svg,
+    _build_beta_strip_svg,
     _build_dual_bar_svg,
     _build_scatter_svg,
 )
@@ -1432,12 +1433,17 @@ def _render_visual_panels(
     # Chart placement (post-deep-review): the rolling-delta chart is the most
     # paper-aligned visual on the detail page, so it sits immediately under the
     # scatter / up-down-beta row, above the volatility and exploratory panels.
+    comparison = tool_a_detail.benchmark_comparison_by_window.get(active_window)
+    comparison_panel = _render_beta_comparison_panel(
+        comparison, ticker=ticker, active_window=active_window
+    )
     return (
         "<div class=\"two-up\">"
         f"{_render_scatter_panel(ticker=ticker, tool_a_row=tool_a_row, anchor_metric=active_metric, anchor_sample=active_sample, active_window=active_window)}"
         f"{_render_up_down_beta_panel(tool_a_row, anchor_metric=active_metric, active_window=active_window)}"
         "</div>"
         f"{beta_history_panel}"
+        f"{comparison_panel}"
         "<div class=\"two-up\">"
         f"{_render_volatility_panel(tool_a_row, active_window=active_window, weekly_series=tool_a_detail.weekly_series, scoring_config=scoring_config)}"
         f"{_render_exploratory_horizon_panel(tool_a_detail.exploratory_horizons)}"
@@ -1580,6 +1586,108 @@ def _render_up_down_beta_panel(
         "taller down bar than up bar (positive gamma) means it falls more with gold than it rises "
         "— a fragile, asymmetric profile. Either beta can be negative (moves opposite to gold).</p>"
         f"{svg}"
+        "</section>"
+    )
+
+
+def _ordinal_percentile(percentile: float | None) -> str:
+    """Format a backend-resolved 0..100 percentile as 'Nth percentile' text."""
+
+    if percentile is None:
+        return "n/a"
+    return f"{int(round(percentile))}th percentile"
+
+
+def _comparison_markers(comparison: Any, side: str) -> list[dict[str, Any]]:
+    """Flatten the backend-resolved comparison into strip markers for one side (down/up).
+
+    Pure shaping: reads the pre-resolved pos / beta / percentile off each marker. No math.
+    """
+
+    markers: list[dict[str, Any]] = []
+    sources = []
+    if comparison.subject is not None:
+        sources.append(comparison.subject)
+    sources.extend(comparison.benchmarks)
+    for marker in sources:
+        pos = getattr(marker, f"{side}_pos")
+        value = getattr(marker, f"{side}_beta")
+        markers.append(
+            {
+                "label": marker.label,
+                "pos": pos,
+                "value": value,
+                "is_subject": marker.is_subject,
+            }
+        )
+    return markers
+
+
+def _render_beta_comparison_panel(
+    comparison: Any,
+    *,
+    ticker: str,
+    active_window: str = "12M",
+) -> str:
+    """Stock vs GDX / GDXJ vs the miner universe, all on the SAME selected window.
+
+    Every number here is resolved in the model layer (golden_vector/model/benchmark_comparison.py);
+    this renderer only formats them and places backend-supplied positions on the strips.
+    """
+
+    title = "How its gold beta compares"
+    if comparison is None or not getattr(comparison, "available", False):
+        note = getattr(comparison, "note", None) if comparison is not None else None
+        message = note or (
+            f"No GDX/GDXJ + universe comparison is available for the {escape(active_window)} window yet."
+        )
+        return (
+            "<section class=\"panel nested-panel\">"
+            f"<h3>{escape(title)}</h3><p class=\"hint\">{escape(message)}</p>"
+            "</section>"
+        )
+
+    # _build_beta_strip_svg escapes the axis label itself, so pass the raw window label there
+    # (avoids double-escaping); window_label is the escaped copy used in this panel's own HTML.
+    window_label_raw = str(comparison.window_label)
+    window_label = escape(window_label_raw)
+    down_svg = _build_beta_strip_svg(
+        axis_label=f"Down beta — weeks gold fell ({window_label_raw})",
+        domain=comparison.down_domain,
+        markers=_comparison_markers(comparison, "down"),
+    )
+    up_svg = _build_beta_strip_svg(
+        axis_label=f"Up beta — weeks gold rose ({window_label_raw})",
+        domain=comparison.up_domain,
+        markers=_comparison_markers(comparison, "up"),
+    )
+
+    subject = comparison.subject
+    if subject is not None and subject.down_percentile is not None:
+        lead = (
+            f"Over the {window_label} window, {escape(ticker)}'s down beta sits at the "
+            f"{_ordinal_percentile(subject.down_percentile)} of the {comparison.universe_down_n} "
+            "miners (higher = falls more with gold), and its up beta at the "
+            f"{_ordinal_percentile(subject.up_percentile)} of {comparison.universe_up_n}. "
+        )
+    else:
+        lead = (
+            f"{escape(ticker)} is not in the scored miner universe, so only the GDX/GDXJ and "
+            f"universe range are shown for the {window_label} window. "
+        )
+    benchmark_bits = ", ".join(
+        f"{escape(marker.label)} down {_fmt_number(marker.down_beta, decimals=2)}"
+        for marker in comparison.benchmarks
+    )
+    benchmark_text = f"For reference: {benchmark_bits}. " if benchmark_bits else ""
+    return (
+        "<section class=\"panel nested-panel\">"
+        f"<h3>{escape(title)}</h3>"
+        f"<p class=\"hint\">{lead}{benchmark_text}GDX/GDXJ, {escape(ticker)}, and the universe "
+        f"are all measured on the same {window_label} window, so the betas are directly "
+        "comparable — switch the window above to re-base all three. The orange marker is this "
+        "stock; the dashed blue ticks are the ETFs; the bar spans the miner universe.</p>"
+        f"{down_svg}{up_svg}"
         "</section>"
     )
 

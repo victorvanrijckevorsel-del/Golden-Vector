@@ -100,6 +100,71 @@ def _build_dual_bar_svg(
     )
 
 
+def _build_beta_strip_svg(
+    *,
+    axis_label: str,
+    domain: tuple[float, float] | None,
+    markers: list[dict[str, object]],
+) -> str:
+    """Render a 1-D distribution strip from BACKEND-resolved positions.
+
+    Each marker carries a pre-computed ``pos`` in 0..1 (where it sits along the universe axis);
+    this builder only maps that fraction to a pixel and draws the tick + label. No ranking,
+    percentile, or domain math happens here — those are resolved in the model layer.
+    """
+
+    if domain is None or not markers:
+        return "<p>No comparison data available.</p>"
+    width = 360
+    height = 116
+    padding = 36
+    track_y = 58
+    span = width - (2 * padding)
+
+    def px(pos: float) -> float:
+        return padding + (min(1.0, max(0.0, pos)) * span)
+
+    low, high = domain
+    parts = [
+        f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#fffdf8\" rx=\"12\" ry=\"12\" />",
+        f"<text x=\"{padding}\" y=\"20\" font-size=\"12\" fill=\"#6f685c\">{escape(axis_label)}</text>",
+        f"<line x1=\"{padding}\" y1=\"{track_y}\" x2=\"{width - padding}\" y2=\"{track_y}\" stroke=\"#cdbfa6\" stroke-width=\"3\" stroke-linecap=\"round\" />",
+        f"<text x=\"{padding}\" y=\"{track_y + 24}\" font-size=\"11\" fill=\"#9a917f\">{low:,.2f}</text>",
+        f"<text x=\"{width - padding}\" y=\"{track_y + 24}\" text-anchor=\"end\" font-size=\"11\" fill=\"#9a917f\">{high:,.2f}</text>",
+    ]
+    for marker in markers:
+        pos = marker.get("pos")
+        if pos is None:
+            continue
+        x = px(float(pos))
+        is_subject = bool(marker.get("is_subject"))
+        label = escape(str(marker.get("label", "")))
+        value = marker.get("value")
+        value_text = f"{float(value):,.2f}" if value is not None else "n/a"
+        if is_subject:
+            parts.append(
+                f"<line x1=\"{x:.1f}\" y1=\"{track_y - 16}\" x2=\"{x:.1f}\" y2=\"{track_y + 16}\" stroke=\"#b26700\" stroke-width=\"2\" />"
+            )
+            parts.append(
+                f"<circle cx=\"{x:.1f}\" cy=\"{track_y:.1f}\" r=\"5\" fill=\"#b26700\" />"
+            )
+            parts.append(
+                f"<text x=\"{x:.1f}\" y=\"{track_y - 22}\" text-anchor=\"middle\" font-size=\"11\" fill=\"#1f1d1a\">{label} {value_text}</text>"
+            )
+        else:
+            parts.append(
+                f"<line x1=\"{x:.1f}\" y1=\"{track_y - 10}\" x2=\"{x:.1f}\" y2=\"{track_y + 10}\" stroke=\"#1d4b73\" stroke-width=\"2\" stroke-dasharray=\"3 2\" />"
+            )
+            parts.append(
+                f"<text x=\"{x:.1f}\" y=\"{track_y + 38}\" text-anchor=\"middle\" font-size=\"11\" fill=\"#3a536b\">{label} {value_text}</text>"
+            )
+    return (
+        f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"{escape(axis_label)} distribution\">"
+        f"{''.join(parts)}"
+        "</svg>"
+    )
+
+
 def _build_beta_history_svg(
     *,
     series_by_window: dict[str, tuple[list[pd.Timestamp], list[float]]],

@@ -229,7 +229,9 @@ def test_scatter_panel_hint_adapts_to_active_window():
         anchor_sample=sample,
         active_window="3Y",
     )
-    assert "3Y trailing sample" in html_live
+    # Hint names the ACTIVE window (3Y), not the ticker's canonical anchor (12M).
+    assert "3Y sample" in html_live
+    assert "12M sample" not in html_live
 
 
 def test_up_down_beta_panel_hint_adapts_to_active_window():
@@ -239,7 +241,9 @@ def test_up_down_beta_panel_hint_adapts_to_active_window():
         anchor_metric={"up_beta": 2.0, "down_beta": 1.5},
         active_window="3Y",
     )
-    assert "3Y regime split" in html
+    # Hint names the ACTIVE window (3Y), not the ticker's canonical anchor (12M).
+    assert "3Y sample" in html
+    assert "12M sample" not in html
 
 
 # ---------------------------------------------------------------- T8 ----
