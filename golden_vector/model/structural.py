@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from golden_vector.common.numeric import strict_optional_float as _optional_float
+from golden_vector.common.stats import weighted_median as _weighted_median_core
 from golden_vector.contracts.config_models import ScoringConfig
 
 
@@ -1181,22 +1182,21 @@ def weighted_median(
     *,
     weights: dict[str, float],
 ) -> float | None:
-    usable = [
+    """Weighted median over a dict of keyed values (model beta aggregation).
+
+    Delegates to the shared array-based primitive in ``common.stats`` — ONE copy of
+    the algorithm, also used by the Lab. Keeps the dict signature the model pipeline
+    depends on; missing values are dropped and each value's weight defaults to 1.0.
+    """
+
+    pairs = [
         (float(value), float(weights.get(key, 1.0)))
         for key, value in values.items()
         if value is not None and pd.notna(value)
     ]
-    if not usable:
+    if not pairs:
         return None
-    usable.sort(key=lambda item: item[0])
-    total_weight = sum(weight for _, weight in usable)
-    cutoff = total_weight / 2.0
-    running = 0.0
-    for value, weight in usable:
-        running += weight
-        if running >= cutoff:
-            return float(value)
-    return float(usable[-1][0])
+    return _weighted_median_core([v for v, _ in pairs], [w for _, w in pairs])
 
 
 def _last_trading_day_per_week(

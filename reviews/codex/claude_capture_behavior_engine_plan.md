@@ -2,7 +2,9 @@
 
 Author: Claude
 Date: 2026-06-17
-Status: RE-REVIEWED — Codex review folded in (see §13); READY TO CODE once Emanuel answers §12.
+Status: ✅ READY TO CODE — Codex's 8 findings + Claude's 4 re-review refinements folded in (§13); all
+3 §12 decisions confirmed by Emanuel 2026-06-17 (Convex offense default · gold-only capture · 13w
+levels / 8w trend labels).
 Grounded first-hand in the current tree
 (`conditional_dial.py`, `forward_returns.py`, `walk_forward.py`, `structural.py`,
 `relative_behavior.py`, `tool_c.py`, the serve Lab modules, `config_models.py`) and cross-checked
@@ -457,7 +459,12 @@ the weak ones), so old peer percentiles are biased **low** and the peer-*trend* 
 
 ---
 
-## 12. Open decisions for Emanuel
+## 12. Decisions for Emanuel — ✅ RESOLVED 2026-06-17
+
+> **Confirmed:** (1) offense default = **Convex** (upside relative to downside; raw torque one click
+> away); (2) capture is **gold-only** (GDX/GDXJ stays the beat-rate/alpha lens); (3) horizons =
+> **13w for capture levels/archetype, 8w for behaviour-change labels** (abstain where a side is thin).
+> The original options are kept below for the record.
 
 1. **"Increase a lot" = raw torque or convex?** I'm baking in **both** as separate upside rankings
    ("Raw torque" = highest up-capture; "Convex" = highest up-capture *relative to* down-capture).
@@ -501,11 +508,14 @@ Emanuel answers §12.
    `dial_behavior_trend` (or a render-ready artifact), never in the base episode artifact. Tests:
    `peer_count` 1, ties, and a `min_peer_count` change that does NOT alter episode rows.
 
-4. **MEDIUM — pin the capture headline sample.** The headline/gating capture ratio is computed on
-   **`is_nonoverlap_anchor` rows** so overlapping weekly labels can't inflate the mean. If an all-row
-   version is kept for smoothness, persist **both** `capture_all_rows` and `capture_anchor`, with
-   `capture_anchor` as the trust/gating number; test that overlapping rows cannot manufacture a
-   stronger archetype than the anchors support.
+4. **MEDIUM — pin the capture headline sample (Claude refinement of Codex's fix).** Codex's risk is
+   real (clustered multi-week moves over-weight the mean), but overlap inflates *variance*, not
+   *bias*, of a mean — and anchors are very few (~n/h), so anchor-only would throw away precision to
+   fix a bias that isn't there. So: **display the all-rows capture** (`capture_all_rows`, unbiased)
+   as the value, but **gate the hard ARCHETYPE label** on effective-N *plus* an anchor cross-check —
+   also compute `capture_anchor` and, **if the archetype flips between all-rows and anchors, abstain
+   (INSUFFICIENT)**. Persist both; test that overlapping rows cannot manufacture a stronger archetype
+   than the anchors support.
 
 5. **MEDIUM — pin the event-time split grain.** Recent/older is split **within the target grain AFTER
    filtering to anchor rows**: bucket trend within `(ticker, benchmark, horizon, bucket)`; capture
@@ -517,16 +527,37 @@ Emanuel answers §12.
    `bench_fwd_simple = exp(log1p(stock_fwd_simple) - alpha) - 1`. Add a round-trip test vs the existing
    forward-return panel columns.
 
-7. **LOW — refine the serve guard.** Forbid compute helpers/operators in serve
-   (`mann_kendall`, `theil_sen`, `.mean(`, `.groupby(`, `.rank(`, `/ mean(`, …), **not** persisted
-   field names (`peer_percentile`, `down_capture`, archetype literals) — those are legitimate in typed
-   structures and renderer constants. Add render-level tests with known persisted values proving serve
-   echoes them without recomputing.
+7. **LOW — refine the serve guard (Claude correction of the folded-in fix).** Forbid compute
+   helpers/operators in serve (`mann_kendall`, `theil_sen`, `.mean(`, `.groupby(`, `.rank(`,
+   `/ mean(`, …) and **allow persisted COLUMN NAMES** (`peer_percentile`, `down_capture`,
+   `up_capture`) — those are legitimate in typed structures/renderer constants. BUT **keep the
+   archetype VALUE words forbidden** (`CONVEX`/`HEDGE`/`TORQUE`/`DEAD WEIGHT`), exactly as the
+   existing guard forbids `Defensive`/`Steady`/`Pro-cyclical`: serve must echo the persisted
+   `archetype` string, never re-decide it. Add render-level tests proving serve echoes persisted
+   values without recomputing.
 
 8. **LOW — survivorship caveat constrains the headline too.** Peer snapshot stays survivor-only and
    visibly caveated; prefer recent/decay peer values over all-history for any headline; stamp
    `survivor_universe=true` and a `peer_snapshot_status`/`caveat` on the artifact.
 
+### Claude re-review additions (beyond Codex's 8)
+
+9. **MED — `behavior_config_hash` must also track the spine.** Splitting the hash (#2) is right, but
+   the behavior artifacts are *derived from* `dial_episodes`. If the spine is rebuilt or its
+   `DIAL_SCHEMA_VERSION` bumps while behavior thresholds are unchanged, a derived artifact would still
+   pass its own hash and go silently stale. So `behavior_config_hash` must fold in the spine's
+   `schema_version` + source-run pointer (or the raw `dial_config_hash`). Test: a spine rebuild
+   invalidates the behavior artifacts even with identical behavior config.
+
+10. **MED — the archetype cutoffs are unjustified numbers (same smell Emanuel caught on horizons).**
+    `hedge_down_capture_max=0.8` and `torque_up_capture_min=1.2` are picked by feel. Before they ship,
+    set them from the **real cross-sectional distribution** of miner capture (e.g. quantiles of actual
+    down/up-capture across the 65 names), the way the horizon set was chosen from measured usable
+    counts — not by guess. Phase 1 must print the distribution and the cutoffs derived from it; the
+    config values are then grounded, not arbitrary.
+
 **Net effect on sequencing:** Tier-1 schema gains `stock_fwd_log`; the artifact family splits into a
-raw spine (one hash) and a behavior layer (second hash); peer ranks move pre-expansion. None of this
-changes the user-facing lenses in §0 — it hardens the contracts before any code is written.
+raw spine (one hash) and a behavior layer (second hash, which also tracks the spine); peer ranks move
+pre-expansion and are computed on a benchmark-independent stock-return source; archetype cutoffs are
+data-derived in Phase 1. None of this changes the user-facing lenses in §0 — it hardens the contracts
+before any code is written.

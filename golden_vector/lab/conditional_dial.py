@@ -18,7 +18,6 @@ Honesty rules (from the Lab spec — these are contract, not style):
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +34,7 @@ from golden_vector.lab.forward_returns import (
     forward_sum,
     reindex_contiguous_weeks,
 )
+from golden_vector.lab.statistics import eb_shrink, pooled_prior, wilson_interval
 from golden_vector.lab.walk_forward import effective_n
 
 DEFAULT_BUCKETS: list[tuple[str, float | None, float | None]] = [
@@ -83,7 +83,7 @@ DIAL_BENCHMARKS: list[str] = ["GDX", "GDXJ"]
 DIAL_SIGNAL_ID = "conditional_dial_analog"
 # Bumped from the GDX-only-13w artifact: long-form episodes + wide cells keyed
 # by horizon and benchmark. The loader fails STALE if an artifact predates this.
-DIAL_SCHEMA_VERSION = 3  # v3: episodes carry alpha_simple (simple-return per-week)
+DIAL_SCHEMA_VERSION = 4  # v4: episodes also carry stock_fwd_log + stock_fwd_simple (miner's own fwd return)
 
 
 def default_gold_profile_config() -> GoldProfileConfig:
@@ -233,13 +233,7 @@ def _dial_cells(
         return pd.DataFrame()
     # EB prior mean per bucket: mean of PER-TICKER means (equal ticker weight) —
     # week-weighted pooling would let long-history tickers dominate the prior.
-    pooled = (
-        episodes.groupby(["bucket", "ticker"])["beat"]
-        .mean()
-        .groupby("bucket")
-        .mean()
-        .to_dict()
-    )
+    pooled = pooled_prior(episodes, group_col="bucket", value_col="beat")
     records: list[dict[str, object]] = []
     for (ticker, bucket), group in episodes.groupby(["ticker", "bucket"], sort=True):
         n_weeks = int(len(group))
@@ -264,9 +258,7 @@ def _dial_cells(
             continue
         p_raw = float(group["beat"].mean())
         prior = float(pooled[bucket])
-        p_shrunk = (p_raw * eff_n + prior * EB_PRIOR_STRENGTH) / (
-            eff_n + EB_PRIOR_STRENGTH
-        )
+        p_shrunk = eb_shrink(p_raw, eff_n, prior, EB_PRIOR_STRENGTH)
         low, high = _wilson_interval(p_raw, eff_n)
         # Alphas are log-return gaps; display basis is simple relative
         # outperformance (exp(x)-1). exp is monotone, so converting the
@@ -361,13 +353,10 @@ def _assign_bucket(
     return None
 
 
-def _wilson_interval(p: float, n: float, z: float = 1.96) -> tuple[float, float]:
-    if n <= 0:
-        return (0.0, 1.0)
-    denom = 1 + z * z / n
-    center = (p + z * z / (2 * n)) / denom
-    margin = (z / denom) * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
-    return (max(0.0, center - margin), min(1.0, center + margin))
+# The Wilson interval lives in lab.statistics now (ONE copy, shared with the capture/
+# behaviour engine). Kept as a module-level alias because tests + _dial_cells reference
+# the private name.
+_wilson_interval = wilson_interval
 
 
 # Long-form chart detail (one row per episode = a week with a valid forward
@@ -380,6 +369,8 @@ EPISODE_COLUMNS = [
     "week_date",
     "gold_fwd_simple",
     "gold_bucket",
+    "stock_fwd_log",
+    "stock_fwd_simple",
     "alpha",
     "alpha_simple",
     "beat",
@@ -446,7 +437,8 @@ def build_episode_artifact(
             alpha_col = f"fwd_alpha_{bench.lower()}_{h}w"
             if alpha_col not in panel.columns:
                 continue
-            merged = panel[["ticker", "week_period", alpha_col]].merge(
+            log_col = f"fwd_log_ret_{h}w"
+            merged = panel[["ticker", "week_period", alpha_col, log_col]].merge(
                 gold_by_week[["week_period", gold_col]], on="week_period", how="left"
             )
             ep = pd.DataFrame(
@@ -454,12 +446,20 @@ def build_episode_artifact(
                     "ticker": merged["ticker"].astype(str),
                     "week_period": merged["week_period"],
                     "gold_fwd_simple": merged[gold_col].astype("Float64"),
+                    "stock_fwd_log": merged[log_col].astype("Float64"),
                     "alpha": merged[alpha_col].astype("Float64"),
                 }
             )
             ep = ep.dropna(subset=["gold_fwd_simple", "alpha"])
             if ep.empty:
                 continue
+            # The miner's OWN forward return (simple basis) — the magnitude the capture
+            # ratios (vs gold) and the peer rank need; alpha (vs benchmark) can't give it.
+            # ONE normalize boundary (exp(log)-1), same as alpha_simple below. stock_fwd_log
+            # is non-NA wherever alpha is (alpha = stock_fwd_log - bench_fwd_log).
+            ep["stock_fwd_simple"] = (
+                np.exp(ep["stock_fwd_log"].astype(float)) - 1.0
+            ).astype("Float64")
             # Per-week alpha in SIMPLE-return basis (exp(log gap) - 1), persisted so
             # serve can plot the distribution strip on the SAME basis the cell median
             # uses (median_alpha = median(exp(alpha)-1)) without an exp() at the render
