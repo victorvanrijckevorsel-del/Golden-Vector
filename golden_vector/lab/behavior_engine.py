@@ -461,6 +461,32 @@ def capture_distribution(table: pd.DataFrame, *, horizon: int) -> dict[str, dict
     return out
 
 
+CUTOFF_DRIFT_TOLERANCE = 0.15  # warn when a config cutoff drifts this far from live p33/p67
+
+
+def _warn_cutoff_drift(cfg: CaptureBehaviorConfig, dist: dict[str, dict[str, float]]) -> None:
+    """Print a loud warning if the archetype cutoffs have drifted from this run's live
+    p33/p67. The cutoffs are config constants grounded on the cross-sectional distribution;
+    a material data change can move the quantiles, so the daily build re-confirms them.
+    Warn (not fail) — re-grounding is a deliberate human decision, recorded in config."""
+
+    checks = (
+        ("hedge_down_capture_max", cfg.hedge_down_capture_max, "down_capture_mean", "p33"),
+        ("torque_up_capture_min", cfg.torque_up_capture_min, "up_capture_mean", "p67"),
+    )
+    for name, value, col, q in checks:
+        live = (dist.get(col) or {}).get(q)
+        if live is None:
+            continue
+        drift = abs(float(value) - float(live))
+        if drift > CUTOFF_DRIFT_TOLERANCE:
+            print(
+                f"WARNING: archetype cutoff {name}={value} has drifted {drift:.3f} from the "
+                f"live {col} {q}={live} (tolerance {CUTOFF_DRIFT_TOLERANCE}). Re-ground the "
+                f"cutoff in config/lab_behavior_trend.yaml and rebuild."
+            )
+
+
 def compute_peer_points(episodes: pd.DataFrame, *, behavior_hash: str) -> pd.DataFrame:
     """Per-episode cross-sectional peer rank (benchmark-independent, point-in-time).
 
@@ -719,10 +745,13 @@ def compute_trend_table(
     Recent vs older is split on the cell's INDEPENDENT anchors in EVENT time (not
     calendar — gold rarely fell in 2022-2026, so a calendar window would be empty on the
     hedge side). Each window shrinks toward its OWN window-matched peer pool (leave-one-
-    out) so the priors cancel in the delta and a real divergence survives. The beat label
-    fires only when ALL hold: effective-N floors, |delta| >= threshold, BH-FDR q <= q_fdr
-    on the two-proportion p, and Mann-Kendall (on anchors) agrees in sign — else
-    INSUFFICIENT_EVIDENCE. Alpha (size) trend is a separate leading indicator.
+    out) so a genuine divergence survives; the priors LARGELY offset in the delta but do
+    not perfectly cancel (different effective-N weights the prior unequally), which is why
+    the label is NOT taken on the shrunk delta alone. The beat label fires only when ALL
+    hold: effective-N floors, |delta| >= threshold, BH-FDR q <= q_fdr on the two-proportion
+    p (computed on RAW counts), and Mann-Kendall (on RAW anchors) agrees in sign — else
+    INSUFFICIENT_EVIDENCE. Those raw-based gates are what guard against a pure prior
+    artifact. Alpha (size) trend is a separate leading indicator.
     """
 
     required = {
@@ -899,6 +928,9 @@ def _trend_record(
         rec_shrunk - old_shrunk if rec_shrunk is not None and old_shrunk is not None else None
     )
     # Decay over the independent anchors (Kish ESS, no /h — anchors are independent).
+    # NOTE: decay_* are DESCRIPTIVE/reserved diagnostics (a smooth exponential view of the
+    # same anchors) — they are persisted for future use and the UI, but they do NOT drive
+    # the beat/alpha labels, which use the discrete recent-vs-older split + raw-based gates.
     na = d["na"]
     if na:
         w = _recency_weights(na, config.decay_half_life_episodes)
@@ -1112,6 +1144,12 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
         if not table.empty
         else {}
     )
+    # The archetype cutoffs are config constants grounded on the cross-sectional p33/p67.
+    # Re-confirm them against THIS run's live distribution and warn loudly on drift, so a
+    # material data change can't silently leave the thresholds mis-grounded (config + the
+    # live distribution are both stamped in meta below for an exact audit).
+    grounded_dist = capture_distribution(table, horizon=cfg.default_capture_horizon)
+    _warn_cutoff_drift(cfg, grounded_dist)
     meta = {
         "built_at_utc": moment.isoformat(),
         "schema_version": BEHAVIOR_SCHEMA_VERSION,
@@ -1132,9 +1170,7 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
         "rows": int(len(table)),
         "capture_status_counts": {str(k): int(v) for k, v in status_counts.items()},
         "archetype_counts": {str(k): int(v) for k, v in archetype_counts.items()},
-        "capture_distribution_default_horizon": capture_distribution(
-            table, horizon=cfg.default_capture_horizon
-        ),
+        "capture_distribution_default_horizon": grounded_dist,
         "peer_points_rows": int(len(peer_points)),
         "peer_rows": int(len(peer_snapshot)),
         "peer_status_counts": (

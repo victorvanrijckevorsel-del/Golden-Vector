@@ -8,8 +8,8 @@ version: 1
 # DATA-GROUNDED from the cross-sectional capture distribution at 13w (see
 # behavior_engine.capture_distribution); relative-to-universe because every miner
 # is high-beta. Finalised after the Phase-1 measurement.
-hedge_down_capture_max: 1.61  # 13w cross-sectional down-capture p33 (bottom third = hedgey)
-torque_up_capture_min: 2.17  # 13w cross-sectional up-capture p67 (top third = torquey)
+hedge_down_capture_max: 1.69  # ~13w down-capture p33 at the grounding spine; re-confirm vs behavior_meta
+torque_up_capture_min: 2.20  # ~13w up-capture p67 at the grounding spine; re-confirm vs behavior_meta
 min_direction_effective_n: 6.0
 min_anchor_episodes: 6  # independent anchors per side for the overlap cross-check to confirm
 default_capture_horizon: 13

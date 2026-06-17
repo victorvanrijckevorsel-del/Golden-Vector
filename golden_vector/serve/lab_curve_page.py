@@ -186,15 +186,16 @@ def _render_behaviour(curve: LabCurveData) -> str:
     else:
         trend_html = (
             f"<p class=\"hint\">No behaviour-change record for this scenario at "
-            f"{int(curve.horizon)} weeks.</p>"
+            f"{int(curve.trend_horizon)} weeks.</p>"
         )
     cards.append(
         "<div class=\"beh-card\">"
-        f"<h3>Behaviour change — {scen}</h3>"
+        f"<h3>Behaviour change — {scen} ({int(curve.trend_horizon)}-week)</h3>"
         + trend_html
-        + "<p class=\"hint\">Recent vs older split on independent episodes; a confident "
-        "label survives a per-scenario false-discovery correction. NO_CHANGE_DETECTED "
-        "means undetected, not proven stable.</p>"
+        + "<p class=\"hint\">Recent vs older split on independent episodes; the bold label "
+        "is decided on peer-adjusted rates and must survive a per-scenario false-discovery "
+        "correction. NO_CHANGE_DETECTED means undetected, not proven stable. Read at the "
+        "8-week horizon (the honest trend default), independent of the look-ahead above.</p>"
         "</div>"
     )
 

@@ -711,8 +711,11 @@ class CaptureBehaviorConfig(StrictConfigModel):
     # below this, "torquey" if its up-capture is at or above torque_up_capture_min.
     # Relative-to-universe cutoffs (every miner is high-beta), set from the measured
     # cross-sectional distribution at the default capture horizon.
-    hedge_down_capture_max: float = 1.61  # 13w cross-sectional down-capture p33 (bottom third = hedgey)
-    torque_up_capture_min: float = 2.17  # 13w cross-sectional up-capture p67 (top third = torquey)
+    # ~13w cross-sectional down-capture p33 / up-capture p67 at the grounding spine
+    # (bottom/top third). Re-confirm against behavior_meta.capture_distribution_default_horizon
+    # after a material data change — the build warns if these drift from the live quantiles.
+    hedge_down_capture_max: float = 1.69
+    torque_up_capture_min: float = 2.20
     min_direction_effective_n: float = 6.0  # per-side floor; below it the side abstains
     # Independent anchors required on BOTH sides for the overlap cross-check to be
     # confirmable; below this the archetype is emitted but flagged unconfirmed_thin_anchor.

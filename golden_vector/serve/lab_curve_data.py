@@ -137,6 +137,7 @@ class LabCurveData:
     # never the page). All numbers/labels are build-computed; serve only echoes them. ---
     behavior_status: str = "UNAVAILABLE"  # None = ok; MISSING / CORRUPT / STALE / UNAVAILABLE
     capture_horizon: int = 13  # the horizon the archetype box is grounded at
+    trend_horizon: int = 8  # the horizon the behaviour-change card is read at (locked 8w)
     capture: dict[str, Any] | None = None  # dial_capture row @ capture_horizon (gold frame)
     peer_down: dict[str, Any] | None = None  # dial_peer snapshot @ page horizon, gold-down
     peer_up: dict[str, Any] | None = None  # dial_peer snapshot @ page horizon, gold-up
@@ -278,7 +279,20 @@ def _load_behaviour(
         return {"behavior_status": "CORRUPT"}
     if not _behavior_is_current(bmeta):
         return {"behavior_status": "STALE"}
-    capture_horizon = int(default_capture_behavior_config().default_capture_horizon)
+    # Cross-artifact staleness: the behaviour layer must be derived from the CURRENT dial
+    # spine RUN. Both config hashes cover config only (not episode DATA), so a dial rebuild
+    # (a weekly data refresh OR a horizon/benchmark change) leaves the behaviour hash
+    # unchanged. Tie to the exact spine run via the stamped source_spine vs the live
+    # dial_meta pointer (skipped only when one side has no pointer — hand-built fixtures).
+    dmeta, _dmeta_status = _read_meta(paths)
+    live_episodes = (dmeta.get("run_stamped_artifacts") or {}).get("episodes")
+    source_episodes = (bmeta.get("source_spine") or {}).get("episodes_artifact")
+    if live_episodes and source_episodes and source_episodes != live_episodes:
+        return {"behavior_status": "STALE"}
+
+    cfg = default_capture_behavior_config()
+    capture_horizon = int(cfg.default_capture_horizon)
+    trend_horizon = int(cfg.default_trend_horizon)
     cap_frame, cap_status = _load_frame(
         paths,
         filename=_current_artifact_filename(bmeta, "capture", CAPTURE_FILENAME),
@@ -302,18 +316,22 @@ def _load_behaviour(
     return {
         "behavior_status": None,
         "capture_horizon": capture_horizon,
+        "trend_horizon": trend_horizon,
         # capture/archetype live at the default capture horizon (gold frame, benchmark-free)
         "capture": _row_for_keys(cap_frame, ticker=ticker, horizon_weeks=capture_horizon),
+        # peer snapshot follows the user's selected look-ahead (a snapshot is valid at any)
         "peer_down": _row_for_keys(
             peer_frame, ticker=ticker, horizon_weeks=horizon, direction="down"
         ),
         "peer_up": _row_for_keys(
             peer_frame, ticker=ticker, horizon_weeks=horizon, direction="up"
         ),
+        # behaviour-change is pinned to the locked 8w trend default (decoupled from the
+        # page look-ahead, like capture) — that is the honest trend horizon (plan §12).
         "behavior_trend": _row_for_keys(
             trend_frame,
             ticker=ticker,
-            horizon_weeks=horizon,
+            horizon_weeks=trend_horizon,
             benchmark=benchmark,
             gold_bucket=scenario_bucket,
         ),
@@ -540,6 +558,7 @@ def load_ticker_curve(
         error_status=None if (points or cell is not None) else "MISSING",
         behavior_status=behaviour["behavior_status"],
         capture_horizon=int(behaviour.get("capture_horizon", 13)),
+        trend_horizon=int(behaviour.get("trend_horizon", 8)),
         capture=behaviour.get("capture"),
         peer_down=behaviour.get("peer_down"),
         peer_up=behaviour.get("peer_up"),

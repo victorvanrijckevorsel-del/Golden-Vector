@@ -19,7 +19,11 @@ from golden_vector.lab.behavior_engine import (
     default_capture_behavior_config,
 )
 from golden_vector.lab.conditional_dial import DIAL_SCHEMA_VERSION
-from golden_vector.serve.lab_curve_data import LabCurveData, _load_behaviour
+from golden_vector.serve.lab_curve_data import (
+    DIAL_ARTIFACT_META_FILENAME,
+    LabCurveData,
+    _load_behaviour,
+)
 from golden_vector.serve.lab_curve_page import _render_behaviour
 
 
@@ -130,7 +134,9 @@ def _row(columns, **vals) -> pd.DataFrame:
     return pd.DataFrame([base])
 
 
-def _write_behaviour(lab: Path, *, behavior_hash: str) -> None:
+def _write_behaviour(
+    lab: Path, *, behavior_hash: str, source_episodes: str | None = None
+) -> None:
     lab.mkdir(parents=True, exist_ok=True)
     # capture at horizon 13 (the default), plus an 8w row that must NOT be picked for the box
     cap = pd.concat(
@@ -144,20 +150,34 @@ def _write_behaviour(lab: Path, *, behavior_hash: str) -> None:
         ignore_index=True,
     )
     cap.to_parquet(lab / CAPTURE_FILENAME, index=False)
+    # peer rows at BOTH 8w and 13w — peer follows the PAGE look-ahead, so the values differ
+    # per horizon to prove the selection picks the page horizon.
     peer = pd.concat(
         [
             _row(PEER_COLUMNS, ticker="AEM", horizon_weeks=8, direction="down",
                  peer_status="OK", peer_percentile_median=70.0, peer_effective_n=6.2),
             _row(PEER_COLUMNS, ticker="AEM", horizon_weeks=8, direction="up",
                  peer_status="OK", peer_percentile_median=55.0, peer_effective_n=30.0),
+            _row(PEER_COLUMNS, ticker="AEM", horizon_weeks=13, direction="down",
+                 peer_status="OK", peer_percentile_median=41.0, peer_effective_n=9.0),
+            _row(PEER_COLUMNS, ticker="AEM", horizon_weeks=13, direction="up",
+                 peer_status="OK", peer_percentile_median=46.0, peer_effective_n=40.0),
         ],
         ignore_index=True,
     )
     peer.to_parquet(lab / PEER_FILENAME, index=False)
-    trend = _row(
-        TREND_COLUMNS, ticker="AEM", horizon_weeks=8, benchmark="GDX",
-        gold_bucket="gold_down", trend_status="OK", trend_label="DETERIORATING",
-        alpha_trend_label="ALPHA_DETERIORATING",
+    # trend rows at BOTH 8w (the locked default) and 13w with DIFFERENT labels — the loader
+    # must pin the trend card to 8w regardless of the page horizon.
+    trend = pd.concat(
+        [
+            _row(TREND_COLUMNS, ticker="AEM", horizon_weeks=8, benchmark="GDX",
+                 gold_bucket="gold_down", trend_status="OK", trend_label="DETERIORATING",
+                 alpha_trend_label="ALPHA_DETERIORATING"),
+            _row(TREND_COLUMNS, ticker="AEM", horizon_weeks=13, benchmark="GDX",
+                 gold_bucket="gold_down", trend_status="OK", trend_label="IMPROVING",
+                 alpha_trend_label="ALPHA_IMPROVING"),
+        ],
+        ignore_index=True,
     )
     trend.to_parquet(lab / TREND_FILENAME, index=False)
     meta = {
@@ -165,7 +185,17 @@ def _write_behaviour(lab: Path, *, behavior_hash: str) -> None:
         "behavior_config_hash": behavior_hash,
         "spine_schema_version": DIAL_SCHEMA_VERSION,
     }
+    if source_episodes is not None:
+        meta["source_spine"] = {"episodes_artifact": source_episodes}
     (lab / BEHAVIOR_META_FILENAME).write_text(json.dumps(meta), encoding="utf-8")
+
+
+def _write_dial_meta(lab: Path, *, episodes: str) -> None:
+    """Minimal live dial_meta.json so the loader can cross-check the behaviour source-spine."""
+    lab.mkdir(parents=True, exist_ok=True)
+    (lab / DIAL_ARTIFACT_META_FILENAME).write_text(
+        json.dumps({"run_stamped_artifacts": {"episodes": episodes}}), encoding="utf-8"
+    )
 
 
 def _live_hash() -> str:
@@ -214,3 +244,44 @@ def test_loader_corrupt_frame_under_valid_meta_degrades(tmp_path) -> None:
     )
     # An artifact-level failure must read as CORRUPT (rebuild), NOT as a "no history" gap.
     assert out["behavior_status"] == "CORRUPT"
+
+
+def test_loader_pins_trend_to_default_horizon_independent_of_page(tmp_path) -> None:
+    lab = tmp_path / "lab"
+    _write_behaviour(lab, behavior_hash=_live_hash())
+    # Page look-ahead is 13w, but the trend card is LOCKED to the 8w default.
+    out = _load_behaviour(
+        _FakePaths(tmp_path), ticker="AEM", horizon=13, benchmark="GDX", scenario_bucket="gold_down"
+    )
+    assert out["behavior_status"] is None
+    assert out["trend_horizon"] == 8
+    # trend is the 8w DETERIORATING row, NOT the 13w IMPROVING row at the page horizon
+    assert out["behavior_trend"]["trend_label"] == "DETERIORATING"
+    assert out["behavior_trend"]["horizon_weeks"] == 8
+    # peer DOES follow the page look-ahead (13w), proving the two are decoupled
+    assert out["peer_down"]["peer_percentile_median"] == 41.0
+    assert out["peer_up"]["peer_percentile_median"] == 46.0
+
+
+def test_loader_source_spine_mismatch_fails_closed(tmp_path) -> None:
+    lab = tmp_path / "lab"
+    # Behaviour built from an OLD spine run; the dial has since been rebuilt (NEW episodes).
+    _write_behaviour(lab, behavior_hash=_live_hash(), source_episodes="dial_episodes_OLD.parquet")
+    _write_dial_meta(lab, episodes="dial_episodes_NEW.parquet")
+    out = _load_behaviour(
+        _FakePaths(tmp_path), ticker="AEM", horizon=8, benchmark="GDX", scenario_bucket="gold_down"
+    )
+    # Config hash is current, but the spine moved underneath — must degrade, never serve stale.
+    assert out["behavior_status"] == "STALE"
+
+
+def test_loader_source_spine_match_serves(tmp_path) -> None:
+    lab = tmp_path / "lab"
+    _write_behaviour(lab, behavior_hash=_live_hash(), source_episodes="dial_episodes_SAME.parquet")
+    _write_dial_meta(lab, episodes="dial_episodes_SAME.parquet")
+    out = _load_behaviour(
+        _FakePaths(tmp_path), ticker="AEM", horizon=8, benchmark="GDX", scenario_bucket="gold_down"
+    )
+    # Spine pointers agree -> the panel serves normally (the cross-check is not over-strict).
+    assert out["behavior_status"] is None
+    assert out["capture"]["archetype"] == "CONVEX"
