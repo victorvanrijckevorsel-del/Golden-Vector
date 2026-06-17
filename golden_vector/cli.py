@@ -4032,3 +4032,9 @@ def _render_refresh_alignment_line(
             f"(manifest={manifest_run_id}; {'; '.join(alignment_messages)})"
         )
     return "Refresh alignment:    OK"
+
+
+if __name__ == "__main__":
+    # Allow `python -m golden_vector.cli <command>` to actually run the CLI.
+    # Without this guard the module just imported and exited silently.
+    raise SystemExit(main())
