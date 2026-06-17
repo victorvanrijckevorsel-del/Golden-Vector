@@ -1637,11 +1637,16 @@ def _render_up_down_beta_panel(
 
 
 def _ordinal_percentile(percentile: float | None) -> str:
-    """Format a backend-resolved 0..100 percentile as 'Nth percentile' text."""
+    """Format a backend-resolved 0..100 percentile as '1st/2nd/3rd/Nth percentile' text."""
 
     if percentile is None:
         return "n/a"
-    return f"{int(round(percentile))}th percentile"
+    n = int(round(percentile))
+    if 10 <= (n % 100) <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix} percentile"
 
 
 def _subject_strip_label(ticker: str, beta: float | None, percentile: float | None) -> str:
@@ -1703,18 +1708,36 @@ def _render_beta_comparison_panel(
         benchmark_positions=[m.up_pos for m in comparison.benchmarks if m.up_pos is not None],
     )
 
-    if subject is not None and subject.down_percentile is not None:
-        lead = (
-            f"Over the {window_label} window, {escape(ticker)}'s down beta sits at the "
-            f"{_ordinal_percentile(subject.down_percentile)} of the {comparison.universe_down_n} "
-            "scored miners (higher = falls more with gold), and its up beta at the "
-            f"{_ordinal_percentile(subject.up_percentile)} of {comparison.universe_up_n}. "
-        )
-    else:
+    # Build the lead per side, so a stock with only one side available is described correctly
+    # (keying off the down side alone would falsely call an up-only stock "not in the universe").
+    if subject is None:
         lead = (
             f"{escape(ticker)} is not in the scored miner universe, so only the universe spread "
             f"and the GDX/GDXJ ticks are shown for the {window_label} window. "
         )
+    else:
+        side_phrases = []
+        if subject.down_percentile is not None:
+            side_phrases.append(
+                f"its down beta sits at the {_ordinal_percentile(subject.down_percentile)} of the "
+                f"{comparison.universe_down_n} scored miners (higher = falls more with gold)"
+            )
+        if subject.up_percentile is not None:
+            side_phrases.append(
+                f"its up beta at the {_ordinal_percentile(subject.up_percentile)} of "
+                f"{comparison.universe_up_n}"
+            )
+        if side_phrases:
+            lead = (
+                f"Over the {window_label} window, {escape(ticker)}'s "
+                + ", and ".join(side_phrases)
+                + ". "
+            )
+        else:
+            lead = (
+                f"{escape(ticker)}'s gold beta is not available for the {window_label} window; "
+                "the universe spread and GDX/GDXJ ticks are shown for context. "
+            )
     return (
         "<section class=\"panel nested-panel\">"
         f"<h3>{escape(title)}</h3>"

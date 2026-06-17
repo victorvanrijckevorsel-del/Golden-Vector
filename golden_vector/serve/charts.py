@@ -133,8 +133,11 @@ def _build_beta_strip_svg(
     track_y = 50
     span = width - (2 * padding)
 
+    # Positions are a trusted backend contract (the model's _position already clamps to 0..1); serve
+    # only maps fraction -> pixel. We do NOT re-clamp here, so an out-of-range backend bug is visible
+    # rather than silently hidden.
     def px(pos: float) -> float:
-        return padding + (min(1.0, max(0.0, pos)) * span)
+        return padding + (pos * span)
 
     low, high = domain
     parts = [

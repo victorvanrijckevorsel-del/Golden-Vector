@@ -134,11 +134,19 @@ def _benchmark_betas(
         or "benchmark_ticker" not in benchmark_df.columns
     ):
         return []
+    has_status = "benchmark_status" in benchmark_df.columns
     out: list[tuple[str, str, float | None, float | None]] = []
     for _, row in benchmark_df.iterrows():
         ticker = str(row.get("benchmark_ticker") or "").strip().upper()
         if not ticker:
             continue
+        # Degraded benchmarks (LOW_CONFIDENCE / UNAVAILABLE / MISSING_*) must NOT appear as clean
+        # comparables — exclude them rather than show a falsely-confident GDX/GDXJ marker. Treat a
+        # missing status column as OK (older artifacts) so the comparison still works.
+        if has_status:
+            status = str(row.get("benchmark_status") or "").strip().upper()
+            if status and status != "OK":
+                continue
         # Display the short ticker (GDX/GDXJ) on the strip; the full ETF name is too long.
         out.append(
             (

@@ -3,11 +3,15 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
+import pandas as pd
+import pytest
+
 from golden_vector.portfolio.snowball_apply import (
     SOURCE_HL_ISA,
     SOURCE_SNOWBALL_IBKR,
     HlIsaLot,
     build_combined_gold_lots,
+    parse_hl_isa_gold_lots,
 )
 from golden_vector.portfolio.snowball_import import SnowballDryRun, SnowballHolding
 
@@ -94,3 +98,50 @@ def test_build_combined_gold_lots_merges_srb_adds_isa_and_excludes_blocked():
     isa = next(lot for lot in altn if lot.source_name == SOURCE_HL_ISA)
     assert isa.buy_date == dt.date(2025, 12, 12)
     assert round(float(isa.cost_basis_total), 2) == 2492.46
+
+
+def test_hl_parser_fails_loud_when_a_sale_is_present(tmp_path):
+    """Gross-purchase cost basis would be overstated by a partial sale, so the parser must refuse
+    rather than silently miscount P&L (Codex MEDIUM; no FIFO/avg-cost accounting here)."""
+    cols = [f"c{i}" for i in range(12)]
+    rows = [
+        ["Testco plc"] + [None] * 11,  # name header -> sets current name
+        [None, None, 46000, None, None, "Purchase", None, 100.0, None, None, None, 1000.0],
+        [None, None, 46010, None, None, "Sale", None, None, 30.0, None, None, None],
+    ]
+    path = tmp_path / "hl.xlsx"
+    pd.DataFrame(rows, columns=cols).to_excel(path, sheet_name="Trade analysis ", index=False)
+    with pytest.raises(ValueError, match="contains a sale"):
+        parse_hl_isa_gold_lots(path, names={"Testco": "TEST.L"})
+
+
+def test_hl_parser_nets_pure_purchases_without_a_sale(tmp_path):
+    # Control: with no sale, the same shape parses cleanly to one lot.
+    cols = [f"c{i}" for i in range(12)]
+    rows = [
+        ["Testco plc"] + [None] * 11,
+        [None, None, 46000, None, None, "Purchase", None, 100.0, None, None, None, 1000.0],
+    ]
+    path = tmp_path / "hl.xlsx"
+    pd.DataFrame(rows, columns=cols).to_excel(path, sheet_name="Trade analysis ", index=False)
+    lots = parse_hl_isa_gold_lots(path, names={"Testco": "TEST.L"})
+    assert len(lots) == 1
+    assert lots[0].shares == 100.0
+    assert lots[0].cost_gbp == 1000.0
+
+
+def test_portfolio_schema_v8_contract_includes_new_columns():
+    from golden_vector.portfolio.benchmark_betas import BENCHMARK_BETA_COLUMNS
+    from golden_vector.portfolio.models import PORTFOLIO_SCHEMA_VERSION
+    from golden_vector.portfolio.pipeline import POSITION_COLUMNS
+
+    assert PORTFOLIO_SCHEMA_VERSION == 8
+    assert {"avg_cost_gbp", "pnl_fraction_gbp"} <= set(POSITION_COLUMNS)
+    assert {
+        "down_beta_6m",
+        "up_beta_6m",
+        "down_beta_12m",
+        "up_beta_12m",
+        "down_beta_3y",
+        "up_beta_3y",
+    } <= set(BENCHMARK_BETA_COLUMNS)

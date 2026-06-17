@@ -110,6 +110,15 @@ def parse_hl_isa_gold_lots(
         net = float(data["buy"]) - float(data["sell"])  # type: ignore[arg-type]
         if net <= 0:
             continue
+        # Fail loud rather than ship a wrong cost basis: this builder sums GROSS purchase cash, so a
+        # partial sale would leave the remaining shares with overstated cost (and understated P&L).
+        # We have no FIFO/avg-cost accounting here, so refuse instead of silently miscounting.
+        if float(data["sell"]) > 0:  # type: ignore[arg-type]
+            raise ValueError(
+                f"HL ISA history for {ticker} contains a sale; gross-purchase cost basis would be "
+                "overstated. Supply a current-holdings cost-basis export, or add FIFO/average-cost "
+                "sale accounting, before importing this name."
+            )
         dates = data["dates"]  # type: ignore[assignment]
         lots.append(
             HlIsaLot(

@@ -320,6 +320,51 @@ def test_up_down_panel_without_comparison_falls_back_to_stock_only():
     assert "<svg" in html  # still shows the stock's up/down bars
 
 
+def test_percentile_ordinals_render_st_nd_rd_not_th():
+    from golden_vector.serve.detail_panels import _ordinal_percentile
+
+    assert _ordinal_percentile(1.0) == "1st percentile"
+    assert _ordinal_percentile(2.0) == "2nd percentile"
+    assert _ordinal_percentile(3.0) == "3rd percentile"
+    assert _ordinal_percentile(11.0) == "11th percentile"  # teens stay 'th'
+    assert _ordinal_percentile(12.0) == "12th percentile"
+    assert _ordinal_percentile(13.0) == "13th percentile"
+    assert _ordinal_percentile(21.0) == "21st percentile"
+    assert _ordinal_percentile(60.0) == "60th percentile"
+    assert _ordinal_percentile(None) == "n/a"
+
+
+def test_degraded_benchmark_is_excluded_from_comparison():
+    """A GDX with a finite beta but a non-OK status must NOT show as a clean comparable
+    (degraded data is excluded, per the data-integrity rules)."""
+    uni = _universe()
+    bench = _benchmarks()
+    bench["benchmark_status"] = ["LOW_CONFIDENCE", "OK"]  # GDX degraded, GDXJ fine
+    c = resolve_beta_universe_comparison(ticker="SUBJ", window_id="6M", universe_df=uni, benchmark_df=bench)
+    labels = {m.label for m in c.benchmarks}
+    assert "GDX" not in labels  # degraded -> excluded
+    assert "GDXJ" in labels     # healthy control still shown
+
+
+def test_missing_benchmark_status_column_is_treated_as_ok():
+    # Older artifacts without the status column must still produce benchmark markers.
+    c = resolve_beta_universe_comparison(ticker="SUBJ", window_id="6M", universe_df=_universe(), benchmark_df=_benchmarks())
+    assert {m.label for m in c.benchmarks} == {"GDX", "GDXJ"}
+
+
+def test_subject_with_only_up_beta_is_not_called_absent():
+    """One-sided availability: down NA but up present must still describe the up rank, not claim the
+    ticker is missing from the universe (Codex LOW)."""
+    from golden_vector.serve.detail_panels import _render_beta_comparison_panel
+
+    uni = _universe()
+    uni.loc[uni["ticker"] == "SUBJ", "down_beta_6m"] = pd.NA  # only up beta survives for SUBJ
+    c = resolve_beta_universe_comparison(ticker="SUBJ", window_id="6M", universe_df=uni, benchmark_df=_benchmarks())
+    html = _render_beta_comparison_panel(c, ticker="SUBJ", active_window="6M")
+    assert "not in the scored miner universe" not in html
+    assert "up beta" in html and "percentile" in html
+
+
 def test_comparison_math_is_not_duplicated_in_the_serve_layer():
     """Canon per-surface guardrail: percentile / rank / axis-domain math for the comparison lives
     ONLY in the model module. The serve panel and chart builder must read resolved fields, never
@@ -331,5 +376,9 @@ def test_comparison_math_is_not_duplicated_in_the_serve_layer():
     for forbidden in ("np.percentile", ".rank(", ".quantile(", "np.sort", "def _percentile"):
         assert forbidden not in charts, f"charts.py recomputes comparison math: {forbidden}"
         assert forbidden not in panels, f"detail_panels.py recomputes comparison math: {forbidden}"
-    # The strip builder must not sort or min/max the universe (that is the model's job).
-    assert "sorted(" not in charts
+    # The strip builder must not clamp, sort, or min/max positions — those are the model's job, and
+    # re-clamping in serve would silently hide a backend bug (Codex MEDIUM). Scope the check to that
+    # function so the grouped-bar's legitimate value-scaling min/max is not falsely flagged.
+    strip_src = charts.split("def _build_beta_strip_svg", 1)[1].split("\ndef ", 1)[0]
+    for forbidden in ("min(", "max(", "sorted(", ".rank(", "quantile"):
+        assert forbidden not in strip_src, f"_build_beta_strip_svg recomputes position math: {forbidden}"

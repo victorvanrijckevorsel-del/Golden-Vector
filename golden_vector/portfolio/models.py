@@ -7,7 +7,10 @@ from datetime import date, datetime
 
 from golden_vector.contracts.config_models import SUPPORTED_CURRENCIES
 
-PORTFOLIO_SCHEMA_VERSION = 7
+# v8: positions gained avg_cost_gbp / pnl_fraction_gbp and benchmark betas gained per-window
+# columns (down/up_beta_6m/12m/3y). Bumped so stale v7 artifacts are flagged at inspection
+# rather than failing later on a missing-column read.
+PORTFOLIO_SCHEMA_VERSION = 8
 PORTFOLIO_STORE_SCHEMA_VERSION = 2
 ALLOWED_PORTFOLIO_CURRENCIES = tuple(sorted(SUPPORTED_CURRENCIES))
 MAX_LOT_NOTE_LENGTH = 500
