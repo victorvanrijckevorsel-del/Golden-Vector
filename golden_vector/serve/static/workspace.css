@@ -813,3 +813,21 @@
   background: #fbf9f4;
   border-radius: 6px;
 }
+/* Behaviour panel (Phase 4): symmetric capture / peer / behaviour-change cards. */
+.lab-behaviour h2 { margin-bottom: 10px; }
+.beh-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+.beh-card {
+  background: #fbf9f4;
+  border: 1px solid var(--line, #e4ddcd);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.beh-card h3 { margin: 0 0 8px; font-size: 0.98rem; }
+.beh-card p { margin: 6px 0; }
+.beh-badge { font-size: 1.05rem; }
+.beh-list { margin: 6px 0; padding-left: 18px; }
+.beh-list li { margin: 4px 0; }

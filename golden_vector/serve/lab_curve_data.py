@@ -46,6 +46,17 @@ from golden_vector.lab.conditional_dial import (
     default_gold_profile_config,
     dial_config_hash,
 )
+from golden_vector.lab.behavior_engine import (
+    BEHAVIOR_META_FILENAME,
+    CAPTURE_COLUMNS,
+    CAPTURE_FILENAME,
+    PEER_COLUMNS,
+    PEER_FILENAME,
+    TREND_COLUMNS,
+    TREND_FILENAME,
+    behavior_config_hash,
+    default_capture_behavior_config,
+)
 from golden_vector.lab.vintages import lab_dir
 
 _EPISODE_REQUIRED = [
@@ -122,6 +133,14 @@ class LabCurveData:
     cell: dict[str, Any] | None = None
     meta: dict[str, Any] = field(default_factory=dict)
     error_status: str | None = None
+    # --- Behaviour layer (optional enrichment; absent/stale degrades the PANEL only,
+    # never the page). All numbers/labels are build-computed; serve only echoes them. ---
+    behavior_status: str = "UNAVAILABLE"  # None = ok; MISSING / CORRUPT / STALE / UNAVAILABLE
+    capture_horizon: int = 13  # the horizon the archetype box is grounded at
+    capture: dict[str, Any] | None = None  # dial_capture row @ capture_horizon (gold frame)
+    peer_down: dict[str, Any] | None = None  # dial_peer snapshot @ page horizon, gold-down
+    peer_up: dict[str, Any] | None = None  # dial_peer snapshot @ page horizon, gold-up
+    behavior_trend: dict[str, Any] | None = None  # dial_behavior_trend @ horizon/benchmark/scenario
 
 
 def _read_meta(paths: ProjectPaths) -> tuple[dict[str, Any], str | None]:
@@ -198,6 +217,107 @@ def _config_is_current(meta: dict[str, Any]) -> bool:
 
 def _artifact_is_current(meta: dict[str, Any]) -> bool:
     return _schema_is_current(meta) and _config_is_current(meta)
+
+
+def _behavior_is_current(bmeta: dict[str, Any]) -> bool:
+    """The behaviour artifacts carry their OWN hash (separate from the dial spine) that
+    also folds in the spine schema — so a behaviour-threshold edit OR a spine rebuild
+    invalidates them. Recompute the expected hash from live config and compare."""
+
+    expected = behavior_config_hash(
+        default_capture_behavior_config(), spine_schema_version=DIAL_SCHEMA_VERSION
+    )
+    return (
+        str(bmeta.get("behavior_config_hash") or "") == expected
+        and int(bmeta.get("spine_schema_version") or 0) == DIAL_SCHEMA_VERSION
+    )
+
+
+def _row_for_keys(frame: pd.DataFrame | None, **keys: Any) -> dict[str, Any] | None:
+    """First row (as a dict) matching every (column == value) key, else None. A pure
+    selection — no aggregation or derivation."""
+
+    if frame is None or frame.empty:
+        return None
+    mask = pd.Series(True, index=frame.index)
+    for column, value in keys.items():
+        if isinstance(value, str):
+            mask &= frame[column].astype(str).str.upper() == value.upper()
+        else:
+            mask &= frame[column] == value
+    selected = frame.loc[mask]
+    if selected.empty:
+        return None
+    row = selected.iloc[0].to_dict()
+    # Normalize pandas NaN -> None (a persisted Python None round-trips as float nan,
+    # which is TRUTHY): so downstream `if x` / `x or "—"` treat an unconfirmed archetype
+    # / absent number as missing, never render the literal "nan" as a confident value.
+    return {k: (None if isinstance(v, float) and v != v else v) for k, v in row.items()}
+
+
+def _load_behaviour(
+    paths: ProjectPaths,
+    *,
+    ticker: str,
+    horizon: int,
+    benchmark: str,
+    scenario_bucket: str,
+) -> dict[str, Any]:
+    """Read-only load of the behaviour artifacts (capture / peer / trend) for one cell.
+
+    Optional enrichment: a missing/corrupt/stale behaviour set returns a status only, so
+    the page still renders. Every number/label is build-computed; serve only selects rows.
+    """
+
+    bmeta_path = lab_dir(paths) / BEHAVIOR_META_FILENAME
+    if not bmeta_path.exists():
+        return {"behavior_status": "MISSING"}
+    try:
+        bmeta = json.loads(bmeta_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"behavior_status": "CORRUPT"}
+    if not _behavior_is_current(bmeta):
+        return {"behavior_status": "STALE"}
+    capture_horizon = int(default_capture_behavior_config().default_capture_horizon)
+    cap_frame, cap_status = _load_frame(
+        paths,
+        filename=_current_artifact_filename(bmeta, "capture", CAPTURE_FILENAME),
+        required_columns=CAPTURE_COLUMNS,
+    )
+    peer_frame, peer_status = _load_frame(
+        paths,
+        filename=_current_artifact_filename(bmeta, "peer", PEER_FILENAME),
+        required_columns=PEER_COLUMNS,
+    )
+    trend_frame, trend_status = _load_frame(
+        paths,
+        filename=_current_artifact_filename(bmeta, "trend", TREND_FILENAME),
+        required_columns=TREND_COLUMNS,
+    )
+    if any(s is not None for s in (cap_status, peer_status, trend_status)):
+        # Meta is current but a behaviour frame is unreadable/missing/stale/empty on disk
+        # — an ARTIFACT failure, not an evidence gap. Degrade the whole panel (rebuild),
+        # never let a corrupt file read as "no history" (mirrors the CELLS_* fail-loud).
+        return {"behavior_status": "CORRUPT"}
+    return {
+        "behavior_status": None,
+        "capture_horizon": capture_horizon,
+        # capture/archetype live at the default capture horizon (gold frame, benchmark-free)
+        "capture": _row_for_keys(cap_frame, ticker=ticker, horizon_weeks=capture_horizon),
+        "peer_down": _row_for_keys(
+            peer_frame, ticker=ticker, horizon_weeks=horizon, direction="down"
+        ),
+        "peer_up": _row_for_keys(
+            peer_frame, ticker=ticker, horizon_weeks=horizon, direction="up"
+        ),
+        "behavior_trend": _row_for_keys(
+            trend_frame,
+            ticker=ticker,
+            horizon_weeks=horizon,
+            benchmark=benchmark,
+            gold_bucket=scenario_bucket,
+        ),
+    }
 
 
 def configured_benchmarks(meta: dict[str, Any]) -> list[str]:
@@ -385,6 +505,13 @@ def load_ticker_curve(
     label = _ticker_profile_label(
         profile_frame, ticker=ticker_u, horizon=horizon_i, benchmark=bench
     )
+    behaviour = _load_behaviour(
+        paths,
+        ticker=ticker_u,
+        horizon=horizon_i,
+        benchmark=bench,
+        scenario_bucket=str(scenario_bucket),
+    )
     return LabCurveData(
         available=bool(points) or cell is not None,
         ticker=ticker_u,
@@ -411,6 +538,12 @@ def load_ticker_curve(
         cell=cell,
         meta=meta,
         error_status=None if (points or cell is not None) else "MISSING",
+        behavior_status=behaviour["behavior_status"],
+        capture_horizon=int(behaviour.get("capture_horizon", 13)),
+        capture=behaviour.get("capture"),
+        peer_down=behaviour.get("peer_down"),
+        peer_up=behaviour.get("peer_up"),
+        behavior_trend=behaviour.get("behavior_trend"),
     )
 
 

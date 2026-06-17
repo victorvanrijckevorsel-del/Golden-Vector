@@ -331,6 +331,29 @@ def test_lab_serve_layer_has_no_dial_arithmetic() -> None:
             # behaviorally by the distribution-strip persisted-median test.
             "/ len(",
             "/len(",
+            # Behaviour layer (Phase 4): serve renders the persisted capture / peer /
+            # trend columns + labels; it must NEVER re-derive them. Forbid every
+            # behaviour COMPUTE entry point (the archetype/label decision needs the
+            # cutoffs + these helpers, none of which belong in serve). Column NAMES and
+            # the echoed enum strings are allowed — only the computation is banned.
+            "compute_capture_table",
+            "compute_peer_points",
+            "compute_peer_snapshot",
+            "compute_trend_table",
+            "build_capture",
+            "_archetype(",
+            "_capture_side(",
+            "_beat_label(",
+            "_alpha_label(",
+            "_trend_record(",
+            "mann_kendall(",
+            "theil_sen(",
+            "benjamini_hochberg(",
+            "two_proportion_p(",
+            "mde_proportion_pp(",
+            "peer_percentile(",
+            "decay_weights(",
+            "decay_effective_n(",
         ):
             assert forbidden not in source, f"{module}: {forbidden}"
 

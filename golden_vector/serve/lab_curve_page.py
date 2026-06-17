@@ -33,6 +33,180 @@ _BENCHMARK_BLURB = {
     "GDXJ": "GDXJ — the junior-miner ETF (smaller, more volatile names).",
 }
 
+# Friendly display text for the build-decided archetype codes (display constants — serve
+# echoes the persisted `archetype` string; it never re-derives the box).
+_ARCHETYPE_BLURB = {
+    "CONVEX": "cushioned when gold falls, explosive when it rises (the dream)",
+    "HEDGE": "holds up when gold falls; lags rallies",
+    "TORQUE": "rips when gold rises; painful when it falls",
+    "DEAD_WEIGHT": "lags both ways",
+}
+
+
+def _beh_x(value: Any) -> str:
+    """Format a capture ratio as a multiple, e.g. 0.50× / 2.00×; '—' if missing."""
+    return f"{float(value):.2f}×" if value is not None and value == value else "—"
+
+
+def _beh_pct(value: Any) -> str:
+    """Format a fraction as a whole percent for display; '—' if missing."""
+    return f"{float(value) * 100:.0f}%" if value is not None and value == value else "—"
+
+
+def _beh_int(value: Any) -> str:
+    return f"{float(value):.0f}" if value is not None and value == value else "—"
+
+
+def _beh_signed(value: Any) -> str:
+    """Signed plain number (convexity is a DIFFERENCE of two multiples, not a multiple)."""
+    return f"{float(value):+.2f}" if value is not None and value == value else "—"
+
+
+def _present(value: Any) -> bool:
+    """A persisted label is present only if it's not None and not NaN (a persisted None
+    round-trips as truthy float nan) and not blank — so an unconfirmed/absent label is
+    never rendered as a settled value."""
+    if value is None or (isinstance(value, float) and value != value):
+        return False
+    return str(value).strip() != "" and str(value).lower() != "nan"
+
+
+def _render_behaviour(curve: LabCurveData) -> str:
+    """The symmetric Behaviour panel: capture/archetype (vs gold), peer rank (vs miners),
+    and behaviour-change (trend) for the selected scenario. Pure render of build-computed,
+    persisted fields — no arithmetic, no re-derivation. Absent/stale degrades the PANEL."""
+
+    status = curve.behavior_status
+    if status is not None:
+        msg = {
+            "MISSING": "Behaviour layer not built yet. Rebuild: "
+            "<code>python -m golden_vector.lab.behavior_engine</code>.",
+            "CORRUPT": "Behaviour artifacts are unreadable. Rebuild the behaviour layer.",
+            "STALE": "Behaviour artifacts are stale (config or spine changed). Rebuild "
+            "the behaviour layer.",
+        }.get(str(status), "Behaviour layer unavailable.")
+        return (
+            "<section class=\"panel\"><h2>Behaviour</h2>"
+            f"<p class=\"hint\">{msg}</p></section>"
+        )
+
+    cards: list[str] = []
+
+    # --- Capture / archetype (vs GOLD, at the default capture horizon) ---
+    cap = curve.capture
+    cap_h = int(curve.capture_horizon)
+    if cap is not None:
+        confirmed = cap.get("archetype")
+        all_rows = cap.get("archetype_all_rows")
+        if _present(confirmed):
+            blurb = _ARCHETYPE_BLURB.get(str(confirmed), "")
+            badge = f"<strong>{escape(str(confirmed))}</strong> — {escape(blurb)}"
+        elif _present(all_rows):
+            badge = (
+                f"{escape(str(all_rows))} <span class=\"hint\">(not confirmed by the "
+                "independent-episode cross-check)</span>"
+            )
+        else:
+            badge = "<span class=\"hint\">not enough independent history to place a box</span>"
+        cstatus = str(cap.get("capture_status") or "")
+        thin_note = (
+            f"<p class=\"hint\">⚠ a side is too thin or invalid to rely on ({escape(cstatus)}) "
+            "— read the multiples with caution.</p>"
+            if cstatus and cstatus != "OK"
+            else ""
+        )
+        cards.append(
+            "<div class=\"beh-card\">"
+            f"<h3>Capture vs gold ({cap_h}-week)</h3>"
+            f"<p class=\"beh-badge\">{badge}</p>"
+            "<p>Takes <strong>" + _beh_x(cap.get("down_capture_mean")) + "</strong> of "
+            "gold's <em>fall</em> · <strong>" + _beh_x(cap.get("up_capture_mean"))
+            + "</strong> of its <em>rise</em> · convexity <strong>"
+            + _beh_signed(cap.get("convexity")) + "</strong></p>"
+            + thin_note
+            + "<p class=\"hint\">Lower fall-capture = better hedge; higher rise-capture = "
+            "more torque; convexity &gt; 0 = the convex sweet spot. The box is grounded at "
+            f"the {cap_h}-week horizon, independent of the look-ahead above.</p>"
+            "</div>"
+        )
+    else:
+        cards.append(
+            "<div class=\"beh-card\"><h3>Capture vs gold</h3>"
+            f"<p class=\"hint\">No capture history for {escape(curve.ticker)} at "
+            f"{cap_h} weeks.</p></div>"
+        )
+
+    # --- Peer rank (vs OTHER miners), both directions ---
+    def _peer_line(label: str, row: dict[str, Any] | None) -> str:
+        if row is None:
+            return f"<li>{escape(label)}: <span class=\"hint\">no usable peer pool</span></li>"
+        if str(row.get("peer_status")) != "OK":
+            return (
+                f"<li>{escape(label)}: <span class=\"hint\">too few independent episodes "
+                "to rank confidently</span></li>"
+            )
+        return (
+            f"<li>{escape(label)}: typically better than "
+            f"<strong>{_beh_int(row.get('peer_percentile_median'))}%</strong> of miners "
+            f"(top-quartile {_beh_pct(row.get('top_quartile_rate'))} of the time, "
+            f"~{_beh_int(row.get('peer_effective_n'))} independent episodes)</li>"
+        )
+
+    cards.append(
+        "<div class=\"beh-card\">"
+        f"<h3>Vs other miners ({int(curve.horizon)}-week)</h3>"
+        "<ul class=\"beh-list\">"
+        + _peer_line("When gold fell", curve.peer_down)
+        + _peer_line("When gold rose", curve.peer_up)
+        + "</ul>"
+        "<p class=\"hint\">Was it one of the better miners to own in that move? "
+        "Point-in-time, survivor-only.</p>"
+        "</div>"
+    )
+
+    # --- Behaviour change (trend) for the SELECTED scenario ---
+    tr = curve.behavior_trend
+    scen = escape(curve.scenario_label or curve.scenario_bucket)
+    if tr is not None and str(tr.get("trend_status")) == "OK":
+        beat = escape(str(tr.get("trend_label") or "—"))
+        alpha = escape(str(tr.get("alpha_trend_label") or "—"))
+        trend_html = (
+            f"<p>Beat-rate: <strong>{beat}</strong> "
+            f"(recent {_beh_pct(tr.get('recent_p_beat_raw'))} vs older "
+            f"{_beh_pct(tr.get('older_p_beat_raw'))} beat {escape(curve.benchmark)}; "
+            f"could only catch a change &gt; {_beh_int(tr.get('mde_80pct_pp'))}pp)</p>"
+            f"<p>Win-size: <strong>{alpha}</strong> "
+            "<span class=\"hint\">(leading indicator)</span></p>"
+        )
+    elif tr is not None:
+        trend_html = (
+            "<p class=\"hint\">Not enough independent recent vs older episodes in this "
+            "scenario to judge a change (the honest default).</p>"
+        )
+    else:
+        trend_html = (
+            f"<p class=\"hint\">No behaviour-change record for this scenario at "
+            f"{int(curve.horizon)} weeks.</p>"
+        )
+    cards.append(
+        "<div class=\"beh-card\">"
+        f"<h3>Behaviour change — {scen}</h3>"
+        + trend_html
+        + "<p class=\"hint\">Recent vs older split on independent episodes; a confident "
+        "label survives a per-scenario false-discovery correction. NO_CHANGE_DETECTED "
+        "means undetected, not proven stable.</p>"
+        "</div>"
+    )
+
+    return (
+        "<section class=\"panel lab-behaviour\">"
+        "<h2>Behaviour — both directions</h2>"
+        "<div class=\"beh-grid\">" + "".join(cards) + "</div>"
+        "<p class=\"hint\">Exploratory, survivor-only (failed miners absent) — describes "
+        "the past, not a forecast.</p>"
+        "</section>"
+    )
+
 
 def _render_lab_curve_page(curve: LabCurveData) -> str:
     title = f"{curve.ticker or 'Ticker'} relative performance - Golden Vector"
@@ -75,6 +249,7 @@ def _render_lab_curve_page(curve: LabCurveData) -> str:
 
     body.append(_render_controls(curve))
     body.append(_render_profile(curve))  # hero: behaviour across all gold scenarios
+    body.append(_render_behaviour(curve))  # symmetric capture / peer / behaviour-change
     body.append(_render_headline(curve))
     body.append(_render_winrate_bar(curve))  # clear within-scenario summary
     body.append(_render_distribution(curve))  # spread of outcomes (magnitude)
