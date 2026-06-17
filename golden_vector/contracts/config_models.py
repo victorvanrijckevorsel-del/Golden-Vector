@@ -736,6 +736,7 @@ class CaptureBehaviorConfig(StrictConfigModel):
 
     # --- Peer ranking (Phase 2) ---
     min_peer_count: int = 20
+    min_peer_effective_n: float = 6.0  # peer-snapshot pool-depth floor (separate from the capture floor)
     top_peer_percentile_cutoff: float = 75.0
     bottom_peer_percentile_cutoff: float = 25.0
 
@@ -743,6 +744,7 @@ class CaptureBehaviorConfig(StrictConfigModel):
         "hedge_down_capture_max",
         "torque_up_capture_min",
         "min_direction_effective_n",
+        "min_peer_effective_n",
         "decay_half_life_episodes",
         "min_all_effective_n",
         "min_recent_effective_n",

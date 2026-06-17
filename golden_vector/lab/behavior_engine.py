@@ -41,6 +41,7 @@ from golden_vector.lab.conditional_dial import (
     DOWN_BUCKETS,
     UP_BUCKETS,
 )
+from golden_vector.lab.statistics import peer_percentile
 from golden_vector.lab.walk_forward import effective_n
 
 BEHAVIOR_SIGNAL_ID = "capture_behavior_engine"
@@ -93,6 +94,48 @@ CAPTURE_COLUMNS = [
     "archetype_anchor_agrees",
     "archetype_confidence",
     "capture_status",
+    "caveat",
+]
+
+# --- Peer ranking (Phase 2) ---
+PEER_POINTS_ARTIFACT = "dial_peer_points"
+PEER_POINTS_FILENAME = "dial_peer_points_latest.parquet"
+PEER_ARTIFACT = "dial_peer"
+PEER_FILENAME = "dial_peer_latest.parquet"
+PEER_STATUSES = ("OK", "THIN_PEER_POOL")
+PEER_DIRECTIONS = ("down", "up")
+PEER_CAVEAT = (
+    "peer percentile ranks the miner's OWN forward return against every other miner "
+    "with valid data that same week (100 = best, 0 = worst); point-in-time membership, "
+    "survivor-only universe (failed miners are absent from old pools, so historical "
+    "ranks read optimistically), exploratory — not a prediction. Peer TREND is deferred "
+    "until dead-miner records exist."
+)
+PEER_POINT_COLUMNS = [
+    "schema_version",
+    "behavior_config_hash",
+    "ticker",
+    "horizon_weeks",
+    "gold_bucket",
+    "week_period",
+    "peer_count",
+    "peer_rank_1_best",
+    "peer_percentile",
+    "point_status",
+]
+PEER_COLUMNS = [
+    "schema_version",
+    "behavior_config_hash",
+    "ticker",
+    "horizon_weeks",
+    "direction",
+    "peer_event_n",
+    "peer_effective_n",
+    "peer_percentile_median",
+    "top_quartile_rate",
+    "bottom_quartile_rate",
+    "peer_status",
+    "survivor_universe",
     "caveat",
 ]
 
@@ -373,6 +416,133 @@ def capture_distribution(table: pd.DataFrame, *, horizon: int) -> dict[str, dict
     return out
 
 
+def compute_peer_points(episodes: pd.DataFrame, *, behavior_hash: str) -> pd.DataFrame:
+    """Per-episode cross-sectional peer rank (benchmark-independent, point-in-time).
+
+    For each (week, horizon, gold_bucket) the miner's OWN forward return is ranked
+    against EVERY other miner that had valid data that same week — 100 = best, 0 = worst.
+    Benchmark-INDEPENDENT: the ranked value (``stock_fwd_simple``) does not depend on
+    GDX vs GDXJ, so it is computed once on the GDX rows (the widest cross-section), never
+    twice per benchmark (Codex review #1). RAW: ``peer_percentile`` is defined whenever
+    there are >= 2 valid peers and is NEVER nulled by a display threshold — the
+    ``min_peer_count`` cut lives only in the snapshot (Codex review #3). Flat-gold weeks
+    are excluded — peer scouting is a gold-down / gold-up question.
+    """
+
+    required = {
+        "ticker",
+        "horizon_weeks",
+        "gold_bucket",
+        "week_period",
+        "stock_fwd_simple",
+    }
+    missing = required - set(episodes.columns)
+    if missing:
+        raise ValueError(
+            f"dial_peer build needs episode columns {sorted(missing)} "
+            "(rebuild the dial spine to schema v4)."
+        )
+    directional = set(DOWN_BUCKETS) | set(UP_BUCKETS)
+    base = episodes[episodes["gold_bucket"].isin(directional)].copy()
+    base["stock_fwd_simple"] = pd.to_numeric(base["stock_fwd_simple"], errors="coerce")
+    base = base.dropna(subset=["stock_fwd_simple"])
+    # Benchmark-INDEPENDENT union cross-section (Codex review #1): stock_fwd_simple is the
+    # miner's OWN forward return (identical across benchmarks), so collapse to one row per
+    # (ticker, week, horizon, bucket) regardless of which benchmark carried it — a
+    # GDXJ-only week is included, never silently dropped by a GDX-only filter.
+    base = base.drop_duplicates(
+        subset=["ticker", "week_period", "horizon_weeks", "gold_bucket"]
+    )
+    if base.empty:
+        return pd.DataFrame(columns=PEER_POINT_COLUMNS)
+    keys = ["week_period", "horizon_weeks", "gold_bucket"]
+    grouped = base.groupby(keys)["stock_fwd_simple"]
+    base["peer_count"] = grouped.transform("count").astype(int)
+    base["peer_rank_1_best"] = grouped.rank(ascending=False, method="average").round(2)
+    # peer_percentile via the ONE shared primitive (NaN for < 2 peers, ties averaged).
+    base["peer_percentile"] = (
+        base.groupby(keys)["stock_fwd_simple"]
+        .transform(lambda s: peer_percentile(s.to_numpy()))
+        .round(2)
+    )
+    # A lone name has no peer pool: abstain UNIFORMLY across both rank columns
+    # (peer_percentile is already NaN from the primitive).
+    base.loc[base["peer_count"] < 2, "peer_rank_1_best"] = pd.NA
+    base["point_status"] = base["peer_count"].map(
+        lambda c: "OK" if c >= 2 else "SINGLETON"
+    )
+    base["schema_version"] = BEHAVIOR_SCHEMA_VERSION
+    base["behavior_config_hash"] = behavior_hash
+    return base[PEER_POINT_COLUMNS].reset_index(drop=True)
+
+
+def compute_peer_snapshot(
+    points: pd.DataFrame,
+    *,
+    behavior_hash: str,
+    config: CaptureBehaviorConfig,
+) -> pd.DataFrame:
+    """Per (ticker, horizon, direction) peer SNAPSHOT — "was it one of the best miners
+    to own when gold fell / rose?"
+
+    Median peer percentile + top/bottom-quartile rates over events with a USABLE peer
+    pool (``peer_count >= min_peer_count`` — the display threshold, applied here, never
+    in the raw points). ``peer_effective_n = events / horizon`` deflates the overlapping
+    weekly events; below the per-side floor the snapshot is flagged ``THIN_PEER_POOL``.
+    NO peer trend in v1 — deferred until dead-miner records exist (survivorship would
+    manufacture a fake "improving").
+    """
+
+    if points.empty:
+        return pd.DataFrame(columns=PEER_COLUMNS)
+    down, up = set(DOWN_BUCKETS), set(UP_BUCKETS)
+    pts = points.copy()
+    pts["direction"] = pts["gold_bucket"].map(
+        lambda b: "down" if b in down else ("up" if b in up else None)
+    )
+    pts = pts[pts["direction"].notna()]
+    records: list[dict[str, object]] = []
+    for (ticker, horizon, direction), group in pts.groupby(
+        ["ticker", "horizon_weeks", "direction"], sort=True
+    ):
+        h = int(horizon)
+        usable = group[
+            (group["peer_count"] >= config.min_peer_count)
+            & group["peer_percentile"].notna()
+        ]
+        event_n = int(len(usable))
+        eff_n = effective_n(event_n, label_horizon_weeks=h) if event_n else 0.0
+        if event_n == 0:
+            median = top = bottom = None
+            status = "THIN_PEER_POOL"
+        else:
+            pct = usable["peer_percentile"].astype(float)
+            median = round(float(pct.median()), 2)
+            top = round(float((pct >= config.top_peer_percentile_cutoff).mean()), 4)
+            bottom = round(float((pct <= config.bottom_peer_percentile_cutoff).mean()), 4)
+            status = "OK" if eff_n >= config.min_peer_effective_n else "THIN_PEER_POOL"
+        records.append(
+            {
+                "schema_version": BEHAVIOR_SCHEMA_VERSION,
+                "behavior_config_hash": behavior_hash,
+                "ticker": str(ticker),
+                "horizon_weeks": h,
+                "direction": str(direction),
+                "peer_event_n": event_n,
+                "peer_effective_n": round(float(eff_n), 2),
+                "peer_percentile_median": median,
+                "top_quartile_rate": top,
+                "bottom_quartile_rate": bottom,
+                "peer_status": status,
+                "survivor_universe": True,
+                "caveat": PEER_CAVEAT,
+            }
+        )
+    if not records:
+        return pd.DataFrame(columns=PEER_COLUMNS)
+    return pd.DataFrame.from_records(records, columns=PEER_COLUMNS)
+
+
 def build_capture(
     episodes: pd.DataFrame,
     *,
@@ -431,6 +601,19 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
     write_parquet_atomic(table, target_dir / stamped_name)
     write_parquet_atomic(table, target_dir / CAPTURE_FILENAME)
 
+    # Peer ranking (Phase 2) — benchmark-independent per-episode ranks + per-direction
+    # snapshot, derived from the SAME spine under the SAME behaviour hash.
+    t_peer = time.perf_counter()
+    peer_points = compute_peer_points(episodes, behavior_hash=chash)
+    peer_snapshot = compute_peer_snapshot(peer_points, behavior_hash=chash, config=cfg)
+    peer_seconds = round(time.perf_counter() - t_peer, 3)
+    peer_points_name = f"{PEER_POINTS_ARTIFACT}_{stamp}.parquet"
+    peer_name = f"{PEER_ARTIFACT}_{stamp}.parquet"
+    write_parquet_atomic(peer_points, target_dir / peer_points_name)
+    write_parquet_atomic(peer_points, target_dir / PEER_POINTS_FILENAME)
+    write_parquet_atomic(peer_snapshot, target_dir / peer_name)
+    write_parquet_atomic(peer_snapshot, target_dir / PEER_FILENAME)
+
     status_counts = (
         table["capture_status"].value_counts().to_dict() if not table.empty else {}
     )
@@ -447,14 +630,36 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
         "signal_id": BEHAVIOR_SIGNAL_ID,
         "source_benchmark": CAPTURE_SOURCE_BENCHMARK,
         "horizons_weeks": horizon_list,
-        "run_stamped_artifacts": {"capture": stamped_name},
-        "latest_aliases": {"capture": CAPTURE_FILENAME},
-        "stage_timings": {"read_episodes_seconds": read_seconds, "build_capture_seconds": build_seconds},
+        "run_stamped_artifacts": {
+            "capture": stamped_name,
+            "peer_points": peer_points_name,
+            "peer": peer_name,
+        },
+        "latest_aliases": {
+            "capture": CAPTURE_FILENAME,
+            "peer_points": PEER_POINTS_FILENAME,
+            "peer": PEER_FILENAME,
+        },
+        "stage_timings": {
+            "read_episodes_seconds": read_seconds,
+            "build_capture_seconds": build_seconds,
+            "build_peer_seconds": peer_seconds,
+        },
         "rows": int(len(table)),
         "capture_status_counts": {str(k): int(v) for k, v in status_counts.items()},
         "archetype_counts": {str(k): int(v) for k, v in archetype_counts.items()},
         "capture_distribution_default_horizon": capture_distribution(
             table, horizon=cfg.default_capture_horizon
+        ),
+        "peer_points_rows": int(len(peer_points)),
+        "peer_rows": int(len(peer_snapshot)),
+        "peer_status_counts": (
+            {
+                str(k): int(v)
+                for k, v in peer_snapshot["peer_status"].value_counts().to_dict().items()
+            }
+            if not peer_snapshot.empty
+            else {}
         ),
         "config": cfg.model_dump(),
         "caveat": CAPTURE_CAVEAT,

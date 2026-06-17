@@ -31,5 +31,6 @@ default_trend_horizon: 8
 
 # --- Peer ranking (Phase 2) ---
 min_peer_count: 20
+min_peer_effective_n: 6.0  # peer-snapshot pool-depth floor (separate from the capture per-side floor)
 top_peer_percentile_cutoff: 75.0
 bottom_peer_percentile_cutoff: 25.0
