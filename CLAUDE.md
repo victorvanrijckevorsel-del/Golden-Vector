@@ -3,6 +3,9 @@
 ## About the user
 Emanuel is a beginner founder. Explain decisions in plain English, avoid jargon. He learns fast but prefers understanding WHY before jumping into implementation. He values low-interruption execution — do the work, show results, don't over-ask. He expects structured output (tables, summaries, test results). Git user is Victor Van Rijckevorsel.
 
+## Rule 
+please call me Victor everytime that you talk to me 
+
 ## Execution mode
 Use low-interruption execution mode.
 
