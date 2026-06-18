@@ -18,6 +18,7 @@ from html import escape
 from typing import Any
 from urllib.parse import quote
 
+from golden_vector.common.numeric import is_missing
 from golden_vector.lab.conditional_dial import BUCKET_SHORT_LABELS
 from golden_vector.serve.column_help import help_term
 from golden_vector.serve.lab_curve_data import LabCurveData
@@ -45,30 +46,41 @@ _ARCHETYPE_BLURB = {
 
 def _beh_x(value: Any) -> str:
     """Format a capture ratio as a multiple, e.g. 0.50× / 2.00×; '—' if missing."""
-    return f"{float(value):.2f}×" if value is not None and value == value else "—"
+    return "—" if is_missing(value) else f"{float(value):.2f}×"
 
 
 def _beh_pct(value: Any) -> str:
     """Format a fraction as a whole percent for display; '—' if missing."""
-    return f"{float(value) * 100:.0f}%" if value is not None and value == value else "—"
+    return "—" if is_missing(value) else f"{float(value) * 100:.0f}%"
 
 
 def _beh_int(value: Any) -> str:
-    return f"{float(value):.0f}" if value is not None and value == value else "—"
+    return "—" if is_missing(value) else f"{float(value):.0f}"
 
 
 def _beh_signed(value: Any) -> str:
     """Signed plain number (convexity is a DIFFERENCE of two multiples, not a multiple)."""
-    return f"{float(value):+.2f}" if value is not None and value == value else "—"
+    return "—" if is_missing(value) else f"{float(value):+.2f}"
+
+
+def _beh_dec(value: Any) -> str:
+    """Two-decimal number (e.g. an FDR q-value); '—' if missing."""
+    return "—" if is_missing(value) else f"{float(value):.2f}"
 
 
 def _present(value: Any) -> bool:
     """A persisted label is present only if it's not None and not NaN (a persisted None
     round-trips as truthy float nan) and not blank — so an unconfirmed/absent label is
-    never rendered as a settled value."""
-    if value is None or (isinstance(value, float) and value != value):
+    never rendered as a settled value. Uses the shared missing-value check (one copy)."""
+    if is_missing(value):
         return False
     return str(value).strip() != "" and str(value).lower() != "nan"
+
+
+def _beh_label(value: Any) -> str:
+    """Render a persisted enum label safely: the label text, or an em dash when it is
+    absent/NaN — never literal 'nan' (mirrors the archetype guard for trend labels)."""
+    return escape(str(value)) if _present(value) else "—"
 
 
 def _render_behaviour(curve: LabCurveData) -> str:
@@ -84,10 +96,15 @@ def _render_behaviour(curve: LabCurveData) -> str:
             "CORRUPT": "Behaviour artifacts are unreadable. Rebuild the behaviour layer.",
             "STALE": "Behaviour artifacts are stale (config or spine changed). Rebuild "
             "the behaviour layer.",
+            "EMPTY": "Behaviour layer built but has no rows yet. Rebuild the behaviour layer.",
         }.get(str(status), "Behaviour layer unavailable.")
+        # Name the failing artifact when serve isolated it, so an operator knows which
+        # frame to look at (capture / peer / trend) rather than rebuilding blind.
+        artifact = getattr(curve, "behavior_artifact", None)
+        detail = f" (<code>{escape(str(artifact))}</code> frame)" if artifact else ""
         return (
             "<section class=\"panel\"><h2>Behaviour</h2>"
-            f"<p class=\"hint\">{msg}</p></section>"
+            f"<p class=\"hint\">{msg}{detail}</p></section>"
         )
 
     cards: list[str] = []
@@ -123,6 +140,9 @@ def _render_behaviour(curve: LabCurveData) -> str:
             "gold's <em>fall</em> · <strong>" + _beh_x(cap.get("up_capture_mean"))
             + "</strong> of its <em>rise</em> · convexity <strong>"
             + _beh_signed(cap.get("convexity")) + "</strong></p>"
+            + "<p class=\"hint\">Evidence: ~" + _beh_int(cap.get("down_effective_n"))
+            + " independent fall episodes · ~" + _beh_int(cap.get("up_effective_n"))
+            + " rise episodes.</p>"
             + thin_note
             + "<p class=\"hint\">Lower fall-capture = better hedge; higher rise-capture = "
             "more torque; convexity &gt; 0 = the convex sweet spot. The box is grounded at "
@@ -159,8 +179,8 @@ def _render_behaviour(curve: LabCurveData) -> str:
         + _peer_line("When gold fell", curve.peer_down)
         + _peer_line("When gold rose", curve.peer_up)
         + "</ul>"
-        "<p class=\"hint\">Was it one of the better miners to own in that move? "
-        "Point-in-time, survivor-only.</p>"
+        "<p class=\"hint\">Was it historically one of the stronger miners in that move? "
+        "Point-in-time, survivor-only — describes the past, not a recommendation.</p>"
         "</div>"
     )
 
@@ -168,15 +188,19 @@ def _render_behaviour(curve: LabCurveData) -> str:
     tr = curve.behavior_trend
     scen = escape(curve.scenario_label or curve.scenario_bucket)
     if tr is not None and str(tr.get("trend_status")) == "OK":
-        beat = escape(str(tr.get("trend_label") or "—"))
-        alpha = escape(str(tr.get("alpha_trend_label") or "—"))
+        beat = _beh_label(tr.get("trend_label"))
+        alpha = _beh_label(tr.get("alpha_trend_label"))
         trend_html = (
             f"<p>Beat-rate: <strong>{beat}</strong> "
-            f"(recent {_beh_pct(tr.get('recent_p_beat_raw'))} vs older "
-            f"{_beh_pct(tr.get('older_p_beat_raw'))} beat {escape(curve.benchmark)}; "
+            f"(recent {_beh_pct(tr.get('recent_p_beat_raw'))} of "
+            f"{_beh_int(tr.get('recent_anchor_n'))} vs older "
+            f"{_beh_pct(tr.get('older_p_beat_raw'))} of {_beh_int(tr.get('older_anchor_n'))} "
+            f"independent episodes beat {escape(curve.benchmark)}; "
             f"could only catch a change &gt; {_beh_int(tr.get('mde_80pct_pp'))}pp)</p>"
             f"<p>Win-size: <strong>{alpha}</strong> "
-            "<span class=\"hint\">(leading indicator)</span></p>"
+            "<span class=\"hint\">(descriptive trend in past win size)</span></p>"
+            f"<p class=\"hint\">FDR q={_beh_dec(tr.get('trend_q_value'))} within a family of "
+            f"{_beh_int(tr.get('trend_fdr_family_size'))} miners tested in this scenario.</p>"
         )
     elif tr is not None:
         trend_html = (
@@ -193,9 +217,10 @@ def _render_behaviour(curve: LabCurveData) -> str:
         f"<h3>Behaviour change — {scen} ({int(curve.trend_horizon)}-week)</h3>"
         + trend_html
         + "<p class=\"hint\">Recent vs older split on independent episodes; the bold label "
-        "is decided on peer-adjusted rates and must survive a per-scenario false-discovery "
-        "correction. NO_CHANGE_DETECTED means undetected, not proven stable. Read at the "
-        "8-week horizon (the honest trend default), independent of the look-ahead above.</p>"
+        "is decided on BOTH the raw and the peer-adjusted recent-vs-older rates and must "
+        "survive a per-scenario false-discovery correction. NO_CHANGE_DETECTED means "
+        f"undetected, not proven stable. Read at the {int(curve.trend_horizon)}-week horizon "
+        "(the honest trend default), independent of the look-ahead above.</p>"
         "</div>"
     )
 

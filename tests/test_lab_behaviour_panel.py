@@ -45,6 +45,7 @@ def test_panel_renders_capture_peer_trend_with_correct_placement() -> None:
             "archetype": "CONVEX", "archetype_all_rows": "CONVEX",
             "archetype_confidence": "confirmed", "capture_status": "OK",
             "down_capture_mean": 0.5, "up_capture_mean": 2.0, "convexity": 1.5,
+            "down_effective_n": 7.0, "up_effective_n": 12.0,
         },
         peer_down={
             "direction": "down", "peer_status": "OK", "peer_percentile_median": 70.0,
@@ -57,6 +58,8 @@ def test_panel_renders_capture_peer_trend_with_correct_placement() -> None:
         behavior_trend={
             "trend_status": "OK", "trend_label": "DETERIORATING",
             "recent_p_beat_raw": 0.2, "older_p_beat_raw": 0.8, "mde_80pct_pp": 40.0,
+            "recent_anchor_n": 8, "older_anchor_n": 9,
+            "trend_q_value": 0.05, "trend_fdr_family_size": 12,
             "alpha_trend_label": "ALPHA_DETERIORATING",
         },
     )
@@ -66,11 +69,18 @@ def test_panel_renders_capture_peer_trend_with_correct_placement() -> None:
     assert "<strong>0.50×</strong> of gold's <em>fall</em>" in html
     assert "<strong>2.00×</strong> of its <em>rise</em>" in html
     assert "convexity <strong>+1.50</strong>" in html  # signed gap, no '×'
+    # F8: capture card shows the effective-N evidence basis (down 7, up 12)
+    assert "~7 independent fall episodes" in html and "~12 rise episodes" in html
     # POSITIONAL peers: 70% on the "fell" line, 55% on the "rose" line
     assert "When gold fell: typically better than <strong>70%</strong>" in html
     assert "When gold rose: typically better than <strong>55%</strong>" in html
     assert "independent episodes" in html  # effective N, not the raw event count
     assert "DETERIORATING" in html and "ALPHA_DETERIORATING" in html
+    # F9: trend card shows the recent/older anchor counts + the FDR q / family-size basis
+    assert "recent 20% of 8 vs older 80% of 9" in html
+    assert "FDR q=0.05" in html and "family of 12" in html
+    # F7: descriptive (not predictive) wording for the win-size trend
+    assert "leading indicator" not in html and "descriptive trend" in html
     assert "13-week" in html and "not a forecast" in html
 
 
@@ -242,8 +252,10 @@ def test_loader_corrupt_frame_under_valid_meta_degrades(tmp_path) -> None:
     out = _load_behaviour(
         _FakePaths(tmp_path), ticker="AEM", horizon=8, benchmark="GDX", scenario_bucket="gold_down"
     )
-    # An artifact-level failure must read as CORRUPT (rebuild), NOT as a "no history" gap.
+    # An artifact-level failure must read as CORRUPT (rebuild), NOT as a "no history" gap,
+    # and name the failing artifact (F10) instead of collapsing the cause.
     assert out["behavior_status"] == "CORRUPT"
+    assert out["behavior_artifact"] == "capture"
 
 
 def test_loader_pins_trend_to_default_horizon_independent_of_page(tmp_path) -> None:
@@ -285,3 +297,84 @@ def test_loader_source_spine_match_serves(tmp_path) -> None:
     # Spine pointers agree -> the panel serves normally (the cross-check is not over-strict).
     assert out["behavior_status"] is None
     assert out["capture"]["archetype"] == "CONVEX"
+
+
+def test_loader_source_spine_missing_pointer_fails_closed(tmp_path) -> None:
+    """Codex F1 (the production hole): behaviour built with NO source_spine, but the live
+    dial publishes a run-stamped pointer -> must be STALE, not served as fresh."""
+    lab = tmp_path / "lab"
+    _write_behaviour(lab, behavior_hash=_live_hash())  # no source_spine stamped
+    _write_dial_meta(lab, episodes="dial_episodes_NEW.parquet")  # live dial HAS a pointer
+    out = _load_behaviour(
+        _FakePaths(tmp_path), ticker="AEM", horizon=8, benchmark="GDX", scenario_bucket="gold_down"
+    )
+    assert out["behavior_status"] == "STALE"
+
+
+def test_loader_frame_hash_mismatch_fails_closed(tmp_path) -> None:
+    """Codex F4: a frame whose rows carry a stale behaviour hash (under an otherwise current
+    meta) must not render as vouched-for data — fail closed to STALE, naming the artifact."""
+    lab = tmp_path / "lab"
+    _write_behaviour(lab, behavior_hash=_live_hash(), source_episodes="e.parquet")
+    _write_dial_meta(lab, episodes="e.parquet")
+    cap = pd.read_parquet(lab / CAPTURE_FILENAME)
+    cap["behavior_config_hash"] = "STALE-FRAME-HASH"  # tamper: rows disagree with the meta
+    cap.to_parquet(lab / CAPTURE_FILENAME, index=False)
+    out = _load_behaviour(
+        _FakePaths(tmp_path), ticker="AEM", horizon=8, benchmark="GDX", scenario_bucket="gold_down"
+    )
+    assert out["behavior_status"] == "STALE" and out["behavior_artifact"] == "capture"
+
+
+def test_loader_preserves_specific_failure_status_and_artifact(tmp_path) -> None:
+    """Codex F10: a missing single frame surfaces as MISSING (not a blanket CORRUPT), with
+    the artifact named, so an operator knows which frame to look at."""
+    lab = tmp_path / "lab"
+    _write_behaviour(lab, behavior_hash=_live_hash())
+    (lab / TREND_FILENAME).unlink()  # only the trend frame is missing
+    out = _load_behaviour(
+        _FakePaths(tmp_path), ticker="AEM", horizon=8, benchmark="GDX", scenario_bucket="gold_down"
+    )
+    assert out["behavior_status"] == "MISSING" and out["behavior_artifact"] == "trend"
+
+
+def test_panel_trend_label_nan_never_renders() -> None:
+    """Codex F12: a NaN trend/alpha label (e.g. a malformed direct render) must show an em
+    dash, never the literal 'nan' (mirrors the archetype guard)."""
+    curve = _curve(
+        behavior_trend={
+            "trend_status": "OK", "trend_label": float("nan"),
+            "alpha_trend_label": float("nan"),
+            "recent_p_beat_raw": 0.5, "older_p_beat_raw": 0.5,
+            "recent_anchor_n": 8, "older_anchor_n": 8, "mde_80pct_pp": 40.0,
+            "trend_q_value": 0.05, "trend_fdr_family_size": 10,
+        },
+    )
+    html = _render_behaviour(curve)
+    assert "<strong>nan</strong>" not in html
+    assert "Beat-rate: <strong>—</strong>" in html  # absent label -> em dash
+
+
+def test_panel_trend_hint_uses_dynamic_horizon() -> None:
+    """Codex F11: the trend hint must follow curve.trend_horizon, not a hardcoded '8-week'."""
+    curve = _curve(
+        trend_horizon=13,
+        behavior_trend={
+            "trend_status": "OK", "trend_label": "IMPROVING", "alpha_trend_label": "ALPHA_NO_CHANGE",
+            "recent_p_beat_raw": 0.8, "older_p_beat_raw": 0.2,
+            "recent_anchor_n": 8, "older_anchor_n": 8, "mde_80pct_pp": 40.0,
+            "trend_q_value": 0.05, "trend_fdr_family_size": 10,
+        },
+    )
+    html = _render_behaviour(curve)
+    assert "13-week horizon" in html and "8-week horizon" not in html
+
+
+def test_no_predictive_copy_in_lab_behaviour_surfaces() -> None:
+    """Codex F7: the behaviour panel + its column help must read descriptive, not predictive,
+    until walk-forward validation exists. Guard the specific forbidden phrases by source scan."""
+    for module in ("lab_curve_page.py", "column_help.py"):
+        src = Path(f"golden_vector/serve/{module}").read_text(encoding="utf-8")
+        for phrase in ("modelled probability", "leading indicator", "more reliably",
+                       "better miners to own"):
+            assert phrase not in src, f"predictive copy {phrase!r} still in {module}"

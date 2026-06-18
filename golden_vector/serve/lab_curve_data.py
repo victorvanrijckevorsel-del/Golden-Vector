@@ -25,6 +25,7 @@ from typing import Any
 import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.numeric import is_missing
 from golden_vector.features.weekly_returns import BENCHMARK_COLUMN_MAP
 from golden_vector.lab.conditional_dial import (
     BUCKET_LABELS,
@@ -48,6 +49,7 @@ from golden_vector.lab.conditional_dial import (
 )
 from golden_vector.lab.behavior_engine import (
     BEHAVIOR_META_FILENAME,
+    BEHAVIOR_SCHEMA_VERSION,
     CAPTURE_COLUMNS,
     CAPTURE_FILENAME,
     PEER_COLUMNS,
@@ -135,7 +137,8 @@ class LabCurveData:
     error_status: str | None = None
     # --- Behaviour layer (optional enrichment; absent/stale degrades the PANEL only,
     # never the page). All numbers/labels are build-computed; serve only echoes them. ---
-    behavior_status: str = "UNAVAILABLE"  # None = ok; MISSING / CORRUPT / STALE / UNAVAILABLE
+    behavior_status: str = "UNAVAILABLE"  # None = ok; MISSING / CORRUPT / STALE / EMPTY / UNAVAILABLE
+    behavior_artifact: str | None = None  # which frame failed (capture/peer/trend), if isolated
     capture_horizon: int = 13  # the horizon the archetype box is grounded at
     trend_horizon: int = 8  # the horizon the behaviour-change card is read at (locked 8w)
     capture: dict[str, Any] | None = None  # dial_capture row @ capture_horizon (gold frame)
@@ -201,6 +204,25 @@ def _load_frame(
     return frame, None
 
 
+def _frame_matches_meta(frame: pd.DataFrame | None, bmeta: dict[str, Any]) -> bool:
+    """Row-level cross-check: every row's stamped ``behavior_config_hash`` /
+    ``schema_version`` must match the published ``behavior_meta`` — defence in depth so a
+    corrupt or stale-aliased frame under a current meta can't render as vouched-for data."""
+
+    if frame is None:
+        return False
+    expected_hash = bmeta.get("behavior_config_hash")
+    if "behavior_config_hash" in frame.columns:
+        hashes = {h for h in frame["behavior_config_hash"].dropna().unique().tolist()}
+        if hashes - {expected_hash}:
+            return False
+    if "schema_version" in frame.columns:
+        versions = {int(v) for v in frame["schema_version"].dropna().unique().tolist()}
+        if versions - {BEHAVIOR_SCHEMA_VERSION}:
+            return False
+    return True
+
+
 def _schema_is_current(meta: dict[str, Any]) -> bool:
     return int(meta.get("schema_version") or 0) == DIAL_SCHEMA_VERSION
 
@@ -253,7 +275,8 @@ def _row_for_keys(frame: pd.DataFrame | None, **keys: Any) -> dict[str, Any] | N
     # Normalize pandas NaN -> None (a persisted Python None round-trips as float nan,
     # which is TRUTHY): so downstream `if x` / `x or "—"` treat an unconfirmed archetype
     # / absent number as missing, never render the literal "nan" as a confident value.
-    return {k: (None if isinstance(v, float) and v != v else v) for k, v in row.items()}
+    # Uses the shared missing-value check (one copy) — also folds NaT/np.nan to None.
+    return {k: (None if is_missing(v) else v) for k, v in row.items()}
 
 
 def _load_behaviour(
@@ -287,32 +310,55 @@ def _load_behaviour(
     dmeta, _dmeta_status = _read_meta(paths)
     live_episodes = (dmeta.get("run_stamped_artifacts") or {}).get("episodes")
     source_episodes = (bmeta.get("source_spine") or {}).get("episodes_artifact")
-    if live_episodes and source_episodes and source_episodes != live_episodes:
+    # When the live dial publishes a run-stamped pointer (always, in production), the
+    # behaviour layer MUST carry a MATCHING source pointer. A missing OR mismatched one
+    # means the spine moved underneath it -> STALE (fail closed). Skipped only when the
+    # live dial itself has no pointer, i.e. a hand-built fixture with no dial_meta (Codex F1).
+    if live_episodes and source_episodes != live_episodes:
         return {"behavior_status": "STALE"}
 
     cfg = default_capture_behavior_config()
     capture_horizon = int(cfg.default_capture_horizon)
     trend_horizon = int(cfg.default_trend_horizon)
-    cap_frame, cap_status = _load_frame(
-        paths,
-        filename=_current_artifact_filename(bmeta, "capture", CAPTURE_FILENAME),
-        required_columns=CAPTURE_COLUMNS,
-    )
-    peer_frame, peer_status = _load_frame(
-        paths,
-        filename=_current_artifact_filename(bmeta, "peer", PEER_FILENAME),
-        required_columns=PEER_COLUMNS,
-    )
-    trend_frame, trend_status = _load_frame(
-        paths,
-        filename=_current_artifact_filename(bmeta, "trend", TREND_FILENAME),
-        required_columns=TREND_COLUMNS,
-    )
-    if any(s is not None for s in (cap_status, peer_status, trend_status)):
-        # Meta is current but a behaviour frame is unreadable/missing/stale/empty on disk
-        # — an ARTIFACT failure, not an evidence gap. Degrade the whole panel (rebuild),
-        # never let a corrupt file read as "no history" (mirrors the CELLS_* fail-loud).
-        return {"behavior_status": "CORRUPT"}
+    frames: dict[str, tuple[pd.DataFrame | None, str | None]] = {
+        "capture": _load_frame(
+            paths,
+            filename=_current_artifact_filename(bmeta, "capture", CAPTURE_FILENAME),
+            required_columns=CAPTURE_COLUMNS,
+        ),
+        "peer": _load_frame(
+            paths,
+            filename=_current_artifact_filename(bmeta, "peer", PEER_FILENAME),
+            required_columns=PEER_COLUMNS,
+        ),
+        "trend": _load_frame(
+            paths,
+            filename=_current_artifact_filename(bmeta, "trend", TREND_FILENAME),
+            required_columns=TREND_COLUMNS,
+        ),
+    }
+    # A meta-current panel must also have frames stamped with the SAME schema + behaviour
+    # hash as the meta. The run-stamped files are published atomically with the meta, so a
+    # row-level mismatch means a corrupt / hand-tampered / stale-aliased frame — fail
+    # closed to STALE rather than render numbers the meta does not vouch for (Codex F4).
+    for key, (frame, status) in frames.items():
+        if status is None and not _frame_matches_meta(frame, bmeta):
+            frames[key] = (None, "STALE")
+    # Preserve the MOST-ACTIONABLE failing status (and which artifact it came from) instead
+    # of collapsing every frame failure to CORRUPT — operators lose the cause otherwise
+    # (Codex F10). An artifact-level failure is still a whole-panel degrade (rebuild),
+    # never a silent "no history" gap (mirrors the CELLS_* fail-loud).
+    _status_priority = ("CORRUPT", "STALE", "MISSING", "EMPTY")
+    failures = [(k, s) for k, (_f, s) in frames.items() if s is not None]
+    if failures:
+        key, status = min(
+            failures,
+            key=lambda ks: _status_priority.index(ks[1]) if ks[1] in _status_priority else 99,
+        )
+        return {"behavior_status": status, "behavior_artifact": key}
+    cap_frame = frames["capture"][0]
+    peer_frame = frames["peer"][0]
+    trend_frame = frames["trend"][0]
     return {
         "behavior_status": None,
         "capture_horizon": capture_horizon,
@@ -557,6 +603,7 @@ def load_ticker_curve(
         meta=meta,
         error_status=None if (points or cell is not None) else "MISSING",
         behavior_status=behaviour["behavior_status"],
+        behavior_artifact=behaviour.get("behavior_artifact"),
         capture_horizon=int(behaviour.get("capture_horizon", 13)),
         trend_horizon=int(behaviour.get("trend_horizon", 8)),
         capture=behaviour.get("capture"),

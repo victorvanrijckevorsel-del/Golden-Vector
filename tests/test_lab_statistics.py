@@ -13,6 +13,7 @@ from golden_vector.lab.statistics import (
     decay_effective_n,
     decay_weights,
     eb_shrink,
+    fisher_exact_p,
     mann_kendall,
     mde_proportion_pp,
     peer_percentile,
@@ -141,6 +142,35 @@ def test_peer_percentile_best_worst_ties_and_singleton() -> None:
     assert math.isclose(ties[2], 100.0) and math.isclose(ties[0], ties[1])
     assert np.isnan(peer_percentile([5.0])).all()  # no peers
     assert np.isnan(peer_percentile([np.nan, 1.0])[0])
+
+
+def test_peer_percentile_exact_tie_policy_and_order_invariance() -> None:
+    """Codex F16: pin the EXACT average-rank tie value, and prove the result is invariant
+    to input order (a determinism guarantee, not just 'ties are equal')."""
+    # [10, 10, 20]: the two 10s share average rank 1.5 -> percentile 100*(1.5-1)/2 = 25.0;
+    # the 20 is best -> 100.0.
+    assert peer_percentile([10.0, 10.0, 20.0]).tolist() == [25.0, 25.0, 100.0]
+    # Same values in a shuffled order -> the SAME per-value percentiles, repositioned.
+    assert peer_percentile([20.0, 10.0, 10.0]).tolist() == [100.0, 25.0, 25.0]
+    # A three-way tie: everyone is at the same average rank -> all 50.0.
+    assert peer_percentile([7.0, 7.0, 7.0]).tolist() == [50.0, 50.0, 50.0]
+
+
+def test_fisher_exact_p_matches_known_values() -> None:
+    """Codex F3: the exact test the trend significance now uses. Pinned against
+    hand-computed hypergeometric values so a regression in the summation is caught."""
+    # Empty margin -> no evidence of a difference.
+    assert fisher_exact_p(0, 0, 0, 0) == 1.0
+    # recent 3/6 vs older 6/6 (the case the old z-test wrongly called significant at ~0.046):
+    # exact two-sided p = 2 * C(9,3)/C(12,6) = 168/924 = 0.18182 — NOT significant.
+    assert math.isclose(fisher_exact_p(3, 3, 6, 0), 168 / 924, rel_tol=1e-9)
+    # recent 0/6 vs older 6/6: a clean separation -> 2 / C(12,6) = 0.002164.
+    assert math.isclose(fisher_exact_p(0, 6, 6, 0), 2 / 924, rel_tol=1e-9)
+    # Symmetry: row-swap and column-swap leave the two-sided p unchanged.
+    assert math.isclose(fisher_exact_p(3, 3, 6, 0), fisher_exact_p(6, 0, 3, 3), rel_tol=1e-12)
+    assert math.isclose(fisher_exact_p(3, 3, 6, 0), fisher_exact_p(3, 3, 0, 6), rel_tol=1e-12)
+    # A bigger, clearer table is more significant than a small noisy one.
+    assert fisher_exact_p(8, 0, 0, 8) < fisher_exact_p(0, 6, 6, 0)
 
 
 # --- weighted_median (shared core + both wrappers) -------------------------

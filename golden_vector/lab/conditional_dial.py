@@ -18,6 +18,7 @@ Honesty rules (from the Lab spec — these are contract, not style):
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -1068,6 +1069,23 @@ def build_and_save(
     family_trials = n_trials(target_dir, signal_id=DIAL_SIGNAL_ID)
     active_variant_count = len(variant_hashes)
     built_at = moment.isoformat()
+    # Per-equity provenance: the normalized miner inputs DOMINATE the spine, so record each
+    # one at file level ({ticker, sha256, rows}) plus a single aggregate hash over the whole
+    # sorted set — not just a count/rows total — so every behaviour number is auditable back
+    # to the exact inputs and a changed/missing miner file is detectable (Codex F6).
+    equity_manifest = [
+        {
+            "ticker": path.stem,
+            "sha256": optional_sha256_file(path),
+            "rows": int(len(histories.get(path.stem, []))),
+        }
+        for path in equity_paths
+    ]
+    equities_aggregate_sha256 = hashlib.sha256(
+        "\n".join(
+            f"{e['ticker']}:{e['sha256']}:{e['rows']}" for e in equity_manifest
+        ).encode("utf-8")
+    ).hexdigest()
     meta = {
         "built_at_utc": built_at,
         "schema_version": DIAL_SCHEMA_VERSION,
@@ -1092,6 +1110,8 @@ def build_and_save(
             "normalized_equities": {
                 "count": int(len(equity_paths)),
                 "rows": int(sum(len(frame) for frame in histories.values())),
+                "aggregate_sha256": equities_aggregate_sha256,
+                "files": equity_manifest,
             },
             "benchmarks": {
                 ticker: {

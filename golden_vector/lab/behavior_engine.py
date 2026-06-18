@@ -29,6 +29,7 @@ import json
 import time
 from datetime import datetime, timezone
 
+import numpy as np
 import pandas as pd
 
 from golden_vector.common.numeric import optional_finite_float
@@ -37,7 +38,6 @@ from golden_vector.lab.conditional_dial import (
     DEFAULT_BUCKETS,
     DIAL_ARTIFACT_META_FILENAME,
     DIAL_BENCHMARKS,
-    DIAL_EPISODES_FILENAME,
     DIAL_HORIZONS_WEEKS,
     DIAL_SCHEMA_VERSION,
     DOWN_BUCKETS,
@@ -48,11 +48,11 @@ from golden_vector.lab.statistics import (
     decay_effective_n,
     decay_weights,
     eb_shrink,
+    fisher_exact_p,
     mann_kendall,
     mde_proportion_pp,
     peer_percentile,
     theil_sen,
-    two_proportion_p,
     weighted_median,
 )
 from golden_vector.lab.walk_forward import effective_n
@@ -665,6 +665,7 @@ TREND_COLUMNS = [
     "decay_alpha_median",
     "n_anchors",
     "trend_delta",
+    "trend_delta_raw",
     "trend_tau",
     "trend_mk_z",
     "trend_mk_p",
@@ -673,6 +674,7 @@ TREND_COLUMNS = [
     "trend_fdr_scope",
     "trend_fdr_family_size",
     "mde_80pct_pp",
+    "alpha_anchor_n",
     "alpha_slope_per_year",
     "alpha_trend_mk_p",
     "alpha_trend_tau",
@@ -853,6 +855,7 @@ def compute_trend_table(
     for idx in df.index[ok]:
         df.at[idx, "trend_label"] = _beat_label(
             delta=df.at[idx, "trend_delta"],
+            delta_raw=df.at[idx, "trend_delta_raw"],
             tau=df.at[idx, "trend_tau"],
             q_value=df.at[idx, "trend_q_value"],
             config=config,
@@ -862,7 +865,7 @@ def compute_trend_table(
     # --- Alpha-trend FDR: the alpha (leading) label is held to the SAME multiplicity
     # bar as beat (BH within the scenario family) + a Theil-Sen/MK sign-agreement gate.
     # Its power floor is its OWN anchor count, independent of the beat split. ---
-    alpha_ok = df["alpha_slope_per_year"].notna() & (df["n_anchors"] >= config.min_anchors)
+    alpha_ok = df["alpha_slope_per_year"].notna() & (df["alpha_anchor_n"] >= config.min_anchors)
     for _key, grp in df[alpha_ok].groupby(fam_keys):
         _, q_values = benjamini_hochberg(
             grp["alpha_trend_mk_p"].to_numpy(dtype=float), config.q_fdr
@@ -879,15 +882,26 @@ def compute_trend_table(
     return df
 
 
-def _beat_label(*, delta, tau, q_value, config: CaptureBehaviorConfig) -> str:
-    """IMPROVING / DETERIORATING only when the effect clears the threshold, survives FDR,
-    AND the Mann-Kendall trend agrees in sign; otherwise NO_CHANGE_DETECTED (which means
-    'no change detected at this power', not 'proven stable')."""
+def _beat_label(*, delta, delta_raw, tau, q_value, config: CaptureBehaviorConfig) -> str:
+    """IMPROVING / DETERIORATING only when BOTH the raw and the peer-shrunk recent-vs-older
+    deltas clear the threshold, the test survives FDR, AND the Mann-Kendall trend agrees in
+    sign with the shrunk delta; otherwise NO_CHANGE_DETECTED ('no change detected at this
+    power', not 'proven stable'). Requiring the RAW delta too stops peer shrinkage from
+    manufacturing a label from a sub-threshold observed effect (Codex F2)."""
 
-    if delta is None or tau is None or q_value is None or pd.isna(delta) or pd.isna(tau):
+    if (
+        delta is None
+        or delta_raw is None
+        or tau is None
+        or q_value is None
+        or pd.isna(delta)
+        or pd.isna(delta_raw)
+        or pd.isna(tau)
+    ):
         return "NO_CHANGE_DETECTED"
-    significant = q_value <= config.q_fdr and abs(delta) >= config.trend_delta_threshold
-    sign_agrees = (delta > 0) == (tau > 0) and tau != 0
+    thr = config.trend_delta_threshold
+    significant = q_value <= config.q_fdr and abs(delta) >= thr and abs(delta_raw) >= thr
+    sign_agrees = (delta > 0) == (delta_raw > 0) == (tau > 0) and tau != 0
     if significant and sign_agrees:
         return "IMPROVING" if delta > 0 else "DETERIORATING"
     return "NO_CHANGE_DETECTED"
@@ -927,6 +941,14 @@ def _trend_record(
     trend_delta = (
         rec_shrunk - old_shrunk if rec_shrunk is not None and old_shrunk is not None else None
     )
+    # The RAW recent-vs-older difference (before peer shrinkage). The label gates on BOTH
+    # this and the shrunk delta clearing the threshold, so peer-prior shrinkage can never
+    # manufacture a confident label from a raw effect below the bar (Codex F2).
+    trend_delta_raw = (
+        d["rec_mean"] - d["old_mean"]
+        if d["rec_mean"] is not None and d["old_mean"] is not None
+        else None
+    )
     # Decay over the independent anchors (Kish ESS, no /h — anchors are independent).
     # NOTE: decay_* are DESCRIPTIVE/reserved diagnostics (a smooth exponential view of the
     # same anchors) — they are persisted for future use and the UI, but they do NOT drive
@@ -946,20 +968,34 @@ def _trend_record(
     else:
         decay_p_raw = decay_eff = decay_shrunk = decay_alpha_med = None
     mk = mann_kendall(d["anc_beat"])
-    # Alpha (size) trend: Theil-Sen slope per year + Mann-Kendall, both on anchors only.
-    if na >= 2:
+    # Alpha (size) trend: Theil-Sen slope per year + Mann-Kendall, on the FINITE-alpha
+    # anchors only. The beat anchors (filtered on a non-null beat) can still carry a NaN
+    # alpha, so the alpha trend's power is its own finite-alpha count, gated separately
+    # below — never the beat-anchor count (Codex F5).
+    alpha_vals = d["anc_alpha"]
+    alpha_finite = np.isfinite(alpha_vals)
+    alpha_anchor_n = int(alpha_finite.sum())
+    if alpha_anchor_n >= 2:
         t_days = pd.to_datetime(d["anc"]["week_date"]).astype("int64") / (1e9 * 86400.0)
         t_years = ((t_days - t_days.min()) / 365.25).to_numpy()
-        slope = theil_sen(t_years, d["anc_alpha"])
-        alpha_mk = mann_kendall(d["anc_alpha"])
+        af = alpha_vals[alpha_finite]
+        tf = t_years[alpha_finite]
+        slope = theil_sen(tf, af)
+        alpha_mk = mann_kendall(af)
     else:
         slope = None
         alpha_mk = {"p_value": 1.0, "tau": 0.0, "z": 0.0}
-    raw_p = (
-        two_proportion_p(d["rec_mean"], rec_eff, d["old_mean"], old_eff)
-        if d["rec_mean"] is not None and d["old_mean"] is not None
-        else 1.0
-    )
+    # Significance on the RAW integer beat counts via an EXACT test — the anchor windows
+    # are far too small (recent/older floors of 6) for the two-proportion z normal
+    # approximation to be trustworthy (Codex F3).
+    if d["rec_mean"] is not None and d["old_mean"] is not None:
+        rec_b = int(np.nansum(d["rec_beat"]))
+        old_b = int(np.nansum(d["old_beat"]))
+        raw_p = fisher_exact_p(
+            rec_b, int(len(d["rec_beat"])) - rec_b, old_b, int(len(d["old_beat"])) - old_b
+        )
+    else:
+        raw_p = 1.0
     mde = mde_proportion_pp(rec_eff, old_eff)
     if all_eff < config.min_all_effective_n:
         status = "THIN_ALL"
@@ -1002,6 +1038,7 @@ def _trend_record(
         "decay_alpha_median": _round(decay_alpha_med),
         "n_anchors": na,
         "trend_delta": _round(trend_delta),
+        "trend_delta_raw": _round(trend_delta_raw),
         "trend_tau": _round(mk["tau"]),
         "trend_mk_z": _round(mk["z"]),
         "trend_mk_p": _round(mk["p_value"]),
@@ -1010,6 +1047,7 @@ def _trend_record(
         "trend_fdr_scope": TREND_FDR_SCOPE,
         "trend_fdr_family_size": None,
         "mde_80pct_pp": _round(mde, 2),
+        "alpha_anchor_n": alpha_anchor_n,
         "alpha_slope_per_year": _round(slope),
         "alpha_trend_mk_p": _round(alpha_mk["p_value"]),
         "alpha_trend_tau": _round(alpha_mk["tau"]),
@@ -1054,27 +1092,35 @@ def build_and_save(paths, *, horizons: list[int] | None = None) -> pd.DataFrame:
     # run-stamped episode file (not the mutable latest alias) and can stamp its EXACT
     # identity — a later dial rebuild with the same schema must not leave behaviour
     # artifacts silently looking current. (No dial meta -> hand-built test fixture.)
+    # The dial manifest is a REQUIRED input (the spine the behaviour layer derives from),
+    # so fail loud if it or its immutable run-stamped episodes pointer is missing — never
+    # silently fall back to the mutable *_latest alias, which would publish behaviour with
+    # no source-spine identity and let a later dial rebuild read as current (Codex F1).
     spine_meta_path = target_dir / DIAL_ARTIFACT_META_FILENAME
-    source_spine: dict[str, object] = {}
-    episode_filename = DIAL_EPISODES_FILENAME
-    if spine_meta_path.exists():
-        spine_meta = json.loads(spine_meta_path.read_text(encoding="utf-8"))
-        spine_schema = int(spine_meta.get("schema_version") or 0)
-        if spine_schema != DIAL_SCHEMA_VERSION:
-            raise ValueError(
-                f"dial spine schema_version {spine_schema} != expected {DIAL_SCHEMA_VERSION}; "
-                "rebuild the dial spine before the behaviour layer."
-            )
-        episode_filename = (
-            (spine_meta.get("run_stamped_artifacts") or {}).get("episodes")
-            or DIAL_EPISODES_FILENAME
+    if not spine_meta_path.exists():
+        raise FileNotFoundError(
+            f"dial_capture build needs the dial manifest at {spine_meta_path}; build the dial "
+            "spine first (python -m golden_vector.lab.conditional_dial)."
         )
-        source_spine = {
-            "dial_built_at_utc": spine_meta.get("built_at_utc"),
-            "dial_config_hash": spine_meta.get("config_hash"),
-            "dial_schema_version": spine_schema,
-            "episodes_artifact": episode_filename,
-        }
+    spine_meta = json.loads(spine_meta_path.read_text(encoding="utf-8"))
+    spine_schema = int(spine_meta.get("schema_version") or 0)
+    if spine_schema != DIAL_SCHEMA_VERSION:
+        raise ValueError(
+            f"dial spine schema_version {spine_schema} != expected {DIAL_SCHEMA_VERSION}; "
+            "rebuild the dial spine before the behaviour layer."
+        )
+    episode_filename = (spine_meta.get("run_stamped_artifacts") or {}).get("episodes")
+    if not episode_filename:
+        raise ValueError(
+            f"dial manifest {spine_meta_path} has no run_stamped_artifacts.episodes pointer; "
+            "rebuild the dial spine — the behaviour layer must bind to the immutable episodes run."
+        )
+    source_spine: dict[str, object] = {
+        "dial_built_at_utc": spine_meta.get("built_at_utc"),
+        "dial_config_hash": spine_meta.get("config_hash"),
+        "dial_schema_version": spine_schema,
+        "episodes_artifact": episode_filename,
+    }
     episode_path = target_dir / episode_filename
     if not episode_path.exists():
         raise FileNotFoundError(

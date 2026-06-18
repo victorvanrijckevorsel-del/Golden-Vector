@@ -849,8 +849,8 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     ),
     "lab_rank": ColumnHelp(
         meaning="This stock's place in the Lab ranking.",
-        calculation="Ranked by the shrunk probability of beating GDX across the lookback episodes.",
-        direction="Rank 1 is the highest modelled probability of beating GDX.",
+        calculation="Ranked by the shrunk historical beat rate vs GDX across the matching past episodes.",
+        direction="Rank 1 has the highest historical beat rate vs GDX (descriptive, not a forecast).",
     ),
     "candidate_finder_coverage": ColumnHelp(
         meaning="How many of your selected criteria have a value for this stock, shown as present / total.",
@@ -1302,7 +1302,7 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "scenario, nudged toward the group average so thin histories aren't "
             "over-trusted (empirical-Bayes shrinkage)."
         ),
-        direction="Higher means more reliably outperforms in that scenario.",
+        direction="Higher means a higher historical beat rate in that scenario (descriptive, not a forecast).",
     ),
     "lab_p_beat_raw": ColumnHelp(
         meaning="The plain count: share of matching historical episodes where the miner beat GDX.",
@@ -1344,7 +1344,7 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "later (2009) so it has its own, usually smaller, sample; a blank means too "
             "few independent GDXJ episodes to count."
         ),
-        direction="Higher means more reliably beats the junior-miner basket in that scenario.",
+        direction="Higher means a higher historical beat rate vs the junior-miner basket in that scenario.",
     ),
     "lab_benchmark_gdx": ColumnHelp(
         meaning=(

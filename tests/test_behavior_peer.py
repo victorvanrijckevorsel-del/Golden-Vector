@@ -12,7 +12,6 @@ import pytest
 from golden_vector.contracts.config_models import CaptureBehaviorConfig
 from golden_vector.lab.behavior_engine import (
     BEHAVIOR_META_FILENAME,
-    DIAL_EPISODES_FILENAME,
     PEER_CAVEAT,
     PEER_COLUMNS,
     PEER_FILENAME,
@@ -22,6 +21,11 @@ from golden_vector.lab.behavior_engine import (
     build_and_save,
     compute_peer_points,
     compute_peer_snapshot,
+)
+from golden_vector.lab.conditional_dial import (
+    DIAL_ARTIFACT_META_FILENAME,
+    DIAL_EPISODES_FILENAME,
+    DIAL_SCHEMA_VERSION,
 )
 
 _CFG = CaptureBehaviorConfig(min_peer_count=2, min_direction_effective_n=1.0)
@@ -206,6 +210,17 @@ def _multi_ticker_spine(lab: Path) -> None:
                 )
             )
     pd.concat(frames, ignore_index=True).to_parquet(lab / DIAL_EPISODES_FILENAME, index=False)
+    (lab / DIAL_ARTIFACT_META_FILENAME).write_text(
+        json.dumps(
+            {
+                "schema_version": DIAL_SCHEMA_VERSION,
+                "config_hash": "test",
+                "built_at_utc": "2026-01-01T00:00:00+00:00",
+                "run_stamped_artifacts": {"episodes": DIAL_EPISODES_FILENAME},
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_build_and_save_writes_peer_artifacts_and_meta(tmp_path) -> None:

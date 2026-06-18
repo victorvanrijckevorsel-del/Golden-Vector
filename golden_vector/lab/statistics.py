@@ -37,6 +37,7 @@ __all__ = [
     "benjamini_hochberg",
     "peer_percentile",
     "two_proportion_p",
+    "fisher_exact_p",
     "mde_proportion_pp",
     "weighted_median",
 ]
@@ -245,6 +246,36 @@ def two_proportion_p(p1: float, n1: float, p2: float, n2: float) -> float:
         return 1.0
     z = (p1 - p2) / se
     return math.erfc(abs(z) / math.sqrt(2.0))
+
+
+def fisher_exact_p(a: int, b: int, c: int, d: int) -> float:
+    """Two-sided Fisher exact test p-value for the 2x2 table [[a, b], [c, d]].
+
+    EXACT (no normal approximation), so it is valid at the tiny anchor-window counts
+    where ``two_proportion_p``'s z-test is unreliable. Sums the hypergeometric
+    probability of every table (with the same margins) that is no more likely than the
+    observed one. Returns 1.0 when any margin is empty. Inputs are integer cell COUNTS,
+    never rates/effective-N.
+    """
+
+    a, b, c, d = int(a), int(b), int(c), int(d)
+    row1, row2 = a + b, c + d
+    col1, col2 = a + c, b + d
+    n = a + b + c + d
+    if row1 == 0 or row2 == 0 or col1 == 0 or col2 == 0:
+        return 1.0
+    denom = math.comb(n, row1)
+
+    def _pmf(k: int) -> float:
+        return math.comb(col1, k) * math.comb(col2, row1 - k) / denom
+
+    p_obs = _pmf(a)
+    lo = max(0, row1 - col2)
+    hi = min(row1, col1)
+    # Sum every feasible table no more probable than the observed one (with a small
+    # tolerance so float round-off never drops a genuinely equiprobable table).
+    total = sum(pk for k in range(lo, hi + 1) if (pk := _pmf(k)) <= p_obs * (1.0 + 1e-9))
+    return min(1.0, total)
 
 
 def mde_proportion_pp(

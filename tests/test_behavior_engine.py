@@ -15,12 +15,17 @@ from golden_vector.lab.behavior_engine import (
     CAPTURE_CAVEAT,
     CAPTURE_COLUMNS,
     CAPTURE_FILENAME,
-    DIAL_EPISODES_FILENAME,
+    _warn_cutoff_drift,
     behavior_config_hash,
     build_and_save,
     build_capture,
     capture_distribution,
     compute_capture_table,
+)
+from golden_vector.lab.conditional_dial import (
+    DIAL_ARTIFACT_META_FILENAME,
+    DIAL_EPISODES_FILENAME,
+    DIAL_SCHEMA_VERSION,
 )
 
 # Cutoffs + floors chosen so the synthetic ratios below classify unambiguously.
@@ -362,6 +367,23 @@ def _write_spine(lab: Path) -> None:
             )
         )
     pd.concat(frames, ignore_index=True).to_parquet(lab / DIAL_EPISODES_FILENAME, index=False)
+    _write_dial_meta(lab, episodes=DIAL_EPISODES_FILENAME)
+
+
+def _write_dial_meta(lab: Path, *, episodes: str) -> None:
+    """The behaviour build now REQUIRES the dial manifest + its immutable episodes
+    pointer (Codex F1) — write a minimal one beside the spine fixture."""
+    (lab / DIAL_ARTIFACT_META_FILENAME).write_text(
+        json.dumps(
+            {
+                "schema_version": DIAL_SCHEMA_VERSION,
+                "config_hash": "test-dial-config-hash",
+                "built_at_utc": "2026-01-01T00:00:00+00:00",
+                "run_stamped_artifacts": {"episodes": episodes},
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 class _FakePaths:
@@ -404,6 +426,50 @@ def test_build_and_save_off_list_default_horizon_fails_loud(tmp_path) -> None:
     # default_capture_horizon (13, from disk config) is not in [4] -> loud failure.
     with pytest.raises(ValueError):
         build_and_save(_FakePaths(tmp_path), horizons=[4])
+
+
+def test_build_and_save_dial_meta_without_episodes_pointer_fails_loud(tmp_path) -> None:
+    """Codex F1: the behaviour build must bind to the IMMUTABLE run-stamped episodes — a
+    manifest with no episodes pointer is a malformed spine, fail loud (never alias-fallback)."""
+    lab = tmp_path / "lab"
+    lab.mkdir(parents=True)
+    _write_spine(lab)
+    (lab / DIAL_ARTIFACT_META_FILENAME).write_text(
+        json.dumps({"schema_version": DIAL_SCHEMA_VERSION, "run_stamped_artifacts": {}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        build_and_save(_FakePaths(tmp_path))
+
+
+def test_warn_cutoff_drift_warns_above_tolerance_and_silent_within(capsys) -> None:
+    """Codex F13: the build re-confirms the archetype cutoffs against the live p33/p67 and
+    warns loudly on drift beyond tolerance, silent within."""
+    dist = {"down_capture_mean": {"p33": 1.50}, "up_capture_mean": {"p67": 2.00}}
+    # down cutoff drifts 0.50 from the live p33 -> warn naming the cutoff.
+    _warn_cutoff_drift(
+        CaptureBehaviorConfig(hedge_down_capture_max=1.00, torque_up_capture_min=2.00), dist
+    )
+    out = capsys.readouterr().out
+    assert "hedge_down_capture_max" in out and "drift" in out.lower()
+    # both cutoffs within tolerance -> silent.
+    _warn_cutoff_drift(
+        CaptureBehaviorConfig(hedge_down_capture_max=1.51, torque_up_capture_min=2.00), dist
+    )
+    assert capsys.readouterr().out == ""
+
+
+def test_build_and_save_invokes_cutoff_drift_check(tmp_path, monkeypatch) -> None:
+    """Codex F13: prove the drift check runs on EVERY behaviour build (not just in main())."""
+    import golden_vector.lab.behavior_engine as be
+
+    lab = tmp_path / "lab"
+    lab.mkdir(parents=True)
+    _write_spine(lab)
+    seen: dict[str, bool] = {}
+    monkeypatch.setattr(be, "_warn_cutoff_drift", lambda cfg, dist: seen.setdefault("called", True))
+    be.build_and_save(_FakePaths(tmp_path))
+    assert seen.get("called") is True
 
 
 def test_archetype_only_emitted_at_default_capture_horizon() -> None:

@@ -12,13 +12,17 @@ import pytest
 from golden_vector.contracts.config_models import CaptureBehaviorConfig
 from golden_vector.lab.behavior_engine import (
     BEHAVIOR_META_FILENAME,
-    DIAL_EPISODES_FILENAME,
     TREND_COLUMNS,
     TREND_FILENAME,
     _beat_label,
     behavior_config_hash,
     build_and_save,
     compute_trend_table,
+)
+from golden_vector.lab.conditional_dial import (
+    DIAL_ARTIFACT_META_FILENAME,
+    DIAL_EPISODES_FILENAME,
+    DIAL_SCHEMA_VERSION,
 )
 from golden_vector.lab.statistics import mde_proportion_pp
 
@@ -171,6 +175,17 @@ def test_build_and_save_writes_trend_artifact_and_meta(tmp_path) -> None:
             )
         )
     pd.concat(frames, ignore_index=True).to_parquet(lab / DIAL_EPISODES_FILENAME, index=False)
+    (lab / DIAL_ARTIFACT_META_FILENAME).write_text(
+        json.dumps(
+            {
+                "schema_version": DIAL_SCHEMA_VERSION,
+                "config_hash": "test",
+                "built_at_utc": "2026-01-01T00:00:00+00:00",
+                "run_stamped_artifacts": {"episodes": DIAL_EPISODES_FILENAME},
+            }
+        ),
+        encoding="utf-8",
+    )
 
     build_and_save(_FakePaths(tmp_path))
     trend = pd.read_parquet(lab / TREND_FILENAME)
@@ -185,16 +200,18 @@ def test_build_and_save_writes_trend_artifact_and_meta(tmp_path) -> None:
 # --- FDR multiplicity gate (the load-bearing honesty control) --------------
 
 def test_fdr_suppresses_borderline_movers_in_a_family() -> None:
-    # One huge mover + 30 borderline movers in ONE scenario family. BH-FDR lets the huge
-    # one through but suppresses the borderline ones to STABLE despite raw p <= 0.05 and a
-    # large delta — the multiplicity gate working.
-    frames = [_cell("MOVER", "gold_down", [1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0])]
-    # A few borderline movers (recent [1,1,1,0,0,0] vs older all-1 => raw p ~ 0.0455)...
+    # One huge mover + a few borderline movers in ONE scenario family. BH-FDR lets the huge
+    # one through but suppresses the borderline ones to STABLE despite raw Fisher p <= 0.05
+    # and a large delta — the multiplicity gate working. Uses 16-anchor windows because the
+    # EXACT (Fisher) test's p-values are discrete: at 8-vs-8, recent 0/8 vs 8/8 gives
+    # p~0.00016 (the MOVER) and recent 3/8 vs 8/8 gives p~0.026 (raw-significant borderline).
+    frames = [_cell("MOVER", "gold_down", [1] * 8 + [0] * 8)]
+    # borderline: old [1]*8 (all beat), recent [1,1,1,0,0,0,0,0] (3/8) -> Fisher p ~ 0.026.
     for i in range(4):
-        frames.append(_cell(f"B{i:02d}", "gold_down", [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0]))
+        frames.append(_cell(f"B{i:02d}", "gold_down", [1] * 11 + [0] * 5))
     # ...amid many flat cells that inflate the family size m so BH lifts the borderline q.
     for i in range(26):
-        frames.append(_cell(f"F{i:02d}", "gold_down", [1] * 12))
+        frames.append(_cell(f"F{i:02d}", "gold_down", [1] * 16))
     table = _trend(pd.concat(frames, ignore_index=True))
     mover = table[table["ticker"] == "MOVER"].iloc[0]
     assert mover["trend_q_value"] <= 0.10 and mover["trend_label"] == "DETERIORATING"
@@ -206,16 +223,46 @@ def test_fdr_suppresses_borderline_movers_in_a_family() -> None:
     assert (suppressed["trend_label"] == "NO_CHANGE_DETECTED").all()  # ...so NOT labelled a mover
 
 
+def test_alpha_trend_gates_on_finite_alpha_count_not_beat_anchors() -> None:
+    """Codex F5: a cell can clear the BEAT-anchor floor while having too few FINITE-alpha
+    anchors (beat is non-null but alpha is NaN). The alpha (win-size) trend must gate on its
+    own finite-alpha count, never the beat-anchor count, or it fires underpowered."""
+    nan = float("nan")
+    beats = [1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0]  # 12 beat anchors >= min_anchors (8)
+    alphas = [0.05, 0.05, 0.05, 0.05, 0.05, nan, nan, nan, nan, nan, nan, nan]  # only 5 finite
+    row = _row(_trend(_cell("AL", "gold_down", beats, alphas=alphas)), "AL")
+    assert row["n_anchors"] == 12  # the beat trend keeps full power
+    assert row["alpha_anchor_n"] == 5  # but the alpha side is thin...
+    assert row["alpha_trend_label"] == "INSUFFICIENT"  # ...so it abstains
+
+
 # --- joint gate: MK sign agreement -----------------------------------------
 
 def test_beat_label_requires_mk_sign_agreement() -> None:
     cfg = CaptureBehaviorConfig()
-    assert _beat_label(delta=0.30, tau=0.5, q_value=0.01, config=cfg) == "IMPROVING"
-    assert _beat_label(delta=-0.30, tau=-0.5, q_value=0.01, config=cfg) == "DETERIORATING"
-    assert _beat_label(delta=0.30, tau=-0.5, q_value=0.01, config=cfg) == "NO_CHANGE_DETECTED"  # signs disagree
-    assert _beat_label(delta=0.30, tau=0.0, q_value=0.01, config=cfg) == "NO_CHANGE_DETECTED"  # tau == 0
-    assert _beat_label(delta=0.30, tau=0.5, q_value=0.50, config=cfg) == "NO_CHANGE_DETECTED"  # q > q_fdr
-    assert _beat_label(delta=0.10, tau=0.5, q_value=0.01, config=cfg) == "NO_CHANGE_DETECTED"  # |delta| < thr
+    L = _beat_label
+    assert L(delta=0.30, delta_raw=0.30, tau=0.5, q_value=0.01, config=cfg) == "IMPROVING"
+    assert L(delta=-0.30, delta_raw=-0.30, tau=-0.5, q_value=0.01, config=cfg) == "DETERIORATING"
+    # signs disagree (MK sign vs delta)
+    assert L(delta=0.30, delta_raw=0.30, tau=-0.5, q_value=0.01, config=cfg) == "NO_CHANGE_DETECTED"
+    assert L(delta=0.30, delta_raw=0.30, tau=0.0, q_value=0.01, config=cfg) == "NO_CHANGE_DETECTED"  # tau == 0
+    assert L(delta=0.30, delta_raw=0.30, tau=0.5, q_value=0.50, config=cfg) == "NO_CHANGE_DETECTED"  # q > q_fdr
+    assert L(delta=0.10, delta_raw=0.10, tau=0.5, q_value=0.01, config=cfg) == "NO_CHANGE_DETECTED"  # |delta| < thr
+
+
+def test_beat_label_requires_raw_delta_too() -> None:
+    """Codex F2: peer shrinkage must not manufacture a label from a sub-threshold RAW
+    effect. The shrunk delta clears the bar but the raw one does not -> NO_CHANGE."""
+    cfg = CaptureBehaviorConfig()
+    L = _beat_label
+    # shrunk delta clears 0.20 but raw delta is below it -> no label
+    assert L(delta=0.30, delta_raw=0.10, tau=0.5, q_value=0.01, config=cfg) == "NO_CHANGE_DETECTED"
+    # raw and shrunk disagree in sign (a pure prior artifact) -> no label
+    assert L(delta=0.30, delta_raw=-0.30, tau=0.5, q_value=0.01, config=cfg) == "NO_CHANGE_DETECTED"
+    # both clear and agree -> fires
+    assert L(delta=0.30, delta_raw=0.25, tau=0.5, q_value=0.01, config=cfg) == "IMPROVING"
+    # raw missing -> no label
+    assert L(delta=0.30, delta_raw=None, tau=0.5, q_value=0.01, config=cfg) == "NO_CHANGE_DETECTED"
 
 
 # --- anchors-only windows + horizon deflation ------------------------------

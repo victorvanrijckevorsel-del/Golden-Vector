@@ -310,6 +310,18 @@ def test_lab_serve_layer_has_no_dial_arithmetic() -> None:
             ".groupby(",
             ".fillna(",
             ".cumsum(",
+            # Broader aggregation ban (Codex F14): display-only counts of already-resolved
+            # rows (e.g. len(above)) are permitted, but re-deriving any statistic in serve
+            # is not — forbid the pandas/numpy aggregation surfaces explicitly.
+            ".sum(",
+            ".std(",
+            ".var(",
+            ".value_counts(",
+            "np.mean",
+            "np.average",
+            "np.percentile",
+            "np.sum",
+            "statistics.",
             "forward_sum",
             "effective_n(",
             "np.exp",
