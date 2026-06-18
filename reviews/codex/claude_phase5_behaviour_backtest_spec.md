@@ -1,8 +1,9 @@
 # Phase 5 — Capture & Behaviour engine: pre-registered walk-forward backtest spec
 
-Status: **v3 — Codex review applied; proposed FREEZE-READY** (Claude). Mirrors the rigor + structure
-of `claude_program_a_validation_spec.md` (which shipped as the `/scorecard`). Nothing here runs until
-this is re-confirmed, frozen, and every variant config is registered in the ledger.
+Status: **v3 — FROZEN; acceptance bar CO-SIGNED (Claude + Codex), required_ic_floor = 0.097**
+(2026-06-18). Mirrors the rigor + structure of `claude_program_a_validation_spec.md` (which shipped as
+the `/scorecard`). The design + bar are locked; the only remaining step before results is registering
+each variant config in the ledger, then building + running the backtest once (§9).
 
 > **v3 changelog — applied Codex's review (`codex_review_phase5_backtest_spec.md`, verdict NEEDS
 > CHANGES, 7 blockers).** (1) **Froze fold geometry** `min_train_weeks=260, test_weeks=1,
@@ -180,9 +181,11 @@ and gated through `require_registered(...)` before compute. `signal_id` prefix =
   3. tercile forward-alpha spread in the hypothesised sign with **t > 2** (one-sided);
   4. per-cell floor: only episodes with side `effective_n ≥ 6` (the live `min_direction_effective_n`);
   5. beats **≥ 3 of 4** paired baselines (§3) by one-sided paired NW-t, p < 0.05;
-  6. **economic-size gate (binding):** `|mean directed IC| ≥ required_ic_floor` AND the implied
+  6. **economic-size gate (binding):** `mean_directed_IC ≥ required_ic_floor` AND the implied
      `IR_ceiling ≥ 0.3` (both from §4's frozen N_eff derivation) — else the verdict caps at PARTIAL
      ("statistically positive but economically too small"), never SUPPORTED (Codex BLOCKER 3).
+     **No absolute value** — the IC is direction-oriented, so a *negative* directed IC (signal points
+     the wrong way) must FAIL this gate, not pass on magnitude (Codex co-sign note).
 - **Down/up slices (implementation note):** run the gold-DOWN and gold-UP regimes as separate
   registered slices with FIXED prediction columns (down → `down_capture_mean`, up → `up_capture_mean`);
   the gold bucket is the realized outcome regime of the scored episode (no forward gold in any feature).
@@ -287,24 +290,24 @@ derivation is FROZEN here (every input pinned so it cannot be re-tuned after see
 4. **Required IC:** the smallest IC with `IR_ceiling = IC × √N_eff × transfer ≥ target IR`, at
    **target IR = 0.3 gross** and **transfer = 0.5** (Codex co-signed these as reasonable for a ~60-name
    survivor universe). Solve `required_ic_floor = 0.3 / (0.5 × √N_eff)`.
-5. **Binding gate (not just reported):** each experiment's gate 6 requires `|mean directed IC| ≥
-   required_ic_floor` AND `IR_ceiling ≥ 0.3`; failing it caps the verdict at **PARTIAL**
-   ("statistically positive but economically too small"), never SUPPORTED (Codex BLOCKER 3).
+5. **Binding gate (not just reported):** each experiment's gate 6 requires `mean_directed_IC ≥
+   required_ic_floor` AND `IR_ceiling ≥ 0.3` (direction-oriented IC, **no absolute value** — a
+   negative directed IC fails); failing it caps the verdict at **PARTIAL** ("statistically positive
+   but economically too small"), never SUPPORTED (Codex BLOCKER 3 + co-sign note).
 6. **Claude + Codex co-sign** the resulting numeric floor + the gate set, hash-locked in the ledger,
    **before** `evaluate_predictions` is ever called on real labels.
 (N_eff + the shrinkage + the IR math are **new pure-numpy code** in `lab/statistics.py`
 (`effective_breadth` / `ledoit_wolf_constant_correlation` / `participation_ratio`) — see §8.)
 
-> **COMPUTED — AWAITING CO-SIGN (run `python -m golden_vector.lab.phase5_breadth`):** on the frozen
-> pre-window (63 names, 260 weeks, avg residual corr 0.079, LW intensity 0.45):
-> **N_eff_shrunk = 38.2** (N_eff_sample = 27.7) → at target IR 0.3 / transfer 0.5,
-> **`required_ic_floor` = 0.097** (sample-N_eff alternative = 0.114). This is a HIGH bar (a 0.10 rank
-> IC is a strong cross-sectional signal) — that is the honest point: at this breadth most signals,
-> especially E4, will not clear it, and the null is the expected outcome. **Open co-sign call:** use
-> the shrunk N_eff (statistically less-biased; LW corrects the finite-T spectral concentration → floor
-> 0.097) or the more-conservative sample N_eff (harder bar → 0.114)? Recommend **shrunk = 0.097**;
-> Codex to confirm. Lowering target IR to 0.2 would drop the floor to ~0.065 if 0.097 is judged too
-> strict.
+> **✅ CO-SIGNED & FROZEN — `required_ic_floor = 0.097` (2026-06-18).** On the frozen pre-window
+> (63 names, 260 weeks, avg residual corr 0.079, LW intensity 0.45): **N_eff_shrunk = 38.179** →
+> at target IR 0.3 / transfer 0.5, **`required_ic_floor` = 0.0971**. Reproduce:
+> `python -m golden_vector.lab.phase5_breadth`. Co-signed by **Claude** (recommended shrunk) and
+> **Codex** (independently reproduced N_eff_shrunk = 38.179 / floor 0.0971; verified the LW
+> rho/intensity against a slow-loop reference — intensity 0.4529630150, diff 7.77e-16; 20 stats tests
+> pass; bound the shrunk floor; required the directed-IC / no-absolute-value gate-6 wording, now
+> applied). A 0.10 rank-IC bar is HIGH by design — at this breadth most signals (especially E4) are
+> expected to miss it, and the null is the honest outcome.
 
 ---
 
