@@ -13,11 +13,14 @@ from golden_vector.lab.statistics import (
     decay_effective_n,
     decay_weights,
     eb_shrink,
+    effective_breadth,
     fisher_exact_p,
     mann_kendall,
     mde_proportion_pp,
+    participation_ratio,
     peer_percentile,
     pooled_prior,
+    t_to_p_one_sided,
     theil_sen,
     two_proportion_p,
     weighted_median,
@@ -154,6 +157,39 @@ def test_peer_percentile_exact_tie_policy_and_order_invariance() -> None:
     assert peer_percentile([20.0, 10.0, 10.0]).tolist() == [100.0, 25.0, 25.0]
     # A three-way tie: everyone is at the same average rank -> all 50.0.
     assert peer_percentile([7.0, 7.0, 7.0]).tolist() == [50.0, 50.0, 50.0]
+
+
+def test_t_to_p_one_sided_matches_known_values() -> None:
+    """Pure-python one-sided t p-value (no scipy) — Phase 5 needs p, not just t."""
+    # large df -> normal: P(Z>=1.96) ~ 0.025
+    assert math.isclose(t_to_p_one_sided(1.96, 1e9), 0.025, abs_tol=1e-3)
+    assert math.isclose(t_to_p_one_sided(0.0, 100), 0.5, abs_tol=1e-9)  # t=0 -> half
+    assert t_to_p_one_sided(3.0, 100) < 0.005  # strong one-sided significance
+    # symmetric: negative t mirrors above 0.5
+    assert math.isclose(t_to_p_one_sided(-2.0, 50), 1.0 - t_to_p_one_sided(2.0, 50), abs_tol=1e-9)
+    assert t_to_p_one_sided(5.0, 0) == 1.0  # df<=0 guard
+
+
+def test_effective_breadth_recovers_known_structure() -> None:
+    """N_eff (effective breadth) — the load-bearing number behind the Phase 5 IR ceiling.
+    Independent columns -> N_eff ~ N; one common factor -> ~1; two blocks -> ~2."""
+    rng = np.random.default_rng(7)
+    indep = effective_breadth(rng.standard_normal((1000, 20)))
+    assert 18.0 <= indep["n_eff_shrunk"] <= 20.0001 and indep["n_eff_shrunk"] >= indep["n_eff_sample"]
+    f = rng.standard_normal((1000, 1))
+    one_factor = effective_breadth(f @ np.ones((1, 20)) + 0.05 * rng.standard_normal((1000, 20)))
+    assert one_factor["n_eff_shrunk"] < 2.0  # ~1 independent bet
+    g1, g2 = rng.standard_normal((1000, 1)), rng.standard_normal((1000, 1))
+    two_block = effective_breadth(
+        np.hstack([g1 @ np.ones((1, 10)), g2 @ np.ones((1, 10))]) + 0.05 * rng.standard_normal((1000, 20))
+    )
+    assert 1.5 <= two_block["n_eff_shrunk"] <= 3.0
+    assert 0.0 <= indep["shrinkage_intensity"] <= 1.0  # intensity is a valid fraction
+
+
+def test_participation_ratio_bounds() -> None:
+    assert math.isclose(participation_ratio(np.eye(10)), 10.0, rel_tol=1e-9)  # identity -> N
+    assert math.isclose(participation_ratio(np.ones((8, 8))), 1.0, rel_tol=1e-9)  # rank-1 -> 1
 
 
 def test_fisher_exact_p_matches_known_values() -> None:

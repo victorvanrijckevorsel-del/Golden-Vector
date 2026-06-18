@@ -270,11 +270,14 @@ complexity.
 
 Because breadth caps achievable IR, an absolute IC floor cannot be guessed honestly. The full
 derivation is FROZEN here (every input pinned so it cannot be re-tuned after seeing results):
-1. **N_eff inputs (frozen):** weekly **residual returns** = each name's weekly log return minus its
-   trailing-104-week-beta × GDX weekly log return; computed over the **frozen pre-window** = the
-   `dial_episodes` spine up to **as-of 2024-12-27 (W-FRI)** (a fixed date written in the ledger,
-   leaving recent weeks unseen). Names with < 104 valid weeks in the window are excluded;
-   pairwise-complete weeks only.
+1. **N_eff inputs (frozen, as implemented in `golden_vector/lab/phase5_breadth.py`):** weekly
+   **residual returns** = each name's weekly log return minus `beta_i × GDX` weekly log return, where
+   `beta_i` is a single OLS slope over a **balanced block** = the last **260 weeks** ending at the
+   frozen pre-window **as-of 2024-12-27 (W-FRI)** (a fixed date; recent weeks left unseen), keeping
+   only names complete across the whole block (a clean, PSD panel). Removing the common GDX factor
+   leaves the residual correlation reflecting idiosyncratic co-movement. (Simplified from v3's
+   "trailing-104w beta" — a single block beta is adequate for a breadth meter and makes the freeze a
+   single deterministic, auditable computation.)
 2. **Shrinkage (PURE NUMPY — no new dependency):** the analytic Ledoit–Wolf intensity toward a
    constant-correlation target, computed in numpy/`math` only (closed form: shrink the sample
    correlation toward the average off-diagonal correlation; intensity = clamp(π̂ − ρ̂)/γ̂, 0..1). The
@@ -289,7 +292,19 @@ derivation is FROZEN here (every input pinned so it cannot be re-tuned after see
    ("statistically positive but economically too small"), never SUPPORTED (Codex BLOCKER 3).
 6. **Claude + Codex co-sign** the resulting numeric floor + the gate set, hash-locked in the ledger,
    **before** `evaluate_predictions` is ever called on real labels.
-(N_eff + the shrinkage + the IR math are **new pure-numpy code** — see §8.)
+(N_eff + the shrinkage + the IR math are **new pure-numpy code** in `lab/statistics.py`
+(`effective_breadth` / `ledoit_wolf_constant_correlation` / `participation_ratio`) — see §8.)
+
+> **COMPUTED — AWAITING CO-SIGN (run `python -m golden_vector.lab.phase5_breadth`):** on the frozen
+> pre-window (63 names, 260 weeks, avg residual corr 0.079, LW intensity 0.45):
+> **N_eff_shrunk = 38.2** (N_eff_sample = 27.7) → at target IR 0.3 / transfer 0.5,
+> **`required_ic_floor` = 0.097** (sample-N_eff alternative = 0.114). This is a HIGH bar (a 0.10 rank
+> IC is a strong cross-sectional signal) — that is the honest point: at this breadth most signals,
+> especially E4, will not clear it, and the null is the expected outcome. **Open co-sign call:** use
+> the shrunk N_eff (statistically less-biased; LW corrects the finite-T spectral concentration → floor
+> 0.097) or the more-conservative sample N_eff (harder bar → 0.114)? Recommend **shrunk = 0.097**;
+> Codex to confirm. Lowering target IR to 0.2 would drop the floor to ~0.065 if 0.097 is judged too
+> strict.
 
 ---
 

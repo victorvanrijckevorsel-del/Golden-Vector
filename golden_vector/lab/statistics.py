@@ -40,6 +40,10 @@ __all__ = [
     "fisher_exact_p",
     "mde_proportion_pp",
     "weighted_median",
+    "t_to_p_one_sided",
+    "participation_ratio",
+    "ledoit_wolf_constant_correlation",
+    "effective_breadth",
 ]
 
 # Standard-normal quantiles for the default two-sided alpha=0.05 / power=0.80 MDE.
@@ -315,3 +319,157 @@ def peer_percentile(values: Sequence[float]) -> np.ndarray:
     ranks = series.rank(method="average")  # 1..n ascending; highest value -> rank n
     out = (100.0 * (ranks - 1.0) / (n - 1.0)).to_numpy(dtype=float)
     return out
+
+
+def t_to_p_one_sided(t: float, df: float) -> float:
+    """One-sided p-value for a t-statistic with ``df`` degrees of freedom — pure-Python
+    (no scipy). Uses the regularized incomplete beta function via a continued fraction
+    (Numerical Recipes ``betai``). Returns P(T >= t); a negative t gives p > 0.5.
+    """
+
+    if df <= 0 or not math.isfinite(t):
+        return 1.0
+    x = df / (df + t * t)
+    # two-sided tail = I_x(df/2, 1/2); one-sided = half of that, mirrored about t=0.
+    two_sided = _betai(0.5 * df, 0.5, x)
+    p = 0.5 * two_sided
+    return p if t > 0 else 1.0 - p
+
+
+def _betai(a: float, b: float, x: float) -> float:
+    """Regularized incomplete beta I_x(a, b), pure-Python (Numerical Recipes)."""
+
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    lbeta = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+    front = math.exp(lbeta + a * math.log(x) + b * math.log(1.0 - x))
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * _betacf(a, b, x) / a
+    return 1.0 - front * _betacf(b, a, 1.0 - x) / b
+
+
+def _betacf(a: float, b: float, x: float) -> float:
+    """Continued fraction for the incomplete beta function (Lentz's method)."""
+
+    tiny = 1e-30
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < tiny:
+        d = tiny
+    d = 1.0 / d
+    h = d
+    for m in range(1, 200):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < 3e-11:
+            break
+    return h
+
+
+def participation_ratio(corr: np.ndarray) -> float:
+    """Effective breadth N_eff = (Σλ)² / Σλ² of a correlation matrix's eigenvalues.
+
+    N_eff = N for an identity (fully independent) matrix and → 1 for a rank-1 (one
+    common factor) matrix. The honest "independent bets" count behind every IR claim.
+    """
+
+    eig = np.linalg.eigvalsh(np.asarray(corr, dtype=float))
+    eig = np.clip(eig, 0.0, None)
+    s2 = float((eig**2).sum())
+    if s2 <= 0.0:
+        return 0.0
+    return float(eig.sum() ** 2 / s2)
+
+
+def ledoit_wolf_constant_correlation(returns: np.ndarray) -> tuple[np.ndarray, float]:
+    """Ledoit–Wolf (2004) analytic shrinkage of the sample covariance toward the
+    constant-correlation target — pure numpy, no scipy/sklearn.
+
+    ``returns`` is ``(T observations, N names)``, NaN-free (the caller drops incomplete
+    rows). Returns ``(shrunk_covariance, shrinkage_intensity in [0, 1])``. With T >> N
+    the intensity is near 0 (the sample covariance is already reliable).
+    """
+
+    x = np.asarray(returns, dtype=float)
+    t, n = x.shape
+    if t < 2 or n < 2:
+        raise ValueError("ledoit_wolf needs at least 2 observations and 2 names")
+    xc = x - x.mean(axis=0, keepdims=True)
+    s = (xc.T @ xc) / t  # MLE sample covariance (/T, matching Ledoit–Wolf)
+    var = np.diag(s).copy()
+    std = np.sqrt(var)
+    outer_std = np.outer(std, std)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        corr = s / outer_std
+    rbar = (corr.sum() - n) / (n * (n - 1))  # mean off-diagonal sample correlation
+    target = rbar * outer_std
+    np.fill_diagonal(target, var)
+    # pi-hat: sum_ij mean_t[(x_i x_j - s_ij)^2] = sum_ij( mean_t[x_i^2 x_j^2] - s_ij^2 )
+    sq = xc**2
+    pi_mat = (sq.T @ sq) / t - s**2
+    pi_hat = float(pi_mat.sum())
+    # rho-hat: diagonal pi + the constant-correlation off-diagonal asymptotic covariance
+    q3 = (xc**3).T @ xc / t  # mean_t[x_i^3 x_j]
+    theta_ii = q3 - var[:, None] * s  # theta_ii,ij
+    theta_jj = q3.T - var[None, :] * s  # theta_jj,ij
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = np.sqrt(np.outer(var, 1.0 / var))  # ratio[i,j] = sqrt(var_i/var_j)
+    off = 0.5 * (ratio.T * theta_ii + ratio * theta_jj)  # sqrt(var_j/var_i)*theta_ii + ...
+    np.fill_diagonal(off, 0.0)
+    rho_hat = float(np.diag(pi_mat).sum() + rbar * off.sum())
+    gamma_hat = float(((target - s) ** 2).sum())
+    if gamma_hat <= 0.0:
+        intensity = 0.0
+    else:
+        intensity = max(0.0, min(1.0, (pi_hat - rho_hat) / gamma_hat / t))
+    shrunk = intensity * target + (1.0 - intensity) * s
+    return shrunk, intensity
+
+
+def effective_breadth(returns: np.ndarray) -> dict[str, float]:
+    """N_eff (effective breadth) of a residual-return panel ``(T, N)``, NaN-free.
+
+    Reports the participation ratio of BOTH the raw sample correlation and the
+    Ledoit–Wolf-shrunk correlation (they agree when T >> N, which validates that the
+    breadth estimate is not an artefact of the shrinkage). The shrunk value is the one
+    the acceptance bar uses.
+    """
+
+    x = np.asarray(returns, dtype=float)
+    t, n = x.shape
+    sample_cov = np.cov(x, rowvar=False, bias=True)
+    sample_std = np.sqrt(np.diag(sample_cov))
+    sample_corr = sample_cov / np.outer(sample_std, sample_std)
+    shrunk_cov, intensity = ledoit_wolf_constant_correlation(x)
+    shrunk_std = np.sqrt(np.diag(shrunk_cov))
+    shrunk_corr = shrunk_cov / np.outer(shrunk_std, shrunk_std)
+    avg_corr = float((sample_corr.sum() - n) / (n * (n - 1)))
+    return {
+        "n_names": float(n),
+        "n_obs": float(t),
+        "shrinkage_intensity": float(intensity),
+        "avg_correlation": avg_corr,
+        "n_eff_sample": participation_ratio(sample_corr),
+        "n_eff_shrunk": participation_ratio(shrunk_corr),
+    }
