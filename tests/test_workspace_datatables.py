@@ -298,6 +298,32 @@ def test_tool_a_view_is_wired_as_a_datatable(tmp_path):
     assert '<th data-col-name="delta" data-sort-numeric>' in body
 
 
+def test_tool_a_overview_has_window_selector_and_direction_betas(tmp_path):
+    """Gold Sensitivity refocus (Phase 1a): a beta-window selector, direction-split
+    up/down betas + a Gold-link trust column, and the opaque composite score dropped."""
+    _, app = _workspace_fixture(tmp_path)
+    body = _response_body(app, "/tool-a")
+    # beta-window selector present, default = 1Y (the stored 12M)
+    assert "window-switcher" in body
+    assert "window=6M" in body and "window=3Y" in body  # selectable windows
+    assert 'name="window" value="12M"' in body  # default resolved to 12M
+    assert ">1Y</a>" in body  # 12M shown to the trader as "1Y"
+    # direction-split + trust columns are the new headline
+    assert '<th data-col-name="up_beta" data-sort-numeric>' in body
+    assert '<th data-col-name="down_beta" data-sort-numeric>' in body
+    assert '<th data-col-name="gold_link" data-sort-numeric>' in body
+    # the opaque composite score is gone (Victor: drop it)
+    assert "Gold Sensitivity Score" not in body
+    assert 'data-col-name="score"' not in body
+
+
+def test_tool_a_overview_window_param_switches_window(tmp_path):
+    _, app = _workspace_fixture(tmp_path)
+    body = _response_body(app, "/tool-a?window=3y")
+    assert 'name="window" value="3Y"' in body  # query resolved to the 3Y window
+    assert 'class="window-tab active"' in body  # a tab is marked active
+
+
 def test_tool_b_view_filter_bar_lists_only_values_present_in_data(tmp_path):
     """The dropdown options are derived from the rendered rows — not a
     hard-coded list. With only NEM bootstrapped and no tool-b output yet,

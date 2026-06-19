@@ -831,9 +831,9 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         ),
     ),
     "tool_a_rank": ColumnHelp(
-        meaning="This stock's place in the Gold Sensitivity ranking.",
-        calculation="Dense rank on the Gold Sensitivity Score; low-confidence names are held out of the ranking.",
-        direction="Rank 1 is the top of the ranking (highest Gold Sensitivity Score); higher numbers rank lower.",
+        meaning="This stock's place in the overall gold-sensitivity ranking.",
+        calculation="Dense rank by overall gold sensitivity (across windows); low-confidence names are held out of the ranking.",
+        direction="Rank 1 = strongest, most reliable gold play; higher numbers rank lower.",
     ),
     "user_notes_count": ColumnHelp(
         meaning="How many notes you have saved on this ticker.",
@@ -1060,6 +1060,24 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         meaning="Whether the stock reacts more to gold rising than to gold falling (or vice versa).",
         calculation="Up-regime gold beta ÷ down-regime gold beta (a ratio).",
         direction="Above 1 means it captures more upside than downside; below 1 means more downside than upside. Higher is better.",
+    ),
+    "tool_a_up_beta": ColumnHelp(
+        meaning="How strongly the stock moves when gold RISES, over the selected beta window.",
+        calculation="Regression slope of the stock's weekly return on gold's, on the weeks gold rose.",
+        direction="Higher = more upside leverage to gold (e.g. 2.0 ≈ moves twice as much as gold).",
+    ),
+    "tool_a_down_beta": ColumnHelp(
+        meaning="How strongly the stock moves when gold FALLS, over the selected beta window.",
+        calculation="Regression slope of the stock's weekly return on gold's, on the weeks gold fell.",
+        direction="Lower = better cushioned when gold drops; a value near 0 barely follows gold down.",
+    ),
+    "tool_a_gold_link": ColumnHelp(
+        meaning=(
+            "How much of the stock's movement gold actually explains in this window — i.e. whether "
+            "its beta is even meaningful. A 'weak'/'none' name barely tracks gold, so don't trust its beta."
+        ),
+        calculation="R² of the gold regression. strong ≥40% · moderate ≥25% · weak ≥10% · none <10%.",
+        direction="Higher = the beta is more trustworthy.",
     ),
     "tool_a_confidence": ColumnHelp(
         meaning=(

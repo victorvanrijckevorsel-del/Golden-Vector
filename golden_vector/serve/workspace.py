@@ -300,6 +300,7 @@ def create_workspace_app(
                         state,
                         flash=flash,
                         search=query.get("search", [""])[0],
+                        window=query.get("window", [""])[0],
                         app_config=app_config,
                     ),
                 )
