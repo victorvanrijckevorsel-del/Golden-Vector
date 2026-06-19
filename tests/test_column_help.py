@@ -286,3 +286,25 @@ def test_beta_help_keys_explain_formula_and_negative_sign():
     # Down/up beta name their regime in beginner wording (weeks gold fell / rose).
     assert "fell" in COLUMN_HELP["tool_c_down_beta"].meaning.lower()
     assert "rose" in COLUMN_HELP["tool_c_up_beta"].meaning.lower()
+
+
+def test_help_value_keeps_filter_sort_clean_and_explains_the_value():
+    """Categorical cell values get a click-to-open 'i' explaining the VALUE, while the
+    cell's filter/sort data stays the RAW value (Codex blocker: the 'i' must not corrupt
+    the exact-regex DataTables filter ^LOW_LINKAGE$ or the column sort)."""
+    from golden_vector.serve.column_help import VALUE_HELP, help_value
+
+    td = help_value("LOW_LINKAGE")
+    # filter + sort data is the raw value (no trailing 'i' from the button)
+    assert 'data-search="LOW_LINKAGE"' in td and 'data-order="LOW_LINKAGE"' in td
+    # the value text shows and the explanation is wired to the click popup
+    assert 'class="help-icon"' in td and 'data-help-title="LOW_LINKAGE"' in td
+    assert "barely tracks gold" in td.lower()
+    # missing -> plain em-dash; unknown value -> clean text, no icon
+    assert help_value(None) == "<td>—</td>"
+    assert help_value(float("nan")) == "<td>—</td>"
+    unknown = help_value("WHATEVER_XYZ")
+    assert 'data-search="WHATEVER_XYZ"' in unknown and "help-icon" not in unknown
+    # glossary covers the live Tool A categorical values
+    for v in ("CONVEX", "FRAGILE", "DEFENSIVE", "MODERATE_NOISE", "HIGH_DOWNSIDE_RISK", "HIGH", "MEDIUM"):
+        assert v in VALUE_HELP

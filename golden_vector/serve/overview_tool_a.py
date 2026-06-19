@@ -5,10 +5,9 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
-from golden_vector.serve.column_help import help_th
+from golden_vector.serve.column_help import help_th, help_value
 from golden_vector.serve.format_helpers import (
     _fmt_numeric_td,
-    _fmt_text,
     _frame_index_by_ticker,
     _optional_float,
 )
@@ -102,9 +101,9 @@ def _render_tool_a_overview_page(
             + _win_num_td(m["delta"], reliable=reliable)
             + _win_num_td(m["gamma"], reliable=reliable)
             + _win_num_td(m["asymmetry"], reliable=reliable)
-            + f"<td>{_fmt_text(ta.get('confidence_label'))}</td>"
-            + f"<td>{_fmt_text(ta.get('profile_label'))}</td>"
-            + f"<td>{_fmt_text(ta.get('volatility_context'))}</td>"
+            + help_value(ta.get("confidence_label"), app_config=app_config)
+            + help_value(ta.get("profile_label"), app_config=app_config)
+            + help_value(ta.get("volatility_context"), app_config=app_config)
             + _fmt_numeric_td(row["tool_a_rank"], decimals=0)
             + _fmt_numeric_td(row["note_count"], decimals=0)
             + "</tr>"

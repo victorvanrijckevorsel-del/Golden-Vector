@@ -171,6 +171,53 @@ def help_th(
     return f"<th{''.join(attrs)}>{inner}</th>"
 
 
+# --- Categorical VALUE glossary: explains what a cell VALUE means (LOW_LINKAGE,
+# FRAGILE, MODERATE_NOISE, HIGH/MEDIUM/LOW confidence, ...) via the same click-to-open
+# "i" the column headers use. One source of truth; wording kept consistent with
+# golden_vector/model/{labels,explanations}.py. ---
+VALUE_HELP: dict[str, str] = {
+    # Profile (Tool A)
+    "CONVEX": "Upside-skewed gold play — strong gold linkage and better up-gold participation than down-gold sensitivity (the favourable shape).",
+    "FRAGILE": "Fragile gold exposure — meaningful linkage, but it has fallen harder with gold than it has risen.",
+    "HIGH_DELTA": "High-delta gold exposure — strong weekly linkage, but a less favourable up-vs-down skew than the best names.",
+    "LINEAR": "Clean linear gold exposure — strong linkage, fairly balanced up-vs-down, low residual noise.",
+    "LOW_LINKAGE": "Barely tracks gold — the structural linkage is too weak to treat it as a core gold name, so its beta is unreliable.",
+    "DEFENSIVE": "More defensive gold exposure — some linkage to gold, but less torque or a less favourable regime profile than the stronger names.",
+    "SCORE_WITHHELD": "Score withheld — trailing FX or return-basis issues make the structural read untrustworthy until resolved.",
+    # Volatility context (Tool A)
+    "LOW_NOISE": "Low residual noise — a large share of its weekly moves is explained by gold rather than idiosyncratic noise (a cleaner gold play).",
+    "MODERATE_NOISE": "Moderate residual noise and downside risk — between the low- and high-noise extremes.",
+    "HIGH_NOISE": "High residual noise — much of its weekly movement is NOT explained by gold, so the exposure is noisy.",
+    "HIGH_DOWNSIDE_RISK": "High downside risk — weekly drawdowns have been especially violent, making the exposure fragile even when gold linkage is strong.",
+    # Confidence (Tool A)
+    "HIGH": "High confidence — decent fit, enough weekly observations, and consistent behaviour across windows.",
+    "MEDIUM": "Medium confidence — usable, but it shows some fit, stability, or regime-split weakness.",
+    "LOW": "Low confidence — noisy, thin, or inconsistent; treat the rank cautiously.",
+}
+
+
+def help_value(value: object, *, app_config: AppConfig | None = None) -> str:
+    """Render a categorical TABLE CELL (<td>) whose VALUE carries its own click-to-open
+    "i" explanation (what ``LOW_LINKAGE`` means), reusing the header popup machinery.
+
+    The cell's filter/sort data is the RAW value via ``data-search`` / ``data-order``
+    (DataTables reads those), so the "i" button never pollutes the column's exact-regex
+    filter (``^LOW_LINKAGE$``) or its sort order — Codex's blocking requirement. The
+    button is a real, focusable ``<button>`` (keyboard/touch accessible, not hover-only).
+    A missing value renders a plain em-dash cell; an unknown value renders clean text.
+    """
+    s = "" if value is None else str(value).strip()
+    if not s or s.lower() == "nan":
+        return "<td>—</td>"
+    attrs = f" data-search=\"{escape(s)}\" data-order=\"{escape(s)}\""
+    meaning = VALUE_HELP.get(s)
+    if not meaning:
+        return f"<td{attrs}>{escape(s)}</td>"
+    icon = help_icon(s, text=meaning, app_config=app_config)
+    inner = f"{escape(s)}<span class=\"help-anchor\">{icon}</span>" if icon else escape(s)
+    return f"<td{attrs}>{inner}</td>"
+
+
 def _percent(value: float) -> str:
     return f"{value * 100:g}%"
 
