@@ -56,6 +56,24 @@ BENCHMARK_BETA_COLUMNS = [
     "benchmark_status_reason",
 ]
 
+# Per-window betas beyond the 3 scoring windows (2Y/5Y) are DISPLAY-ONLY — the Gold
+# Sensitivity overview's GDX/GDXJ reference rows at those lookbacks. They are OPTIONAL on
+# read: a benchmark artifact built before Phase 2 lacks them, and no portfolio analytic
+# depends on them, so the reader treats them as optional (backfills NA) rather than
+# failing the whole /portfolio page. New builds still produce them via the builder below.
+BENCHMARK_BETA_DISPLAY_WINDOW_COLUMNS = (
+    "down_beta_2y",
+    "up_beta_2y",
+    "down_beta_5y",
+    "up_beta_5y",
+)
+# Columns the reader REQUIRES — everything except the optional display-window betas.
+BENCHMARK_BETA_REQUIRED_COLUMNS = [
+    column
+    for column in BENCHMARK_BETA_COLUMNS
+    if column not in BENCHMARK_BETA_DISPLAY_WINDOW_COLUMNS
+]
+
 BENCHMARK_BETA_METHOD_VERSION = "tool_a_structural_weekly_v1"
 PUBLISHABLE_CONFIDENCE_LABELS = {"HIGH", "MEDIUM"}
 

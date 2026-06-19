@@ -439,3 +439,12 @@ def test_tool_a_benchmark_reference_rows_render_in_tfoot():
     html3y = _benchmark_reference_rows(df, "3Y")
     assert "1.70" in html3y and "1.38" in html3y  # selector reads the right window
     assert _benchmark_reference_rows(pd.DataFrame(), "12M") == ""  # no data -> no tfoot
+    # Old (pre-Phase-2) benchmark artifact has only 6M/12M/3Y columns; at 2Y/5Y the footer
+    # shows an explicit "n/a for this window" cue rather than silently vanishing (Codex P2).
+    html2y = _benchmark_reference_rows(df, "2Y")
+    assert html2y.startswith("<tfoot>") and "n/a for the 2Y window yet" in html2y
+    # it's the single n/a cue row, not real benchmark rows (no 12M/3Y betas leak through)
+    assert "1.01" not in html2y and "1.70" not in html2y
+    assert "· benchmark</span>" not in html2y
+    html5y = _benchmark_reference_rows(df, "5Y")
+    assert "n/a for the 5Y window yet" in html5y

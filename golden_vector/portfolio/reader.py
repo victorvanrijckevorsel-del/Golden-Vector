@@ -13,7 +13,11 @@ from golden_vector.portfolio.models import (
     PortfolioStaleSchemaError,
     PORTFOLIO_SCHEMA_VERSION,
 )
-from golden_vector.portfolio.benchmark_betas import BENCHMARK_BETA_COLUMNS
+from golden_vector.portfolio.benchmark_betas import (
+    BENCHMARK_BETA_COLUMNS,
+    BENCHMARK_BETA_DISPLAY_WINDOW_COLUMNS,
+    BENCHMARK_BETA_REQUIRED_COLUMNS,
+)
 from golden_vector.portfolio.m4_artifacts import (
     CORRELATION_COLUMNS,
     HEDGE_SIZING_COLUMNS,
@@ -95,6 +99,19 @@ def load_portfolio_data(paths: ProjectPaths) -> PortfolioData:
     assert value_history_path is not None
     assert reconciliation_export_path is not None
     try:
+        # Benchmark betas: require everything EXCEPT the optional display-only 2Y/5Y betas,
+        # then backfill those with NA. A pre-Phase-2 artifact lacks the 2Y/5Y columns; the
+        # portfolio page does not use them, so it stays usable (the overview's 2Y/5Y
+        # reference rows show the explicit "n/a for this window" cue, not a 503).
+        benchmark_betas = read_required_parquet(
+            benchmark_beta_path,
+            label="benchmark betas",
+            required_columns=BENCHMARK_BETA_REQUIRED_COLUMNS,
+            schema_version=PORTFOLIO_SCHEMA_VERSION,
+        )
+        for _display_column in BENCHMARK_BETA_DISPLAY_WINDOW_COLUMNS:
+            if _display_column not in benchmark_betas.columns:
+                benchmark_betas[_display_column] = pd.NA
         return PortfolioData(
             lines=read_required_parquet(
                 line_path,
@@ -114,12 +131,7 @@ def load_portfolio_data(paths: ProjectPaths) -> PortfolioData:
                 required_columns=SUMMARY_COLUMNS,
                 schema_version=PORTFOLIO_SCHEMA_VERSION,
             ),
-            benchmark_betas=read_required_parquet(
-                benchmark_beta_path,
-                label="benchmark betas",
-                required_columns=BENCHMARK_BETA_COLUMNS,
-                schema_version=PORTFOLIO_SCHEMA_VERSION,
-            ),
+            benchmark_betas=benchmark_betas,
             reconciliation=read_required_parquet(
                 reconciliation_path,
                 label="portfolio reconciliation",

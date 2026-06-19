@@ -35,12 +35,15 @@ def _reference_compute_structural_window_metrics(
 
     ticker = str(weekly_series["ticker"].iloc[0]).upper()
     as_of_dates = list(pd.to_datetime(weekly_series["as_of_date"]).sort_values().unique())
+    display_window_ids = {str(w).upper() for w in scoring_config.structural_display_windows}
     rows: list[dict[str, object]] = []
     for as_of_timestamp in as_of_dates:
         as_of_date = pd.Timestamp(as_of_timestamp)
-        issue_summary = None
+        # Scoring windows share the 3Y-trailing summary; display windows (2Y/5Y) use their
+        # own lookback (mirrors compute_structural_window_metrics).
+        scoring_issue_summary = None
         if not normalization_issues.empty:
-            issue_summary = summarize_normalization_issues(
+            scoring_issue_summary = summarize_normalization_issues(
                 normalization_issues=normalization_issues,
                 as_of_date=as_of_date,
             )
@@ -48,6 +51,16 @@ def _reference_compute_structural_window_metrics(
             *scoring_config.structural_windows,
             *scoring_config.structural_display_windows,
         ):
+            if normalization_issues.empty:
+                issue_summary = None
+            elif str(window_id).upper() in display_window_ids:
+                issue_summary = summarize_normalization_issues(
+                    normalization_issues=normalization_issues,
+                    as_of_date=as_of_date,
+                    window_id=window_id,
+                )
+            else:
+                issue_summary = scoring_issue_summary
             window_rows = build_trailing_window_rows(
                 weekly_series=weekly_series,
                 as_of_date=as_of_date,
@@ -281,6 +294,20 @@ def test_compute_structural_window_metrics_matches_reference_loop():
     ].iloc[0]
     assert boundary_metric["week_count"] == len(boundary_rows.index)
     assert boundary_metric["normalization_issue_summary"] == "STALE_FX"
+    # Display windows scope the normalization summary to their OWN lookback (Codex P2): at
+    # 2026-04-03 the 5Y window (start ~2021-04) covers the 2023-04 issues, while the 2Y
+    # window (start ~2024-04) and the scoring 12M row (3Y basis, boundary-excludes the
+    # 2023-04-03 issue) do not.
+    summary_5y = actual.loc[
+        actual["as_of_date"].eq(pd.Timestamp("2026-04-03").date())
+        & actual["window_id"].eq("5Y")
+    ].iloc[0]["normalization_issue_summary"]
+    assert summary_5y == "MISSING_FX,STALE_FX"
+    summary_2y = actual.loc[
+        actual["as_of_date"].eq(pd.Timestamp("2026-04-03").date())
+        & actual["window_id"].eq("2Y")
+    ].iloc[0]["normalization_issue_summary"]
+    assert pd.isna(summary_2y)
 
 
 def test_trailing_window_calendar_boundaries_are_exact():

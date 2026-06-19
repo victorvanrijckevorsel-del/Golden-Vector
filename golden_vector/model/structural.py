@@ -415,10 +415,27 @@ def compute_structural_window_metrics(
         )
         for window_id in all_window_ids
     }
-    issue_summaries = _summarize_normalization_issues_by_as_of(
+    # Scoring windows share the conservative 3Y-trailing normalization summary (covers all
+    # scoring data; consumed unchanged by scoring via scoring_frame). Display windows (2Y/5Y)
+    # get a summary scoped to their OWN lookback so each persisted row is a faithful audit
+    # source for that window (a 5Y row reflects 5Y data quality, not just the last 3 years).
+    display_window_ids = {str(w).upper() for w in scoring_config.structural_display_windows}
+    scoring_issue_summaries = _summarize_normalization_issues_by_as_of(
         normalization_issues=normalization_issues,
         as_of_dates=as_of_dates,
     )
+    issue_summaries_by_window = {
+        window_id: (
+            _summarize_normalization_issues_by_as_of(
+                normalization_issues=normalization_issues,
+                as_of_dates=as_of_dates,
+                window_id=window_id,
+            )
+            if str(window_id).upper() in display_window_ids
+            else scoring_issue_summaries
+        )
+        for window_id in all_window_ids
+    }
 
     rows: list[dict[str, object]] = []
     for position, as_of_timestamp in enumerate(as_of_dates):
@@ -435,7 +452,7 @@ def compute_structural_window_metrics(
                     y_values=y_values,
                     up_raw_mask=up_raw_mask,
                     down_raw_mask=down_raw_mask,
-                    issue_summary=issue_summaries[position],
+                    issue_summary=issue_summaries_by_window[window_id][position],
                     minimum_observations=minimum_observations_by_window[window_id],
                     minimum_regime_observations=minimum_regime_observations_by_window[
                         window_id
@@ -748,7 +765,13 @@ def _summarize_normalization_issues_by_as_of(
     *,
     normalization_issues: pd.DataFrame,
     as_of_dates: pd.DatetimeIndex,
+    window_id: str = "3Y",
 ) -> list[str | None]:
+    """Distinct normalization issues inside each as-of's trailing ``window_id`` lookback.
+
+    Defaults to 3Y (the widest scoring window) so the scoring summary covers all scoring
+    data; display windows pass their own id so a 5Y row's audit summary reflects its full
+    5Y window rather than only the last 3 years (Codex Phase-2 P2)."""
     if normalization_issues.empty:
         return [None] * len(as_of_dates)
 
@@ -765,7 +788,7 @@ def _summarize_normalization_issues_by_as_of(
     issue_dates = issues["date"].to_numpy(dtype="datetime64[ns]")
     issue_statuses = issues["normalization_status"].to_numpy(dtype=str)
     normalized_as_of_dates = pd.DatetimeIndex(as_of_dates)
-    trailing_starts = _window_start_values(normalized_as_of_dates, "3Y")
+    trailing_starts = _window_start_values(normalized_as_of_dates, window_id)
     as_of_values = normalized_as_of_dates.to_numpy(dtype="datetime64[ns]")
 
     summaries: list[str | None] = []
@@ -1089,12 +1112,16 @@ def summarize_normalization_issues(
     *,
     normalization_issues: pd.DataFrame,
     as_of_date: pd.Timestamp,
+    window_id: str = "3Y",
 ) -> str | None:
+    """Distinct normalization issues inside the trailing ``window_id`` lookback as of a
+    date. Defaults to 3Y (the widest scoring window); display windows pass their own id so
+    the persisted row's audit summary matches its regression window (Codex Phase-2 P2)."""
     if normalization_issues.empty:
         return None
     issues = normalization_issues.copy()
     issues["date"] = pd.to_datetime(issues["date"])
-    trailing_start = as_of_date - pd.DateOffset(years=3)
+    trailing_start = _window_start(pd.Timestamp(as_of_date), window_id)
     recent = issues.loc[
         issues["date"].gt(trailing_start) & issues["date"].le(as_of_date)
     ].copy()

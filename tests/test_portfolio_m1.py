@@ -36,6 +36,7 @@ from golden_vector.portfolio.m4_artifacts import (
     build_hedge_sizing_frame,
     build_value_history_frame,
 )
+from golden_vector.portfolio.benchmark_betas import BENCHMARK_BETA_DISPLAY_WINDOW_COLUMNS
 from golden_vector.portfolio.models import PortfolioStaleSchemaError, PortfolioValidationError
 from golden_vector.portfolio.pipeline import build_portfolio_artifacts, build_ticker_info
 from golden_vector.portfolio.reader import PortfolioData, load_portfolio_data
@@ -232,6 +233,41 @@ def test_portfolio_pipeline_groups_lots_and_computes_local_pnl(tmp_path):
     assert position["pnl_local"] == pytest.approx(40.0)
     assert position["pnl_fraction_local"] == pytest.approx(40.0 / 140.0)
     assert data.summary.iloc[0]["total_value_usd"] == pytest.approx(180.0)
+
+
+def test_load_portfolio_data_backfills_missing_display_window_benchmark_betas(tmp_path):
+    """Codex P2 regression: a pre-Phase-2 benchmark artifact (only 6M/12M/3Y per-window
+    betas, no 2Y/5Y) must keep /portfolio usable. The reader treats the display-only 2Y/5Y
+    betas as optional and backfills them with NA rather than raising PortfolioStaleSchemaError."""
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _portfolio_config()
+    _write_foundation_snapshot(paths, app_config, ticker="NEM", price=60.0, currency="USD")
+    ticker_info = build_ticker_info(app_config)
+    add_lot(
+        paths,
+        {"ticker": "NEM", "shares": "2", "buy_price": "50", "buy_currency": "USD", "buy_date": "2026-01-02"},
+        ticker_info=ticker_info,
+    )
+    build_portfolio_artifacts(paths=paths, app_config=app_config)
+
+    # Simulate an old artifact: strip the display-only 2Y/5Y benchmark beta columns from
+    # the persisted parquet (schema_version column is retained, so only the optional
+    # display columns are missing).
+    benchmark_path = resolve_current_model_artifact_path(paths, "benchmark_betas")
+    assert benchmark_path is not None
+    old_frame = pd.read_parquet(benchmark_path).drop(
+        columns=list(BENCHMARK_BETA_DISPLAY_WINDOW_COLUMNS)
+    )
+    assert "down_beta_2y" not in old_frame.columns
+    write_parquet_atomic(old_frame, benchmark_path)
+
+    data = load_portfolio_data(paths)  # must NOT raise PortfolioStaleSchemaError
+    for column in BENCHMARK_BETA_DISPLAY_WINDOW_COLUMNS:
+        assert column in data.benchmark_betas.columns
+        assert data.benchmark_betas[column].isna().all()
+    # the real scoring-window benchmark betas survive the read
+    assert "down_beta_6m" in data.benchmark_betas.columns
 
 
 def test_portfolio_pipeline_degrades_missing_snapshot_line_without_aborting(tmp_path):
