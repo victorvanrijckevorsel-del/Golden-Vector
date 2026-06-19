@@ -21,11 +21,22 @@ import pandas as pd
 from golden_vector.common.numeric import optional_finite_float
 
 # The window the user picks -> the column suffix used in tool_a_latest and benchmark_betas.
-_WINDOW_COLUMN_SUFFIX = {"6M": "6m", "12M": "12m", "3Y": "3y", "CORE": "core"}
+# Includes the display-only 2Y/5Y so the universe comparison resolves them once those
+# per-window beta columns exist (they now do on tool_a_latest and benchmark_betas).
+_WINDOW_COLUMN_SUFFIX = {
+    "6M": "6m",
+    "12M": "12m",
+    "2Y": "2y",
+    "3Y": "3y",
+    "5Y": "5y",
+    "CORE": "core",
+}
 _WINDOW_LABEL = {
     "6M": "6-month",
     "12M": "12-month",
+    "2Y": "2-year",
     "3Y": "3-year",
+    "5Y": "5-year",
     "CORE": "full-history",
 }
 

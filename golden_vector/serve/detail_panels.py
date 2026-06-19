@@ -1303,7 +1303,7 @@ def _render_structural_window_table(
 ) -> str:
     window_rows = []
     anchor_window_id = str(tool_a_row.get("anchor_window_id") or "").upper()
-    for window_id in ("6M", "12M", "3Y"):
+    for window_id in _STRUCTURAL_WINDOWS:
         normalized = window_id.lower()
         markers = []
         if window_id == anchor_window_id:

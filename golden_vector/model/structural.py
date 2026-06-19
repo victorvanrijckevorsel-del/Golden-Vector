@@ -383,6 +383,13 @@ def compute_structural_window_metrics(
         y_values=y_values,
         raw_mask=down_raw_mask,
     )
+    # Scoring windows PLUS the display-only windows (2Y/5Y) — the per-window beta math is
+    # identical; the pipeline filters back to the scoring windows for all rank/confidence
+    # work, so computing the extras here only adds display rows (Codex Phase-2, Option B).
+    all_window_ids = [
+        *scoring_config.structural_windows,
+        *scoring_config.structural_display_windows,
+    ]
     window_data_by_id = {
         window_id: _build_vectorized_window_data(
             as_of_dates=as_of_dates,
@@ -394,19 +401,19 @@ def compute_structural_window_metrics(
             up_count_prefix=up_count_prefix,
             down_count_prefix=down_count_prefix,
         )
-        for window_id in scoring_config.structural_windows
+        for window_id in all_window_ids
     }
     minimum_observations_by_window = {
         window_id: scoring_config.confidence_thresholds.minimum_observations_for_window(
             window_id
         )
-        for window_id in scoring_config.structural_windows
+        for window_id in all_window_ids
     }
     minimum_regime_observations_by_window = {
         window_id: scoring_config.confidence_thresholds.minimum_regime_observations_for_window(
             window_id
         )
-        for window_id in scoring_config.structural_windows
+        for window_id in all_window_ids
     }
     issue_summaries = _summarize_normalization_issues_by_as_of(
         normalization_issues=normalization_issues,
@@ -416,7 +423,7 @@ def compute_structural_window_metrics(
     rows: list[dict[str, object]] = []
     for position, as_of_timestamp in enumerate(as_of_dates):
         as_of_date = pd.Timestamp(as_of_timestamp)
-        for window_id in scoring_config.structural_windows:
+        for window_id in all_window_ids:
             rows.append(
                 _compute_vectorized_window_metric(
                     ticker=ticker,

@@ -306,6 +306,8 @@ def test_tool_a_overview_has_window_selector_and_direction_betas(tmp_path):
     # beta-window selector present, default = 1Y (the stored 12M)
     assert "window-switcher" in body
     assert "window=6M" in body and "window=3Y" in body  # selectable windows
+    assert "window=2Y" in body and "window=5Y" in body  # display-only longer lookbacks
+    assert ">2Y</a>" in body and ">5Y</a>" in body  # the new Phase-2 selector tabs render
     assert 'name="window" value="12M"' in body  # default resolved to 12M
     assert ">1Y</a>" in body  # 12M shown to the trader as "1Y"
     # direction-split + trust columns are the new headline

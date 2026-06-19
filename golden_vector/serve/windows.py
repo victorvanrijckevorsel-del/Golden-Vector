@@ -6,8 +6,9 @@ so the window→column mapping lives in one place (no hard-coded ``_6m/_12m/_3y`
 lists scattered across the overview, the detail page, and benchmark comparison).
 
 Serve-only: it resolves persisted columns for display; it never computes a beta in the
-request path. The window SET mirrors the model's ``_STRUCTURAL_WINDOWS`` (6M / 12M / 3Y);
-2Y / 5Y are a separate model/schema extension (plan Phase 2).
+request path. The window set is 6M / 12M / 2Y / 3Y / 5Y: 6M/12M/3Y are the SCORING
+windows; 2Y/5Y are DISPLAY-ONLY longer lookbacks (never part of the score/rank). The
+12M window renders under the "1Y" label.
 """
 
 from __future__ import annotations
@@ -18,13 +19,18 @@ from urllib.parse import quote
 
 from golden_vector.serve.format_helpers import _optional_float
 
-# Canonical window ids as stored by the model (suffix = ``.lower()``).
-STRUCTURAL_WINDOWS: tuple[str, ...] = ("6M", "12M", "3Y")
+# Canonical window ids as stored by the model (suffix = ``.lower()``). 6M/12M/3Y are the
+# scoring windows; 2Y/5Y are display-only extras (model Phase 2). Ordered for the selector.
+STRUCTURAL_WINDOWS: tuple[str, ...] = ("6M", "12M", "2Y", "3Y", "5Y")
+# The scoring vs display split, exported as the ONE source of truth so other serve
+# surfaces (detail page, charts) import these instead of re-hardcoding window tuples.
+SCORING_WINDOWS: tuple[str, ...] = ("6M", "12M", "3Y")
+DISPLAY_WINDOWS: tuple[str, ...] = ("2Y", "5Y")
 DEFAULT_WINDOW = "12M"  # the canonical anchor (matches the detail page default)
 # Display label only — Victor asked to show the 12M window as "1Y" (same data).
-WINDOW_LABELS: dict[str, str] = {"6M": "6M", "12M": "1Y", "3Y": "3Y"}
+WINDOW_LABELS: dict[str, str] = {"6M": "6M", "12M": "1Y", "2Y": "2Y", "3Y": "3Y", "5Y": "5Y"}
 # Accept the display alias + lowercase forms from the query string.
-_ALIASES: dict[str, str] = {"6M": "6M", "12M": "12M", "1Y": "12M", "3Y": "3Y"}
+_ALIASES: dict[str, str] = {"6M": "6M", "12M": "12M", "1Y": "12M", "2Y": "2Y", "3Y": "3Y", "5Y": "5Y"}
 
 
 def resolve_window(requested: str | None) -> str:
@@ -76,15 +82,19 @@ def r2_band(r_squared: float | None) -> tuple[str, bool]:
 _USABLE_WINDOW_STATUSES = ("", "OK", "ELIGIBLE")
 
 
-def window_is_reliable(metrics: dict[str, Any], *, min_weeks: float = 20.0) -> bool:
+def window_is_reliable(metrics: dict[str, Any]) -> bool:
     """A window's betas are trustworthy only when the window status is usable
-    (ELIGIBLE/OK), the fit is at least moderate, and the sample is not thin (Codex:
-    R² band + weeks + status together)."""
+    (ELIGIBLE/OK) and the fit is at least moderate.
+
+    Sample-size adequacy lives ONCE in config (per-window ``minimum_observations``:
+    6M=20 … 5Y=200) and is enforced upstream — a window with too few weeks is written
+    as LOW_OBSERVATION (not ELIGIBLE), so the status gate already excludes it. A
+    serve-side week floor would be a hardcoded twin of that config value, and a single
+    flat floor is wrong per-window (20 weeks is fine for 6M but far below the 200 a 5Y
+    window needs). So reliability defers to the backend status, never a literal here."""
     _band, fit_ok = r2_band(metrics.get("r_squared"))
     status_ok = str(metrics.get("status") or "").upper() in _USABLE_WINDOW_STATUSES
-    weeks = metrics.get("weeks")
-    weeks_ok = weeks is None or weeks >= min_weeks
-    return fit_ok and status_ok and weeks_ok
+    return fit_ok and status_ok
 
 
 def render_window_selector(active: str, *, search: str = "", target: str = "/tool-a") -> str:

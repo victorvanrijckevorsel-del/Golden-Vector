@@ -387,6 +387,44 @@ def test_reconstruction_parity_against_live_artifact():
         assert recon[tk] == pytest.approx(float(live[tk]), abs=1e-6), tk
 
 
+def test_reconstruct_cores_ignores_display_windows():
+    """The PIT core reconstruction must mirror model/pipeline: only the SCORING windows
+    (the weight_map keys) feed the core. ELIGIBLE 2Y/5Y DISPLAY rows — even with extreme
+    values — must NOT move the reconstructed core. weighted_median defaults an unmapped
+    window's weight to 1.0, so without the scoring-window filter the display rows would
+    leak into the core (this is the leak that broke the live-artifact parity test)."""
+    weight_map = {"6M": 1.0, "12M": 1.0, "3Y": 1.0}
+    base_rows = [
+        {"ticker": tk, "as_of_date": "2025-01-03", "window_id": w,
+         "window_status": "ELIGIBLE", "structural_delta": d}
+        for tk, deltas in (("AAA", (1.0, 1.2, 1.4)), ("BBB", (2.0, 2.2, 2.4)))
+        for w, d in zip(("6M", "12M", "3Y"), deltas)
+    ]
+    base_panel = v._panel_with_periods(pd.DataFrame(base_rows))
+    period = base_panel["week_period"].iloc[0]
+    baseline = v.reconstruct_cores_at(
+        base_panel, period, column="structural_delta", weight_map=weight_map
+    )
+
+    # Append ELIGIBLE 2Y/5Y display rows with an extreme delta for BOTH tickers.
+    display_rows = [
+        {"ticker": tk, "as_of_date": "2025-01-03", "window_id": w,
+         "window_status": "ELIGIBLE", "structural_delta": 99.0}
+        for tk in ("AAA", "BBB")
+        for w in ("2Y", "5Y")
+    ]
+    with_display = v.reconstruct_cores_at(
+        v._panel_with_periods(pd.DataFrame(base_rows + display_rows)),
+        period,
+        column="structural_delta",
+        weight_map=weight_map,
+    )
+
+    pd.testing.assert_series_equal(baseline.sort_index(), with_display.sort_index())
+    # Sanity: cores are the scoring-window weighted medians (1.2 / 2.2), never the 99 leak.
+    assert baseline["AAA"] < 2.0 and baseline["BBB"] < 3.0
+
+
 def test_ledger_constants_match_registered_gates():
     """MED-3: implementation gate constants must equal the registered ledger
     configs — the guardrail against post-hoc drift."""

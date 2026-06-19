@@ -1006,6 +1006,11 @@ class ConfidenceThresholds(StrictConfigModel):
     minimum_observations_6m: int = 20
     minimum_observations_12m: int = 40
     minimum_observations_3y: int = 120
+    # Display-only windows (Gold Sensitivity selector). Scaled at the same ~0.77 obs/week
+    # as the scoring windows; 5Y=200 keeps a short-history name (e.g. ~2.8y) INELIGIBLE at
+    # 5Y instead of silently reusing the 3Y floor (Codex Phase-2 P1). Not scoring windows.
+    minimum_observations_2y: int = 80
+    minimum_observations_5y: int = 200
     stability_floor: float = 0.25
 
     @model_validator(mode="after")
@@ -1025,6 +1030,8 @@ class ConfidenceThresholds(StrictConfigModel):
             self.minimum_observations_6m,
             self.minimum_observations_12m,
             self.minimum_observations_3y,
+            self.minimum_observations_2y,
+            self.minimum_observations_5y,
         ) <= 0:
             raise ValueError("minimum observations must all be positive")
         if self.stability_floor <= 0:
@@ -1037,6 +1044,8 @@ class ConfidenceThresholds(StrictConfigModel):
             "6M": self.minimum_observations_6m,
             "12M": self.minimum_observations_12m,
             "3Y": self.minimum_observations_3y,
+            "2Y": self.minimum_observations_2y,
+            "5Y": self.minimum_observations_5y,
         }
         if normalized not in mapping:
             raise ValueError(f"Unsupported structural window: {window_id}")
@@ -1110,6 +1119,15 @@ class ScoringConfig(StrictConfigModel):
         min_length=3,
         max_length=3,
     )
+    # Display-only extra beta windows for the Gold Sensitivity selector. Computed +
+    # persisted, but NEVER part of the score/rank/confidence/eligibility/anchor (the
+    # pipeline filters back to `structural_windows` for all scoring; Codex Phase-2 P0).
+    structural_display_windows: list[str] = Field(
+        # Only 2Y and 5Y are legitimate display windows (the disjointness validator
+        # below forbids the three scoring windows), so the schema bound is 2.
+        default_factory=lambda: ["2Y", "5Y"],
+        max_length=2,
+    )
     delta_bands: StructuralDeltaBands = Field(default_factory=StructuralDeltaBands)
     gamma_thresholds: GammaThresholds = Field(default_factory=GammaThresholds)
     asymmetry_thresholds: AsymmetryThresholds = Field(
@@ -1139,6 +1157,35 @@ class ScoringConfig(StrictConfigModel):
                 "structural_windows must be exactly: 6M, 12M, 3Y"
             )
         return normalized
+
+    @field_validator("structural_display_windows")
+    @classmethod
+    def valid_structural_display_windows(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip().upper() for value in values]
+        allowed = {"6M", "12M", "2Y", "3Y", "5Y"}
+        unknown = [w for w in normalized if w not in allowed]
+        if unknown:
+            raise ValueError(f"structural_display_windows must be within {sorted(allowed)}; got {unknown}")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("structural_display_windows must not contain duplicates")
+        return normalized
+
+    @model_validator(mode="after")
+    def display_windows_disjoint_from_scoring(self) -> "ScoringConfig":
+        # A scoring window listed under structural_display_windows would make
+        # structural.py emit a DUPLICATE row for that window per (ticker, as_of_date)
+        # (all_window_ids = scoring + display). The pipeline's scoring_frame filter
+        # keeps BOTH copies, inflating eligible_structural_window_count /
+        # positive_delta_window_count (and confidence coverage) — a silent rank
+        # corruption. The two lists must be disjoint, like GoldProfileConfig's
+        # down/up buckets.
+        overlap = set(self.structural_windows) & set(self.structural_display_windows)
+        if overlap:
+            raise ValueError(
+                "structural_display_windows must be disjoint from structural_windows; "
+                f"shared (scoring) windows: {sorted(overlap)}"
+            )
+        return self
 
     @field_validator("structural_anchor_window")
     @classmethod

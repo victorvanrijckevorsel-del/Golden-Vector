@@ -42,8 +42,12 @@ BENCHMARK_BETA_COLUMNS = [
     "up_beta_6m",
     "down_beta_12m",
     "up_beta_12m",
+    "down_beta_2y",
+    "up_beta_2y",
     "down_beta_3y",
     "up_beta_3y",
+    "down_beta_5y",
+    "up_beta_5y",
     "confidence_label",
     "confidence_score",
     "score_eligible",
@@ -197,7 +201,7 @@ def _benchmark_row(
         f"{side}_beta_{window}": (
             optional_float(row.get(f"{side}_beta_{window}")) if row else None
         )
-        for window in ("6m", "12m", "3y")
+        for window in ("6m", "12m", "2y", "3y", "5y")
         for side in ("down", "up")
     }
     score_eligible = (

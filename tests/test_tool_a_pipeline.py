@@ -288,6 +288,106 @@ def test_tool_a_output_build_restricts_to_latest_snapshot_candidate_dates():
     )
 
 
+def test_display_windows_never_change_rank_or_scoring():
+    """Codex Phase-2 P0 guard: appending 2Y/5Y display rows — even ELIGIBLE with extreme
+    betas that WOULD move confidence/counts/core if they leaked — must leave every scoring/
+    rank field byte-identical. Display rows only populate the new *_2y/*_5y columns."""
+    app_config = load_app_config(ProjectPaths.discover()).app
+    dates = {
+        "AEM": [date(2026, 1, 9), date(2026, 1, 16)],
+        "NEM": [date(2026, 1, 9), date(2026, 1, 16)],
+        "VAU.AX": [date(2026, 1, 9), date(2026, 1, 16)],
+    }
+    base = _synthetic_structural_metrics(dates)
+    # Add decision-boundary + deliberate-tie subjects so the DISCRETE protected fields
+    # (eligible_structural_window_count, score_eligible, tool_a_rank) are load-bearing —
+    # not just the continuous score/count fields. CLAUDE.md: exclusion tests use a
+    # borderline subject + healthy control; determinism tests include ties and NA.
+    edge_dates = [date(2026, 1, 9), date(2026, 1, 16)]
+    edge_rows: list[dict[str, object]] = []
+    for as_of in edge_dates:
+        # BRD: only 2 ELIGIBLE scoring windows (3Y is LOW_OBSERVATION — the degraded/NA
+        # window). Its eligible count sits at 2; if the 2 ELIGIBLE 2Y/5Y display rows
+        # leaked into scoring, the count would jump 2 -> 4 and could flip score_eligible.
+        for window_id, status, weeks in (
+            ("6M", "ELIGIBLE", 26), ("12M", "ELIGIBLE", 52), ("3Y", "LOW_OBSERVATION", 60),
+        ):
+            edge_rows.append({
+                "ticker": "BRD", "as_of_date": as_of, "window_id": window_id,
+                "window_status": status, "structural_delta": 1.30, "gamma_value": -0.2,
+                "asymmetry_ratio": 1.1, "up_beta": 1.2, "down_beta": 1.4, "r_squared": 0.9,
+                "week_count": weeks, "normalization_issue_summary": None,
+            })
+        # TIA / TIB: identical scoring inputs -> a deliberate score tie (rank tiebreak).
+        for tie_ticker in ("TIA", "TIB"):
+            for window_id, weeks in (("6M", 26), ("12M", 52), ("3Y", 156)):
+                edge_rows.append({
+                    "ticker": tie_ticker, "as_of_date": as_of, "window_id": window_id,
+                    "window_status": "ELIGIBLE", "structural_delta": 1.50, "gamma_value": -0.2,
+                    "asymmetry_ratio": 1.1, "up_beta": 1.35, "down_beta": 1.65, "r_squared": 0.9,
+                    "week_count": weeks, "normalization_issue_summary": None,
+                })
+    base = pd.concat([base, pd.DataFrame(edge_rows)], ignore_index=True)
+    volatility = _synthetic_volatility_diagnostics(base)
+    # Give the tie pair identical volatility so their scores tie EXACTLY (determinism).
+    tie_mask = volatility["ticker"].isin(["TIA", "TIB"])
+    for col in ("total_volatility_52w", "residual_volatility_52w", "downside_volatility_52w"):
+        volatility.loc[tie_mask, col] = float(volatility.loc[tie_mask, col].iloc[0])
+
+    extra_rows: list[dict[str, object]] = []
+    for r in base[["ticker", "as_of_date"]].drop_duplicates().itertuples(index=False):
+        for window_id, weeks in (("2Y", 104), ("5Y", 260)):
+            # One ticker's display rows carry a normalization issue: if it were read from
+            # the full frame instead of scoring_frame it would leak into eligibility.
+            issue = "STALE_FX" if r.ticker == "NEM" else None
+            extra_rows.append({
+                "ticker": r.ticker, "as_of_date": r.as_of_date, "window_id": window_id,
+                "window_status": "ELIGIBLE", "structural_delta": 99.0, "gamma_value": 5.0,
+                "asymmetry_ratio": 9.0, "up_beta": 50.0, "down_beta": 50.0,
+                "r_squared": 0.99, "week_count": weeks, "normalization_issue_summary": issue,
+            })
+    candidate = pd.concat([base, pd.DataFrame(extra_rows)], ignore_index=True)
+
+    def _build(metrics: pd.DataFrame) -> pd.DataFrame:
+        return _rank_tool_a_outputs(_build_tool_a_outputs(
+            structural_window_metrics=metrics, volatility_diagnostics=volatility,
+            app_config=app_config, run_context=_SyntheticRunContext(),
+            snapshot_refresh_run_id="foundation-run",
+        ))
+
+    baseline = _build(base)
+    with_display = _build(candidate)
+    protected = [
+        "ticker", "as_of_date", "tool_a_score", "tool_a_rank", "confidence_score",
+        "confidence_label", "profile_label", "score_eligible", "score_eligibility_reason",
+        "eligible_structural_window_count", "positive_delta_window_count",
+        "structural_delta_core", "structural_gamma_core", "up_beta_core", "down_beta_core",
+        "asymmetry_ratio_core", "anchor_window_id", "volatility_anchor_window_id",
+        # explicit invariant fields with their own leak paths (normalization issue is read
+        # from scoring_frame; stability derives from the eligible scoring frame)
+        "normalization_issue_summary", "delta_stability_score",
+    ]
+    pd.testing.assert_frame_equal(
+        baseline[protected].reset_index(drop=True),
+        with_display[protected].reset_index(drop=True),
+        check_dtype=False, check_exact=False, atol=1e-9, rtol=1e-9,
+    )
+    wd = with_display
+    # eligibility counts the SCORING windows only: 3 for full names, 2 for the boundary BRD
+    # (never the 5 a leak would produce). This is the load-bearing discrete assertion.
+    assert (wd.loc[wd["ticker"] != "BRD", "eligible_structural_window_count"] == 3).all()
+    assert (wd.loc[wd["ticker"] == "BRD", "eligible_structural_window_count"] == 2).all()
+    # the normalization issue on NEM's DISPLAY rows must not reach the scoring output
+    assert wd.loc[wd["ticker"] == "NEM", "normalization_issue_summary"].isna().all()
+    # the new display columns ARE populated from the (extreme) display rows
+    assert (wd["up_beta_2y"] == 50.0).all()
+    assert (wd["window_status_5y"] == "ELIGIBLE").all()
+    # the deliberate tie resolves deterministically: identical inputs -> identical score
+    latest = wd[wd["as_of_date"] == max(edge_dates)].set_index("ticker")
+    assert abs(float(latest.loc["TIA", "tool_a_score"]) - float(latest.loc["TIB", "tool_a_score"])) < 1e-9
+    assert pd.notna(latest.loc["TIA", "tool_a_rank"]) and pd.notna(latest.loc["TIB", "tool_a_rank"])
+
+
 def _rank_tool_a_outputs(outputs: pd.DataFrame) -> pd.DataFrame:
     ranked = rank_tool_a_outputs(outputs)
     return ranked.sort_values(

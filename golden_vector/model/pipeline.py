@@ -81,6 +81,23 @@ TOOL_A_OUTPUT_COLUMNS = [
     "window_status_6m",
     "window_status_12m",
     "window_status_3y",
+    # display-only windows (2Y/5Y) — Gold Sensitivity selector, not scoring
+    "structural_delta_2y",
+    "structural_delta_5y",
+    "gamma_2y",
+    "gamma_5y",
+    "up_beta_2y",
+    "down_beta_2y",
+    "up_beta_5y",
+    "down_beta_5y",
+    "asymmetry_ratio_2y",
+    "asymmetry_ratio_5y",
+    "r_squared_2y",
+    "r_squared_5y",
+    "weeks_2y",
+    "weeks_5y",
+    "window_status_2y",
+    "window_status_5y",
     "delta_stability_score",
     "confidence_score",
     "confidence_label",
@@ -379,7 +396,17 @@ def _build_tool_a_outputs(
 
     for (ticker, as_of_date), frame in grouped:
         window_map = {str(row.window_id).upper(): row for row in frame.itertuples(index=False)}
-        eligible_frame = frame.loc[frame["window_status"].astype(str).eq("ELIGIBLE")].copy()
+        # Codex Phase-2 P0: every scoring quantity (core betas, confidence, eligibility,
+        # counts, anchor, normalization) must come ONLY from the SCORING windows. Display
+        # windows (2Y/5Y) live in `frame`/`window_map` purely to populate the per-window
+        # display columns, and must NEVER reach the rank. So derive scoring from this filter.
+        scoring_window_ids = {str(w).upper() for w in app_config.scoring.structural_windows}
+        scoring_frame = frame.loc[
+            frame["window_id"].astype(str).str.upper().isin(scoring_window_ids)
+        ].copy()
+        eligible_frame = scoring_frame.loc[
+            scoring_frame["window_status"].astype(str).eq("ELIGIBLE")
+        ].copy()
         delta_values = _window_value_map(
             eligible_frame=eligible_frame,
             window_map=window_map,
@@ -423,7 +450,7 @@ def _build_tool_a_outputs(
             scoring_config=app_config.scoring,
         )
         normalization_issue_summary = _first_non_empty(
-            frame["normalization_issue_summary"].tolist()
+            scoring_frame["normalization_issue_summary"].tolist()
         )
         eligible_structural_window_count = int(len(eligible_frame.index))
         positive_delta_window_count = int(
@@ -450,11 +477,11 @@ def _build_tool_a_outputs(
         )
 
         anchor_window_id = choose_structural_anchor_window(
-            window_metrics=frame,
+            window_metrics=scoring_frame,
             scoring_config=app_config.scoring,
             require_eligible=True,
         ) or choose_structural_anchor_window(
-            window_metrics=frame,
+            window_metrics=scoring_frame,
             scoring_config=app_config.scoring,
             require_eligible=False,
         )
@@ -621,6 +648,24 @@ def _build_tool_a_outputs(
                 "window_status_6m": getattr(window_map.get("6M"), "window_status", None),
                 "window_status_12m": getattr(window_map.get("12M"), "window_status", None),
                 "window_status_3y": getattr(window_map.get("3Y"), "window_status", None),
+                # Display-only windows (2Y/5Y): persisted for the Gold Sensitivity selector,
+                # never used in scoring (see the scoring_frame filter above).
+                "structural_delta_2y": _optional_float(getattr(window_map.get("2Y"), "structural_delta", None)),
+                "structural_delta_5y": _optional_float(getattr(window_map.get("5Y"), "structural_delta", None)),
+                "gamma_2y": _optional_float(getattr(window_map.get("2Y"), "gamma_value", None)),
+                "gamma_5y": _optional_float(getattr(window_map.get("5Y"), "gamma_value", None)),
+                "up_beta_2y": _optional_float(getattr(window_map.get("2Y"), "up_beta", None)),
+                "down_beta_2y": _optional_float(getattr(window_map.get("2Y"), "down_beta", None)),
+                "up_beta_5y": _optional_float(getattr(window_map.get("5Y"), "up_beta", None)),
+                "down_beta_5y": _optional_float(getattr(window_map.get("5Y"), "down_beta", None)),
+                "asymmetry_ratio_2y": _optional_float(getattr(window_map.get("2Y"), "asymmetry_ratio", None)),
+                "asymmetry_ratio_5y": _optional_float(getattr(window_map.get("5Y"), "asymmetry_ratio", None)),
+                "r_squared_2y": _optional_float(getattr(window_map.get("2Y"), "r_squared", None)),
+                "r_squared_5y": _optional_float(getattr(window_map.get("5Y"), "r_squared", None)),
+                "weeks_2y": int(getattr(window_map.get("2Y"), "week_count", 0) or 0),
+                "weeks_5y": int(getattr(window_map.get("5Y"), "week_count", 0) or 0),
+                "window_status_2y": getattr(window_map.get("2Y"), "window_status", None),
+                "window_status_5y": getattr(window_map.get("5Y"), "window_status", None),
                 "delta_stability_score": delta_stability_score,
                 "confidence_score": confidence_score,
                 "confidence_label": confidence_label,

@@ -27,6 +27,7 @@ from golden_vector.serve.windows import (
     resolve_window,
     window_is_reliable,
     window_metrics,
+    window_suffix,
 )
 from golden_vector.serve.workspace_state import WorkspaceState
 
@@ -60,7 +61,7 @@ def _benchmark_reference_rows(benchmark_df: Any, active_window: str) -> str:
     is not OK (or has no beta for this window) is dropped."""
     if benchmark_df is None or getattr(benchmark_df, "empty", True):
         return ""
-    suffix = active_window.lower()
+    suffix = window_suffix(active_window)  # ONE window->column suffix map (serve/windows.py)
     rows: list[str] = []
     for _, r in benchmark_df.iterrows():
         if str(r.get("benchmark_status") or "").upper() not in ("", "OK"):
@@ -86,7 +87,17 @@ def _benchmark_reference_rows(benchmark_df: Any, active_window: str) -> str:
             + "<td class=\"hint\">—</td>"  # notes
             + "</tr>"
         )
-    return f"<tfoot>{''.join(rows)}</tfoot>" if rows else ""
+    if rows:
+        return f"<tfoot>{''.join(rows)}</tfoot>"
+    # No benchmark carries a beta for this window yet (e.g. GDX/GDXJ at 2Y/5Y before the
+    # benchmark artifact is rebuilt with those columns). Show an explicit muted cue rather
+    # than silently dropping the whole reference footer (an empty footer reads as a bug).
+    label = WINDOW_LABELS.get(active_window, active_window)
+    return (
+        "<tfoot><tr class=\"reference-row\">"
+        f"<td colspan=\"12\" class=\"hint\">GDX / GDXJ benchmark · n/a for the "
+        f"{escape(label)} window yet</td></tr></tfoot>"
+    )
 
 
 def _render_tool_a_overview_page(
@@ -100,8 +111,9 @@ def _render_tool_a_overview_page(
     """Gold Sensitivity overview: which miners react strongly/weakly to gold, up vs down.
 
     Ranked by the cross-window gold-sensitivity rank (low-confidence names are held out).
-    The beta window selector (6M / 1Y / 3Y) chooses which window's up/down beta, Gamma,
-    Asymmetry and Gold-link (R²) are shown — a pure read of persisted Tool A columns.
+    The beta window selector (6M / 1Y / 2Y / 3Y / 5Y) chooses which window's up/down beta,
+    Gamma, Asymmetry and Gold-link (R²) are shown — a pure read of persisted Tool A columns.
+    6M/1Y/3Y are the scoring windows; 2Y/5Y are display-only longer lookbacks.
     """
     active_window = resolve_window(window)
     note_counts = note_counts_by_ticker(state.stock_notes)
@@ -128,9 +140,13 @@ def _render_tool_a_overview_page(
         ta = row["tool_a_row"]
         m = window_metrics(ta, active_window)
         reliable = window_is_reliable(m)
+        # Carry the active window through to the detail page so the selection isn't lost on
+        # click-through (the detail page honours scoring windows and falls back gracefully
+        # for the display-only 2Y/5Y). Reuse the shared suffix helper — no inline .lower().
+        ticker_href = f"/ticker/{escape(row['ticker'])}?window={window_suffix(active_window)}"
         rows_html.append(
             "<tr>"
-            f"<td><a href=\"/ticker/{escape(row['ticker'])}\">{escape(row['ticker'])}</a></td>"
+            f"<td><a href=\"{ticker_href}\">{escape(row['ticker'])}</a></td>"
             + _win_num_td(m["up_beta"], reliable=reliable)
             + _win_num_td(m["down_beta"], reliable=reliable)
             + _gold_link_td(m["r_squared"])

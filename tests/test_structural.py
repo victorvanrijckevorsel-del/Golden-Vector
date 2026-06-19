@@ -44,7 +44,10 @@ def _reference_compute_structural_window_metrics(
                 normalization_issues=normalization_issues,
                 as_of_date=as_of_date,
             )
-        for window_id in scoring_config.structural_windows:
+        for window_id in (
+            *scoring_config.structural_windows,
+            *scoring_config.structural_display_windows,
+        ):
             window_rows = build_trailing_window_rows(
                 weekly_series=weekly_series,
                 as_of_date=as_of_date,
@@ -346,7 +349,7 @@ def test_trailing_window_calendar_boundaries_are_exact():
 
 def test_vectorized_window_starts_match_scalar_calendar_offsets():
     as_of_dates = pd.date_range("2014-01-01", "2026-12-31", freq="D")
-    for window_id in ("6M", "12M", "3Y"):
+    for window_id in ("6M", "12M", "2Y", "3Y", "5Y"):
         vectorized = _window_start_values(as_of_dates, window_id)
         scalar = np.array(
             [
@@ -511,6 +514,54 @@ def test_compute_volatility_diagnostics_uses_anchor_window_id():
     latest_row = diagnostics.sort_values("as_of_date").iloc[-1]
     assert latest_row["volatility_anchor_window_id"] == "12M"
     assert pd.notna(latest_row["residual_volatility_52w"])
+
+
+def test_volatility_anchor_never_selects_a_display_window():
+    """Phase-2 invariant: an ELIGIBLE 2Y/5Y display row must NEVER be chosen as the
+    volatility anchor, even when no scoring window is ELIGIBLE. The anchor (and hence
+    residual vol) must fall back through the scoring-window preference only."""
+    scoring = load_app_config(ProjectPaths.discover()).app.scoring
+    weeks = pd.date_range("2025-01-03", periods=60, freq="W-FRI")
+    gold_returns = np.where(np.arange(60) % 2 == 0, 0.015, -0.01)
+    stock_returns = (1.5 * gold_returns) + 0.002
+    weekly_series = pd.DataFrame(
+        {
+            "ticker": "NEM",
+            "as_of_date": weeks.date,
+            "stock_week_date": weeks.date,
+            "gold_week_date": weeks.date,
+            "stock_basis_usd": 10.0 * np.exp(np.cumsum(stock_returns)),
+            "gold_basis_usd": 1800.0 * np.exp(np.cumsum(gold_returns)),
+            "stock_weekly_log_return": stock_returns,
+            "gold_weekly_log_return": gold_returns,
+        }
+    )
+    # All scoring windows are LOW_OBSERVATION; only the 2Y DISPLAY window is ELIGIBLE
+    # with an extreme delta. If display windows leaked, the anchor would become "2Y".
+    as_of = weeks.max().date()
+    structural_metrics = pd.DataFrame(
+        [
+            {"ticker": "NEM", "as_of_date": as_of, "window_id": "6M",
+             "window_status": "LOW_OBSERVATION", "structural_delta": 1.45, "intercept_alpha": 0.002},
+            {"ticker": "NEM", "as_of_date": as_of, "window_id": "12M",
+             "window_status": "LOW_OBSERVATION", "structural_delta": 1.5, "intercept_alpha": 0.002},
+            {"ticker": "NEM", "as_of_date": as_of, "window_id": "3Y",
+             "window_status": "LOW_OBSERVATION", "structural_delta": 1.55, "intercept_alpha": 0.002},
+            {"ticker": "NEM", "as_of_date": as_of, "window_id": "2Y",
+             "window_status": "ELIGIBLE", "structural_delta": 99.0, "intercept_alpha": 9.9},
+        ]
+    )
+
+    diagnostics = compute_volatility_diagnostics(
+        weekly_series=weekly_series,
+        structural_window_metrics=structural_metrics,
+        scoring_config=scoring,
+    )
+
+    latest_row = diagnostics.sort_values("as_of_date").iloc[-1]
+    # Anchor must be a SCORING window (preference 12M -> 3Y -> 6M), never the 2Y display row.
+    assert latest_row["volatility_anchor_window_id"] in {"6M", "12M", "3Y"}
+    assert latest_row["volatility_anchor_window_id"] != "2Y"
 
 
 def test_compute_volatility_diagnostics_matches_reference_loop():

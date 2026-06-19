@@ -185,10 +185,18 @@ def reconstruct_cores_at(
         # its drift would invalidate the study, so there must be one
         # implementation (a committed parity test pins reconstruction to the
         # live artifact).
+        #
+        # Restrict to the SCORING windows (the weight_map's keys). The panel now
+        # also carries display-only windows (2Y/5Y, plan Phase 2); they are
+        # ELIGIBLE but never enter the core. model/pipeline guarantees this by
+        # building the core from a scoring-windows-only frame, and weighted_median
+        # defaults an unmapped window's weight to 1.0 — so without this filter a
+        # display window would silently shift the reconstructed core. Mirror the
+        # pipeline exactly.
         values = {
             str(r["window_id"]).upper(): r[column]
             for _, r in eligible.iterrows()
-            if pd.notna(r[column])
+            if pd.notna(r[column]) and str(r["window_id"]).upper() in weight_map
         }
         core = weighted_median(values, weights=weight_map)
         if core is not None:

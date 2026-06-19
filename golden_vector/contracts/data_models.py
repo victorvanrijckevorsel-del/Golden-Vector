@@ -189,6 +189,23 @@ class ToolAOutput(StrictDataModel):
     window_status_6m: str | None = None
     window_status_12m: str | None = None
     window_status_3y: str | None = None
+    # Display-only windows (2Y/5Y) for the Gold Sensitivity selector — not scoring inputs.
+    structural_delta_2y: float | None = None
+    structural_delta_5y: float | None = None
+    gamma_2y: float | None = None
+    gamma_5y: float | None = None
+    up_beta_2y: float | None = None
+    down_beta_2y: float | None = None
+    up_beta_5y: float | None = None
+    down_beta_5y: float | None = None
+    asymmetry_ratio_2y: float | None = None
+    asymmetry_ratio_5y: float | None = None
+    r_squared_2y: float | None = None
+    r_squared_5y: float | None = None
+    weeks_2y: int = 0
+    weeks_5y: int = 0
+    window_status_2y: str | None = None
+    window_status_5y: str | None = None
     delta_stability_score: float | None = None
     confidence_score: float | None = None
     confidence_label: str | None = None

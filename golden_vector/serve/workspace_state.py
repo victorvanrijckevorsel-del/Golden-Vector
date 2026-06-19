@@ -28,6 +28,7 @@ from golden_vector.model.benchmark_comparison import (
 from golden_vector.model.structural import build_structural_weekly_series
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.schema import validate_tool_b_output_schema
+from golden_vector.serve.windows import SCORING_WINDOWS
 
 
 @dataclass(frozen=True)
@@ -369,9 +370,12 @@ DETAIL_ALIGNMENT_FOUNDATION_MISSING = "FOUNDATION_MISSING"
 DETAIL_ALIGNMENT_TOOL_A_MISSING_REFRESH = "TOOL_A_MISSING_REFRESH"
 
 
-# Canonical structural windows available on the detail page. Order here
-# is the display order for the switcher tabs.
-_STRUCTURAL_WINDOWS: tuple[str, ...] = ("6M", "12M", "3Y")
+# Canonical structural windows available on the detail page. The detail page
+# intentionally shows only the SCORING windows; the display-only 2Y/5Y lookbacks live
+# on the Gold Sensitivity overview selector, not here (kept as one deliberate scope
+# decision rather than a half-delivered switcher). Imported from serve.windows so the
+# scoring-window set has ONE definition. Order = switcher tab display order.
+_STRUCTURAL_WINDOWS: tuple[str, ...] = SCORING_WINDOWS
 
 # Number of weekly observations per window, used by the scatter-slice
 # and volatility recompute helpers.
@@ -461,7 +465,9 @@ def _structural_history_matches_tool_a(
 _WINDOW_COLORS: dict[str, str] = {
     "6M": "#8a6d3b",
     "12M": "#1d4b73",
+    "2Y": "#2e7d5b",
     "3Y": "#5a3b8a",
+    "5Y": "#7a3b5a",
 }
 
 

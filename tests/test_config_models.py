@@ -655,6 +655,75 @@ def test_scoring_config_rejects_unsupported_blocked_normalization_status():
         )
 
 
+def test_scoring_config_default_display_windows_are_disjoint_from_scoring():
+    # The shipped default (2Y/5Y display, 6M/12M/3Y scoring) must validate.
+    config = ScoringConfig()
+    assert config.structural_display_windows == ["2Y", "5Y"]
+    assert not (
+        set(config.structural_windows) & set(config.structural_display_windows)
+    )
+
+
+def test_scoring_config_rejects_display_window_overlapping_a_scoring_window():
+    # A scoring window listed as display would emit a duplicate structural row and
+    # inflate eligible_structural_window_count / positive_delta_window_count — a
+    # silent rank corruption. Must fail loud at config validation.
+    with pytest.raises(ValidationError, match="disjoint"):
+        ScoringConfig.model_validate(
+            {
+                "structural_display_windows": ["6M", "2Y"],
+            }
+        )
+
+
+def test_scoring_config_rejects_unknown_display_window():
+    with pytest.raises(ValidationError, match="within"):
+        ScoringConfig.model_validate({"structural_display_windows": ["7Y"]})
+
+
+def test_scoring_config_rejects_duplicate_display_window():
+    with pytest.raises(ValidationError, match="duplicate"):
+        ScoringConfig.model_validate({"structural_display_windows": ["2Y", "2Y"]})
+
+
+def test_confidence_thresholds_minimum_observations_for_window_covers_all_windows():
+    ct = ConfidenceThresholds()
+    assert ct.minimum_observations_for_window("6M") == 20
+    assert ct.minimum_observations_for_window("12M") == 40
+    assert ct.minimum_observations_for_window("2Y") == 80
+    assert ct.minimum_observations_for_window("3Y") == 120
+    assert ct.minimum_observations_for_window("5Y") == 200
+    with pytest.raises(ValueError, match="Unsupported structural window"):
+        ct.minimum_observations_for_window("7Y")
+
+
+@pytest.mark.parametrize("field", ["minimum_observations_2y", "minimum_observations_5y"])
+def test_confidence_thresholds_reject_non_positive_display_floor(field):
+    # A non-positive observation floor would defeat the LOW_OBSERVATION gate, letting a
+    # thin long-lookback window show as ELIGIBLE/reliable. Must be rejected like the
+    # scoring-window floors (the positivity guard covers all five windows).
+    for bad in (0, -5):
+        with pytest.raises(
+            ValidationError, match="minimum observations must all be positive"
+        ):
+            ConfidenceThresholds.model_validate({field: bad})
+
+
+def test_confidence_thresholds_observation_floors_share_one_scaling():
+    # Every window's floor tracks the same ~0.77 obs/week scaling. Pins the floors so a
+    # future edit cannot silently desync one window from the rest.
+    ct = ConfidenceThresholds()
+    ratios = {
+        "6M": ct.minimum_observations_6m / 26,
+        "12M": ct.minimum_observations_12m / 52,
+        "2Y": ct.minimum_observations_2y / 104,
+        "3Y": ct.minimum_observations_3y / 156,
+        "5Y": ct.minimum_observations_5y / 260,
+    }
+    for window, ratio in ratios.items():
+        assert ratio == pytest.approx(20 / 26, abs=0.05), window
+
+
 def test_candidate_finder_preset_accepts_no_option_filter():
     config = CandidateFinderConfig.model_validate(
         {

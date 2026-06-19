@@ -49,6 +49,43 @@ def test_persist_tool_a_outputs_writes_full_and_latest_exports(tmp_path):
     assert list(stable_latest["ticker"]) == ["GOLD", "NEM"]
 
 
+def test_persist_tool_a_outputs_round_trips_display_window_columns(tmp_path):
+    """Schema/persist lock for the Phase-2 display windows: the 16 2Y/5Y columns must
+    survive the parquet round-trip with their values, and weeks_* must stay integer."""
+    paths = build_test_paths(tmp_path)
+    run_context = RunContext.start(
+        paths=paths, command="tool-a", parameters={}, config_hash="hash",
+    )
+    display_cols = {
+        "structural_delta_2y": 1.6, "structural_delta_5y": 1.4,
+        "gamma_2y": 0.05, "gamma_5y": -0.02,
+        "up_beta_2y": 1.31, "down_beta_2y": 1.02,
+        "up_beta_5y": 1.45, "down_beta_5y": 1.10,
+        "asymmetry_ratio_2y": 1.28, "asymmetry_ratio_5y": 1.10,
+        "r_squared_2y": 0.41, "r_squared_5y": 0.33,
+        "weeks_2y": 104, "weeks_5y": 143,
+        "window_status_2y": "ELIGIBLE", "window_status_5y": "LOW_OBSERVATION",
+    }
+    tool_a_outputs = pd.DataFrame(
+        [{"ticker": "NEM", "as_of_date": date(2026, 1, 31), "tool_a_rank": 1, **display_cols}]
+    )
+
+    persist_tool_a_outputs(
+        paths=paths, run_context=run_context, tool_a_outputs=tool_a_outputs,
+    )
+
+    stable = pd.read_parquet(paths.latest_tool_a_snapshot_parquet_path)
+    row = stable[stable["ticker"] == "NEM"].iloc[0]
+    for col, expected in display_cols.items():
+        if isinstance(expected, str):
+            assert row[col] == expected, col
+        else:
+            assert abs(float(row[col]) - expected) < 1e-9, col
+    # weeks columns must persist as an integer dtype, not float
+    assert pd.api.types.is_integer_dtype(stable["weeks_2y"])
+    assert pd.api.types.is_integer_dtype(stable["weeks_5y"])
+
+
 def test_persist_tool_a_outputs_can_preserve_previous_stable_latest_alias_on_empty_run(tmp_path):
     paths = build_test_paths(tmp_path)
     initial_context = RunContext.start(
