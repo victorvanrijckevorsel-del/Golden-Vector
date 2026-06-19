@@ -47,6 +47,8 @@ class WorkspaceState:
     tool_c_alias_present: bool
     tool_d_alias_present: bool
     model_state_manifest: dict[str, Any] | None
+    # GDX/GDXJ per-window betas (the tiny 2-row benchmark file) for overview reference rows.
+    latest_benchmark_betas: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 @dataclass(frozen=True)
@@ -128,6 +130,16 @@ def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> Wor
             "tool_d",
             fallback_path=paths.latest_tool_d_snapshot_parquet_path,
         )
+    benchmark_betas_path = resolve_current_model_artifact_path(
+        paths,
+        "benchmark_betas",
+        fallback_path=paths.latest_benchmark_betas_path,
+    )
+    latest_benchmark_betas = (
+        read_optional_parquet(benchmark_betas_path) if benchmark_betas_path is not None else None
+    )
+    if latest_benchmark_betas is None:
+        latest_benchmark_betas = pd.DataFrame()
     if not latest_tool_a.empty and "ticker" in latest_tool_a.columns:
         latest_tool_a["ticker"] = latest_tool_a["ticker"].astype(str).str.upper()
     if not latest_tool_b.empty and "ticker" in latest_tool_b.columns:
@@ -152,6 +164,7 @@ def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> Wor
         tool_c_alias_present=tool_c_path is not None,
         tool_d_alias_present=tool_d_path is not None,
         model_state_manifest=model_state_manifest,
+        latest_benchmark_betas=latest_benchmark_betas,
     )
 
 

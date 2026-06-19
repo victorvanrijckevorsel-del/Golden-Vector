@@ -53,6 +53,42 @@ def _gold_link_td(r_squared: float | None) -> str:
     return f"<td data-order=\"{r_squared:.4f}\">{body}</td>"
 
 
+def _benchmark_reference_rows(benchmark_df: Any, active_window: str) -> str:
+    """GDX / GDXJ reference rows for the selected window, rendered in <tfoot> so
+    DataTables excludes them from the miner ranking / sort / filter (Codex). Each is the
+    same-window benchmark beta from the persisted benchmark file; a benchmark whose status
+    is not OK (or has no beta for this window) is dropped."""
+    if benchmark_df is None or getattr(benchmark_df, "empty", True):
+        return ""
+    suffix = active_window.lower()
+    rows: list[str] = []
+    for _, r in benchmark_df.iterrows():
+        if str(r.get("benchmark_status") or "").upper() not in ("", "OK"):
+            continue
+        up = _optional_float(r.get(f"up_beta_{suffix}"))
+        down = _optional_float(r.get(f"down_beta_{suffix}"))
+        if up is None and down is None:
+            continue
+        ticker = str(r.get("benchmark_ticker") or "")
+        rows.append(
+            "<tr class=\"reference-row\">"
+            f"<td>{escape(ticker)} <span class=\"hint\">· benchmark</span></td>"
+            + _win_num_td(up, reliable=True)
+            + _win_num_td(down, reliable=True)
+            + "<td class=\"hint\">—</td>"  # gold-link (n/a for the benchmark itself)
+            + "<td class=\"hint\">—</td>"  # delta
+            + "<td class=\"hint\">—</td>"  # gamma
+            + "<td class=\"hint\">—</td>"  # asymmetry
+            + f"<td>{escape(str(r.get('confidence_label') or '—'))}</td>"
+            + "<td class=\"hint\">ETF</td>"  # profile
+            + "<td class=\"hint\">—</td>"  # volatility
+            + "<td class=\"hint\">—</td>"  # rank (benchmarks are not ranked)
+            + "<td class=\"hint\">—</td>"  # notes
+            + "</tr>"
+        )
+    return f"<tfoot>{''.join(rows)}</tfoot>" if rows else ""
+
+
 def _render_tool_a_overview_page(
     state: WorkspaceState,
     *,
@@ -169,6 +205,7 @@ def _render_tool_a_overview_page(
         + help_th("Notes", key="user_notes_count", app_config=app_config, col_name="notes", sort_numeric=True)
         + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
-        "</table>"
+        + _benchmark_reference_rows(state.latest_benchmark_betas, active_window)
+        + "</table>"
     )
     return _page_shell("Gold Sensitivity - Golden Vector Workspace", "".join(body), active_nav="tool_a")

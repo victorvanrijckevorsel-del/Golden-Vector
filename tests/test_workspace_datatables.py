@@ -412,3 +412,28 @@ def test_workspace_tables_js_has_datatable_guard():
     content = js_path.read_text(encoding="utf-8")
     assert "typeof window.DataTable !== 'function'" in content
     assert "return" in content  # inside the guard
+
+
+def test_tool_a_benchmark_reference_rows_render_in_tfoot():
+    """GDX/GDXJ reference rows render in <tfoot> (so DataTables keeps them out of the
+    miner ranking/sort/filter), read the SELECTED window's beta, and drop non-OK benchmarks."""
+    import pandas as pd
+
+    from golden_vector.serve.overview_tool_a import _benchmark_reference_rows
+
+    df = pd.DataFrame([
+        {"benchmark_ticker": "GDX", "benchmark_status": "OK", "confidence_label": "HIGH",
+         "up_beta_12m": 1.01, "down_beta_12m": 1.44, "up_beta_3y": 1.70, "down_beta_3y": 1.38},
+        {"benchmark_ticker": "GDXJ", "benchmark_status": "OK", "confidence_label": "HIGH",
+         "up_beta_12m": 1.21, "down_beta_12m": 1.58, "up_beta_3y": 1.85, "down_beta_3y": 1.45},
+        {"benchmark_ticker": "BAD", "benchmark_status": "DEGRADED", "confidence_label": "LOW",
+         "up_beta_12m": 9.9, "down_beta_12m": 9.9},
+    ])
+    html = _benchmark_reference_rows(df, "12M")
+    assert html.startswith("<tfoot>") and html.endswith("</tfoot>")
+    assert "GDX" in html and "GDXJ" in html
+    assert "BAD" not in html  # non-OK benchmark is dropped
+    assert "1.01" in html and "1.44" in html  # 12M betas
+    html3y = _benchmark_reference_rows(df, "3Y")
+    assert "1.70" in html3y and "1.38" in html3y  # selector reads the right window
+    assert _benchmark_reference_rows(pd.DataFrame(), "12M") == ""  # no data -> no tfoot
