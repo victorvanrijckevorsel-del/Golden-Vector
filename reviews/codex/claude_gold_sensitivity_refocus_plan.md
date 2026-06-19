@@ -48,9 +48,8 @@ A fast, scannable, sortable table — the answer to "who reacts to gold, up vs d
   wiring. **General across all tabs** (Profile / Volatility / Confidence here, plus categorical values
   on B / C / D). UX: show the value "i" on cell hover (not 60 visible "i"s at once); same popup on click.
 - Sortable on every column, neutral (both directions equally), with **GDX / GDXJ reference rows**.
-- **OPEN — the "Gold Sensitivity Score" composite:** drop it (per the no-invented-composite rule,
-  Claude's lean) OR keep it with a "?" tooltip explaining its construction (per "keep the words").
-  Awaiting Victor's call.
+- **Drop the "Gold Sensitivity Score" composite** (decided 2026-06-19, per the no-invented-composite
+  rule). The raw betas + Gamma + Profile speak for themselves; no opaque blended score.
 - **Presentation rebuild of `/tool-a` — no new math** (all numbers already in `tool_a_latest`).
 - Thin/weak values are flagged, never dressed up (the opposite of the capture card's sin).
 
@@ -102,10 +101,12 @@ no opaque composite scores; descriptive, not a forecast.
 
 ## Decisions (Victor 2026-06-19)
 1. **Window set = 6M · 1Y · 2Y · 3Y · 5Y** (1Y = old 12M; 2Y & 5Y new). ✓
-2. **Tab name = "Gold Sensitivity"** — pure UI label; internal code/name unchanged. ✓
+2. **NO tab renames anywhere — all 5 tabs keep their current names.** The page is *already* displayed
+   as "Gold Sensitivity" (internal route `/tool-a`); nothing changes. "Gold Reactors" is only an
+   internal nickname for the redesigned *table*, NOT a new tab name. ✓
 3. **Keep existing column words**; add the "i" info-tooltip to every **column** AND to every
    categorical **value** (the centralised value-glossary, see Decision 1). ✓
+4. **Drop the "Gold Sensitivity Score"** composite. ✓
 
 ## Still open
-- **Gold Sensitivity Score** — keep (with an "i" tooltip) or drop (no-invented-composite rule)? (Claude leans drop.)
 - GDXJ reference row alongside GDX? (assumed yes unless told otherwise)
