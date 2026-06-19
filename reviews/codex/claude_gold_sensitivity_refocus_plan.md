@@ -91,13 +91,44 @@ want it, it's ready and the acceptance bar is co-signed.
 Lead with the stable/validated number; always show fit/confidence (R²); flag thin/weak data loudly;
 no opaque composite scores; descriptive, not a forecast.
 
-## Sequencing & complexity
-1. **Phase 1 (easy, data exists):** `/tool-a` → Gold Reactors reframe **+ horizon selector (A)**.
-   Presentation/serve only; reuse existing `tool_a_latest` columns.
-2. **Phase 2 (small model change):** add 1Y / 2Y / 5Y fixed windows to Tool A if more granularity is
-   wanted.
-3. **Phase 3 (medium, model change):** compute + persist multi-window downside betas in Tool C, then
-   add the horizon selector to **Gold Downside (C)**.
+## Codex review applied (2026-06-19) — corrected scope & refinements
+Codex verdict was NEEDS-CHANGES; corrections folded in:
+- **My "5-window selector is cheap" was wrong.** Tool A stores ONLY 6M/12M/3Y and `ScoringConfig`
+  hard-validates `structural_windows == ["6M","12M","3Y"]` (pipeline, `ToolAOutputRow`,
+  `benchmark_comparison`, the detail switcher, and tests are all 3-window-shaped). So **2Y/5Y is real
+  model/schema/config/test work**, split out below.
+- **Default window** = **12M (1Y)** — the existing canonical anchor (matches the detail page); the
+  selector toggles windows, so **the selector itself is the "is it changing?" mechanism** → drop the
+  inline recent-shift arrow (avoids a forecast-y reading; Codex guardrail).
+- **Trust = R² *band* + weeks + window_status together**, not R² alone; low-fit / low-status rows
+  **sort + display as weak evidence** (reuse `LOW_LINKAGE` / rank-ineligible), not just a warning.
+- **Value-tooltip cell contract (Codex MED, blocking):** the "i" button must NOT pollute the cell's
+  search/sort text → emit clean `data-search` / `data-order` (raw value) with the button outside the
+  searchable text; **accessible on keyboard + touch (NOT hover-only)**; escape via the existing helper;
+  glossary content kept consistent with `model/labels.py` + `model/explanations.py`. Add render-level
+  DataTables-filter tests for Profile/Confidence/Volatility after value-help is added.
+- **GDX + GDXJ reference rows** — same window, benchmark-styled, excluded from miner ranks/counts,
+  hidden/degraded when benchmark status != OK.
+- **Shared window resolver** — one helper used by the Tool A overview, detail page, and benchmark
+  comparison; do not add another hard-coded window list.
+- **5Y is not universal** (e.g. AAUC.TO ~2.8y, THX.L ~5.0y of history) → explicit unavailable/thin
+  handling for the 2Y/5Y windows.
+- Architecture: selector **reads persisted fields only** — no regression computed in the `/tool-a` or
+  `/tool-c` request path; 2Y/5Y (A) and windowed C must publish persisted artifacts + update the
+  current-state contract.
+
+## Sequencing & complexity (revised)
+1. **Phase 1a (serve-only, cheap — start here):** reframe `/tool-a` + horizon selector for **6M / 1Y /
+   3Y** (1Y = the stored 12M), default 1Y; drop the composite score; lead with the selected window's
+   up/down beta + R²-band + weeks/status; GDX+GDXJ reference rows; **shared window resolver**. Reuses
+   existing `tool_a_latest` columns — no model change.
+2. **Phase 1b (serve, mostly content):** value-tooltip system — central glossary (consistent with
+   labels/explanations) + `help_value()` with clean `data-search`/`data-order` + accessible + tests.
+3. **Phase 2 (model change):** add **2Y / 5Y** windows to Tool A via centralized config + output
+   columns + `ToolAOutputRow` + benchmark betas + detail switcher + current-state contract + tests +
+   5Y thin/unavailable handling → extend the selector to the full 6M/1Y/2Y/3Y/5Y set.
+4. **Phase 3 (model change):** persist windowed down/up betas (+ R²/weeks/status/confidence) in Tool C,
+   add C descriptive-not-forecast copy, then add the horizon selector to **Gold Downside (C)**.
 
 ## Decisions (Victor 2026-06-19)
 1. **Window set = 6M · 1Y · 2Y · 3Y · 5Y** (1Y = old 12M; 2Y & 5Y new). ✓
