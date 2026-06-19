@@ -9,7 +9,6 @@ from golden_vector.serve.windows import (
     DISPLAY_WINDOWS,
     SCORING_WINDOWS,
     STRUCTURAL_WINDOWS,
-    WINDOW_LABELS,
     r2_band,
     render_window_selector,
     resolve_window,
