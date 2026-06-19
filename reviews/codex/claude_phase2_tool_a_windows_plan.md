@@ -57,6 +57,49 @@ cross-window and unchanged by the selector.
 - **5Y data scarcity** — surfaced honestly via `window_status_5y` + the existing Gold-link/mute logic.
 - One-copy: the window→months map lives once; reuse the existing per-window machinery, don't fork it.
 
+## Codex review applied (2026-06-19) — corrections folded in (verdict was NEEDS CHANGES)
+Codex confirmed Option B but found the plan unsafe-to-build as written. Build-ready scope now:
+
+- **P0 — scoring-frame hard boundary (the critical guard).** `model/pipeline.py` builds
+  `eligible_frame` from EVERY eligible window in the group and feeds it into `confidence_score`,
+  `eligible_structural_window_count`, `positive_delta_window_count`, `determine_score_eligibility`,
+  the anchor, explanations, and normalization blockers (`pipeline.py:382-438, 771-793`). Weighted
+  medians are weight-protected but these are NOT — so appended 2Y/5Y rows WOULD corrupt confidence/
+  eligibility/rank. **Fix:** filter to `scoring_window_ids = set(scoring_config.structural_windows)`
+  in output assembly; compute ALL core/confidence/eligibility/count/anchor/explanation/blocker values
+  from the scoring-only frame; use display rows ONLY to populate the new `*_2y`/`*_5y` columns.
+- **P1 — 2Y/5Y observation policy.** `ConfidenceThresholds.minimum_observations_for_window()` only
+  supports 6M/12M/3Y and RAISES otherwise; `structural.py` calls it for every computed window. Add
+  central minimum-observation + regime-observation thresholds for 2Y/5Y (config_models + scoring.yaml)
+  WITHOUT scoring weights — this is what makes `window_status_5y` honest (a ~2.8y name must NOT be
+  marked eligible at 5Y by reusing the 3Y threshold).
+- **P1 — expanded touch list:** the pipeline scoring-frame filter; benchmark `PORTFOLIO_SCHEMA_VERSION`
+  bump + `BENCHMARK_BETA_COLUMNS` + reader tests; a model-state manifest current-state contract proving
+  the new columns resolve through the manifest path (Tool A has no schema version → column-contract
+  tests are the guard); `model/benchmark_comparison.py` 2Y/5Y suffix+label maps; `serve/workspace_state.py`
+  `_STRUCTURAL_WINDOWS` + `_WINDOW_WEEKS` (must NOT fall back to 52w for 2Y/5Y vol) + `_WINDOW_COLORS`
+  + chart/detail consumers; `detail_panels.py:1306` hardcoded window loop; `serve/format_helpers.py`
+  numeric field sets; `serve/column_help.py` text; Candidate Finder + Tool C **no-change regression
+  tests** (they read core fields only); a **live-column parity** check (old/rank columns identical,
+  new columns additive).
+- **P1 — rank-parity guard** in `tests/test_tool_a_pipeline.py`: build outputs from the same synthetic
+  structural metrics twice (6M/12M/3Y only vs +2Y/5Y appended); assert EXACT equality on
+  `tool_a_score, tool_a_rank, confidence_score, confidence_label, profile_label, score_eligible,
+  score_eligibility_reason, eligible_structural_window_count, positive_delta_window_count,
+  structural_delta_core, structural_gamma_core, up_beta_core, down_beta_core, asymmetry_ratio_core,
+  anchor_window_id, volatility_anchor_window_id`; separately assert the new display columns exist.
+- **P2 — overview status alignment: DONE** (`window_is_reliable` now treats `ELIGIBLE`/`OK` as usable;
+  weak-R²/`LOW_OBSERVATION`/`INELIGIBLE`/thin stay muted). Committed `d8d4325` + `tests/test_windows.py`.
+- **Labels/anchor (confirmed):** keep `12M` as the canonical internal id, persisted `*_12m`, and the
+  `structural_anchor_window`; show "1Y" only as a display label (URL alias `1Y→12M`). Do NOT rename
+  columns to `*_1y` and do NOT change the anchor.
+
+**Build order (each gated):** (1) write the rank-parity test; (2) config 2Y/5Y thresholds +
+`structural_display_windows`; (3) `structural.py` computes display windows; (4) **pipeline scoring-frame
+filter (P0)** — parity test must stay green; (5) output columns + benchmark schema bump; (6) serve/
+detail window registries + labels; (7) Candidate Finder / Tool C no-change tests; (8) rebuild artifacts
++ live-verify.
+
 ## Open question for Codex
 Is **Option B (decoupled display windows)** the right architecture, or is there a reason to make 2Y/5Y
 full scoring windows? And: should the **canonical anchor** stay 12M, or is there value in offering a
