@@ -30,18 +30,35 @@ A fast, scannable, sortable table — the answer to "who reacts to gold, up vs d
 - **New "Gold-link (R²)" column = the master trust signal** — how much of the stock's movement gold
   actually explains. strong / moderate / weak / **none**. Stocks that barely track gold (e.g. CG, PRU
   at R²≈1%) are flagged **"barely tracks gold"**, not shown with a confident-looking beta.
-- **Tilt** (torque = rises more than falls / fragile = falls more than rises / balanced) shown **only
-  when the gold-link is real**; never a verdict on a stock that doesn't track gold.
-- **Drop the opaque "Gold Sensitivity Score"** composite (honours the no-invented-composite rule);
-  rename "gamma" → plain "tilt".
+- **Keep the existing column vocabulary exactly** (Victor 2026-06-19): **Gamma**, **Asymmetry**,
+  **Confidence** (HIGH/MEDIUM), **Profile** (LOW_LINKAGE / FRAGILE / DEFENSIVE / …), **Volatility**
+  (MODERATE_NOISE / HIGH_DOWNSIDE_RISK / HIGH_NOISE / LOW_NOISE). **Do NOT invent new words** — this
+  supersedes the earlier "rename gamma → tilt / torque / fragile / balanced" idea. (Note: Profile's
+  `LOW_LINKAGE` already encodes the "barely tracks gold" / low-R² honesty signal I'd proposed.)
+- **Every column header carries the same "i" info-tooltip** that Gamma already has — plain-English
+  description + a **FORMULA** box + a "Read more" link — applied **consistently to ALL columns**
+  (existing ones AND the new beta / R² / horizon columns).
+- **NEW — value-level "i" tooltips (Victor 2026-06-19, the main ask).** Clicking the "i" next to a
+  *cell value* (LOW_LINKAGE, FRAGILE, DEFENSIVE, MODERATE_NOISE, HIGH_DOWNSIDE_RISK, HIGH/MEDIUM
+  confidence, …) opens a little window explaining what that *value* means — exactly like the header
+  "i". **Centralised + reuses the existing machinery** (the `help-popover.js` + the "i"-button
+  renderer + `column_help.py`): add (1) a **value glossary** (term → meaning, one place), (2) a small
+  `help_value(value)` helper that drops the same "i" button next to a known value, (3) wire it into
+  the categorical cell renderers. **No new popup/CSS/JS** — only the glossary content + one helper +
+  wiring. **General across all tabs** (Profile / Volatility / Confidence here, plus categorical values
+  on B / C / D). UX: show the value "i" on cell hover (not 60 visible "i"s at once); same popup on click.
 - Sortable on every column, neutral (both directions equally), with **GDX / GDXJ reference rows**.
+- **OPEN — the "Gold Sensitivity Score" composite:** drop it (per the no-invented-composite rule,
+  Claude's lean) OR keep it with a "?" tooltip explaining its construction (per "keep the words").
+  Awaiting Victor's call.
 - **Presentation rebuild of `/tool-a` — no new math** (all numbers already in `tool_a_latest`).
 - Thin/weak values are flagged, never dressed up (the opposite of the capture card's sin).
 
 ## Decision 2 — Horizon selector on **Gold Sensitivity (A)** and **Gold Downside (C)**  *(NEW — Victor 2026-06-19)*
 
-Let the user choose the lookback the betas are measured over, via a **fixed, extendable set** of
-windows (today 6M / 12M / 3Y; can add 1Y / 2Y / 5Y). The selector picks which window the table/cards
+Let the user choose the lookback the betas are measured over, via a **fixed set** of windows:
+**6M · 1Y · 2Y · 3Y · 5Y** (Victor 2026-06-19; 1Y = the existing 12M relabelled, 2Y and 5Y are new
+computations to add to Tool A). The selector picks which window the table/cards
 show and rank by — consistent control across both gold pages (the per-stock detail page already has
 6M / 12M / 3Y).
 
@@ -83,8 +100,12 @@ no opaque composite scores; descriptive, not a forecast.
 3. **Phase 3 (medium, model change):** compute + persist multi-window downside betas in Tool C, then
    add the horizon selector to **Gold Downside (C)**.
 
-## Open questions (for Victor / Codex)
-1. Window set — keep 6M / 12M / 3Y, or add 1Y / 2Y / 5Y now?
-2. Rename the tab from internal "Tool A" to a trader-legible "Gold Sensitivity" / "Gold Reactors"?
-3. "Tilt" wording — keep torque / fragile / balanced, or plainer ("rises more / falls more / even")?
-4. Include a GDXJ reference row alongside GDX?
+## Decisions (Victor 2026-06-19)
+1. **Window set = 6M · 1Y · 2Y · 3Y · 5Y** (1Y = old 12M; 2Y & 5Y new). ✓
+2. **Tab name = "Gold Sensitivity"** — pure UI label; internal code/name unchanged. ✓
+3. **Keep existing column words**; add the "i" info-tooltip to every **column** AND to every
+   categorical **value** (the centralised value-glossary, see Decision 1). ✓
+
+## Still open
+- **Gold Sensitivity Score** — keep (with an "i" tooltip) or drop (no-invented-composite rule)? (Claude leans drop.)
+- GDXJ reference row alongside GDX? (assumed yes unless told otherwise)
