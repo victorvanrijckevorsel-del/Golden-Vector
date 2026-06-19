@@ -97,6 +97,32 @@ def window_is_reliable(metrics: dict[str, Any]) -> bool:
     return fit_ok and status_ok
 
 
+def win_num_td(value: float | None, *, reliable: bool, decimals: int = 2) -> str:
+    """A window-specific numeric cell, shared by the Gold Sensitivity (A) and Gold
+    Downside (C) overviews. Sorts by ``data-order``; when the selected window's gold-link
+    is weak/thin the number is muted (weak evidence must DISPLAY as weak, not just warn)."""
+    if value is None or value != value:
+        return "<td data-order=\"-999\"><span class=\"hint\">—</span></td>"
+    txt = f"{value:.{decimals}f}"
+    body = (
+        txt
+        if reliable
+        else f"<span class=\"hint\" title=\"weak gold-link — treat with caution\">{txt}</span>"
+    )
+    return f"<td data-order=\"{value:.4f}\">{body}</td>"
+
+
+def gold_link_td(r_squared: float | None) -> str:
+    """The trust column: how much of the stock's moves gold explains in this window.
+    Sortable by R² via ``data-order``; weak/none is muted. Shared by the A and C overviews."""
+    band, fit_ok = r2_band(r_squared)
+    if r_squared is None:
+        return "<td data-order=\"-1\"><span class=\"hint\">—</span></td>"
+    inner = f"{band} · {r_squared * 100:.0f}%"
+    body = inner if fit_ok else f"<span class=\"hint\">{inner}</span>"
+    return f"<td data-order=\"{r_squared:.4f}\">{body}</td>"
+
+
 def render_window_selector(active: str, *, search: str = "", target: str = "/tool-a") -> str:
     """The beta-window toggle for an overview page — navigates to ``?window=<id>`` (the
     toggle IS the 'is it changing?' mechanism). Reuses the existing ``.window-switcher`` /

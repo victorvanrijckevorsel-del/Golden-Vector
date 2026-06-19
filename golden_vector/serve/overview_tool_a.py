@@ -22,36 +22,15 @@ from golden_vector.serve.overview_helpers import (
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.windows import (
     WINDOW_LABELS,
-    r2_band,
+    gold_link_td,
     render_window_selector,
     resolve_window,
+    win_num_td,
     window_is_reliable,
     window_metrics,
     window_suffix,
 )
 from golden_vector.serve.workspace_state import WorkspaceState
-
-
-def _win_num_td(value: float | None, *, reliable: bool, decimals: int = 2) -> str:
-    """A window-specific numeric cell. Sorts by ``data-order``; when the selected
-    window's gold-link is weak/thin the number is muted (Codex: weak evidence must
-    DISPLAY as weak, not just carry a warning)."""
-    if value is None or value != value:
-        return "<td data-order=\"-999\"><span class=\"hint\">—</span></td>"
-    txt = f"{value:.{decimals}f}"
-    body = txt if reliable else f"<span class=\"hint\" title=\"weak gold-link — treat with caution\">{txt}</span>"
-    return f"<td data-order=\"{value:.4f}\">{body}</td>"
-
-
-def _gold_link_td(r_squared: float | None) -> str:
-    """The trust column: how much of the stock's moves gold explains in this window.
-    Sortable by R² via ``data-order``; weak/none is muted."""
-    band, fit_ok = r2_band(r_squared)
-    if r_squared is None:
-        return "<td data-order=\"-1\"><span class=\"hint\">—</span></td>"
-    inner = f"{band} · {r_squared * 100:.0f}%"
-    body = inner if fit_ok else f"<span class=\"hint\">{inner}</span>"
-    return f"<td data-order=\"{r_squared:.4f}\">{body}</td>"
 
 
 def _benchmark_reference_rows(benchmark_df: Any, active_window: str) -> str:
@@ -74,8 +53,8 @@ def _benchmark_reference_rows(benchmark_df: Any, active_window: str) -> str:
         rows.append(
             "<tr class=\"reference-row\">"
             f"<td>{escape(ticker)} <span class=\"hint\">· benchmark</span></td>"
-            + _win_num_td(up, reliable=True)
-            + _win_num_td(down, reliable=True)
+            + win_num_td(up, reliable=True)
+            + win_num_td(down, reliable=True)
             + "<td class=\"hint\">—</td>"  # gold-link (n/a for the benchmark itself)
             + "<td class=\"hint\">—</td>"  # delta
             + "<td class=\"hint\">—</td>"  # gamma
@@ -147,12 +126,12 @@ def _render_tool_a_overview_page(
         rows_html.append(
             "<tr>"
             f"<td><a href=\"{ticker_href}\">{escape(row['ticker'])}</a></td>"
-            + _win_num_td(m["up_beta"], reliable=reliable)
-            + _win_num_td(m["down_beta"], reliable=reliable)
-            + _gold_link_td(m["r_squared"])
-            + _win_num_td(m["delta"], reliable=reliable)
-            + _win_num_td(m["gamma"], reliable=reliable)
-            + _win_num_td(m["asymmetry"], reliable=reliable)
+            + win_num_td(m["up_beta"], reliable=reliable)
+            + win_num_td(m["down_beta"], reliable=reliable)
+            + gold_link_td(m["r_squared"])
+            + win_num_td(m["delta"], reliable=reliable)
+            + win_num_td(m["gamma"], reliable=reliable)
+            + win_num_td(m["asymmetry"], reliable=reliable)
             + help_value(ta.get("confidence_label"), app_config=app_config)
             + help_value(ta.get("profile_label"), app_config=app_config)
             + help_value(ta.get("volatility_context"), app_config=app_config)

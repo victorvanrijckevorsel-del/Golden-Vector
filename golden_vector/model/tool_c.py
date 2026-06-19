@@ -16,6 +16,17 @@ from golden_vector.features.percentile_ranks import oriented_percentile
 from golden_vector.features.relative_behavior import compute_relative_behavior_metrics
 from golden_vector.features.weekly_returns import build_weekly_return_frame
 
+# Display-only per-window betas carried over from Tool A for the Gold Downside window
+# selector (6M/1Y/2Y/3Y/5Y). They let the trader see how the up/down gold beta changes
+# over different lookbacks, but they are NOT scoring inputs (absent from DOWNSIDE/UPSIDE
+# COMPONENTS) — the downside/upside RANK stays on the validated *_core betas. Same
+# display-only invariant as Tool A's 2Y/5Y windows (plan Phase 3).
+TOOL_C_WINDOW_DISPLAY_COLUMNS = [
+    f"{metric}_{window}"
+    for window in ("6m", "12m", "2y", "3y", "5y")
+    for metric in ("down_beta", "up_beta", "r_squared", "weeks", "window_status")
+]
+
 TOOL_C_OUTPUT_COLUMNS = [
     "ticker",
     "as_of_date",
@@ -25,6 +36,7 @@ TOOL_C_OUTPUT_COLUMNS = [
     "down_beta_core",
     "up_beta_core",
     "asymmetry_ratio_core",
+    *TOOL_C_WINDOW_DISPLAY_COLUMNS,
     "downside_volatility_52w",
     "confidence_score",
     "score_eligible",
@@ -210,6 +222,8 @@ def _prepare_tool_a(tool_a_latest: pd.DataFrame) -> pd.DataFrame:
         "downside_volatility_52w",
         "confidence_score",
         "score_eligible",
+        # Display-only per-window betas for the Gold Downside selector (never scoring inputs).
+        *TOOL_C_WINDOW_DISPLAY_COLUMNS,
     ]
     available = [column for column in columns if column in tool_a_latest.columns]
     result = tool_a_latest[available].copy()

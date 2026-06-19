@@ -6,6 +6,7 @@ import pytest
 from golden_vector.contracts.config_models import ToolCConfig
 from golden_vector.model.tool_c import (
     TOOL_C_OUTPUT_COLUMNS,
+    TOOL_C_WINDOW_DISPLAY_COLUMNS,
     build_tool_c_output_frame,
 )
 
@@ -62,6 +63,74 @@ def test_build_tool_c_output_frame_produces_symmetric_ranks():
     assert "score_ineligible" in rows.loc["CCC", "tool_c_downside_tags"]
     assert rows.loc["AAA", "source_run_id"] == "tool-c-run"
     assert rows.loc["AAA", "source_tool_a_run_id"] == "tool-a-run"
+
+
+def test_tool_c_display_windows_never_change_rank():
+    """Phase-3 invariant: the 25 per-window up/down beta columns surfaced for the Gold
+    Downside selector (all of 6M/12M/2Y/3Y/5Y) are DISPLAY-ONLY — none of them appear in
+    DOWNSIDE_COMPONENTS/UPSIDE_COMPONENTS. The downside/upside score, rank and eligibility
+    stay on the validated cross-window *_core betas (6M/12M/3Y are the scoring windows that
+    already feed *_core; 2Y/5Y are display-only longer lookbacks). Appending the per-window
+    columns — even ELIGIBLE with extreme values that would dominate if they leaked — must
+    leave the protected fields byte-identical."""
+    base_tool_a = pd.DataFrame(
+        [
+            _tool_a_row("AAA", down_beta=2.0, up_beta=0.6, score_eligible=True),
+            _tool_a_row("BBB", down_beta=1.0, up_beta=2.0, score_eligible=True),
+            _tool_a_row("CCC", down_beta=3.0, up_beta=3.0, score_eligible=False),
+        ]
+    )
+    metrics = pd.DataFrame(
+        [
+            _metric_row("AAA", rel_weakness=1.0, rel_strength=0.2, downside_hit_rate=1.0, upside_hit_rate=0.0),
+            _metric_row("BBB", rel_weakness=0.2, rel_strength=1.0, downside_hit_rate=0.0, upside_hit_rate=1.0),
+            _metric_row("CCC", rel_weakness=1.0, rel_strength=1.0, downside_hit_rate=1.0, upside_hit_rate=1.0),
+        ]
+    )
+
+    def _build(tool_a: pd.DataFrame) -> pd.DataFrame:
+        return build_tool_c_output_frame(
+            tool_a_latest=tool_a,
+            relative_metrics=metrics,
+            config=ToolCConfig(min_events=2),
+            source_run_id="tool-c-run",
+        )
+
+    baseline = _build(base_tool_a)
+    # Append EXTREME per-window display betas to every row.
+    candidate_tool_a = base_tool_a.copy()
+    for column in TOOL_C_WINDOW_DISPLAY_COLUMNS:
+        if column.startswith("window_status_"):
+            candidate_tool_a[column] = "ELIGIBLE"
+        elif column.startswith("r_squared_"):
+            candidate_tool_a[column] = 0.99
+        elif column.startswith("weeks_"):
+            candidate_tool_a[column] = 260
+        else:  # down_beta_* / up_beta_*
+            candidate_tool_a[column] = 99.0
+    candidate = _build(candidate_tool_a)
+
+    protected = [
+        "ticker",
+        "tool_c_downside_score",
+        "tool_c_downside_rank",
+        "tool_c_upside_score",
+        "tool_c_upside_rank",
+        "score_eligible",
+        "down_beta_core",
+        "up_beta_core",
+    ]
+    pd.testing.assert_frame_equal(
+        baseline[protected].reset_index(drop=True),
+        candidate[protected].reset_index(drop=True),
+        check_dtype=False,
+    )
+    # the display columns ARE populated in the candidate output (surfaced for the selector)
+    cand = candidate.set_index("ticker")
+    assert cand.loc["AAA", "down_beta_2y"] == 99.0
+    assert cand.loc["AAA", "window_status_5y"] == "ELIGIBLE"
+    # baseline (no per-window input) backfills them as NA — never reaching the rank
+    assert pd.isna(baseline.set_index("ticker").loc["AAA", "down_beta_2y"])
 
 
 def test_tool_c_thin_relative_metric_is_tagged_and_excluded_from_rank():

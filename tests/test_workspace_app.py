@@ -1074,6 +1074,18 @@ def _write_latest_tool_c_output(paths) -> None:
                     "tool_c_upside_score": 58.0,
                     "down_beta_core": 1.5,
                     "up_beta_core": 2.1,
+                    # Phase-3 display-only per-window betas for the Gold Downside selector
+                    # (all 25: down/up beta, r², weeks, status × 6M/12M/2Y/3Y/5Y).
+                    "down_beta_6m": 1.18, "up_beta_6m": 1.5, "r_squared_6m": 0.6,
+                    "weeks_6m": 26, "window_status_6m": "ELIGIBLE",
+                    "down_beta_12m": 1.6, "up_beta_12m": 2.0, "r_squared_12m": 0.5,
+                    "weeks_12m": 52, "window_status_12m": "ELIGIBLE",
+                    "down_beta_2y": 1.75, "up_beta_2y": 2.2, "r_squared_2y": 0.48,
+                    "weeks_2y": 104, "window_status_2y": "ELIGIBLE",
+                    "down_beta_3y": 1.85, "up_beta_3y": 2.3, "r_squared_3y": 0.4,
+                    "weeks_3y": 156, "window_status_3y": "ELIGIBLE",
+                    "down_beta_5y": 1.9, "up_beta_5y": 2.4, "r_squared_5y": 0.45,
+                    "weeks_5y": 260, "window_status_5y": "ELIGIBLE",
                     "downside_hit_rate_10pct": 0.42,
                     "upside_hit_rate_10pct": 0.37,
                     "tool_c_downside_tags": "downside_sensitive",
@@ -1862,6 +1874,69 @@ def test_workspace_tool_c_view_renders_gold_downside_page(tmp_path):
     assert "Downside Score" in response["body"]
     assert "Downside Rank" not in response["body"]
     assert 'class="nav-tab active" href="/tool-c"' in response["body"]
+    # Phase 3: shared beta-window selector + a Gold-link trust column on Gold Downside.
+    assert "window-switcher" in response["body"]
+    assert "window=2Y" in response["body"] and "window=5Y" in response["body"]
+    assert ">1Y</a>" in response["body"] and ">2Y</a>" in response["body"]
+    assert "Gold-link" in response["body"]
+    assert "1.60" in response["body"]  # default 12M windowed down beta (not the 1.5 core)
+    # switching the window switches the displayed beta to that lookback
+    response_5y = _call_wsgi_app(app, method="GET", path="/tool-c?window=5Y")
+    assert 'name="window" value="5Y"' in response_5y["body"]
+    assert "1.90" in response_5y["body"]  # 5Y windowed down beta
+    # an intermediate display-only window (2Y) also switches the displayed beta
+    response_2y = _call_wsgi_app(app, method="GET", path="/tool-c?window=2Y")
+    assert 'name="window" value="2Y"' in response_2y["body"]
+    assert "1.75" in response_2y["body"]  # 2Y windowed down beta
+
+
+def test_workspace_tool_c_view_degrades_gracefully_for_old_artifact(tmp_path):
+    """Backward compatibility: a pre-Phase-3 Tool C artifact has NO per-window beta columns.
+    The Gold Downside page must still render (selector + core-based ranks) and show muted
+    em-dash cells for the windowed betas at every window, never crash (optional display
+    data degrades per item; mirrors the benchmark-betas old-artifact handling)."""
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    # Old artifact: core betas + ranks only, NO per-window display columns.
+    context = RunContext.start(paths=paths, command="tool-c", parameters={}, config_hash="hash")
+    persist_tool_c_outputs(
+        paths=paths,
+        run_context=context,
+        tool_c_outputs=pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 4, 22),
+                    "tool_c_downside_rank": 82.0,
+                    "tool_c_downside_score": 71.0,
+                    "tool_c_upside_rank": 64.0,
+                    "tool_c_upside_score": 58.0,
+                    "down_beta_core": 1.5,
+                    "up_beta_core": 2.1,
+                    "downside_hit_rate_10pct": 0.42,
+                    "upside_hit_rate_10pct": 0.37,
+                    "tool_c_downside_tags": "downside_sensitive",
+                    "tool_c_upside_tags": "upside_participation",
+                    "snapshot_refresh_run_id": "refresh-run",
+                    "source_run_id": "tool-c-run",
+                }
+            ]
+        ),
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    for window in ("12M", "2Y", "5Y"):
+        response = _call_wsgi_app(app, method="GET", path=f"/tool-c?window={window}")
+        assert response["status"].startswith("200"), window
+        assert "Gold Downside" in response["body"]
+        assert "window-switcher" in response["body"]  # selector still renders
+        assert "82.0" in response["body"]  # core-based downside rank still shown
+        # the windowed beta cells degrade to the muted None cell, not a crash or stale value
+        assert 'data-order="-999"' in response["body"], window
 
 
 def test_workspace_tool_d_view_renders_corporate_resilience_page(tmp_path):
