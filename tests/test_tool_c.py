@@ -119,6 +119,10 @@ def test_tool_c_display_windows_never_change_rank():
         "score_eligible",
         "down_beta_core",
         "up_beta_core",
+        "tool_c_downside_tags",
+        "tool_c_upside_tags",
+        "tool_c_downside_explanation",
+        "tool_c_upside_explanation",
     ]
     pd.testing.assert_frame_equal(
         baseline[protected].reset_index(drop=True),

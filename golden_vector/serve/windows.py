@@ -17,6 +17,7 @@ from html import escape
 from typing import Any
 from urllib.parse import quote
 
+from golden_vector.common.numeric import is_missing
 from golden_vector.serve.format_helpers import _optional_float
 
 # Canonical window ids as stored by the model (suffix = ``.lower()``). 6M/12M/3Y are the
@@ -77,8 +78,8 @@ def r2_band(r_squared: float | None) -> tuple[str, bool]:
 
 # Window statuses the model writes for a USABLE window. Tool A emits "ELIGIBLE" (not
 # "OK") for good windows — treating only ("","OK") as usable silently muted every beta
-# (Codex Phase-2 review P2). Problem statuses (LOW_OBSERVATION / INELIGIBLE / missing)
-# stay muted.
+# (Codex Phase-2 review P2). The empty string is kept only for explicit legacy blank
+# statuses; missing/null status stays muted.
 _USABLE_WINDOW_STATUSES = ("", "OK", "ELIGIBLE")
 
 
@@ -93,7 +94,12 @@ def window_is_reliable(metrics: dict[str, Any]) -> bool:
     flat floor is wrong per-window (20 weeks is fine for 6M but far below the 200 a 5Y
     window needs). So reliability defers to the backend status, never a literal here."""
     _band, fit_ok = r2_band(metrics.get("r_squared"))
-    status_ok = str(metrics.get("status") or "").upper() in _USABLE_WINDOW_STATUSES
+    raw_status = metrics.get("status") if "status" in metrics else None
+    status_ok = (
+        raw_status is not None
+        and not is_missing(raw_status)
+        and str(raw_status).strip().upper() in _USABLE_WINDOW_STATUSES
+    )
     return fit_ok and status_ok
 
 

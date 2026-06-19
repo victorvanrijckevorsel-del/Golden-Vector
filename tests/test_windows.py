@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pandas as pd
+
 from golden_vector.serve.windows import (
     DEFAULT_WINDOW,
     DISPLAY_WINDOWS,
@@ -48,8 +50,13 @@ def test_window_is_reliable_treats_ELIGIBLE_as_usable():
     # is the canonical degraded-data signal, NOT a hardcoded serve week floor.
     assert window_is_reliable({"r_squared": 0.54, "status": "LOW_OBSERVATION", "weeks": 8}) is False
     assert window_is_reliable({"r_squared": 0.54, "status": "INELIGIBLE", "weeks": 52}) is False
-    # plain OK / empty still count as usable (defensive)
+    # plain OK / explicit empty still count as usable (defensive legacy blank status),
+    # but a missing/null status is degraded, not silently treated as trustworthy.
     assert window_is_reliable({"r_squared": 0.54, "status": "OK", "weeks": 52}) is True
+    assert window_is_reliable({"r_squared": 0.54, "status": "", "weeks": 52}) is True
+    assert window_is_reliable({"r_squared": 0.54, "status": None, "weeks": 52}) is False
+    assert window_is_reliable({"r_squared": 0.54, "status": pd.NA, "weeks": 52}) is False
+    assert window_is_reliable({"r_squared": 0.54, "weeks": 52}) is False
 
 
 def test_window_metrics_reads_the_selected_window_columns():
