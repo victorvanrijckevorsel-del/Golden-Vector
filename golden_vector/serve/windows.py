@@ -69,11 +69,19 @@ def r2_band(r_squared: float | None) -> tuple[str, bool]:
     return ("none", False)
 
 
+# Window statuses the model writes for a USABLE window. Tool A emits "ELIGIBLE" (not
+# "OK") for good windows — treating only ("","OK") as usable silently muted every beta
+# (Codex Phase-2 review P2). Problem statuses (LOW_OBSERVATION / INELIGIBLE / missing)
+# stay muted.
+_USABLE_WINDOW_STATUSES = ("", "OK", "ELIGIBLE")
+
+
 def window_is_reliable(metrics: dict[str, Any], *, min_weeks: float = 20.0) -> bool:
-    """A window's betas are trustworthy only when the fit is at least moderate, the
-    window status is OK, and the sample is not thin (Codex: R² band + weeks + status)."""
+    """A window's betas are trustworthy only when the window status is usable
+    (ELIGIBLE/OK), the fit is at least moderate, and the sample is not thin (Codex:
+    R² band + weeks + status together)."""
     _band, fit_ok = r2_band(metrics.get("r_squared"))
-    status_ok = str(metrics.get("status") or "").upper() in ("", "OK")
+    status_ok = str(metrics.get("status") or "").upper() in _USABLE_WINDOW_STATUSES
     weeks = metrics.get("weeks")
     weeks_ok = weeks is None or weeks >= min_weeks
     return fit_ok and status_ok and weeks_ok
