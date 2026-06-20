@@ -44,9 +44,15 @@ from golden_vector.contracts.fundamentals import fetched_fundamentals_latest_pat
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.screening.manual_store import load_store_tables
-from golden_vector.screening.pipeline import compute_tool_b_in_memory
+from golden_vector.screening.pipeline import (
+    compute_tool_b_in_memory,
+    normalize_finance_source,
+)
 from golden_vector.hedge.option_availability import has_usable_option_slots
 from golden_vector.serve.format_helpers import _first_frame_number
+from golden_vector.serve.fundamentals_provenance import (
+    load_fundamentals_provenance_lookup,
+)
 from golden_vector.serve.option_trading_data import (
     OptionTradingData,
     load_option_trading_data,
@@ -98,6 +104,7 @@ class CandidateFinderCacheKey:
     tool_d_latest_hash: str | None
     model_state_manifest_hash: str | None = None
     scenario_gold_price: float | None = None
+    fundamentals_source: str = "our"
     scenario_foundation_manifest_hash: str | None = None
     scenario_fundamentals_hash: str | None = None
 
@@ -126,6 +133,7 @@ class _CandidateFinderScenarioSources:
     spot_gold_date: str | None
     source_basis: str
     rank_basis: str
+    fundamentals_source: str
 
 
 @dataclass(frozen=True)
@@ -154,6 +162,8 @@ class CandidateFinderData:
     spot_gold_date: str | None = None
     source_basis: str = "persisted_spot"
     rank_basis: str = "persisted_current"
+    fundamentals_source: str = "our"
+    fundamentals_provenance: dict[tuple[str, str], str] | None = None
     scenario_requested_gold_price: float | None = None
     scenario_active: bool = False
     scenario_error: str | None = None
@@ -198,9 +208,12 @@ def load_candidate_finder_data(
     *,
     app_config: AppConfig,
     scenario: CandidateFinderScenario | None = None,
+    fundamentals_source: str = "our",
 ) -> CandidateFinderData:
     """Load the latest joined frame used by Candidate Finder screens."""
 
+    finance_source = normalize_finance_source(fundamentals_source)
+    requested_finance_source = finance_source
     model_state_manifest = load_current_model_state_manifest(paths)
     tool_a_path, tool_a_required = _resolve_finder_source(
         paths, "tool_a", fallback_path=paths.latest_tool_a_snapshot_parquet_path
@@ -234,7 +247,7 @@ def load_candidate_finder_data(
     options_refresh_run_id = _options_refresh_run_id(option_data)
     scenario_foundation_manifest_path: Path | None = None
     scenario_foundation_error: Exception | None = None
-    if scenario is not None:
+    if scenario is not None or finance_source == "yahoo":
         try:
             scenario_foundation_manifest_path = resolve_current_foundation_manifest_path(
                 paths,
@@ -255,10 +268,11 @@ def load_candidate_finder_data(
         tool_d_latest_hash=_file_sha256(tool_d_source_path),
         model_state_manifest_hash=_file_sha256(paths.latest_model_state_manifest_path),
         scenario_gold_price=_cache_gold_price(scenario),
+        fundamentals_source=finance_source,
         scenario_foundation_manifest_hash=_file_sha256(scenario_foundation_manifest_path),
         scenario_fundamentals_hash=(
             _file_sha256(fetched_fundamentals_latest_path(paths))
-            if scenario is not None
+            if scenario is not None or finance_source == "yahoo"
             else None
         ),
     )
@@ -268,7 +282,7 @@ def load_candidate_finder_data(
 
     scenario_error: str | None = None
     scenario_requested_gold_price = scenario.gold_price if scenario is not None else None
-    if scenario is not None:
+    if scenario is not None or finance_source == "yahoo":
         try:
             if scenario_foundation_error is not None:
                 raise scenario_foundation_error
@@ -277,6 +291,7 @@ def load_candidate_finder_data(
                 app_config=app_config,
                 scenario=scenario,
                 foundation_manifest_path=scenario_foundation_manifest_path,
+                finance_source=finance_source,
             )
             tool_b_load = scenario_sources.tool_b
             tool_b = tool_b_load.frame
@@ -288,7 +303,13 @@ def load_candidate_finder_data(
             spot_gold_date = scenario_sources.spot_gold_date
             source_basis = scenario_sources.source_basis
             rank_basis = scenario_sources.rank_basis
+            finance_source = scenario_sources.fundamentals_source
         except Exception as exc:
+            if requested_finance_source == "yahoo":
+                raise CandidateFinderSourceError(
+                    "Could not compute Candidate Finder Yahoo Fundamentals view: "
+                    f"{exc}"
+                ) from exc
             scenario_error = f"Could not compute Candidate Finder scenario: {exc}"
             tool_b_spot_load = _spot_tool_b_source(tool_b_load.frame)
             tool_d_spot_load = _spot_tool_d_source(tool_d_load.frame)
@@ -302,6 +323,7 @@ def load_candidate_finder_data(
             spot_gold_date = _first_provenance_text("spot_gold_date", tool_b, tool_d)
             source_basis = "persisted_spot"
             rank_basis = "persisted_current"
+            finance_source = "our"
     else:
         tool_b_spot_load = _spot_tool_b_source(tool_b_load.frame)
         tool_d_spot_load = _spot_tool_d_source(tool_d_load.frame)
@@ -315,6 +337,7 @@ def load_candidate_finder_data(
         spot_gold_date = _first_provenance_text("spot_gold_date", tool_b, tool_d)
         source_basis = "persisted_spot"
         rank_basis = "persisted_current"
+        finance_source = "our"
 
     frame = _joined_frame(
         app_config=app_config,
@@ -325,6 +348,11 @@ def load_candidate_finder_data(
         options=option_data.options_features,
         manual_company=manual_company,
         option_data=option_data,
+    )
+    fundamentals_provenance = (
+        load_fundamentals_provenance_lookup(paths)
+        if finance_source == "yahoo"
+        else {}
     )
     alignment = _alignment(
         model_state_manifest=model_state_manifest,
@@ -362,6 +390,8 @@ def load_candidate_finder_data(
         spot_gold_date=spot_gold_date,
         source_basis=source_basis,
         rank_basis=rank_basis,
+        fundamentals_source=finance_source,
+        fundamentals_provenance=fundamentals_provenance,
         scenario_requested_gold_price=scenario_requested_gold_price,
         scenario_active=scenario_active,
         scenario_error=scenario_error,
@@ -1018,8 +1048,9 @@ def _compute_scenario_sources(
     *,
     paths: ProjectPaths,
     app_config: AppConfig,
-    scenario: CandidateFinderScenario,
+    scenario: CandidateFinderScenario | None,
     foundation_manifest_path: Path | None,
+    finance_source: str,
 ) -> _CandidateFinderScenarioSources:
     foundation_snapshot = load_latest_foundation_snapshot(
         paths=paths,
@@ -1032,9 +1063,10 @@ def _compute_scenario_sources(
     spot_gold_usd, spot_gold_date = latest_gold_price_from_history(
         foundation_snapshot.gold_history
     )
+    gold_price = scenario.gold_price if scenario is not None else spot_gold_usd
     gold_price_basis = (
         "latest_daily_gold_close"
-        if abs(scenario.gold_price - spot_gold_usd) <= 0.01
+        if abs(gold_price - spot_gold_usd) <= 0.01
         else "custom_scenario"
     )
     manual_data = load_manual_screening_data(
@@ -1055,7 +1087,7 @@ def _compute_scenario_sources(
             app_config=app_config,
             manual_data=manual_data,
             normalized_market_snapshots=foundation_snapshot.normalized_market_snapshots,
-            gold_price_assumption=scenario.gold_price,
+            gold_price_assumption=gold_price,
             snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
             snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
             source_run_id=_SCENARIO_SOURCE_RUN_ID,
@@ -1063,6 +1095,7 @@ def _compute_scenario_sources(
             spot_gold_date=spot_gold_date,
             gold_price_basis=gold_price_basis,
             official_fundamentals=official_fundamentals,
+            finance_source=finance_source,
         ),
         label="Candidate Finder scenario Corporate Finance frame",
     )
@@ -1087,28 +1120,30 @@ def _compute_scenario_sources(
             snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
             snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
             official_fundamentals=official_fundamentals,
+            finance_source=finance_source,
         ),
         config=app_config.tool_d,
-        gold_price=scenario.gold_price,
+        gold_price=gold_price,
         source_run_id=_SCENARIO_SOURCE_RUN_ID,
     )
     tool_d_load = _scenario_tool_d_source(
         tool_d,
-        expected_gold_price=scenario.gold_price,
+        expected_gold_price=gold_price,
     )
-    rank_basis = (
-        "latest_daily_gold_close"
-        if gold_price_basis == "latest_daily_gold_close"
-        else "custom_gold_scenario"
-    )
+    rank_basis = "latest_daily_gold_close"
+    if gold_price_basis != "latest_daily_gold_close":
+        rank_basis = "custom_gold_scenario"
+    if finance_source == "yahoo":
+        rank_basis = f"{rank_basis}_yahoo_fundamentals"
     return _CandidateFinderScenarioSources(
         tool_b=CandidateFinderSourceLoad(frame=tool_b),
         tool_d=tool_d_load,
-        gold_price_used=float(scenario.gold_price),
+        gold_price_used=float(gold_price),
         spot_gold_usd=float(spot_gold_usd),
         spot_gold_date=spot_gold_date,
         source_basis=gold_price_basis,
         rank_basis=rank_basis,
+        fundamentals_source=finance_source,
     )
 
 

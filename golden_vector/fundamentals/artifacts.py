@@ -134,6 +134,9 @@ def normalize_fetched_fundamentals_frame(
         "period_type",
         "statement_currency",
         "statement_scale",
+        "value_origin",
+        "calculation_formula",
+        "components_json",
     ):
         normalized[column] = normalized[column].astype("object").where(
             normalized[column].notna(),

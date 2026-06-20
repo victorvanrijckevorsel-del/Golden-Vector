@@ -31,6 +31,7 @@ def test_candidate_finder_page_renders_default_bull_screen():
     assert "All stocks" in html
     assert "Screen Builder" in html
     assert "Gold price for ranking" in html
+    assert "Financials source" in html
     assert "Apply Gold Scenario" in html
     assert "Gold Sensitivity" in html
     assert "Corporate Finance" in html
@@ -125,6 +126,37 @@ def test_candidate_finder_page_renders_scenario_status_and_preserves_query():
     assert "/candidate-finder?preset=bear&amp;options_side=puts" in html
 
 
+def test_candidate_finder_page_preserves_yahoo_fundamentals_source():
+    data = _candidate_finder_data()
+    data = CandidateFinderData(
+        frame=data.frame,
+        criteria_config=data.criteria_config,
+        alignment=data.alignment,
+        cache_key=data.cache_key,
+        model_state_manifest=data.model_state_manifest,
+        gold_price_used=4000.0,
+        spot_gold_usd=4000.0,
+        spot_gold_date="2026-06-01",
+        source_basis="latest_daily_gold_close",
+        rank_basis="latest_daily_gold_close_yahoo_fundamentals",
+        fundamentals_source="yahoo",
+        scenario_active=True,
+    )
+
+    html = render_candidate_finder_page(
+        data,
+        query={"fundamentals_source": ["yahoo"], "gold_price": ["4000"]},
+    )
+
+    assert (
+        '<option value="yahoo" selected>Yahoo Fundamentals</option>'
+        in html
+    )
+    assert "Yahoo Fundamentals recalculates finance-dependent ranking" in html
+    assert "/candidate-finder?preset=bull&amp;gold_price=4000&amp;fundamentals_source=yahoo" in html
+    assert "/ticker/AEM?lens=option-trading&amp;fundamentals_source=yahoo#option-trading" in html
+
+
 def test_candidate_finder_page_bear_screen_has_direction_neutral_copy():
     data = _candidate_finder_data()
 
@@ -188,7 +220,7 @@ def test_candidate_finder_route_is_reachable(monkeypatch, tmp_path):
     monkeypatch.setattr(
         workspace_module,
         "load_candidate_finder_data",
-        lambda _paths, *, app_config: _candidate_finder_data(),
+        lambda _paths, *, app_config, scenario=None, fundamentals_source="our": _candidate_finder_data(),
     )
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
 

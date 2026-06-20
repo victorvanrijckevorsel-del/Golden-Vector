@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Literal
 
 import pandas as pd
 
@@ -16,7 +17,11 @@ from golden_vector.fundamentals.artifacts import (
     empty_fetched_fundamentals_frame,
     load_official_fundamentals,
 )
-from golden_vector.fundamentals.resolution import resolve_fundamental_layers
+from golden_vector.fundamentals.resolution import (
+    MANUAL_ONLY_FINANCIAL_FIELDS,
+    MONEY_DUAL_SOURCE_FIELDS,
+    resolve_fundamental_layers,
+)
 from golden_vector.ingestion.persist import persist_tool_b_outputs
 from golden_vector.screening.layer1 import evaluate_layer1
 from golden_vector.screening.layer2 import (
@@ -29,13 +34,46 @@ from golden_vector.screening.manual_data import (
     load_manual_screening_data,
     missing_required_manual_fields,
 )
-from golden_vector.screening.manual_store import FINANCIAL_DUAL_SOURCE_FIELDS
+from golden_vector.screening.manual_store import (
+    FINANCIAL_DUAL_SOURCE_FIELDS,
+    OPERATIONAL_SINGLE_SOURCE_FIELDS,
+)
 from golden_vector.screening.ranking import rank_tool_b_outputs
-from golden_vector.screening.schema import TOOL_B_OUTPUT_COLUMNS
+from golden_vector.screening.schema import TOOL_B_OUTPUT_COLUMNS, ToolBStaleSchemaError
 from golden_vector.screening.verdicts import (
     compute_fundamental_checks,
     determine_screening_verdict,
 )
+
+FinanceSource = Literal["our", "yahoo"]
+
+YAHOO_FINANCE_SOURCE_COLUMN_MAP: dict[str, str] = {
+    "screening_verdict": "screening_verdict_official",
+    "confidence": "confidence_official",
+    "layer1_status": "layer1_status_official",
+    "layer1_pass": "layer1_pass_official",
+    "layer1_fail_reasons": "layer1_fail_reasons_official",
+    "layer2_incomplete_reasons": "layer2_incomplete_reasons_official",
+    "net_debt_musd": "net_debt_musd_official",
+    "interest_expense_musd": "interest_expense_musd_official",
+    "cash_margin_usd_per_oz": "cash_margin_usd_per_oz_official",
+    "margin_pct": "margin_pct_official",
+    "enterprise_value_musd": "enterprise_value_musd_official",
+    "forward_revenue_musd": "forward_revenue_musd_official",
+    "forward_ebitda_musd": "forward_ebitda_musd_official",
+    "forward_net_income_musd": "forward_net_income_musd_official",
+    "forward_eps": "forward_eps_official",
+    "forward_pe": "forward_pe_official",
+    "sustainable_fcf_musd": "sustainable_fcf_musd_official",
+    "fcf_yield": "fcf_yield_official",
+    "ev_ebitda": "ev_ebitda_official",
+    "leverage": "leverage_official",
+    "fundamental_check_score": "fundamental_check_score_official",
+    "fundamental_check_rank": "fundamental_check_rank_official",
+    "fundamental_checks_passed": "fundamental_checks_passed_official",
+    "fundamental_checks_total": "fundamental_checks_total_official",
+    "fundamental_check_summary": "fundamental_check_summary_official",
+}
 
 
 @dataclass(frozen=True)
@@ -170,6 +208,7 @@ def compute_tool_b_in_memory(
     spot_gold_date: str | None = None,
     gold_price_basis: str = "custom_scenario",
     official_fundamentals: pd.DataFrame | None = None,
+    finance_source: FinanceSource = "our",
 ) -> pd.DataFrame:
     """Run the Tool B math without any persistence.
 
@@ -203,7 +242,53 @@ def compute_tool_b_in_memory(
         spot_gold_date=spot_gold_date,
         gold_price_basis=gold_price_basis,
     )
-    return _frame_from_rows(rows)
+    return materialize_tool_b_finance_source(
+        _frame_from_rows(rows),
+        finance_source=finance_source,
+    )
+
+
+def normalize_finance_source(value: object) -> FinanceSource:
+    """Return the canonical source mode used by Tool B scenario views."""
+
+    text = str(value or "").strip().lower()
+    if text in {"yahoo", "official", "market", "yahoo_fundamentals"}:
+        return "yahoo"
+    return "our"
+
+
+def materialize_tool_b_finance_source(
+    frame: pd.DataFrame,
+    *,
+    finance_source: FinanceSource | str,
+) -> pd.DataFrame:
+    """Return a Tool B frame whose active columns match the selected source.
+
+    Persisted Tool B remains the Our View decision artifact. Request-level
+    scenario views can use this helper to make the existing active columns
+    (`screening_verdict`, `ev_ebitda`, `fundamental_check_rank`, etc.) reflect
+    Yahoo Fundamentals while preserving the flat `_our_view` / `_official`
+    comparison columns for renderers and backward-compatible consumers.
+    """
+
+    selected = normalize_finance_source(finance_source)
+    materialized = frame.copy()
+    if "finance_source" in materialized.columns:
+        materialized["finance_source"] = selected
+    if selected == "our" or materialized.empty:
+        return materialized
+    required_columns = {"finance_source", *YAHOO_FINANCE_SOURCE_COLUMN_MAP.keys(), *YAHOO_FINANCE_SOURCE_COLUMN_MAP.values()}
+    missing_columns = sorted(required_columns.difference(materialized.columns))
+    if missing_columns:
+        raise ToolBStaleSchemaError(
+            "Tool B output is stale - re-run python main.py refresh "
+            "(Yahoo Fundamentals materialization missing columns: "
+            + ", ".join(missing_columns)
+            + ")"
+        )
+    for active_column, source_column in YAHOO_FINANCE_SOURCE_COLUMN_MAP.items():
+        materialized[active_column] = materialized[source_column]
+    return materialized
 
 
 def _active_tool_b_tickers(app_config: AppConfig) -> list[str]:
@@ -308,6 +393,12 @@ def _build_tool_b_rows(
             company_row=row,
             source_verification=manual_data.source_verification,
         )
+        official_confidence = _determine_official_confidence(
+            ticker=ticker,
+            company_row=row,
+            source_verification=manual_data.source_verification,
+            resolved_lookup=resolved_lookup,
+        )
         missing_fields = missing_required_manual_fields(row)
         layer1, layer2, fundamental_checks = _tool_b_metric_bundle(
             our_row,
@@ -323,6 +414,12 @@ def _build_tool_b_rows(
             confidence=confidence,
             layer1_status=str(layer1["layer1_status"]),
             forward_pe=layer2["forward_pe"],
+            thresholds=app_config.screening_params.verdict_thresholds,
+        )
+        official_verdict = determine_screening_verdict(
+            confidence=official_confidence,
+            layer1_status=str(official_layer1["layer1_status"]),
+            forward_pe=official_layer2["forward_pe"],
             thresholds=app_config.screening_params.verdict_thresholds,
         )
         official_check_score = (
@@ -354,6 +451,7 @@ def _build_tool_b_rows(
                 "aisc_usd_per_oz": our_row.get("aisc_usd_per_oz"),
                 "cash_cost_usd_per_oz": our_row.get("cash_cost_usd_per_oz"),
                 "net_debt_musd": our_row.get("net_debt_musd"),
+                "interest_expense_musd": our_row.get("interest_expense_musd"),
                 "reserve_life_years": our_row.get("reserve_life_years"),
                 "cash_margin_usd_per_oz": layer1["cash_margin_usd_per_oz"],
                 "margin_pct": layer1["margin_pct"],
@@ -424,6 +522,53 @@ def _build_tool_b_rows(
                 "fx_policy_max_staleness_days": int(app_config.qa.max_fx_staleness_days),
                 "fx_policy_block_on_stale_fx": bool(app_config.qa.block_on_stale_fx),
                 "source_run_id": source_run_id,
+                "finance_source": "our",
+                "screening_verdict_official": official_verdict,
+                "confidence_official": official_confidence,
+                "layer1_status_official": official_layer1["layer1_status"],
+                "layer1_pass_official": bool(official_layer1["layer1_pass"]),
+                "layer1_fail_reasons_official": official_layer1["layer1_fail_reasons"],
+                "layer2_incomplete_reasons_official": official_layer2[
+                    "layer2_incomplete_reasons"
+                ],
+                "net_debt_musd_our_view": our_row.get("net_debt_musd"),
+                "net_debt_musd_official": official_row.get("net_debt_musd"),
+                "interest_expense_musd_our_view": our_row.get(
+                    "interest_expense_musd"
+                ),
+                "interest_expense_musd_official": official_row.get(
+                    "interest_expense_musd"
+                ),
+                "cash_margin_usd_per_oz_our_view": layer1["cash_margin_usd_per_oz"],
+                "cash_margin_usd_per_oz_official": official_layer1[
+                    "cash_margin_usd_per_oz"
+                ],
+                "margin_pct_our_view": layer1["margin_pct"],
+                "margin_pct_official": official_layer1["margin_pct"],
+                "forward_revenue_musd_our_view": layer2["forward_revenue_musd"],
+                "forward_revenue_musd_official": official_layer2[
+                    "forward_revenue_musd"
+                ],
+                "forward_ebitda_musd_our_view": layer2["forward_ebitda_musd"],
+                "forward_ebitda_musd_official": official_layer2[
+                    "forward_ebitda_musd"
+                ],
+                "forward_net_income_musd_our_view": layer2[
+                    "forward_net_income_musd"
+                ],
+                "forward_net_income_musd_official": official_layer2[
+                    "forward_net_income_musd"
+                ],
+                "forward_eps_our_view": layer2["forward_eps"],
+                "forward_eps_official": official_layer2["forward_eps"],
+                "forward_pe_our_view": layer2["forward_pe"],
+                "forward_pe_official": official_layer2["forward_pe"],
+                "sustainable_fcf_musd_our_view": layer1["sustainable_fcf_musd"],
+                "sustainable_fcf_musd_official": official_layer1[
+                    "sustainable_fcf_musd"
+                ],
+                "fcf_yield_our_view": layer1["fcf_yield"],
+                "fcf_yield_official": official_layer1["fcf_yield"],
             }
         )
     return rows
@@ -484,6 +629,60 @@ def _row_for_fundamental_layer(
             resolved.get(value_column) if status == "OK" else pd.NA
         )
     return layered
+
+
+def _determine_official_confidence(
+    *,
+    ticker: str,
+    company_row: pd.Series,
+    source_verification: pd.DataFrame,
+    resolved_lookup: dict[tuple[str, str], dict[str, object]],
+) -> str:
+    """Confidence for the Yahoo Fundamentals view.
+
+    Yahoo can replace the money fields, but the mining assumptions and tax rate
+    are still our inputs. Missing Yahoo money fields make the official view
+    incomplete; unverified manual-only fields make it estimated, not incomplete.
+    """
+
+    manual_required = OPERATIONAL_SINGLE_SOURCE_FIELDS | MANUAL_ONLY_FINANCIAL_FIELDS
+    for field_name in sorted(manual_required):
+        if _value_is_missing(company_row.get(field_name)):
+            return "INCOMPLETE"
+
+    for field_name in sorted(MONEY_DUAL_SOURCE_FIELDS):
+        resolved = resolved_lookup.get((ticker, field_name), {})
+        if _clean_status(resolved.get("official_status")) != "OK":
+            return "INCOMPLETE"
+
+    verification_rows = source_verification[
+        source_verification["ticker"] == str(ticker).upper()
+    ].copy()
+    if verification_rows.empty:
+        return "ESTIMATED"
+
+    verification_rows["field_name"] = verification_rows["field_name"].astype(str)
+    status_by_field = {
+        field_name: set(
+            verification_rows.loc[
+                verification_rows["field_name"] == field_name,
+                "verification_status",
+            ].astype(str)
+        )
+        for field_name in manual_required
+    }
+    if all(status_by_field.get(field_name) == {"VERIFIED"} for field_name in manual_required):
+        return "VERIFIED"
+    return "ESTIMATED"
+
+
+def _value_is_missing(value: object) -> bool:
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
 
 
 def _financial_comparison_summary(

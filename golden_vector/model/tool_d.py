@@ -17,6 +17,7 @@ TOOL_D_OUTPUT_COLUMNS = [
     "ticker",
     "as_of_date",
     "source_run_id",
+    "finance_source",
     "source_tool_b_run_id",
     "snapshot_refresh_run_id",
     "gold_price_used",
@@ -86,6 +87,7 @@ class ToolDExecutionInputs:
     snapshot_refresh_run_id: str | None
     snapshot_as_of_date: object = None
     official_fundamentals: pd.DataFrame | None = None
+    finance_source: str = "our"
 
 
 def compute_tool_d_outputs(
@@ -110,6 +112,7 @@ def compute_tool_d_outputs(
         snapshot_as_of_date=inputs.snapshot_as_of_date,
         source_run_id=source_run_id,
         official_fundamentals=inputs.official_fundamentals,
+        finance_source=inputs.finance_source,
     )
     if same_as_spot:
         stressed = spot
@@ -123,6 +126,7 @@ def compute_tool_d_outputs(
             snapshot_as_of_date=inputs.snapshot_as_of_date,
             source_run_id=source_run_id,
             official_fundamentals=inputs.official_fundamentals,
+            finance_source=inputs.finance_source,
         )
     else:
         stressed = compute_tool_b_in_memory(
@@ -134,6 +138,7 @@ def compute_tool_d_outputs(
             snapshot_as_of_date=inputs.snapshot_as_of_date,
             source_run_id=source_run_id,
             official_fundamentals=inputs.official_fundamentals,
+            finance_source=inputs.finance_source,
         )
         ebitda_anchor_gold_price = inputs.spot_gold_usd
         ebitda_anchor = spot
@@ -149,6 +154,7 @@ def compute_tool_d_outputs(
         spot_gold_usd=inputs.spot_gold_usd,
         spot_gold_date=inputs.spot_gold_date,
         source_run_id=source_run_id,
+        finance_source=inputs.finance_source,
     )
 
 
@@ -211,6 +217,7 @@ def build_tool_d_output_frame(
     spot_gold_usd: float,
     spot_gold_date: str | None,
     source_run_id: str,
+    finance_source: str = "our",
 ) -> pd.DataFrame:
     """Build Tool D output from Tool B in-memory frames."""
 
@@ -254,6 +261,7 @@ def build_tool_d_output_frame(
                 spot_gold_usd=spot_gold_usd,
                 spot_gold_date=spot_gold_date,
                 source_run_id=source_run_id,
+                finance_source=finance_source,
             )
         )
 
@@ -282,14 +290,19 @@ def _build_tool_d_row(
     spot_gold_usd: float,
     spot_gold_date: str | None,
     source_run_id: str,
+    finance_source: str,
 ) -> dict[str, object]:
     ticker = str(stressed_row.get("ticker", "")).upper()
     production = _optional_float(manual_row.get("production_oz"))
     aisc = _optional_float(manual_row.get("aisc_usd_per_oz"))
     sustaining_capex = _optional_float(manual_row.get("sustaining_capex_musd"))
-    interest_expense = _optional_float(manual_row.get("interest_expense_musd"))
+    interest_expense = _optional_float(stressed_row.get("interest_expense_musd"))
+    if interest_expense is None:
+        interest_expense = _optional_float(manual_row.get("interest_expense_musd"))
     cash_cost = _optional_float(manual_row.get("cash_cost_usd_per_oz"))
-    net_debt = _optional_float(manual_row.get("net_debt_musd"))
+    net_debt = _optional_float(stressed_row.get("net_debt_musd"))
+    if net_debt is None:
+        net_debt = _optional_float(manual_row.get("net_debt_musd"))
     forward_ebitda = _optional_float(stressed_row.get("forward_ebitda_musd"))
     spot_ebitda = _optional_float(spot_row.get("forward_ebitda_musd"))
     anchor_ebitda = _optional_float(anchor_row.get("forward_ebitda_musd"))
@@ -356,6 +369,7 @@ def _build_tool_d_row(
         "ticker": ticker,
         "as_of_date": stressed_row.get("as_of_date"),
         "source_run_id": source_run_id,
+        "finance_source": finance_source,
         "source_tool_b_run_id": latest_row.get("source_run_id"),
         "snapshot_refresh_run_id": stressed_row.get("snapshot_refresh_run_id"),
         "gold_price_used": float(gold_price),

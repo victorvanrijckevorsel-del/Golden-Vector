@@ -119,6 +119,37 @@ def test_workspace_detail_page_renders_explanations_and_exploratory_ladder(tmp_p
     assert "Single-Period Ratio" in response["body"]
 
 
+def test_workspace_detail_page_honors_yahoo_fundamentals_source(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    tool_b = pd.read_parquet(paths.latest_tool_b_snapshot_parquet_path)
+    tool_b["screening_verdict_official"] = "SCREEN_OUT"
+    tool_b["fundamental_check_rank_official"] = 9
+    tool_b["leverage_official"] = 8.88
+    tool_b["confidence_official"] = "VERIFIED"
+    tool_b.to_parquet(paths.latest_tool_b_snapshot_parquet_path, index=False)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path="/ticker/NEM?fundamentals_source=yahoo",
+    )
+
+    assert response["status"].startswith("200")
+    assert "Latest Corporate Finance Snapshot" in response["body"]
+    assert "Financials source" in response["body"]
+    assert "Yahoo Fundamentals" in response["body"]
+    assert "SCREEN_OUT" in response["body"]
+    assert "8.88" in response["body"]
+    assert "/ticker/NEM?window=6m&amp;fundamentals_source=yahoo" in response["body"]
+    assert "/ticker/NEM?fundamentals_source=yahoo" in response["body"]
+
+
 def test_workspace_tool_a_detail_refuses_latest_foundation_when_model_state_corrupt(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -1114,6 +1145,7 @@ def _write_latest_tool_d_output(paths) -> None:
                 {
                     "ticker": "NEM",
                     "as_of_date": date(2026, 4, 22),
+                    "finance_source": "our",
                     "tool_d_quality_rank": 88.0,
                     "tool_d_quality_score": 76.0,
                     "gold_price_used": 4000.0,
@@ -2053,8 +2085,78 @@ def test_workspace_tool_d_view_renders_corporate_resilience_page(tmp_path):
     assert "Resilience Score" in response["body"]
     assert "Interest-Cover Line" in response["body"]
     assert "Breakeven Gold" in response["body"]
+    assert "Financials source" in response["body"]
     assert "/tool-d?gold_price=3400.00" in response["body"]
     assert 'class="nav-tab active" href="/tool-d"' in response["body"]
+
+
+def test_workspace_tool_d_yahoo_source_recomputes_and_preserves_links(
+    tmp_path,
+    monkeypatch,
+):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_latest_tool_d_output(paths)
+    scenario_frame = pd.read_parquet(paths.latest_tool_d_spot_snapshot_parquet_path).copy()
+    scenario_frame["finance_source"] = "yahoo"
+    captured: dict[str, object] = {}
+
+    def fake_compute_scenario_frame(**kwargs):
+        captured["finance_source"] = kwargs["finance_source"]
+        return scenario_frame
+
+    monkeypatch.setattr(
+        "golden_vector.serve.overview_tool_d._compute_scenario_frame",
+        fake_compute_scenario_frame,
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path="/tool-d?fundamentals_source=yahoo",
+    )
+
+    assert response["status"].startswith("200")
+    assert captured["finance_source"] == "yahoo"
+    assert "Yahoo Fundamentals view recomputed" in response["body"]
+    assert 'value="yahoo" selected>Yahoo Fundamentals</option>' in response["body"]
+    assert "/tool-d?gold_price=3400.00&amp;fundamentals_source=yahoo" in response["body"]
+    assert "/ticker/NEM?fundamentals_source=yahoo" in response["body"]
+
+
+def test_workspace_tool_d_yahoo_failure_resets_rendered_source(tmp_path, monkeypatch):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_latest_tool_d_output(paths)
+
+    def fail_compute_scenario_frame(**_kwargs):
+        raise RuntimeError("official fundamentals unreadable")
+
+    monkeypatch.setattr(
+        "golden_vector.serve.overview_tool_d._compute_scenario_frame",
+        fail_compute_scenario_frame,
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path="/tool-d?fundamentals_source=yahoo",
+    )
+
+    assert response["status"].startswith("200")
+    assert "Could not compute Yahoo Fundamentals view" in response["body"]
+    assert 'value="our" selected>Our View</option>' in response["body"]
+    assert 'value="yahoo" selected>Yahoo Fundamentals</option>' not in response["body"]
 
 
 def test_workspace_tool_d_override_does_not_touch_spot_parquet(tmp_path, monkeypatch):
@@ -2347,10 +2449,10 @@ def test_workspace_tool_b_market_ours_controls_render_from_backend_columns(tmp_p
     assert response["status"].startswith("200")
     body = response["body"]
     assert "Differences only" in body
-    assert 'value="official" selected>Market</option>' in body
-    assert "Ours 2.4" in body
-    assert "Market 3.2" in body
-    assert "/ticker/NEM" in body
+    assert 'value="yahoo" selected>Yahoo Fundamentals</option>' in body
+    assert "Yahoo Fundamentals 3.2" in body
+    assert "Our View 2.4" in body
+    assert "/ticker/NEM?fundamentals_source=yahoo" in body
     assert "/ticker/GOLD" not in body
 
 

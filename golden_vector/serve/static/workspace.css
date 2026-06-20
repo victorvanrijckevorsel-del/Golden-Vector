@@ -352,6 +352,16 @@
     .hint {
       color: var(--muted);
     }
+    .market-ours-pair {
+      display: grid;
+      gap: 2px;
+      line-height: 1.25;
+    }
+    .source-alternate {
+      color: var(--accent);
+      font-size: 0.86rem;
+      font-weight: 700;
+    }
     .two-column {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));

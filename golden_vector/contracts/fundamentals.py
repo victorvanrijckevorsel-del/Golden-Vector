@@ -9,9 +9,11 @@ from golden_vector.common.files import safe_file_fragment
 
 FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME = "fundamentals_official"
 FETCHED_FUNDAMENTALS_PREFIX = "fetched_fundamentals"
-FETCHED_FUNDAMENTALS_SCHEMA_VERSION = 1
+FETCHED_FUNDAMENTALS_SCHEMA_VERSION = 2
 RAW_FUNDAMENTALS_STATEMENTS_PREFIX = "raw_fundamentals_statements"
-RAW_FUNDAMENTALS_STATEMENTS_SCHEMA_VERSION = 1
+RAW_FUNDAMENTALS_STATEMENTS_SCHEMA_VERSION = 2
+RAW_FUNDAMENTALS_HISTORY_PREFIX = "raw_fundamentals_history"
+RAW_FUNDAMENTALS_HISTORY_SCHEMA_VERSION = 1
 FUNDAMENTALS_FETCH_MANIFEST_VERSION = 1
 
 FundamentalValueStatus = Literal[
@@ -54,6 +56,9 @@ FETCHED_FUNDAMENTALS_COLUMNS: tuple[str, ...] = (
     "statement_currency",
     "statement_scale",
     "value_status",
+    "value_origin",
+    "calculation_formula",
+    "components_json",
 )
 
 RAW_FUNDAMENTALS_STATEMENTS_COLUMNS: tuple[str, ...] = (
@@ -63,12 +68,22 @@ RAW_FUNDAMENTALS_STATEMENTS_COLUMNS: tuple[str, ...] = (
     "statement_type",
     "line_item_original",
     "period_end",
+    "period_type",
     "value_raw",
     "financial_currency",
     "fetched_at_utc",
     "source_run_id",
     "fetch_status",
     "error_message",
+)
+
+RAW_FUNDAMENTALS_HISTORY_COLUMNS: tuple[str, ...] = (
+    *RAW_FUNDAMENTALS_STATEMENTS_COLUMNS,
+    "row_hash",
+    "first_seen_source_run_id",
+    "last_seen_source_run_id",
+    "first_seen_at_utc",
+    "last_seen_at_utc",
 )
 
 
@@ -112,6 +127,26 @@ def raw_fundamentals_statements_run_stamped_path(
     return (
         paths.raw_fundamentals_dir
         / f"{RAW_FUNDAMENTALS_STATEMENTS_PREFIX}_latest_{safe_file_fragment(source_run_id)}.parquet"
+    )
+
+
+def raw_fundamentals_history_latest_path(
+    paths: _FundamentalsArtifactPaths,
+) -> Path:
+    """Return the cumulative raw fundamentals history latest path."""
+
+    return paths.raw_fundamentals_dir / f"{RAW_FUNDAMENTALS_HISTORY_PREFIX}_latest.parquet"
+
+
+def raw_fundamentals_history_run_stamped_path(
+    paths: _FundamentalsArtifactPaths,
+    source_run_id: str,
+) -> Path:
+    """Return the run-stamped cumulative raw fundamentals history path."""
+
+    return (
+        paths.raw_fundamentals_dir
+        / f"{RAW_FUNDAMENTALS_HISTORY_PREFIX}_latest_{safe_file_fragment(source_run_id)}.parquet"
     )
 
 
