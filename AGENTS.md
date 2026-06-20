@@ -49,6 +49,13 @@ Everything else: just do it.
 2. Execute — create files, write code, run tests. Do not pause between files to ask.
 3. Brief result + next step
 
+## Product idea generalization
+When Victor suggests a product or UI idea, check whether the same concept applies elsewhere in the app. If it can be generalized across related pages, data surfaces, or repeated metric displays, say so proactively before planning implementation. Explain the general pattern in plain English and name the affected pages or components.
+
+If Victor asks to add a control, explanation, source toggle, warning, `i` button, calculation detail, color rule, or similar UI treatment to one page, actively search for the same numbers or concept on other pages. Then say plainly, for example: "Hey Victor, these same numbers are also shown on the ticker detail page and Candidate Finder. Should we apply the same rule there too?" Do not wait for Victor to notice duplicated surfaces.
+
+When a new tool, page, or feature request could reasonably be built either as a small local change or as a broader shared/product-wide feature, do not assume the smaller scope. Make the scope choice explicit before planning or coding: "Hey Victor, this can be built as a small change on this page, or as a larger shared feature across X/Y/Z. Which do you want?" This is a product-scope decision, so asking is required even in low-interruption execution mode.
+
 ## Git merge workflow (follow every time, automatically)
 When a milestone is ready to ship:
 1. Commit and push to `dev-vic`

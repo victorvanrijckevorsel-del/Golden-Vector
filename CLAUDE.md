@@ -67,6 +67,25 @@ Do this automatically at each milestone — no need to ask.
 ## Fix bugs immediately
 When a bug or code smell is identified, fix it now unless there's a concrete reason to defer (e.g., depends on unbuilt code). "It works for now" is NOT a valid reason to defer.
 
+## Product consistency & scope (always apply — Claude AND Codex)
+When Victor suggests a new tool, page, UI control, data view, explanation/`i` button, source toggle, warning, metric treatment, color rule, source comparison, or similar product idea, do NOT assume he wants the smallest/local version.
+
+### Ask the scope question FIRST (required — even in low-interruption mode)
+If the request could reasonably be built either way:
+1. **Small scope** — only on the page/tool Victor named.
+2. **Bigger scope** — generalized across related pages, repeated metrics, shared components, or the wider product.
+
+…you must explicitly surface the scope choice BEFORE writing a plan or coding. Plain language, e.g.:
+> "Victor, this can be built as a small change only on this page, or as a shared feature across X/Y/Z because the same data appears there too. Which scope do you want?"
+
+This question is REQUIRED even in low-interruption mode — it's a product-scope decision, not routine implementation permission. Do NOT silently pick the smaller version because it's easier/faster. Make the tradeoff clear, ask, then execute once Victor answers.
+
+### Actively check for duplicated surfaces
+When Victor asks for an `i` button, data-source toggle, calculation explanation, color rule, source comparison, warning, or similar treatment on one page, actively search whether the same numbers or concept appear elsewhere (ticker detail page, Candidate Finder, workspace tools, portfolio views). If they do, call it out plainly and ask whether the same rule should apply there too. Example:
+> "Hey Victor, these same numbers are also shown on the ticker detail page and Candidate Finder. Should we apply the same rule there too?"
+
+Do NOT wait for Victor to notice duplicated surfaces. The goal is whole-product usability, not patching one isolated page when the same user need appears elsewhere.
+
 ## Search and display rules
 - Show ALL matching results — never limit or hide with "+X more"
 - Use scrolling or pagination for long lists, not truncation
