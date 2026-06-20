@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 
@@ -67,15 +68,33 @@ def load_official_fundamentals(
 
     alias_path = fetched_fundamentals_latest_path(paths)
     if prefer_latest_alias and alias_path.exists():
-        path: object | None = alias_path
-    else:
-        path = resolve_current_model_artifact_path(
-            paths,
-            FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
-            fallback_path=alias_path,
-        )
+        try:
+            return _read_official_fundamentals_path(alias_path)
+        except Exception:
+            # The refresh bypass should use this run's fresh alias only when it is actually
+            # readable. If the stale/missing guard was triggered by a corrupt alias and the
+            # optional fetch failed or was publish-blocked, fall back to the last published
+            # manifest artifact instead of aborting Tool B on optional fundamentals data.
+            path = resolve_current_model_artifact_path(
+                paths,
+                FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
+                fallback_path=None,
+            )
+            if path is None:
+                return empty_fetched_fundamentals_frame()
+            return _read_official_fundamentals_path(path)
+
+    path = resolve_current_model_artifact_path(
+        paths,
+        FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
+        fallback_path=alias_path,
+    )
     if path is None:
         return empty_fetched_fundamentals_frame()
+    return _read_official_fundamentals_path(path)
+
+
+def _read_official_fundamentals_path(path: Path) -> pd.DataFrame:
     frame = read_required_parquet(
         path,
         label="official fundamentals",

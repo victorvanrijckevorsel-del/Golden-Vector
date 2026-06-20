@@ -198,6 +198,38 @@ def test_official_fundamentals_loader_prefer_latest_alias_reads_fresh_fetch(tmp_
     assert via_alias.set_index("field_name").loc["ebitda_ltm_musd", "value"] == 950.0
 
 
+def test_official_fundamentals_loader_prefer_latest_alias_falls_back_when_alias_unreadable(
+    tmp_path,
+):
+    """Refresh should prefer the fresh alias only if it is usable. If the stale guard was
+    triggered by an unreadable latest alias and the optional fetch cannot replace it, Tool B
+    must fall back to the last published manifest artifact instead of aborting the refresh."""
+    paths = build_test_paths(tmp_path)
+    old_run = "20260610T120000Z-fetch-fundamentals"
+    write_fetched_fundamentals_artifact_pair(
+        paths=paths,
+        frame=pd.DataFrame(
+            [
+                _official_row(
+                    ticker="AEM",
+                    field_name="ebitda_ltm_musd",
+                    value=900.0,
+                    source_run_id=old_run,
+                )
+            ]
+        ),
+        source_run_id=old_run,
+    )
+    write_current_model_state_manifest(paths=paths, config_hash="config-hash")
+    fetched_fundamentals_latest_path(paths).write_text("not parquet", encoding="utf-8")
+
+    loaded = load_official_fundamentals(paths, prefer_latest_alias=True)
+
+    assert loaded[["ticker", "field_name", "value"]].to_dict("records") == [
+        {"ticker": "AEM", "field_name": "ebitda_ltm_musd", "value": 900.0}
+    ]
+
+
 def test_writer_enforces_one_source_run_id_for_manifest_resolution(tmp_path):
     paths = build_test_paths(tmp_path)
     source_run_id = "20260610T120000Z-fetch-fundamentals"
