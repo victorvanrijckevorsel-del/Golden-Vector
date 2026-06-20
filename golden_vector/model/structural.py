@@ -12,6 +12,7 @@ import pandas as pd
 from golden_vector.common.numeric import rebase_to_base
 from golden_vector.common.numeric import strict_optional_float as _optional_float
 from golden_vector.common.stats import weighted_median as _weighted_median_core
+from golden_vector.common.windows import window_offset
 from golden_vector.contracts.config_models import ScoringConfig
 
 
@@ -1313,12 +1314,8 @@ def _window_start_values(
 
 
 def _window_offset(window_id: str) -> pd.DateOffset:
-    normalized = str(window_id).strip().upper()
-    if normalized.endswith("M"):
-        return pd.DateOffset(months=int(normalized[:-1]))
-    if normalized.endswith("Y"):
-        return pd.DateOffset(years=int(normalized[:-1]))
-    raise ValueError(f"Unsupported structural window: {window_id}")
+    # One copy of the window offset logic lives in the registry (common/windows.py).
+    return window_offset(window_id)
 
 
 def _empty_window_metric(

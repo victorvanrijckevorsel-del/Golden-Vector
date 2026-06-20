@@ -29,6 +29,7 @@ from golden_vector.model.structural import (
     build_rebased_comparison_series,
     build_structural_weekly_series,
 )
+from golden_vector.common.windows import window_weeks
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.serve.windows import SCORING_WINDOWS
@@ -424,16 +425,14 @@ DETAIL_ALIGNMENT_FOUNDATION_MISSING = "FOUNDATION_MISSING"
 DETAIL_ALIGNMENT_TOOL_A_MISSING_REFRESH = "TOOL_A_MISSING_REFRESH"
 
 
-# Canonical structural windows available on the detail page. The detail page
-# intentionally shows only the SCORING windows; the display-only 2Y/5Y lookbacks live
-# on the Gold Sensitivity overview selector, not here (kept as one deliberate scope
-# decision rather than a half-delivered switcher). Imported from serve.windows so the
-# scoring-window set has ONE definition. Order = switcher tab display order.
+# Structural windows the detail page currently exposes. Still the SCORING set for now;
+# the horizon-consistency rollout (Phase 4) widens this to the full registry set. Imported
+# so the set has ONE definition. Order = switcher tab display order.
 _STRUCTURAL_WINDOWS: tuple[str, ...] = SCORING_WINDOWS
 
-# Number of weekly observations per window, used by the scatter-slice
-# and volatility recompute helpers.
-_WINDOW_WEEKS: dict[str, int] = {"6M": 26, "12M": 52, "3Y": 156}
+# Weekly-observation count per detail window, sourced from the ONE registry (no literals)
+# — used by the scatter-slice / volatility recompute / rebased-overlay helpers.
+_WINDOW_WEEKS: dict[str, int] = {window: window_weeks(window) for window in _STRUCTURAL_WINDOWS}
 
 
 def _current_structural_metrics_path(paths: ProjectPaths) -> Path | None:

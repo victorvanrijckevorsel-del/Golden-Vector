@@ -18,30 +18,35 @@ from typing import Any
 from urllib.parse import quote
 
 from golden_vector.common.numeric import is_missing
+# Window topology comes from the ONE registry (golden_vector/common/windows.py). This module
+# re-exports the names serve surfaces already import from here, and keeps the serve-only
+# render helpers (selector, cells, reliability) below.
+from golden_vector.common.windows import (
+    ALL_WINDOWS as STRUCTURAL_WINDOWS,
+    DEFAULT_WINDOW,
+    DISPLAY_WINDOWS,
+    SCORING_WINDOWS,
+    WINDOW_LABELS,
+    resolve_window,
+    window_suffix,
+)
 from golden_vector.serve.format_helpers import _optional_float
 
-# Canonical window ids as stored by the model (suffix = ``.lower()``). 6M/12M/3Y are the
-# scoring windows; 2Y/5Y are display-only extras (model Phase 2). Ordered for the selector.
-STRUCTURAL_WINDOWS: tuple[str, ...] = ("6M", "12M", "2Y", "3Y", "5Y")
-# The scoring vs display split, exported as the ONE source of truth so other serve
-# surfaces (detail page, charts) import these instead of re-hardcoding window tuples.
-SCORING_WINDOWS: tuple[str, ...] = ("6M", "12M", "3Y")
-DISPLAY_WINDOWS: tuple[str, ...] = ("2Y", "5Y")
-DEFAULT_WINDOW = "12M"  # the canonical anchor (matches the detail page default)
-# Display label only — Victor asked to show the 12M window as "1Y" (same data).
-WINDOW_LABELS: dict[str, str] = {"6M": "6M", "12M": "1Y", "2Y": "2Y", "3Y": "3Y", "5Y": "5Y"}
-# Accept the display alias + lowercase forms from the query string.
-_ALIASES: dict[str, str] = {"6M": "6M", "12M": "12M", "1Y": "12M", "2Y": "2Y", "3Y": "3Y", "5Y": "5Y"}
-
-
-def resolve_window(requested: str | None) -> str:
-    """Normalise a query-string window (e.g. '1y', '12M', '3Y') to a canonical id;
-    anything unrecognised falls back to the default anchor."""
-    return _ALIASES.get(str(requested or "").strip().upper(), DEFAULT_WINDOW)
-
-
-def window_suffix(window_id: str) -> str:
-    return str(window_id).lower()
+__all__ = [
+    "STRUCTURAL_WINDOWS",
+    "SCORING_WINDOWS",
+    "DISPLAY_WINDOWS",
+    "DEFAULT_WINDOW",
+    "WINDOW_LABELS",
+    "resolve_window",
+    "window_suffix",
+    "window_metrics",
+    "r2_band",
+    "window_is_reliable",
+    "win_num_td",
+    "gold_link_td",
+    "render_window_selector",
+]
 
 
 def window_metrics(row: dict[str, Any], window_id: str) -> dict[str, Any]:
