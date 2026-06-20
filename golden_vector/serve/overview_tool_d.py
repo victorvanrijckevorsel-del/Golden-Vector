@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from html import escape
 from time import perf_counter
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import pandas as pd
 
@@ -24,11 +24,16 @@ from golden_vector.model.tool_d import (
     tool_d_stress_scenario_presets,
 )
 from golden_vector.screening.manual_data import load_manual_screening_data
+from golden_vector.screening.pipeline import normalize_finance_source
 from golden_vector.screening.schema import ToolBStaleSchemaError, validate_tool_b_output_schema
 from golden_vector.serve.format_helpers import (
     _first_frame_number,
     _fmt_numeric_td,
     _fmt_text,
+)
+from golden_vector.serve.fundamentals_provenance import (
+    load_fundamentals_provenance_lookup,
+    ticker_provenance_icon,
 )
 from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.overview_helpers import (
@@ -37,6 +42,7 @@ from golden_vector.serve.overview_helpers import (
 )
 from golden_vector.serve.column_help import help_th
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import WorkspaceState
 
 
@@ -53,26 +59,40 @@ def _render_tool_d_overview_page(
 
     query = query or {}
     requested_gold, scenario_error = _requested_gold_price(query)
+    finance_source = normalize_finance_source(
+        (query.get("fundamentals_source", ["our"])[0] or "our")
+    )
     frame = state.latest_tool_d.copy()
     scenario_seconds: float | None = None
     scenario_message: str | None = None
-    if requested_gold is not None:
+    if requested_gold is not None or finance_source == "yahoo":
         try:
             start = perf_counter()
             frame = _compute_scenario_frame(
                 paths=paths,
                 app_config=app_config,
                 gold_price=requested_gold,
+                finance_source=finance_source,
             )
             scenario_seconds = perf_counter() - start
-            scenario_message = (
-                f"Scenario recomputed in {scenario_seconds:.2f}s. "
-                "Persisted spot output was not changed."
-            )
+            if requested_gold is not None:
+                scenario_message = (
+                    f"Scenario recomputed in {scenario_seconds:.2f}s. "
+                    "Persisted spot output was not changed."
+                )
+            else:
+                scenario_message = (
+                    f"Yahoo Fundamentals view recomputed in {scenario_seconds:.2f}s. "
+                    "Persisted Our View output was not changed."
+                )
         except ToolBStaleSchemaError:
             raise
         except Exception as exc:
             scenario_error = f"Could not compute stress scenario: {exc}"
+            if finance_source == "yahoo":
+                scenario_error = f"Could not compute Yahoo Fundamentals view: {exc}"
+                finance_source = "our"
+                frame = state.latest_tool_d.copy()
 
     search_term = str(search or "").strip().upper()
     if not frame.empty and search_term and "ticker" in frame.columns:
@@ -95,6 +115,11 @@ def _render_tool_d_overview_page(
         frame.loc[frame["resilience_flip_flags"].notna()].copy()
         if not frame.empty and "resilience_flip_flags" in frame.columns
         else frame.iloc[0:0].copy()
+    )
+    fundamentals_provenance = (
+        load_fundamentals_provenance_lookup(paths)
+        if finance_source == "yahoo"
+        else {}
     )
 
     body = ["<h1>Corporate Resilience</h1>"]
@@ -125,10 +150,25 @@ def _render_tool_d_overview_page(
             search=search,
             spot_gold=spot_gold,
             active_gold=active_gold,
+            finance_source=finance_source,
         )
     )
-    body.append(_render_flip_section(flip_rows, app_config=app_config))
-    body.append(_render_table(frame, app_config=app_config))
+    body.append(
+        _render_flip_section(
+            flip_rows,
+            app_config=app_config,
+            finance_source=finance_source,
+            fundamentals_provenance=fundamentals_provenance,
+        )
+    )
+    body.append(
+        _render_table(
+            frame,
+            app_config=app_config,
+            finance_source=finance_source,
+            fundamentals_provenance=fundamentals_provenance,
+        )
+    )
     return _page_shell(
         "Corporate Resilience - Golden Vector Workspace",
         "".join(body),
@@ -140,7 +180,8 @@ def _compute_scenario_frame(
     *,
     paths: ProjectPaths,
     app_config: AppConfig,
-    gold_price: float,
+    gold_price: float | None,
+    finance_source: str = "our",
 ) -> pd.DataFrame:
     foundation_snapshot = load_latest_foundation_snapshot(
         paths=paths,
@@ -156,6 +197,7 @@ def _compute_scenario_frame(
     spot_gold_usd, spot_gold_date = latest_gold_price_from_history(
         foundation_snapshot.gold_history
     )
+    resolved_gold_price = float(gold_price) if gold_price is not None else spot_gold_usd
     tool_b_latest = validate_tool_b_output_schema(
         read_current_model_parquet(
             paths,
@@ -186,9 +228,10 @@ def _compute_scenario_frame(
             snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
             snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
             official_fundamentals=official_fundamentals,
+            finance_source=finance_source,
         ),
         config=app_config.tool_d,
-        gold_price=gold_price,
+        gold_price=resolved_gold_price,
         source_run_id="workspace-tool-d-scenario",
     )
 
@@ -198,11 +241,16 @@ def _render_scenario_form(
     search: str,
     spot_gold: float | None,
     active_gold: float | None,
+    finance_source: str,
 ) -> str:
     links = []
     if spot_gold is not None:
         for label, value in tool_d_stress_scenario_presets(spot_gold):
-            href = _scenario_href(search=search, gold_price=value)
+            href = _scenario_href(
+                search=search,
+                gold_price=value,
+                finance_source=finance_source,
+            )
             active_class = (
                 " active"
                 if active_gold is not None and abs(float(active_gold) - value) < 0.01
@@ -212,12 +260,23 @@ def _render_scenario_form(
                 f"<a class=\"button-like{active_class}\" href=\"{escape(href)}\">{escape(label)}</a>"
             )
     custom_value = "" if active_gold is None else f"{active_gold:.0f}"
-    reset_link = "/tool-d" + (f"?{urlencode({'search': search})}" if search else "")
+    reset_params = {}
+    if search:
+        reset_params["search"] = search
+    if finance_source == "yahoo":
+        reset_params["fundamentals_source"] = "yahoo"
+    reset_link = "/tool-d" + (f"?{urlencode(reset_params)}" if reset_params else "")
+    yahoo_selected = " selected" if finance_source == "yahoo" else ""
+    our_selected = " selected" if finance_source != "yahoo" else ""
     return (
         "<section class=\"panel\">"
         "<form method=\"get\" action=\"/tool-d\" class=\"overview-filters-form\">"
         f"<label><span>Search ticker</span><input name=\"search\" type=\"text\" value=\"{escape(search)}\" placeholder=\"NEM\"></label>"
         f"<label><span>Custom gold price</span><input name=\"gold_price\" type=\"number\" min=\"1\" step=\"1\" value=\"{escape(custom_value)}\"></label>"
+        "<label><span>Financials source</span><select name=\"fundamentals_source\">"
+        f"<option value=\"our\"{our_selected}>Our View</option>"
+        f"<option value=\"yahoo\"{yahoo_selected}>Yahoo Fundamentals</option>"
+        "</select></label>"
         "<div class=\"overview-filters-actions\">"
         f"{''.join(links)}"
         "<button type=\"submit\">Apply</button>"
@@ -231,7 +290,13 @@ def _render_scenario_form(
     )
 
 
-def _render_flip_section(frame, *, app_config: AppConfig | None = None) -> str:
+def _render_flip_section(
+    frame,
+    *,
+    app_config: AppConfig | None = None,
+    finance_source: str,
+    fundamentals_provenance: dict[tuple[str, str], str],
+) -> str:
     if frame.empty:
         return (
             "<section class=\"panel\"><h2>Who Flips Under This Stress</h2>"
@@ -241,9 +306,15 @@ def _render_flip_section(frame, *, app_config: AppConfig | None = None) -> str:
     rows: list[str] = []
     for row in frame.to_dict(orient="records"):
         ticker = str(row.get("ticker") or "")
+        href = _ticker_href(ticker, finance_source=finance_source)
+        icon = (
+            ticker_provenance_icon(ticker, fundamentals_provenance)
+            if finance_source == "yahoo"
+            else ""
+        )
         rows.append(
             "<tr>"
-            f"<td><a href=\"/ticker/{escape(ticker)}\">{escape(ticker)}</a></td>"
+            f"<td><a href=\"{escape(href, quote=True)}\">{escape(ticker)}</a>{icon}</td>"
             f"<td>{_fmt_text(row.get('resilience_flip_flags'))}</td>"
             f"{_fmt_numeric_td(row.get('interest_cover_gold_usd'), decimals=0)}"
             f"{_fmt_numeric_td(row.get('leverage_stressed_at_g'), decimals=2)}"
@@ -263,13 +334,25 @@ def _render_flip_section(frame, *, app_config: AppConfig | None = None) -> str:
     )
 
 
-def _render_table(frame, *, app_config=None) -> str:
+def _render_table(
+    frame,
+    *,
+    app_config=None,
+    finance_source: str,
+    fundamentals_provenance: dict[tuple[str, str], str],
+) -> str:
     rows_html: list[str] = []
     for row in frame.to_dict(orient="records"):
         ticker = str(row.get("ticker") or "")
+        href = _ticker_href(ticker, finance_source=finance_source)
+        icon = (
+            ticker_provenance_icon(ticker, fundamentals_provenance)
+            if finance_source == "yahoo"
+            else ""
+        )
         rows_html.append(
             "<tr>"
-            f"<td><a href=\"/ticker/{escape(ticker)}\">{escape(ticker)}</a></td>"
+            f"<td><a href=\"{escape(href, quote=True)}\">{escape(ticker)}</a>{icon}</td>"
             f"{_fmt_numeric_td(row.get('tool_d_quality_rank'), decimals=1)}"
             f"{_fmt_numeric_td(row.get('gold_price_used'), decimals=0)}"
             f"{_fmt_numeric_td(row.get('interest_cover_gold_usd'), decimals=0)}"
@@ -336,11 +419,25 @@ def _requested_gold_price(query: dict[str, list[str]]) -> tuple[float | None, st
     return value, None
 
 
-def _scenario_href(*, search: str, gold_price: float) -> str:
+def _scenario_href(*, search: str, gold_price: float, finance_source: str) -> str:
     params: dict[str, str] = {"gold_price": f"{gold_price:.2f}"}
     if search:
         params["search"] = search
+    if finance_source == "yahoo":
+        params["fundamentals_source"] = "yahoo"
     return "/tool-d?" + urlencode(params)
+
+
+def _ticker_href(ticker: str, *, finance_source: str) -> str:
+    return build_page_url(
+        f"/ticker/{quote(str(ticker), safe='')}",
+        {},
+        set_params=(
+            {"fundamentals_source": "yahoo"}
+            if finance_source == "yahoo"
+            else {}
+        ),
+    )
 
 
 def _first_number(frame, column: str) -> float | None:

@@ -4,6 +4,7 @@ import json
 from datetime import date
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.run_context import RunContext
@@ -15,12 +16,17 @@ from golden_vector.contracts.fundamentals import (
     fetched_fundamentals_latest_path,
     fundamentals_fetch_manifest_run_stamped_path,
     raw_fundamentals_statements_latest_path,
+    raw_fundamentals_history_latest_path,
 )
 from golden_vector.fundamentals.artifacts import (
     load_official_fundamentals,
     write_fetched_fundamentals_artifact_pair,
 )
 from golden_vector.fundamentals.fetch import fetch_and_publish_fundamentals
+from golden_vector.fundamentals.history_store import (
+    merge_raw_fundamentals_history,
+    write_raw_fundamentals_history_artifact_pair,
+)
 from golden_vector.fundamentals.mapper import map_raw_fundamentals_to_official
 from golden_vector.fundamentals.raw_store import (
     load_raw_fundamentals_statements,
@@ -58,6 +64,7 @@ def test_raw_fundamentals_round_trip_preserves_yahoo_lines_periods_currency_and_
     assert row["ticker"] == "AEM"
     assert row["financial_currency"] == "USD"
     assert row["period_end"] == date(2025, 12, 31)
+    assert row["period_type"] == "ANNUAL"
     assert row["value_raw"] == 500_000_000.0
 
 
@@ -94,6 +101,8 @@ def test_mapper_converts_currency_then_scales_to_millions_once(tmp_path):
     assert rows.loc["ebitda_ltm_musd", "value"] == 750.0
     assert rows.loc["da_musd", "value"] == 125.0
     assert rows.loc["interest_expense_musd", "value"] == 25.0
+    interest_components = json.loads(rows.loc["interest_expense_musd", "components_json"])
+    assert interest_components[0]["normalized_value"] == 25.0
 
 
 def test_mapper_missing_debt_leg_is_missing_not_zero_strength(tmp_path):
@@ -181,6 +190,12 @@ def test_mapper_missing_cash_leg_keeps_debt_value_but_degrades_status(tmp_path):
     assert row["value"] == 500.0
     assert row["value_status"] == "MISSING"
     assert row["statement_scale"] == "absolute_to_usd_millions_cash_missing_assumed_zero"
+    assert row["value_origin"] == "cash_missing_assumed_zero"
+    components = json.loads(row["components_json"])
+    assert components[0]["component"] == "total_debt"
+    assert components[0]["yahoo_line_item"] == "Total Debt"
+    assert components[1]["component"] == "cash"
+    assert components[1]["status"] == "MISSING_ASSUMED_ZERO"
 
 
 def test_mapper_net_cash_miner_stays_net_cash_when_cash_is_present(tmp_path):
@@ -295,6 +310,13 @@ def test_mapper_marks_divergent_reported_ebitda_contaminated(tmp_path):
     row = official[official["field_name"].eq("ebitda_ltm_musd")].iloc[0]
     assert row["value"] == 600.0
     assert row["value_status"] == "CONTAMINATED"
+    assert row["value_origin"] == "reported_field_diverged"
+    components = json.loads(row["components_json"])
+    assert [component["component"] for component in components] == [
+        "operating_income",
+        "depreciation_and_amortization",
+        "reported_ebitda_cross_check",
+    ]
 
 
 def test_fetch_stage_persists_raw_then_maps_from_storage(tmp_path):
@@ -321,7 +343,9 @@ def test_fetch_stage_persists_raw_then_maps_from_storage(tmp_path):
     assert result.raw_row_count == len(raw.index)
     assert result.official_row_count == len(official.index)
     assert raw_fundamentals_statements_latest_path(paths).exists()
+    assert raw_fundamentals_history_latest_path(paths).exists()
     assert result.manifest["raw_statements"]["path"].endswith(".parquet")
+    assert result.manifest["raw_history_artifact"]["row_count"] >= len(raw.index)
     assert result.manifest["summary"]["pass_count"] == 1
     assert set(official["field_name"]) == {
         "da_musd",
@@ -330,6 +354,67 @@ def test_fetch_stage_persists_raw_then_maps_from_storage(tmp_path):
         "net_debt_musd",
         "tax_rate",
     }
+
+
+def test_raw_fundamentals_history_preserves_period_type_key(tmp_path):
+    source_run_id = "20260610T120000Z-fetch-fundamentals"
+    raw = raw_statement_payload_to_frame(
+        ticker="AEM",
+        yahoo_symbol="AEM",
+        payload=_payload(currency="USD"),
+        fetched_at_utc="2026-06-10T12:00:00Z",
+        source_run_id=source_run_id,
+    )
+    history = merge_raw_fundamentals_history(
+        existing=None,
+        incoming=raw,
+        source_run_id=source_run_id,
+    )
+    updated = raw.copy()
+    mask = updated["line_item_original"].eq("Operating Income")
+    updated.loc[mask, "value_raw"] = 600_000_000.0
+    updated.loc[mask, "fetched_at_utc"] = "2026-06-11T12:00:00Z"
+    updated.loc[mask, "source_run_id"] = "20260611T120000Z-fetch-fundamentals"
+    quarterly = updated.loc[mask].copy()
+    quarterly["period_type"] = "QUARTERLY"
+
+    merged = merge_raw_fundamentals_history(
+        existing=history,
+        incoming=pd.concat([updated, quarterly], ignore_index=True),
+        source_run_id="20260611T120000Z-fetch-fundamentals",
+    )
+
+    rows = merged[
+        merged["statement_type"].eq("income_stmt")
+        & merged["line_item_original"].eq("Operating Income")
+        & merged["period_end"].astype(str).eq("2025-12-31")
+    ].sort_values("period_type")
+    assert rows["period_type"].tolist() == ["ANNUAL", "QUARTERLY"]
+    annual = rows[rows["period_type"].eq("ANNUAL")].iloc[0]
+    assert annual["value_raw"] == 600_000_000.0
+    assert annual["first_seen_source_run_id"] == source_run_id
+    assert annual["last_seen_source_run_id"] == "20260611T120000Z-fetch-fundamentals"
+
+
+def test_raw_fundamentals_history_fails_loud_on_corrupt_latest(tmp_path):
+    paths = build_test_paths(tmp_path)
+    source_run_id = "20260610T120000Z-fetch-fundamentals"
+    raw = raw_statement_payload_to_frame(
+        ticker="AEM",
+        yahoo_symbol="AEM",
+        payload=_payload(currency="USD"),
+        fetched_at_utc="2026-06-10T12:00:00Z",
+        source_run_id=source_run_id,
+    )
+    raw_fundamentals_history_latest_path(paths).parent.mkdir(parents=True, exist_ok=True)
+    raw_fundamentals_history_latest_path(paths).write_text("not parquet", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="raw fundamentals history could not be read"):
+        write_raw_fundamentals_history_artifact_pair(
+            paths=paths,
+            incoming=raw,
+            source_run_id=source_run_id,
+        )
 
 
 def test_fetch_stage_isolates_per_ticker_statement_exception(tmp_path):

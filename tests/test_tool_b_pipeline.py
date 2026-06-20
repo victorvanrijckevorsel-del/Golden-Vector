@@ -1,6 +1,7 @@
 from datetime import date
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
@@ -11,7 +12,12 @@ from golden_vector.screening.manual_store import (
     upsert_company_input,
     upsert_source_verification,
 )
-from golden_vector.screening.pipeline import execute_tool_b_pipeline
+from golden_vector.screening.pipeline import (
+    compute_tool_b_in_memory,
+    execute_tool_b_pipeline,
+    materialize_tool_b_finance_source,
+)
+from golden_vector.screening.schema import TOOL_B_OUTPUT_COLUMNS, ToolBStaleSchemaError
 from tests.helpers import build_test_paths
 
 
@@ -526,9 +532,118 @@ def test_compute_tool_b_in_memory_emits_market_vs_ours_comparison(tmp_path):
     assert nem["ev_ebitda"] == nem["ev_ebitda_our_view"]
 
 
+def test_compute_tool_b_in_memory_can_materialize_yahoo_fundamentals_view(tmp_path):
+    from golden_vector.screening.manual_data import load_manual_screening_data
+
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(ProjectPaths.discover()).app
+    _populate_manual_store(
+        paths,
+        {
+            "NEM": {
+                "production_oz": 6_000_000,
+                "aisc_usd_per_oz": 1300,
+                "cash_cost_usd_per_oz": 900,
+                "royalty_rate": 0.03,
+                "sustaining_capex_musd": 900,
+                "da_musd": 500,
+                "interest_expense_musd": 100,
+                "tax_rate": 0.30,
+                "reserve_life_years": 12,
+                "net_debt_musd": 2000,
+                "ebitda_ltm_musd": 5000,
+            },
+        },
+    )
+    manual_data = load_manual_screening_data(paths, tickers=["NEM"])
+    official = _official_fundamentals_frame(
+        {
+            "NEM": {
+                "net_debt_musd": (1000.0, "OK"),
+                "ebitda_ltm_musd": (4000.0, "OK"),
+                "da_musd": (500.0, "OK"),
+                "interest_expense_musd": (100.0, "OK"),
+            }
+        }
+    )
+
+    frame = compute_tool_b_in_memory(
+        app_config=app_config,
+        manual_data=manual_data,
+        normalized_market_snapshots=_market_snapshots(),
+        gold_price_assumption=4000.0,
+        official_fundamentals=official,
+        finance_source="yahoo",
+    )
+
+    nem = frame.set_index("ticker").loc["NEM"]
+    assert nem["finance_source"] == "yahoo"
+    assert nem["net_debt_musd"] == nem["net_debt_musd_official"] == 1000.0
+    assert nem["net_debt_musd_our_view"] == 2000.0
+    assert nem["leverage"] == nem["leverage_official"] == 0.25
+    assert nem["ev_ebitda"] == nem["ev_ebitda_official"]
+    assert nem["fundamental_check_score"] == nem["fundamental_check_score_official"]
+    assert nem["fundamental_check_rank"] == nem["fundamental_check_rank_official"]
+    assert nem["screening_verdict"] == nem["screening_verdict_official"]
+
+
+def test_compute_tool_b_yahoo_view_uses_source_specific_confidence(tmp_path):
+    from golden_vector.screening.manual_data import load_manual_screening_data
+
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(ProjectPaths.discover()).app
+    _populate_manual_store(
+        paths,
+        {
+            "NEM": {
+                "production_oz": 6_000_000,
+                "aisc_usd_per_oz": 1300,
+                "cash_cost_usd_per_oz": 900,
+                "royalty_rate": 0.03,
+                "sustaining_capex_musd": 900,
+                "tax_rate": 0.30,
+                "reserve_life_years": 12,
+            },
+        },
+    )
+    manual_data = load_manual_screening_data(paths, tickers=["NEM"])
+    official = _official_fundamentals_frame(
+        {
+            "NEM": {
+                "net_debt_musd": (1000.0, "OK"),
+                "ebitda_ltm_musd": (4000.0, "OK"),
+                "da_musd": (500.0, "OK"),
+                "interest_expense_musd": (100.0, "OK"),
+            }
+        }
+    )
+
+    frame = compute_tool_b_in_memory(
+        app_config=app_config,
+        manual_data=manual_data,
+        normalized_market_snapshots=_market_snapshots(),
+        gold_price_assumption=4000.0,
+        official_fundamentals=official,
+        finance_source="yahoo",
+    )
+
+    nem = frame.set_index("ticker").loc["NEM"]
+    assert nem["finance_source"] == "yahoo"
+    assert nem["confidence"] == "VERIFIED"
+    assert nem["screening_verdict"] != "INCOMPLETE"
+
+
+def test_materialize_yahoo_view_fails_if_mapped_source_column_is_missing():
+    row = {column: None for column in TOOL_B_OUTPUT_COLUMNS}
+    row["ticker"] = "NEM"
+    frame = pd.DataFrame([row]).drop(columns=["forward_eps_official"])
+
+    with pytest.raises(ToolBStaleSchemaError, match="forward_eps_official"):
+        materialize_tool_b_finance_source(frame, finance_source="yahoo")
+
+
 def test_compute_tool_b_official_rank_excludes_degraded_official_data(tmp_path):
     from golden_vector.screening.manual_data import load_manual_screening_data
-    from golden_vector.screening.pipeline import compute_tool_b_in_memory
 
     paths = build_test_paths(tmp_path)
     app_config = load_app_config(ProjectPaths.discover()).app

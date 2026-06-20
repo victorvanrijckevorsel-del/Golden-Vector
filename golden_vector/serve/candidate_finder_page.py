@@ -23,6 +23,7 @@ from golden_vector.serve.candidate_finder_data import (
 )
 from golden_vector.serve.column_help import help_term, help_th
 from golden_vector.serve.format_helpers import _fmt_number, _fmt_numeric_td, _metric_card
+from golden_vector.serve.fundamentals_provenance import ticker_provenance_icon
 from golden_vector.serve.model_state_banner import (
     render_model_state_banner,
     render_option_freshness_box,
@@ -32,6 +33,7 @@ from golden_vector.serve.option_refresh import (
     render_option_refresh_control,
 )
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.url_helpers import build_page_url
 
 _DEFAULT_PRESET_ID = "bull"
 _PRESET_ALIASES = {
@@ -78,8 +80,13 @@ def render_candidate_finder_page(
             _render_warning_banner(screen.warnings),
             _render_summary_cards(screen),
             _render_builder(data, screen, query, base_path=base_path),
-            _render_top_lists(screen),
-            _render_ranking_tables(screen, app_config=app_config),
+            _render_top_lists(screen, fundamentals_source=data.fundamentals_source),
+            _render_ranking_tables(
+                screen,
+                app_config=app_config,
+                fundamentals_source=data.fundamentals_source,
+                fundamentals_provenance=data.fundamentals_provenance or {},
+            ),
             "</section>",
         )
     )
@@ -168,6 +175,9 @@ def _preset_href(
     gold_price = _first(query, "gold_price")
     if gold_price:
         params.append(("gold_price", gold_price))
+    fundamentals_source = _first(query, "fundamentals_source")
+    if fundamentals_source:
+        params.append(("fundamentals_source", fundamentals_source))
     return base_path + "?" + urlencode(params)
 
 
@@ -182,10 +192,17 @@ def _render_gold_scenario_control(
         if data.gold_price_used is None
         else f"{float(data.gold_price_used):.0f}"
     )
-    hidden = _hidden_query_inputs(query, exclude={"gold_price"})
+    hidden = _hidden_query_inputs(query, exclude={"gold_price", "fundamentals_source"})
     reset_query = _query_without(query, {"gold_price"})
     reset_href = base_path + (f"?{reset_query}" if reset_query else "")
-    if data.scenario_active:
+    yahoo_selected = " selected" if data.fundamentals_source == "yahoo" else ""
+    our_selected = " selected" if data.fundamentals_source != "yahoo" else ""
+    if data.scenario_active and data.scenario_requested_gold_price is None:
+        status = (
+            "Yahoo Fundamentals recalculates finance-dependent ranking at spot gold. "
+            "Persisted model artifacts are unchanged."
+        )
+    elif data.scenario_active:
         status = (
             f"Scenario ranks gold-dependent fundamentals at ${data.gold_price_used:,.0f}/oz. "
             "Persisted model artifacts are unchanged."
@@ -204,6 +221,13 @@ def _render_gold_scenario_control(
       <label>
         Gold price for ranking
         <input type="number" name="gold_price" min="1" step="1" value="{escape(current_value)}">
+      </label>
+      <label>
+        Financials source
+        <select name="fundamentals_source">
+          <option value="our"{our_selected}>Our View</option>
+          <option value="yahoo"{yahoo_selected}>Yahoo Fundamentals</option>
+        </select>
       </label>
       <button type="submit">Apply Gold Scenario</button>
       <a href="{escape(reset_href, quote=True)}">Reset to persisted spot</a>
@@ -418,11 +442,20 @@ def _render_builder_row(
 """
 
 
-def _render_top_lists(screen: CandidateFinderScreen) -> str:
+def _render_top_lists(
+    screen: CandidateFinderScreen,
+    *,
+    fundamentals_source: str,
+) -> str:
     if not screen.ranking.selected_criteria:
         return ""
     cards = "\n".join(
-        _render_top_list_card(criterion, screen.ranking.top_lists.get(criterion.id, ()))
+        _render_top_list_card(
+            criterion,
+            screen.ranking.top_lists.get(criterion.id, ()),
+            fundamentals_source=fundamentals_source,
+            fundamentals_provenance=screen.data.fundamentals_provenance or {},
+        )
         for criterion in screen.ranking.selected_criteria
     )
     return f"""
@@ -436,11 +469,14 @@ def _render_top_lists(screen: CandidateFinderScreen) -> str:
 def _render_top_list_card(
     criterion: ResolvedCriterion,
     rows: Sequence[CriterionTopEntry],
+    *,
+    fundamentals_source: str,
+    fundamentals_provenance: dict[tuple[str, str], str],
 ) -> str:
     body = "\n".join(
         f"""
 <tr>
-  <td>{_ticker_link(row.ticker)}</td>
+  <td>{_ticker_link(row.ticker, fundamentals_source=fundamentals_source, fundamentals_provenance=fundamentals_provenance)}</td>
   <td class="numeric">{_fmt_number(row.raw_value, decimals=2)}</td>
   <td class="numeric">{_fmt_number(row.percentile, decimals=1)}</td>
 </tr>
@@ -465,15 +501,19 @@ def _render_top_list_card(
 
 
 def _render_ranking_tables(
-    screen: CandidateFinderScreen, *, app_config: AppConfig | None = None
+    screen: CandidateFinderScreen,
+    *,
+    app_config: AppConfig | None = None,
+    fundamentals_source: str,
+    fundamentals_provenance: dict[tuple[str, str], str],
 ) -> str:
     eligible = [row for row in screen.ranking.rows if _is_ranked(row)]
     low_coverage = [row for row in screen.ranking.rows if not _is_ranked(row)]
     return f"""
 <section class="candidate-view-section">
   <h2>View 2: Fit Ranking</h2>
-  {_render_score_table("Eligible Ranking", eligible, screen.ranking.selected_criteria, "candidate-eligible-ranking", app_config=app_config)}
-  {_render_score_table("Low-Coverage Rows", low_coverage, screen.ranking.selected_criteria, "candidate-low-coverage-ranking", app_config=app_config)}
+  {_render_score_table("Eligible Ranking", eligible, screen.ranking.selected_criteria, "candidate-eligible-ranking", app_config=app_config, fundamentals_source=fundamentals_source, fundamentals_provenance=fundamentals_provenance)}
+  {_render_score_table("Low-Coverage Rows", low_coverage, screen.ranking.selected_criteria, "candidate-low-coverage-ranking", app_config=app_config, fundamentals_source=fundamentals_source, fundamentals_provenance=fundamentals_provenance)}
 </section>
 """
 
@@ -485,6 +525,8 @@ def _render_score_table(
     table_id: str,
     *,
     app_config: AppConfig | None = None,
+    fundamentals_source: str,
+    fundamentals_provenance: dict[tuple[str, str], str],
 ) -> str:
     criterion_headers = "".join(
         help_th(
@@ -507,7 +549,7 @@ def _render_score_table(
         body_rows.append(
             f"""
 <tr>
-  <td>{_ticker_link(row.ticker)}</td>
+  <td>{_ticker_link(row.ticker, fundamentals_source=fundamentals_source, fundamentals_provenance=fundamentals_provenance)}</td>
   {_fmt_numeric_td(row.score, decimals=2)}
   {_coverage_td(row)}
   {_fmt_numeric_td(row.top_n_tally, decimals=0)}
@@ -548,10 +590,29 @@ def _render_score_table(
 """
 
 
-def _ticker_link(ticker: str) -> str:
+def _ticker_link(
+    ticker: str,
+    *,
+    fundamentals_source: str,
+    fundamentals_provenance: dict[tuple[str, str], str],
+) -> str:
     clean = escape(ticker)
-    href = f"/ticker/{quote(str(ticker), safe='')}?lens=option-trading#option-trading"
-    return f"<a href=\"{escape(href, quote=True)}\">{clean}</a>"
+    href = build_page_url(
+        f"/ticker/{quote(str(ticker), safe='')}",
+        {"lens": "option-trading"},
+        set_params=(
+            {"fundamentals_source": "yahoo"}
+            if fundamentals_source == "yahoo"
+            else {}
+        ),
+    )
+    href = f"{href}#option-trading"
+    icon = (
+        ticker_provenance_icon(ticker, fundamentals_provenance)
+        if fundamentals_source == "yahoo"
+        else ""
+    )
+    return f"<a href=\"{escape(href, quote=True)}\">{clean}</a>{icon}"
 
 
 def _option_tag(value: str, label: str, selected: bool) -> str:

@@ -5,6 +5,7 @@ from golden_vector.screening.schema import (
     ToolBStaleSchemaError,
     validate_tool_b_output_schema,
 )
+from golden_vector.screening.pipeline import YAHOO_FINANCE_SOURCE_COLUMN_MAP
 
 
 def test_tool_b_schema_excludes_removed_target_and_best_fields():
@@ -13,6 +14,13 @@ def test_tool_b_schema_excludes_removed_target_and_best_fields():
 
 def test_tool_b_schema_includes_simple_fundamental_fields():
     assert REQUIRED_TOOL_B_FUNDAMENTAL_COLUMNS.issubset(TOOL_B_OUTPUT_COLUMNS)
+
+
+def test_tool_b_schema_requires_all_yahoo_materialization_source_columns():
+    assert set(YAHOO_FINANCE_SOURCE_COLUMN_MAP).issubset(TOOL_B_OUTPUT_COLUMNS)
+    assert set(YAHOO_FINANCE_SOURCE_COLUMN_MAP.values()).issubset(
+        REQUIRED_TOOL_B_FUNDAMENTAL_COLUMNS
+    )
 
 
 def test_tool_b_schema_guard_rejects_any_target_upside_or_best_column():

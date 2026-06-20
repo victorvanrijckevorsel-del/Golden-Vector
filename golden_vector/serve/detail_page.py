@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import escape
+from typing import Mapping
 
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge.option_trading import OptionTradingDetailData
@@ -51,6 +52,9 @@ def render_detail_page(
     show_workspace_panels: bool = True,
     show_manual_sections: bool = True,
     model_state_manifest: dict[str, object] | None = None,
+    financials_source: str = "our",
+    query_params: Mapping[str, str] | None = None,
+    fundamentals_provenance: dict[tuple[str, str], str] | None = None,
 ) -> str:
     company_row = _frame_index_by_ticker(state.company_inputs).get(ticker, {})
     reporting_row = _frame_index_by_ticker(state.reporting_calendar).get(ticker, {})
@@ -76,6 +80,7 @@ def render_detail_page(
                     and option_trading_detail.sizing is not None
                     else None
                 ),
+                financials_source=financials_source,
             )
         )
     elif option_lens_active:
@@ -98,6 +103,9 @@ def render_detail_page(
                 alignment=alignment,
                 active_window=active_window,
                 app_config=app_config,
+                financials_source=financials_source,
+                query_params=query_params,
+                fundamentals_provenance=fundamentals_provenance,
             )
         )
     body.append(

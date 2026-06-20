@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+from dataclasses import replace
 from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs, unquote
 from wsgiref.simple_server import make_server
@@ -16,6 +17,10 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.screening.manual_data import (
     REQUIRED_MANUAL_FIELDS,
+)
+from golden_vector.screening.pipeline import (
+    materialize_tool_b_finance_source,
+    normalize_finance_source,
 )
 from golden_vector.screening.schema import ToolBStaleSchemaError
 from golden_vector.serve.workspace_state import (
@@ -89,6 +94,9 @@ from golden_vector.serve.format_helpers import (
     _coerce_form_text,
     _frame_index_by_ticker,
 )
+from golden_vector.serve.fundamentals_provenance import (
+    load_fundamentals_provenance_lookup,
+)
 from golden_vector.portfolio.manual_store import add_lot, delete_lot, edit_lot
 from golden_vector.portfolio.models import PortfolioError, PortfolioStaleSchemaError
 from golden_vector.portfolio.pipeline import build_portfolio_artifacts, build_ticker_info
@@ -99,6 +107,18 @@ from golden_vector.screening.manual_store import (
     upsert_reporting_calendar,
     upsert_source_verification,
 )
+
+
+def _first_query_values(query: dict[str, list[str]]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for key, values in query.items():
+        if not values or values[0] is None:
+            continue
+        value = str(values[0])
+        if str(key) == "lens" and value.strip().lower() != DETAIL_OPTION_TRADING_LENS_ID:
+            continue
+        result[str(key)] = value
+    return result
 
 
 def create_workspace_app(
@@ -120,12 +140,12 @@ def create_workspace_app(
         query: dict[str, list[str]],
     ) -> CandidateFinderData:
         scenario = parse_candidate_finder_scenario(query)
-        if scenario is None:
-            return load_candidate_finder_data(paths, app_config=app_config)
+        fundamentals_source = query.get("fundamentals_source", ["our"])[0]
         return load_candidate_finder_data(
             paths,
             app_config=app_config,
             scenario=scenario,
+            fundamentals_source=fundamentals_source,
         )
 
     def app(environ: dict[str, Any], start_response: Callable[..., Any]) -> Iterable[bytes]:
@@ -308,7 +328,10 @@ def create_workspace_app(
                 state = _load_workspace_state(paths, normalized_tickers)
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 flash = _flash_message(query.get("saved", [""])[0])
-                rank_by = query.get("rank_by", ["our_view"])[0]
+                rank_by = query.get(
+                    "fundamentals_source",
+                    query.get("rank_by", ["our_view"]),
+                )[0]
                 differences_only = _query_flag(query, "differences_only")
                 try:
                     overrides = parse_query_overrides(query)
@@ -495,6 +518,22 @@ def create_workspace_app(
 
                 if method == "GET" and action is None:
                     state = _load_workspace_state(paths, normalized_tickers)
+                    financials_source = normalize_finance_source(
+                        query.get("fundamentals_source", ["our"])[0]
+                    )
+                    if financials_source == "yahoo":
+                        state = replace(
+                            state,
+                            latest_tool_b=materialize_tool_b_finance_source(
+                                state.latest_tool_b,
+                                finance_source=financials_source,
+                            ),
+                        )
+                    fundamentals_provenance = (
+                        load_fundamentals_provenance_lookup(paths)
+                        if financials_source == "yahoo"
+                        else {}
+                    )
                     tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker, universe_tool_a=state.latest_tool_a)
                     flash = _flash_message(query.get("saved", [""])[0])
                     # Resolve the active structural window for this page
@@ -536,6 +575,9 @@ def create_workspace_app(
                             option_trading_detail=option_trading_detail,
                             show_workspace_panels=not option_vehicle_detail,
                             show_manual_sections=not option_vehicle_detail,
+                            financials_source=financials_source,
+                            query_params=_first_query_values(query),
+                            fundamentals_provenance=fundamentals_provenance,
                             model_state_manifest=(
                                 load_current_model_state_manifest(paths)
                                 if detail_lens == DETAIL_OPTION_TRADING_LENS_ID

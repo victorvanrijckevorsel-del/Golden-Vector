@@ -17,7 +17,11 @@ from golden_vector.contracts.config_models import AppConfig
 from golden_vector.fundamentals.artifacts import load_official_fundamentals
 from golden_vector.model.tool_d import latest_gold_price_from_history
 from golden_vector.screening.manual_data import load_manual_screening_data
-from golden_vector.screening.pipeline import compute_tool_b_in_memory
+from golden_vector.screening.pipeline import (
+    compute_tool_b_in_memory,
+    materialize_tool_b_finance_source,
+    normalize_finance_source,
+)
 from golden_vector.screening.schema import ToolBStaleSchemaError
 from golden_vector.serve.format_helpers import (
     _MISSING_SORT_SENTINEL,
@@ -28,6 +32,11 @@ from golden_vector.serve.format_helpers import (
     _fmt_text,
     _frame_index_by_ticker,
     _optional_float,
+)
+from golden_vector.serve.fundamentals_provenance import (
+    load_fundamentals_provenance_lookup,
+    provenance_icon_for_metric,
+    ticker_provenance_icon,
 )
 from golden_vector.serve.overview_helpers import (
     _collect_filter_options,
@@ -68,22 +77,47 @@ def _comparison_numeric_td(
     metric_name: str,
     *,
     decimals: int,
+    rank_by: str,
+    provenance_lookup: dict[tuple[str, str], str] | None = None,
 ) -> str:
     ours = _optional_float(tb.get(f"{metric_name}_our_view"))
     if ours is None:
         ours = _optional_float(tb.get(metric_name))
     official = _optional_float(tb.get(f"{metric_name}_official"))
-    order_value = _MISSING_SORT_SENTINEL if ours is None else f"{ours}"
-    if _truthy(tb.get(f"{metric_name}_differs")) and official is not None and ours is not None:
+    if rank_by == "official":
+        active = official
+        alternate = ours
+        active_label = "Yahoo Fundamentals"
+        alternate_label = "Our View"
+    else:
+        active = ours
+        alternate = official
+        active_label = "Our View"
+        alternate_label = "Yahoo Fundamentals"
+    order_value = _MISSING_SORT_SENTINEL if active is None else f"{active}"
+    differs = _truthy(tb.get(f"{metric_name}_differs"))
+    show_alternate = alternate is not None and (
+        (active is not None and differs)
+        or (active is None and rank_by == "official")
+    )
+    if show_alternate:
         display = (
             "<span class=\"market-ours-pair\">"
-            f"<span>Ours {_number_text(ours, decimals=decimals)}</span>"
-            f"<span>Market {_number_text(official, decimals=decimals)}</span>"
+            f"<span>{escape(active_label)} {_number_text(active, decimals=decimals)}</span>"
+            f"<span class=\"source-alternate\">{escape(alternate_label)} "
+            f"{_number_text(alternate, decimals=decimals)}</span>"
             "</span>"
         )
     else:
-        display = _number_text(ours, decimals=decimals)
-    return f"<td data-order=\"{escape(order_value)}\">{display}</td>"
+        display = _number_text(active, decimals=decimals)
+    icon = ""
+    if rank_by == "official" and provenance_lookup:
+        icon = provenance_icon_for_metric(
+            tb.get("ticker"),
+            metric_name,
+            provenance_lookup,
+        )
+    return f"<td data-order=\"{escape(order_value)}\">{display}{icon}</td>"
 
 
 def _number_text(value: float | None, *, decimals: int) -> str:
@@ -139,7 +173,16 @@ def _render_tool_b_overview_page(
         app_config=app_config,
         paths=paths,
     )
-    tool_b_frame = resolution.frame
+    rank_by = _normalize_rank_by(rank_by)
+    tool_b_frame = materialize_tool_b_finance_source(
+        resolution.frame,
+        finance_source="yahoo" if rank_by == "official" else "our",
+    )
+    provenance_lookup = (
+        load_fundamentals_provenance_lookup(paths)
+        if rank_by == "official"
+        else {}
+    )
     override_runtime_error = resolution.runtime_error
     # The FRAME is the source of truth for what gold price is on screen.
     # On a failed recompute this self-corrects: the persisted fallback
@@ -151,7 +194,6 @@ def _render_tool_b_overview_page(
     gold_price_basis = _first_frame_text(tool_b_frame, "gold_price_basis")
     tool_b_index = _frame_index_by_ticker(tool_b_frame)
     search_term = str(search or "").strip().upper()
-    rank_by = _normalize_rank_by(rank_by)
 
     derived: list[dict[str, Any]] = []
     for ticker in state.tool_b_tickers:
@@ -197,9 +239,14 @@ def _render_tool_b_overview_page(
     rows_html: list[str] = []
     for row in derived:
         tb = row["tool_b_row"]
+        ticker_icon = (
+            ticker_provenance_icon(row["ticker"], provenance_lookup)
+            if rank_by == "official"
+            else ""
+        )
         rows_html.append(
             "<tr>"
-            f"<td><a href=\"/ticker/{escape(row['ticker'])}\">{escape(row['ticker'])}</a></td>"
+            f"<td><a href=\"{escape(_ticker_href(row['ticker'], rank_by=rank_by))}\">{escape(row['ticker'])}</a>{ticker_icon}</td>"
             f"<td>{_fmt_text(tb.get('screening_verdict'))}</td>"
             f"{_fmt_numeric_td(tb.get('fundamental_check_score'), decimals=1)}"
             f"{_fmt_numeric_td(row['rank_value'], decimals=0)}"
@@ -211,9 +258,9 @@ def _render_tool_b_overview_page(
             f"{_fmt_numeric_td(tb.get('margin_pct'), decimals=1, as_percent=True)}"
             f"{_fmt_numeric_td(tb.get('forward_ebitda_musd'), decimals=0)}"
             f"{_fmt_numeric_td(tb.get('forward_pe'), decimals=1)}"
-            f"{_comparison_numeric_td(tb, 'ev_ebitda', decimals=1)}"
+            f"{_comparison_numeric_td(tb, 'ev_ebitda', decimals=1, rank_by=rank_by, provenance_lookup=provenance_lookup)}"
             f"{_fmt_numeric_td(tb.get('fcf_yield'), decimals=1, as_percent=True)}"
-            f"{_comparison_numeric_td(tb, 'leverage', decimals=2)}"
+            f"{_comparison_numeric_td(tb, 'leverage', decimals=2, rank_by=rank_by, provenance_lookup=provenance_lookup)}"
             f"{_fmt_numeric_td(tb.get('reserve_life_years'), decimals=1)}"
             f"<td>{_fmt_text(tb.get('financial_data_status'))}</td>"
             f"{_fmt_numeric_td(tb.get('divergent_field_count'), decimals=0)}"
@@ -274,6 +321,14 @@ def _render_tool_b_overview_page(
             f"{timing}"
             "Recomputed live from manual data + latest snapshot; the persisted "
             "spot output was not changed. <a href=\"/tool-b\">Reset to spot</a>.</div>"
+        )
+    if rank_by == "official":
+        body.append(
+            "<div class=\"flash\"><strong>Yahoo Fundamentals view:</strong> "
+            "dual-source financial fields and derived finance checks are "
+            "materialized from Yahoo Fundamentals for this page. Mining "
+            "assumptions still come from Our View. The persisted decision "
+            "artifact remains Our View.</div>"
         )
     body.append(render_model_state_banner(state.model_state_manifest))
     body.append(_render_provenance_warnings(state))
@@ -348,7 +403,7 @@ def _render_tool_b_overview_page(
         + help_th("FCF Yield est.", key="tool_b_fcf_yield", app_config=app_config, col_name="fcf_yield", sort_numeric=True)
         + help_th("Net Debt/EBITDA", key="tool_b_leverage", app_config=app_config, col_name="leverage", sort_numeric=True)
         + help_th("Reserve Life", key="tool_b_reserve_life", app_config=app_config, col_name="reserve_life", sort_numeric=True)
-        + help_th("Market Data", key="tool_b_financial_data_status", app_config=app_config, col_name="financial_data")
+        + help_th("Financial Data", key="tool_b_financial_data_status", app_config=app_config, col_name="financial_data")
         + help_th("Differences", key="tool_b_divergent_field_count", app_config=app_config, col_name="differences", sort_numeric=True)
         + help_th("Layer 1", key="tool_b_layer1_status", app_config=app_config, col_name="layer1")
         + help_th("Notes", key="user_notes_count", app_config=app_config, col_name="notes", sort_numeric=True)
@@ -776,7 +831,7 @@ def _add_view_params(
     differences_only: bool,
 ) -> None:
     if rank_by == "official":
-        params["rank_by"] = "official"
+        params["fundamentals_source"] = "yahoo"
     if differences_only:
         params["differences_only"] = "1"
 
@@ -821,10 +876,10 @@ def _render_rank_controls(*, rank_by: str, differences_only: bool) -> str:
     our_selected = " selected" if rank_by != "official" else ""
     checked = " checked" if differences_only else ""
     return (
-        "<label><span>Rank by</span>"
-        "<select name=\"rank_by\">"
-        f"<option value=\"our_view\"{our_selected}>Our view</option>"
-        f"<option value=\"official\"{official_selected}>Market</option>"
+        "<label><span>Financials source</span>"
+        "<select name=\"fundamentals_source\">"
+        f"<option value=\"our\"{our_selected}>Our View</option>"
+        f"<option value=\"yahoo\"{official_selected}>Yahoo Fundamentals</option>"
         "</select></label>"
         "<label class=\"checkbox-label\">"
         f"<input type=\"checkbox\" name=\"differences_only\" value=\"1\"{checked}>"
@@ -834,5 +889,12 @@ def _render_rank_controls(*, rank_by: str, differences_only: bool) -> str:
 
 
 def _normalize_rank_by(value: object) -> str:
-    text = str(value or "").strip().lower()
-    return "official" if text in {"official", "market"} else "our_view"
+    return "official" if normalize_finance_source(value) == "yahoo" else "our_view"
+
+
+def _ticker_href(ticker: object, *, rank_by: str) -> str:
+    ticker_text = str(ticker or "").upper().strip()
+    href = f"/ticker/{ticker_text}"
+    if rank_by == "official":
+        return f"{href}?fundamentals_source=yahoo"
+    return href

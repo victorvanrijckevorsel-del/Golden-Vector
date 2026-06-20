@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -62,6 +63,15 @@ class _MappedField:
     period_type: str
     statement_currency: str
     statement_scale: str
+    value_origin: str
+    calculation_formula: str | None = None
+    components: tuple[dict[str, object], ...] = ()
+
+
+@dataclass(frozen=True)
+class _MatchedValue:
+    value: float
+    line_item_original: str
 
 
 @dataclass(frozen=True)
@@ -107,6 +117,9 @@ def map_raw_fundamentals_to_official(
                     "statement_currency": mapped.statement_currency,
                     "statement_scale": mapped.statement_scale,
                     "value_status": mapped.value_status,
+                    "value_origin": mapped.value_origin,
+                    "calculation_formula": mapped.calculation_formula,
+                    "components_json": _components_json(mapped.components),
                 }
             )
     frame = pd.DataFrame(rows, columns=FETCHED_FUNDAMENTALS_COLUMNS)
@@ -166,18 +179,98 @@ def _map_net_debt(
     period_end = _period_end(balance)
     currency = _statement_currency(balance)
     total_debt = _find_value(balance, TOTAL_DEBT_ALIASES)
+    components: list[dict[str, object]] = []
     if total_debt is None:
         long_debt = _find_value(balance, LONG_TERM_DEBT_ALIASES)
         current_debt = _find_value(balance, CURRENT_DEBT_ALIASES)
         if long_debt is None or current_debt is None:
-            return _missing_field("net_debt_musd", period_end=period_end, currency=currency)
-        total_debt = long_debt + current_debt
+            return _missing_field(
+                "net_debt_musd",
+                period_end=period_end,
+                currency=currency,
+                calculation_formula="Net Debt = Total Debt - Cash",
+                components=tuple(
+                    component
+                    for component in (
+                        _component(
+                            component="long_term_debt",
+                            matched=long_debt,
+                            currency=currency,
+                            period_end=period_end,
+                            fx_histories=fx_histories,
+                        )
+                        if long_debt is not None
+                        else None,
+                        _component(
+                            component="current_debt",
+                            matched=current_debt,
+                            currency=currency,
+                            period_end=period_end,
+                            fx_histories=fx_histories,
+                        )
+                        if current_debt is not None
+                        else None,
+                    )
+                    if component is not None
+                ),
+            )
+        components.extend(
+            [
+                _component(
+                    component="long_term_debt",
+                    matched=long_debt,
+                    currency=currency,
+                    period_end=period_end,
+                    fx_histories=fx_histories,
+                ),
+                _component(
+                    component="current_debt",
+                    matched=current_debt,
+                    currency=currency,
+                    period_end=period_end,
+                    fx_histories=fx_histories,
+                ),
+            ]
+        )
+        total_debt_value = long_debt.value + current_debt.value
+        formula = "Net Debt = Long-term debt + Current debt - Cash"
+    else:
+        components.append(
+            _component(
+                component="total_debt",
+                matched=total_debt,
+                currency=currency,
+                period_end=period_end,
+                fx_histories=fx_histories,
+            )
+        )
+        total_debt_value = total_debt.value
+        formula = "Net Debt = Total Debt - Cash"
     cash = _find_value(balance, CASH_ALIASES)
     cash_missing = cash is None
     if cash_missing:
-        cash = 0.0
+        cash_value = 0.0
+        components.append(
+            _assumed_zero_component(
+                component="cash",
+                status="MISSING_ASSUMED_ZERO",
+                currency=currency,
+            )
+        )
+    else:
+        cash_value = cash.value
+        components.append(
+            _component(
+                component="cash",
+                matched=cash,
+                currency=currency,
+                period_end=period_end,
+                fx_histories=fx_histories,
+                sign=-1,
+            )
+        )
     converted = _convert_money(
-        total_debt - cash,
+        total_debt_value - cash_value,
         currency=currency,
         period_end=period_end,
         fx_histories=fx_histories,
@@ -202,6 +295,13 @@ def _map_net_debt(
             if cash_missing
             else "absolute_to_usd_millions"
         ),
+        value_origin=(
+            "cash_missing_assumed_zero"
+            if cash_missing
+            else "calculated_from_yahoo_fields"
+        ),
+        calculation_formula=formula,
+        components=tuple(components),
     )
 
 
@@ -225,9 +325,38 @@ def _map_ebitda(
     if da is None:
         da = _find_value(income, DA_ALIASES)
     if operating_income is None or da is None:
-        return _missing_field("ebitda_ltm_musd", period_end=period_end, currency=currency)
+        return _missing_field(
+            "ebitda_ltm_musd",
+            period_end=period_end,
+            currency=currency,
+            calculation_formula="EBITDA = Operating income + D&A",
+            components=tuple(
+                component
+                for component in (
+                    _component(
+                        component="operating_income",
+                        matched=operating_income,
+                        currency=currency,
+                        period_end=period_end,
+                        fx_histories=fx_histories,
+                    )
+                    if operating_income is not None
+                    else None,
+                    _component(
+                        component="depreciation_and_amortization",
+                        matched=da,
+                        currency=currency,
+                        period_end=period_end,
+                        fx_histories=fx_histories,
+                    )
+                    if da is not None
+                    else None,
+                )
+                if component is not None
+            ),
+        )
     converted = _convert_money(
-        operating_income + da,
+        operating_income.value + da.value,
         currency=currency,
         period_end=period_end,
         fx_histories=fx_histories,
@@ -239,12 +368,42 @@ def _map_ebitda(
         max_statement_age_days=max_statement_age_days,
     )
     reported = _find_value(income, REPORTED_EBITDA_ALIASES)
-    if status == "OK" and reported is not None and converted.value_musd not in (None, 0.0):
-        reported_converted = _convert_money(
-            reported,
+    value_origin = (
+        "reconciled_with_reported_field"
+        if status == "OK" and reported is not None
+        else "calculated_from_yahoo_fields"
+    )
+    components = [
+        _component(
+            component="operating_income",
+            matched=operating_income,
             currency=currency,
             period_end=period_end,
             fx_histories=fx_histories,
+        ),
+        _component(
+            component="depreciation_and_amortization",
+            matched=da,
+            currency=currency,
+            period_end=period_end,
+            fx_histories=fx_histories,
+        ),
+    ]
+    if status == "OK" and reported is not None and converted.value_musd not in (None, 0.0):
+        reported_converted = _convert_money(
+            reported.value,
+            currency=currency,
+            period_end=period_end,
+            fx_histories=fx_histories,
+        )
+        components.append(
+            _component(
+                component="reported_ebitda_cross_check",
+                matched=reported,
+                currency=currency,
+                period_end=period_end,
+                fx_histories=fx_histories,
+            )
         )
         if reported_converted.value_status == "OK" and reported_converted.value_musd is not None:
             divergence = abs(reported_converted.value_musd - converted.value_musd) / abs(
@@ -252,6 +411,7 @@ def _map_ebitda(
             )
             if divergence > ebitda_reconciliation_max_pct:
                 status = "CONTAMINATED"
+                value_origin = "reported_field_diverged"
     return _MappedField(
         field_name="ebitda_ltm_musd",
         value=converted.value_musd,
@@ -260,6 +420,9 @@ def _map_ebitda(
         period_type="ANNUAL",
         statement_currency=currency,
         statement_scale="absolute_to_usd_millions",
+        value_origin=value_origin,
+        calculation_formula="EBITDA = Operating income + D&A",
+        components=tuple(components),
     )
 
 
@@ -281,9 +444,14 @@ def _map_da(
     if da is None:
         da = _find_value(income, DA_ALIASES)
     if da is None:
-        return _missing_field("da_musd", period_end=period_end, currency=currency)
+        return _missing_field(
+            "da_musd",
+            period_end=period_end,
+            currency=currency,
+            calculation_formula="D&A = Yahoo depreciation and amortization",
+        )
     converted = _convert_money(
-        da,
+        da.value,
         currency=currency,
         period_end=period_end,
         fx_histories=fx_histories,
@@ -302,6 +470,17 @@ def _map_da(
         period_type="ANNUAL",
         statement_currency=currency,
         statement_scale="absolute_to_usd_millions",
+        value_origin="yahoo_reported_component",
+        calculation_formula="D&A = Yahoo depreciation and amortization",
+        components=(
+            _component(
+                component="depreciation_and_amortization",
+                matched=da,
+                currency=currency,
+                period_end=period_end,
+                fx_histories=fx_histories,
+            ),
+        ),
     )
 
 
@@ -320,9 +499,10 @@ def _map_interest(
             "interest_expense_musd",
             period_end=period_end,
             currency=currency,
+            calculation_formula="Interest expense = absolute Yahoo interest expense",
         )
     converted = _convert_money(
-        abs(interest),
+        abs(interest.value),
         currency=currency,
         period_end=period_end,
         fx_histories=fx_histories,
@@ -341,6 +521,18 @@ def _map_interest(
         period_type="ANNUAL",
         statement_currency=currency,
         statement_scale="absolute_to_usd_millions",
+        value_origin="yahoo_reported_component",
+        calculation_formula="Interest expense = absolute Yahoo interest expense",
+        components=(
+            _component(
+                component="interest_expense",
+                matched=interest,
+                currency=currency,
+                period_end=period_end,
+                fx_histories=fx_histories,
+                absolute=True,
+            ),
+        ),
     )
 
 
@@ -350,6 +542,8 @@ def _missing_field(
     period_end: date | None = None,
     currency: str = "",
     period_type: str = "ANNUAL",
+    calculation_formula: str | None = None,
+    components: tuple[dict[str, object], ...] = (),
 ) -> _MappedField:
     return _MappedField(
         field_name=field_name,
@@ -359,6 +553,9 @@ def _missing_field(
         period_type=period_type,
         statement_currency=currency,
         statement_scale="not_applicable",
+        value_origin="missing_yahoo_inputs",
+        calculation_formula=calculation_formula,
+        components=components,
     )
 
 
@@ -375,7 +572,7 @@ def _latest_statement_rows(raw: pd.DataFrame, statement_type: str) -> pd.DataFra
     return rows[rows["period_end"].eq(latest_period)].copy()
 
 
-def _find_value(rows: pd.DataFrame, aliases: tuple[str, ...]) -> float | None:
+def _find_value(rows: pd.DataFrame, aliases: tuple[str, ...]) -> _MatchedValue | None:
     if rows.empty:
         return None
     working = rows.copy()
@@ -385,8 +582,70 @@ def _find_value(rows: pd.DataFrame, aliases: tuple[str, ...]) -> float | None:
     for alias in aliases:
         matches = working[working["_label_key"].eq(_normalize_label(alias))]
         if not matches.empty:
-            return optional_float(matches.iloc[0].get("value_raw"))
+            value = optional_float(matches.iloc[0].get("value_raw"))
+            if value is None:
+                return None
+            return _MatchedValue(
+                value=value,
+                line_item_original=str(matches.iloc[0].get("line_item_original") or alias),
+            )
     return None
+
+
+def _components_json(components: tuple[dict[str, object], ...]) -> str | None:
+    if not components:
+        return None
+    return json.dumps(list(components), sort_keys=True, separators=(",", ":"))
+
+
+def _component(
+    *,
+    component: str,
+    matched: _MatchedValue | None,
+    currency: str,
+    period_end: date | None,
+    fx_histories: dict[str, pd.DataFrame],
+    sign: int = 1,
+    absolute: bool = False,
+    status: str | None = None,
+) -> dict[str, object]:
+    raw_value = matched.value if matched is not None else None
+    conversion_value = abs(raw_value) if absolute and raw_value is not None else raw_value
+    converted = _convert_money(
+        conversion_value,
+        currency=currency,
+        period_end=period_end,
+        fx_histories=fx_histories,
+    )
+    normalized_value = converted.value_musd
+    if normalized_value is not None:
+        normalized_value *= sign
+    return {
+        "component": component,
+        "yahoo_line_item": matched.line_item_original if matched is not None else None,
+        "raw_value": raw_value,
+        "normalized_value": normalized_value,
+        "unit": "MUSD",
+        "statement_currency": currency,
+        "status": status or converted.value_status,
+    }
+
+
+def _assumed_zero_component(
+    *,
+    component: str,
+    status: str,
+    currency: str,
+) -> dict[str, object]:
+    return {
+        "component": component,
+        "yahoo_line_item": None,
+        "raw_value": None,
+        "normalized_value": 0.0,
+        "unit": "MUSD",
+        "statement_currency": currency,
+        "status": status,
+    }
 
 
 def _convert_money(

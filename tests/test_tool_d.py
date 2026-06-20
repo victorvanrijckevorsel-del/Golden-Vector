@@ -145,6 +145,63 @@ def test_compute_tool_d_outputs_threads_official_fundamentals(monkeypatch):
         assert passed is official
 
 
+def test_compute_tool_d_outputs_threads_finance_source_and_uses_source_values(
+    monkeypatch,
+):
+    captured_sources: list[str] = []
+
+    def fake_tool_b(**kwargs):
+        captured_sources.append(kwargs["finance_source"])
+        gold = float(kwargs["gold_price_assumption"])
+        return pd.DataFrame(
+            [
+                _tool_b_row(
+                    "AAA",
+                    forward_ebitda=gold / 2.0,
+                    fcf_yield=0.01,
+                    net_debt=1000.0,
+                    interest_expense=25.0,
+                )
+            ]
+        )
+
+    monkeypatch.setattr(tool_d_module, "compute_tool_b_in_memory", fake_tool_b)
+    manual_data = _manual_data(
+        [
+            _manual_payload(
+                ticker="AAA",
+                aisc=1200,
+                net_debt=500.0,
+            )
+        ]
+    )
+
+    output = compute_tool_d_outputs(
+        inputs=ToolDExecutionInputs(
+            app_config=object(),
+            manual_data=manual_data,
+            normalized_market_snapshots=pd.DataFrame(),
+            tool_b_latest=pd.DataFrame(
+                [{"ticker": "AAA", "source_run_id": "tool-b-run"}]
+            ),
+            spot_gold_usd=4000.0,
+            spot_gold_date="2026-06-01",
+            snapshot_refresh_run_id="refresh-run",
+            snapshot_as_of_date="2026-06-01",
+            finance_source="yahoo",
+        ),
+        config=ToolDConfig(),
+        gold_price=3000.0,
+        source_run_id="tool-d-run",
+    )
+    row = output.iloc[0]
+
+    assert captured_sources == ["yahoo", "yahoo"]
+    assert row["finance_source"] == "yahoo"
+    assert row["net_debt_musd"] == pytest.approx(1000.0)
+    assert row["interest_expense_musd"] == pytest.approx(25.0)
+
+
 def test_tool_d_stress_scenario_presets_are_backend_owned():
     assert tool_d_stress_scenario_presets(4000.0) == [
         ("Spot", 4000.0),
@@ -549,7 +606,14 @@ def _manual_data(rows: list[dict[str, object]]) -> LoadedManualScreeningData:
     )
 
 
-def _tool_b_row(ticker: str, *, forward_ebitda: float, fcf_yield: float) -> dict[str, object]:
+def _tool_b_row(
+    ticker: str,
+    *,
+    forward_ebitda: float,
+    fcf_yield: float,
+    net_debt: float | None = None,
+    interest_expense: float | None = None,
+) -> dict[str, object]:
     return {
         "ticker": ticker,
         "as_of_date": date(2026, 6, 1),
@@ -559,4 +623,6 @@ def _tool_b_row(ticker: str, *, forward_ebitda: float, fcf_yield: float) -> dict
         "confidence": "VERIFIED",
         "fcf_yield": fcf_yield,
         "forward_ebitda_musd": forward_ebitda,
+        "net_debt_musd": net_debt,
+        "interest_expense_musd": interest_expense,
     }

@@ -20,6 +20,9 @@ from golden_vector.contracts.fundamentals import (
     raw_fundamentals_statements_latest_path,
 )
 from golden_vector.fundamentals.artifacts import write_fetched_fundamentals_artifact_pair
+from golden_vector.fundamentals.history_store import (
+    write_raw_fundamentals_history_artifact_pair,
+)
 from golden_vector.fundamentals.mapper import map_raw_fundamentals_to_official
 from golden_vector.fundamentals.raw_store import (
     RAW_FETCH_STATUS_EMPTY,
@@ -117,10 +120,30 @@ def fetch_and_publish_fundamentals(
     if publish_blocked_reason is not None:
         timings["current_publish_blocked_reason"] = publish_blocked_reason
     raw_latest_path: Path | None = None
+    raw_history_artifact: dict[str, object] = {}
     if publish_current_effective:
         raw_latest_path = raw_fundamentals_statements_latest_path(paths)
         write_parquet_atomic(persisted_raw, raw_latest_path, index=False)
         run_context.record_artifact(raw_latest_path)
+        history_write = write_raw_fundamentals_history_artifact_pair(
+            paths=paths,
+            incoming=persisted_raw,
+            source_run_id=source_run_id,
+            publish_latest_alias=True,
+        )
+        history_run_path = Path(history_write.run_path)
+        run_context.record_artifact(history_run_path)
+        if history_write.latest_path is not None:
+            run_context.record_artifact(Path(history_write.latest_path))
+        raw_history_artifact = {
+            "path": repo_relative(paths, history_run_path),
+            "latest_alias_path": (
+                repo_relative(paths, Path(history_write.latest_path))
+                if history_write.latest_path is not None
+                else None
+            ),
+            "row_count": history_write.row_count,
+        }
 
     started_at = perf_counter()
     official_write = write_fetched_fundamentals_artifact_pair(
@@ -153,6 +176,7 @@ def fetch_and_publish_fundamentals(
         ticker_statuses=ticker_statuses,
         timings=timings,
         official_artifact=official_artifact,
+        raw_history_artifact=raw_history_artifact,
         publish_latest_alias=publish_current_effective,
     )
     run_context.record_artifact(

@@ -147,6 +147,7 @@ def write_fundamentals_fetch_manifest(
     ticker_statuses: list[dict[str, object]],
     timings: dict[str, object],
     official_artifact: dict[str, object] | None = None,
+    raw_history_artifact: dict[str, object] | None = None,
     publish_latest_alias: bool = True,
 ) -> dict[str, object]:
     """Write latest + run-stamped fetch manifests for the raw fundamentals stage."""
@@ -170,6 +171,7 @@ def write_fundamentals_fetch_manifest(
                 else None
             ),
         },
+        "raw_history_artifact": raw_history_artifact or {},
         "official_artifact": official_artifact or {},
         "ticker_statuses": ticker_statuses,
         "stage_timings": timings,
@@ -223,6 +225,9 @@ def normalize_raw_fundamentals_frame(
         None,
     )
     normalized["period_end"] = pd.to_datetime(normalized["period_end"], errors="coerce").dt.date
+    normalized["period_type"] = (
+        normalized["period_type"].fillna("").astype(str).str.upper().str.strip()
+    )
     normalized["value_raw"] = pd.to_numeric(normalized["value_raw"], errors="coerce")
     normalized["financial_currency"] = (
         normalized["financial_currency"].fillna("").astype(str).str.upper().str.strip()
@@ -263,6 +268,14 @@ def validate_raw_fundamentals_frame(frame: pd.DataFrame) -> pd.DataFrame:
             "raw fundamentals statements contain unsupported statement_type values: "
             + ", ".join(invalid_statement_types)
         )
+    invalid_period_types = sorted(
+        set(frame["period_type"].dropna().astype(str)) - {"", "ANNUAL", "QUARTERLY"}
+    )
+    if invalid_period_types:
+        raise ValueError(
+            "raw fundamentals statements contain unsupported period_type values: "
+            + ", ".join(invalid_period_types)
+        )
     invalid_statuses = sorted(
         set(frame["fetch_status"].dropna().astype(str))
         - {RAW_FETCH_STATUS_PASS, RAW_FETCH_STATUS_FAIL, RAW_FETCH_STATUS_EMPTY}
@@ -297,6 +310,7 @@ def _flatten_statement_frame(
                     "statement_type": statement_type,
                     "line_item_original": str(line_item),
                     "period_end": period_end,
+                    "period_type": "ANNUAL",
                     "value_raw": value,
                     "financial_currency": financial_currency,
                     "fetched_at_utc": fetched_at_utc,
@@ -328,6 +342,7 @@ def _status_frame(
                     "statement_type": "",
                     "line_item_original": None,
                     "period_end": None,
+                    "period_type": "",
                     "value_raw": None,
                     "financial_currency": financial_currency,
                     "fetched_at_utc": fetched_at_utc,

@@ -423,4 +423,7 @@ def _official_row(
         "statement_currency": "USD",
         "statement_scale": "millions",
         "value_status": value_status,
+        "value_origin": "yahoo_reported_component",
+        "calculation_formula": None,
+        "components_json": None,
     }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, time, timezone
 from html import escape
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import quote
 
 import pandas as pd
@@ -33,13 +33,17 @@ from golden_vector.serve.format_helpers import (
     _fmt_number,
     _fmt_percent,
     _fmt_text,
+    _fmt_value,
     _is_na,
     _metric_card,
     _optional_float,
-    _render_small_table,
     format_dte_suffix as _dte_suffix,
 )
 from golden_vector.serve.column_help import help_term, help_th
+from golden_vector.serve.fundamentals_provenance import (
+    provenance_icon_for_metric,
+    ticker_provenance_icon,
+)
 from golden_vector.serve.model_state_banner import render_option_freshness_box
 from golden_vector.serve.option_signal_charts import render_option_signal_charts
 from golden_vector.serve.option_signal_render import (
@@ -49,6 +53,7 @@ from golden_vector.serve.option_signal_render import (
     render_option_signal_badge,
     signal_horizon_from_row,
 )
+from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import (
     DETAIL_ALIGNMENT_ALIGNED,
     DETAIL_ALIGNMENT_FOUNDATION_AHEAD,
@@ -100,6 +105,7 @@ def _render_window_switcher(
     lens: str | None = None,
     anchor: str | None = None,
     sizing_request: object | None = None,
+    financials_source: str = "our",
 ) -> str:
     """Three-tab switcher at the top of the detail page: 6M / 12M / 3Y.
 
@@ -112,6 +118,7 @@ def _render_window_switcher(
     base = f"/ticker/{quote(str(ticker), safe='')}"
     lens_value = str(lens or "").strip()
     anchor_value = str(anchor or "").strip()
+    source_value = str(financials_source or "our").strip().lower()
     sizing_parts = _sizing_query_parts(sizing_request)
     for window in _STRUCTURAL_WINDOWS:
         is_active = window == active
@@ -122,6 +129,8 @@ def _render_window_switcher(
             query_parts.append(f"window={window.lower()}")
         if lens_value:
             query_parts.append(f"lens={quote(lens_value, safe='')}")
+        if source_value == "yahoo":
+            query_parts.append("fundamentals_source=yahoo")
         query_parts.extend(sizing_parts)
         query = f"?{'&'.join(query_parts)}" if query_parts else ""
         fragment = f"#{quote(anchor_value, safe='')}" if anchor_value else ""
@@ -212,7 +221,17 @@ def _render_latest_panels(
     alignment: str,
     active_window: str = "12M",
     app_config: AppConfig | None = None,
+    financials_source: str = "our",
+    query_params: Mapping[str, str] | None = None,
+    fundamentals_provenance: dict[tuple[str, str], str] | None = None,
 ) -> str:
+    provenance_lookup = fundamentals_provenance or {}
+    finance_controls = _render_financials_source_switcher(
+        ticker=ticker,
+        financials_source=financials_source,
+        query_params=query_params or {},
+        fundamentals_provenance=provenance_lookup,
+    )
     return (
         _render_tool_a_panel(
             ticker=ticker,
@@ -223,9 +242,85 @@ def _render_latest_panels(
             app_config=app_config,
         )
         + "<div class=\"two-up\">"
-        f"{_render_small_table('Latest Corporate Finance Snapshot', tool_b_row, ['as_of_date', 'gold_price_assumption', 'fundamental_check_summary', 'fundamental_check_rank', 'screening_verdict', 'confidence', 'share_price_usd', 'market_cap_musd', 'cash_margin_usd_per_oz', 'margin_pct', 'fcf_yield', 'leverage', 'forward_pe', 'ev_ebitda', 'snapshot_refresh_run_id', 'snapshot_as_of_date', 'snapshot_normalization_status', 'fx_staleness_days'])}"
+        f"<section class=\"panel nested-panel\"><h3>Latest Corporate Finance Snapshot</h3>"
+        f"{finance_controls}"
+        f"{_render_tool_b_snapshot_table(ticker=ticker, row=tool_b_row, columns=['as_of_date', 'gold_price_assumption', 'fundamental_check_summary', 'fundamental_check_rank', 'screening_verdict', 'confidence', 'share_price_usd', 'market_cap_musd', 'cash_margin_usd_per_oz', 'margin_pct', 'fcf_yield', 'leverage', 'forward_pe', 'ev_ebitda', 'snapshot_refresh_run_id', 'snapshot_as_of_date', 'snapshot_normalization_status', 'fx_staleness_days'], financials_source=financials_source, fundamentals_provenance=provenance_lookup)}"
+        "</section>"
         "</div>"
     )
+
+
+def _render_financials_source_switcher(
+    *,
+    ticker: str,
+    financials_source: str,
+    query_params: Mapping[str, str],
+    fundamentals_provenance: dict[tuple[str, str], str],
+) -> str:
+    source = str(financials_source or "our").strip().lower()
+    source = "yahoo" if source == "yahoo" else "our"
+    base_path = f"/ticker/{quote(str(ticker), safe='')}"
+    our_href = build_page_url(
+        base_path,
+        query_params,
+        set_params={"fundamentals_source": None},
+    )
+    yahoo_href = build_page_url(
+        base_path,
+        query_params,
+        set_params={"fundamentals_source": "yahoo"},
+    )
+    our_class = "button-like active" if source == "our" else "button-like"
+    yahoo_class = "button-like active" if source == "yahoo" else "button-like"
+    hint = (
+        "<p class=\"hint\">Yahoo Fundamentals changes dual-source financial "
+        "fields and derived checks; mining assumptions remain Our View.</p>"
+        if source == "yahoo"
+        else ""
+    )
+    icon = ticker_provenance_icon(ticker, fundamentals_provenance) if source == "yahoo" else ""
+    return (
+        "<div class=\"overview-filters-actions source-switcher\">"
+        f"<span class=\"hint\">Financials source</span>"
+        f"<a class=\"{our_class}\" href=\"{escape(our_href, quote=True)}\">Our View</a>"
+        f"<a class=\"{yahoo_class}\" href=\"{escape(yahoo_href, quote=True)}\">Yahoo Fundamentals</a>"
+        f"{icon}"
+        "</div>"
+        f"{hint}"
+    )
+
+
+def _render_tool_b_snapshot_table(
+    *,
+    ticker: str,
+    row: dict[str, Any],
+    columns: list[str],
+    financials_source: str,
+    fundamentals_provenance: dict[tuple[str, str], str],
+) -> str:
+    if not row:
+        return "<p>No latest output is available yet.</p>"
+    rows_html = "".join(
+        "<tr>"
+        f"<th>{escape(column_name.replace('_', ' ').strip().title())}</th>"
+        f"<td>{_fmt_value(row.get(column_name), column_name)}"
+        f"{_snapshot_metric_icon(ticker, column_name, financials_source, fundamentals_provenance)}</td>"
+        "</tr>"
+        for column_name in columns
+        if column_name in row
+    )
+    return f"<table><tbody>{rows_html}</tbody></table>"
+
+
+def _snapshot_metric_icon(
+    ticker: str,
+    column_name: str,
+    financials_source: str,
+    fundamentals_provenance: dict[tuple[str, str], str],
+) -> str:
+    if financials_source != "yahoo":
+        return ""
+    return provenance_icon_for_metric(ticker, column_name, fundamentals_provenance)
 
 
 def _render_option_trading_link_panel(ticker: str) -> str:
