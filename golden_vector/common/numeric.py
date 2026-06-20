@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 
 import pandas as pd
 
@@ -132,3 +133,23 @@ def is_missing(value: object) -> bool:
     except Exception:
         return False
     return bool(missing) if isinstance(missing, bool) else False
+
+
+def rebase_to_base(values: Iterable[object], *, base: float = 100.0) -> list[float | None]:
+    """Index a numeric series to ``base`` at its first finite, non-zero value.
+
+    Each point becomes ``value / anchor * base``; non-finite/None points (and any point before
+    the anchor) become ``None``. Returns all-``None`` when there is no usable anchor. This is the
+    ONE copy of the rebasing math, used by the gold/stock/GDX/GDXJ overlay so series on very
+    different price scales share one honest indexed axis."""
+
+    rebased: list[float | None] = []
+    anchor: float | None = None
+    for value in values:
+        numeric = optional_float(value)
+        if numeric is not None and not math.isfinite(numeric):
+            numeric = None
+        if anchor is None and numeric is not None and numeric != 0.0:
+            anchor = numeric
+        rebased.append(None if (numeric is None or anchor is None) else numeric / anchor * base)
+    return rebased

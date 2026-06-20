@@ -78,19 +78,25 @@ BENCHMARK_BETA_METHOD_VERSION = "tool_a_structural_weekly_v1"
 PUBLISHABLE_CONFIDENCE_LABELS = {"HIGH", "MEDIUM"}
 
 
-def build_benchmark_betas_frame(
+def _active_benchmarks(app_config: AppConfig) -> list[BenchmarkTicker]:
+    """The ONE definition of which benchmarks are live (GDX/GDXJ). Used by both the
+    normalized-history loader and the betas-frame builder so the filter never drifts."""
+    return [benchmark for benchmark in app_config.benchmarks.benchmarks if benchmark.active]
+
+
+def load_benchmark_normalized_histories(
     *,
     paths: ProjectPaths,
     app_config: AppConfig,
-    gold_history: pd.DataFrame,
-    source_run_id: str,
-    snapshot_refresh_run_id: str,
-) -> pd.DataFrame:
-    active_benchmarks = [
-        benchmark
-        for benchmark in app_config.benchmarks.benchmarks
-        if benchmark.active
-    ]
+) -> tuple[dict[str, pd.DataFrame], dict[str, str]]:
+    """Read + USD-normalize the active benchmarks' (GDX/GDXJ) cached histories.
+
+    ONE copy of the read+normalize step, shared by ``build_benchmark_betas_frame`` (which then
+    builds the full structural frames) and the detail-page rebased overlay (which builds only the
+    cheap weekly series). A benchmark with no cached/normalizable history records a ``load_error``
+    and is absent from the result (degrade per item; one bad benchmark never breaks the others)."""
+
+    active_benchmarks = _active_benchmarks(app_config)
     raw_histories = {
         benchmark.ticker: _read_cached_benchmark_history(paths, benchmark)
         for benchmark in active_benchmarks
@@ -110,6 +116,21 @@ def build_benchmark_betas_frame(
             )
         except Exception as exc:  # noqa: BLE001 - one bad benchmark must fail closed.
             load_errors[benchmark.ticker] = f"Benchmark history normalization failed: {exc}"
+    return normalized_histories, load_errors
+
+
+def build_benchmark_betas_frame(
+    *,
+    paths: ProjectPaths,
+    app_config: AppConfig,
+    gold_history: pd.DataFrame,
+    source_run_id: str,
+    snapshot_refresh_run_id: str,
+) -> pd.DataFrame:
+    active_benchmarks = _active_benchmarks(app_config)
+    normalized_histories, load_errors = load_benchmark_normalized_histories(
+        paths=paths, app_config=app_config
+    )
 
     structural_frames = build_structural_history_frames(
         tickers=[benchmark.ticker for benchmark in active_benchmarks],

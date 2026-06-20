@@ -23,7 +23,7 @@ from golden_vector.model.structural import build_trailing_window_rows
 from golden_vector.serve.charts import (
     _STOCK_COLOR,
     _benchmark_color,
-    _build_beta_history_svg,
+    _build_multiline_overlay_svg,
     _build_beta_strip_svg,
     _build_dual_bar_svg,
     _build_grouped_beta_bar_svg,
@@ -60,6 +60,7 @@ from golden_vector.serve.workspace_state import (
     _WINDOW_WEEKS,
     _structural_history_matches_tool_a,
 )
+from golden_vector.serve.windows import WINDOW_LABELS
 
 def _sizing_query_parts(sizing_request: object | None) -> list[str]:
     """Serialize the option sizing request into URL query parts so window-tab
@@ -210,7 +211,6 @@ def _render_latest_panels(
     tool_a_detail: ToolADetailState,
     alignment: str,
     active_window: str = "12M",
-    visible_windows: list[str] | None = None,
     app_config: AppConfig | None = None,
 ) -> str:
     return (
@@ -220,7 +220,6 @@ def _render_latest_panels(
             tool_a_detail=tool_a_detail,
             alignment=alignment,
             active_window=active_window,
-            visible_windows=visible_windows,
             app_config=app_config,
         )
         + "<div class=\"two-up\">"
@@ -1010,7 +1009,6 @@ def _render_tool_a_panel(
     tool_a_detail: ToolADetailState,
     alignment: str,
     active_window: str = "12M",
-    visible_windows: list[str] | None = None,
     app_config: AppConfig | None = None,
 ) -> str:
     if not tool_a_row:
@@ -1042,7 +1040,9 @@ def _render_tool_a_panel(
         f"{TOOL_A_BETA_FORMULA} The horizon-return ladder below is exploratory only.</p>",
         _render_signal_notice(tool_a_row),
         _render_detail_alignment_notice(alignment),
-        _render_structural_metrics_load_notice(tool_a_detail.structural_metrics_load),
+        _render_structural_metrics_load_notice(
+            tool_a_detail.structural_metrics_load, tool_a_row=tool_a_row
+        ),
         # Window-specific metrics (recompute with switcher).
         f"<h3>Active window: {escape(active_window)}</h3>",
         "<div class=\"metric-grid\">",
@@ -1075,7 +1075,6 @@ def _render_tool_a_panel(
             tool_a_detail=tool_a_detail,
             alignment=alignment,
             active_window=active_window,
-            visible_windows=visible_windows,
             scoring_config=scoring_config,
         ),
         "</section>",
@@ -1085,15 +1084,32 @@ def _render_tool_a_panel(
 
 def _render_structural_metrics_load_notice(
     metrics_load: "StructuralHistoryLoad",
+    *,
+    tool_a_row: dict[str, Any] | None = None,
 ) -> str:
-    """Surface a corrupt or missing structural-metrics file at the page level.
+    """Surface a corrupt / missing / out-of-sync structural-metrics file at the page level.
 
     Codex follow-up to Fix #5: previously, `_load_published_structural_metrics` swallowed
     parquet read errors silently, so a corrupted file would show "Could not read" inside
     the chart panel but silently degrade the scatter / up-down panels. Now every consumer
     sees one consistent file-health story.
+
+    The price-overlay chart no longer carries the structural-file provenance gate it used to
+    (it draws prices, not the scored betas). So the ``source_run_id`` mismatch check moved
+    here: the scatter / up-down beta / structural-window panels below read these metrics, and
+    a file from a different ``tool-a`` run must not be presented as the published row's betas.
     """
     if metrics_load.status == "ok":
+        if tool_a_row is not None and not _structural_history_matches_tool_a(
+            metrics_load.history, tool_a_row
+        ):
+            message = (
+                "Structural metrics file is out of sync with the published Gold Sensitivity row "
+                "(produced by a different tool-a run). The scatter, up/down beta, and structural "
+                "windows panels below may not match the headline row. "
+                "Re-run <code>python main.py tool-a</code> to realign."
+            )
+            return f"<div class=\"flash\"><p>{message}</p></div>"
         return ""
     if metrics_load.status == "missing":
         message = (
@@ -1353,11 +1369,8 @@ def _render_visual_panels(
     tool_a_detail: ToolADetailState,
     alignment: str,
     active_window: str = "12M",
-    visible_windows: list[str] | None = None,
     scoring_config: Any = None,
 ) -> str:
-    if visible_windows is None:
-        visible_windows = [active_window]
     # Alignment check fires first so every documented non-aligned state — including
     # FOUNDATION_MISSING, where load_latest_foundation_snapshot raises and sets
     # tool_a_detail.foundation_error — gets the per-panel suppressed-card treatment
@@ -1384,16 +1397,14 @@ def _render_visual_panels(
         }
         reason = suppression_reasons.get(alignment, suppression_reasons[DETAIL_ALIGNMENT_FOUNDATION_AHEAD])
         command = suppression_commands.get(alignment, "python main.py tool-a")
-        # The beta-history chart has its own provenance check (source_run_id).
-        # It still renders when its own provenance is OK even if foundation is
-        # misaligned. The rebased gold overlay was removed in the post-deep-review
-        # fix pass, so there's nothing extra to suppress here.
-        beta_history_panel = _render_beta_history_panel(
+        # The rebased price overlay draws gold / stock / GDX / GDXJ prices, not the
+        # scored betas, so it carries no structural-file provenance gate. It renders
+        # whenever there is enough price history, even when the foundation snapshot is
+        # misaligned (the misalignment is surfaced by the page-level notice above).
+        overlay_panel = _render_rebased_overlay_panel(
             ticker=ticker,
-            tool_a_row=tool_a_row,
-            structural_history_load=tool_a_detail.structural_history_load,
+            rebased_overlay_by_window=tool_a_detail.rebased_overlay_by_window,
             active_window=active_window,
-            visible_windows=visible_windows,
         )
         # Mirror the aligned branch's ordering (Fix #10 follow-up): chart sits
         # between the scatter row and the volatility row in BOTH branches so the
@@ -1403,7 +1414,7 @@ def _render_visual_panels(
             + _render_suppressed_panel("Weekly Return Scatter", reason, command)
             + _render_suppressed_panel("Up vs Down Beta", reason, command)
             + "</div>"
-            + beta_history_panel
+            + overlay_panel
             + "<div class=\"two-up\">"
             + _render_volatility_panel(
                 tool_a_row,
@@ -1424,18 +1435,16 @@ def _render_visual_panels(
     # Use the active window's metrics + sample (not the ticker's canonical anchor).
     active_metric = _active_window_metric(tool_a_detail, active_window)
     active_sample = _active_window_sample(tool_a_row, tool_a_detail, active_window)
-    # Rolling chart now shows all three windows as separate lines;
-    # structural_history_load provides the full per-window history.
-    beta_history_panel = _render_beta_history_panel(
+    # Rebased price overlay (gold / stock / GDX / GDXJ indexed to 100 over the active
+    # window). The beta NUMBERS live in the structural-window table above; this chart
+    # answers co-movement — did the miner beat gold and the gold-miner ETFs?
+    overlay_panel = _render_rebased_overlay_panel(
         ticker=ticker,
-        tool_a_row=tool_a_row,
-        structural_history_load=tool_a_detail.structural_history_load,
+        rebased_overlay_by_window=tool_a_detail.rebased_overlay_by_window,
         active_window=active_window,
-        visible_windows=visible_windows,
     )
-    # Chart placement (post-deep-review): the rolling-delta chart is the most
-    # paper-aligned visual on the detail page, so it sits immediately under the
-    # scatter / up-down-beta row, above the volatility and exploratory panels.
+    # Chart placement: the overlay sits immediately under the scatter / up-down-beta
+    # row, above the volatility and exploratory panels.
     comparison = tool_a_detail.benchmark_comparison_by_window.get(active_window)
     comparison_panel = _render_beta_comparison_panel(
         comparison, ticker=ticker, active_window=active_window
@@ -1445,7 +1454,7 @@ def _render_visual_panels(
         f"{_render_scatter_panel(ticker=ticker, tool_a_row=tool_a_row, anchor_metric=active_metric, anchor_sample=active_sample, active_window=active_window)}"
         f"{_render_up_down_beta_panel(tool_a_row, anchor_metric=active_metric, active_window=active_window, comparison=comparison)}"
         "</div>"
-        f"{beta_history_panel}"
+        f"{overlay_panel}"
         f"{comparison_panel}"
         "<div class=\"two-up\">"
         f"{_render_volatility_panel(tool_a_row, active_window=active_window, weekly_series=tool_a_detail.weekly_series, scoring_config=scoring_config)}"
@@ -1965,146 +1974,70 @@ def _resolve_active_window(raw_param: str, canonical_anchor: str) -> str:
     return canonical_anchor if canonical_anchor in _STRUCTURAL_WINDOWS else "12M"
 
 
-def _resolve_visible_windows(raw_param: str, active_window: str) -> list[str]:
-    """Map a URL `show=` value to an ordered list of windows to draw.
-
-    The active window is always included — the switcher tab is the "primary"
-    line the user picked, so hiding it would make the chart meaningless.
-    Additional windows can be layered in via `?show=6m` or `?show=6m,3y`.
-    Tokens are case-insensitive; invalid tokens are silently dropped.
-
-    Return order mirrors `_STRUCTURAL_WINDOWS` so the legend is always
-    displayed 6M / 12M / 3Y regardless of what the user clicked first.
-    """
-    tokens = {
-        token.strip().upper()
-        for token in str(raw_param or "").split(",")
-        if token.strip()
-    }
-    tokens.add(active_window.upper())
-    return [window for window in _STRUCTURAL_WINDOWS if window.upper() in tokens]
-
-
-def _render_beta_history_panel(
+def _render_rebased_overlay_panel(
     *,
     ticker: str,
-    tool_a_row: dict[str, Any],
-    structural_history_load: "StructuralHistoryLoad",
+    rebased_overlay_by_window: dict[str, dict[str, tuple[list, list]]],
     active_window: str = "12M",
-    visible_windows: list[str] | None = None,
 ) -> str:
-    """Render the rolling structural-delta panel with one line per window.
+    """Rebased-to-100 overlay of the stock vs gold vs GDX/GDXJ over the active lookback window.
 
-    Per plan v3 §5 and the post-deep-review fix pass:
-    - The chart uses only ``source_run_id`` for its provenance gate. The rebased
-      gold overlay was removed because it wasn't numerically interpretable.
-    - The four empty states are now distinguished by the structured load result
-      (missing / corrupt / no_rows / ok), not by checking ``DataFrame.empty`` alone.
-    - The horizon-switcher version draws 6M / 12M / 3Y as three lines on one shared
-      y-axis; the active window is thicker and fully opaque, the other two muted.
-    """
+    Replaces the old rolling-beta line: the beta NUMBERS live in the windowed table above, so this
+    chart's job is co-movement — "did the miner beat gold and the gold-miner ETFs?". The series are
+    built in the backend (``workspace_state`` → ``build_rebased_comparison_series``); this only
+    draws them. Needs at least two drawable series (gold + the stock); a missing GDX/GDXJ history
+    simply omits that line (degrade per item)."""
 
-    title = "Rolling Structural Delta"
-
-    if structural_history_load.status == "missing":
+    title = "Gold vs Stock vs Gold-Miner ETFs"
+    overlay = rebased_overlay_by_window.get(active_window) or {}
+    drawable = {
+        label: series
+        for label, series in overlay.items()
+        if series
+        and series[0]
+        and series[1]
+        and any(value is not None for value in series[1])
+    }
+    if len(drawable) < 2:
         return _render_chart_unavailable_panel(
             title,
-            "Structural history file has not been generated yet. "
-            "Run <code>python main.py tool-a</code> to generate it.",
+            "Not enough price history to plot the comparison yet. "
+            "Run <code>python main.py refresh</code> to fetch fresh prices.",
         )
 
-    if structural_history_load.status == "corrupt":
-        detail = (
-            f" Underlying error: {escape(structural_history_load.error_message)}"
-            if structural_history_load.error_message
-            else ""
+    colors = {
+        ticker: "#1d4b73",
+        "Gold": "#b8860b",
+        "GDX": "#5a3b8a",
+        "GDXJ": "#2e7d5b",
+    }
+    svg = _build_multiline_overlay_svg(series_by_label=drawable, colors=colors)
+    window_label = WINDOW_LABELS.get(active_window, active_window)
+    # Caption names only the benchmarks that actually drew, so a missing GDX/GDXJ history
+    # is never implied to be present (label every number with its real basis).
+    gold_drawn = "Gold" in drawable
+    drawn_benchmarks = [label for label in ("GDX", "GDXJ") if label in drawable]
+    comparator_parts: list[str] = []
+    if gold_drawn:
+        comparator_parts.append("gold")
+    if drawn_benchmarks:
+        etf_word = "ETF" if len(drawn_benchmarks) == 1 else "ETFs"
+        comparator_parts.append(
+            f"the gold-miner {etf_word} (" + " / ".join(drawn_benchmarks) + ")"
         )
-        return _render_chart_unavailable_panel(
-            title,
-            "Could not read the structural history file."
-            + detail
-            + " Re-run <code>python main.py tool-a</code> to regenerate it.",
+    benchmark_phrase = " and ".join(comparator_parts)
+    if gold_drawn and not drawn_benchmarks:
+        # Be explicit that the benchmarks are absent rather than implying they were compared.
+        benchmark_phrase = (
+            "gold (GDX / GDXJ benchmark history was unavailable, so only gold is shown)"
         )
-
-    structural_history = structural_history_load.history
-
-    if structural_history is None or structural_history.empty:
-        return _render_chart_unavailable_panel(
-            title,
-            "This ticker does not have enough clean structural history to plot yet. "
-            "Run <code>python main.py tool-a</code> after a fresh data refresh.",
-        )
-
-    if not _structural_history_matches_tool_a(structural_history, tool_a_row):
-        return _render_chart_fallback_panel(
-            title,
-            "Structural history file is out of sync with the published Gold Sensitivity row.",
-            "python main.py tool-a",
-        )
-
-    # Split the combined history back into per-window (dates, deltas) tuples.
-    series_by_window: dict[str, tuple[list[pd.Timestamp], list[float]]] = {}
-    window_series = structural_history["window_id"].astype(str).str.upper()
-    for window_id in _STRUCTURAL_WINDOWS:
-        mask = window_series == window_id.upper()
-        slice_df = structural_history.loc[mask].copy()
-        if slice_df.empty:
-            continue
-        slice_df = slice_df.sort_values("as_of_date")
-        series_by_window[window_id] = (
-            list(slice_df["as_of_date"]),
-            slice_df["structural_delta"].astype(float).tolist(),
-        )
-
-    if not series_by_window:
-        return _render_chart_unavailable_panel(
-            title,
-            "This ticker does not have enough clean structural history in any window to plot yet. "
-            "Run <code>python main.py tool-a</code> after a fresh data refresh.",
-        )
-
-    current_delta_core = _optional_float(tool_a_row.get("structural_delta_core"))
-    score_eligible = is_score_eligible(tool_a_row.get("score_eligible"))
-    watermark = ""
-    if not score_eligible:
-        watermark = (
-            "<p class=\"hint\"><em>Current snapshot score for this stock is withheld; "
-            "historical series shown for context only.</em></p>"
-        )
-
-    # Default: only the active window's line is drawn. The user opts-in to
-    # additional windows by clicking their legend items (which toggle via the
-    # `?show=` URL param).
-    if visible_windows is None:
-        visible_windows = [active_window]
-
-    svg = _build_beta_history_svg(
-        series_by_window=series_by_window,
-        active_window=active_window,
-        visible_windows=visible_windows,
-        current_delta_core=current_delta_core,
-        ticker=ticker,
-    )
     return (
         "<section class=\"panel nested-panel\">"
         f"<h3>{escape(title)}</h3>"
-        f"<p class=\"hint\">How {escape(ticker)}'s weekly structural beta to gold has moved over time, "
-        f"with the {escape(active_window)} window highlighted. Click a window below to add or remove its line. "
-        "Drawn from <code>tool_a_structural_latest.parquet</code>.</p>"
-        f"{watermark}{svg}"
-        "</section>"
-    )
-
-
-def _render_chart_fallback_panel(title: str, reason: str, command: str) -> str:
-    """Out-of-sync (provenance mismatch) fallback panel. Reserved for the
-    source_run_id mismatch case so the 'Out of Sync' wording is unambiguous.
-    """
-    return (
-        "<section class=\"panel nested-panel\">"
-        f"<h3>{escape(title)} &mdash; Out of Sync</h3>"
-        f"<p>{reason}</p>"
-        f"<p class=\"hint\">Run <code>{escape(command)}</code> to realign.</p>"
+        f"<p class=\"hint\">Each line is indexed to 100 at the start of the {escape(window_label)} "
+        f"window (USD) — so you can see whether {escape(ticker)} outpaced {benchmark_phrase} "
+        "over the lookback. Use the window toggle above to change the period.</p>"
+        f"{svg}"
         "</section>"
     )
 

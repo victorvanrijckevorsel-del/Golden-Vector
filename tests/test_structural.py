@@ -2,6 +2,7 @@ from datetime import date
 
 import numpy as np
 import pandas as pd
+import pytest
 from pandas.testing import assert_frame_equal
 
 from golden_vector.app.config import load_app_config
@@ -12,6 +13,7 @@ from golden_vector.model.structural import (
     VOLATILITY_DIAGNOSTIC_COLUMNS,
     annualize_downside_volatility,
     annualize_weekly_volatility,
+    build_rebased_comparison_series,
     build_structural_weekly_series,
     build_trailing_window_rows,
     choose_structural_anchor_window,
@@ -673,3 +675,50 @@ def test_compute_volatility_diagnostics_matches_reference_loop():
         rtol=0,
         atol=1e-12,
     )
+
+
+def test_build_rebased_comparison_series_indexes_each_window_to_100():
+    dates = list(pd.date_range("2024-01-05", periods=6, freq="W-FRI"))
+    series_by_label = {
+        # Wildly different absolute scales — the whole reason for rebasing.
+        "ABC": (dates, [10.0, 11.0, 12.0, 9.0, 13.0, 14.0]),
+        "Gold": (dates, [2000.0, 2100.0, 1900.0, 2200.0, 2300.0, 2400.0]),
+    }
+
+    # window_weeks=3 keeps only the last 3 points and re-anchors there.
+    out = build_rebased_comparison_series(series_by_label, window_weeks=3)
+
+    assert set(out) == {"ABC", "Gold"}
+    abc_dates, abc_values = out["ABC"]
+    assert abc_dates == dates[-3:]
+    # Last 3 ABC prices [9, 13, 14] -> indexed to 9.
+    assert abc_values == pytest.approx([100.0, 13 / 9 * 100, 14 / 9 * 100])
+    gold_dates, gold_values = out["Gold"]
+    assert gold_dates == dates[-3:]
+    # Last 3 Gold prices [2200, 2300, 2400] -> indexed to 2200.
+    assert gold_values == pytest.approx([100.0, 2300 / 2200 * 100, 2400 / 2200 * 100])
+
+
+def test_build_rebased_comparison_series_drops_empty_and_mismatched_series():
+    dates = list(pd.date_range("2024-01-05", periods=4, freq="W-FRI"))
+    series_by_label = {
+        "ABC": (dates, [10.0, 11.0, 12.0, 13.0]),
+        "GDXJ": ([], []),  # missing benchmark -> degrade per item, omit the line
+        "GDX": (dates, [50.0, 55.0]),  # length mismatch -> dropped, never crashes
+    }
+
+    out = build_rebased_comparison_series(series_by_label, window_weeks=52)
+
+    assert set(out) == {"ABC"}
+    assert out["ABC"][1] == pytest.approx([100.0, 110.0, 120.0, 130.0])
+
+
+def test_build_rebased_comparison_series_window_weeks_zero_keeps_full_series():
+    # window_weeks=0 means "no windowing" -> keep every point (the `if span else` branch).
+    dates = list(pd.date_range("2024-01-05", periods=4, freq="W-FRI"))
+    series_by_label = {"ABC": (dates, [10.0, 11.0, 12.0, 13.0])}
+
+    out = build_rebased_comparison_series(series_by_label, window_weeks=0)
+
+    assert out["ABC"][0] == dates  # all dates retained, not a tail slice
+    assert out["ABC"][1] == pytest.approx([100.0, 110.0, 120.0, 130.0])

@@ -6,8 +6,6 @@ from html import escape
 
 import pandas as pd
 
-from golden_vector.serve.workspace_state import _STRUCTURAL_WINDOWS, _WINDOW_COLORS
-
 
 def _build_scatter_svg(
     *,
@@ -264,174 +262,98 @@ def _build_grouped_beta_bar_svg(
     )
 
 
-def _build_beta_history_svg(
+def _build_multiline_overlay_svg(
     *,
-    series_by_window: dict[str, tuple[list[pd.Timestamp], list[float]]],
-    active_window: str,
-    visible_windows: list[str] | None = None,
-    current_delta_core: float | None,
-    ticker: str = "",
+    series_by_label: dict[str, tuple[list[pd.Timestamp], list[float | None]]],
+    colors: dict[str, str] | None = None,
+    base: float = 100.0,
 ) -> str:
-    """SVG line chart of structural_delta over time, one line per visible window.
+    """SVG line chart of several already-rebased series sharing one indexed y-axis.
 
-    ``series_by_window`` maps ``window_id`` → (dates, deltas). The active window
-    is always drawn (thicker and fully opaque). Any other window whose id is in
-    ``visible_windows`` is layered in thinner and muted. Hidden windows appear
-    in the legend as muted toggle links so the user can click to reveal them.
+    ``series_by_label`` maps a label → (dates, values) where values are pre-rebased upstream
+    (``model.structural.build_rebased_comparison_series``). All series are drawn; a dashed
+    baseline at ``base`` (100) anchors the comparison. ``None`` values (gaps / pre-anchor points)
+    are skipped within each line. The x-axis spans the union of dates so different-length series
+    align. Serve-render only: it maps pre-computed values to pixels, no business arithmetic."""
 
-    All lines share one y-axis (structural delta units), so a "stock drifts
-    upward" signal is visible regardless of which window is active.
-    """
-    if visible_windows is None:
-        visible_windows = [active_window]
-    visible_upper = {w.upper() for w in visible_windows}
-
+    colors = colors or {}
     width = 720
     height = 240
-    padding_left = 44
+    padding_left = 48
     padding_right = 24
     padding_top = 20
     padding_bottom = 28
     inner_w = width - padding_left - padding_right
     inner_h = height - padding_top - padding_bottom
 
-    # Collect every delta/date across VISIBLE windows so axis bounds rescale
-    # when the user toggles a window off. A hidden 3Y line shouldn't stretch
-    # the y-axis of a 6M-only view.
-    all_deltas: list[float] = []
+    cleaned: dict[str, list[tuple[pd.Timestamp, float]]] = {}
+    all_values: list[float] = []
     all_dates: list[pd.Timestamp] = []
-    for window_id, (dates, deltas) in series_by_window.items():
-        if window_id.upper() not in visible_upper:
+    for label, series in series_by_label.items():
+        dates, values = series
+        if not dates or not values or len(dates) != len(values):
             continue
-        if dates and deltas and len(dates) == len(deltas):
-            all_deltas.extend(deltas)
-            all_dates.extend(dates)
+        # Skip points with a missing value OR a missing/NaT date — a NaT date would
+        # otherwise propagate into min()/max() below and crash strftime on corrupt input.
+        points = [
+            (d, float(v)) for d, v in zip(dates, values) if v is not None and pd.notna(d)
+        ]
+        if not points:
+            continue
+        cleaned[label] = points
+        all_dates.extend(d for d, _ in points)
+        all_values.extend(v for _, v in points)
 
-    if not all_deltas:
-        return "<p>No beta history data available.</p>"
+    if not cleaned:
+        return "<p>No comparison data available.</p>"
 
-    # X scale uses the full date range across all windows so different-length
-    # series align correctly. 6M has fewer points than 3Y; both must share x.
     min_date = min(all_dates)
     max_date = max(all_dates)
     date_span_days = max((max_date - min_date).days, 1)
 
     def x_at(date_value: pd.Timestamp) -> float:
-        offset_days = (date_value - min_date).days
-        return padding_left + (offset_days / date_span_days) * inner_w
+        return padding_left + ((date_value - min_date).days / date_span_days) * inner_w
 
-    # Y scale: deltas → y position (anchor at 0 on the visible band)
-    delta_lo = min(all_deltas + [0.0])
-    delta_hi = max(all_deltas + [0.0])
-    if current_delta_core is not None:
-        delta_lo = min(delta_lo, current_delta_core)
-        delta_hi = max(delta_hi, current_delta_core)
-    if delta_hi == delta_lo:
-        delta_hi = delta_lo + 1.0
-    pad = (delta_hi - delta_lo) * 0.1
-    delta_lo -= pad
-    delta_hi += pad
+    value_lo = min(all_values + [base])
+    value_hi = max(all_values + [base])
+    if value_hi == value_lo:
+        value_hi = value_lo + 1.0
+    pad = (value_hi - value_lo) * 0.1
+    value_lo -= pad
+    value_hi += pad
 
     def y_at(value: float) -> float:
-        return padding_top + (1.0 - (value - delta_lo) / (delta_hi - delta_lo)) * inner_h
+        return padding_top + (1.0 - (value - value_lo) / (value_hi - value_lo)) * inner_h
 
-    grid_zero = ""
-    if delta_lo <= 0.0 <= delta_hi:
-        grid_zero = (
-            f"<line x1=\"{padding_left}\" y1=\"{y_at(0.0):.1f}\" "
-            f"x2=\"{width - padding_right}\" y2=\"{y_at(0.0):.1f}\" "
+    baseline = ""
+    if value_lo <= base <= value_hi:
+        baseline = (
+            f"<line x1=\"{padding_left}\" y1=\"{y_at(base):.1f}\" "
+            f"x2=\"{width - padding_right}\" y2=\"{y_at(base):.1f}\" "
             f"stroke=\"#bfb5a2\" stroke-width=\"1\" stroke-dasharray=\"3 3\" />"
         )
-    grid_core = ""
-    if current_delta_core is not None:
-        grid_core = (
-            f"<line x1=\"{padding_left}\" y1=\"{y_at(current_delta_core):.1f}\" "
-            f"x2=\"{width - padding_right}\" y2=\"{y_at(current_delta_core):.1f}\" "
-            f"stroke=\"#b26700\" stroke-width=\"1\" stroke-dasharray=\"4 2\" opacity=\"0.65\" />"
-        )
 
-    # SVG later elements paint above earlier ones, so render inactive windows
-    # first and the active window last so it always sits on top. Only visible
-    # windows draw lines; hidden windows still appear in the legend as toggle
-    # links so the user can opt them back in.
-    active_upper = (active_window or "").strip().upper()
-    ordered_windows = [w for w in _STRUCTURAL_WINDOWS if w in series_by_window]
-    draw_order = [
-        w for w in ordered_windows
-        if w.upper() != active_upper and w.upper() in visible_upper
-    ] + [w for w in ordered_windows if w.upper() == active_upper]
     lines_html = ""
-    for window_id in draw_order:
-        dates, deltas = series_by_window[window_id]
-        if not dates or not deltas or len(dates) != len(deltas):
-            continue
-        is_active = window_id.upper() == active_upper
-        color = _WINDOW_COLORS.get(window_id.upper(), "#555555")
-        width_px = 2.4 if is_active else 1.2
-        opacity = "1.0" if is_active else "0.55"
-        points = " ".join(f"{x_at(d):.1f},{y_at(v):.1f}" for d, v in zip(dates, deltas))
-        lines_html += (
-            f"<polyline points=\"{points}\" fill=\"none\" stroke=\"{color}\" "
-            f"stroke-width=\"{width_px}\" opacity=\"{opacity}\" />"
-        )
-
-    # Build clickable toggle links: clicking a visible non-active window
-    # removes it from `show=`; clicking a hidden window adds it. The active
-    # window has no href — it's always drawn, so there's nothing to toggle.
-    ticker_base = f"/ticker/{escape(ticker)}" if ticker else ""
-    window_param = f"window={active_window.lower()}"
     legend_parts: list[str] = []
-    for window_id in ordered_windows:
-        upper = window_id.upper()
-        is_active = upper == active_upper
-        is_visible = upper in visible_upper
-        color = _WINDOW_COLORS.get(upper, "#555555")
-        font_weight = "600" if is_active else "400"
-        marker = "&#9632;" if is_visible else "&#9633;"  # filled vs hollow square
-        if is_active:
-            label = f"{escape(window_id)} (active)"
-            legend_parts.append(
-                f"<span class=\"chart-legend-item\" "
-                f"style=\"color:{color};font-weight:{font_weight}\">"
-                f"{marker} {label}</span>"
-            )
-            continue
-        # Toggle target: visible windows that are NOT the active one come out of
-        # `show=` on click; hidden windows go in.
-        new_show = {
-            w.upper() for w in visible_windows
-            if w.upper() != active_upper and w.upper() != upper
-        } if is_visible else (
-            {w.upper() for w in visible_windows if w.upper() != active_upper} | {upper}
+    for index, (label, points) in enumerate(cleaned.items()):
+        color = colors.get(label, _benchmark_color(label, index))
+        coords = " ".join(f"{x_at(d):.1f},{y_at(v):.1f}" for d, v in points)
+        lines_html += (
+            f"<polyline points=\"{coords}\" fill=\"none\" stroke=\"{color}\" "
+            f"stroke-width=\"1.8\" opacity=\"0.9\" />"
         )
-        show_param = ",".join(
-            w.lower() for w in _STRUCTURAL_WINDOWS if w.upper() in new_show
-        )
-        action = "hide" if is_visible else "show"
-        query = f"?{window_param}"
-        if show_param:
-            query += f"&show={show_param}"
-        href = f"{ticker_base}{query}" if ticker_base else query
-        title_text = f"Click to {action} the {window_id} line"
         legend_parts.append(
-            f"<a class=\"chart-legend-item chart-legend-link\" href=\"{href}\" "
-            f"title=\"{title_text}\" "
-            f"style=\"color:{color};font-weight:{font_weight};"
-            f"opacity:{'1.0' if is_visible else '0.55'}\">"
-            f"{marker} {escape(window_id)}</a>"
+            f"<span class=\"chart-legend-item\" style=\"color:{color};font-weight:600\">"
+            f"&#9632; {escape(label)}</span>"
         )
-    legend_html = (
-        "<p class=\"chart-legend\">" + " ".join(legend_parts) + "</p>" if legend_parts else ""
-    )
+    legend_html = "<p class=\"chart-legend\">" + " ".join(legend_parts) + "</p>"
 
-    # Y-axis labels (lo / hi)
     y_labels = (
-        f"<text x=\"{padding_left - 6}\" y=\"{y_at(delta_hi) + 4:.1f}\" "
-        f"text-anchor=\"end\" font-size=\"11\" fill=\"#6f685c\">{delta_hi:.1f}</text>"
-        f"<text x=\"{padding_left - 6}\" y=\"{y_at(delta_lo) + 4:.1f}\" "
-        f"text-anchor=\"end\" font-size=\"11\" fill=\"#6f685c\">{delta_lo:.1f}</text>"
+        f"<text x=\"{padding_left - 6}\" y=\"{y_at(value_hi) + 4:.1f}\" text-anchor=\"end\" "
+        f"font-size=\"11\" fill=\"#6f685c\">{value_hi:.0f}</text>"
+        f"<text x=\"{padding_left - 6}\" y=\"{y_at(value_lo) + 4:.1f}\" text-anchor=\"end\" "
+        f"font-size=\"11\" fill=\"#6f685c\">{value_lo:.0f}</text>"
     )
-    # Date range labels (first / last only)
     date_labels = (
         f"<text x=\"{padding_left}\" y=\"{height - 8}\" font-size=\"11\" fill=\"#6f685c\">"
         f"{min_date.strftime('%Y-%m-%d')}</text>"
@@ -440,11 +362,9 @@ def _build_beta_history_svg(
     )
 
     svg = (
-        f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Rolling structural delta by window\">"
+        f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Rebased price comparison\">"
         f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#fffdf8\" rx=\"12\" ry=\"12\" />"
-        f"{grid_zero}{grid_core}"
-        f"{lines_html}"
-        f"{y_labels}{date_labels}"
+        f"{baseline}{lines_html}{y_labels}{date_labels}"
         "</svg>"
     )
     return legend_html + svg

@@ -10,7 +10,11 @@ from golden_vector.common.files import (
 )
 from golden_vector.common.eligibility import is_score_eligible, score_eligible_mask
 from golden_vector.common.frames import latest_records_by_key
-from golden_vector.common.numeric import optional_finite_float, sum_optional_floats
+from golden_vector.common.numeric import (
+    optional_finite_float,
+    rebase_to_base,
+    sum_optional_floats,
+)
 from golden_vector.common.status import combine_statuses
 from golden_vector.common.strings import clean_string, unique_strings
 from golden_vector.serve.format_helpers import format_dte_suffix
@@ -60,6 +64,42 @@ def test_optional_finite_float_rejects_missing_invalid_and_infinite_values():
     assert optional_finite_float("not-a-number") is None
     assert optional_finite_float(float("nan")) is None
     assert optional_finite_float(float("inf")) is None
+
+
+def test_rebase_to_base_indexes_to_first_finite_nonzero_anchor():
+    # Anchor is the first finite, non-zero value -> 100 there; rest scale proportionally.
+    assert rebase_to_base([200.0, 220.0, 180.0]) == pytest.approx([100.0, 110.0, 90.0])
+    # Different absolute scale, same shape -> identical rebased curve (the whole point):
+    # assert the two series produce the SAME output directly, not just equal hardcoded values.
+    assert rebase_to_base([2.0, 2.2, 1.8]) == pytest.approx([100.0, 110.0, 90.0])
+    assert rebase_to_base([200.0, 220.0, 180.0]) == pytest.approx(
+        rebase_to_base([2.0, 2.2, 1.8])
+    )
+
+
+def test_rebase_to_base_nulls_pre_anchor_and_non_finite_points():
+    # Leading None/zero cannot anchor; they stay None until the first usable value.
+    out = rebase_to_base([None, 0.0, 50.0, 75.0])
+    assert out[0] is None
+    assert out[1] is None
+    assert out[2] == pytest.approx(100.0)
+    assert out[3] == pytest.approx(150.0)
+    # A non-finite value mid-series becomes a gap, not a crash; the anchor is unchanged.
+    gapped = rebase_to_base([10.0, float("nan"), 12.0, float("inf")])
+    assert gapped[0] == pytest.approx(100.0)
+    assert gapped[1] is None
+    assert gapped[2] == pytest.approx(120.0)
+    assert gapped[3] is None
+
+
+def test_rebase_to_base_returns_all_none_without_a_usable_anchor():
+    # No finite, non-zero value anywhere -> nothing to index against.
+    assert rebase_to_base([None, 0.0, float("nan"), pd.NA]) == [None, None, None, None]
+    assert rebase_to_base([]) == []
+
+
+def test_rebase_to_base_honors_custom_base():
+    assert rebase_to_base([4.0, 6.0], base=1.0) == pytest.approx([1.0, 1.5])
 
 
 def test_format_dte_suffix_ignores_missing_values():

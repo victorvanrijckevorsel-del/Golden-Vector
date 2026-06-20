@@ -800,8 +800,8 @@ def test_workspace_detail_chart_sits_above_volatility_in_both_alignment_branches
     # Aligned case.
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert body.find("Rolling Structural Delta") < body.find("Volatility Diagnostics")
-    assert body.find("Rolling Structural Delta") < body.find("Exploratory Horizon Ladder")
+    assert body.find("Gold vs Stock vs Gold-Miner ETFs") < body.find("Volatility Diagnostics")
+    assert body.find("Gold vs Stock vs Gold-Miner ETFs") < body.find("Exploratory Horizon Ladder")
 
     # Non-aligned case (foundation manifest's refresh != Tool A row's refresh).
     _write_latest_outputs(
@@ -814,13 +814,14 @@ def test_workspace_detail_chart_sits_above_volatility_in_both_alignment_branches
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
     # Chart must come before the volatility panel even when foundation is misaligned.
-    assert body.find("Rolling Structural Delta") < body.find("Volatility Diagnostics")
+    assert body.find("Gold vs Stock vs Gold-Miner ETFs") < body.find("Volatility Diagnostics")
 
 
 def test_workspace_detail_surfaces_corrupt_structural_metrics_at_page_level(tmp_path):
-    """Codex follow-up to Fix #5: a corrupt structural-metrics file now surfaces a
-    page-level notice in addition to the chart's own corrupt fallback, so scatter and
-    up/down panels aren't silently degraded.
+    """Codex follow-up to Fix #5: a corrupt structural-metrics file surfaces ONE
+    page-level notice, so the scatter, up/down beta, and structural-window panels
+    (which read those metrics) aren't silently degraded. The price-overlay chart no
+    longer carries its own duplicate fallback — file health is told once, at page level.
     """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -837,8 +838,8 @@ def test_workspace_detail_surfaces_corrupt_structural_metrics_at_page_level(tmp_
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
     assert "Could not read the structural metrics file" in body
-    # And the chart panel still gets its own message.
-    assert "Could not read the structural history file" in body
+    # The old per-chart duplicate of this message is gone (one consistent story).
+    assert "Could not read the structural history file" not in body
 
 
 def test_workspace_verification_post_returns_friendly_date_error_for_invalid_date(tmp_path):
@@ -1472,9 +1473,43 @@ def _write_structural_history_file(
     frame.to_parquet(out_path, index=False)
 
 
-def test_workspace_detail_warns_when_structural_history_file_is_missing(tmp_path):
-    """Plan v3 §6 T12 + codex P2 fix: missing structural-history file → "Not Available
-    Yet" panel with the missing-file specific wording.
+def _write_overlay_benchmark_history(paths, ticker: str, *, scale: float) -> None:
+    """Write a USD benchmark (GDX/GDXJ) cached history aligned to the foundation snapshot's
+    weekly dates, so the rebased overlay can draw the benchmark line end-to-end.
+
+    Mirrors the column shape that ``normalize_equity_history_to_usd`` →
+    ``build_structural_weekly_series`` consume (same pipeline as the real benchmarks).
+    """
+    weekly_dates = pd.date_range("2024-01-05", periods=70, freq="W-FRI")
+    prices = scale + (weekly_dates.dayofyear.to_numpy(dtype=float) * 0.03)
+    frame = pd.DataFrame(
+        {
+            "ticker": ticker,
+            "date": weekly_dates.date,
+            "open_local": prices,
+            "high_local": prices * 1.01,
+            "low_local": prices * 0.99,
+            "close_local": prices,
+            "adj_close_local": prices,
+            "volume": 1_000_000,
+            "currency": "USD",
+            "exchange": "BENCHMARK",
+            "source": "test",
+            "source_symbol": ticker,
+            "feed_currency": "USD",
+            "price_scale_factor": 1.0,
+            "minor_unit_adjusted": False,
+            "fetched_at_utc": pd.Timestamp("2026-06-08T00:00:00Z"),
+        }
+    )
+    paths.benchmarks_dir.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(paths.benchmarks_dir / f"{ticker}.parquet", index=False)
+
+
+def test_workspace_detail_warns_when_structural_metrics_file_is_missing(tmp_path):
+    """A missing structural-metrics file surfaces a page-level notice (the scatter /
+    up-down / window panels read those metrics). The price-overlay chart does NOT
+    depend on that file, so it still renders from foundation price history.
     """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -1482,18 +1517,24 @@ def test_workspace_detail_warns_when_structural_history_file_is_missing(tmp_path
     bootstrap_manual_screening_data(paths, tickers=["NEM"])
     _write_latest_foundation_snapshot(paths)
     _write_latest_outputs(paths)
-    # Deliberately do NOT write the structural-history parquet.
+    # Deliberately do NOT write the structural-metrics parquet.
 
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert "Rolling Structural Delta &mdash; Not Available Yet" in body
-    assert "Structural history file has not been generated yet" in body
+    assert "Structural metrics file is missing" in body
+    # The overlay chart is independent of the structural-metrics file: it still draws.
+    assert ">Gold vs Stock vs Gold-Miner ETFs</h3>" in body
+    # Prove it actually drew the gold + stock lines (not the empty state) by name.
+    assert body.count("<polyline points=") == 2
+    assert "&#9632; NEM" in body
+    assert "&#9632; Gold" in body
 
 
-def test_workspace_detail_suppresses_chart_when_structural_source_run_id_mismatches(tmp_path):
-    """Plan v3 §6 T13: structural file source_run_id different from Tool A row's
-    source_run_id → chart suppressed with "Out of Sync" panel.
+def test_workspace_detail_warns_when_structural_metrics_source_run_id_mismatches(tmp_path):
+    """Provenance gate (moved from the old beta chart to the page level): a structural
+    metrics file from a DIFFERENT tool-a run than the published row must surface an
+    out-of-sync notice, because the scatter / up-down / window panels read those metrics.
     """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -1507,12 +1548,23 @@ def test_workspace_detail_suppresses_chart_when_structural_source_run_id_mismatc
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert "Rolling Structural Delta &mdash; Out of Sync" in body
-    assert "Structural history file is out of sync with the published Gold Sensitivity row" in body
+    assert "Structural metrics file is out of sync with the published Gold Sensitivity row" in body
+    # The provenance notice must appear ABOVE the overlay chart, so a user can never read the
+    # chart as endorsed by a mismatched structural file (gate moved from chart to page level).
+    assert body.find("out of sync with the published Gold Sensitivity row") < body.find(
+        ">Gold vs Stock vs Gold-Miner ETFs</h3>"
+    )
+    # The price overlay is independent of structural-metrics provenance, so it still draws
+    # its two foundation-price lines even while the out-of-sync notice is shown above it.
+    assert body.count("<polyline points=") == 2
 
 
-def test_workspace_detail_renders_beta_history_chart_when_aligned(tmp_path):
-    """Plan v3 §6 T15: aligned structural file + eligible 12M rows → SVG chart renders."""
+def test_workspace_detail_renders_rebased_overlay_chart_when_aligned(tmp_path):
+    """Aligned foundation + price history → the rebased gold/stock/ETF overlay renders.
+
+    Foundation history (gold + NEM) gives two drawable lines even without a cached
+    GDX/GDXJ benchmark, so the chart draws and carries its indexed-to-100 caption.
+    """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
     app_config = _repo_app_config()
@@ -1525,16 +1577,55 @@ def test_workspace_detail_renders_beta_history_chart_when_aligned(tmp_path):
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert ">Rolling Structural Delta</h3>" in body
-    assert "Out of Sync" not in body
-    # Beta line as polyline + chart frame must be present.
-    assert "<polyline points=" in body
-    assert "rolling structural delta by window" in body.lower()
+    assert ">Gold vs Stock vs Gold-Miner ETFs</h3>" in body
+    assert "out of sync" not in body.lower()
+    # Two lines draw (gold + stock); the legend must name both so we know WHICH lines drew,
+    # and there must be exactly two legend chips (legend count tracks the drawn-line count).
+    assert body.count("<polyline points=") == 2
+    assert body.count('<span class="chart-legend-item"') == 2
+    assert "&#9632; NEM" in body
+    assert "&#9632; Gold" in body
+    # The caption is indexed-to-100 and names the active window's human label (12M -> "1Y").
+    assert "indexed to 100" in body
+    assert "1Y window" in body
+    # The y-axis must be anchored on the rebasing baseline (100) — the dashed baseline proves the
+    # indexed axis spans 100, i.e. the rebasing actually drove the chart scale.
+    assert "stroke-dasharray=\"3 3\"" in body
+    # No GDX/GDXJ cache here, so the caption must admit the benchmarks are absent (not imply them).
+    assert "benchmark history was unavailable" in body
 
 
-def test_workspace_detail_chart_shows_withheld_watermark_when_score_is_withheld(tmp_path):
-    """Plan v3 §6 T16: when score is withheld, the chart still renders but carries a
-    visible "context only" watermark.
+def test_workspace_detail_overlay_draws_all_four_lines_when_benchmarks_present(tmp_path):
+    """End-to-end benchmark-present path: foundation prices + cached GDX/GDXJ histories →
+    the overlay draws all four lines and the caption names the gold-miner ETFs honestly.
+    """
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_structural_history_file(paths, "NEM", source_run_id="tool-a-run")
+    _write_overlay_benchmark_history(paths, "GDX", scale=30.0)
+    _write_overlay_benchmark_history(paths, "GDXJ", scale=45.0)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
+    body = response["body"]
+    assert ">Gold vs Stock vs Gold-Miner ETFs</h3>" in body
+    # Four lines: NEM + Gold + GDX + GDXJ, each labelled in the legend.
+    assert body.count("<polyline points=") == 4
+    for label in ("NEM", "Gold", "GDX", "GDXJ"):
+        assert f"&#9632; {label}" in body
+    # Caption names the ETFs honestly and does NOT claim they were unavailable.
+    assert "gold-miner ETFs (GDX / GDXJ)" in body
+    assert "benchmark history was unavailable" not in body
+
+
+def test_workspace_detail_chart_renders_without_suppression_when_score_withheld(tmp_path):
+    """When the Gold Sensitivity score is withheld, the page surfaces a withheld notice
+    at the page level, and the price overlay still renders honest prices WITHOUT any
+    watermark or suppression (prices are factual; only the scored beta is withheld).
     """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -1573,12 +1664,19 @@ def test_workspace_detail_chart_shows_withheld_watermark_when_score_is_withheld(
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert ">Rolling Structural Delta</h3>" in body
-    assert "historical series shown for context only" in body
+    # Withheld score is surfaced page-level; the overlay still renders honest prices.
+    assert "Gold Sensitivity score is withheld" in body
+    assert ">Gold vs Stock vs Gold-Miner ETFs</h3>" in body
+    # Prove the overlay actually drew (not the empty state) — the withheld score must not
+    # suppress the factual price chart.
+    assert body.count("<polyline points=") == 2
 
 
-def test_workspace_detail_chart_shows_no_eligible_rows_message_when_history_is_only_low_observation(tmp_path):
-    """Plan v3 §6 T21: ticker has rows in the structural file but none are ELIGIBLE.
+def test_workspace_detail_overlay_renders_even_when_structural_rows_are_low_observation(tmp_path):
+    """The price overlay draws prices, not the scored betas, so it is NOT gated by
+    structural-window eligibility: a ticker whose only structural rows are LOW_OBSERVATION
+    still gets the overlay (from foundation price history), while the structural betas
+    remain governed separately by the window panels.
     """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -1593,15 +1691,16 @@ def test_workspace_detail_chart_shows_no_eligible_rows_message_when_history_is_o
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    # No ELIGIBLE rows for this ticker → fallback to the "missing/empty" empty state.
-    assert "Not Available Yet" in body
+    # The overlay is not gated by structural eligibility: it draws exactly the two price
+    # lines (gold + stock) from foundation history, with no benchmarks accidentally appearing.
+    assert ">Gold vs Stock vs Gold-Miner ETFs</h3>" in body
+    assert body.count("<polyline points=") == 2
 
 
-def test_workspace_detail_chart_renders_beta_line_when_foundation_misaligned_but_structural_aligned(tmp_path):
-    """Replaces the previous gold-overlay-suppression test. The rebased gold overlay
-    was removed in the post-deep-review fix pass (both reviewers agreed it was bad UX),
-    so the assertion now is just: the chart still renders its beta line when the chart's
-    own provenance (source_run_id) is OK, even if the foundation snapshot has moved past.
+def test_workspace_detail_overlay_renders_when_foundation_misaligned_but_metrics_aligned(tmp_path):
+    """When the foundation snapshot has moved ahead of the published row, the scatter /
+    up-down panels are suppressed, but the price overlay still renders (it draws prices
+    from the foundation history). The misalignment is surfaced by the page-level notice.
     """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -1620,19 +1719,17 @@ def test_workspace_detail_chart_renders_beta_line_when_foundation_misaligned_but
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert ">Rolling Structural Delta</h3>" in body
+    assert ">Gold vs Stock vs Gold-Miner ETFs</h3>" in body
     assert "<polyline points=" in body
-    # No more gold-overlay-related copy in any direction.
-    assert "Gold-price overlay" not in body
     # The aligned-Tool-A-but-misaligned-foundation message is the page-level alignment
     # notice, not a chart-panel note.
     assert "foundation snapshot has moved ahead" in body
 
 
-def test_workspace_detail_chart_distinguishes_corrupt_parquet_from_missing(tmp_path):
-    """Codex P2 fix: a corrupted structural-history parquet must produce a distinct
-    "Could not read the structural history file" fallback, not be mis-classified as
-    "Not Available Yet" (which would send the user to the wrong fix).
+def test_workspace_detail_distinguishes_corrupt_structural_metrics_from_missing(tmp_path):
+    """A corrupted structural-metrics parquet must produce a distinct page-level
+    "Could not read the structural metrics file" notice, not be mis-classified as
+    "missing" (which would send the user to the wrong fix).
     """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -1648,10 +1745,9 @@ def test_workspace_detail_chart_distinguishes_corrupt_parquet_from_missing(tmp_p
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert "Rolling Structural Delta &mdash; Not Available Yet" in body
-    assert "Could not read the structural history file" in body
+    assert "Could not read the structural metrics file" in body
     # The user should NOT see the "missing" wording for a corrupt file.
-    assert "Structural history file has not been generated yet" not in body
+    assert "Structural metrics file is missing" not in body
 
 
 def _make_tool_a_row(

@@ -11,7 +11,6 @@ Covers:
   T8  narrative cards regenerate from live band math (single source of truth)
   T9  volatility panel suppresses numbers when the window is not ELIGIBLE
   T10 volatility panel renders for a canonical-matching eligible window
-  T11 rolling chart renders one <polyline> per window when all three have history
   T12 structural window table flags the active row with the active-row class
   T13 mismatch banner appears when active != canonical
   T14 invalid window param falls back to canonical without 500
@@ -408,74 +407,6 @@ def test_volatility_panel_renders_numbers_for_canonical_eligible_window(tmp_path
     assert "is not eligible for this ticker" not in body
 
 
-# ---------------------------------------------------------------- T11 ----
-
-def test_rolling_chart_default_draws_only_active_window_line(tmp_path):
-    """Post-legend-toggle default: only the active window's line is drawn.
-    The other two windows appear in the legend as opt-in toggle links so the
-    user can add or remove them one at a time.
-    """
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM"])
-    _write_latest_foundation_snapshot(paths)
-    _write_latest_outputs(paths)
-    _write_multi_window_structural_history(paths, ticker="NEM", source_run_id="tool-a-run")
-
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
-    response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
-    body = response["body"]
-    # Exactly one line (the active 12M one) drawn.
-    assert body.count("<polyline points=") == 1
-    # Two hidden toggle <a> legend links present for the other two windows.
-    assert body.count('class="chart-legend-item chart-legend-link"') == 2
-    # Active window labeled.
-    assert "12M (active)" in body
-
-
-def test_rolling_chart_honors_show_param_to_add_lines(tmp_path):
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM"])
-    _write_latest_foundation_snapshot(paths)
-    _write_latest_outputs(paths)
-    _write_multi_window_structural_history(paths, ticker="NEM", source_run_id="tool-a-run")
-
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
-    # Explicitly show all three windows.
-    response = _call_wsgi_app(
-        app, method="GET", path="/ticker/NEM?show=6m,3y"
-    )
-    body = response["body"]
-    assert body.count("<polyline points=") == 3
-
-
-def test_rolling_chart_legend_link_drops_window_from_show_when_visible(tmp_path):
-    """When a window is currently visible, its legend link should navigate to
-    a URL that removes it from `show=` (toggle off).
-    """
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM"])
-    _write_latest_foundation_snapshot(paths)
-    _write_latest_outputs(paths)
-    _write_multi_window_structural_history(paths, ticker="NEM", source_run_id="tool-a-run")
-
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
-    # With 6M shown, the 6M legend link should drop it (→ only window=12m).
-    response = _call_wsgi_app(
-        app, method="GET", path="/ticker/NEM?show=6m"
-    )
-    body = response["body"]
-    # The 6M legend link should point to a URL WITHOUT 6m in show=.
-    assert 'href="/ticker/NEM?window=12m"' in body
-    # The 3Y legend link should ADD 3y while keeping 6m (toggle on, preserving context).
-    assert 'href="/ticker/NEM?window=12m&amp;show=6m,3y"' in body or "show=6m,3y" in body
-
-
 # ---------------------------------------------------------------- T12 ----
 
 def test_structural_window_table_marks_the_active_row():
@@ -532,46 +463,3 @@ def test_invalid_window_param_falls_back_to_canonical_without_error(tmp_path):
     # Falls back to canonical (12M).
     assert "Structural Delta (12M)" in body
 
-
-# ---------------------------------------------------------------- helpers ----
-
-def _write_multi_window_structural_history(paths, *, ticker: str, source_run_id: str):
-    """Fixture: write a structural-history parquet with all three windows.
-
-    The real pipeline writes one row per (ticker, as_of_date, window_id). For
-    chart tests we need at least two points in each window so the polyline has
-    a real segment.
-    """
-    import numpy as np
-
-    weeks = pd.date_range("2024-06-07", periods=60, freq="W-FRI")
-    rows: list[dict] = []
-    # Different baseline per window so the lines are visibly distinct.
-    for window_id, baseline in (("6M", 1.4), ("12M", 1.7), ("3Y", 2.1)):
-        for i, w in enumerate(weeks):
-            delta = float(baseline + 0.05 * np.sin((i / 12.0) * 2 * np.pi))
-            rows.append(
-                {
-                    "ticker": ticker,
-                    "as_of_date": w.date(),
-                    "window_id": window_id,
-                    "week_count": {"6M": 26, "12M": 52, "3Y": 156}[window_id],
-                    "window_status": "ELIGIBLE",
-                    "window_reason": "OK",
-                    "structural_delta": delta,
-                    "intercept_alpha": 0.001,
-                    "r_squared": 0.5,
-                    "up_week_count": 25,
-                    "down_week_count": 25,
-                    "up_beta": baseline + 0.2,
-                    "down_beta": baseline - 0.2,
-                    "gamma_value": -0.2,
-                    "asymmetry_ratio": 1.14,
-                    "normalization_issue_summary": None,
-                    "source_run_id": source_run_id,
-                }
-            )
-    frame = pd.DataFrame(rows)
-    out_path = paths.latest_tool_a_structural_metrics_path
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(out_path, index=False)

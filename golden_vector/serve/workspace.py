@@ -36,7 +36,6 @@ from golden_vector.serve.http_helpers import (
 from golden_vector.serve.detail_panels import (
     _canonical_anchor_window,
     _resolve_active_window,
-    _resolve_visible_windows,
 )
 from golden_vector.serve.detail_forms import COMPANY_FORM_FIELDS
 from golden_vector.serve.detail_page import (
@@ -505,9 +504,6 @@ def create_workspace_app(
                     active_window = _resolve_active_window(
                         query.get("window", [""])[0], canonical_anchor,
                     )
-                    visible_windows = _resolve_visible_windows(
-                        query.get("show", [""])[0], active_window,
-                    )
                     option_trading_detail = None
                     if detail_lens == DETAIL_OPTION_TRADING_LENS_ID:
                         option_trading_data = (
@@ -535,7 +531,6 @@ def create_workspace_app(
                             flash=flash,
                             active_window=active_window,
                             canonical_anchor=canonical_anchor,
-                            visible_windows=visible_windows,
                             lens=detail_lens,
                             app_config=app_config,
                             option_trading_detail=option_trading_detail,

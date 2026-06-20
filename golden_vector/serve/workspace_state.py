@@ -25,7 +25,10 @@ from golden_vector.model.benchmark_comparison import (
     BetaUniverseComparison,
     resolve_beta_universe_comparisons_by_window,
 )
-from golden_vector.model.structural import build_structural_weekly_series
+from golden_vector.model.structural import (
+    build_rebased_comparison_series,
+    build_structural_weekly_series,
+)
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.serve.windows import SCORING_WINDOWS
@@ -58,13 +61,17 @@ class ToolADetailState:
     structural_window_metrics: pd.DataFrame
     structural_metrics_load: "StructuralHistoryLoad"
     exploratory_horizons: pd.DataFrame
-    structural_history_load: "StructuralHistoryLoad"
     foundation_error: str | None = None
     # Backend-resolved, per-window comparison of this stock vs GDX/GDXJ vs the miner universe.
     # Keyed by window id ("6M"/"12M"/"3Y"); the panel only formats the resolved markers.
     benchmark_comparison_by_window: dict[str, BetaUniverseComparison] = field(
         default_factory=dict
     )
+    # Backend-built rebased (indexed-to-100) price overlay per window:
+    # {window_id: {label: (dates, rebased_values)}}. The panel only draws it.
+    rebased_overlay_by_window: dict[
+        str, dict[str, tuple[list, list]]
+    ] = field(default_factory=dict)
 
 
 def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> WorkspaceState:
@@ -191,14 +198,13 @@ def _load_tool_a_detail(
             manifest_path=foundation_manifest_path,
         )
     except Exception as exc:
-        # Even when the foundation snapshot is unavailable, the structural-history
-        # parquet might still be present and usable for the beta-history chart.
+        # Even when the foundation snapshot is unavailable, the published structural
+        # metrics may still be present so the page-level file-health notice is accurate.
         return ToolADetailState(
             weekly_series=pd.DataFrame(),
             structural_window_metrics=pd.DataFrame(),
             structural_metrics_load=_load_published_structural_metrics(paths, ticker),
             exploratory_horizons=pd.DataFrame(),
-            structural_history_load=_safe_load_structural_history(paths, ticker),
             foundation_error=str(exc),
         )
 
@@ -243,12 +249,90 @@ def _load_tool_a_detail(
         structural_window_metrics=structural_window_metrics,
         structural_metrics_load=structural_metrics_load,
         exploratory_horizons=exploratory_horizons,
-        structural_history_load=_safe_load_structural_history(paths, ticker),
         foundation_error=None,
         benchmark_comparison_by_window=_resolve_benchmark_comparison(
             paths, ticker, universe_df=universe_tool_a
         ),
+        rebased_overlay_by_window=_build_rebased_overlay_by_window(
+            paths,
+            app_config,
+            ticker=ticker,
+            weekly_series=weekly_series,
+            gold_history=foundation_snapshot.gold_history,
+        ),
     )
+
+
+def _build_rebased_overlay_by_window(
+    paths: ProjectPaths,
+    app_config: AppConfig,
+    *,
+    ticker: str,
+    weekly_series: pd.DataFrame,
+    gold_history: pd.DataFrame,
+) -> dict[str, dict[str, tuple[list, list]]]:
+    """Backend-built rebased (indexed-to-100) overlay of this stock vs gold vs GDX/GDXJ, one set
+    per window lookback (``_WINDOW_WEEKS``). The detail panel only draws it. GDX/GDXJ are optional
+    — a missing benchmark history simply omits that line. Reuses the shared benchmark loader + the
+    cheap weekly-series builder (no per-page structural-metric recompute).
+
+    Architecture note (deliberate): this is serve-time ASSEMBLY, not serve-time arithmetic. The
+    rebasing math lives in the model layer (``common.numeric.rebase_to_base`` →
+    ``model.structural.build_rebased_comparison_series``); here we only orchestrate load → call the
+    model builders → assemble a display dict. That matches the established detail-page exception —
+    ``weekly_series``, ``exploratory_horizons`` and ``benchmark_comparison_by_window`` are all built
+    on this same per-request path in ``_build_tool_a_detail_state`` — and the work is O(window) over
+    already-loaded prices, so it is intentionally NOT promoted to a persisted artifact."""
+
+    # The overlay is an optional display aid — degrade to "no chart" on ANY failure rather than
+    # 500 the whole detail page (matches _resolve_benchmark_comparison's never-break-the-page rule).
+    try:
+        if weekly_series.empty or "as_of_date" not in weekly_series.columns:
+            return {}
+        sorted_weekly = weekly_series.sort_values("as_of_date")
+        stock_dates = list(pd.to_datetime(sorted_weekly["as_of_date"]))
+        # pd.to_numeric(errors="coerce") — NOT .astype(float) — so nullable pd.NA values become
+        # NaN (which rebase_to_base then treats as a per-point gap) instead of raising TypeError.
+        series_by_label: dict[str, tuple[list, list]] = {
+            ticker: (
+                stock_dates,
+                pd.to_numeric(sorted_weekly["stock_basis_usd"], errors="coerce").tolist(),
+            ),
+            "Gold": (
+                stock_dates,
+                pd.to_numeric(sorted_weekly["gold_basis_usd"], errors="coerce").tolist(),
+            ),
+        }
+
+        # Lazy import keeps the serve module free of a top-level portfolio dependency.
+        from golden_vector.portfolio.benchmark_betas import load_benchmark_normalized_histories
+
+        try:
+            # load_errors is intentionally discarded: GDX/GDXJ are optional here, so a failed
+            # benchmark load simply omits that line (same policy as _resolve_benchmark_comparison).
+            normalized_histories, _ = load_benchmark_normalized_histories(
+                paths=paths, app_config=app_config
+            )
+        except Exception:  # noqa: BLE001 - benchmarks are optional; never break the page.
+            normalized_histories = {}
+        for label, history in normalized_histories.items():
+            bench_weekly, _ = build_structural_weekly_series(
+                usd_equity_history=history, gold_history=gold_history
+            )
+            if bench_weekly.empty or "as_of_date" not in bench_weekly.columns:
+                continue
+            bench_weekly = bench_weekly.sort_values("as_of_date")
+            series_by_label[label] = (
+                list(pd.to_datetime(bench_weekly["as_of_date"])),
+                pd.to_numeric(bench_weekly["stock_basis_usd"], errors="coerce").tolist(),
+            )
+
+        return {
+            window: build_rebased_comparison_series(series_by_label, window_weeks=weeks)
+            for window, weeks in _WINDOW_WEEKS.items()
+        }
+    except Exception:  # noqa: BLE001 - overlay is an optional display aid; degrade to no chart.
+        return {}
 
 
 def _resolve_benchmark_comparison(
@@ -321,36 +405,6 @@ def _load_published_structural_metrics(
     return StructuralHistoryLoad(status="ok", history=filtered)
 
 
-def _safe_load_structural_history(paths: ProjectPaths, ticker: str) -> "StructuralHistoryLoad":
-    """Load the full per-window structural history for one ticker.
-
-    Returns all three windows (6M / 12M / 3Y) so the rolling chart can draw
-    three lines. Distinguishes ``missing`` / ``corrupt`` / ``no_rows`` / ``ok``
-    so the chart panel can render the right fallback (codex P2 fix).
-    """
-
-    parquet_path = _current_structural_metrics_path(paths)
-    if parquet_path is None:
-        return StructuralHistoryLoad(status="missing", history=pd.DataFrame())
-    if not parquet_path.exists():
-        return StructuralHistoryLoad(status="missing", history=pd.DataFrame())
-    try:
-        frames: list[pd.DataFrame] = []
-        for window_id in _STRUCTURAL_WINDOWS:
-            frames.append(
-                _load_structural_delta_history(paths, ticker=ticker, window_id=window_id)
-            )
-    except Exception as exc:  # parquet read error → corrupt
-        return StructuralHistoryLoad(
-            status="corrupt", history=pd.DataFrame(), error_message=str(exc)
-        )
-    non_empty = [frame for frame in frames if not frame.empty]
-    if not non_empty:
-        return StructuralHistoryLoad(status="no_rows", history=pd.DataFrame())
-    history = pd.concat(non_empty, ignore_index=True)
-    return StructuralHistoryLoad(status="ok", history=history)
-
-
 def _parse_ticker_route(path: str) -> tuple[str, str | None]:
     parts = [part for part in path.split("/") if part]
     if len(parts) < 2 or parts[0] != "ticker":
@@ -380,54 +434,6 @@ _STRUCTURAL_WINDOWS: tuple[str, ...] = SCORING_WINDOWS
 # Number of weekly observations per window, used by the scatter-slice
 # and volatility recompute helpers.
 _WINDOW_WEEKS: dict[str, int] = {"6M": 26, "12M": 52, "3Y": 156}
-
-
-def _load_structural_delta_history(
-    paths: ProjectPaths,
-    *,
-    ticker: str,
-    window_id: str = "12M",
-) -> pd.DataFrame:
-    """Read the published structural-metrics parquet for one ticker / window.
-
-    Returns rows where ``window_status == 'ELIGIBLE'`` and ``structural_delta`` is
-    finite, sorted by ``as_of_date``. Carries ``source_run_id`` for the Phase 1A
-    provenance check. Empty DataFrame if the file is missing or no eligible rows
-    exist for the ticker.
-    """
-
-    parquet_path = _current_structural_metrics_path(paths)
-    if parquet_path is None:
-        return pd.DataFrame(
-            columns=["ticker", "as_of_date", "window_id", "structural_delta", "source_run_id"]
-        )
-    if not parquet_path.exists():
-        return pd.DataFrame(
-            columns=["ticker", "as_of_date", "window_id", "structural_delta", "source_run_id"]
-        )
-    frame = pd.read_parquet(parquet_path)
-    if frame.empty or "ticker" not in frame.columns:
-        return pd.DataFrame(
-            columns=["ticker", "as_of_date", "window_id", "structural_delta", "source_run_id"]
-        )
-    normalized_ticker = str(ticker).strip().upper()
-    normalized_window = str(window_id).strip().upper()
-    mask = (
-        (frame["ticker"].astype(str).str.upper() == normalized_ticker)
-        & (frame["window_id"].astype(str).str.upper() == normalized_window)
-        & (frame.get("window_status", pd.Series(dtype=str)).astype(str).str.upper() == "ELIGIBLE")
-    )
-    history = frame.loc[mask].copy()
-    if history.empty:
-        return pd.DataFrame(
-            columns=["ticker", "as_of_date", "window_id", "structural_delta", "source_run_id"]
-        )
-    history["structural_delta"] = pd.to_numeric(history["structural_delta"], errors="coerce")
-    history = history.loc[history["structural_delta"].notna()].copy()
-    history["as_of_date"] = pd.to_datetime(history["as_of_date"], errors="coerce")
-    history = history.loc[history["as_of_date"].notna()].copy()
-    history = history.sort_values("as_of_date").reset_index(drop=True)
-    return history
 
 
 def _current_structural_metrics_path(paths: ProjectPaths) -> Path | None:
@@ -462,18 +468,9 @@ def _structural_history_matches_tool_a(
     return history_ids == {tool_a_run_id}
 
 
-_WINDOW_COLORS: dict[str, str] = {
-    "6M": "#8a6d3b",
-    "12M": "#1d4b73",
-    "2Y": "#2e7d5b",
-    "3Y": "#5a3b8a",
-    "5Y": "#7a3b5a",
-}
-
-
 @dataclass(frozen=True)
 class StructuralHistoryLoad:
-    """Structured load result for the beta-history parquet, per codex P2 fix.
+    """Structured load result for the published structural-metrics parquet.
 
     Distinguishes the file states the workspace must communicate differently:
     - ``ok`` — file loaded; ``history`` is the filtered DataFrame

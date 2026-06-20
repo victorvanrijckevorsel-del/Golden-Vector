@@ -9,6 +9,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from golden_vector.common.numeric import rebase_to_base
 from golden_vector.common.numeric import strict_optional_float as _optional_float
 from golden_vector.common.stats import weighted_median as _weighted_median_core
 from golden_vector.contracts.config_models import ScoringConfig
@@ -341,6 +342,31 @@ def build_structural_weekly_series(
 
     merged = merged[WEEKLY_SERIES_COLUMNS].reset_index(drop=True)
     return merged, normalization_issues.reset_index(drop=True)
+
+
+def build_rebased_comparison_series(
+    series_by_label: dict[str, tuple[list[pd.Timestamp], list[float]]],
+    *,
+    window_weeks: int,
+    base: float = 100.0,
+) -> dict[str, tuple[list[pd.Timestamp], list[float | None]]]:
+    """Index each ``(dates, prices)`` series to ``base`` over the last ``window_weeks`` points.
+
+    The detail-page gold / stock / GDX / GDXJ overlay rebases every line to 100 at the start of
+    the selected lookback so series on very different price scales share one honest axis. Empty or
+    length-mismatched series are dropped (degraded per item — a missing benchmark just omits its
+    line). The rebasing math is delegated to ``common.numeric.rebase_to_base`` (one copy)."""
+
+    rebased_by_label: dict[str, tuple[list[pd.Timestamp], list[float | None]]] = {}
+    span = max(0, int(window_weeks))
+    for label, series in series_by_label.items():
+        dates, prices = series
+        if not dates or not prices or len(dates) != len(prices):
+            continue
+        window_dates = list(dates)[-span:] if span else list(dates)
+        window_prices = list(prices)[-span:] if span else list(prices)
+        rebased_by_label[label] = (window_dates, rebase_to_base(window_prices, base=base))
+    return rebased_by_label
 
 
 def compute_structural_window_metrics(

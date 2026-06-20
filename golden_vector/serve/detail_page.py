@@ -45,7 +45,6 @@ def render_detail_page(
     error: str | None = None,
     active_window: str = "12M",
     canonical_anchor: str = "12M",
-    visible_windows: list[str] | None = None,
     lens: str = DETAIL_DEFAULT_LENS_ID,
     app_config: AppConfig | None = None,
     option_trading_detail: OptionTradingDetailData | None = None,
@@ -59,8 +58,6 @@ def render_detail_page(
     tool_b_row = _frame_index_by_ticker(state.latest_tool_b).get(ticker, {})
     verification_rows = _ticker_rows(state.source_verification, ticker)
     note_rows = _ticker_rows(state.stock_notes, ticker)
-    if visible_windows is None:
-        visible_windows = [active_window]
 
     option_lens_active = str(lens or "").strip().lower() == DETAIL_OPTION_TRADING_LENS_ID
     body = ["<p><a href=\"/\">Back to workspace</a></p>", f"<h1>{escape(ticker)}</h1>"]
@@ -100,7 +97,6 @@ def render_detail_page(
                 tool_a_detail=tool_a_detail,
                 alignment=alignment,
                 active_window=active_window,
-                visible_windows=visible_windows,
                 app_config=app_config,
             )
         )
