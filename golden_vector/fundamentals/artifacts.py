@@ -52,14 +52,28 @@ def write_fetched_fundamentals_artifact_pair(
     )
 
 
-def load_official_fundamentals(paths: ProjectPaths) -> pd.DataFrame:
-    """Load the manifest-resolved official fundamentals artifact, if present."""
+def load_official_fundamentals(
+    paths: ProjectPaths,
+    *,
+    prefer_latest_alias: bool = False,
+) -> pd.DataFrame:
+    """Load the official fundamentals artifact, if present.
 
-    path = resolve_current_model_artifact_path(
-        paths,
-        FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
-        fallback_path=fetched_fundamentals_latest_path(paths),
-    )
+    Normally resolves through the model-state manifest (the published current state).
+    During a ``refresh`` the manifest still points at the PREVIOUS run until the end-of-run
+    promote, so the Tool B build passes ``prefer_latest_alias=True`` to read the latest
+    fetched alias the refresh's fundamentals step just wrote — the same bypass-the-stale-
+    manifest pattern Tool B already uses for the foundation."""
+
+    alias_path = fetched_fundamentals_latest_path(paths)
+    if prefer_latest_alias and alias_path.exists():
+        path: object | None = alias_path
+    else:
+        path = resolve_current_model_artifact_path(
+            paths,
+            FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
+            fallback_path=alias_path,
+        )
     if path is None:
         return empty_fetched_fundamentals_frame()
     frame = read_required_parquet(

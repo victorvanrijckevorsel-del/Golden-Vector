@@ -844,6 +844,7 @@ def run_fetch_fundamentals(
     paths: ProjectPaths,
     *,
     tickers: list[str] | None = None,
+    publish_model_state: bool = True,
 ) -> int:
     loaded_config = load_app_config(paths)
     publish_current = not tickers
@@ -875,7 +876,10 @@ def run_fetch_fundamentals(
             }
         )
         model_state: dict[str, object] | None = None
-        if publish_current:
+        # publish_model_state=False is the refresh path: it writes the latest fetched
+        # fundamentals alias (so the in-refresh Tool B reads fresh data) but defers the
+        # model-state manifest publish to refresh's single end-of-run promote.
+        if publish_current and publish_model_state:
             model_state = write_current_model_state_manifest(
                 paths=paths,
                 config_hash=loaded_config.config_hash,
@@ -885,6 +889,8 @@ def run_fetch_fundamentals(
             )
             run_context.record_artifact(paths.latest_model_state_manifest_path)
             summary["model_state"] = model_state.get("state")
+        elif publish_current:
+            summary["model_state"] = "deferred_to_caller"
         else:
             summary["model_state"] = "unchanged"
         status = "SUCCESS" if int(summary.get("fail_count") or 0) == 0 else "WARN"
@@ -902,6 +908,11 @@ def run_fetch_fundamentals(
                 "Model-state manifest updated: "
                 f"{paths.latest_model_state_manifest_path.relative_to(paths.repo_root).as_posix()} "
                 f"({str(model_state.get('state')).upper()})"
+            )
+        elif publish_current:
+            print(
+                "Published latest official fundamentals; model-state publish deferred to "
+                "the caller (refresh end-of-run promote)."
             )
         else:
             print(
@@ -2254,6 +2265,9 @@ def run_tool_b(
             spot_gold_date=spot_gold_date,
             gold_price_basis=gold_price_basis,
             publish_latest_aliases=publish_latest_aliases,
+            # In refresh (model-state bypass) read the fresh fundamentals alias, not the
+            # not-yet-promoted manifest, so the persisted Tool B reflects this run's fetch.
+            prefer_latest_fundamentals_alias=not _use_model_state_inputs,
         )
         run_context.write_json("tool_b_output_summary.json", tool_b_result.summary)
 
@@ -3349,6 +3363,36 @@ def run_refresh(
             )
 
 
+def _fundamentals_due_for_refresh(
+    paths: ProjectPaths, app_config: AppConfig
+) -> tuple[bool, str]:
+    """Whether ``refresh`` should re-fetch official fundamentals before Tool B.
+
+    Returns (due, reason). Due when the published official fundamentals are missing or older
+    than ``fundamentals.refresh_fetch_max_age_days``. Annual statements change ~quarterly, so
+    the intraday market-hours refresh skips the fetch while the data is still fresh."""
+    from golden_vector.contracts.fundamentals import fetched_fundamentals_latest_path
+
+    path = fetched_fundamentals_latest_path(paths)
+    if not path.exists():
+        return True, "no official fundamentals on disk"
+    try:
+        fetched = pd.to_datetime(
+            pd.read_parquet(path, columns=["fetched_at_utc"])["fetched_at_utc"],
+            utc=True,
+            errors="coerce",
+        ).max()
+    except Exception:
+        return True, "official fundamentals unreadable"
+    if pd.isna(fetched):
+        return True, "official fundamentals missing fetched_at"
+    age_days = (pd.Timestamp.now(tz="UTC") - fetched).total_seconds() / 86400.0
+    max_age = app_config.fundamentals.refresh_fetch_max_age_days
+    if age_days > max_age:
+        return True, f"{age_days:.1f}d old (> {max_age}d threshold)"
+    return False, f"{age_days:.1f}d old (<= {max_age}d threshold)"
+
+
 def _run_refresh_unlocked(
     paths: ProjectPaths,
     *,
@@ -3452,6 +3496,27 @@ def _run_refresh_unlocked(
             f"({str(model_state.get('state')).upper()})"
         )
     else:
+        # Keep official fundamentals fresh before Tool B reads them. Re-fetch only when the
+        # last fetch is stale (config: fundamentals.refresh_fetch_max_age_days) so intraday
+        # refreshes don't re-download quarterly data. Fundamentals are OPTIONAL: a fetch
+        # failure warns and the refresh continues (Tool B falls back to the last-good official
+        # alias + the manual store). publish_model_state=False defers the manifest publish to
+        # the single end-of-run promote; Tool B reads the fresh alias via the bypass below.
+        due, reason = _fundamentals_due_for_refresh(paths, loaded_config_for_refresh.app)
+        print()
+        if due:
+            print(f"== Fundamentals: re-fetching official fundamentals ({reason}) ==")
+            started_at = perf_counter()
+            fundamentals_exit = run_fetch_fundamentals(paths, publish_model_state=False)
+            record_step("fetch_fundamentals", started_at, fundamentals_exit)
+            if fundamentals_exit != 0:
+                print(
+                    "fetch-fundamentals failed (exit {}); continuing on the last-good official "
+                    "fundamentals (optional data).".format(fundamentals_exit)
+                )
+        else:
+            print(f"== Fundamentals: fresh ({reason}); skipping fetch ==")
+
         print()
         print(f"== Step 3/{total_steps}: tool-b ==")
         started_at = perf_counter()

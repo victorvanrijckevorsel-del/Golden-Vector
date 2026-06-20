@@ -1434,12 +1434,24 @@ class FundamentalsConfig(StrictConfigModel):
     version: int = 1
     max_statement_age_days: int = 540
     ebitda_reconciliation_max_pct: float = 0.25
+    # How old the published official fundamentals may get before `refresh` re-fetches them.
+    # The market-hours refresh runs intraday, but annual statements change ~quarterly, so we
+    # only re-pull when the last fetch is older than this (7 days catches new filings within a
+    # week without re-downloading every intraday run). A manual `fetch-fundamentals` ignores it.
+    refresh_fetch_max_age_days: int = 7
 
     @field_validator("max_statement_age_days")
     @classmethod
     def positive_statement_age(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("max_statement_age_days must be positive")
+        return int(value)
+
+    @field_validator("refresh_fetch_max_age_days")
+    @classmethod
+    def positive_refresh_fetch_age(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("refresh_fetch_max_age_days must be positive")
         return int(value)
 
     @field_validator("ebitda_reconciliation_max_pct")

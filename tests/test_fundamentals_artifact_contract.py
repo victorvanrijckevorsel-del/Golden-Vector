@@ -168,6 +168,36 @@ def test_official_fundamentals_loader_reads_through_manifest(tmp_path):
     ]
 
 
+def test_official_fundamentals_loader_prefer_latest_alias_reads_fresh_fetch(tmp_path):
+    """prefer_latest_alias=True reads the freshly-written latest alias even when the manifest
+    still points at the previous fetch — the bypass refresh's Tool B uses so it reflects this
+    run's fundamentals fetch before the end-of-run promote."""
+    paths = build_test_paths(tmp_path)
+    old_run = "20260610T120000Z-fetch-fundamentals"
+    write_fetched_fundamentals_artifact_pair(
+        paths=paths,
+        frame=pd.DataFrame(
+            [_official_row(ticker="AEM", field_name="ebitda_ltm_musd", value=900.0, source_run_id=old_run)]
+        ),
+        source_run_id=old_run,
+    )
+    write_current_model_state_manifest(paths=paths, config_hash="config-hash")  # manifest -> old
+
+    new_run = "20260620T120000Z-fetch-fundamentals"
+    write_fetched_fundamentals_artifact_pair(
+        paths=paths,
+        frame=pd.DataFrame(
+            [_official_row(ticker="AEM", field_name="ebitda_ltm_musd", value=950.0, source_run_id=new_run)]
+        ),
+        source_run_id=new_run,
+    )  # alias -> new, manifest NOT re-promoted
+
+    via_manifest = load_official_fundamentals(paths)
+    via_alias = load_official_fundamentals(paths, prefer_latest_alias=True)
+    assert via_manifest.set_index("field_name").loc["ebitda_ltm_musd", "value"] == 900.0
+    assert via_alias.set_index("field_name").loc["ebitda_ltm_musd", "value"] == 950.0
+
+
 def test_writer_enforces_one_source_run_id_for_manifest_resolution(tmp_path):
     paths = build_test_paths(tmp_path)
     source_run_id = "20260610T120000Z-fetch-fundamentals"

@@ -499,6 +499,13 @@ def test_refresh_continues_past_blocked_options_and_runs_portfolio(
         "golden_vector.cli.run_tool_a",
         lambda _paths: call_order.append("tool-a") or 0,
     )
+    # Refresh now runs a guarded fetch-fundamentals step before Tool B; stub it (like the
+    # other pipeline steps) so this carry-forward test never reaches Yahoo. Non-appending so
+    # it can't disturb the call_order assertion.
+    monkeypatch.setattr(
+        "golden_vector.cli.run_fetch_fundamentals",
+        lambda _paths, **_kwargs: 0,
+    )
     monkeypatch.setattr(
         "golden_vector.cli.run_tool_b",
         lambda _paths, **_kwargs: call_order.append("tool-b") or 0,

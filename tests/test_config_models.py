@@ -7,6 +7,7 @@ from golden_vector.contracts.config_models import (
     BenchmarksConfig,
     CandidateFinderConfig,
     ConfidenceThresholds,
+    FundamentalsConfig,
     GammaThresholds,
     GoldProfileConfig,
     HedgeReadinessConfig,
@@ -722,6 +723,14 @@ def test_confidence_thresholds_observation_floors_share_one_scaling():
     }
     for window, ratio in ratios.items():
         assert ratio == pytest.approx(20 / 26, abs=0.05), window
+
+
+def test_fundamentals_config_refresh_fetch_max_age_days_defaults_and_validates():
+    assert FundamentalsConfig().refresh_fetch_max_age_days == 7
+    assert FundamentalsConfig(refresh_fetch_max_age_days=30).refresh_fetch_max_age_days == 30
+    for bad in (0, -3):
+        with pytest.raises(ValidationError, match="refresh_fetch_max_age_days must be positive"):
+            FundamentalsConfig(refresh_fetch_max_age_days=bad)
 
 
 def test_candidate_finder_preset_accepts_no_option_filter():

@@ -43,6 +43,27 @@ class _LoadedConfigStub:
         self.config_hash = config_hash
 
 
+@pytest.fixture(autouse=True)
+def _stub_refresh_fundamentals_fetch(monkeypatch):
+    """Refresh runs a guarded fetch-fundamentals step before Tool B. The chain/fault tests
+    stub every pipeline step so they never touch Yahoo — stub this one too by default. Tests
+    that exercise the step override this with their own fake."""
+    monkeypatch.setattr("golden_vector.cli.run_fetch_fundamentals", lambda *args, **kwargs: 0)
+
+
+def _write_fetched_fundamentals_age(paths, *, days_old: float) -> None:
+    """Write a minimal official-fundamentals latest alias with a controllable fetch age
+    (only the fetched_at_utc column the freshness guard reads)."""
+    from golden_vector.contracts.fundamentals import fetched_fundamentals_latest_path
+
+    path = fetched_fundamentals_latest_path(paths)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fetched = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days_old)
+    pd.DataFrame(
+        {"ticker": ["AAA"], "fetched_at_utc": [fetched.isoformat()]}
+    ).to_parquet(path, index=False)
+
+
 def test_tool_b_prices_at_spot_gold_close_when_cli_omits_gold_price(tmp_path, monkeypatch):
     """Gold dial M1: `python main.py tool-b` (no --gold-price) prices at the
     latest daily gold close from the foundation — the config default is no
@@ -62,7 +83,7 @@ def test_tool_b_prices_at_spot_gold_close_when_cli_omits_gold_price(tmp_path, mo
     def fake_pipeline(*, paths, app_config, run_context, normalized_market_snapshots,
                      gold_price_assumption, snapshot_refresh_run_id, snapshot_as_of_date,
                      spot_gold_usd, spot_gold_date, gold_price_basis,
-                     publish_latest_aliases):
+                     publish_latest_aliases, prefer_latest_fundamentals_alias=False):
         captured["gold_price"] = gold_price_assumption
         captured["gold_price_basis"] = gold_price_basis
         captured["publish_latest_aliases"] = publish_latest_aliases
@@ -414,6 +435,88 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     assert "Step 7/7: portfolio" in out
     assert "Model state manifest published:" in out
     assert "Refresh complete" in out
+
+
+def test_fundamentals_due_for_refresh_guard(tmp_path):
+    """The freshness guard re-fetches official fundamentals when missing or older than
+    fundamentals.refresh_fetch_max_age_days, and skips when fresh."""
+    from golden_vector.cli import _fundamentals_due_for_refresh
+
+    paths = build_test_paths(tmp_path)
+    app = load_app_config(ProjectPaths.discover()).app  # default refresh_fetch_max_age_days = 7
+
+    due, reason = _fundamentals_due_for_refresh(paths, app)
+    assert due is True and "no official fundamentals" in reason  # missing -> due
+
+    _write_fetched_fundamentals_age(paths, days_old=0)
+    due, _ = _fundamentals_due_for_refresh(paths, app)
+    assert due is False  # fresh -> skip
+
+    _write_fetched_fundamentals_age(paths, days_old=30)
+    due, _ = _fundamentals_due_for_refresh(paths, app)
+    assert due is True  # stale (30d > 7d) -> due
+
+    # The threshold is read from config, not hardcoded: a 14-day config keeps a 9-day-old
+    # fetch fresh, while the default 7-day config marks the same fetch due.
+    app14 = app.model_copy(
+        update={"fundamentals": app.fundamentals.model_copy(update={"refresh_fetch_max_age_days": 14})}
+    )
+    _write_fetched_fundamentals_age(paths, days_old=9)
+    assert _fundamentals_due_for_refresh(paths, app14)[0] is False
+    assert _fundamentals_due_for_refresh(paths, app)[0] is True
+
+
+def _stub_refresh_pipeline(monkeypatch, *, order):
+    """Stub every refresh pipeline step (returning success) and record call order."""
+    real = load_app_config(ProjectPaths.discover()).app
+    app_with_portfolio = real.model_copy(
+        update={"portfolio": real.portfolio.model_copy(update={"enabled": True})}
+    )
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=app_with_portfolio, config_hash="hash"),
+    )
+    monkeypatch.setattr("golden_vector.cli.run_foundation", lambda _p, *, command_name="update-data": (order.append("update-data"), 0)[1])
+    monkeypatch.setattr("golden_vector.cli.run_tool_a", lambda _p: (order.append("tool-a"), 0)[1])
+    monkeypatch.setattr("golden_vector.cli.run_tool_b", lambda _p, *, gold_price, _use_model_state_inputs: (order.append("tool-b"), 0)[1])
+    monkeypatch.setattr("golden_vector.cli.run_tool_c", lambda _p, **_k: (order.append("tool-c"), 0)[1])
+    monkeypatch.setattr("golden_vector.cli.run_tool_d", lambda _p, *, gold_price, **_k: (order.append("tool-d"), 0)[1])
+    monkeypatch.setattr("golden_vector.cli.run_option_artifacts_outcome", lambda _p, *, parent_refresh_id, lock_held=False: OptionArtifactsOutcome(status="OK"))
+    monkeypatch.setattr("golden_vector.cli._run_portfolio_refresh_step", lambda _p, **_k: (order.append("portfolio"), 0)[1])
+
+
+def test_refresh_runs_guarded_fundamentals_step_before_tool_b(tmp_path, monkeypatch):
+    """The refresh fetches fundamentals BEFORE Tool B when stale/missing (deferring the
+    manifest publish), skips when fresh, and a fetch failure does not abort the refresh."""
+    paths = build_test_paths(tmp_path)
+    order: list[str] = []
+    _stub_refresh_pipeline(monkeypatch, order=order)
+    fetch_calls: list[dict] = []
+
+    def fake_fetch(_p, *, publish_model_state=True):
+        fetch_calls.append({"publish_model_state": publish_model_state})
+        order.append("fetch-fundamentals")
+        return 0
+
+    monkeypatch.setattr("golden_vector.cli.run_fetch_fundamentals", fake_fetch)
+
+    # Missing official fundamentals -> due -> fetch runs before tool-b, manifest publish deferred.
+    assert run_refresh(paths, gold_price_override=None, skip_tool_b=False) == 0
+    assert fetch_calls == [{"publish_model_state": False}]
+    assert order.index("fetch-fundamentals") < order.index("tool-b")
+
+    # Fresh -> the step skips the fetch entirely.
+    _write_fetched_fundamentals_age(paths, days_old=0)
+    fetch_calls.clear()
+    order.clear()
+    assert run_refresh(paths, gold_price_override=None, skip_tool_b=False) == 0
+    assert fetch_calls == []
+    assert "fetch-fundamentals" not in order
+
+    # Stale + a fetch FAILURE -> warns and continues; the refresh still completes.
+    _write_fetched_fundamentals_age(paths, days_old=30)
+    monkeypatch.setattr("golden_vector.cli.run_fetch_fundamentals", lambda _p, **_k: 1)
+    assert run_refresh(paths, gold_price_override=None, skip_tool_b=False) == 0
 
 
 def test_refresh_fault_after_tool_b_keeps_previous_manifest_and_readers_intact(

@@ -59,13 +59,19 @@ def execute_tool_b_pipeline(
     spot_gold_date: str | None = None,
     gold_price_basis: str = "custom_scenario",
     publish_latest_aliases: bool = True,
+    prefer_latest_fundamentals_alias: bool = False,
 ) -> ToolBExecutionResult:
     tool_b_tickers = _active_tool_b_tickers(app_config)
     manual_data = load_manual_screening_data(
         paths,
         tickers=tool_b_tickers,
     )
-    official_fundamentals = load_official_fundamentals(paths)
+    # During a refresh the model-state manifest still points at the previous run, so read
+    # the fresh fundamentals alias the refresh's fundamentals step just wrote (same stale-
+    # manifest bypass Tool B uses for the foundation). Standalone/serve reads via the manifest.
+    official_fundamentals = load_official_fundamentals(
+        paths, prefer_latest_alias=prefer_latest_fundamentals_alias
+    )
     merged, snapshot_anchor_date = _merge_inputs_for_tool_b(
         app_config=app_config,
         manual_data=manual_data,

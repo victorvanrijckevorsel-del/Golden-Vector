@@ -252,6 +252,37 @@ def test_run_tool_b_defaults_to_latest_gold_close(tmp_path, monkeypatch):
     assert captured["spot_gold_date"] == "2026-06-09"
     assert captured["gold_price_basis"] == "latest_daily_gold_close"
     assert captured["publish_latest_aliases"] is True
+    # Standalone (manifest-resolved) run reads official fundamentals via the manifest, NOT
+    # the fresh alias — the alias bypass is only for the in-refresh model-state bypass.
+    assert captured["prefer_latest_fundamentals_alias"] is False
+
+
+def test_run_tool_b_reads_fresh_fundamentals_alias_when_bypassing_model_state(tmp_path, monkeypatch):
+    """In refresh (model-state bypass, _use_model_state_inputs=False) run_tool_b must pass
+    prefer_latest_fundamentals_alias=True so Tool B reads THIS run's fresh fundamentals alias
+    (the not-yet-promoted manifest still points at the previous run). Guards the wiring so a
+    dropped kwarg can't silently make the in-refresh Tool B read stale fundamentals."""
+    paths = build_test_paths(tmp_path)
+    real_loaded = load_app_config(ProjectPaths.discover()).app
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    monkeypatch.setattr(
+        "golden_vector.cli.load_app_config",
+        lambda _: _LoadedConfigStub(app=real_loaded, config_hash="hash"),
+    )
+    monkeypatch.setattr(
+        "golden_vector.cli.load_latest_foundation_snapshot",
+        lambda **_: _latest_foundation_snapshot(gold_history=_gold_history()),
+    )
+    captured: dict[str, object] = {}
+
+    def _capture_tool_b(**kwargs):
+        captured.update(kwargs)
+        return _tool_b_result_stub()
+
+    monkeypatch.setattr("golden_vector.cli.execute_tool_b_pipeline", _capture_tool_b)
+
+    assert run_tool_b(paths, gold_price=None, _use_model_state_inputs=False) == 0
+    assert captured["prefer_latest_fundamentals_alias"] is True
 
 
 def test_run_tool_b_fails_closed_before_persistence_when_spot_gold_missing(
