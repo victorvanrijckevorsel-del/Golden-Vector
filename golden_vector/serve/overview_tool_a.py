@@ -154,10 +154,13 @@ def _render_tool_a_overview_page(
     body = ["<h1>Gold Sensitivity</h1>"]
     body.append(
         "<p>Which miners react strongly or weakly to the gold price — split by direction "
-        "(up vs down). Ranked by the cross-window gold-sensitivity rank; low-confidence names "
-        "are held out. <strong>Gold-link</strong> shows how much of each stock's movement gold "
-        "actually explains in the chosen window — a 'weak'/'none' beta barely tracks gold, so "
-        "treat it with caution. Click a ticker for the full breakdown and beta-history chart.</p>"
+        "(up vs down). The beta columns (up/down beta, delta, gamma, asymmetry, gold-link) "
+        "follow the window selector below; <strong>Confidence, Profile and Rank are computed "
+        "across the scoring windows (6M / 1Y / 3Y) and do not change with the selector</strong> "
+        "(low-confidence names are held out of the rank). <strong>Gold-link</strong> shows how "
+        "much of each stock's movement gold actually explains in the chosen window — a "
+        "'weak'/'none' beta barely tracks gold, so treat it with caution. Click a ticker for "
+        "the full breakdown and the gold / stock / ETF overlay.</p>"
     )
     if flash:
         body.append(f"<div class=\"flash\">{escape(flash)}</div>")

@@ -29,10 +29,9 @@ from golden_vector.model.structural import (
     build_rebased_comparison_series,
     build_structural_weekly_series,
 )
-from golden_vector.common.windows import window_weeks
+from golden_vector.common.windows import ALL_WINDOWS, window_weeks
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.schema import validate_tool_b_output_schema
-from golden_vector.serve.windows import SCORING_WINDOWS
 
 
 @dataclass(frozen=True)
@@ -425,10 +424,12 @@ DETAIL_ALIGNMENT_FOUNDATION_MISSING = "FOUNDATION_MISSING"
 DETAIL_ALIGNMENT_TOOL_A_MISSING_REFRESH = "TOOL_A_MISSING_REFRESH"
 
 
-# Structural windows the detail page currently exposes. Still the SCORING set for now;
-# the horizon-consistency rollout (Phase 4) widens this to the full registry set. Imported
-# so the set has ONE definition. Order = switcher tab display order.
-_STRUCTURAL_WINDOWS: tuple[str, ...] = SCORING_WINDOWS
+# Structural windows the detail page exposes — the FULL registry set (6M/1Y/2Y/3Y/5Y), so
+# every descriptive metric (delta/gamma/asymmetry/beta/R²/weeks/volatility/scatter/overlay)
+# follows the horizon switcher with no mixing. Score/Confidence/Profile are cross-window
+# summaries (across the scoring windows) and are labelled as such, not faked per-window.
+# ONE definition, from the registry. Order = switcher tab display order.
+_STRUCTURAL_WINDOWS: tuple[str, ...] = ALL_WINDOWS
 
 # Weekly-observation count per detail window, sourced from the ONE registry (no literals)
 # — used by the scatter-slice / volatility recompute / rebased-overlay helpers.

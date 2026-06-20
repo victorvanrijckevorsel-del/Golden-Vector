@@ -60,7 +60,7 @@ from golden_vector.serve.workspace_state import (
     _WINDOW_WEEKS,
     _structural_history_matches_tool_a,
 )
-from golden_vector.serve.windows import WINDOW_LABELS
+from golden_vector.serve.windows import SCORING_WINDOWS, WINDOW_LABELS
 
 def _sizing_query_parts(sizing_request: object | None) -> list[str]:
     """Serialize the option sizing request into URL query parts so window-tab
@@ -101,7 +101,9 @@ def _render_window_switcher(
     anchor: str | None = None,
     sizing_request: object | None = None,
 ) -> str:
-    """Three-tab switcher at the top of the detail page: 6M / 12M / 3Y.
+    """Window switcher at the top of the detail page: all structural lookbacks
+    (6M / 1Y / 2Y / 3Y / 5Y; 12M renders as "1Y"). Every descriptive metric below
+    follows the selected tab; Score/Confidence/Profile are a cross-window summary.
 
     Clicking a tab navigates to the same ticker with `?window=<id>`. Optional
     lens/anchor values keep tool-specific detail views stable while the user
@@ -130,14 +132,15 @@ def _render_window_switcher(
             " <span class=\"window-canonical\">anchor</span>" if is_canonical else ""
         )
         tabs.append(
-            f"<a class=\"{cls}\" href=\"{escape(href, quote=True)}\">{escape(window)}{canonical_marker}</a>"
+            f"<a class=\"{cls}\" href=\"{escape(href, quote=True)}\">"
+            f"{escape(WINDOW_LABELS.get(window, window))}{canonical_marker}</a>"
         )
     mismatch_note = ""
     if active != canonical:
         mismatch_note = (
-            f"<p class=\"hint window-mismatch\">Viewing {escape(active)} — canonical anchor for "
-            f"this ticker is {escape(canonical)}. Cross-window aggregates (Confidence, Gold Sensitivity "
-            "Score, Profile) are unchanged.</p>"
+            f"<p class=\"hint window-mismatch\">Viewing {escape(WINDOW_LABELS.get(active, active))} — "
+            f"canonical anchor for this ticker is {escape(WINDOW_LABELS.get(canonical, canonical))}. "
+            "Cross-window aggregates (Confidence, Gold Sensitivity Score, Profile) are unchanged.</p>"
         )
     return (
         "<section class=\"panel window-switcher\">"
@@ -1054,8 +1057,14 @@ def _render_tool_a_panel(
         _metric_card(f"Weeks ({active_window})", _fmt_number(tool_a_row.get(f"weeks_{win}"), decimals=0)),
         _metric_card(f"Volatility Context ({active_window})", _fmt_text(vol_context_display)),
         "</div>",
-        # Aggregate (cross-window) metrics — stable regardless of switcher.
-        "<h3>Aggregate across all windows</h3>",
+        # Cross-window summary — the Score/Confidence/Profile are computed ACROSS the
+        # scoring windows (a robustness blend), NOT for the selected horizon, so they are
+        # stable regardless of the switcher. Labelled explicitly so nothing reads as mixed:
+        # the descriptive cards above are the selected window; these are the across-windows view.
+        f"<h3>Across scoring windows ({' / '.join(WINDOW_LABELS[w] for w in SCORING_WINDOWS)})</h3>",
+        "<p class=\"hint\">The Gold Sensitivity Score, Confidence, and Profile are computed "
+        "across the scoring windows (a robustness blend) and do not change with the horizon "
+        "switcher above. 2Y / 5Y are display-only lookbacks and are never scored.</p>",
         "<div class=\"metric-grid\">",
         _metric_card("Confidence", _fmt_text(tool_a_row.get("confidence_label"))),
         _metric_card("Gold Sensitivity Score", _fmt_number(tool_a_row.get("tool_a_score"), decimals=1)),
@@ -1326,6 +1335,8 @@ def _render_structural_window_table(
             markers.append("Anchor")
         if window_id == active_window:
             markers.append("Active")
+        if window_id not in SCORING_WINDOWS:
+            markers.append("display-only")
         marker_text = f" ({', '.join(markers)})" if markers else ""
         row_class = " class=\"active-row\"" if window_id == active_window else ""
         window_rows.append(
@@ -1343,7 +1354,9 @@ def _render_structural_window_table(
         )
     return (
         "<section class=\"panel nested-panel\">"
-        "<h3>Official Structural Windows</h3>"
+        "<h3>Structural windows — all lookbacks</h3>"
+        "<p class=\"hint\">Cross-window reference: 6M / 1Y / 3Y are the scoring windows; "
+        "2Y / 5Y are display-only longer lookbacks (computed but never scored or ranked).</p>"
         "<table>"
         "<thead><tr>"
         + help_th("Window", key="tool_a_structural_window")

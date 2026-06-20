@@ -68,11 +68,11 @@ def test_canonical_anchor_window_defaults_to_12m_when_missing():
 
 # ---------------------------------------------------------------- T2 ----
 
-def test_window_switcher_renders_three_tabs_and_marks_active_and_canonical():
+def test_window_switcher_renders_all_tabs_and_marks_active_and_canonical():
     html = _render_window_switcher(ticker="NEM", active="6M", canonical="12M")
-    # Three tabs present.
-    for window in ("6M", "12M", "3Y"):
-        assert f">{window}" in html
+    # All five lookbacks present (12M renders as "1Y").
+    for label in ("6M", "1Y", "2Y", "3Y", "5Y"):
+        assert f">{label}" in html
     # Active tab marked with the active class.
     assert 'class="window-tab active"' in html
     # Canonical tab carries the 'anchor' marker.
@@ -463,3 +463,51 @@ def test_invalid_window_param_falls_back_to_canonical_without_error(tmp_path):
     # Falls back to canonical (12M).
     assert "Structural Delta (12M)" in body
 
+
+
+# -------------------------------------------- T15 (horizon consistency) ----
+
+def test_structural_window_table_lists_all_windows_and_flags_display_only():
+    row = {"anchor_window_id": "12M"}
+    for w in ("6m", "12m", "2y", "3y", "5y"):
+        row.update({
+            f"structural_delta_{w}": 1.5, f"gamma_{w}": -0.2, f"up_beta_{w}": 1.6,
+            f"down_beta_{w}": 1.4, f"asymmetry_ratio_{w}": 1.14, f"r_squared_{w}": 0.5,
+            f"weeks_{w}": 52, f"window_status_{w}": "ELIGIBLE",
+        })
+    html = _render_structural_window_table(row, active_window="3Y")
+    # all five lookbacks are listed
+    for wid in ("6M", "12M", "2Y", "3Y", "5Y"):
+        assert f"<td>{wid}" in html
+    # 2Y/5Y rows are flagged display-only; scoring windows are not
+    assert "2Y (display-only)" in html
+    assert "5Y (display-only)" in html
+    assert "6M (display-only)" not in html
+    assert "3Y (Active)" in html
+
+
+def test_detail_page_is_horizon_consistent_with_no_silent_mixing(tmp_path):
+    """Pick a horizon (2Y) -> every descriptive metric is that horizon, while
+    Score/Confidence/Profile are an explicitly-labelled cross-window summary (never
+    faked per-window). This is the anti-mixing guarantee for the detail page.
+    """
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    body = _call_wsgi_app(app, method="GET", path="/ticker/NEM?window=2y")["body"]
+
+    # Descriptive cards follow the selected horizon.
+    assert "Structural Delta (2Y)" in body
+    assert "Volatility Context (2Y)" in body
+    # Score/Confidence/Profile are a labelled cross-window summary, NOT faked as 2Y.
+    assert "Across scoring windows" in body
+    assert "do not change with the horizon switcher" in body
+    assert "Gold Sensitivity Score" in body
+    assert "Gold Sensitivity Score (2Y)" not in body
+    # The all-lookbacks reference table marks the display-only windows.
+    assert "display-only" in body
