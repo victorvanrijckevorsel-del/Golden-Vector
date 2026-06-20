@@ -100,6 +100,51 @@ def test_compute_tool_d_outputs_reuses_spot_tool_b_frame_for_spot_run(monkeypatc
     assert output.iloc[0]["gold_price_used"] == 4000.0
 
 
+def test_compute_tool_d_outputs_threads_official_fundamentals(monkeypatch):
+    captured: list[pd.DataFrame | None] = []
+    official = pd.DataFrame(
+        [
+            {
+                "ticker": "AAA",
+                "field_name": "net_debt_musd",
+                "value": 123.0,
+                "value_status": "OK",
+            }
+        ]
+    )
+
+    def fake_tool_b(**kwargs):
+        captured.append(kwargs.get("official_fundamentals"))
+        gold = float(kwargs["gold_price_assumption"])
+        return pd.DataFrame(
+            [_tool_b_row("AAA", forward_ebitda=gold / 2.0, fcf_yield=0.01)]
+        )
+
+    monkeypatch.setattr(tool_d_module, "compute_tool_b_in_memory", fake_tool_b)
+    manual_data = _manual_data([_manual_payload(ticker="AAA", aisc=1200, net_debt=500)])
+
+    compute_tool_d_outputs(
+        inputs=ToolDExecutionInputs(
+            app_config=object(),
+            manual_data=manual_data,
+            normalized_market_snapshots=pd.DataFrame(),
+            tool_b_latest=pd.DataFrame([{"ticker": "AAA", "source_run_id": "tool-b-run"}]),
+            spot_gold_usd=4000.0,
+            spot_gold_date="2026-06-01",
+            snapshot_refresh_run_id="refresh-run",
+            snapshot_as_of_date="2026-06-01",
+            official_fundamentals=official,
+        ),
+        config=ToolDConfig(),
+        gold_price=3000.0,
+        source_run_id="tool-d-run",
+    )
+
+    assert len(captured) == 2
+    for passed in captured:
+        assert passed is official
+
+
 def test_tool_d_stress_scenario_presets_are_backend_owned():
     assert tool_d_stress_scenario_presets(4000.0) == [
         ("Spot", 4000.0),

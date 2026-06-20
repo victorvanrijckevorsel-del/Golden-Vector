@@ -85,6 +85,7 @@ class ToolDExecutionInputs:
     spot_gold_date: str | None
     snapshot_refresh_run_id: str | None
     snapshot_as_of_date: object = None
+    official_fundamentals: pd.DataFrame | None = None
 
 
 def compute_tool_d_outputs(
@@ -108,6 +109,7 @@ def compute_tool_d_outputs(
         snapshot_refresh_run_id=inputs.snapshot_refresh_run_id,
         snapshot_as_of_date=inputs.snapshot_as_of_date,
         source_run_id=source_run_id,
+        official_fundamentals=inputs.official_fundamentals,
     )
     if same_as_spot:
         stressed = spot
@@ -120,6 +122,7 @@ def compute_tool_d_outputs(
             snapshot_refresh_run_id=inputs.snapshot_refresh_run_id,
             snapshot_as_of_date=inputs.snapshot_as_of_date,
             source_run_id=source_run_id,
+            official_fundamentals=inputs.official_fundamentals,
         )
     else:
         stressed = compute_tool_b_in_memory(
@@ -130,6 +133,7 @@ def compute_tool_d_outputs(
             snapshot_refresh_run_id=inputs.snapshot_refresh_run_id,
             snapshot_as_of_date=inputs.snapshot_as_of_date,
             source_run_id=source_run_id,
+            official_fundamentals=inputs.official_fundamentals,
         )
         ebitda_anchor_gold_price = inputs.spot_gold_usd
         ebitda_anchor = spot

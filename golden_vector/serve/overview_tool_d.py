@@ -16,6 +16,7 @@ from golden_vector.app.model_state import (
 )
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
+from golden_vector.fundamentals.artifacts import load_official_fundamentals
 from golden_vector.model.tool_d import (
     ToolDExecutionInputs,
     compute_tool_d_outputs,
@@ -173,6 +174,7 @@ def _compute_scenario_frame(
             if ticker.active and ticker.tool_b_enabled
         ),
     )
+    official_fundamentals = load_official_fundamentals(paths)
     return compute_tool_d_outputs(
         inputs=ToolDExecutionInputs(
             app_config=app_config,
@@ -183,6 +185,7 @@ def _compute_scenario_frame(
             spot_gold_date=spot_gold_date,
             snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
             snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
+            official_fundamentals=official_fundamentals,
         ),
         config=app_config.tool_d,
         gold_price=gold_price,

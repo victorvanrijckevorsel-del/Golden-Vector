@@ -62,6 +62,7 @@ from golden_vector.app.run_pruning import PruneReport, prune_runs
 from golden_vector.app.run_context import RunContext, to_jsonable
 from golden_vector.features.horizons import parse_requested_horizons
 from golden_vector.features.returns import RETURN_COLUMNS, compute_horizon_returns_for_ticker
+from golden_vector.fundamentals.artifacts import load_official_fundamentals
 from golden_vector.fundamentals.fetch import fetch_and_publish_fundamentals
 from golden_vector.hedge.comparison import COMPARISON_SORT_COLUMNS
 from golden_vector.hedge.option_artifact_builder import (
@@ -1681,6 +1682,10 @@ def run_tool_d(
                 if ticker.active and ticker.tool_b_enabled
             ),
         )
+        official_fundamentals = load_official_fundamentals(
+            paths,
+            prefer_latest_alias=not _use_model_state_inputs,
+        )
         tool_d_outputs = compute_tool_d_outputs(
             inputs=ToolDExecutionInputs(
                 app_config=loaded_config.app,
@@ -1691,6 +1696,7 @@ def run_tool_d(
                 spot_gold_date=spot_gold_date,
                 snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
                 snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
+                official_fundamentals=official_fundamentals,
             ),
             config=loaded_config.app.tool_d,
             gold_price=resolved_gold_price,

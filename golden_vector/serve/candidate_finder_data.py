@@ -1086,6 +1086,7 @@ def _compute_scenario_sources(
             spot_gold_date=spot_gold_date,
             snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
             snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
+            official_fundamentals=official_fundamentals,
         ),
         config=app_config.tool_d,
         gold_price=scenario.gold_price,
