@@ -11,7 +11,7 @@ import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext, utc_now_iso
-from golden_vector.common.files import repo_relative
+from golden_vector.common.files import repo_relative, sha256_file
 from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.contracts.config_models import AppConfig, UniverseTicker
 from golden_vector.contracts.fundamentals import (
@@ -137,8 +137,14 @@ def fetch_and_publish_fundamentals(
             run_context.record_artifact(Path(history_write.latest_path))
         raw_history_artifact = {
             "path": repo_relative(paths, history_run_path),
+            "sha256": sha256_file(history_run_path),
             "latest_alias_path": (
                 repo_relative(paths, Path(history_write.latest_path))
+                if history_write.latest_path is not None
+                else None
+            ),
+            "latest_alias_sha256": (
+                sha256_file(Path(history_write.latest_path))
                 if history_write.latest_path is not None
                 else None
             ),

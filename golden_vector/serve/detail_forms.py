@@ -48,6 +48,7 @@ def _render_company_form(
     ticker: str,
     company_row: dict[str, Any],
     verification_rows: list[dict[str, Any]] | None = None,
+    return_to: str | None = None,
 ) -> str:
     verification_status_by_field = {
         str(row.get("field_name") or "").strip(): str(row.get("verification_status") or "").strip().upper()
@@ -129,6 +130,7 @@ def _render_company_form(
         "</p>"
         f"{clear_hint}"
         f"<form method=\"post\" action=\"/ticker/{escape(ticker)}/company\" class=\"form-grid\">"
+        f"{_return_to_input(return_to)}"
         f"{''.join(fields_html)}"
         "<div class=\"form-actions\"><button type=\"submit\">Save Company Inputs</button></div>"
         "</form>"
@@ -136,7 +138,12 @@ def _render_company_form(
     )
 
 
-def _render_reporting_form(*, ticker: str, reporting_row: dict[str, Any]) -> str:
+def _render_reporting_form(
+    *,
+    ticker: str,
+    reporting_row: dict[str, Any],
+    return_to: str | None = None,
+) -> str:
     fields_html = [
         "<label>"
         f"<span>{escape(label)}</span>"
@@ -156,6 +163,7 @@ def _render_reporting_form(*, ticker: str, reporting_row: dict[str, Any]) -> str
         "<h2>Reporting Calendar</h2>"
         f"<p><strong>Last Updated:</strong> {updated_at}</p>"
         f"<form method=\"post\" action=\"/ticker/{escape(ticker)}/reporting\" class=\"form-grid\">"
+        f"{_return_to_input(return_to)}"
         f"{''.join(fields_html)}"
         "<div class=\"form-actions\"><button type=\"submit\">Save Reporting Calendar</button></div>"
         "</form>"
@@ -167,6 +175,7 @@ def _render_verification_section(
     *,
     ticker: str,
     verification_rows: list[dict[str, Any]],
+    return_to: str | None = None,
 ) -> str:
     """Editable source-verification section.
 
@@ -230,6 +239,7 @@ def _render_verification_section(
             f"<td>{status}</td>"
             f"<td>"
             f"<form method=\"post\" action=\"/ticker/{escape(ticker)}/verification\" class=\"verification-form\">"
+            f"{_return_to_input(return_to)}"
             f"<input type=\"hidden\" name=\"field_name\" value=\"{escape(field_name)}\">"
             f"<label class=\"verification-cell\"><span>Status</span>"
             f"<select name=\"verification_status\" required>{options_html}</select></label>"
@@ -264,7 +274,12 @@ def _render_verification_section(
     )
 
 
-def _render_note_section(*, ticker: str, note_rows: list[dict[str, Any]]) -> str:
+def _render_note_section(
+    *,
+    ticker: str,
+    note_rows: list[dict[str, Any]],
+    return_to: str | None = None,
+) -> str:
     open_count = sum(1 for r in note_rows if str(r.get("note_status") or "").upper() == "OPEN")
     watch_count = sum(1 for r in note_rows if str(r.get("note_status") or "").upper() == "WATCH")
     done_count = sum(1 for r in note_rows if str(r.get("note_status") or "").upper() == "DONE")
@@ -316,6 +331,7 @@ def _render_note_section(*, ticker: str, note_rows: list[dict[str, Any]]) -> str
         f"{summary}"
         f"{note_table}"
         f"<form method=\"post\" action=\"/ticker/{escape(ticker)}/note\" class=\"note-form\">"
+        f"{_return_to_input(return_to)}"
         "<label class=\"full-width\"><span>Note</span><textarea name=\"note_text\" rows=\"3\" required></textarea></label>"
         "<label><span>Tag</span><input name=\"note_tag\" type=\"text\" placeholder=\"e.g. FOLLOW_UP\"></label>"
         "<label><span>Status</span>"
@@ -328,3 +344,10 @@ def _render_note_section(*, ticker: str, note_rows: list[dict[str, Any]]) -> str
         "</form>"
         "</section>"
     )
+
+
+def _return_to_input(return_to: str | None) -> str:
+    value = str(return_to or "").strip()
+    if not value:
+        return ""
+    return f"<input type=\"hidden\" name=\"return_to\" value=\"{escape(value, quote=True)}\">"

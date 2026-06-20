@@ -666,6 +666,10 @@ def test_candidate_finder_yahoo_source_recomputes_tool_b_and_tool_d_at_spot(
         "tool_b_finance_source": "yahoo",
         "tool_d_finance_source": "yahoo",
     }
+    row = data.frame.set_index("ticker").loc["AEM"]
+    assert row["gold_price_used"] == pytest.approx(4000.0)
+    assert row["tool_d_quality_rank"] == pytest.approx(12.0)
+    assert row["interest_cover_gold_usd"] == pytest.approx(2100.0)
 
 
 def test_candidate_finder_yahoo_source_failure_does_not_fallback_to_our_view(

@@ -633,6 +633,55 @@ def test_compute_tool_b_yahoo_view_uses_source_specific_confidence(tmp_path):
     assert nem["screening_verdict"] != "INCOMPLETE"
 
 
+def test_compute_tool_b_yahoo_rank_excludes_incomplete_manual_operating_inputs(tmp_path):
+    from golden_vector.screening.manual_data import load_manual_screening_data
+
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(ProjectPaths.discover()).app
+    _populate_manual_store(
+        paths,
+        {
+            "NEM": {
+                # Missing production_oz: Yahoo financial fields alone are not enough
+                # to rank the full Corporate Finance screen.
+                "aisc_usd_per_oz": 1300,
+                "cash_cost_usd_per_oz": 900,
+                "royalty_rate": 0.03,
+                "sustaining_capex_musd": 900,
+                "tax_rate": 0.30,
+                "reserve_life_years": 12,
+            },
+        },
+    )
+    manual_data = load_manual_screening_data(paths, tickers=["NEM"])
+    official = _official_fundamentals_frame(
+        {
+            "NEM": {
+                "net_debt_musd": (1000.0, "OK"),
+                "ebitda_ltm_musd": (4000.0, "OK"),
+                "da_musd": (500.0, "OK"),
+                "interest_expense_musd": (100.0, "OK"),
+            }
+        }
+    )
+
+    frame = compute_tool_b_in_memory(
+        app_config=app_config,
+        manual_data=manual_data,
+        normalized_market_snapshots=_market_snapshots(),
+        gold_price_assumption=4000.0,
+        official_fundamentals=official,
+        finance_source="yahoo",
+    )
+
+    nem = frame.set_index("ticker").loc["NEM"]
+    assert nem["finance_source"] == "yahoo"
+    assert nem["confidence"] == "INCOMPLETE"
+    assert nem["screening_verdict"] == "INCOMPLETE"
+    assert pd.isna(nem["fundamental_check_score"])
+    assert pd.isna(nem["fundamental_check_rank"])
+
+
 def test_materialize_yahoo_view_fails_if_mapped_source_column_is_missing():
     row = {column: None for column in TOOL_B_OUTPUT_COLUMNS}
     row["ticker"] = "NEM"

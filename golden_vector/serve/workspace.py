@@ -5,7 +5,7 @@ from __future__ import annotations
 import ipaddress
 from dataclasses import replace
 from typing import Any, Callable, Iterable
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 from wsgiref.simple_server import make_server
 
 from golden_vector.serve.screening_overrides import (
@@ -607,7 +607,7 @@ def create_workspace_app(
                             if not company_values:
                                 return _redirect_response(
                                     start_response,
-                                    f"/ticker/{ticker}?saved=company",
+                                    _saved_ticker_return_to(form_data, ticker, "company"),
                                 )
                             upsert_company_input(paths, ticker=ticker, values=company_values)
                         except ValueError as exc:
@@ -626,7 +626,7 @@ def create_workspace_app(
                             )
                         return _redirect_response(
                             start_response,
-                            f"/ticker/{ticker}?saved=company",
+                            _saved_ticker_return_to(form_data, ticker, "company"),
                         )
 
                     if action == "reporting":
@@ -663,7 +663,7 @@ def create_workspace_app(
                             )
                         return _redirect_response(
                             start_response,
-                            f"/ticker/{ticker}?saved=reporting",
+                            _saved_ticker_return_to(form_data, ticker, "reporting"),
                         )
 
                     if action == "verification":
@@ -714,7 +714,7 @@ def create_workspace_app(
                             )
                         return _redirect_response(
                             start_response,
-                            f"/ticker/{ticker}?saved=verification",
+                            _saved_ticker_return_to(form_data, ticker, "verification"),
                         )
 
                     if action == "note":
@@ -746,7 +746,7 @@ def create_workspace_app(
                             )
                         return _redirect_response(
                             start_response,
-                            f"/ticker/{ticker}?saved=note",
+                            _saved_ticker_return_to(form_data, ticker, "note"),
                         )
 
                 return _html_response(
@@ -840,6 +840,18 @@ def _safe_return_to(raw_value: object, *, fallback: str = "/option-trading") -> 
     if not value or not value.startswith("/") or value.startswith("//") or "\\" in value:
         return fallback
     return value
+
+
+def _saved_ticker_return_to(form_data: dict[str, list[str]], ticker: str, saved: str) -> str:
+    fallback = f"/ticker/{ticker}"
+    return_to = _safe_return_to(
+        form_data.get("return_to", [fallback])[0],
+        fallback=fallback,
+    )
+    parts = urlsplit(return_to)
+    params = dict(parse_qsl(parts.query, keep_blank_values=True))
+    params["saved"] = saved
+    return urlunsplit(("", "", parts.path or fallback, urlencode(params), parts.fragment))
 
 
 def _query_flag(query: dict[str, list[str]], name: str) -> bool:

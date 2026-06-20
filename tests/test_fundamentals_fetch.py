@@ -103,6 +103,13 @@ def test_mapper_converts_currency_then_scales_to_millions_once(tmp_path):
     assert rows.loc["interest_expense_musd", "value"] == 25.0
     interest_components = json.loads(rows.loc["interest_expense_musd", "components_json"])
     assert interest_components[0]["normalized_value"] == 25.0
+    assert interest_components[0]["normalization"] == "absolute_value"
+    net_debt_components = json.loads(rows.loc["net_debt_musd", "components_json"])
+    cash_component = next(
+        component for component in net_debt_components if component["component"] == "cash"
+    )
+    assert cash_component["normalized_value"] == 125.0
+    assert cash_component["contribution_musd"] == -125.0
 
 
 def test_mapper_missing_debt_leg_is_missing_not_zero_strength(tmp_path):
@@ -130,6 +137,16 @@ def test_mapper_missing_debt_leg_is_missing_not_zero_strength(tmp_path):
     row = official[official["field_name"].eq("net_debt_musd")].iloc[0]
     assert pd.isna(row["value"])
     assert row["value_status"] == "MISSING"
+    assert row["calculation_formula"] == "Net Debt = Long-term debt + Current debt - Cash"
+    components = json.loads(row["components_json"])
+    assert [component["component"] for component in components] == [
+        "long_term_debt",
+        "current_debt",
+        "cash",
+    ]
+    assert components[1]["status"] == "MISSING"
+    assert components[2]["normalized_value"] == 50.0
+    assert components[2]["contribution_musd"] == -50.0
 
 
 def test_mapper_missing_one_split_debt_leg_is_missing_not_understated(tmp_path):
@@ -189,6 +206,7 @@ def test_mapper_missing_cash_leg_keeps_debt_value_but_degrades_status(tmp_path):
     row = official[official["field_name"].eq("net_debt_musd")].iloc[0]
     assert row["value"] == 500.0
     assert row["value_status"] == "MISSING"
+    assert row["period_type"] == "ANNUAL"
     assert row["statement_scale"] == "absolute_to_usd_millions_cash_missing_assumed_zero"
     assert row["value_origin"] == "cash_missing_assumed_zero"
     components = json.loads(row["components_json"])
@@ -228,6 +246,40 @@ def test_mapper_net_cash_miner_stays_net_cash_when_cash_is_present(tmp_path):
     row = official[official["field_name"].eq("net_debt_musd")].iloc[0]
     assert row["value"] == -400.0
     assert row["value_status"] == "OK"
+    components = json.loads(row["components_json"])
+    cash_component = next(
+        component for component in components if component["component"] == "cash"
+    )
+    assert cash_component["normalized_value"] == 500.0
+    assert cash_component["contribution_musd"] == -500.0
+
+
+def test_mapper_annual_fields_ignore_newer_quarterly_rows(tmp_path):
+    source_run_id = "20260610T120000Z-fetch-fundamentals"
+    raw = raw_statement_payload_to_frame(
+        ticker="AEM",
+        yahoo_symbol="AEM",
+        payload=_payload(currency="USD"),
+        fetched_at_utc="2026-06-10T12:00:00Z",
+        source_run_id=source_run_id,
+    )
+    quarterly = raw[raw["statement_type"].ne("")].copy()
+    quarterly["period_end"] = date(2026, 3, 31)
+    quarterly["period_type"] = "QUARTERLY"
+    quarterly["value_raw"] = quarterly["value_raw"] * 10
+
+    official = map_raw_fundamentals_to_official(
+        pd.concat([raw, quarterly], ignore_index=True),
+        fx_histories={},
+        source_run_id=source_run_id,
+        max_statement_age_days=540,
+        ebitda_reconciliation_max_pct=0.25,
+    )
+
+    rows = official.set_index("field_name")
+    assert rows.loc["net_debt_musd", "value"] == 400.0
+    assert rows.loc["ebitda_ltm_musd", "value"] == 600.0
+    assert rows["period_type"].eq("ANNUAL").all()
 
 
 def test_mapper_rejects_cross_period_ebitda_and_da_mix(tmp_path):
@@ -388,12 +440,16 @@ def test_raw_fundamentals_history_preserves_period_type_key(tmp_path):
         merged["statement_type"].eq("income_stmt")
         & merged["line_item_original"].eq("Operating Income")
         & merged["period_end"].astype(str).eq("2025-12-31")
-    ].sort_values("period_type")
-    assert rows["period_type"].tolist() == ["ANNUAL", "QUARTERLY"]
-    annual = rows[rows["period_type"].eq("ANNUAL")].iloc[0]
-    assert annual["value_raw"] == 600_000_000.0
-    assert annual["first_seen_source_run_id"] == source_run_id
-    assert annual["last_seen_source_run_id"] == "20260611T120000Z-fetch-fundamentals"
+    ].sort_values(["period_type", "value_raw"])
+    assert rows["period_type"].tolist() == ["ANNUAL", "ANNUAL", "QUARTERLY"]
+    annual_rows = rows[rows["period_type"].eq("ANNUAL")]
+    assert annual_rows["value_raw"].tolist() == [500_000_000.0, 600_000_000.0]
+    original = annual_rows.iloc[0]
+    restated = annual_rows.iloc[1]
+    assert original["first_seen_source_run_id"] == source_run_id
+    assert original["last_seen_source_run_id"] == source_run_id
+    assert restated["first_seen_source_run_id"] == "20260611T120000Z-fetch-fundamentals"
+    assert restated["last_seen_source_run_id"] == "20260611T120000Z-fetch-fundamentals"
 
 
 def test_raw_fundamentals_history_fails_loud_on_corrupt_latest(tmp_path):
@@ -406,8 +462,22 @@ def test_raw_fundamentals_history_fails_loud_on_corrupt_latest(tmp_path):
         fetched_at_utc="2026-06-10T12:00:00Z",
         source_run_id=source_run_id,
     )
-    raw_fundamentals_history_latest_path(paths).parent.mkdir(parents=True, exist_ok=True)
-    raw_fundamentals_history_latest_path(paths).write_text("not parquet", encoding="utf-8")
+    loaded_config = load_app_config(paths)
+    run_context = RunContext.start(
+        paths=paths,
+        command="fetch-fundamentals",
+        parameters={"tickers": ["AEM"]},
+        config_hash=loaded_config.config_hash,
+    )
+    result = fetch_and_publish_fundamentals(
+        paths=paths,
+        app_config=loaded_config.app,
+        run_context=run_context,
+        yahoo_client=_FakeYahooClient({"AEM": _payload(currency="USD")}),
+        tickers=["AEM"],
+    )
+    corrupt_path = paths.resolve_repo_relative(result.manifest["raw_history_artifact"]["path"])
+    corrupt_path.write_text("not parquet", encoding="utf-8")
 
     with pytest.raises(ValueError, match="raw fundamentals history could not be read"):
         write_raw_fundamentals_history_artifact_pair(

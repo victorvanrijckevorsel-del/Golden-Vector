@@ -422,9 +422,14 @@ def _build_tool_b_rows(
             forward_pe=official_layer2["forward_pe"],
             thresholds=app_config.screening_params.verdict_thresholds,
         )
+        official_rank_eligible = (
+            comparison["official_rank_eligible"]
+            and official_confidence != "INCOMPLETE"
+            and str(official_layer1["layer1_status"]) != "INCOMPLETE"
+        )
         official_check_score = (
             official_checks["fundamental_check_score"]
-            if comparison["official_rank_eligible"]
+            if official_rank_eligible
             else None
         )
 

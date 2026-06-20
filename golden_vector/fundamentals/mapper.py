@@ -179,40 +179,48 @@ def _map_net_debt(
     period_end = _period_end(balance)
     currency = _statement_currency(balance)
     total_debt = _find_value(balance, TOTAL_DEBT_ALIASES)
+    cash = _find_value(balance, CASH_ALIASES)
     components: list[dict[str, object]] = []
     if total_debt is None:
         long_debt = _find_value(balance, LONG_TERM_DEBT_ALIASES)
         current_debt = _find_value(balance, CURRENT_DEBT_ALIASES)
         if long_debt is None or current_debt is None:
+            missing_components = [
+                _component(
+                    component="long_term_debt",
+                    matched=long_debt,
+                    currency=currency,
+                    period_end=period_end,
+                    fx_histories=fx_histories,
+                )
+                if long_debt is not None
+                else _missing_component(component="long_term_debt", currency=currency),
+                _component(
+                    component="current_debt",
+                    matched=current_debt,
+                    currency=currency,
+                    period_end=period_end,
+                    fx_histories=fx_histories,
+                )
+                if current_debt is not None
+                else _missing_component(component="current_debt", currency=currency),
+                _component(
+                    component="cash",
+                    matched=cash,
+                    currency=currency,
+                    period_end=period_end,
+                    fx_histories=fx_histories,
+                    sign=-1,
+                )
+                if cash is not None
+                else _missing_component(component="cash", currency=currency),
+            ]
             return _missing_field(
                 "net_debt_musd",
                 period_end=period_end,
                 currency=currency,
-                calculation_formula="Net Debt = Total Debt - Cash",
-                components=tuple(
-                    component
-                    for component in (
-                        _component(
-                            component="long_term_debt",
-                            matched=long_debt,
-                            currency=currency,
-                            period_end=period_end,
-                            fx_histories=fx_histories,
-                        )
-                        if long_debt is not None
-                        else None,
-                        _component(
-                            component="current_debt",
-                            matched=current_debt,
-                            currency=currency,
-                            period_end=period_end,
-                            fx_histories=fx_histories,
-                        )
-                        if current_debt is not None
-                        else None,
-                    )
-                    if component is not None
-                ),
+                calculation_formula="Net Debt = Long-term debt + Current debt - Cash",
+                components=tuple(missing_components),
             )
         components.extend(
             [
@@ -246,7 +254,6 @@ def _map_net_debt(
         )
         total_debt_value = total_debt.value
         formula = "Net Debt = Total Debt - Cash"
-    cash = _find_value(balance, CASH_ALIASES)
     cash_missing = cash is None
     if cash_missing:
         cash_value = 0.0
@@ -521,7 +528,7 @@ def _map_interest(
         period_type="ANNUAL",
         statement_currency=currency,
         statement_scale="absolute_to_usd_millions",
-        value_origin="yahoo_reported_component",
+        value_origin="sign_normalized_yahoo_component",
         calculation_formula="Interest expense = absolute Yahoo interest expense",
         components=(
             _component(
@@ -564,6 +571,7 @@ def _latest_statement_rows(raw: pd.DataFrame, statement_type: str) -> pd.DataFra
         raw["statement_type"].eq(statement_type)
         & raw["fetch_status"].eq(RAW_FETCH_STATUS_PASS)
         & raw["period_end"].notna()
+        & raw["period_type"].fillna("").astype(str).str.upper().eq("ANNUAL")
     ].copy()
     if rows.empty:
         return rows
@@ -618,16 +626,36 @@ def _component(
         fx_histories=fx_histories,
     )
     normalized_value = converted.value_musd
-    if normalized_value is not None:
-        normalized_value *= sign
+    contribution = None
+    if normalized_value is not None and sign != 1:
+        contribution = normalized_value * sign
+    normalization = "absolute_value" if absolute else None
     return {
         "component": component,
         "yahoo_line_item": matched.line_item_original if matched is not None else None,
         "raw_value": raw_value,
         "normalized_value": normalized_value,
+        "contribution_musd": contribution,
+        "formula_sign": sign,
+        "normalization": normalization,
         "unit": "MUSD",
         "statement_currency": currency,
         "status": status or converted.value_status,
+    }
+
+
+def _missing_component(*, component: str, currency: str) -> dict[str, object]:
+    return {
+        "component": component,
+        "yahoo_line_item": None,
+        "raw_value": None,
+        "normalized_value": None,
+        "contribution_musd": None,
+        "formula_sign": 1,
+        "normalization": None,
+        "unit": "MUSD",
+        "statement_currency": currency,
+        "status": "MISSING",
     }
 
 
@@ -642,6 +670,9 @@ def _assumed_zero_component(
         "yahoo_line_item": None,
         "raw_value": None,
         "normalized_value": 0.0,
+        "contribution_musd": 0.0,
+        "formula_sign": 1,
+        "normalization": None,
         "unit": "MUSD",
         "statement_currency": currency,
         "status": status,
