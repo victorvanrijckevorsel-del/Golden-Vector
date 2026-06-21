@@ -187,8 +187,8 @@ def _render_option_trading_overview_page(
         "<thead><tr>"
         + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
         + help_th("Stock Price", key="option_stock_price", app_config=app_config, col_name="stock_price", sort_numeric=True)
-        + help_th("Down Beta", key="tool_c_down_beta", app_config=app_config, col_name="down_beta", sort_numeric=True)
-        + help_th("Up Beta", key="tool_c_up_beta", app_config=app_config, col_name="up_beta", sort_numeric=True)
+        + help_th("Down Beta", key="tool_c_down_beta_blend", app_config=app_config, col_name="down_beta", sort_numeric=True)
+        + help_th("Up Beta", key="tool_c_up_beta_blend", app_config=app_config, col_name="up_beta", sort_numeric=True)
         + help_th("Gold Sensitivity Confidence", key="tool_a_confidence", app_config=app_config, col_name="confidence")
         + help_th("Signal", key="option_direction_signal", app_config=app_config, col_name="direction")
         + help_th(

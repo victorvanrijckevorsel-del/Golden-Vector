@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from dataclasses import replace
 
 import pandas as pd
 import pytest
@@ -93,6 +94,34 @@ def test_candidate_finder_builder_preserves_gold_price_scenario():
     html = render_candidate_finder_page(data, query={"custom": ["1"], "gold_price": ["3500"]})
 
     assert '<input type="hidden" name="gold_price" value="3500">' in html
+
+
+def test_candidate_finder_page_renders_beta_window_selector():
+    # Victor's per-horizon screening: the Finder exposes a gold-beta horizon picker that
+    # defaults to the cross-window blend and labels 12M as "1Y" (registry rule).
+    data = _candidate_finder_data()
+
+    html = render_candidate_finder_page(data)
+
+    assert 'name="beta_window"' in html
+    assert "Blend (6M / 1Y / 3Y)" in html
+    assert ">1Y</option>" in html
+    assert ">12M</option>" not in html
+    assert "cross-window blend" in html
+
+
+def test_candidate_finder_page_beta_window_selected_and_preserved():
+    # Picking a window marks it selected, states the basis, and is carried as a hidden input
+    # through the other forms (gold scenario / builder) so it is not silently dropped.
+    data = replace(_candidate_finder_data(), beta_window="3Y")
+
+    html = render_candidate_finder_page(
+        data, query={"beta_window": ["3y"], "gold_price": ["3500"]}
+    )
+
+    assert '<option value="3y" selected>3Y</option>' in html
+    assert "rank on the 3Y window" in html
+    assert '<input type="hidden" name="beta_window" value="3y">' in html
 
 
 def test_candidate_finder_page_renders_scenario_status_and_preserves_query():
@@ -249,7 +278,7 @@ def test_candidate_finder_route_is_reachable(monkeypatch, tmp_path):
     monkeypatch.setattr(
         workspace_module,
         "load_candidate_finder_data",
-        lambda _paths, *, app_config, scenario=None, fundamentals_source="our": _candidate_finder_data(),
+        lambda _paths, *, app_config, scenario=None, fundamentals_source="our", beta_window=None: _candidate_finder_data(),
     )
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
 

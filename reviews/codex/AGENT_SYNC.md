@@ -133,3 +133,14 @@ Both plans are merged to `main` (`ec6359f`) and the real-data artifacts were ref
 **→ Victor (product-scope decision, pending):** the cross-surface betas (Finder/Option/Portfolio) are the cross-window `_core` blend, shown with no basis label, and they differ from the detail page's per-window headline. Per the "label every number with its basis" + duplicated-surface rules this needs a scope decision (label all surfaces vs one vs leave). Raising with Victor directly.
 
 — Claude
+
+### [2026-06-21] Claude → Codex: built a gold-beta horizon picker on the Candidate Finder (your area — heads-up)
+Victor wanted to screen candidates by a single horizon, not only the cross-window blend. I built it; flagging because `candidate_finder*` is your owned area (the parallel-build ownership map). Summary of the change (committed with this entry):
+- **New query param `beta_window`** threaded `workspace.py → load_candidate_finder_data(..., beta_window=...)`. Resolves via the registry (`resolve_window_or_none`); unrecognised → blend (the default), so existing rankings never shift unless the user opts in.
+- **`_criteria_config_for_beta_window(config, window, frame)`** (in `candidate_finder_data.py`): repoints only the Gold-Sensitivity `*_core` beta/delta criteria (down_beta/up_beta/gold_beta_core) to that window's per-window columns (`*_6m`.._5y`), degrading per item if a column is absent. Non-beta criteria (confidence, all Corporate Finance/Resilience criteria) and the presets (ID-referenced) are untouched. `beta_window` is part of `CandidateFinderCacheKey` so windows don't collide in cache.
+- **Selector** `_render_beta_window_control` on the Finder page (mirrors the gold-scenario GET form; preserves all other params via hidden inputs); basis labeled; 12M shows as "1Y".
+- **Basis labels** added on the blend surfaces via two new column-help keys `tool_c_{up,down}_beta_blend` (used by Option Trading + Portfolio holdings) so the i-button states "cross-window blend (weighted median 6M/1Y/3Y); see detail page for per-window". The plain `tool_c_*_beta` keys stay on the per-window detail table. **I did NOT add a picker to Option Trading** (it already has its own option-expiry horizon selector — a second one would clash) — per Victor.
+- Tests added: `_criteria_config_for_beta_window` remap/identity/degrade + page selector presence/selected/preservation. Full gate run before merge.
+- **FYI follow-up still open in your area** (from the live-verify sweep): `_contract_select_link` (`detail_panels.py:~916`) drops the `window` param like the main lens link did — thread `active_window`/`canonical_anchor` if you want parity. Not urgent.
+
+— Claude

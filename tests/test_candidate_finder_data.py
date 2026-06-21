@@ -29,11 +29,16 @@ from golden_vector.model.tool_d import TOOL_D_OUTPUT_COLUMNS
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.screening.manual_store import upsert_company_input
 from golden_vector.screening.schema import TOOL_B_OUTPUT_COLUMNS
+from golden_vector.contracts.config_models import (
+    CandidateFinderConfig,
+    CandidateFinderCriterion,
+)
 from golden_vector.serve.candidate_finder_data import (
     CandidateFinderScenario,
     CandidateFinderScenarioError,
     CandidateFinderSourceError,
     TOOL_D_FINDER_FIELDS,
+    _criteria_config_for_beta_window,
     candidate_finder_result_frame,
     clear_candidate_finder_cache,
     load_candidate_finder_data,
@@ -1492,3 +1497,88 @@ def test_candidate_finder_scenario_threads_official_fundamentals(tmp_path, monke
         "scenario compute_tool_b_in_memory must receive official_fundamentals"
     )
     pd.testing.assert_frame_equal(passed, sentinel_officials)
+
+
+def _beta_window_test_config() -> CandidateFinderConfig:
+    def crit(cid: str, source: str) -> CandidateFinderCriterion:
+        return CandidateFinderCriterion(
+            id=cid,
+            label=cid,
+            description=cid,
+            source_field=source,
+            group="Gold Sensitivity",
+            default_direction="high_good",
+            unit="beta",
+        )
+
+    return CandidateFinderConfig(
+        version=1,
+        default_top_n=10,
+        min_criteria_fraction=0.67,
+        criteria=[
+            crit("up_beta", "up_beta_core"),
+            crit("down_beta", "down_beta_core"),
+            crit("gold_beta_core", "structural_delta_core"),
+            crit("confidence", "confidence_score"),
+        ],
+        presets=[],
+    )
+
+
+def test_criteria_config_for_beta_window_remaps_only_per_window_betas():
+    # Selecting a window repoints the *_core beta/delta criteria to that window's columns,
+    # and leaves non-window criteria (confidence) untouched.
+    config = _beta_window_test_config()
+    frame = pd.DataFrame(
+        [
+            {
+                "ticker": "AEM",
+                "up_beta_core": 2.0,
+                "up_beta_6m": 1.3,
+                "down_beta_core": 1.8,
+                "down_beta_6m": 1.1,
+                "structural_delta_core": 1.5,
+                "structural_delta_6m": 0.9,
+                "confidence_score": 0.9,
+            }
+        ]
+    )
+
+    remapped = _criteria_config_for_beta_window(config, "6M", frame)
+
+    by_id = {c.id: c.source_field for c in remapped.criteria}
+    assert by_id["up_beta"] == "up_beta_6m"
+    assert by_id["down_beta"] == "down_beta_6m"
+    assert by_id["gold_beta_core"] == "structural_delta_6m"
+    assert by_id["confidence"] == "confidence_score"
+
+
+def test_criteria_config_for_beta_window_blend_returns_identity():
+    # The blend (None) must be a no-op so default rankings never silently change.
+    config = _beta_window_test_config()
+    frame = pd.DataFrame([{"ticker": "AEM", "up_beta_core": 2.0}])
+
+    assert _criteria_config_for_beta_window(config, None, frame) is config
+
+
+def test_criteria_config_for_beta_window_degrades_when_per_window_column_absent():
+    # If a per-window column is missing, the criterion keeps its blend column (degrade per item).
+    config = _beta_window_test_config()
+    frame = pd.DataFrame(
+        [
+            {
+                "ticker": "AEM",
+                "up_beta_core": 2.0,
+                "down_beta_core": 1.8,
+                "structural_delta_core": 1.5,
+                "confidence_score": 0.9,
+            }
+        ]
+    )
+
+    remapped = _criteria_config_for_beta_window(config, "2Y", frame)
+
+    by_id = {c.id: c.source_field for c in remapped.criteria}
+    assert by_id["up_beta"] == "up_beta_core"
+    assert by_id["down_beta"] == "down_beta_core"
+    assert by_id["gold_beta_core"] == "structural_delta_core"

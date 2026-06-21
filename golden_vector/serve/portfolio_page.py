@@ -424,7 +424,7 @@ def _render_positions(data: PortfolioData) -> str:
         + help_th("P&L %", key="portfolio_pnl_pct")
         + help_th("Equity Weight", key="portfolio_equity_weight")
         + help_th("NAV Weight", key="portfolio_nav_weight")
-        + help_th("Down Beta", key="tool_c_down_beta")
+        + help_th("Down Beta", key="tool_c_down_beta_blend")
         + help_th("Linear Loss @ Gold -10%", key="portfolio_gold_down_loss")
         + help_th("Loss Share", key="portfolio_loss_share")
         + help_th("Resilience", key="portfolio_resilience")

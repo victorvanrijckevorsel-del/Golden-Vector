@@ -1192,6 +1192,46 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         ),
         direction="Higher means it rises more than gold on up weeks.",
     ),
+    # Blend-basis variants for surfaces that show the cross-window `_core` beta (Candidate
+    # Finder / Option Trading / Portfolio) rather than a single selected window. They state
+    # the basis explicitly so the number is never mistaken for a per-window beta — the detail
+    # page's per-window table keeps the plain `tool_c_*_beta` keys.
+    "tool_c_down_beta_blend": ColumnHelp(
+        meaning=(
+            "How much the stock moves per 1% gold move on the weeks gold FELL — its gold beta "
+            "in down markets. The value shown here is the cross-window blend: a weighted median "
+            "of the 6M / 1Y / 3Y windows. Open a ticker's detail page for per-window betas."
+        ),
+        calculation=(
+            "Per window, the slope β of stock_weekly_return = α + β × gold_weekly_return on the "
+            "down weeks; the figure shown is the weighted-median blend across the scoring "
+            "windows (6M / 1Y / 3Y) — the same robustness blend behind the Gold Sensitivity Score."
+        ),
+        details=(
+            "Units: ≈ % the stock moves per 1% gold move on down weeks. Usually positive for "
+            "miners (~1–2.5×); it CAN be negative (rises when gold falls). If the down beta is "
+            "bigger than the up beta, the stock falls more with gold than it rises (fragile)."
+        ),
+        direction="Lower means it falls less than gold on down weeks (more resilient).",
+    ),
+    "tool_c_up_beta_blend": ColumnHelp(
+        meaning=(
+            "How much the stock moves per 1% gold move on the weeks gold ROSE — its gold beta "
+            "in up markets. The value shown here is the cross-window blend: a weighted median "
+            "of the 6M / 1Y / 3Y windows. Open a ticker's detail page for per-window betas."
+        ),
+        calculation=(
+            "Per window, the slope β of stock_weekly_return = α + β × gold_weekly_return on the "
+            "up weeks; the figure shown is the weighted-median blend across the scoring windows "
+            "(6M / 1Y / 3Y) — the same robustness blend behind the Gold Sensitivity Score."
+        ),
+        details=(
+            "Units: ≈ % the stock moves per 1% gold move on up weeks. Usually positive for miners "
+            "(~1–2.5×); it CAN be negative. Compare with the down beta: down bigger than up means "
+            "it falls more than it rises with gold (fragile)."
+        ),
+        direction="Higher means it rises more than gold on up weeks.",
+    ),
     "benchmark_gold_beta": ColumnHelp(
         meaning=(
             "Where this stock's gold beta sits versus GDX, GDXJ, and the whole miner universe — "

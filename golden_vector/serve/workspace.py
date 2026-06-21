@@ -141,11 +141,13 @@ def create_workspace_app(
     ) -> CandidateFinderData:
         scenario = parse_candidate_finder_scenario(query)
         fundamentals_source = query.get("fundamentals_source", ["our"])[0]
+        beta_window = query.get("beta_window", [""])[0]
         return load_candidate_finder_data(
             paths,
             app_config=app_config,
             scenario=scenario,
             fundamentals_source=fundamentals_source,
+            beta_window=beta_window,
         )
 
     def app(environ: dict[str, Any], start_response: Callable[..., Any]) -> Iterable[bytes]:

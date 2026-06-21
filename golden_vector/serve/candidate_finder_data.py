@@ -23,9 +23,11 @@ from golden_vector.app.model_state import (
     summarize_model_state_alignment,
 )
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.windows import resolve_window_or_none, window_suffix
 from golden_vector.contracts.config_models import (
     AppConfig,
     CandidateFinderConfig,
+    CandidateFinderCriterion,
     CandidateFinderPreset,
     CandidateFinderPresetCriterion,
 )
@@ -107,6 +109,7 @@ class CandidateFinderCacheKey:
     fundamentals_source: str = "our"
     scenario_foundation_manifest_hash: str | None = None
     scenario_fundamentals_hash: str | None = None
+    beta_window: str = "core"
 
 
 @dataclass(frozen=True)
@@ -167,6 +170,9 @@ class CandidateFinderData:
     scenario_requested_gold_price: float | None = None
     scenario_active: bool = False
     scenario_error: str | None = None
+    # None = the cross-window blend (`*_core`); a canonical window id ("6M".."5Y") means the
+    # Gold-Sensitivity beta criteria were repointed to that window's per-window columns.
+    beta_window: str | None = None
 
 
 @dataclass(frozen=True)
@@ -203,17 +209,57 @@ def parse_candidate_finder_scenario(
         raise CandidateFinderScenarioError(str(exc)) from exc
 
 
+def _criteria_config_for_beta_window(
+    config: CandidateFinderConfig,
+    beta_window: str | None,
+    frame: pd.DataFrame,
+) -> CandidateFinderConfig:
+    """Repoint the Gold-Sensitivity blend criteria (`*_core`) to a single window's per-window
+    columns when a specific beta window is selected.
+
+    Blend (``beta_window`` is None) leaves the `_core` columns untouched — the default, so
+    rankings never silently change. When a window is chosen, every criterion whose
+    ``source_field`` ends in ``_core`` (down_beta_core / up_beta_core / structural_delta_core)
+    is repointed to ``<base>_<suffix>`` (e.g. ``up_beta_6m``). Degrades per item: a criterion
+    whose per-window column is absent from the frame keeps its blend column.
+    """
+    if not beta_window:
+        return config
+    suffix = window_suffix(beta_window)
+    available = set(frame.columns)
+    changed = False
+    remapped: list[CandidateFinderCriterion] = []
+    for criterion in config.criteria:
+        source = criterion.source_field
+        if source.endswith("_core"):
+            per_window = f"{source[: -len('_core')]}_{suffix}"
+            if per_window in available:
+                criterion = criterion.model_copy(update={"source_field": per_window})
+                changed = True
+        remapped.append(criterion)
+    if not changed:
+        return config
+    return config.model_copy(update={"criteria": remapped})
+
+
 def load_candidate_finder_data(
     paths: ProjectPaths,
     *,
     app_config: AppConfig,
     scenario: CandidateFinderScenario | None = None,
     fundamentals_source: str = "our",
+    beta_window: str | None = None,
 ) -> CandidateFinderData:
-    """Load the latest joined frame used by Candidate Finder screens."""
+    """Load the latest joined frame used by Candidate Finder screens.
+
+    ``beta_window`` optionally narrows the Gold-Sensitivity beta criteria to a single
+    structural window (id or display alias, e.g. ``"6m"`` / ``"1y"``); anything
+    unrecognised falls back to the cross-window blend (the default).
+    """
 
     finance_source = normalize_finance_source(fundamentals_source)
     requested_finance_source = finance_source
+    resolved_beta_window = resolve_window_or_none(beta_window)
     model_state_manifest = load_current_model_state_manifest(paths)
     tool_a_path, tool_a_required = _resolve_finder_source(
         paths, "tool_a", fallback_path=paths.latest_tool_a_snapshot_parquet_path
@@ -275,6 +321,7 @@ def load_candidate_finder_data(
             if scenario is not None or finance_source == "yahoo"
             else None
         ),
+        beta_window=resolved_beta_window or "core",
     )
     cached = _cache_get(cache_key)
     if cached is not None:
@@ -381,9 +428,12 @@ def load_candidate_finder_data(
     )
     data = CandidateFinderData(
         frame=frame,
-        criteria_config=app_config.candidate_finder,
+        criteria_config=_criteria_config_for_beta_window(
+            app_config.candidate_finder, resolved_beta_window, frame
+        ),
         alignment=alignment,
         cache_key=cache_key,
+        beta_window=resolved_beta_window,
         model_state_manifest=model_state_manifest,
         gold_price_used=gold_price_used,
         spot_gold_usd=spot_gold_usd,

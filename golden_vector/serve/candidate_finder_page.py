@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from html import escape
 from urllib.parse import quote, urlencode
 
+from golden_vector.common.windows import ALL_WINDOWS, WINDOW_LABELS
 from golden_vector.contracts.config_models import (
     AppConfig,
     CandidateFinderConfig,
@@ -70,6 +71,7 @@ def render_candidate_finder_page(
                 return_to=base_path,
             ),
             _render_gold_scenario_control(data, query, base_path=base_path),
+            _render_beta_window_control(data, query, base_path=base_path),
             _render_preset_bar(
                 data,
                 active_preset_id,
@@ -233,6 +235,57 @@ def _render_gold_scenario_control(
       <a href="{escape(reset_href, quote=True)}">Reset gold price to spot</a>
     </div>
     <p class="hint">{escape(status)}</p>
+  </form>
+</section>
+"""
+
+
+def _render_beta_window_control(
+    data: CandidateFinderData,
+    query: Mapping[str, Sequence[str]],
+    *,
+    base_path: str,
+) -> str:
+    """Pick the gold-beta horizon the Gold-Sensitivity criteria screen on.
+
+    Default is the cross-window blend (`*_core`, a weighted median of the scoring windows),
+    so existing rankings never shift unless the user opts into a single window. Mirrors the
+    gold-scenario GET form; preserves every other query param via hidden inputs.
+    """
+    current = data.beta_window or ""
+    hidden = _hidden_query_inputs(query, exclude={"beta_window"})
+    scoring_labels = " / ".join(WINDOW_LABELS[w] for w in ("6M", "12M", "3Y"))
+    blend_selected = " selected" if not current else ""
+    options = [f'<option value=""{blend_selected}>Blend ({escape(scoring_labels)})</option>']
+    for window in ALL_WINDOWS:
+        selected = " selected" if current == window else ""
+        options.append(
+            f'<option value="{escape(window.lower())}"{selected}>'
+            f"{escape(WINDOW_LABELS.get(window, window))}</option>"
+        )
+    if current:
+        basis = (
+            "Gold-Sensitivity criteria (Up beta / Down beta / Gold beta) rank on the "
+            f"{escape(WINDOW_LABELS.get(current, current))} window. Other criteria are unchanged."
+        )
+    else:
+        basis = (
+            "Gold-Sensitivity criteria (Up beta / Down beta / Gold beta) rank on the "
+            f"cross-window blend (weighted median of {escape(scoring_labels)}). "
+            "Pick a single window to screen on that horizon instead."
+        )
+    return f"""
+<section class="panel candidate-beta-window-panel">
+  <form method="get" action="{escape(base_path, quote=True)}" class="candidate-finder-form">
+    {hidden}
+    <div class="candidate-form-row">
+      <label>
+        Gold beta horizon
+        <select name="beta_window">{''.join(options)}</select>
+      </label>
+      <button type="submit">Apply Horizon</button>
+    </div>
+    <p class="hint">{basis}</p>
   </form>
 </section>
 """
