@@ -23,6 +23,21 @@ def test_tool_b_schema_requires_all_yahoo_materialization_source_columns():
     )
 
 
+def test_tool_b_schema_guard_requires_our_view_comparison_columns():
+    import pandas as pd
+
+    row = {column: None for column in TOOL_B_OUTPUT_COLUMNS}
+    row["ticker"] = "AEM"
+    frame = pd.DataFrame([row]).drop(columns=["enterprise_value_musd_our_view"])
+
+    try:
+        validate_tool_b_output_schema(frame)
+    except ToolBStaleSchemaError as exc:
+        assert "enterprise_value_musd_our_view" in str(exc)
+    else:
+        raise AssertionError("schema guard should reject missing Our View comparison columns")
+
+
 def test_tool_b_schema_guard_rejects_any_target_upside_or_best_column():
     import pandas as pd
 

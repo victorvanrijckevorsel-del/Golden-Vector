@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from html import escape
 from time import perf_counter
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import pandas as pd
 
@@ -49,6 +49,7 @@ from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.column_help import help_th
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.screening_overrides import ScreeningOverrides, apply_overrides
+from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import WorkspaceState
 
 
@@ -894,7 +895,12 @@ def _normalize_rank_by(value: object) -> str:
 
 def _ticker_href(ticker: object, *, rank_by: str) -> str:
     ticker_text = str(ticker or "").upper().strip()
-    href = f"/ticker/{ticker_text}"
-    if rank_by == "official":
-        return f"{href}?fundamentals_source=yahoo"
-    return href
+    return build_page_url(
+        f"/ticker/{quote(ticker_text, safe='')}",
+        {},
+        set_params=(
+            {"fundamentals_source": "yahoo"}
+            if rank_by == "official"
+            else {}
+        ),
+    )

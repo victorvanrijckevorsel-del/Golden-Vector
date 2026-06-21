@@ -146,8 +146,11 @@ def test_workspace_detail_page_honors_yahoo_fundamentals_source(tmp_path):
     assert "Yahoo Fundamentals" in response["body"]
     assert "SCREEN_OUT" in response["body"]
     assert "8.88" in response["body"]
+    assert 'href="/?fundamentals_source=yahoo"' in response["body"]
     assert "/ticker/NEM?window=6m&amp;fundamentals_source=yahoo" in response["body"]
+    assert "/ticker/NEM?lens=option-trading&amp;fundamentals_source=yahoo#option-trading" in response["body"]
     assert "/ticker/NEM?fundamentals_source=yahoo" in response["body"]
+    assert 'name="return_to" value="/ticker/NEM?fundamentals_source=yahoo"' in response["body"]
 
 
 def test_workspace_tool_a_detail_refuses_latest_foundation_when_model_state_corrupt(tmp_path):
@@ -1315,6 +1318,33 @@ def test_workspace_verification_post_upserts_row_and_redirects(tmp_path):
     assert row["notes"] == "Matches Q4 2025 release"
 
 
+def test_workspace_detail_post_redirect_preserves_yahoo_source_window_and_lens(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+
+    response = _call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/verification",
+        body=(
+            "return_to=%2Fticker%2FNEM%3Ffundamentals_source%3Dyahoo%26window%3D6m"
+            "%26lens%3Doption-trading"
+            "&field_name=production_oz"
+            "&verification_status=VERIFIED"
+        ),
+    )
+
+    assert response["status"].startswith("303")
+    assert dict(response["headers"])["Location"] == (
+        "/ticker/NEM?fundamentals_source=yahoo&window=6m&lens=option-trading"
+        "&saved=verification"
+    )
+
+
 def test_workspace_verification_post_preserves_unfilled_optional_fields(tmp_path):
     """Null-on-blank guard: POSTing verification_status with blank optional inputs
     must not overwrite existing source_date / source_url / notes with NULL.
@@ -2124,7 +2154,9 @@ def test_workspace_tool_d_yahoo_source_recomputes_and_preserves_links(
     assert response["status"].startswith("200")
     assert captured["finance_source"] == "yahoo"
     assert "Yahoo Fundamentals view recomputed" in response["body"]
+    assert "Scenario recomputed" not in response["body"]
     assert 'value="yahoo" selected>Yahoo Fundamentals</option>' in response["body"]
+    assert 'name="gold_price" type="number" min="1" step="1" value=""' in response["body"]
     assert "/tool-d?gold_price=3400.00&amp;fundamentals_source=yahoo" in response["body"]
     assert "/ticker/NEM?fundamentals_source=yahoo" in response["body"]
 

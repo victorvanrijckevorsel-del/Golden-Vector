@@ -16,8 +16,8 @@ FIELD_LABELS = {
     "ebitda_ltm_musd": "EBITDA LTM",
     "da_musd": "D&A",
     "interest_expense_musd": "Interest expense",
-    "tax_rate": "Tax rate",
 }
+TICKER_PROVENANCE_FIELDS = tuple(FIELD_LABELS)
 
 METRIC_FIELD_DEPENDENCIES = {
     "leverage": ("net_debt_musd", "ebitda_ltm_musd"),
@@ -95,7 +95,7 @@ def ticker_provenance_icon(
     ticker: object,
     lookup: dict[tuple[str, str], str],
 ) -> str:
-    return provenance_icon_for_fields(ticker, FIELD_LABELS.keys(), lookup)
+    return provenance_icon_for_fields(ticker, TICKER_PROVENANCE_FIELDS, lookup)
 
 
 def _field_explanation(row: dict[str, object]) -> str:
@@ -134,6 +134,9 @@ def _origin_text(origin: str) -> str:
             "calculated from Yahoo line items, but Yahoo's reported EBITDA did not reconcile."
         ),
         "yahoo_reported_component": "taken directly from one Yahoo line item.",
+        "sign_normalized_yahoo_component": (
+            "taken from one Yahoo line item with the sign normalized to a positive expense."
+        ),
         "missing_yahoo_inputs": "not available because Yahoo inputs are missing.",
     }.get(origin, f"origin: {origin}.")
 
@@ -155,10 +158,25 @@ def _component_lines(raw: object) -> list[str]:
         component = _text(item.get("component")) or "component"
         line_item = _text(item.get("yahoo_line_item"))
         status = _text(item.get("status"))
-        value = _text(item.get("normalized_value") or item.get("value_musd"))
+        value_source = (
+            item.get("normalized_value")
+            if item.get("normalized_value") is not None
+            else item.get("value_musd")
+        )
+        value = _text(value_source)
+        contribution = _text(item.get("contribution_musd"))
+        formula_sign = _text(item.get("formula_sign"))
+        normalization = _text(item.get("normalization"))
         bits = [component.replace("_", " ")]
         if value:
             bits.append(f"= {value} MUSD")
+        if contribution and (contribution != value or formula_sign.startswith("-")):
+            if contribution.startswith("-") or formula_sign.startswith("-"):
+                bits.append(f"subtracts {contribution.lstrip('-')} MUSD in formula")
+            else:
+                bits.append(f"contributes {contribution} MUSD in formula")
+        if normalization == "absolute_value":
+            bits.append("sign normalized to positive expense")
         if line_item:
             bits.append(f"Yahoo line: {line_item}")
         if status and status != "OK":

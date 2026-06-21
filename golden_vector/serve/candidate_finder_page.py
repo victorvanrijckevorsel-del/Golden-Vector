@@ -189,8 +189,8 @@ def _render_gold_scenario_control(
 ) -> str:
     current_value = (
         ""
-        if data.gold_price_used is None
-        else f"{float(data.gold_price_used):.0f}"
+        if data.scenario_requested_gold_price is None
+        else f"{float(data.scenario_requested_gold_price):.0f}"
     )
     hidden = _hidden_query_inputs(query, exclude={"gold_price", "fundamentals_source"})
     reset_query = _query_without(query, {"gold_price"})
@@ -230,7 +230,7 @@ def _render_gold_scenario_control(
         </select>
       </label>
       <button type="submit">Apply Gold Scenario</button>
-      <a href="{escape(reset_href, quote=True)}">Reset to persisted spot</a>
+      <a href="{escape(reset_href, quote=True)}">Reset gold price to spot</a>
     </div>
     <p class="hint">{escape(status)}</p>
   </form>

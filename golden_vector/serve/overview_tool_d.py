@@ -150,6 +150,7 @@ def _render_tool_d_overview_page(
             search=search,
             spot_gold=spot_gold,
             active_gold=active_gold,
+            requested_gold=requested_gold,
             finance_source=finance_source,
         )
     )
@@ -241,6 +242,7 @@ def _render_scenario_form(
     search: str,
     spot_gold: float | None,
     active_gold: float | None,
+    requested_gold: float | None,
     finance_source: str,
 ) -> str:
     links = []
@@ -259,7 +261,7 @@ def _render_scenario_form(
             links.append(
                 f"<a class=\"button-like{active_class}\" href=\"{escape(href)}\">{escape(label)}</a>"
             )
-    custom_value = "" if active_gold is None else f"{active_gold:.0f}"
+    custom_value = "" if requested_gold is None else f"{requested_gold:.0f}"
     reset_params = {}
     if search:
         reset_params["search"] = search
@@ -280,7 +282,7 @@ def _render_scenario_form(
         "<div class=\"overview-filters-actions\">"
         f"{''.join(links)}"
         "<button type=\"submit\">Apply</button>"
-        f"<a class=\"hint\" href=\"{escape(reset_link)}\">Reset to persisted spot</a>"
+        f"<a class=\"hint\" href=\"{escape(reset_link)}\">Reset gold price to spot</a>"
         "</div>"
         "</form>"
         "<p class=\"hint\">Formulas: breakeven = AISC; FCF breakeven = AISC plus sustaining capex per ounce; "

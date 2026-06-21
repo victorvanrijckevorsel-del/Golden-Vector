@@ -75,30 +75,6 @@ def _fmt_note_tag(value: Any) -> str:
     return f"<span class=\"badge note-tag\">{text}</span>"
 
 
-def _render_small_table(title: str, row: dict[str, Any], columns: list[str]) -> str:
-    if not row:
-        return (
-            "<section class=\"panel\">"
-            f"<h2>{escape(title)}</h2>"
-            "<p>No latest output is available yet.</p>"
-            "</section>"
-        )
-    rows_html = "".join(
-        "<tr>"
-        f"<th>{escape(_humanize_column_name(column_name))}</th>"
-        f"<td>{_fmt_value(row.get(column_name), column_name)}</td>"
-        "</tr>"
-        for column_name in columns
-        if column_name in row
-    )
-    return (
-        "<section class=\"panel\">"
-        f"<h2>{escape(title)}</h2>"
-        f"<table><tbody>{rows_html}</tbody></table>"
-        "</section>"
-    )
-
-
 def _metric_card(title: str, value: str) -> str:
     return (
         "<article class=\"panel metric-card\">"

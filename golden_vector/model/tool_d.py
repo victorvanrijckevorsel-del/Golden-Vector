@@ -297,11 +297,11 @@ def _build_tool_d_row(
     aisc = _optional_float(manual_row.get("aisc_usd_per_oz"))
     sustaining_capex = _optional_float(manual_row.get("sustaining_capex_musd"))
     interest_expense = _optional_float(stressed_row.get("interest_expense_musd"))
-    if interest_expense is None:
+    if interest_expense is None and not _is_yahoo_finance_source(finance_source):
         interest_expense = _optional_float(manual_row.get("interest_expense_musd"))
     cash_cost = _optional_float(manual_row.get("cash_cost_usd_per_oz"))
     net_debt = _optional_float(stressed_row.get("net_debt_musd"))
-    if net_debt is None:
+    if net_debt is None and not _is_yahoo_finance_source(finance_source):
         net_debt = _optional_float(manual_row.get("net_debt_musd"))
     forward_ebitda = _optional_float(stressed_row.get("forward_ebitda_musd"))
     spot_ebitda = _optional_float(spot_row.get("forward_ebitda_musd"))
@@ -370,7 +370,12 @@ def _build_tool_d_row(
         "as_of_date": stressed_row.get("as_of_date"),
         "source_run_id": source_run_id,
         "finance_source": finance_source,
-        "source_tool_b_run_id": latest_row.get("source_run_id"),
+        "source_tool_b_run_id": _source_tool_b_run_id(
+            latest_row=latest_row,
+            stressed_row=stressed_row,
+            source_run_id=source_run_id,
+            finance_source=finance_source,
+        ),
         "snapshot_refresh_run_id": stressed_row.get("snapshot_refresh_run_id"),
         "gold_price_used": float(gold_price),
         "spot_gold_usd": float(spot_gold_usd),
@@ -553,6 +558,25 @@ def _prepare_tool_b_latest(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame[["ticker", *[col for col in ["source_run_id"] if col in frame.columns]]].copy()
     result["ticker"] = result["ticker"].astype(str).str.upper().str.strip()
     return result[result["ticker"] != ""].drop_duplicates(subset=["ticker"], keep="last")
+
+
+def _source_tool_b_run_id(
+    *,
+    latest_row: pd.Series,
+    stressed_row: pd.Series,
+    source_run_id: str,
+    finance_source: str,
+) -> object:
+    if _is_yahoo_finance_source(finance_source) or source_run_id in {
+        "candidate-finder-scenario",
+        "workspace-tool-d-scenario",
+    }:
+        return stressed_row.get("source_run_id") or source_run_id
+    return latest_row.get("source_run_id")
+
+
+def _is_yahoo_finance_source(finance_source: str) -> bool:
+    return str(finance_source or "").strip().lower() == "yahoo"
 
 
 def _prepare_manual_company(frame: pd.DataFrame) -> pd.DataFrame:

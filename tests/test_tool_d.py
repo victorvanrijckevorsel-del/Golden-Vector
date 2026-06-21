@@ -200,6 +200,61 @@ def test_compute_tool_d_outputs_threads_finance_source_and_uses_source_values(
     assert row["finance_source"] == "yahoo"
     assert row["net_debt_musd"] == pytest.approx(1000.0)
     assert row["interest_expense_musd"] == pytest.approx(25.0)
+    assert row["source_tool_b_run_id"] == "tool-d-run"
+
+
+def test_compute_tool_d_yahoo_source_does_not_fallback_to_manual_debt_or_interest(
+    monkeypatch,
+):
+    def fake_tool_b(**kwargs):
+        gold = float(kwargs["gold_price_assumption"])
+        row = _tool_b_row(
+            "AAA",
+            forward_ebitda=gold / 2.0,
+            fcf_yield=0.01,
+            net_debt=None,
+            interest_expense=None,
+        )
+        row["source_run_id"] = kwargs["source_run_id"]
+        return pd.DataFrame([row])
+
+    monkeypatch.setattr(tool_d_module, "compute_tool_b_in_memory", fake_tool_b)
+    manual_data = _manual_data(
+        [
+            _manual_payload(
+                ticker="AAA",
+                aisc=1200,
+                net_debt=500.0,
+            )
+        ]
+    )
+
+    output = compute_tool_d_outputs(
+        inputs=ToolDExecutionInputs(
+            app_config=object(),
+            manual_data=manual_data,
+            normalized_market_snapshots=pd.DataFrame(),
+            tool_b_latest=pd.DataFrame(
+                [{"ticker": "AAA", "source_run_id": "persisted-tool-b-run"}]
+            ),
+            spot_gold_usd=4000.0,
+            spot_gold_date="2026-06-01",
+            snapshot_refresh_run_id="refresh-run",
+            snapshot_as_of_date="2026-06-01",
+            finance_source="yahoo",
+        ),
+        config=ToolDConfig(),
+        gold_price=3000.0,
+        source_run_id="workspace-tool-d-scenario",
+    )
+    row = output.iloc[0]
+
+    assert row["finance_source"] == "yahoo"
+    assert pd.isna(row["net_debt_musd"])
+    assert pd.isna(row["interest_expense_musd"])
+    assert "net_debt_musd" in row["missing_inputs"]
+    assert "interest_expense_musd" in row["missing_inputs"]
+    assert row["source_tool_b_run_id"] == "workspace-tool-d-scenario"
 
 
 def test_tool_d_stress_scenario_presets_are_backend_owned():

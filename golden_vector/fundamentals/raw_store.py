@@ -20,6 +20,10 @@ from golden_vector.contracts.fundamentals import (
     raw_fundamentals_statements_run_stamped_path,
 )
 
+RAW_FUNDAMENTALS_V1_COMPAT_COLUMNS = tuple(
+    column for column in RAW_FUNDAMENTALS_STATEMENTS_COLUMNS if column != "period_type"
+)
+
 STATEMENT_TYPES: tuple[str, ...] = ("income_stmt", "balance_sheet", "cashflow")
 RAW_FETCH_STATUS_PASS = "PASS"
 RAW_FETCH_STATUS_FAIL = "FAIL"
@@ -126,10 +130,12 @@ def load_raw_fundamentals_statements(
     frame = read_required_parquet(
         path,
         label="raw fundamentals statements",
-        required_columns=RAW_FUNDAMENTALS_STATEMENTS_COLUMNS,
-        schema_version=RAW_FUNDAMENTALS_STATEMENTS_SCHEMA_VERSION,
+        required_columns=RAW_FUNDAMENTALS_V1_COMPAT_COLUMNS,
     )
-    frame = validate_raw_fundamentals_frame(frame)
+    frame = normalize_raw_fundamentals_frame(
+        frame,
+        source_run_id=source_run_id or _source_run_id_from_frame(frame),
+    )
     if ticker:
         frame = frame[frame["ticker"].eq(_clean_code(ticker))].copy()
     if statement_type:
@@ -208,6 +214,7 @@ def normalize_raw_fundamentals_frame(
 
     source_run_id = _require_source_run_id(source_run_id)
     normalized = frame.copy()
+    period_type_missing = "period_type" not in normalized.columns
     for column in RAW_FUNDAMENTALS_STATEMENTS_COLUMNS:
         if column not in normalized.columns:
             normalized[column] = pd.NA
@@ -228,6 +235,9 @@ def normalize_raw_fundamentals_frame(
     normalized["period_type"] = (
         normalized["period_type"].fillna("").astype(str).str.upper().str.strip()
     )
+    if period_type_missing:
+        statement_mask = normalized["statement_type"].astype(str).str.strip() != ""
+        normalized.loc[statement_mask, "period_type"] = "ANNUAL"
     normalized["value_raw"] = pd.to_numeric(normalized["value_raw"], errors="coerce")
     normalized["financial_currency"] = (
         normalized["financial_currency"].fillna("").astype(str).str.upper().str.strip()
@@ -382,3 +392,14 @@ def _require_source_run_id(value: str) -> str:
     if not cleaned:
         raise ValueError("raw fundamentals source_run_id is required")
     return cleaned
+
+
+def _source_run_id_from_frame(frame: pd.DataFrame) -> str:
+    if "source_run_id" in frame.columns:
+        values = frame["source_run_id"].dropna().astype(str).str.strip()
+        if not values.empty and values.iloc[0]:
+            return values.iloc[0]
+    attr_value = str(frame.attrs.get("source_run_id") or "").strip()
+    if attr_value:
+        return attr_value
+    raise ValueError("raw fundamentals source_run_id is required")

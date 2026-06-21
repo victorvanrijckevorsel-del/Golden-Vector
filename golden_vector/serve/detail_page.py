@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from html import escape
 from typing import Mapping
+from urllib.parse import quote
 
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.hedge.option_trading import OptionTradingDetailData
@@ -22,6 +23,7 @@ from golden_vector.serve.detail_panels import (
 )
 from golden_vector.serve.format_helpers import _frame_index_by_ticker, _ticker_rows
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import ToolADetailState, WorkspaceState
 
 
@@ -62,9 +64,25 @@ def render_detail_page(
     tool_b_row = _frame_index_by_ticker(state.latest_tool_b).get(ticker, {})
     verification_rows = _ticker_rows(state.source_verification, ticker)
     note_rows = _ticker_rows(state.stock_notes, ticker)
+    current_query = dict(query_params or {})
+    current_query.pop("saved", None)
+    ticker_path = f"/ticker/{quote(str(ticker), safe='')}"
+    return_to = build_page_url(ticker_path, current_query, set_params={})
 
     option_lens_active = str(lens or "").strip().lower() == DETAIL_OPTION_TRADING_LENS_ID
-    body = ["<p><a href=\"/\">Back to workspace</a></p>", f"<h1>{escape(ticker)}</h1>"]
+    back_href = build_page_url(
+        "/",
+        {},
+        set_params=(
+            {"fundamentals_source": "yahoo"}
+            if str(financials_source).strip().lower() == "yahoo"
+            else {}
+        ),
+    )
+    body = [
+        f"<p><a href=\"{escape(back_href, quote=True)}\">Back to workspace</a></p>",
+        f"<h1>{escape(ticker)}</h1>",
+    ]
     if show_workspace_panels:
         body.append(
             _render_window_switcher(
@@ -113,9 +131,13 @@ def render_detail_page(
             option_trading_detail,
             model_state_manifest=model_state_manifest,
             app_config=app_config,
+            financials_source=financials_source,
         )
         if option_lens_active
-        else _render_option_trading_link_panel(ticker)
+        else _render_option_trading_link_panel(
+            ticker,
+            financials_source=financials_source,
+        )
     )
     if show_manual_sections:
         body.append(
@@ -123,11 +145,24 @@ def render_detail_page(
                 ticker=ticker,
                 company_row=company_row,
                 verification_rows=verification_rows,
+                return_to=return_to,
             )
         )
-        body.append(_render_reporting_form(ticker=ticker, reporting_row=reporting_row))
-        body.append(_render_verification_section(ticker=ticker, verification_rows=verification_rows))
-        body.append(_render_note_section(ticker=ticker, note_rows=note_rows))
+        body.append(
+            _render_reporting_form(
+                ticker=ticker,
+                reporting_row=reporting_row,
+                return_to=return_to,
+            )
+        )
+        body.append(
+            _render_verification_section(
+                ticker=ticker,
+                verification_rows=verification_rows,
+                return_to=return_to,
+            )
+        )
+        body.append(_render_note_section(ticker=ticker, note_rows=note_rows, return_to=return_to))
     active_nav = "option_trading" if option_lens_active else "candidate_finder"
     return _page_shell(
         f"Golden Vector Workspace - {ticker}",

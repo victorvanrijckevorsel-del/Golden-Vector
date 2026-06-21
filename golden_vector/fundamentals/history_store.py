@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from golden_vector.app.run_context import to_jsonable
+from golden_vector.common.files import sha256_file
 from golden_vector.common.parquet import read_required_parquet, write_parquet_atomic
 from golden_vector.contracts.fundamentals import (
     RAW_FUNDAMENTALS_HISTORY_COLUMNS,
@@ -17,7 +18,10 @@ from golden_vector.contracts.fundamentals import (
     raw_fundamentals_history_latest_path,
     raw_fundamentals_history_run_stamped_path,
 )
-from golden_vector.fundamentals.raw_store import normalize_raw_fundamentals_frame
+from golden_vector.fundamentals.raw_store import (
+    load_latest_fundamentals_fetch_manifest,
+    normalize_raw_fundamentals_frame,
+)
 
 HISTORY_KEY_COLUMNS = (
     "ticker",
@@ -27,6 +31,7 @@ HISTORY_KEY_COLUMNS = (
     "period_end",
     "period_type",
 )
+HISTORY_IDENTITY_COLUMNS = (*HISTORY_KEY_COLUMNS, "row_hash")
 
 
 @dataclass(frozen=True)
@@ -98,7 +103,7 @@ def merge_raw_fundamentals_history(
         if column not in merged.columns:
             merged[column] = pd.NA
     merged = merged[list(RAW_FUNDAMENTALS_HISTORY_COLUMNS)]
-    merged = merged.sort_values(list(HISTORY_KEY_COLUMNS)).reset_index(drop=True)
+    merged = merged.sort_values(list(HISTORY_IDENTITY_COLUMNS)).reset_index(drop=True)
     merged.attrs["schema_version"] = RAW_FUNDAMENTALS_HISTORY_SCHEMA_VERSION
     return merged
 
@@ -127,15 +132,26 @@ def _normalize_history_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
 
 
 def _read_existing_history(paths) -> pd.DataFrame:
-    path = raw_fundamentals_history_latest_path(paths)
-    if not path.exists():
+    manifest = load_latest_fundamentals_fetch_manifest(paths)
+    if not manifest:
         return _empty_history_frame()
-    return read_required_parquet(
+    artifact = manifest.get("raw_history_artifact")
+    if not isinstance(artifact, dict):
+        return _empty_history_frame()
+    raw_path = artifact.get("path")
+    if not raw_path:
+        return _empty_history_frame()
+    path = paths.resolve_repo_relative(str(raw_path))
+    frame = read_required_parquet(
         path,
         label="raw fundamentals history",
         required_columns=RAW_FUNDAMENTALS_HISTORY_COLUMNS,
         schema_version=RAW_FUNDAMENTALS_HISTORY_SCHEMA_VERSION,
     )
+    expected_hash = str(artifact.get("sha256") or "").strip()
+    if expected_hash and sha256_file(path) != expected_hash:
+        raise ValueError(f"raw fundamentals history checksum mismatch: {path}")
+    return frame
 
 
 def _empty_history_frame() -> pd.DataFrame:
@@ -145,7 +161,7 @@ def _empty_history_frame() -> pd.DataFrame:
 
 
 def _history_key(row: dict[str, object]) -> tuple[str, ...]:
-    return tuple(str(row.get(column) or "") for column in HISTORY_KEY_COLUMNS)
+    return tuple(str(row.get(column) or "") for column in HISTORY_IDENTITY_COLUMNS)
 
 
 def _row_hash(row: pd.Series) -> str:

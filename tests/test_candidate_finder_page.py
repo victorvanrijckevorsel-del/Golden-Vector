@@ -157,6 +157,35 @@ def test_candidate_finder_page_preserves_yahoo_fundamentals_source():
     assert "/ticker/AEM?lens=option-trading&amp;fundamentals_source=yahoo#option-trading" in html
 
 
+def test_candidate_finder_page_source_only_yahoo_switch_does_not_submit_spot_as_custom_gold():
+    data = _candidate_finder_data()
+    data = CandidateFinderData(
+        frame=data.frame,
+        criteria_config=data.criteria_config,
+        alignment=data.alignment,
+        cache_key=data.cache_key,
+        model_state_manifest=data.model_state_manifest,
+        gold_price_used=4000.0,
+        spot_gold_usd=4000.0,
+        spot_gold_date="2026-06-01",
+        source_basis="latest_daily_gold_close",
+        rank_basis="latest_daily_gold_close_yahoo_fundamentals",
+        fundamentals_source="yahoo",
+        scenario_active=True,
+        scenario_requested_gold_price=None,
+    )
+
+    html = render_candidate_finder_page(
+        data,
+        query={"fundamentals_source": ["yahoo"]},
+    )
+
+    assert 'name="gold_price" min="1" step="1" value=""' in html
+    assert "/candidate-finder?preset=bull&amp;fundamentals_source=yahoo" in html
+    assert "/candidate-finder?preset=bull&amp;gold_price=" not in html
+    assert "Reset gold price to spot" in html
+
+
 def test_candidate_finder_page_bear_screen_has_direction_neutral_copy():
     data = _candidate_finder_data()
 

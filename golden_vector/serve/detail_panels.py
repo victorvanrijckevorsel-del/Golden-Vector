@@ -327,8 +327,22 @@ def _snapshot_metric_icon(
     return provenance_icon_for_metric(ticker, column_name, fundamentals_provenance)
 
 
-def _render_option_trading_link_panel(ticker: str) -> str:
-    href = f"/ticker/{quote(str(ticker), safe='')}?lens=option-trading#option-trading"
+def _render_option_trading_link_panel(
+    ticker: str,
+    *,
+    financials_source: str = "our",
+) -> str:
+    href = (
+        build_page_url(
+            f"/ticker/{quote(str(ticker), safe='')}",
+            {},
+            set_params=_source_set_params(
+                financials_source,
+                lens="option-trading",
+            ),
+        )
+        + "#option-trading"
+    )
     return (
         "<section id=\"option-trading\" class=\"panel\">"
         "<h2>Option Trading</h2>"
@@ -345,6 +359,7 @@ def _render_option_trading_panel(
     *,
     model_state_manifest: dict[str, object] | None = None,
     app_config: AppConfig | None = None,
+    financials_source: str = "our",
 ) -> str:
     body = [
         "<section id=\"option-trading\" class=\"panel\">",
@@ -379,14 +394,20 @@ def _render_option_trading_panel(
     body.append(_render_option_signal_card(detail))
     # Hero: the tradable candidates, then the sizing calculator for a selected
     # contract. Everything else is reference detail, collapsed below.
-    body.append(_render_option_candidate_matrix(detail, app_config=app_config))
+    body.append(
+        _render_option_candidate_matrix(
+            detail,
+            app_config=app_config,
+            financials_source=financials_source,
+        )
+    )
     if detail.risk_free_rate_is_fallback:
         body.append(
             "<p class=\"hint\">Risk-free rate was missing from the options manifest; "
             "scenario values use a 0% rate fallback.</p>"
         )
-    body.append(_render_option_sizing_calculator(detail))
-    body.append(_render_option_proxy_fallback(detail))
+    body.append(_render_option_sizing_calculator(detail, financials_source=financials_source))
+    body.append(_render_option_proxy_fallback(detail, financials_source=financials_source))
     chain_detail = "".join(
         [
             _render_option_skew_overlay(detail, app_config=app_config),
@@ -538,16 +559,29 @@ def _activity_text(signal: dict[str, object]) -> str:
     return f"{put} / {call}"
 
 
-def _render_option_proxy_fallback(detail: OptionTradingDetailData) -> str:
+def _render_option_proxy_fallback(
+    detail: OptionTradingDetailData,
+    *,
+    financials_source: str = "our",
+) -> str:
     if not detail.proxy_fallbacks and not detail.proxy_fallback_note:
         return ""
     rows = []
     for fallback in detail.proxy_fallbacks:
         candidate = fallback.candidate
         href = (
-            f"/ticker/{quote(fallback.ticker, safe='')}?lens=option-trading"
-            f"&side={quote(fallback.side, safe='')}&horizon={fallback.horizon_days}"
-            f"&bucket={quote(str(candidate.bucket or ''), safe='')}#option-sizing"
+            build_page_url(
+                f"/ticker/{quote(fallback.ticker, safe='')}",
+                {},
+                set_params=_source_set_params(
+                    financials_source,
+                    lens="option-trading",
+                    side=fallback.side,
+                    horizon=str(fallback.horizon_days),
+                    bucket=str(candidate.bucket or ""),
+                ),
+            )
+            + "#option-sizing"
         )
         rows.append(
             "<tr>"
@@ -677,7 +711,10 @@ def _render_option_liquidity_summary(detail: OptionTradingDetailData) -> str:
 
 
 def _render_option_candidate_matrix(
-    detail: OptionTradingDetailData, *, app_config: AppConfig | None = None
+    detail: OptionTradingDetailData,
+    *,
+    app_config: AppConfig | None = None,
+    financials_source: str = "our",
 ) -> str:
     put_slots = _ordered_side_slots(detail.put_slots)
     call_slots = _ordered_side_slots(detail.call_slots)
@@ -694,8 +731,8 @@ def _render_option_candidate_matrix(
         "<p class=\"hint\">Each side shows near-ATM and directional candidates around the "
         "configured target horizons. The bold row is the tradable near-ATM pick. Hover a "
         "candidate name for bid/ask, open interest, and volume.</p>"
-        f"{_render_option_candidate_side_section('Puts', put_slots, ticker=detail.ticker, app_config=app_config)}"
-        f"{_render_option_candidate_side_section('Calls', call_slots, ticker=detail.ticker, app_config=app_config)}"
+        f"{_render_option_candidate_side_section('Puts', put_slots, ticker=detail.ticker, app_config=app_config, financials_source=financials_source)}"
+        f"{_render_option_candidate_side_section('Calls', call_slots, ticker=detail.ticker, app_config=app_config, financials_source=financials_source)}"
         "</section>"
     )
 
@@ -706,6 +743,7 @@ def _render_option_candidate_side_section(
     *,
     ticker: str,
     app_config: AppConfig | None = None,
+    financials_source: str = "our",
 ) -> str:
     if not slots:
         return (
@@ -730,7 +768,13 @@ def _render_option_candidate_side_section(
             "</tr>"
         )
         for slot in grouped[horizon]:
-            rows.append(_render_option_candidate_matrix_row(slot=slot, ticker=ticker))
+            rows.append(
+                _render_option_candidate_matrix_row(
+                    slot=slot,
+                    ticker=ticker,
+                    financials_source=financials_source,
+                )
+            )
     return (
         "<section class=\"option-side-candidates\">"
         f"<h4>{escape(title)}</h4>"
@@ -765,6 +809,7 @@ def _render_option_candidate_matrix_row(
     *,
     slot: OptionCandidateSlot,
     ticker: str,
+    financials_source: str = "our",
 ) -> str:
     candidate = slot.candidate
     side = "put" if slot.option_type == "P" else "call"
@@ -787,6 +832,7 @@ def _render_option_candidate_matrix_row(
             side=side,
             horizon_days=slot.horizon_days,
             bucket=slot.bucket,
+            financials_source=financials_source,
         )
         if candidate.liquidity_tier == "tradable"
         else ""
@@ -873,12 +919,21 @@ def _contract_select_link(
     side: str,
     horizon_days: int,
     bucket: str | None,
+    financials_source: str = "our",
 ) -> str:
-    bucket_value = quote(str(bucket or ""), safe="")
     href = (
-        f"/ticker/{quote(ticker, safe='')}?lens=option-trading"
-        f"&side={quote(side, safe='')}&horizon={horizon_days}"
-        f"&bucket={bucket_value}#option-sizing"
+        build_page_url(
+            f"/ticker/{quote(ticker, safe='')}",
+            {},
+            set_params=_source_set_params(
+                financials_source,
+                lens="option-trading",
+                side=side,
+                horizon=str(horizon_days),
+                bucket=str(bucket or ""),
+            ),
+        )
+        + "#option-sizing"
     )
     return f"<a class=\"button-link\" href=\"{escape(href, quote=True)}\">Select</a>"
 
@@ -919,7 +974,11 @@ def _yahoo_chain_link(ticker: str, expiration: str | None) -> str:
     )
 
 
-def _render_option_sizing_calculator(detail: OptionTradingDetailData) -> str:
+def _render_option_sizing_calculator(
+    detail: OptionTradingDetailData,
+    *,
+    financials_source: str = "our",
+) -> str:
     sizing = detail.sizing
     if sizing is None:
         return ""
@@ -961,6 +1020,11 @@ def _render_option_sizing_calculator(detail: OptionTradingDetailData) -> str:
     mode_budget_checked = " checked" if request.size_mode == "budget" else ""
     notes = list(sizing.notes)
     result = _render_option_sizing_result(sizing)
+    source_input = (
+        "<input type=\"hidden\" name=\"fundamentals_source\" value=\"yahoo\">"
+        if str(financials_source).strip().lower() == "yahoo"
+        else ""
+    )
     notes_html = (
         "<ul class=\"hint\">"
         + "".join(f"<li>{escape(note)}</li>" for note in notes)
@@ -974,6 +1038,7 @@ def _render_option_sizing_calculator(detail: OptionTradingDetailData) -> str:
         "<p class=\"hint\">Uses cached per-contract scenarios. Live option quotes may differ.</p>"
         f"<form method=\"get\" action=\"/ticker/{quote(detail.ticker, safe='')}#option-sizing\" class=\"option-sizing-form\">"
         "<input type=\"hidden\" name=\"lens\" value=\"option-trading\">"
+        f"{source_input}"
         "<label>Side "
         f"<select name=\"side\">{side_options}</select>"
         "</label>"
@@ -998,6 +1063,13 @@ def _render_option_sizing_calculator(detail: OptionTradingDetailData) -> str:
         f"{notes_html}{result}"
         "</section>"
     )
+
+
+def _source_set_params(financials_source: str, **params: str) -> dict[str, str | None]:
+    result: dict[str, str | None] = dict(params)
+    if str(financials_source).strip().lower() == "yahoo":
+        result["fundamentals_source"] = "yahoo"
+    return result
 
 
 def _bucket_options_for_request(

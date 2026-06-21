@@ -20,6 +20,12 @@ from golden_vector.contracts.fundamentals import (
 )
 from golden_vector.screening.manual_store import FINANCIAL_DUAL_SOURCE_FIELDS
 
+FETCHED_FUNDAMENTALS_V1_COMPAT_COLUMNS = tuple(
+    column
+    for column in FETCHED_FUNDAMENTALS_COLUMNS
+    if column not in {"period_type", "value_origin", "calculation_formula", "components_json"}
+)
+
 
 @dataclass(frozen=True)
 class FetchedFundamentalsArtifactWrite:
@@ -98,10 +104,12 @@ def _read_official_fundamentals_path(path: Path) -> pd.DataFrame:
     frame = read_required_parquet(
         path,
         label="official fundamentals",
-        required_columns=FETCHED_FUNDAMENTALS_COLUMNS,
-        schema_version=FETCHED_FUNDAMENTALS_SCHEMA_VERSION,
+        required_columns=FETCHED_FUNDAMENTALS_V1_COMPAT_COLUMNS,
     )
-    return validate_fetched_fundamentals_frame(frame)
+    return normalize_fetched_fundamentals_frame(
+        frame,
+        source_run_id=_source_run_id_from_frame(frame),
+    )
 
 
 def normalize_fetched_fundamentals_frame(
@@ -115,6 +123,7 @@ def normalize_fetched_fundamentals_frame(
     if not source_run_id:
         raise ValueError("official fundamentals source_run_id is required")
     normalized = frame.copy()
+    period_type_missing = "period_type" not in normalized.columns
     for column in FETCHED_FUNDAMENTALS_COLUMNS:
         if column not in normalized.columns:
             normalized[column] = pd.NA
@@ -142,6 +151,8 @@ def normalize_fetched_fundamentals_frame(
             normalized[column].notna(),
             None,
         )
+    if period_type_missing:
+        normalized["period_type"] = "ANNUAL"
     normalized = normalized[normalized["ticker"] != ""].copy()
     normalized = normalized[normalized["field_name"] != ""].copy()
     normalized = normalized.drop_duplicates(
@@ -188,3 +199,14 @@ def empty_fetched_fundamentals_frame() -> pd.DataFrame:
     frame = pd.DataFrame(columns=FETCHED_FUNDAMENTALS_COLUMNS)
     frame.attrs["schema_version"] = FETCHED_FUNDAMENTALS_SCHEMA_VERSION
     return frame
+
+
+def _source_run_id_from_frame(frame: pd.DataFrame) -> str:
+    if "source_run_id" in frame.columns:
+        values = frame["source_run_id"].dropna().astype(str).str.strip()
+        if not values.empty and values.iloc[0]:
+            return values.iloc[0]
+    attr_value = str(frame.attrs.get("source_run_id") or "").strip()
+    if attr_value:
+        return attr_value
+    raise ValueError("official fundamentals source_run_id is required")
