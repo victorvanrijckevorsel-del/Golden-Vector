@@ -100,7 +100,8 @@ def test_fundamentals_provenance_keeps_zero_component_values_and_omits_manual_ta
                     "calculation_formula": "Net Debt = Total Debt - Cash",
                     "components_json": (
                         '[{"component":"cash","normalized_value":0.0,'
-                        '"contribution_musd":0.0,"status":"MISSING_ASSUMED_ZERO"}]'
+                        '"contribution_musd":0.0,"formula_sign":-1,'
+                        '"status":"MISSING_ASSUMED_ZERO"}]'
                     ),
                 },
                 {
@@ -128,7 +129,10 @@ def test_fundamentals_provenance_keeps_zero_component_values_and_omits_manual_ta
     lookup = fundamentals_provenance_lookup(frame)
     text = provenance_text_for_fields("AEM", ["net_debt_musd"], lookup)
 
-    assert "cash (= 0.0 MUSD, status: MISSING_ASSUMED_ZERO)" in text
+    assert (
+        "cash (= 0.0 MUSD, subtracts 0.0 MUSD in formula, "
+        "status: MISSING_ASSUMED_ZERO)"
+    ) in text
     assert ("AEM", "tax_rate") in lookup
     assert "Tax rate" not in provenance_text_for_fields(
         "AEM",

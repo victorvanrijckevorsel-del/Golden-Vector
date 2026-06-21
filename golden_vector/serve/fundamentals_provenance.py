@@ -165,13 +165,14 @@ def _component_lines(raw: object) -> list[str]:
         )
         value = _text(value_source)
         contribution = _text(item.get("contribution_musd"))
+        formula_sign = _text(item.get("formula_sign"))
         normalization = _text(item.get("normalization"))
         bits = [component.replace("_", " ")]
         if value:
             bits.append(f"= {value} MUSD")
-        if contribution and contribution != value:
-            if contribution.startswith("-"):
-                bits.append(f"subtracts {contribution[1:]} MUSD in formula")
+        if contribution and (contribution != value or formula_sign.startswith("-")):
+            if contribution.startswith("-") or formula_sign.startswith("-"):
+                bits.append(f"subtracts {contribution.lstrip('-')} MUSD in formula")
             else:
                 bits.append(f"contributes {contribution} MUSD in formula")
         if normalization == "absolute_value":

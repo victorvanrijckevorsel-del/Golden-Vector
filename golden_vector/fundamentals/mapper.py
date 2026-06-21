@@ -262,6 +262,7 @@ def _map_net_debt(
                 component="cash",
                 status="MISSING_ASSUMED_ZERO",
                 currency=currency,
+                sign=-1,
             )
         )
     else:
@@ -664,14 +665,16 @@ def _assumed_zero_component(
     component: str,
     status: str,
     currency: str,
+    sign: int = 1,
 ) -> dict[str, object]:
+    contribution = 0.0 * sign
     return {
         "component": component,
         "yahoo_line_item": None,
         "raw_value": None,
         "normalized_value": 0.0,
-        "contribution_musd": 0.0,
-        "formula_sign": 1,
+        "contribution_musd": contribution if sign != 1 else None,
+        "formula_sign": sign,
         "normalization": None,
         "unit": "MUSD",
         "statement_currency": currency,
