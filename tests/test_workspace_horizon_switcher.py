@@ -567,8 +567,69 @@ def test_detail_page_uses_1y_label_not_raw_12m_anywhere(tmp_path):
     assert "12M anchor window" not in body
     assert "12M window" not in body
     assert "anchor window" not in body
-    # Canonical Anchor card is present and shows the label, not the raw '12M' id.
+    # Canonical Anchor card is present and shows the LABEL ('1Y'), not the raw '12M' id — assert
+    # the exact card so a regression of the anchor-card label mapping fails here.
     assert "Canonical Anchor" in body
+    assert "<h3>Canonical Anchor</h3><p>1Y</p>" in body
+
+
+def test_interaction_summary_use_cross_window_volatility_not_active_window():
+    # Regression (fleet review): Interaction + Summary are CROSS-WINDOW cards rendered under the
+    # "does not change with the horizon switcher" banner, so they must read the PUBLISHED
+    # cross-window volatility_context, never the active-window recompute. Previously they flipped
+    # per window for CONVEX tickers whose volatility band crossed between windows.
+    from golden_vector.serve.detail_panels import _build_active_window_explanations
+
+    scoring_config = _repo_app_config().scoring
+    row = {
+        "score_eligible": True,
+        "score_eligibility_reason": "OK",
+        "profile_label": "CONVEX",
+        "confidence_label": "HIGH",
+        "confidence_score": 0.9,
+        "volatility_context": "LOW_NOISE",  # published cross-window value
+        "structural_delta_core": 2.0,
+        "structural_gamma_core": -0.1,
+        "asymmetry_ratio_core": 1.5,
+    }
+    # Active-window recompute says HIGH_NOISE at 5Y but LOW_NOISE at 1Y — the per-window
+    # Volatility card SHOULD reflect that; Interaction/Summary must NOT.
+    at_5y = dict(_build_active_window_explanations(
+        tool_a_row=row, active_window="5Y", scoring_config=scoring_config,
+        volatility_diag={"volatility_context": "HIGH_NOISE"}))
+    at_1y = dict(_build_active_window_explanations(
+        tool_a_row=row, active_window="12M", scoring_config=scoring_config,
+        volatility_diag={"volatility_context": "LOW_NOISE"}))
+
+    assert at_5y["Interaction"] == at_1y["Interaction"]
+    assert at_5y["Summary"] == at_1y["Summary"]
+    # Control: the per-window Volatility card DOES track the active-window context (so the test
+    # would fail if the builder ignored the active window entirely).
+    assert at_5y["Volatility"] != at_1y["Volatility"]
+
+
+def test_explanation_card_partition_is_exhaustive_and_disjoint():
+    # Regression (fleet review): the per-window / cross-window split is by exact title membership.
+    # A future title rename/addition not reflected in the two constants would silently drop a card
+    # from BOTH grids ("never silently hide results"). Lock the partition against the builder.
+    from golden_vector.serve.detail_panels import (
+        _CROSS_WINDOW_EXPLANATION_TITLES,
+        _PER_WINDOW_EXPLANATION_TITLES,
+        _build_active_window_explanations,
+    )
+
+    cards = _build_active_window_explanations(
+        tool_a_row={"score_eligible": True, "score_eligibility_reason": "OK"},
+        active_window="12M",
+        scoring_config=_repo_app_config().scoring,
+        volatility_diag={},
+    )
+    returned = {title for title, _ in cards}
+    per = set(_PER_WINDOW_EXPLANATION_TITLES)
+    cross = set(_CROSS_WINDOW_EXPLANATION_TITLES)
+
+    assert per.isdisjoint(cross), "a card title is in both grids"
+    assert per | cross == returned, "every narrative card must be categorized (none silently dropped)"
 
 
 def test_resolve_active_window_honors_1y_alias_not_canonical_fallback():

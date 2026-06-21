@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from html import escape
 from urllib.parse import quote, urlencode
 
-from golden_vector.common.windows import ALL_WINDOWS, WINDOW_LABELS
+from golden_vector.common.windows import ALL_WINDOWS, SCORING_WINDOWS, WINDOW_LABELS
 from golden_vector.contracts.config_models import (
     AppConfig,
     CandidateFinderConfig,
@@ -180,6 +180,11 @@ def _preset_href(
     fundamentals_source = _first(query, "fundamentals_source")
     if fundamentals_source:
         params.append(("fundamentals_source", fundamentals_source))
+    # Carry the gold-beta horizon so switching preset never silently reverts the screen from a
+    # selected window back to the cross-window blend (the same state-loss class as gold_price).
+    beta_window = _first(query, "beta_window")
+    if beta_window:
+        params.append(("beta_window", beta_window))
     return base_path + "?" + urlencode(params)
 
 
@@ -254,7 +259,7 @@ def _render_beta_window_control(
     """
     current = data.beta_window or ""
     hidden = _hidden_query_inputs(query, exclude={"beta_window"})
-    scoring_labels = " / ".join(WINDOW_LABELS[w] for w in ("6M", "12M", "3Y"))
+    scoring_labels = " / ".join(WINDOW_LABELS[w] for w in SCORING_WINDOWS)
     blend_selected = " selected" if not current else ""
     options = [f'<option value=""{blend_selected}>Blend ({escape(scoring_labels)})</option>']
     for window in ALL_WINDOWS:

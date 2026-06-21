@@ -10,17 +10,27 @@ import pandas as pd
 
 from golden_vector.common.eligibility import is_score_eligible, score_eligible_mask
 from golden_vector.common.numeric import optional_float as _optional_float
+from golden_vector.common.windows import ALL_WINDOWS, window_suffix
 from golden_vector.features.percentile_ranks import oriented_percentile
 
 CriterionDirection = Literal["high_good", "low_good"]
 VALID_DIRECTIONS = frozenset({"high_good", "low_good"})
 
+# Score-gated Gold-Sensitivity beta/delta fields. The `score_eligible` exclusion (degraded
+# tickers must never be ranked) has to apply identically whether the Candidate Finder screens
+# on the cross-window blend (`*_core`) OR on a single per-window column (e.g. `down_beta_6m`
+# when the horizon picker selects 6M) — otherwise picking a window silently re-admits degraded
+# rows. So the gated set is the blend column AND every per-window variant, derived from the
+# window registry (one source of truth). `downside_volatility_52w` is a fixed 52w field with
+# no per-window form.
+_WINDOWED_SCORE_GATED_BASES = ("down_beta", "up_beta", "structural_delta")
 TOOL_A_SCORE_ELIGIBLE_FIELDS = frozenset(
-    {
-        "down_beta_core",
-        "up_beta_core",
-        "structural_delta_core",
-        "downside_volatility_52w",
+    {"downside_volatility_52w"}
+    | {f"{base}_core" for base in _WINDOWED_SCORE_GATED_BASES}
+    | {
+        f"{base}_{window_suffix(window)}"
+        for base in _WINDOWED_SCORE_GATED_BASES
+        for window in ALL_WINDOWS
     }
 )
 

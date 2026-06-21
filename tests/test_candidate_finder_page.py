@@ -13,7 +13,7 @@ from golden_vector.serve.candidate_finder_data import (
     CandidateFinderCacheKey,
     CandidateFinderData,
 )
-from golden_vector.serve.candidate_finder_page import render_candidate_finder_page
+from golden_vector.serve.candidate_finder_page import _preset_href, render_candidate_finder_page
 from golden_vector.serve.workspace import create_workspace_app
 from tests.helpers import build_test_paths
 
@@ -122,6 +122,45 @@ def test_candidate_finder_page_beta_window_selected_and_preserved():
     assert '<option value="3y" selected>3Y</option>' in html
     assert "rank on the 3Y window" in html
     assert '<input type="hidden" name="beta_window" value="3y">' in html
+
+
+def test_preset_links_preserve_beta_window():
+    # Regression (fleet review HIGH): clicking a preset must NOT silently drop the selected
+    # gold-beta horizon and revert the screen to the blend. The preset href carries beta_window
+    # the same way it carries gold_price / fundamentals_source.
+    href = _preset_href(
+        base_path="/candidate-finder",
+        preset_id="bear",
+        query={"beta_window": ["6m"], "gold_price": ["3500"], "fundamentals_source": ["yahoo"]},
+    )
+
+    assert "preset=bear" in href
+    assert "beta_window=6m" in href
+    assert "gold_price=3500" in href
+    assert "fundamentals_source=yahoo" in href
+
+
+def test_candidate_finder_route_threads_beta_window_to_loader(monkeypatch, tmp_path):
+    # Regression: the route must parse ?beta_window and pass it to the loader (else the selector
+    # renders but always screens on the blend).
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+
+    import golden_vector.serve.workspace as workspace_module
+
+    captured: dict[str, object] = {}
+
+    def capturing_loader(_paths, *, app_config, scenario=None, fundamentals_source="our", beta_window=None):
+        captured["beta_window"] = beta_window
+        return _candidate_finder_data()
+
+    monkeypatch.setattr(workspace_module, "load_candidate_finder_data", capturing_loader)
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+
+    _call_wsgi_app(app, method="GET", path="/candidate-finder?beta_window=3y")
+
+    assert captured["beta_window"] == "3y"
 
 
 def test_candidate_finder_page_renders_scenario_status_and_preserves_query():

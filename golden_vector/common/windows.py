@@ -99,8 +99,14 @@ def window_suffix(window_id: str) -> str:
     return str(window_id).lower()
 
 
-def window_label(window_id: str) -> str:
-    """Display label for a window id (12M -> '1Y'); echoes the id if unknown."""
+def window_label(window_id: str | None) -> str:
+    """Display label for a window id (12M -> '1Y'); echoes the id if unknown, '' if falsy.
+
+    The empty-string return for a missing/blank id lets callers route it through display
+    formatters (which render '' as a dash) without re-implementing the normalize+label+echo
+    logic inline."""
+    if not window_id:
+        return ""
     window = _BY_ID.get(_normalize(window_id))
     return window.label if window is not None else str(window_id)
 

@@ -1582,3 +1582,48 @@ def test_criteria_config_for_beta_window_degrades_when_per_window_column_absent(
     assert by_id["up_beta"] == "up_beta_core"
     assert by_id["down_beta"] == "down_beta_core"
     assert by_id["gold_beta_core"] == "structural_delta_core"
+
+
+def test_criteria_config_for_beta_window_degrades_per_item_in_mixed_frame():
+    # Forces the changed=True branch with ONE per-window column present and TWO absent, proving
+    # per-ITEM degradation (the all-absent test only exercises the no-op shortcut).
+    config = _beta_window_test_config()
+    frame = pd.DataFrame(
+        [
+            {
+                "ticker": "AEM",
+                "up_beta_core": 2.0,
+                "up_beta_6m": 1.3,  # only up_beta has a 6M column
+                "down_beta_core": 1.8,
+                "structural_delta_core": 1.5,
+                "confidence_score": 0.9,
+            }
+        ]
+    )
+
+    remapped = _criteria_config_for_beta_window(config, "6M", frame)
+
+    by_id = {c.id: c.source_field for c in remapped.criteria}
+    assert by_id["up_beta"] == "up_beta_6m"  # remapped (column present)
+    assert by_id["down_beta"] == "down_beta_core"  # degrades (column absent)
+    assert by_id["gold_beta_core"] == "structural_delta_core"  # degrades
+    assert by_id["confidence"] == "confidence_score"
+
+
+def test_candidate_finder_cache_key_isolates_beta_window(tmp_path):
+    # Regression: a per-window selection must not collide with the blend in the cache (else
+    # picking a window could serve the blend's cached ranking). beta_window is part of the key
+    # and is normalized via the registry.
+    clear_candidate_finder_cache()
+    paths = build_test_paths(tmp_path)
+    app_config = load_app_config(paths).app
+    _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
+
+    blend = load_candidate_finder_data(paths, app_config=app_config)
+    window = load_candidate_finder_data(paths, app_config=app_config, beta_window="6m")
+
+    assert blend.beta_window is None
+    assert window.beta_window == "6M"
+    assert blend.cache_key.beta_window == "core"
+    assert window.cache_key.beta_window == "6M"
+    assert blend.cache_key != window.cache_key

@@ -232,7 +232,7 @@ def _render_hedge_sizing(data: PortfolioData) -> str:
         + help_th("Proxy", key="portfolio_hedge_proxy")
         + help_th("Label", key="portfolio_hedge_proxy_label")
         + help_th("Status", key="portfolio_hedge_status")
-        + help_th("Down beta", key="tool_c_down_beta")
+        + help_th("Down beta", key="tool_c_down_beta_blend")
         + help_th("Proxy price", key="portfolio_hedge_proxy_price")
         + help_th("Effective exposure", key="portfolio_hedge_effective_exposure")
         + help_th("Short notional", key="portfolio_hedge_short_notional")

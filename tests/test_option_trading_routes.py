@@ -172,6 +172,26 @@ def test_workspace_default_detail_uses_lightweight_option_trading_link(
     assert "Sizing Calculator" not in body
 
 
+def test_workspace_default_detail_option_link_preserves_selected_window(tmp_path):
+    # Regression (Fix D): on the default lens the "Open Option Trading" link must carry the
+    # selected window when it differs from the canonical anchor (AEM's anchor is 12M), and OMIT
+    # it on the canonical default — mirroring the window switcher's own rule.
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+
+    body_2y = _call_wsgi_app(app, method="GET", path="/ticker/AEM?window=2y")["body"]
+    assert "/ticker/AEM?lens=option-trading&amp;window=2y#option-trading" in body_2y
+
+    body_default = _call_wsgi_app(app, method="GET", path="/ticker/AEM")["body"]
+    assert "/ticker/AEM?lens=option-trading#option-trading" in body_default
+    assert "lens=option-trading&amp;window=" not in body_default
+
+
 def test_workspace_option_trading_calculator_contracts_mode(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)

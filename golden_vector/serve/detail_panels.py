@@ -1277,12 +1277,7 @@ def _render_tool_a_panel(
         _metric_card("Profile", _fmt_text(tool_a_row.get("profile_label"))),
         _metric_card(
             "Canonical Anchor",
-            _fmt_text(
-                WINDOW_LABELS.get(
-                    str(tool_a_row.get("anchor_window_id") or "").strip().upper()
-                )
-                or tool_a_row.get("anchor_window_id")
-            ),
+            _fmt_text(window_label(tool_a_row.get("anchor_window_id"))),
         ),
         "</div>",
         _render_explanation_grid(cross_window_explanations),
@@ -1382,9 +1377,10 @@ def _render_signal_notice(tool_a_row: dict[str, Any]) -> str:
 
 # Narrative cards split by horizon-dependence. Delta/Gamma/Asymmetry/Volatility are computed
 # from the ACTIVE window's numbers (they track the switcher); Confidence/Interaction/Summary
-# read the cross-window aggregates (confidence_label / profile_label / *_core) and never change
-# with the switcher. The page renders each group under its matching heading so the cross-window
-# "does not change with the horizon switcher" hint can never apply to per-window prose.
+# read only cross-window aggregates (confidence_label / profile_label / *_core / the published
+# cross-window volatility_context) and never change with the switcher. The page renders each
+# group under its matching heading so the cross-window "does not change with the horizon
+# switcher" hint can never apply to per-window prose.
 _PER_WINDOW_EXPLANATION_TITLES = ("Delta", "Gamma", "Asymmetry", "Volatility")
 _CROSS_WINDOW_EXPLANATION_TITLES = ("Confidence", "Interaction", "Summary")
 
@@ -1454,6 +1450,11 @@ def _build_active_window_explanations(
         volatility_diag.get("volatility_context")
         or str(tool_a_row.get("volatility_context") or "").strip().upper()
     )
+    # Interaction/Summary are CROSS-WINDOW cards (rendered under the "does not change with the
+    # horizon switcher" block), so they must read the PUBLISHED cross-window volatility context,
+    # never the active-window recompute — otherwise their prose flips per window for tickers
+    # whose volatility band crosses between windows (e.g. a CONVEX name LOW_NOISE@1Y, HIGH@5Y).
+    cross_window_vol_context = str(tool_a_row.get("volatility_context") or "").strip().upper()
     diag_residual = volatility_diag.get("residual_volatility")
     residual_vol = (
         diag_residual
@@ -1508,7 +1509,7 @@ def _build_active_window_explanations(
         structural_delta_core=structural_delta_core,
         structural_gamma_core=structural_gamma_core,
         asymmetry_ratio_core=asymmetry_core,
-        volatility_context=vol_context,
+        volatility_context=cross_window_vol_context,
         confidence_label=confidence_label,
         scoring_config=scoring_config,
     )

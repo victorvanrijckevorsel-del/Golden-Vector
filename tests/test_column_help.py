@@ -288,6 +288,24 @@ def test_beta_help_keys_explain_formula_and_negative_sign():
     assert "rose" in COLUMN_HELP["tool_c_up_beta"].meaning.lower()
 
 
+def test_blend_beta_help_keys_state_cross_window_basis():
+    """Regression (fleet review): the cross-surface betas (Finder / Option Trading / Portfolio)
+    show the cross-window *_core blend, so their column help must say so — and the per-window
+    detail keys must NOT, keeping the split correct."""
+    from golden_vector.serve.column_help import COLUMN_HELP
+
+    for key in ("tool_c_down_beta_blend", "tool_c_up_beta_blend"):
+        spec = COLUMN_HELP[key]
+        meaning = (spec.meaning or "").lower()
+        calc = (spec.calculation or "").lower()
+        assert "blend" in meaning, f"{key} meaning must state it is the blend"
+        assert "blend" in calc and "median" in calc, f"{key} calc must state weighted-median blend"
+        assert "per-window" in meaning or "detail page" in meaning, f"{key} should point to per-window view"
+    # The per-window detail keys describe a single window, not the blend.
+    assert "blend" not in (COLUMN_HELP["tool_c_down_beta"].meaning or "").lower()
+    assert "blend" not in (COLUMN_HELP["tool_c_up_beta"].meaning or "").lower()
+
+
 def test_help_value_keeps_filter_sort_clean_and_explains_the_value():
     """Categorical cell values get a click-to-open 'i' explaining the VALUE, while the
     cell's filter/sort data stays the RAW value (Codex blocker: the 'i' must not corrupt

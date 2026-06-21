@@ -186,6 +186,58 @@ def test_candidate_finder_score_ineligible_treats_tool_a_beta_as_missing():
     assert rows["B"].rank_eligible is True
 
 
+def test_score_eligible_gate_covers_per_window_beta_variants():
+    # Regression (fleet review HIGH): the Candidate Finder horizon picker repoints the gold-beta
+    # criteria from *_core to per-window columns; the score_eligible exclusion gate MUST recognise
+    # those variants or degraded tickers re-enter the ranking. Confidence is intentionally NOT gated.
+    from golden_vector.model.candidate_finder import TOOL_A_SCORE_ELIGIBLE_FIELDS
+
+    for column in (
+        "down_beta_core", "up_beta_core", "structural_delta_core",
+        "down_beta_6m", "up_beta_12m", "structural_delta_2y", "up_beta_3y", "down_beta_5y",
+        "downside_volatility_52w",
+    ):
+        assert column in TOOL_A_SCORE_ELIGIBLE_FIELDS, column
+    assert "confidence_score" not in TOOL_A_SCORE_ELIGIBLE_FIELDS
+
+
+def test_candidate_finder_per_window_beta_still_excludes_score_ineligible():
+    # Regression (fleet review HIGH): a degraded (score_eligible=False) ticker must be excluded
+    # from the ranking under a PER-WINDOW beta selection exactly as it is under the blend — picking
+    # a horizon must not silently re-admit degraded rows. Healthy control proves the screen works.
+    per_window_down_beta = CriterionDefinition(
+        id="down_beta",
+        label="Down-beta",
+        description="Gold downside sensitivity.",
+        source_field="down_beta_6m",
+        group="Sensitivity",
+        default_direction="high_good",
+        unit="beta",
+    )
+    frame = pd.DataFrame(
+        [
+            {"ticker": "DEGRADED", "down_beta_6m": 3.0, "confidence_score": 0.9, "score_eligible": False},
+            {"ticker": "HEALTHY", "down_beta_6m": 2.0, "confidence_score": 0.7, "score_eligible": True},
+        ]
+    )
+
+    result = rank_candidates(
+        frame,
+        criteria=[per_window_down_beta] + [c for c in _criteria() if c.id != "down_beta"],
+        selections=[
+            CriterionSelection("down_beta"),
+            CriterionSelection("confidence"),
+        ],
+        min_criteria_fraction=0.67,
+    )
+    rows = {row.ticker: row for row in result.rows}
+
+    assert rows["DEGRADED"].raw_values["down_beta"] is None
+    assert rows["DEGRADED"].percentiles["down_beta"] is None
+    assert rows["DEGRADED"].rank_eligible is False
+    assert rows["HEALTHY"].rank_eligible is True
+
+
 def test_candidate_finder_empty_selection_returns_guard_warning():
     result = rank_candidates(
         pd.DataFrame([{"ticker": "A", "down_beta_core": 1.0}]),
