@@ -198,9 +198,9 @@ def test_by_window_keys_carry_correct_window_id_and_distinct_percentiles():
     out = resolve_beta_universe_comparisons_by_window(
         ticker="SUBJ", window_ids=("6M", "12M", "3Y"), universe_df=_universe(), benchmark_df=_benchmarks()
     )
-    assert out["6M"].window_id == "6M" and out["6M"].window_label == "6-month"
-    assert out["12M"].window_id == "12M" and out["12M"].window_label == "12-month"
-    assert out["3Y"].window_id == "3Y" and out["3Y"].window_label == "3-year"
+    assert out["6M"].window_id == "6M" and out["6M"].window_label == "6M"
+    assert out["12M"].window_id == "12M" and out["12M"].window_label == "1Y"
+    assert out["3Y"].window_id == "3Y" and out["3Y"].window_label == "3Y"
     pcts = {out[w].subject.down_percentile for w in ("6M", "12M", "3Y")}
     assert len(pcts) == 3  # 60 / 80 / 100 — genuinely re-based, not one cached number
 
@@ -273,7 +273,7 @@ def test_render_comparison_panel_shows_window_label_percentile_and_rug():
     c = resolve_beta_universe_comparison(ticker="SUBJ", window_id="3Y", universe_df=_universe(), benchmark_df=_benchmarks())
     html = _render_beta_comparison_panel(c, ticker="SUBJ", active_window="3Y")
     assert "ranks vs the miner universe" in html
-    assert "3-year" in html  # window label rendered
+    assert "Over the 3Y window" in html  # registry window label rendered (not "3-year")
     assert "percentile" in html  # subject percentile text rendered
     assert "orange marker" in html  # legend
     assert "<svg" in html  # both strips present

@@ -1,8 +1,8 @@
-"""Tests for the Tool A detail-page horizon switcher (6M / 12M / 3Y).
+"""Tests for the Tool A detail-page horizon switcher (6M / 1Y / 2Y / 3Y / 5Y).
 
 Covers:
   T1  window resolver — URL param mapping, fallbacks, canonical anchor recovery
-  T2  window switcher HTML — three tabs, active + canonical markers
+  T2  window switcher HTML — five tabs, active + canonical markers
   T3  backward-compat — no query param renders the canonical anchor
   T4  window param routes the active_window through to scorecards
   T5  switching windows changes the delta/gamma scorecards
@@ -44,6 +44,7 @@ from tests.test_workspace_app import (
 def test_resolve_active_window_uses_url_param_case_insensitive():
     assert _resolve_active_window("6m", "12M") == "6M"
     assert _resolve_active_window("12M", "12M") == "12M"
+    assert _resolve_active_window("1y", "6M") == "12M"
     assert _resolve_active_window("3y", "12M") == "3Y"
 
 
@@ -154,8 +155,8 @@ def test_detail_page_without_window_param_defaults_to_canonical_anchor(tmp_path)
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    # The 12M-specific scorecard label must appear.
-    assert "Structural Delta (12M)" in body
+    # The canonical 12M window renders under the user-facing 1Y label.
+    assert "Structural Delta (1Y)" in body
     # 12M is the canonical anchor, so no mismatch banner should show.
     # Check for the banner paragraph, not the CSS class selector block.
     assert 'class="hint window-mismatch"' not in body
@@ -402,7 +403,7 @@ def test_volatility_panel_renders_numbers_for_canonical_eligible_window(tmp_path
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert "Volatility Diagnostics (12M)" in body
+    assert "Volatility Diagnostics (1Y)" in body
     assert "Volatility Context" in body
     assert "is not eligible for this ticker" not in body
 
@@ -422,9 +423,9 @@ def test_structural_window_table_marks_the_active_row():
     html = _render_structural_window_table(tool_a_row, active_window="3Y")
     # Exactly the active row carries the active-row class.
     assert html.count('class="active-row"') == 1
-    # 3Y cell is marked as Active; 12M as Anchor.
+    # 3Y cell is marked as Active; canonical 12M renders as 1Y Anchor.
     assert "3Y (Active)" in html
-    assert "12M (Anchor)" in html
+    assert "1Y (Anchor)" in html
 
 
 # ---------------------------------------------------------------- T13 ----
@@ -460,8 +461,8 @@ def test_invalid_window_param_falls_back_to_canonical_without_error(tmp_path):
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM?window=9M")
     assert response["status"].startswith("200")
     body = response["body"]
-    # Falls back to canonical (12M).
-    assert "Structural Delta (12M)" in body
+    # Falls back to canonical (12M), rendered under the user-facing 1Y label.
+    assert "Structural Delta (1Y)" in body
 
 
 
@@ -477,8 +478,8 @@ def test_structural_window_table_lists_all_windows_and_flags_display_only():
         })
     html = _render_structural_window_table(row, active_window="3Y")
     # all five lookbacks are listed
-    for wid in ("6M", "12M", "2Y", "3Y", "5Y"):
-        assert f"<td>{wid}" in html
+    for label in ("6M", "1Y", "2Y", "3Y", "5Y"):
+        assert f"<td>{label}" in html
     # 2Y/5Y rows are flagged display-only; scoring windows are not
     assert "2Y (display-only)" in html
     assert "5Y (display-only)" in html
@@ -511,3 +512,12 @@ def test_detail_page_is_horizon_consistent_with_no_silent_mixing(tmp_path):
     assert "Gold Sensitivity Score (2Y)" not in body
     # The all-lookbacks reference table marks the display-only windows.
     assert "display-only" in body
+
+
+def test_resolve_active_window_honors_1y_alias_not_canonical_fallback():
+    # Regression (Codex review): ?window=1y must resolve to 12M, NOT fall back to the
+    # ticker's canonical anchor. Use a non-12M canonical so the bug would be visible.
+    assert _resolve_active_window("1y", "6M") == "12M"
+    assert _resolve_active_window("1Y", "3Y") == "12M"
+    # Invalid still falls back to the canonical anchor.
+    assert _resolve_active_window("nonsense", "6M") == "6M"

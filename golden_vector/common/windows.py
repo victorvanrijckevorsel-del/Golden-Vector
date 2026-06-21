@@ -78,13 +78,20 @@ def get_window(window_id: str) -> Window:
     return window
 
 
-def resolve_window(requested: str | None) -> str:
-    """Normalise a query-string window ('1y', '12M', '3Y', …) to a canonical id; anything
-    unrecognised falls back to ``DEFAULT_WINDOW``."""
+def resolve_window_or_none(requested: str | None) -> str | None:
+    """Canonical id for a requested window id OR display alias ('1y' -> '12M'), or None
+    when unrecognised. Lets callers distinguish 'recognised alias' from 'invalid' so they
+    can choose their own fallback (e.g. the detail page falls back to the ticker's anchor)."""
     normalized = _normalize(requested or "")
     if normalized in _BY_ID:
         return normalized
-    return _LABEL_ALIASES.get(normalized, DEFAULT_WINDOW)
+    return _LABEL_ALIASES.get(normalized)
+
+
+def resolve_window(requested: str | None) -> str:
+    """Normalise a query-string window ('1y', '12M', '3Y', …) to a canonical id; anything
+    unrecognised falls back to ``DEFAULT_WINDOW``."""
+    return resolve_window_or_none(requested) or DEFAULT_WINDOW
 
 
 def window_suffix(window_id: str) -> str:

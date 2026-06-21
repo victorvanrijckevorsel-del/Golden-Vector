@@ -65,6 +65,7 @@ from golden_vector.serve.workspace_state import (
     _WINDOW_WEEKS,
     _structural_history_matches_tool_a,
 )
+from golden_vector.common.windows import resolve_window_or_none
 from golden_vector.serve.windows import SCORING_WINDOWS, WINDOW_LABELS
 
 def _sizing_query_parts(sizing_request: object | None) -> list[str]:
@@ -1121,6 +1122,9 @@ def _render_tool_a_panel(
         )
 
     win = active_window.lower()
+    # Visible label uses the registry display name (12M -> "1Y") so the page never shows two
+    # names for one horizon; the canonical id (`active_window` / `win`) stays for lookups.
+    win_label = WINDOW_LABELS.get(active_window, active_window)
     scoring_config = app_config.scoring if app_config is not None else None
     volatility_diag = _compute_window_volatility(
         tool_a_row=tool_a_row,
@@ -1142,15 +1146,15 @@ def _render_tool_a_panel(
             tool_a_detail.structural_metrics_load, tool_a_row=tool_a_row
         ),
         # Window-specific metrics (recompute with switcher).
-        f"<h3>Active window: {escape(active_window)}</h3>",
+        f"<h3>Active window: {escape(win_label)}</h3>",
         "<div class=\"metric-grid\">",
         _metric_card("As Of", _fmt_text(tool_a_row.get("as_of_date"))),
-        _metric_card(f"Structural Delta ({active_window})", _fmt_number(tool_a_row.get(f"structural_delta_{win}"), decimals=2)),
-        _metric_card(f"Gamma Down-Up ({active_window})", _fmt_number(tool_a_row.get(f"gamma_{win}"), decimals=2)),
-        _metric_card(f"Asymmetry ({active_window})", _fmt_number(tool_a_row.get(f"asymmetry_ratio_{win}"), decimals=2)),
-        _metric_card(f"R² ({active_window})", _fmt_percent(tool_a_row.get(f"r_squared_{win}"), decimals=1)),
-        _metric_card(f"Weeks ({active_window})", _fmt_number(tool_a_row.get(f"weeks_{win}"), decimals=0)),
-        _metric_card(f"Volatility Context ({active_window})", _fmt_text(vol_context_display)),
+        _metric_card(f"Structural Delta ({win_label})", _fmt_number(tool_a_row.get(f"structural_delta_{win}"), decimals=2)),
+        _metric_card(f"Gamma Down-Up ({win_label})", _fmt_number(tool_a_row.get(f"gamma_{win}"), decimals=2)),
+        _metric_card(f"Asymmetry ({win_label})", _fmt_number(tool_a_row.get(f"asymmetry_ratio_{win}"), decimals=2)),
+        _metric_card(f"R² ({win_label})", _fmt_percent(tool_a_row.get(f"r_squared_{win}"), decimals=1)),
+        _metric_card(f"Weeks ({win_label})", _fmt_number(tool_a_row.get(f"weeks_{win}"), decimals=0)),
+        _metric_card(f"Volatility Context ({win_label})", _fmt_text(vol_context_display)),
         "</div>",
         # Cross-window summary — the Score/Confidence/Profile are computed ACROSS the
         # scoring windows (a robustness blend), NOT for the selected horizon, so they are
@@ -1436,7 +1440,7 @@ def _render_structural_window_table(
         row_class = " class=\"active-row\"" if window_id == active_window else ""
         window_rows.append(
             f"<tr{row_class}>"
-            f"<td>{window_id}{marker_text}</td>"
+            f"<td>{WINDOW_LABELS.get(window_id, window_id)}{marker_text}</td>"
             f"<td>{_fmt_number(tool_a_row.get(f'structural_delta_{normalized}'), decimals=2)}</td>"
             f"<td>{_fmt_number(tool_a_row.get(f'gamma_{normalized}'), decimals=2)}</td>"
             f"<td>{_fmt_number(tool_a_row.get(f'up_beta_{normalized}'), decimals=2)}</td>"
@@ -1655,7 +1659,7 @@ def _render_scatter_panel(
         return (
             "<section class=\"panel nested-panel\">"
             "<h3>Weekly Return Scatter</h3>"
-            f"<p>No weekly return detail is available yet for the {escape(active_window)} window.</p>"
+            f"<p>No weekly return detail is available yet for the {escape(WINDOW_LABELS.get(active_window, active_window))} window.</p>"
             "</section>"
         )
     regression_beta = _optional_float(anchor_metric.get("structural_delta"))
@@ -1669,7 +1673,7 @@ def _render_scatter_panel(
     return (
         "<section class=\"panel nested-panel\">"
         f"<h3>Weekly Return Scatter</h3><p class=\"hint\">Each dot is one week over the "
-        f"{escape(active_window)} sample: x = gold's weekly return, y = {escape(ticker)}'s. The "
+        f"{escape(WINDOW_LABELS.get(active_window, active_window))} sample: x = gold's weekly return, y = {escape(ticker)}'s. The "
         "line's slope is the gold beta (how much the stock moves per 1% gold move); how tightly "
         "the dots hug the line is the R² (reliability). Top-right = both rose, bottom-left = both "
         "fell.</p>"
@@ -1713,7 +1717,7 @@ def _render_up_down_beta_panel(
     if up_beta is None and down_beta is None:
         return (
             "<section class=\"panel nested-panel\">"
-            f"<h3>Up vs Down Beta</h3><p>No {escape(active_window)} regime split is available yet.</p>"
+            f"<h3>Up vs Down Beta</h3><p>No {escape(WINDOW_LABELS.get(active_window, active_window))} regime split is available yet.</p>"
             "</section>"
         )
     # When the GDX/GDXJ comparison is available, show the stock AND the ETFs as grouped bars on the
@@ -1730,7 +1734,7 @@ def _render_up_down_beta_panel(
             f"<p class=\"hint\">Bars: <span style=\"color:{_STOCK_COLOR}\">■ this stock</span>, "
             "<span style=\"color:#1d4b73\">■ GDX</span>, "
             "<span style=\"color:#3f7cae\">■ GDXJ</span> — all on the "
-            f"{escape(active_window)} window, so they are directly comparable.</p>"
+            f"{escape(WINDOW_LABELS.get(active_window, active_window))} window, so they are directly comparable.</p>"
         )
     else:
         svg = _build_dual_bar_svg(
@@ -1744,7 +1748,7 @@ def _render_up_down_beta_panel(
         "<section class=\"panel nested-panel\">"
         "<h3>Up vs Down Beta</h3>"
         f"<p class=\"hint\">Gold beta measured separately on weeks gold rose (up beta) vs weeks gold "
-        f"fell (down beta), over the {escape(active_window)} sample. A taller down bar than up bar "
+        f"fell (down beta), over the {escape(WINDOW_LABELS.get(active_window, active_window))} sample. A taller down bar than up bar "
         "(positive gamma) means it falls more with gold than it rises — a fragile, asymmetric "
         "profile. Either beta can be negative (moves opposite to gold).</p>"
         f"{legend}"
@@ -1793,7 +1797,7 @@ def _render_beta_comparison_panel(
     if comparison is None or not getattr(comparison, "available", False):
         note = getattr(comparison, "note", None) if comparison is not None else None
         message = note or (
-            f"No universe comparison is available for the {escape(active_window)} window yet."
+            f"No universe comparison is available for the {escape(WINDOW_LABELS.get(active_window, active_window))} window yet."
         )
         return (
             "<section class=\"panel nested-panel\">"
@@ -1884,14 +1888,15 @@ def _render_volatility_panel(
     rendering numbers built on thin observations.
     """
     window_status = _window_status(tool_a_row, active_window)
+    win_label = WINDOW_LABELS.get(active_window, active_window)
     # If the active window isn't ELIGIBLE, suppress numbers entirely.
     # Codex flagged in review: a structural page showing low-obs vol
     # with just a sample-size asterisk implies more trust than it should.
     if window_status != "ELIGIBLE":
         return (
             "<section class=\"panel nested-panel\">"
-            f"<h3>Volatility Diagnostics ({escape(active_window)})</h3>"
-            f"<p class=\"hint\">The {escape(active_window)} window is not eligible for this ticker "
+            f"<h3>Volatility Diagnostics ({escape(win_label)})</h3>"
+            f"<p class=\"hint\">The {escape(win_label)} window is not eligible for this ticker "
             f"(status: {escape(str(window_status))}). Volatility is not shown.</p>"
             "</section>"
         )
@@ -1905,7 +1910,7 @@ def _render_volatility_panel(
     context_label = diag.get("volatility_context") or "UNKNOWN"
     return (
         "<section class=\"panel nested-panel\">"
-        f"<h3>Volatility Diagnostics ({escape(active_window)})</h3>"
+        f"<h3>Volatility Diagnostics ({escape(win_label)})</h3>"
         "<div class=\"metric-grid\">"
         f"{_metric_card('Total Volatility (Annualized Log Vol)', _fmt_percent(diag.get('total_volatility'), decimals=1))}"
         f"{_metric_card('Residual Volatility (Annualized Log Vol)', _fmt_percent(diag.get('residual_volatility'), decimals=1))}"
@@ -2073,12 +2078,13 @@ def _canonical_anchor_window(tool_a_row: dict[str, Any]) -> str:
 def _resolve_active_window(raw_param: str, canonical_anchor: str) -> str:
     """Map a URL `window=` value to a valid structural window id.
 
-    Invalid / missing params fall back to the ticker's canonical anchor.
-    Case-insensitive.
+    Recognises canonical ids AND display aliases via the registry (so `?window=1y`
+    resolves to 12M, not the canonical anchor). Invalid / missing params fall back to
+    the ticker's canonical anchor. Case-insensitive.
     """
-    normalized = str(raw_param or "").strip().upper()
-    if normalized in _STRUCTURAL_WINDOWS:
-        return normalized
+    resolved = resolve_window_or_none(raw_param)
+    if resolved is not None:
+        return resolved
     return canonical_anchor if canonical_anchor in _STRUCTURAL_WINDOWS else "12M"
 
 

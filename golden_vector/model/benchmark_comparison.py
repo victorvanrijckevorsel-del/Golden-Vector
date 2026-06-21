@@ -19,26 +19,16 @@ from dataclasses import dataclass
 import pandas as pd
 
 from golden_vector.common.numeric import optional_finite_float
+from golden_vector.common.windows import (
+    WINDOW_LABELS,
+    is_window,
+    window_suffix as _registry_window_suffix,
+)
 
-# The window the user picks -> the column suffix used in tool_a_latest and benchmark_betas.
-# Includes the display-only 2Y/5Y so the universe comparison resolves them once those
-# per-window beta columns exist (they now do on tool_a_latest and benchmark_betas).
-_WINDOW_COLUMN_SUFFIX = {
-    "6M": "6m",
-    "12M": "12m",
-    "2Y": "2y",
-    "3Y": "3y",
-    "5Y": "5y",
-    "CORE": "core",
-}
-_WINDOW_LABEL = {
-    "6M": "6-month",
-    "12M": "12-month",
-    "2Y": "2-year",
-    "3Y": "3-year",
-    "5Y": "5-year",
-    "CORE": "full-history",
-}
+# Suffix/label come from the ONE window registry (common/windows.py) so the universe
+# comparison can't drift from the rest of the app (e.g. 12M renders as "1Y" everywhere,
+# not "12-month" here). CORE is the only non-structural extra this panel adds.
+_CORE_KEY = "CORE"
 
 
 @dataclass(frozen=True)
@@ -180,8 +170,15 @@ def resolve_beta_universe_comparison(
     """Resolve the stock-vs-(GDX/GDXJ)-vs-universe beta comparison for ONE window."""
 
     key = (window_id or "").upper()
-    suffix = _WINDOW_COLUMN_SUFFIX.get(key)
-    label = _WINDOW_LABEL.get(key, window_id)
+    if key == _CORE_KEY:
+        suffix = "core"
+        label = "full-history"
+    elif is_window(key):
+        suffix = _registry_window_suffix(key)
+        label = WINDOW_LABELS.get(key, key)
+    else:
+        suffix = None
+        label = window_id
     if suffix is None:
         return BetaUniverseComparison(
             window_id=key,
