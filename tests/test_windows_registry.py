@@ -28,6 +28,8 @@ def test_labels_and_aliases():
     assert reg.resolve_window("nonsense") == "12M"
     assert reg.resolve_window("") == "12M"
     assert reg.resolve_window(None) == "12M"
+    assert reg.resolve_window_or_none("1y") == "12M"
+    assert reg.resolve_window_or_none("nonsense") is None
 
 
 def test_suffix_weeks_scored():

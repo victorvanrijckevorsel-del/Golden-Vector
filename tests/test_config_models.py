@@ -1,6 +1,12 @@
 import pytest
 from pydantic import ValidationError
 
+from golden_vector.common.windows import (
+    ALL_WINDOWS,
+    DISPLAY_WINDOWS,
+    SCORING_WINDOWS,
+    window_suffix,
+)
 from golden_vector.contracts.config_models import (
     GOLD_BUCKET_NAMES,
     AsymmetryThresholds,
@@ -682,6 +688,14 @@ def test_scoring_config_rejects_unknown_display_window():
         ScoringConfig.model_validate({"structural_display_windows": ["7Y"]})
 
 
+def test_scoring_config_window_defaults_follow_registry():
+    config = ScoringConfig()
+    assert tuple(config.structural_windows) == SCORING_WINDOWS
+    assert tuple(config.structural_display_windows) == DISPLAY_WINDOWS
+    assert set(config.structural_windows) | set(config.structural_display_windows) == set(ALL_WINDOWS)
+    assert StructuralWindowWeights().windows == {window: 1.0 for window in SCORING_WINDOWS}
+
+
 def test_scoring_config_rejects_duplicate_display_window():
     with pytest.raises(ValidationError, match="duplicate"):
         ScoringConfig.model_validate({"structural_display_windows": ["2Y", "2Y"]})
@@ -694,6 +708,10 @@ def test_confidence_thresholds_minimum_observations_for_window_covers_all_window
     assert ct.minimum_observations_for_window("2Y") == 80
     assert ct.minimum_observations_for_window("3Y") == 120
     assert ct.minimum_observations_for_window("5Y") == 200
+    for window in ALL_WINDOWS:
+        assert ct.minimum_observations_for_window(window) == getattr(
+            ct, f"minimum_observations_{window_suffix(window)}"
+        )
     with pytest.raises(ValueError, match="Unsupported structural window"):
         ct.minimum_observations_for_window("7Y")
 

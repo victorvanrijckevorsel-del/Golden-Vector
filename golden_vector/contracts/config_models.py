@@ -8,6 +8,14 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from golden_vector.common.windows import (
+    ALL_WINDOWS,
+    DISPLAY_WINDOWS,
+    SCORING_WINDOWS,
+    is_window,
+    window_suffix,
+)
+
 SUPPORTED_CURRENCIES = {"USD", "CAD", "GBP", "AUD", "ZAR", "EUR", "SEK"}
 HORIZON_PATTERN = re.compile(r"^\d+[DMY]$")
 
@@ -18,6 +26,10 @@ HORIZON_PATTERN = re.compile(r"^\d+[DMY]$")
 GOLD_BUCKET_NAMES: frozenset[str] = frozenset(
     {"gold_down_big", "gold_down", "gold_flat", "gold_up", "gold_up_big"}
 )
+
+
+def _window_list_text(window_ids: tuple[str, ...]) -> str:
+    return ", ".join(window_ids)
 
 # Single source of truth for the default option DTE bands; the liquidity
 # layer's fallback and the config default must never diverge.
@@ -1040,16 +1052,9 @@ class ConfidenceThresholds(StrictConfigModel):
 
     def minimum_observations_for_window(self, window_id: str) -> int:
         normalized = str(window_id).strip().upper()
-        mapping = {
-            "6M": self.minimum_observations_6m,
-            "12M": self.minimum_observations_12m,
-            "3Y": self.minimum_observations_3y,
-            "2Y": self.minimum_observations_2y,
-            "5Y": self.minimum_observations_5y,
-        }
-        if normalized not in mapping:
+        if not is_window(normalized):
             raise ValueError(f"Unsupported structural window: {window_id}")
-        return mapping[normalized]
+        return int(getattr(self, f"minimum_observations_{window_suffix(normalized)}"))
 
     def minimum_regime_observations_for_window(self, window_id: str) -> int:
         minimum_observations = self.minimum_observations_for_window(window_id)
@@ -1098,15 +1103,18 @@ class ScoreWeights(StrictConfigModel):
 
 class StructuralWindowWeights(StrictConfigModel):
     windows: dict[str, float] = Field(
-        default_factory=lambda: {"6M": 1.0, "12M": 1.0, "3Y": 1.0}
+        default_factory=lambda: {window: 1.0 for window in SCORING_WINDOWS}
     )
 
     @field_validator("windows")
     @classmethod
     def valid_window_weights(cls, value: dict[str, float]) -> dict[str, float]:
         normalized = {str(key).strip().upper(): float(weight) for key, weight in value.items()}
-        if set(normalized) != {"6M", "12M", "3Y"}:
-            raise ValueError("structural window weights must contain exactly: 6M, 12M, 3Y")
+        if set(normalized) != set(SCORING_WINDOWS):
+            raise ValueError(
+                "structural window weights must contain exactly: "
+                f"{_window_list_text(SCORING_WINDOWS)}"
+            )
         if any(weight <= 0 for weight in normalized.values()):
             raise ValueError("structural window weights must all be positive")
         return normalized
@@ -1115,9 +1123,9 @@ class StructuralWindowWeights(StrictConfigModel):
 class ScoringConfig(StrictConfigModel):
     version: int = 2
     structural_windows: list[str] = Field(
-        default_factory=lambda: ["6M", "12M", "3Y"],
-        min_length=3,
-        max_length=3,
+        default_factory=lambda: list(SCORING_WINDOWS),
+        min_length=len(SCORING_WINDOWS),
+        max_length=len(SCORING_WINDOWS),
     )
     # Display-only extra beta windows for the Gold Sensitivity selector. Computed +
     # persisted, but NEVER part of the score/rank/confidence/eligibility/anchor (the
@@ -1125,8 +1133,8 @@ class ScoringConfig(StrictConfigModel):
     structural_display_windows: list[str] = Field(
         # Only 2Y and 5Y are legitimate display windows (the disjointness validator
         # below forbids the three scoring windows), so the schema bound is 2.
-        default_factory=lambda: ["2Y", "5Y"],
-        max_length=2,
+        default_factory=lambda: list(DISPLAY_WINDOWS),
+        max_length=len(DISPLAY_WINDOWS),
     )
     delta_bands: StructuralDeltaBands = Field(default_factory=StructuralDeltaBands)
     gamma_thresholds: GammaThresholds = Field(default_factory=GammaThresholds)
@@ -1152,9 +1160,10 @@ class ScoringConfig(StrictConfigModel):
     @classmethod
     def valid_structural_windows(cls, values: list[str]) -> list[str]:
         normalized = [value.strip().upper() for value in values]
-        if normalized != ["6M", "12M", "3Y"]:
+        if normalized != list(SCORING_WINDOWS):
             raise ValueError(
-                "structural_windows must be exactly: 6M, 12M, 3Y"
+                "structural_windows must be exactly: "
+                f"{_window_list_text(SCORING_WINDOWS)}"
             )
         return normalized
 
@@ -1162,7 +1171,7 @@ class ScoringConfig(StrictConfigModel):
     @classmethod
     def valid_structural_display_windows(cls, values: list[str]) -> list[str]:
         normalized = [value.strip().upper() for value in values]
-        allowed = {"6M", "12M", "2Y", "3Y", "5Y"}
+        allowed = set(ALL_WINDOWS)
         unknown = [w for w in normalized if w not in allowed]
         if unknown:
             raise ValueError(f"structural_display_windows must be within {sorted(allowed)}; got {unknown}")
@@ -1191,8 +1200,11 @@ class ScoringConfig(StrictConfigModel):
     @classmethod
     def valid_anchor_window(cls, value: str) -> str:
         normalized = str(value).strip().upper()
-        if normalized not in {"6M", "12M", "3Y"}:
-            raise ValueError("structural_anchor_window must be one of: 6M, 12M, 3Y")
+        if normalized not in set(SCORING_WINDOWS):
+            raise ValueError(
+                "structural_anchor_window must be one of: "
+                f"{_window_list_text(SCORING_WINDOWS)}"
+            )
         return normalized
 
     @field_validator("blocked_normalization_statuses")
