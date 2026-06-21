@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from golden_vector.common.windows import window_label
 from golden_vector.contracts.config_models import ScoringConfig
 
 
@@ -28,7 +29,7 @@ def build_delta_explanation(
     if anchor_delta is None:
         return "Structural delta could not be estimated cleanly for the anchor window."
     window_text = (
-        f" in the {anchor_window_id} anchor window"
+        f" in the {window_label(anchor_window_id)} window"
         if anchor_window_id
         else ""
     )
@@ -68,7 +69,7 @@ def build_gamma_explanation(
     if gamma_core is None or up_beta_anchor is None or down_beta_anchor is None:
         return "Gamma is unavailable because there were not enough clean up-gold and down-gold weeks to compare regime sensitivity."
     window_text = (
-        f" in the {anchor_window_id} anchor window"
+        f" in the {window_label(anchor_window_id)} window"
         if anchor_window_id
         else ""
     )

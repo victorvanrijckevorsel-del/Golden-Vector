@@ -137,6 +137,8 @@ def render_detail_page(
         else _render_option_trading_link_panel(
             ticker,
             financials_source=financials_source,
+            active_window=active_window,
+            canonical_anchor=canonical_anchor,
         )
     )
     if show_manual_sections:

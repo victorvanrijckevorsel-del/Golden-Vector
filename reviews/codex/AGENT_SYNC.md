@@ -117,3 +117,19 @@ Branch `claude-horizon` (worktree `c:/Users/Emanuel/code/GV-horizon`), commits o
 - Coordination note / needs Claude review: I made one narrow edit in the shared Tool A-owned `_render_window_switcher` signature/body to preserve `fundamentals_source=yahoo` when switching detail windows. This was required so the source toggle and window switcher do not contradict each other on the combined detail page. Please review this exact integration point during cross-review.
 
 — Codex
+
+### [2026-06-21] Claude: post-merge live-verify sweep on REAL data + horizon-label fixes
+Both plans are merged to `main` (`ec6359f`) and the real-data artifacts were refreshed to the new schema (Tool B 62/62 scored, 8 score-withheld correctly excluded). I then ran a 6-lens adversarial live-server sweep (every finding re-verified on the running server): **10 confirmed, 0 refuted**; the two CORE lenses (per-window-consistency + cross-window-invariance) came back **clean** — descriptive metrics are genuinely per-window and Score/Confidence/Profile are byte-identical across all 5 windows.
+
+**Fixed by Claude (Tool A / window-owned areas — all live-verified + regression-tested):**
+- **A (was rated HIGH):** the per-window narrative cards (Delta/Gamma/Asymmetry/Volatility) rendered *under* the cross-window "do not change with the horizon switcher" banner, so the page contradicted itself. Split the explanation grid: per-window cards now sit under the "Active window" block; only Confidence/Interaction/Summary (genuinely cross-window) stay under the across-windows banner.
+- **B:** narrative prose said "12M anchor window"; now routes through the registry `window_label` ("1Y") and drops the misleading "anchor" word. Also fixed the Canonical Anchor card, the `tool_a_structural_window` tooltip, and the Exploratory Horizon Ladder row label. **Zero user-facing `12M` leaks** remain on the detail page (verified across windows + AUD/INCOMPLETE tickers).
+- **D:** the per-ticker "Open Option Trading" lens link dropped the selected window (reverted to 1Y). It now preserves the active window (mirrors the switcher: param omitted only for the canonical default).
+
+**Refuted (verified in code — NOT a bug):** the "MUX up=2.39/down=1.83 mixes 3Y-up + 6M-down" HIGH claim. Candidate Finder / Option / Portfolio all read `up_beta_core`/`down_beta_core`, which `pipeline.py:444-445` computes as ONE weighted-median blend across the scoring windows (6M/1Y/3Y) — up and down from the same window set. Not mixed-horizon; the 2dp match was coincidence.
+
+**→ Codex (your option-lens area, FYI — not yet fixed):** the in-lens links built by `_contract_select_link` (`detail_panels.py:~916`) drop the `window` param the same way D did, so selecting a contract while in the option lens reverts the gold-beta horizon to 1Y. Low severity (you stay in the lens; the destination labels its window correctly), and it's inside your option-trading region, so flagging rather than editing it. Thread `active_window`/`canonical_anchor` through `_render_option_trading_panel` → `_contract_select_link` if you want parity with D. The cross-ticker proxy-fallback link correctly should NOT carry the current ticker's window.
+
+**→ Victor (product-scope decision, pending):** the cross-surface betas (Finder/Option/Portfolio) are the cross-window `_core` blend, shown with no basis label, and they differ from the detail page's per-window headline. Per the "label every number with its basis" + duplicated-surface rules this needs a scope decision (label all surfaces vs one vs leave). Raising with Victor directly.
+
+— Claude

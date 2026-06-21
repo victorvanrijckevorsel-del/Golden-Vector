@@ -65,7 +65,7 @@ from golden_vector.serve.workspace_state import (
     _WINDOW_WEEKS,
     _structural_history_matches_tool_a,
 )
-from golden_vector.common.windows import resolve_window_or_none
+from golden_vector.common.windows import resolve_window_or_none, window_label
 from golden_vector.serve.windows import SCORING_WINDOWS, WINDOW_LABELS
 
 def _sizing_query_parts(sizing_request: object | None) -> list[str]:
@@ -331,7 +331,19 @@ def _render_option_trading_link_panel(
     ticker: str,
     *,
     financials_source: str = "our",
+    active_window: str | None = None,
+    canonical_anchor: str | None = None,
 ) -> str:
+    # Preserve the selected horizon so opening the lens never silently reverts to the
+    # canonical anchor. Mirror the window switcher: the param is omitted only for the
+    # canonical default (which needs no ?window=), and carried for every other window.
+    extra_params: dict[str, str] = {}
+    if (
+        active_window
+        and canonical_anchor
+        and str(active_window).upper() != str(canonical_anchor).upper()
+    ):
+        extra_params["window"] = str(active_window).lower()
     href = (
         build_page_url(
             f"/ticker/{quote(str(ticker), safe='')}",
@@ -339,6 +351,7 @@ def _render_option_trading_link_panel(
             set_params=_source_set_params(
                 financials_source,
                 lens="option-trading",
+                **extra_params,
             ),
         )
         + "#option-trading"
@@ -1206,6 +1219,23 @@ def _render_tool_a_panel(
     )
     vol_context_display = volatility_diag.get("volatility_context") or tool_a_row.get("volatility_context")
 
+    # The narrative cards split by horizon-dependence: Delta/Gamma/Asymmetry/Volatility track
+    # the selected window, while Confidence/Interaction/Summary are cross-window aggregates.
+    # We render them under their matching heading so the "does not change with the horizon
+    # switcher" hint can never apply to per-window prose (it sat under that hint before).
+    explanation_cards = _build_active_window_explanations(
+        tool_a_row=tool_a_row,
+        active_window=active_window,
+        scoring_config=scoring_config,
+        volatility_diag=volatility_diag,
+    )
+    per_window_explanations = [
+        card for card in explanation_cards if card[0] in _PER_WINDOW_EXPLANATION_TITLES
+    ]
+    cross_window_explanations = [
+        card for card in explanation_cards if card[0] in _CROSS_WINDOW_EXPLANATION_TITLES
+    ]
+
     body = [
         "<section class=\"panel\">",
         "<h2>Gold Sensitivity</h2>",
@@ -1228,6 +1258,11 @@ def _render_tool_a_panel(
         _metric_card(f"Weeks ({win_label})", _fmt_number(tool_a_row.get(f"weeks_{win}"), decimals=0)),
         _metric_card(f"Volatility Context ({win_label})", _fmt_text(vol_context_display)),
         "</div>",
+        # Per-window narrative (tracks the switcher) sits under the active-window block, so the
+        # cross-window "does not change" hint below can never be misread as applying to it.
+        f"<p class=\"hint\">These read-outs describe the active window ({escape(win_label)}) and "
+        "update when you switch the horizon above.</p>",
+        _render_explanation_grid(per_window_explanations),
         # Cross-window summary — the Score/Confidence/Profile are computed ACROSS the
         # scoring windows (a robustness blend), NOT for the selected horizon, so they are
         # stable regardless of the switcher. Labelled explicitly so nothing reads as mixed:
@@ -1240,14 +1275,17 @@ def _render_tool_a_panel(
         _metric_card("Confidence", _fmt_text(tool_a_row.get("confidence_label"))),
         _metric_card("Gold Sensitivity Score", _fmt_number(tool_a_row.get("tool_a_score"), decimals=1)),
         _metric_card("Profile", _fmt_text(tool_a_row.get("profile_label"))),
-        _metric_card("Canonical Anchor", _fmt_text(tool_a_row.get("anchor_window_id"))),
-        "</div>",
-        _render_explanation_cards(
-            tool_a_row,
-            active_window=active_window,
-            scoring_config=scoring_config,
-            volatility_diag=volatility_diag,
+        _metric_card(
+            "Canonical Anchor",
+            _fmt_text(
+                WINDOW_LABELS.get(
+                    str(tool_a_row.get("anchor_window_id") or "").strip().upper()
+                )
+                or tool_a_row.get("anchor_window_id")
+            ),
         ),
+        "</div>",
+        _render_explanation_grid(cross_window_explanations),
         _render_structural_window_table(tool_a_row, active_window=active_window),
         _render_visual_panels(
             ticker=ticker,
@@ -1342,27 +1380,26 @@ def _render_signal_notice(tool_a_row: dict[str, Any]) -> str:
     )
 
 
-def _render_explanation_cards(
-    tool_a_row: dict[str, Any],
-    *,
-    active_window: str = "12M",
-    scoring_config: Any = None,
-    volatility_diag: dict[str, Any] | None = None,
-) -> str:
-    """Render the 7 narrative cards for the active window.
+# Narrative cards split by horizon-dependence. Delta/Gamma/Asymmetry/Volatility are computed
+# from the ACTIVE window's numbers (they track the switcher); Confidence/Interaction/Summary
+# read the cross-window aggregates (confidence_label / profile_label / *_core) and never change
+# with the switcher. The page renders each group under its matching heading so the cross-window
+# "does not change with the horizon switcher" hint can never apply to per-window prose.
+_PER_WINDOW_EXPLANATION_TITLES = ("Delta", "Gamma", "Asymmetry", "Volatility")
+_CROSS_WINDOW_EXPLANATION_TITLES = ("Confidence", "Interaction", "Summary")
 
-    Reuses `golden_vector/model/explanations.py` so we have ONE source of
-    truth for narrative semantics across the pipeline and the workspace
-    (per Codex's horizon-plan review). The pipeline bakes explanations
-    for the ticker's canonical anchor; the workspace regenerates them
-    live using the active window's numbers.
+
+def _render_explanation_grid(cards: list[tuple[str, str]]) -> str:
+    """Render a set of (title, text) narrative cards as one explanation grid.
+
+    Cards are built once by `_build_active_window_explanations`, which reuses
+    `golden_vector/model/explanations.py` so narrative semantics have ONE source of
+    truth across the pipeline and the workspace (per Codex's horizon-plan review).
+    The pipeline bakes explanations for the ticker's canonical anchor; the workspace
+    regenerates them live using the active window's numbers.
     """
-    cards = _build_active_window_explanations(
-        tool_a_row=tool_a_row,
-        active_window=active_window,
-        scoring_config=scoring_config,
-        volatility_diag=volatility_diag or {},
-    )
+    if not cards:
+        return ""
     return (
         "<div class=\"explanation-grid\">"
         + "".join(
@@ -2104,7 +2141,7 @@ def _render_exploratory_horizon_panel(exploratory_horizons: pd.DataFrame) -> str
     for row in exploratory_horizons.sort_values(["horizon_value", "horizon_unit"]).itertuples(index=False):
         rows.append(
             "<tr>"
-            f"<td>{escape(str(row.horizon_id))}</td>"
+            f"<td>{escape(window_label(str(row.horizon_id)))}</td>"
             f"<td>{_fmt_percent(getattr(row, 'equity_return', None), decimals=1)}</td>"
             f"<td>{_fmt_percent(getattr(row, 'gold_return', None), decimals=1)}</td>"
             f"<td>{_fmt_number(getattr(row, 'gold_delta', None), decimals=2)}</td>"

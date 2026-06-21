@@ -570,7 +570,7 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     ),
     "tool_a_structural_window": ColumnHelp(
         meaning=(
-            "The trailing time window (6M, 12M, or 3Y) over which these structural metrics were "
+            "The trailing time window (6M, 1Y, or 3Y) over which these structural metrics were "
             "estimated; marked Anchor (the ticker's canonical window) and/or Active (the window "
             "currently selected)."
         ),

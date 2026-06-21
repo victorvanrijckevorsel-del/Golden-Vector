@@ -514,6 +514,63 @@ def test_detail_page_is_horizon_consistent_with_no_silent_mixing(tmp_path):
     assert "display-only" in body
 
 
+def test_detail_page_splits_per_window_narrative_from_cross_window_block(tmp_path):
+    """Regression (live-verify sweep, Root Cause A): the per-window narrative cards
+    (Delta/Gamma/Asymmetry/Volatility) must render UNDER the active-window block, never
+    beneath the cross-window 'do not change with the horizon switcher' banner — which
+    previously made the page contradict itself (per-window prose flipping while the banner
+    promised invariance). The cross-window narrative (Confidence/Interaction/Summary) stays
+    under the cross-window block.
+    """
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    body = _call_wsgi_app(app, method="GET", path="/ticker/NEM?window=2y")["body"]
+
+    per_window_hint = "These read-outs describe the active window"
+    invariant_hint = "do not change with the horizon switcher"
+    assert per_window_hint in body
+    assert invariant_hint in body
+    # Per-window narrative + its hint sit BEFORE the cross-window invariance banner.
+    assert body.index(per_window_hint) < body.index(invariant_hint)
+    assert body.index("<h3>Delta</h3>") < body.index(invariant_hint)
+    assert body.index("<h3>Volatility</h3>") < body.index(invariant_hint)
+    # Cross-window narrative sits AFTER the banner (it really is invariant).
+    assert body.index(invariant_hint) < body.index("<h3>Interaction</h3>")
+    assert body.index(invariant_hint) < body.index("<h3>Summary</h3>")
+
+
+def test_detail_page_uses_1y_label_not_raw_12m_anywhere(tmp_path):
+    """Regression (live-verify sweep, Root Cause B): the 12M window must surface as its
+    display label '1Y' everywhere user-facing — including the active-window narrative prose
+    and the Canonical Anchor card. The raw '12M' id must never leak, and the misleading
+    'anchor window' wording is gone (the active window is not always the canonical anchor).
+    """
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    body = _call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
+
+    # Default window renders as 1Y in the narrative prose...
+    assert "in the 1Y window" in body
+    # ...and the raw id / old wording must not leak anywhere user-facing.
+    assert "12M anchor window" not in body
+    assert "12M window" not in body
+    assert "anchor window" not in body
+    # Canonical Anchor card is present and shows the label, not the raw '12M' id.
+    assert "Canonical Anchor" in body
+
+
 def test_resolve_active_window_honors_1y_alias_not_canonical_fallback():
     # Regression (Codex review): ?window=1y must resolve to 12M, NOT fall back to the
     # ticker's canonical anchor. Use a non-12M canonical so the bug would be visible.

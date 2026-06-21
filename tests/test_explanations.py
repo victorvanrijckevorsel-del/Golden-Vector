@@ -68,4 +68,8 @@ def test_build_delta_explanation_describes_high_delta_for_eligible_row():
     )
 
     assert "High structural delta" in explanation
-    assert "12M anchor window" in explanation
+    # 12M must surface as its display label "1Y" everywhere user-facing (registry rule),
+    # and the prose drops the misleading "anchor" word (the active window is not always the
+    # canonical anchor). Lock both: "1Y window" present, raw "12M" absent.
+    assert "in the 1Y window" in explanation
+    assert "12M" not in explanation
