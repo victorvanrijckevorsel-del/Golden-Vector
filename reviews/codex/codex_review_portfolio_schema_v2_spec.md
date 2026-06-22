@@ -1,0 +1,35 @@
+# Review - Portfolio Store Schema v2 Spec
+
+**Verdict:** READY WITH MINOR CHANGES
+
+This revised spec fixes the three blockers from my previous review. It now separates quote currency from cost currency, makes portfolio artifact schema migration explicit, keeps FX arithmetic in the backend, and treats Snowball currency as cost currency rather than quote currency. I would build from this spec after the clarifications below are folded in.
+
+## Findings
+
+| Severity | Location | Finding | Fix |
+|---|---|---|---|
+| MEDIUM | `reviews/codex/claude_portfolio_schema_v2_spec.md:6`, `reviews/codex/claude_portfolio_schema_v2_spec.md:43`, `reviews/codex/claude_portfolio_schema_v2_spec.md:91` | The hard rule says "no write to `manual_lots.json` until this ships...and the atomic writer lands," but the schema migration also says v2 is written on explicit save/edit paths. Those are different things. As written, one engineer could accidentally disable normal manual portfolio edits, or another could treat the hard rule as permission to write the real file during migration. | Reword the rule: "Do not overwrite/replace Emanuel's real `manual_lots.json` from Snowball, and do not auto-rewrite v1 on read. Manual add/edit/delete remains allowed after v2 ships, with backup-on-first-v2-write." |
+| MEDIUM | `reviews/codex/claude_portfolio_schema_v2_spec.md:31`, `reviews/codex/claude_portfolio_schema_v2_spec.md:46`, `reviews/codex/claude_portfolio_schema_v2_spec.md:89` | Store shape uses `cost_basis_total`, but the UI section says manual entry should label the amount "Cost per share." Both are valid, but the boundary is underspecified. Current code and tests are per-share (`buy_price`), while Snowball is total cost basis. | Decide the input contract explicitly: store `cost_basis_total`; manual form accepts `cost_per_share` and backend converts to total; Snowball importer writes total directly. Add both fields to tests so the UI/input layer cannot accidentally store a per-share value as a total. |
+| MEDIUM | `reviews/codex/claude_portfolio_schema_v2_spec.md:14`, `reviews/codex/claude_portfolio_schema_v2_spec.md:56`, `reviews/codex/claude_portfolio_schema_v2_spec.md:64` | GBP presentation is correctly backend-owned, but the formula and status semantics are still too loose. FX data is `currency -> USD`, so GBP presentation requires the reciprocal `GBPUSD` rate. Missing GBP presentation FX is not always the same severity as missing cost FX. | Specify formulas: `value_gbp = value_usd / gbp_to_usd`, `cost_gbp_at_current_fx = cost_usd_at_current_fx / gbp_to_usd`, `pnl_gbp = value_gbp - cost_gbp`. If GBP FX is missing only for presentation, keep USD valuation valid and set GBP fields null with a presentation warning. If GBP is the cost currency and GBP FX is missing, degrade the line because cost USD cannot be computed. |
+| MEDIUM | `reviews/codex/claude_portfolio_schema_v2_spec.md:15`, `reviews/codex/claude_portfolio_schema_v2_spec.md:91`, `reviews/codex/claude_portfolio_schema_v2_spec.md:112` | The spec accepts a portfolio-only instrument registry, but the build sequence goes straight from Snowball dry-run v2 to the atomic writer. Without the registry, many Snowball rows remain out-of-universe and the writer cannot truly replace the whole book. A signoff report helps, but it still leaves NAV materially incomplete. | Insert a step before the real writer: implement portfolio-only instrument handling or make the writer fail closed while any non-cash Snowball row remains unrepresented, unless Emanuel gives an explicit one-time exclusion. This keeps "replace the whole portfolio" honest. |
+| LOW | `reviews/codex/claude_portfolio_schema_v2_spec.md:58`, `golden_vector/portfolio/pipeline.py:436` | The spec uses generic `STALE_FX` / missing FX language for quote FX, cost FX, and GBP-presentation FX. Reusing one status can work, but only if the reason clearly says which leg failed. Otherwise the UI cannot tell whether value, cost, or presentation is degraded. | Keep one combined line status if you want, but add leg-specific reason fields or a small backend-owned `fx_issues_json`/`line_status_reason` convention: quote FX, cost FX, GBP presentation FX. Tests should assert stale cost FX excludes P&L while stale presentation-only FX does not invalidate USD totals. |
+| LOW | `reviews/codex/claude_portfolio_schema_v2_spec.md:64`, `golden_vector/ingestion/standardize.py:73`, `golden_vector/normalize/calendar.py:26` | Extending `LatestFoundationSnapshot` with `fx_histories` is the right integration point, but raw FX is a concatenated snapshot keyed by `base_currency`. The spec should say to split by `base_currency` after checked read, not infer currencies from file names. | Add this implementation detail: read `raw_fx.parquet` via the manifest, validate `base_currency/date/fx_rate_to_usd/source_symbol` columns, split into `{base_currency: frame}`, then use `merge_fx_asof`. |
+| NIT | `reviews/codex/claude_portfolio_schema_v2_spec.md:34` | `source_name = manual | snowball` is enough for this milestone, but the schema will likely need HL/IBKR/import sources later. | Either allow any clean string with known values in tests, or use an enum that already includes `manual`, `snowball`, `hl`, `ibkr`, `unknown`. Not blocking. |
+
+## Answers To Open Questions
+
+1. **Field shapes:** Agree with storing `cost_basis_total` as the canonical store field. Manual UI can still accept cost per share, but it must convert to total at the validation boundary. Dropping stored `buy_currency` is correct; derive quote currency from the universe.
+2. **FX integration:** Prefer extending `LatestFoundationSnapshot` with `fx_histories`. It keeps portfolio valuation tied to the same coherent foundation manifest and avoids one-off manifest readers inside portfolio code.
+3. **Artifact migration:** Bumping `PORTFOLIO_SCHEMA_VERSION` to 6 plus calm stale rendering is sufficient. Do not hard-migrate old portfolio artifacts on disk; rebuild them from the v2 store/foundation.
+4. **Consumers to update:** The spec correctly names most of them. The grep targets are `manual_store.py`, `models.py`, `pipeline.py`, `m4_artifacts.py`, `portfolio_page.py`, `snowball_import.py`, `reconciliation.py`, `reader.py`, `model_state.py`, and `tests/test_portfolio_*`.
+5. **Local P&L:** Suppress/null local P&L when cost currency differs from quote currency. Show USD and GBP P&L with a clear note: "Local P&L is not shown because cost currency and trading currency differ."
+
+## Build Recommendation
+
+Build this in two reviewed checkpoints:
+
+1. **Schema + valuation spine:** `LatestFoundationSnapshot.fx_histories`, v2 store migration, v6 portfolio artifacts, backend GBP fields, stale schema handling, and tests. Do not touch the real Snowball writer.
+2. **Snowball v2 dry-run:** reinterpret Snowball currency as cost currency, add name/scale guards, prove AUD/GBP rows are representable, still read-only.
+
+Then separately decide whether the next milestone is the portfolio-only registry or the atomic writer. I would not build the real writer until every Snowball row is either representable or explicitly excluded.
+
