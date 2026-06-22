@@ -2449,6 +2449,23 @@ def test_charts_serve_layer_is_display_only():
         assert forbidden not in source, forbidden
 
 
+def test_one_info_affordance_no_legacy_hover_remains():
+    """The whole app shows info ONE way — the click-to-open panel. No serve module may emit the
+    old dotted-hover tooltip (class="help-term" / a bare data-help= attribute), and the popover
+    script must no longer carry the hover handler. (Structured data-help-* attrs are the panel.)"""
+    import pathlib
+
+    serve = pathlib.Path("golden_vector/serve")
+    for py in serve.rglob("*.py"):
+        src = py.read_text(encoding="utf-8")
+        assert 'class="help-term"' not in src, py
+        assert 'data-help="' not in src, py  # bare data-help= is the dead hover; data-help-* is fine
+    js = (serve / "static" / "help-popover.js").read_text(encoding="utf-8")
+    assert "help-term" not in js  # hover handler removed; only the click panel remains
+    css = (serve / "static" / "workspace.css").read_text(encoding="utf-8")
+    assert ".help-term" not in css
+
+
 def test_snapshot_ratio_cell_is_compact_and_shows_yahoo_divergence():
     """The ticker-detail snapshot renders dual-source ratios (ev_ebitda) with a compact value (no
     'x' suffix) plus the SAME '(Yahoo X)' divergence accent the Tool B overview shows."""
@@ -2595,10 +2612,13 @@ def test_workspace_tool_b_market_ours_controls_render_from_backend_columns(tmp_p
     assert "(Our View 2.4)" in body
     assert "market-ours-pair" not in body
     assert "Yahoo Fundamentals 3.2" not in body  # active source isn't relabelled in-cell
-    # The EV/EBITDA cell now carries a formula info button (formula + this ticker's numbers).
-    assert "EV/EBITDA = (Market cap + net debt) / forward EBITDA" in body
-    # Source consistency: in Yahoo (official) mode the popover result equals the DISPLAYED active
-    # value (3.2), not the Our View value (2.4) — the cell and its info button must agree.
+    # The EV/EBITDA cell carries the unified info panel: title + the generic formula (in the
+    # structured data-help-formula slot, from COLUMN_HELP) + this ticker's numbers in the
+    # "This stock" values slot.
+    assert 'data-help-title="EV/EBITDA"' in body
+    assert "(Market cap + net debt) / forward EBITDA" in body  # formula in data-help-formula
+    # Source consistency: in Yahoo (official) mode the "This stock" result equals the DISPLAYED
+    # active value (3.2), not the Our View value (2.4) — the cell and its info button must agree.
     assert "→ 3.2x" in body
     assert "→ 2.4x" not in body
     assert "/ticker/NEM?fundamentals_source=yahoo" in body

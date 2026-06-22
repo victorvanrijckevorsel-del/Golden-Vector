@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from golden_vector.common.numeric import optional_finite_float
-from golden_vector.serve.column_help import COLUMN_HELP, help_icon
+from golden_vector.serve.column_help import help_icon
 
 
 @dataclass(frozen=True)
@@ -157,9 +157,11 @@ def metric_result_text(metric_key: str, row: Mapping[str, object] | None) -> str
     return metric_value_text(metric_key, row.get(spec.result_field))
 
 
-def metric_formula_text(metric_key: str, row: Mapping[str, object] | None) -> str | None:
-    """Plain-English "label = formula. inputs -> result" for one ratio, or None if the ratio
-    is unknown or its value is unavailable (degrade per item — never invent a number)."""
+def metric_values_text(metric_key: str, row: Mapping[str, object] | None) -> str | None:
+    """This stock's instantiation of a ratio — "components → result" with the FULL unit, e.g.
+    "Gold price 4,173, AISC 2,080 → 2,093 $/oz". Shown in the "This stock" section of the shared
+    help panel (the generic formula lives in the panel's FORMULA box, sourced from COLUMN_HELP).
+    None if the ratio is unknown or its value is unavailable (degrade per item)."""
 
     spec = _METRIC_FORMULAS.get(metric_key)
     if spec is None or not row:
@@ -167,29 +169,29 @@ def metric_formula_text(metric_key: str, row: Mapping[str, object] | None) -> st
     result = _fmt(row.get(spec.result_field), spec.result_decimals, spec.result_scale)
     if result is None:
         return None
-    help_spec = COLUMN_HELP.get(spec.help_key)
-    formula = ((help_spec.calculation if help_spec else "") or "").strip().rstrip(".")
     component_bits = [
         f"{component.label} {value}"
         for component in spec.components
         if (value := _fmt(row.get(component.field), component.decimals, component.scale))
         is not None
     ]
-    head = f"{spec.label} = {formula}" if formula else spec.label
-    # No orphan "formula. -> result" when every input degraded away: go formula -> result.
     if component_bits:
-        return f"{head}. {', '.join(component_bits)} → {result}{spec.result_suffix}"
-    return f"{head} → {result}{spec.result_suffix}"
+        return f"{', '.join(component_bits)} → {result}{spec.result_suffix}"
+    return f"→ {result}{spec.result_suffix}"
 
 
 def metric_formula_icon(metric_key: str, row: Mapping[str, object] | None, *, extra: str = "") -> str:
-    """Click-to-open info button explaining a ratio's formula + this ticker's numbers. ``extra``
-    appends source provenance (e.g. Yahoo origin/period) below the formula. Returns "" when the
-    ratio has no formula spec or no computable value."""
+    """Click-to-open info button for a ratio VALUE cell. Renders the SAME structured panel as the
+    column header (plain-English meaning + formula + Read-more, all from COLUMN_HELP[help_key]),
+    PLUS a "This stock" section with this row's numbers. ``extra`` appends source provenance (e.g.
+    Yahoo origin/period). Returns "" when the ratio has no spec or no computable value."""
 
-    text = metric_formula_text(metric_key, row)
-    if not text:
+    spec = _METRIC_FORMULAS.get(metric_key)
+    if spec is None or not row:
+        return ""
+    values = metric_values_text(metric_key, row)
+    if not values:
         return ""
     if extra:
-        text = f"{text}\n\n{extra}"
-    return help_icon(_METRIC_FORMULAS[metric_key].label, text=text)
+        values = f"{values}\n{extra}"
+    return help_icon(spec.label, key=spec.help_key, values=values)

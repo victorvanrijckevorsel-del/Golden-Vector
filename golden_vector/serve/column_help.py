@@ -92,23 +92,15 @@ def help_term(
     app_config: AppConfig | None = None,
     text: str | None = None,
 ) -> str:
-    """Wrap a label in a dotted-underlined help affordance.
+    """Inline label carrying the SAME click-to-open "i" panel used everywhere — one info
+    affordance across the whole app (no separate hover tooltip). Use inside any cell, heading, or
+    label. Pass an explicit ``text`` to explain something not in the registry. With no help the
+    label renders plain (escaped)."""
 
-    Use inside any cell or label, not just headers. The explanation rides in
-    ``data-help``; ``help-popover.js`` renders the box on hover/focus. Pass an
-    explicit ``text`` to explain something not in the registry. With no help
-    text the label renders plain (escaped).
-    """
-
-    title = text if text is not None else (
-        column_help_text(key, app_config=app_config) if key else None
-    )
-    if not title:
+    icon = help_icon(label, key=key, app_config=app_config, text=text)
+    if not icon:
         return escape(label)
-    return (
-        "<span class=\"help-term\" tabindex=\"0\" role=\"note\" "
-        f"data-help=\"{escape(title)}\">{escape(label)}</span>"
-    )
+    return f"{escape(label)}<span class=\"help-anchor\">{icon}</span>"
 
 
 def help_icon(
@@ -117,11 +109,14 @@ def help_icon(
     key: str | None = None,
     app_config: AppConfig | None = None,
     text: str | None = None,
+    values: str | None = None,
 ) -> str:
     """A small clickable ``ⓘ`` button carrying the help split into meaning / formula /
-    more, for the click-to-open explanation panel (``help-popover.js``). Returns ``""``
-    when there is nothing to explain. Use beside a header label; clicking it opens the
-    panel without triggering the header's sort (the script stops propagation)."""
+    "this stock" / more, for the click-to-open explanation panel (``help-popover.js``). This is
+    the ONE info affordance — headers, categorical values, inline labels AND ratio value cells all
+    use it. ``values`` is the per-row instantiation ("Gold price 4,173, AISC 2,080 → 2,093 $/oz")
+    shown in a "This stock" section; pass it only for value cells. Returns ``""`` when there is
+    nothing to explain. Clicking it opens the panel without triggering a header's sort."""
 
     parts = column_help_parts(key, app_config=app_config) if key else None
     if parts is None and text:
@@ -134,6 +129,7 @@ def help_icon(
         f"data-help-title=\"{escape(label)}\" "
         f"data-help-meaning=\"{escape(parts['meaning'])}\" "
         f"data-help-formula=\"{escape(parts.get('formula') or '')}\" "
+        f"data-help-values=\"{escape(values or '')}\" "
         f"data-help-more=\"{escape(parts.get('more') or '')}\">i</button>"
     )
 

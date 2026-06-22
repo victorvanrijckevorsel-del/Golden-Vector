@@ -101,15 +101,17 @@ def test_help_th_renders_attributes_and_escapes():
     assert " title=\"" not in html
     assert ">Skew vs Benchmark<" in html
 
-    # panel=False keeps the legacy dotted-underline hover tooltip.
+    # panel=False also uses the unified click "i" panel (help_term converged to it — no
+    # separate hover tooltip anywhere in the app).
     hover = help_th(
         "Skew vs Benchmark",
         key="skew_vs_benchmark",
         app_config=config,
         panel=False,
     )
-    assert 'class="help-term"' in hover
-    assert "data-help=\"" in hover
+    assert 'class="help-icon"' in hover
+    assert "data-help-meaning=\"" in hover
+    assert "help-term" not in hover
 
     plain = help_th("Notes", col_name="notes")
     assert "help-term" not in plain
@@ -117,15 +119,18 @@ def test_help_th_renders_attributes_and_escapes():
     assert ">Notes</th>" in plain
 
 
-def test_help_term_inline_and_explicit_text():
+def test_help_term_inline_uses_the_unified_click_panel():
     config = _app_config()
-    # Inline use (not a header) renders the same affordance.
+    # Inline use renders the SAME click "i" panel as headers (one info affordance, no hover).
     inline = help_term("Skew vs Benchmark", key="skew_vs_benchmark", app_config=config)
-    assert inline.startswith("<span class=\"help-term\"")
-    assert "tabindex=\"0\"" in inline
+    assert inline.startswith("Skew vs Benchmark<span class=\"help-anchor\">")
+    assert 'class="help-icon"' in inline
+    assert "data-help-meaning=\"" in inline
+    assert "help-term" not in inline  # the old dotted-hover affordance is gone
     # Explicit text bypasses the registry for one-off explanations.
     custom = help_term("EV/EBITDA", text="Enterprise value over forward EBITDA.")
     assert "Enterprise value over forward EBITDA." in custom
+    assert 'class="help-icon"' in custom
     # No key, no text -> plain escaped label.
     assert help_term("Plain") == "Plain"
 
