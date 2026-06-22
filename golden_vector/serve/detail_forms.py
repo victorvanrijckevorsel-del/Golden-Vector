@@ -233,11 +233,21 @@ def _render_verification_section(
             if notes
             else ""
         )
+        # Collapse each field's edit form behind a <details> so the panel is a compact
+        # one-row-per-field table by default (Field · Status · Edit), expanding to the full
+        # form only on click. Keeps every edit affordance while reclaiming the vertical space.
+        updated_summary = (
+            f"<span class=\"hint\"> · updated {escape(updated)}</span>"
+            if updated and updated != "-"
+            else ""
+        )
         rows_html.append(
             "<tr>"
             f"<td>{escape(label)}<br><span class=\"hint\">{escape(field_name)}</span></td>"
             f"<td>{status}</td>"
             f"<td>"
+            f"<details class=\"verification-edit\">"
+            f"<summary>Edit{updated_summary}</summary>"
             f"<form method=\"post\" action=\"/ticker/{escape(ticker)}/verification\" class=\"verification-form\">"
             f"{_return_to_input(return_to)}"
             f"<input type=\"hidden\" name=\"field_name\" value=\"{escape(field_name)}\">"
@@ -254,6 +264,7 @@ def _render_verification_section(
             f"<button type=\"submit\">Save</button>"
             f"</div>"
             f"</form>"
+            f"</details>"
             f"</td>"
             "</tr>"
         )

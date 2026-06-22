@@ -316,6 +316,18 @@
     table.verification-table td, table.verification-table th {
       vertical-align: top;
     }
+    .verification-edit > summary {
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 600;
+      width: max-content;
+    }
+    .verification-edit[open] > summary {
+      margin-bottom: 8px;
+    }
+    .verification-edit > summary .hint {
+      font-weight: 400;
+    }
     .full-width {
       grid-column: 1 / -1;
     }

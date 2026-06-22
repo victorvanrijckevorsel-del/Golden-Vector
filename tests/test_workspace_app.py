@@ -1492,6 +1492,34 @@ def test_workspace_verification_post_rejects_invalid_status(tmp_path):
     assert "verification_status must be" in response["body"]
 
 
+def test_verification_section_collapses_edit_forms_for_compactness():
+    # The Source Verification panel must be compact: each field's edit form is collapsed behind
+    # a <details> (one row per field by default), expanding to the full form on click — while
+    # every edit affordance is preserved.
+    from golden_vector.serve.detail_forms import _render_verification_section
+
+    html = _render_verification_section(
+        ticker="NEM",
+        verification_rows=[
+            {
+                "field_name": "production_oz",
+                "verification_status": "VERIFIED",
+                "updated_at_utc": "2026-04-24T15:24:12+00:00",
+            }
+        ],
+    )
+
+    # Edit forms are collapsed behind a per-field <details> (compact by default).
+    assert '<details class="verification-edit">' in html
+    assert "<summary>Edit" in html
+    # The form and its controls are still present (editing preserved on expand).
+    assert 'class="verification-form"' in html
+    assert 'name="verification_status"' in html
+    assert ">Save</button>" in html
+    # The compact summary surfaces the last-updated date without expanding.
+    assert "updated 2026-04-24T15:24:12+00:00" in html
+
+
 def _write_structural_history_file(
     paths,
     ticker: str,
