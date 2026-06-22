@@ -925,13 +925,6 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "the total weight of those criteria."
         ),
     ),
-    "candidate_finder_criterion_percentile": ColumnHelp(
-        meaning="This stock's 0-100 percentile versus peers for this single criterion.",
-        direction="Higher percentile means it ranks better on this criterion (after the criterion's chosen direction).",
-    ),
-    "candidate_finder_top_list_value": ColumnHelp(
-        meaning="The stock's raw value for this criterion (its underlying metric).",
-    ),
     "candidate_finder_top_list_percentile": ColumnHelp(
         meaning="Where this stock's value falls versus peers for this criterion, as a 0-100 percentile.",
         direction="Higher percentile means it ranks better on this criterion (after the criterion's chosen direction).",

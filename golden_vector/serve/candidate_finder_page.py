@@ -43,6 +43,37 @@ _PRESET_ALIASES = {
     "strong_corporate_finance": "bull",
 }
 
+# Each Candidate Finder criterion maps to the SAME rich column-help entry that explains the
+# metric everywhere else (detail / Tool B / Tool C / Tool D / Option pages). This lets the
+# "Value" info button on the top-list cards and the criterion columns in the Fit Ranking table
+# describe the actual metric (meaning + formula + units/sign) instead of a generic "raw value"
+# line. Criteria with no rich entry fall back to their config description (help_th text=).
+_CRITERION_HELP_KEYS: dict[str, str] = {
+    "down_beta": "tool_c_down_beta",
+    "up_beta": "tool_c_up_beta",
+    "gold_beta_core": "tool_a_delta",
+    "downside_volatility": "tool_a_volatility",
+    "confidence": "tool_a_confidence",
+    "aisc": "tool_b_aisc",
+    "leverage": "tool_b_leverage",
+    "ev_ebitda": "tool_b_ev_ebitda",
+    "forward_pe": "tool_b_forward_pe",
+    "fcf_yield": "tool_b_fcf_yield",
+    "margin_pct": "tool_b_margin_pct",
+    "reserve_life": "tool_b_reserve_life",
+    "market_cap": "tool_b_market_cap",
+    "interest_cover_gold": "tool_d_interest_cover",
+    "debt_stress_gold": "tool_d_debt_stress",
+    "fcf_breakeven_gold": "tool_d_fcf_breakeven",
+    "cost_curve": "tool_d_cost_curve",
+    "iv_percentile": "iv_percentile",
+    "iv_skew": "skew_vs_benchmark",
+    "name_iv_skew": "option_name_skew",
+    "tool_c_downside_rank": "tool_c_downside_rank",
+    "tool_c_upside_rank": "tool_c_upside_rank",
+    "tool_d_quality_rank": "tool_d_quality_rank",
+}
+
 
 def render_candidate_finder_page(
     data: CandidateFinderData,
@@ -82,7 +113,7 @@ def render_candidate_finder_page(
             _render_warning_banner(screen.warnings),
             _render_summary_cards(screen),
             _render_builder(data, screen, query, base_path=base_path),
-            _render_top_lists(screen, fundamentals_source=data.fundamentals_source),
+            _render_top_lists(screen, fundamentals_source=data.fundamentals_source, app_config=app_config),
             _render_ranking_tables(
                 screen,
                 app_config=app_config,
@@ -504,6 +535,7 @@ def _render_top_lists(
     screen: CandidateFinderScreen,
     *,
     fundamentals_source: str,
+    app_config: AppConfig | None = None,
 ) -> str:
     if not screen.ranking.selected_criteria:
         return ""
@@ -513,6 +545,7 @@ def _render_top_lists(
             screen.ranking.top_lists.get(criterion.id, ()),
             fundamentals_source=fundamentals_source,
             fundamentals_provenance=screen.data.fundamentals_provenance or {},
+            app_config=app_config,
         )
         for criterion in screen.ranking.selected_criteria
     )
@@ -530,6 +563,7 @@ def _render_top_list_card(
     *,
     fundamentals_source: str,
     fundamentals_provenance: dict[tuple[str, str], str],
+    app_config: AppConfig | None = None,
 ) -> str:
     body = "\n".join(
         f"""
@@ -550,7 +584,7 @@ def _render_top_list_card(
   <p class="hint">{escape(criterion.description)} {direction} values rank higher. Weight {_fmt_weight(criterion.weight)}.</p>
   <table>
     <thead>
-      <tr>{help_th("Ticker", key="ticker_symbol")}{help_th("Value", key="candidate_finder_top_list_value")}{help_th("Percentile", key="candidate_finder_top_list_percentile")}</tr>
+      <tr>{help_th("Ticker", key="ticker_symbol")}{help_th("Value", key=_CRITERION_HELP_KEYS.get(criterion.id), text=criterion.description, app_config=app_config)}{help_th("Percentile", key="candidate_finder_top_list_percentile")}</tr>
     </thead>
     <tbody>{body}</tbody>
   </table>
@@ -586,10 +620,13 @@ def _render_score_table(
     fundamentals_source: str,
     fundamentals_provenance: dict[tuple[str, str], str],
 ) -> str:
+    # Each criterion column explains its own metric (rich registry help), not a generic
+    # "percentile" line; falls back to the criterion's config description if unmapped.
     criterion_headers = "".join(
         help_th(
             criterion.label,
-            key="candidate_finder_criterion_percentile",
+            key=_CRITERION_HELP_KEYS.get(criterion.id),
+            text=criterion.description,
             app_config=app_config,
             col_name=f"criterion_{criterion.id}",
             sort_numeric=True,

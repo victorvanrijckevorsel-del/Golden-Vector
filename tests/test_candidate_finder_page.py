@@ -140,6 +140,33 @@ def test_preset_links_preserve_beta_window():
     assert "fundamentals_source=yahoo" in href
 
 
+def test_criterion_help_keys_resolve_and_cover_every_criterion():
+    # Guardrail: every criterion->help-key mapping must resolve in the registry (no typo/rename
+    # drift), and every configured criterion must be mapped so its 'Value' info button describes
+    # the real metric (a new unmapped criterion would silently fall back to its terse description).
+    from golden_vector.serve.candidate_finder_page import _CRITERION_HELP_KEYS
+    from golden_vector.serve.column_help import COLUMN_HELP
+
+    for crit_id, key in _CRITERION_HELP_KEYS.items():
+        assert key in COLUMN_HELP, f"{crit_id} -> {key} missing from COLUMN_HELP"
+
+    config = _repo_app_config().candidate_finder
+    unmapped = [c.id for c in config.criteria if c.id not in _CRITERION_HELP_KEYS]
+    assert not unmapped, f"criteria missing a rich help mapping: {unmapped}"
+
+
+def test_top_list_value_tooltip_uses_rich_metric_help_not_generic():
+    # Victor's fix: the 'Value' info button must explain the actual metric, not a generic
+    # "raw value for this criterion" line. The default Bull screen selects up_beta, so its rich
+    # help (regression on up weeks) must appear, and the generic string must be gone everywhere.
+    data = _candidate_finder_data()
+
+    html = render_candidate_finder_page(data, app_config=_repo_app_config())
+
+    assert "raw value for this criterion" not in html
+    assert "up markets" in html  # from tool_c_up_beta's meaning, wired via _CRITERION_HELP_KEYS
+
+
 def test_candidate_finder_route_threads_beta_window_to_loader(monkeypatch, tmp_path):
     # Regression: the route must parse ?beta_window and pass it to the loader (else the selector
     # renders but always screens on the blend).
