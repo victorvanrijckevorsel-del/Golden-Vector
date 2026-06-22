@@ -273,10 +273,31 @@ def _build_grouped_beta_bar_svg(
 
 
 def _pct_label(delta: float) -> str:
-    """Signed integer-percent label for the rebased overlay (value − base). Used for BOTH the
+    """Signed percent label for the rebased overlay (value - base). Used for BOTH the
     y-axis gridline labels and the per-point hover values so the two can never diverge (one copy
-    of the index→% display rule). Exact zero shows as ``0%`` without a sign."""
-    return "0%" if round(delta) == 0 else f"{delta:+.0f}%"
+    of the index-to-% display rule). Exact zero shows as ``0%`` without a sign."""
+    if math.isclose(delta, 0.0, abs_tol=1e-9):
+        return "0%"
+    if abs(delta) < 1.0:
+        compact = f"{delta:+.2f}".rstrip("0").rstrip(".")
+        return f"{compact}%"
+    if math.isclose(delta, round(delta), abs_tol=0.05):
+        return f"{delta:+.0f}%"
+    return f"{delta:+.1f}%"
+
+
+def _nice_overlay_grid_step(span: float, *, max_intervals: int = 6) -> float:
+    """Return a bounded 1/2/5-style grid step for rebased overlay display ticks."""
+
+    if not math.isfinite(span) or span <= 0:
+        return 1.0
+    rough_step = span / max(max_intervals, 1)
+    magnitude = 10 ** math.floor(math.log10(rough_step))
+    for multiplier in (1, 2, 5, 10):
+        step = multiplier * magnitude
+        if span / step <= max_intervals:
+            return step
+    return 10 * magnitude
 
 
 def _build_multiline_overlay_svg(
@@ -372,14 +393,13 @@ def _build_multiline_overlay_svg(
 
     # Horizontal gridlines at nice levels, labelled as % change from the rebase start (base=100)
     # so the lines are actually readable ("AEM +120%, gold +60%"). Display-only axis math.
-    step = next(
-        (s for s in (1, 2, 5, 10, 25, 50, 100, 250, 500) if (value_hi - value_lo) / s <= 6),
-        1000,
-    )
+    step = _nice_overlay_grid_step(value_hi - value_lo)
     grid_lines = ""
     grid_labels = ""
     tick = base + math.floor((value_lo - base) / step) * step
-    while tick <= value_hi + 1e-9:
+    max_tick_count = 12
+    tick_count = 0
+    while tick <= value_hi + 1e-9 and tick_count < max_tick_count:
         if tick >= value_lo - 1e-9:
             gy = y_at(tick)
             is_base = abs(tick - base) < 1e-9
@@ -394,6 +414,7 @@ def _build_multiline_overlay_svg(
                 f"font-size=\"11\" fill=\"#6f685c\">{label_text}</text>"
             )
         tick += step
+        tick_count += 1
 
     date_labels = (
         f"<text x=\"{padding_left}\" y=\"{height - 8}\" font-size=\"11\" fill=\"#6f685c\">"

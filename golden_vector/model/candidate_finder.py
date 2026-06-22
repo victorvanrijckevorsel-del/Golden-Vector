@@ -10,30 +10,10 @@ import pandas as pd
 
 from golden_vector.common.eligibility import is_score_eligible, score_eligible_mask
 from golden_vector.common.numeric import optional_float as _optional_float
-from golden_vector.common.windows import ALL_WINDOWS, window_suffix
 from golden_vector.features.percentile_ranks import oriented_percentile
 
 CriterionDirection = Literal["high_good", "low_good"]
 VALID_DIRECTIONS = frozenset({"high_good", "low_good"})
-
-# Score-gated Gold-Sensitivity beta/delta fields. The `score_eligible` exclusion (degraded
-# tickers must never be ranked) has to apply identically whether the Candidate Finder screens
-# on the cross-window blend (`*_core`) OR on a single per-window column (e.g. `down_beta_6m`
-# when the horizon picker selects 6M) — otherwise picking a window silently re-admits degraded
-# rows. So the gated set is the blend column AND every per-window variant, derived from the
-# window registry (one source of truth). `downside_volatility_52w` is a fixed 52w field with
-# no per-window form.
-_WINDOWED_SCORE_GATED_BASES = ("down_beta", "up_beta", "structural_delta")
-TOOL_A_SCORE_ELIGIBLE_FIELDS = frozenset(
-    {"downside_volatility_52w"}
-    | {f"{base}_core" for base in _WINDOWED_SCORE_GATED_BASES}
-    | {
-        f"{base}_{window_suffix(window)}"
-        for base in _WINDOWED_SCORE_GATED_BASES
-        for window in ALL_WINDOWS
-    }
-)
-
 
 @dataclass(frozen=True)
 class CriterionDefinition:
@@ -146,9 +126,10 @@ def rank_candidates(
     raw_values: dict[str, pd.Series] = {}
     top_lists: dict[str, tuple[CriterionTopEntry, ...]] = {}
     top_sets: dict[str, set[str]] = {}
+    source_rankable = _source_rankable_mask(data)
 
     for criterion in selected:
-        values = _criterion_values(data, criterion)
+        values = _criterion_values(data, criterion).mask(~source_rankable)
         raw_values[criterion.id] = values
         percentile = oriented_percentile(
             values,
@@ -308,11 +289,15 @@ def _prepare_frame(frame: pd.DataFrame, *, ticker_column: str) -> pd.DataFrame:
 def _criterion_values(data: pd.DataFrame, criterion: ResolvedCriterion) -> pd.Series:
     if criterion.source_field not in data.columns:
         return pd.Series([pd.NA] * len(data.index), index=data.index, dtype="Float64")
-    values = pd.to_numeric(data[criterion.source_field], errors="coerce")
-    if criterion.source_field in TOOL_A_SCORE_ELIGIBLE_FIELDS and "score_eligible" in data.columns:
-        score_eligible = score_eligible_mask(data["score_eligible"])
-        values = values.mask(~score_eligible)
-    return values
+    return pd.to_numeric(data[criterion.source_field], errors="coerce")
+
+
+def _source_rankable_mask(data: pd.DataFrame) -> pd.Series:
+    """Rows marked score-ineligible are degraded and must not enter any ranking surface."""
+
+    if "score_eligible" not in data.columns:
+        return pd.Series(True, index=data.index)
+    return score_eligible_mask(data["score_eligible"])
 
 
 def _top_entries(
@@ -381,15 +366,19 @@ def _score_rows(
 
         score = weighted_total / present_weight if present_weight > 0 else None
         criteria_fraction = len(present) / selected_count if selected_count else 0.0
+        source_score_eligible = _row_score_eligible(data, ticker)
         rows.append(
             CandidateScore(
                 ticker=ticker,
                 score=score,
                 rank=None,
-                rank_eligible=_is_rank_eligible(
-                    present_count=len(present),
-                    selected_count=selected_count,
-                    min_criteria_fraction=min_criteria_fraction,
+                rank_eligible=(
+                    source_score_eligible
+                    and _is_rank_eligible(
+                        present_count=len(present),
+                        selected_count=selected_count,
+                        min_criteria_fraction=min_criteria_fraction,
+                    )
                 ),
                 present_criteria_count=len(present),
                 selected_criteria_count=selected_count,
@@ -398,7 +387,7 @@ def _score_rows(
                 percentiles=row_percentiles,
                 raw_values=row_values,
                 missing_criteria=tuple(missing),
-                source_score_eligible=_row_score_eligible(data, ticker),
+                source_score_eligible=source_score_eligible,
             )
         )
     return rows

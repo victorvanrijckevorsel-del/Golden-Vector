@@ -691,6 +691,36 @@ def test_materialize_yahoo_view_fails_if_mapped_source_column_is_missing():
         materialize_tool_b_finance_source(frame, finance_source="yahoo")
 
 
+def test_materialize_finance_source_adds_dual_source_display_fields():
+    row = {column: None for column in TOOL_B_OUTPUT_COLUMNS}
+    row.update(
+        {
+            "ticker": "NEM",
+            "ev_ebitda": 2.0,
+            "ev_ebitda_our_view": 2.0,
+            "ev_ebitda_official": 3.5,
+            "ev_ebitda_differs": True,
+            "leverage": 0.4,
+            "leverage_our_view": 0.4,
+            "leverage_official": None,
+            "leverage_differs": True,
+        }
+    )
+    frame = pd.DataFrame([row])
+
+    our = materialize_tool_b_finance_source(frame, finance_source="our").iloc[0]
+    assert our["ev_ebitda"] == pytest.approx(2.0)
+    assert our["ev_ebitda_alternate_value"] == pytest.approx(3.5)
+    assert our["ev_ebitda_alternate_label"] == "Yahoo Fundamentals"
+    assert bool(our["ev_ebitda_show_alternate"]) is True
+
+    yahoo = materialize_tool_b_finance_source(frame, finance_source="yahoo").iloc[0]
+    assert pd.isna(yahoo["leverage"])
+    assert yahoo["leverage_alternate_value"] == pytest.approx(0.4)
+    assert yahoo["leverage_alternate_label"] == "Our View"
+    assert bool(yahoo["leverage_show_alternate"]) is True
+
+
 def test_compute_tool_b_official_rank_excludes_degraded_official_data(tmp_path):
     from golden_vector.screening.manual_data import load_manual_screening_data
 

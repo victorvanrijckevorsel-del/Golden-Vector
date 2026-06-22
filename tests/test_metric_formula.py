@@ -16,6 +16,7 @@ def _row() -> dict[str, float]:
     return {
         "market_cap_musd": 3227.88,
         "net_debt_musd": -94.0,
+        "ebitda_ltm_musd": 240.0,
         "forward_ebitda_musd": 1565.45,
         "enterprise_value_musd": 3133.88,
         "ev_ebitda": 2.0019,
@@ -118,6 +119,7 @@ def test_metric_value_text_formats_an_arbitrary_value_compactly():
 def test_leverage_values_line():
     text = metric_values_text("leverage", _row())
     assert "Net debt -94" in text
+    assert "EBITDA LTM 240" in text
     assert text.endswith("→ -0.39x")
 
 

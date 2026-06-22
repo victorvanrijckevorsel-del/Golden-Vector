@@ -37,7 +37,6 @@ from golden_vector.serve.format_helpers import (
     _is_na,
     _metric_card,
     _optional_float,
-    resolve_dual_source,
     source_alternate_span,
     format_dte_suffix as _dte_suffix,
 )
@@ -336,16 +335,13 @@ def _snapshot_metric_value(
     the overview shows. Everything else uses the generic value formatter."""
     if has_metric_formula(column_name):
         formatted = metric_result_text(column_name, row)
+        if bool(row.get(f"{column_name}_show_alternate")):
+            alt_text = metric_value_text(column_name, row.get(f"{column_name}_alternate_value"))
+            alt_label = str(row.get(f"{column_name}_alternate_label") or "")
+            if alt_text is not None and alt_label:
+                display = formatted if formatted is not None else "-"
+                return f"{display} {source_alternate_span(alt_label, alt_text)}"
         if formatted is not None:
-            if f"{column_name}_differs" in row:
-                prefer_official = str(financials_source or "our").strip().lower() == "yahoo"
-                _active, alternate, alt_label, differs = resolve_dual_source(
-                    row, column_name, prefer_official=prefer_official
-                )
-                if differs and alternate is not None:
-                    alt_text = metric_value_text(column_name, alternate)
-                    if alt_text is not None:
-                        return f"{formatted} {source_alternate_span(alt_label, alt_text)}"
             return formatted
     return _fmt_value(row.get(column_name), column_name)
 
@@ -2278,10 +2274,7 @@ def _render_rebased_overlay_panel(
     drawable = {
         label: series
         for label, series in overlay.items()
-        if series
-        and series[0]
-        and series[1]
-        and any(value is not None for value in series[1])
+        if _has_drawable_overlay_line(series)
     }
     if len(drawable) < 2:
         return _render_chart_unavailable_panel(
@@ -2325,6 +2318,25 @@ def _render_rebased_overlay_panel(
         f"{svg}"
         "</section>"
     )
+
+
+def _has_drawable_overlay_line(series: tuple[list, list] | object) -> bool:
+    if not series:
+        return False
+    try:
+        dates, values = series
+    except (TypeError, ValueError):
+        return False
+    if not dates or not values or len(dates) != len(values):
+        return False
+    valid_date_keys: set[str] = set()
+    for date_value, value in zip(dates, values):
+        if value is None or pd.isna(date_value):
+            continue
+        timestamp = pd.Timestamp(date_value)
+        if pd.notna(timestamp):
+            valid_date_keys.add(timestamp.strftime("%Y-%m-%d"))
+    return len(valid_date_keys) >= 2
 
 
 def _render_chart_unavailable_panel(title: str, reason_html: str) -> str:

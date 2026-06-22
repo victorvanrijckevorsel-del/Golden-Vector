@@ -529,5 +529,7 @@ def test_finder_value_column_scales_percent_criteria():
 
     assert _fmt_criterion_value(_resolved_criterion("margin_pct"), 0.571) == "57.1%"
     assert _fmt_criterion_value(_resolved_criterion("fcf_yield"), 0.3935) == "39.4%"
-    # Non-percent criteria keep the plain 2-decimal number.
-    assert _fmt_criterion_value(_resolved_criterion("ev_ebitda"), 7.31) == "7.31"
+    # Registered Tool B criteria use the same compact formatter as the other Tool B surfaces.
+    assert _fmt_criterion_value(_resolved_criterion("ev_ebitda"), 7.31) == "7.3"
+    # Unknown criteria fall back to the generic 2-decimal number.
+    assert _fmt_criterion_value(_resolved_criterion("custom_metric"), 7.31) == "7.31"
