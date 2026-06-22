@@ -10,6 +10,13 @@
     tip.hidden = true;
     document.body.appendChild(tip);
 
+    // JS is active, so this floating tooltip replaces the native SVG <title>. Remove the
+    // <title> children so browsers don't ALSO show the delayed OS tooltip (double label). The
+    // server keeps emitting <title> as the no-JS fallback; we strip it only when JS runs.
+    document.querySelectorAll(".rug-tick > title").forEach(function (node) {
+      node.remove();
+    });
+
     function place(x, y) {
       tip.style.left = x + 14 + "px";
       tip.style.top = y + 14 + "px";
@@ -38,6 +45,15 @@
       if (event.target.closest && event.target.closest(".rug-tick")) {
         tip.hidden = true;
       }
+    });
+
+    // Belt-and-braces: clear the label if the pointer leaves the page entirely or the tab is
+    // backgrounded while still over a tick (mouseout/mousemove may not fire in those cases).
+    document.addEventListener("mouseleave", function () {
+      tip.hidden = true;
+    });
+    window.addEventListener("blur", function () {
+      tip.hidden = true;
     });
   }
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 from html import escape
 
 import pandas as pd
@@ -270,6 +272,13 @@ def _build_grouped_beta_bar_svg(
     )
 
 
+def _pct_label(delta: float) -> str:
+    """Signed integer-percent label for the rebased overlay (value − base). Used for BOTH the
+    y-axis gridline labels and the per-point hover values so the two can never diverge (one copy
+    of the index→% display rule). Exact zero shows as ``0%`` without a sign."""
+    return "0%" if round(delta) == 0 else f"{delta:+.0f}%"
+
+
 def _build_multiline_overlay_svg(
     *,
     series_by_label: dict[str, tuple[list[pd.Timestamp], list[float | None]]],
@@ -341,10 +350,15 @@ def _build_multiline_overlay_svg(
             f"stroke=\"#bfb5a2\" stroke-width=\"1\" stroke-dasharray=\"3 3\" />"
         )
 
+    series_colors = {
+        label: colors.get(label, _benchmark_color(label, index))
+        for index, label in enumerate(cleaned)
+    }
+
     lines_html = ""
     legend_parts: list[str] = []
-    for index, (label, points) in enumerate(cleaned.items()):
-        color = colors.get(label, _benchmark_color(label, index))
+    for label, points in cleaned.items():
+        color = series_colors[label]
         coords = " ".join(f"{x_at(d):.1f},{y_at(v):.1f}" for d, v in points)
         lines_html += (
             f"<polyline points=\"{coords}\" fill=\"none\" stroke=\"{color}\" "
@@ -356,12 +370,31 @@ def _build_multiline_overlay_svg(
         )
     legend_html = "<p class=\"chart-legend\">" + " ".join(legend_parts) + "</p>"
 
-    y_labels = (
-        f"<text x=\"{padding_left - 6}\" y=\"{y_at(value_hi) + 4:.1f}\" text-anchor=\"end\" "
-        f"font-size=\"11\" fill=\"#6f685c\">{value_hi:.0f}</text>"
-        f"<text x=\"{padding_left - 6}\" y=\"{y_at(value_lo) + 4:.1f}\" text-anchor=\"end\" "
-        f"font-size=\"11\" fill=\"#6f685c\">{value_lo:.0f}</text>"
+    # Horizontal gridlines at nice levels, labelled as % change from the rebase start (base=100)
+    # so the lines are actually readable ("AEM +120%, gold +60%"). Display-only axis math.
+    step = next(
+        (s for s in (1, 2, 5, 10, 25, 50, 100, 250, 500) if (value_hi - value_lo) / s <= 6),
+        1000,
     )
+    grid_lines = ""
+    grid_labels = ""
+    tick = base + math.floor((value_lo - base) / step) * step
+    while tick <= value_hi + 1e-9:
+        if tick >= value_lo - 1e-9:
+            gy = y_at(tick)
+            is_base = abs(tick - base) < 1e-9
+            if not is_base:  # the dashed baseline already marks 0%
+                grid_lines += (
+                    f"<line x1=\"{padding_left}\" y1=\"{gy:.1f}\" x2=\"{width - padding_right}\" "
+                    f"y2=\"{gy:.1f}\" stroke=\"#eadfca\" stroke-width=\"1\" />"
+                )
+            label_text = _pct_label(tick - base)
+            grid_labels += (
+                f"<text x=\"{padding_left - 6}\" y=\"{gy + 4:.1f}\" text-anchor=\"end\" "
+                f"font-size=\"11\" fill=\"#6f685c\">{label_text}</text>"
+            )
+        tick += step
+
     date_labels = (
         f"<text x=\"{padding_left}\" y=\"{height - 8}\" font-size=\"11\" fill=\"#6f685c\">"
         f"{min_date.strftime('%Y-%m-%d')}</text>"
@@ -369,10 +402,38 @@ def _build_multiline_overlay_svg(
         f"font-size=\"11\" fill=\"#6f685c\">{max_date.strftime('%Y-%m-%d')}</text>"
     )
 
+    # Embed the data so the hover crosshair (overlay-crosshair.js) can show each line's value +
+    # date at the cursor: ticks = union dates with x-px (for snapping); each series carries
+    # byDate -> [y-px, value, pct-label]. The pct label is produced HERE by _pct_label (the same
+    # formatter as the y-axis gridlines), so the JS only renders pre-formatted strings — no
+    # percent arithmetic in the browser. Serve mirrors already-rebased values; no business math.
+    # Ticks are keyed by the SAME date string as byDate (one entry per calendar day) so a tick and
+    # its point can never desync, even if two timestamps happen to share a day.
+    tick_x_by_date = {d.strftime("%Y-%m-%d"): round(x_at(d), 1) for d in all_dates}
+    overlay_data = {
+        "top": round(padding_top, 1),
+        "bottom": round(height - padding_bottom, 1),
+        "base": base,
+        "ticks": sorted(tick_x_by_date.items()),
+        "series": [
+            {
+                "label": label,
+                "color": series_colors[label],
+                "byDate": {
+                    d.strftime("%Y-%m-%d"): [round(y_at(v), 1), round(v, 2), _pct_label(v - base)]
+                    for d, v in points
+                },
+            }
+            for label, points in cleaned.items()
+        ],
+    }
+    data_attr = escape(json.dumps(overlay_data, separators=(",", ":")))
+
     svg = (
-        f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Rebased price comparison\">"
+        f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Rebased price comparison\" "
+        f"class=\"overlay-chart\" data-overlay=\"{data_attr}\">"
         f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#fffdf8\" rx=\"12\" ry=\"12\" />"
-        f"{baseline}{lines_html}{y_labels}{date_labels}"
+        f"{grid_lines}{baseline}{lines_html}{grid_labels}{date_labels}"
         "</svg>"
     )
     return legend_html + svg

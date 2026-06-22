@@ -33,8 +33,12 @@ class _MetricFormula:
     components: tuple[_Component, ...]
     result_field: str
     result_decimals: int
-    result_suffix: str = ""
+    result_suffix: str = ""  # full unit shown in the FORMULA POPOVER (e.g. "x", " $/oz", "%")
     result_scale: float = 1.0
+    # Unit shown in the in-table CELL. Defaults to result_suffix; set to "" for "multiple"/unit
+    # ratios (x, $/oz) so the cell stays compact (the column header carries the unit) while the
+    # popover keeps the full unit. Percent fields keep "%" because the cell needs it to be read.
+    cell_suffix: str | None = None
 
 
 # The Corporate Finance ratios whose info button shows formula + live inputs. Raw line items
@@ -52,6 +56,7 @@ _METRIC_FORMULAS: dict[str, _MetricFormula] = {
         result_field="ev_ebitda",
         result_decimals=1,
         result_suffix="x",
+        cell_suffix="",
     ),
     "leverage": _MetricFormula(
         help_key="tool_b_leverage",
@@ -60,6 +65,7 @@ _METRIC_FORMULAS: dict[str, _MetricFormula] = {
         result_field="leverage",
         result_decimals=2,
         result_suffix="x",
+        cell_suffix="",
     ),
     "forward_pe": _MetricFormula(
         help_key="tool_b_forward_pe",
@@ -71,6 +77,7 @@ _METRIC_FORMULAS: dict[str, _MetricFormula] = {
         result_field="forward_pe",
         result_decimals=2,
         result_suffix="x",
+        cell_suffix="",
     ),
     "cash_margin_usd_per_oz": _MetricFormula(
         help_key="tool_b_cash_margin",
@@ -82,6 +89,7 @@ _METRIC_FORMULAS: dict[str, _MetricFormula] = {
         result_field="cash_margin_usd_per_oz",
         result_decimals=0,
         result_suffix=" $/oz",
+        cell_suffix="",
     ),
     "margin_pct": _MetricFormula(
         help_key="tool_b_margin_pct",
@@ -121,18 +129,32 @@ def _fmt(value: object, decimals: int, scale: float = 1.0) -> str | None:
     return f"{number * scale:,.{decimals}f}"
 
 
-def metric_result_text(metric_key: str, row: Mapping[str, object] | None) -> str | None:
-    """The formatted result for a ratio (scale + decimals + suffix), e.g. "57.1%", "2.0x",
-    "2,383 $/oz" — the SAME value the formula popover concludes with. Rendering a cell with this
-    guarantees the cell and its info button can never disagree. None if unknown/unavailable."""
+def metric_value_text(metric_key: str, value: object) -> str | None:
+    """Format an arbitrary ratio value with the metric's scale/decimals and CELL unit (the compact
+    in-table unit — "57.1%", "2.0", "2,383"; the "x"/"$/oz" suffix lives only in the popover).
+    None if the metric is unknown or the value is unavailable/non-finite."""
 
     spec = _METRIC_FORMULAS.get(metric_key)
-    if spec is None or not row:
+    if spec is None:
         return None
-    result = _fmt(row.get(spec.result_field), spec.result_decimals, spec.result_scale)
+    result = _fmt(value, spec.result_decimals, spec.result_scale)
     if result is None:
         return None
-    return f"{result}{spec.result_suffix}"
+    suffix = spec.cell_suffix if spec.cell_suffix is not None else spec.result_suffix
+    return f"{result}{suffix}"
+
+
+def metric_result_text(metric_key: str, row: Mapping[str, object] | None) -> str | None:
+    """The formatted CELL result for a ratio read from ``row`` (scale + decimals + cell unit), e.g.
+    "57.1%", "2.0", "2,383". The popover repeats the value with its FULL unit, so the cell stays
+    compact while the info button spells out the unit. None if unknown/unavailable."""
+
+    if not row:
+        return None
+    spec = _METRIC_FORMULAS.get(metric_key)
+    if spec is None:
+        return None
+    return metric_value_text(metric_key, row.get(spec.result_field))
 
 
 def metric_formula_text(metric_key: str, row: Mapping[str, object] | None) -> str | None:
@@ -145,7 +167,8 @@ def metric_formula_text(metric_key: str, row: Mapping[str, object] | None) -> st
     result = _fmt(row.get(spec.result_field), spec.result_decimals, spec.result_scale)
     if result is None:
         return None
-    formula = (COLUMN_HELP[spec.help_key].calculation or "").strip().rstrip(".")
+    help_spec = COLUMN_HELP.get(spec.help_key)
+    formula = ((help_spec.calculation if help_spec else "") or "").strip().rstrip(".")
     component_bits = [
         f"{component.label} {value}"
         for component in spec.components

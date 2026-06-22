@@ -37,6 +37,8 @@ from golden_vector.serve.format_helpers import (
     _is_na,
     _metric_card,
     _optional_float,
+    resolve_dual_source,
+    source_alternate_span,
     format_dte_suffix as _dte_suffix,
 )
 from golden_vector.serve.column_help import help_term, help_th
@@ -50,6 +52,7 @@ from golden_vector.serve.metric_formula import (
     has_metric_formula,
     metric_formula_icon,
     metric_result_text,
+    metric_value_text,
 )
 from golden_vector.serve.model_state_banner import render_option_freshness_box
 from golden_vector.serve.option_signal_charts import render_option_signal_charts
@@ -314,7 +317,7 @@ def _render_tool_b_snapshot_table(
     rows_html = "".join(
         "<tr>"
         f"<th>{escape(column_name.replace('_', ' ').strip().title())}</th>"
-        f"<td>{_snapshot_metric_value(column_name, row)}"
+        f"<td>{_snapshot_metric_value(column_name, row, financials_source=financials_source)}"
         f"{_snapshot_metric_icon(ticker, column_name, financials_source, fundamentals_provenance, row)}</td>"
         "</tr>"
         for column_name in columns
@@ -323,13 +326,26 @@ def _render_tool_b_snapshot_table(
     return f"<table><tbody>{rows_html}</tbody></table>"
 
 
-def _snapshot_metric_value(column_name: str, row: dict[str, Any]) -> str:
-    """Render a snapshot cell value. Ratios use the SAME per-metric format (scale/decimals/unit)
-    as their formula popover, so the cell and its info button can never disagree (e.g. margin_pct
-    shows 57.1%, not the raw 0.57). Everything else uses the generic value formatter."""
+def _snapshot_metric_value(
+    column_name: str, row: dict[str, Any], *, financials_source: str = "our"
+) -> str:
+    """Render a snapshot cell value. Ratios use the compact per-metric cell format (scale/decimals,
+    no x/$/oz suffix — the column header + info button carry the unit), so margin_pct shows 57.1%
+    and ev_ebitda shows 2.0 (matching the Tool B overview). Dual-source ratios (ev_ebitda,
+    leverage) also append a "(Yahoo X)" accent when the two sources differ — the SAME divergence
+    the overview shows. Everything else uses the generic value formatter."""
     if has_metric_formula(column_name):
         formatted = metric_result_text(column_name, row)
         if formatted is not None:
+            if f"{column_name}_differs" in row:
+                prefer_official = str(financials_source or "our").strip().lower() == "yahoo"
+                _active, alternate, alt_label, differs = resolve_dual_source(
+                    row, column_name, prefer_official=prefer_official
+                )
+                if differs and alternate is not None:
+                    alt_text = metric_value_text(column_name, alternate)
+                    if alt_text is not None:
+                        return f"{formatted} {source_alternate_span(alt_label, alt_text)}"
             return formatted
     return _fmt_value(row.get(column_name), column_name)
 
@@ -1883,10 +1899,12 @@ def _render_up_down_beta_panel(
                 {"label": "Down-Gold (weeks gold fell)", "bars": _grouped_beta_bars(comparison, "down")},
             ],
         )
+        # Swatch colors come from the SAME _benchmark_color source the bars use, so the legend
+        # can never drift from the bars it labels (one copy of the palette).
         legend = (
             f"<p class=\"hint\">Bars: <span style=\"color:{_STOCK_COLOR}\">■ this stock</span>, "
-            "<span style=\"color:#1d4b73\">■ GDX</span>, "
-            "<span style=\"color:#3f7cae\">■ GDXJ</span> — all on the "
+            f"<span style=\"color:{_benchmark_color('GDX', 0)}\">■ GDX</span>, "
+            f"<span style=\"color:{_benchmark_color('GDXJ', 1)}\">■ GDXJ</span> — all on the "
             f"{escape(WINDOW_LABELS.get(active_window, active_window))} window, so they are directly comparable.</p>"
         )
     else:

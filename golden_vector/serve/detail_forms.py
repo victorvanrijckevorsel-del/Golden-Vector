@@ -236,8 +236,9 @@ def _render_verification_section(
         # Collapse each field's edit form behind a <details> so the panel is a compact
         # one-row-per-field table by default (Field · Status · Edit), expanding to the full
         # form only on click. Keeps every edit affordance while reclaiming the vertical space.
+        # `updated` is already HTML-escaped by _fmt_text — do not escape twice.
         updated_summary = (
-            f"<span class=\"hint\"> · updated {escape(updated)}</span>"
+            f"<span class=\"hint\"> · updated {updated}</span>"
             if updated and updated != "-"
             else ""
         )
@@ -260,7 +261,6 @@ def _render_verification_section(
             f"<label class=\"verification-cell full-width\"><span>Notes</span>"
             f"<textarea name=\"notes\" rows=\"2\">{escape(notes)}</textarea>{notes_clear_html}</label>"
             f"<div class=\"verification-actions\">"
-            f"<span class=\"hint\">Last updated: {updated}</span>"
             f"<button type=\"submit\">Save</button>"
             f"</div>"
             f"</form>"

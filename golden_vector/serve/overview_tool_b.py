@@ -32,6 +32,8 @@ from golden_vector.serve.format_helpers import (
     _fmt_text,
     _frame_index_by_ticker,
     _optional_float,
+    resolve_dual_source,
+    source_alternate_span,
 )
 from golden_vector.serve.fundamentals_provenance import (
     METRIC_FIELD_DEPENDENCIES,
@@ -110,20 +112,13 @@ def _comparison_numeric_td(
     rank_by: str,
     provenance_lookup: dict[tuple[str, str], str] | None = None,
 ) -> str:
-    ours = _optional_float(tb.get(f"{metric_name}_our_view"))
-    if ours is None:
-        ours = _optional_float(tb.get(metric_name))
-    official = _optional_float(tb.get(f"{metric_name}_official"))
-    if rank_by == "official":
-        active = official
-        alternate = ours
-        alternate_label = "Our View"
-    else:
-        active = ours
-        alternate = official
-        alternate_label = "Yahoo Fundamentals"
+    # Resolve active/alternate via the shared helper (finite-aware, matching the formula popover):
+    # a non-finite ratio renders "-" on the cell AND suppresses the popover, so the two never
+    # disagree. The ticker-detail snapshot uses the SAME resolver, so both surfaces agree.
+    active, alternate, alternate_label, differs = resolve_dual_source(
+        tb, metric_name, prefer_official=(rank_by == "official")
+    )
     order_value = _MISSING_SORT_SENTINEL if active is None else f"{active}"
-    differs = _truthy(tb.get(f"{metric_name}_differs"))
     show_alternate = alternate is not None and (
         (active is not None and differs)
         or (active is None and rank_by == "official")
@@ -133,11 +128,9 @@ def _comparison_numeric_td(
         # (so the column stays scannable), and the differing alternate is a short accent
         # parenthetical. The active source is not relabelled here — the page's source toggle
         # already says which source is active. Keeps the row from ballooning to 3 lines.
-        short_alternate = "Yahoo" if alternate_label == "Yahoo Fundamentals" else alternate_label
         display = (
             f"{_number_text(active, decimals=decimals)} "
-            f"<span class=\"source-alternate\">({escape(short_alternate)} "
-            f"{_number_text(alternate, decimals=decimals)})</span>"
+            f"{source_alternate_span(alternate_label, _number_text(alternate, decimals=decimals))}"
         )
     else:
         display = _number_text(active, decimals=decimals)
@@ -151,19 +144,6 @@ def _number_text(value: float | None, *, decimals: int) -> str:
     if value is None:
         return "-"
     return escape(f"{value:,.{decimals}f}")
-
-
-def _truthy(value: object) -> bool:
-    if value is None:
-        return False
-    try:
-        if pd.isna(value):
-            return False
-    except (TypeError, ValueError):
-        pass
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes"}
-    return bool(value)
 
 
 def _render_tool_b_overview_page(

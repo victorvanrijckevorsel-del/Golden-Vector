@@ -40,6 +40,7 @@ def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
   <script src="/static/workspace-tables.js" defer></script>
   <script src="/static/help-popover.js" defer></script>
   <script src="/static/rug-tooltip.js" defer></script>
+  <script src="/static/overlay-crosshair.js" defer></script>
   <link rel="stylesheet" href="/static/workspace.css">
 </head>
 <body>

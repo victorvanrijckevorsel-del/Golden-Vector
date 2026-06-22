@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from golden_vector.serve.metric_formula import (
+    _fmt,
     has_metric_formula,
     metric_formula_icon,
     metric_formula_text,
@@ -39,9 +40,25 @@ def test_ev_ebitda_shows_formula_inputs_and_result():
 
 
 def test_percent_ratios_render_as_percent():
-    # margin_pct / fcf_yield are stored as fractions and must display as percents.
-    assert "→ 57.1%" in metric_formula_text("margin_pct", _row())  # 0.5710 -> 57.1%
-    assert "→ 39.4%" in metric_formula_text("fcf_yield", _row())  # 0.3935 -> 39.4%
+    # margin_pct / fcf_yield are stored as fractions and must display as percents — and the
+    # formula HEAD + component value bits must render too (not only the trailing result).
+    margin = metric_formula_text("margin_pct", _row())
+    assert margin.startswith("Margin % =")
+    assert "Cash margin 2,383" in margin and "Gold price 4,173" in margin
+    assert "→ 57.1%" in margin  # 0.5710 -> 57.1%
+    fcf = metric_formula_text("fcf_yield", _row())
+    assert fcf.startswith("FCF yield =")
+    assert "Sustainable FCF 1,270" in fcf and "Market cap 3,228" in fcf
+    assert "→ 39.4%" in fcf  # 0.3935 -> 39.4%
+
+
+def test_component_scale_renders_a_fraction_as_a_percent():
+    # The per-INPUT scale path (display = raw * scale) — exercise scale != 1.0 directly so a
+    # future fraction-valued component is guarded, not just the result-level scaling.
+    assert _fmt(0.5710, 1, 100.0) == "57.1"
+    assert _fmt(2382.9, 0, 1.0) == "2,383"
+    assert _fmt(None, 1, 100.0) is None
+    assert _fmt(float("inf"), 1, 100.0) is None  # non-finite degrades to None
 
 
 def test_forward_pe_and_cash_margin_formulas():
@@ -72,16 +89,33 @@ def test_missing_component_is_omitted_but_result_still_shown():
     assert "→ 2.0x" in text  # result still shown
 
 
-def test_metric_result_text_matches_popover_result_format():
-    # The cell formatter must produce the SAME value the popover concludes with, so they agree.
+def test_cell_is_compact_but_popover_keeps_full_unit():
+    # Product decision: in-table CELLS are compact — no "x"/"$/oz" suffix (the column header + the
+    # info button carry the unit), matching the Tool B overview. Percent fields keep "%" because
+    # the cell needs it to be read. The formula POPOVER keeps the full unit.
     row = _row()
-    assert metric_result_text("margin_pct", row) == "57.1%"
+    assert metric_result_text("ev_ebitda", row) == "2.0"  # not "2.0x"
+    assert metric_result_text("forward_pe", row) == "3.29"  # not "3.29x"
+    assert metric_result_text("leverage", row) == "-0.39"  # not "-0.39x"
+    assert metric_result_text("cash_margin_usd_per_oz", row) == "2,383"  # not "2,383 $/oz"
+    assert metric_result_text("margin_pct", row) == "57.1%"  # % stays
     assert metric_result_text("fcf_yield", row) == "39.4%"
-    assert metric_result_text("cash_margin_usd_per_oz", row) == "2,383 $/oz"
-    assert metric_result_text("ev_ebitda", row) == "2.0x"
-    assert metric_result_text("forward_pe", row) == "3.29x"
+    # The popover still spells out the full unit.
+    assert metric_formula_text("ev_ebitda", row).endswith("→ 2.0x")
+    assert metric_formula_text("cash_margin_usd_per_oz", row).endswith("→ 2,383 $/oz")
     assert metric_result_text("ev_ebitda", {"ev_ebitda": None}) is None
     assert metric_result_text("not_a_metric", row) is None
+
+
+def test_metric_value_text_formats_an_arbitrary_value_compactly():
+    # Used to render the "(Yahoo X)" divergence accent on the detail snapshot: format a given
+    # value with the metric's scale/decimals and COMPACT cell unit.
+    from golden_vector.serve.metric_formula import metric_value_text
+
+    assert metric_value_text("ev_ebitda", 2.5) == "2.5"  # no "x"
+    assert metric_value_text("margin_pct", 0.42) == "42.0%"  # fraction -> percent
+    assert metric_value_text("ev_ebitda", None) is None
+    assert metric_value_text("not_a_metric", 1.0) is None
 
 
 def test_leverage_shows_net_debt_and_result():

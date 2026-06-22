@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 
+from golden_vector.common.numeric import optional_finite_float
 from golden_vector.common.numeric import optional_float as _optional_float
 from golden_vector.common.numeric import require_finite
 
@@ -173,6 +174,44 @@ def _fmt_percent(value: Any, *, decimals: int = 1) -> str:
     if pd.isna(numeric):
         return "-"
     return escape(f"{numeric * 100:,.{decimals}f}%")
+
+
+def _truthy(value: Any) -> bool:
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return bool(value)
+
+
+def resolve_dual_source(
+    row: Any, metric_name: str, *, prefer_official: bool
+) -> tuple[float | None, float | None, str, bool]:
+    """Resolve the active vs alternate value for a dual-source Tool B ratio (Our View vs Yahoo
+    official), plus whether the two differ. Shared by the Tool B overview cell and the
+    ticker-detail snapshot so BOTH surfaces resolve the comparison identically (one copy).
+
+    Returns ``(active, alternate, alternate_label, differs)``. ``prefer_official`` selects which
+    source is active (overview: rank_by == "official"; detail: financials source == "yahoo")."""
+    ours = optional_finite_float(row.get(f"{metric_name}_our_view"))
+    if ours is None:
+        ours = optional_finite_float(row.get(metric_name))
+    official = optional_finite_float(row.get(f"{metric_name}_official"))
+    differs = _truthy(row.get(f"{metric_name}_differs"))
+    if prefer_official:
+        return official, ours, "Our View", differs
+    return ours, official, "Yahoo Fundamentals", differs
+
+
+def source_alternate_span(alternate_label: str, value_text: str) -> str:
+    """The compact "(Yahoo 2.5)" divergence accent shown next to a dual-source ratio value."""
+    short = "Yahoo" if alternate_label == "Yahoo Fundamentals" else alternate_label
+    return f"<span class=\"source-alternate\">({escape(short)} {value_text})</span>"
 
 
 def format_dte_suffix(days_to_expiry: object) -> str:

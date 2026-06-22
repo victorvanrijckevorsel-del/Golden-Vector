@@ -1091,6 +1091,26 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         ),
         direction="Higher means more leveraged to gold (both up and down).",
     ),
+    "tool_a_delta_blend": ColumnHelp(
+        meaning=(
+            "How much this stock tends to move for each 1% move in the gold price — its gold beta "
+            "over all weeks (up and down). The value shown here is the cross-window blend: a "
+            "weighted median of the 6M / 1Y / 3Y windows. Open a ticker's detail page for "
+            "per-window betas."
+        ),
+        calculation=(
+            "Per window, the slope β of stock_weekly_return = α + β × gold_weekly_return (OLS on "
+            "weekly log-returns); the figure shown is the weighted-median blend across the scoring "
+            "windows (6M / 1Y / 3Y) — the same robustness blend behind the Gold Sensitivity Score."
+        ),
+        details=(
+            "Units: roughly the % the stock moves per 1% weekly gold move (1.5 ≈ moves 1.5% per "
+            "1% gold). Usually positive for miners, often ~1–2.5×; it CAN be negative (moves "
+            "OPPOSITE to gold). Down beta and up beta split the same regression by whether gold "
+            "fell or rose; gamma (down − up) is the asymmetry."
+        ),
+        direction="Higher means more leveraged to gold (both up and down).",
+    ),
     "tool_a_gamma": ColumnHelp(
         meaning="The gap between how the stock moves when gold falls and when gold rises — its down-gold beta minus its up-gold beta.",
         calculation="Down-regime gold beta − up-regime gold beta.",

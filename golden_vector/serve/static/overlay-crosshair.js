@@ -1,0 +1,155 @@
+// Hover crosshair for the rebased "Gold vs Stock vs Gold-Miner ETFs" overlay chart.
+// On mousemove over the chart, snap to the nearest date, draw a vertical line, place a dot on
+// each line, and show a tooltip listing every series' value + % change at that date. Reads the
+// pre-computed points embedded in the SVG's data-overlay attribute (no business math in JS):
+// each byDate entry is [y-px, value, pct-label], the pct already formatted server-side by the
+// SAME formatter as the y-axis gridlines, so the browser never recomputes a percentage.
+(function () {
+  var NS = "http://www.w3.org/2000/svg";
+
+  // HTML-escape any data string before it enters an innerHTML sink (the series labels are
+  // tickers — data, not trusted markup). Mirrors the textContent safety the sibling tooltips use.
+  function esc(text) {
+    return String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function setupChart(svg, tip, state) {
+    var data;
+    try {
+      data = JSON.parse(svg.getAttribute("data-overlay"));
+    } catch (e) {
+      return;
+    }
+    if (!data || !data.ticks || !data.ticks.length || !data.series) return;
+
+    var layer = document.createElementNS(NS, "g");
+    layer.setAttribute("class", "overlay-cursor");
+    svg.appendChild(layer);
+
+    var vline = document.createElementNS(NS, "line");
+    vline.setAttribute("stroke", "#6f685c");
+    vline.setAttribute("stroke-width", "1");
+    vline.setAttribute("stroke-dasharray", "3 2");
+    vline.setAttribute("y1", data.top);
+    vline.setAttribute("y2", data.bottom);
+    layer.appendChild(vline);
+
+    var dots = data.series.map(function (s) {
+      var c = document.createElementNS(NS, "circle");
+      c.setAttribute("r", "3.5");
+      c.setAttribute("fill", s.color);
+      layer.appendChild(c);
+      return c;
+    });
+
+    function hide() {
+      layer.style.display = "none";
+      tip.hidden = true;
+      state.lastDate = null;
+    }
+    hide();
+    state.hiders.push(hide);
+
+    function position(event) {
+      // Place near the cursor, then clamp so the (white-space:nowrap) box stays on screen.
+      var pad = 14;
+      var rect = tip.getBoundingClientRect();
+      var left = event.clientX + pad;
+      var top = event.clientY + pad;
+      if (left + rect.width > window.innerWidth) left = event.clientX - pad - rect.width;
+      if (top + rect.height > window.innerHeight) top = event.clientY - pad - rect.height;
+      tip.style.left = Math.max(0, left) + "px";
+      tip.style.top = Math.max(0, top) + "px";
+    }
+
+    svg.addEventListener("mousemove", function (event) {
+      var box = svg.getBoundingClientRect();
+      if (!box.width) return;
+      var vb = svg.viewBox.baseVal;
+      var sx = ((event.clientX - box.left) / box.width) * vb.width;
+
+      var nearest = data.ticks[0];
+      var best = Infinity;
+      for (var i = 0; i < data.ticks.length; i++) {
+        var dx = Math.abs(data.ticks[i][1] - sx);
+        if (dx < best) {
+          best = dx;
+          nearest = data.ticks[i];
+        }
+      }
+      var date = nearest[0];
+      var xpx = nearest[1];
+
+      layer.style.display = "";
+      // The snapped date hasn't changed since the last pixel: only reposition, skip the rebuild
+      // (and the innerHTML write) to avoid needless DOM churn while gliding within one column.
+      if (date === state.lastDate && tip.lastChart === svg) {
+        position(event);
+        return;
+      }
+      state.lastDate = date;
+      tip.lastChart = svg;
+
+      vline.setAttribute("x1", xpx);
+      vline.setAttribute("x2", xpx);
+
+      var rows = "<strong>" + esc(date) + "</strong>";
+      data.series.forEach(function (s, idx) {
+        var pt = s.byDate[date];
+        if (pt) {
+          dots[idx].style.display = "";
+          dots[idx].setAttribute("cx", xpx);
+          dots[idx].setAttribute("cy", pt[0]);
+          rows +=
+            "<br><span style='color:" + esc(s.color) + "'>■</span> " +
+            esc(s.label) + ": " + pt[1].toFixed(1) + " (" + esc(pt[2]) + ")";
+        } else {
+          dots[idx].style.display = "none";
+        }
+      });
+
+      tip.innerHTML = rows;
+      tip.hidden = false;
+      position(event);
+    });
+
+    svg.addEventListener("mouseleave", hide);
+  }
+
+  function init() {
+    var charts = document.querySelectorAll("svg.overlay-chart");
+    if (!charts.length) return;
+    var tip = document.createElement("div");
+    tip.className = "overlay-tooltip";
+    tip.setAttribute("role", "status");
+    tip.hidden = true;
+    document.body.appendChild(tip);
+
+    // Shared dismissal: clear the tooltip if the pointer leaves the document, the tab is
+    // backgrounded, or the page scrolls — events the per-SVG mouseleave can miss.
+    var state = { lastDate: null, hiders: [] };
+    function hideAll() {
+      state.hiders.forEach(function (h) {
+        h();
+      });
+    }
+    document.addEventListener("mouseleave", hideAll);
+    window.addEventListener("blur", hideAll);
+    window.addEventListener("scroll", hideAll, true);
+
+    charts.forEach(function (svg) {
+      setupChart(svg, tip, state);
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();

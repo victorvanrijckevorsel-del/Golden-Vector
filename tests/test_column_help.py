@@ -326,3 +326,14 @@ def test_help_value_keeps_filter_sort_clean_and_explains_the_value():
     # glossary covers the live Tool A categorical values
     for v in ("CONVEX", "FRAGILE", "DEFENSIVE", "MODERATE_NOISE", "HIGH_DOWNSIDE_RISK", "HIGH", "MEDIUM"):
         assert v in VALUE_HELP
+
+
+def test_help_value_escapes_special_characters():
+    """A categorical value with HTML metacharacters must be escaped in both the data-search
+    attribute and the visible cell text — no attribute breakout, no injected markup."""
+    from golden_vector.serve.column_help import help_value
+
+    td = help_value('A"<b>')
+    assert "<b>" not in td  # never raw markup
+    assert "&lt;b&gt;" in td  # angle brackets encoded
+    assert 'data-search="A&quot;&lt;b&gt;"' in td  # quote encoded -> no attribute breakout

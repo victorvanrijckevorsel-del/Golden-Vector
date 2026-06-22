@@ -489,3 +489,45 @@ def _call_wsgi_app(app, *, method: str, path: str) -> dict[str, str]:
     }
     body = b"".join(app(environ, start_response)).decode("utf-8")
     return {"status": str(captured["status"]), "body": body}
+
+
+def _resolved_criterion(criterion_id: str, source_field: str = "f"):
+    from golden_vector.model.candidate_finder import ResolvedCriterion
+
+    return ResolvedCriterion(
+        id=criterion_id,
+        label="x",
+        description="d",
+        source_field=source_field,
+        group="g",
+        direction="high_good",
+        weight=1.0,
+    )
+
+
+def test_beta_criterion_help_keys_match_blend_vs_window_basis():
+    """Beta criteria show the cross-window blend by default and a single window when picked; the
+    info-button help key must follow so the basis label always matches the displayed value."""
+    from golden_vector.serve.candidate_finder_page import _criterion_help_key
+
+    # Default cross-window blend (source_field ends in _core) -> blend-basis help keys.
+    assert _criterion_help_key(_resolved_criterion("down_beta", "down_beta_core")) == "tool_c_down_beta_blend"
+    assert _criterion_help_key(_resolved_criterion("up_beta", "up_beta_core")) == "tool_c_up_beta_blend"
+    assert _criterion_help_key(_resolved_criterion("gold_beta_core", "structural_delta_core")) == "tool_a_delta_blend"
+    # A single picked window -> plain per-window help keys (which describe one window).
+    assert _criterion_help_key(_resolved_criterion("down_beta", "down_beta_6m")) == "tool_c_down_beta"
+    assert _criterion_help_key(_resolved_criterion("up_beta", "up_beta_1y")) == "tool_c_up_beta"
+    assert _criterion_help_key(_resolved_criterion("gold_beta_core", "structural_delta_3y")) == "tool_a_delta"
+    # Non-beta criteria are unaffected.
+    assert _criterion_help_key(_resolved_criterion("aisc", "aisc_usd_per_oz")) == "tool_b_aisc"
+
+
+def test_finder_value_column_scales_percent_criteria():
+    """margin_pct / fcf_yield are stored as fractions; the Value cell must render them as percents
+    so it agrees with the metric its info button explains (and the same metric on the other tools)."""
+    from golden_vector.serve.candidate_finder_page import _fmt_criterion_value
+
+    assert _fmt_criterion_value(_resolved_criterion("margin_pct"), 0.571) == "57.1%"
+    assert _fmt_criterion_value(_resolved_criterion("fcf_yield"), 0.3935) == "39.4%"
+    # Non-percent criteria keep the plain 2-decimal number.
+    assert _fmt_criterion_value(_resolved_criterion("ev_ebitda"), 7.31) == "7.31"

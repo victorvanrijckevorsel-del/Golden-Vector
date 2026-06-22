@@ -23,7 +23,12 @@ from golden_vector.serve.candidate_finder_data import (
     run_candidate_finder_screen,
 )
 from golden_vector.serve.column_help import help_term, help_th
-from golden_vector.serve.format_helpers import _fmt_number, _fmt_numeric_td, _metric_card
+from golden_vector.serve.format_helpers import (
+    _fmt_number,
+    _fmt_numeric_td,
+    _fmt_percent,
+    _metric_card,
+)
 from golden_vector.serve.fundamentals_provenance import ticker_provenance_icon
 from golden_vector.serve.model_state_banner import (
     render_model_state_banner,
@@ -73,6 +78,37 @@ _CRITERION_HELP_KEYS: dict[str, str] = {
     "tool_c_upside_rank": "tool_c_upside_rank",
     "tool_d_quality_rank": "tool_d_quality_rank",
 }
+
+# Beta criteria show the cross-window BLEND by default (source_field ending in `_core`) and a
+# single window when the user picks one via the horizon control. The blend variants spell out the
+# basis ("a weighted median of 6M/1Y/3Y") so the info button never mislabels a blended number as a
+# per-window beta — matching the Portfolio / Option Trading surfaces that also show the `_core` beta.
+_BLEND_HELP_KEYS: dict[str, str] = {
+    "down_beta": "tool_c_down_beta_blend",
+    "up_beta": "tool_c_up_beta_blend",
+    "gold_beta_core": "tool_a_delta_blend",
+}
+
+# Criteria stored as fractions (0.57) but explained/shown as percents everywhere else; their
+# "Value" cell must render as a percent so it agrees with the metric the info button describes.
+_PERCENT_VALUE_CRITERIA: frozenset[str] = frozenset({"margin_pct", "fcf_yield"})
+
+
+def _criterion_help_key(criterion: ResolvedCriterion) -> str | None:
+    """Rich help key for a criterion's Value column. For the beta criteria, pick the blend-basis
+    entry when the displayed value is the cross-window `_core` blend, and the plain per-window
+    entry when a single window is active — so the basis label always matches the number shown."""
+    if criterion.id in _BLEND_HELP_KEYS and criterion.source_field.endswith("_core"):
+        return _BLEND_HELP_KEYS[criterion.id]
+    return _CRITERION_HELP_KEYS.get(criterion.id)
+
+
+def _fmt_criterion_value(criterion: ResolvedCriterion, value: object) -> str:
+    """Format a top-list raw value, scaling fraction-valued criteria (margin %, FCF yield) to a
+    percent so the cell agrees with its info button and the same metric on the other tools."""
+    if criterion.id in _PERCENT_VALUE_CRITERIA:
+        return _fmt_percent(value)
+    return _fmt_number(value, decimals=2)
 
 
 def render_candidate_finder_page(
@@ -569,7 +605,7 @@ def _render_top_list_card(
         f"""
 <tr>
   <td>{_ticker_link(row.ticker, fundamentals_source=fundamentals_source, fundamentals_provenance=fundamentals_provenance)}</td>
-  <td class="numeric">{_fmt_number(row.raw_value, decimals=2)}</td>
+  <td class="numeric">{_fmt_criterion_value(criterion, row.raw_value)}</td>
   <td class="numeric">{_fmt_number(row.percentile, decimals=1)}</td>
 </tr>
 """
@@ -584,7 +620,7 @@ def _render_top_list_card(
   <p class="hint">{escape(criterion.description)} {direction} values rank higher. Weight {_fmt_weight(criterion.weight)}.</p>
   <table>
     <thead>
-      <tr>{help_th("Ticker", key="ticker_symbol")}{help_th("Value", key=_CRITERION_HELP_KEYS.get(criterion.id), text=criterion.description, app_config=app_config)}{help_th("Percentile", key="candidate_finder_top_list_percentile")}</tr>
+      <tr>{help_th("Ticker", key="ticker_symbol")}{help_th("Value", key=_criterion_help_key(criterion), text=criterion.description, app_config=app_config)}{help_th("Percentile", key="candidate_finder_top_list_percentile")}</tr>
     </thead>
     <tbody>{body}</tbody>
   </table>
@@ -625,7 +661,7 @@ def _render_score_table(
     criterion_headers = "".join(
         help_th(
             criterion.label,
-            key=_CRITERION_HELP_KEYS.get(criterion.id),
+            key=_criterion_help_key(criterion),
             text=criterion.description,
             app_config=app_config,
             col_name=f"criterion_{criterion.id}",

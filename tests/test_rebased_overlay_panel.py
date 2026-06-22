@@ -11,10 +11,22 @@ every supplied line is drawn, a missing benchmark degrades to one fewer line
 
 from __future__ import annotations
 
+import json
+import re
+from html import unescape
+from pathlib import Path
+
 import pandas as pd
 
 from golden_vector.serve.charts import _build_multiline_overlay_svg
 from golden_vector.serve.detail_panels import _render_rebased_overlay_panel
+
+
+def _overlay_payload(html: str) -> dict:
+    """Decode the embedded data-overlay JSON the crosshair JS consumes."""
+    match = re.search(r'data-overlay="([^"]+)"', html)
+    assert match, "overlay SVG must carry a data-overlay attribute"
+    return json.loads(unescape(match.group(1)))
 
 
 def _window_dates(n: int = 6) -> list[pd.Timestamp]:
@@ -49,6 +61,89 @@ def test_overlay_panel_draws_every_supplied_series_with_a_baseline():
     assert html.count("<polyline") == 4
     assert "stroke-dasharray=\"3 3\"" in html
     assert "aria-label=\"Rebased price comparison\"" in html
+
+
+def test_overlay_chart_has_percent_gridlines_and_crosshair_data():
+    html = _render_rebased_overlay_panel(
+        ticker="ABC",
+        rebased_overlay_by_window=_full_overlay(),
+        active_window="12M",
+    )
+
+    # Readable y-axis: gridlines labelled as % change from the rebase start (not raw index nums).
+    assert ">0%</text>" in html
+    assert ">+30%</text>" in html
+    # Hover crosshair hook: the SVG carries the embedded per-series data for overlay-crosshair.js.
+    assert 'class="overlay-chart"' in html
+    assert "data-overlay=" in html
+    assert "byDate" in html  # embedded series points (escaped JSON)
+    assert "2024-01-05" in html  # a tick date present in the embedded crosshair data
+
+
+def test_overlay_embed_pins_the_coordinate_mapping():
+    # Decode the data-overlay payload and assert the ACTUAL pixel mapping the crosshair relies on,
+    # so a swapped/inverted x_at/y_at or a byDate field-order change fails the test (not silently
+    # ships a misaligned crosshair). Fixture spans values 100..130 with base 100.
+    payload = _overlay_payload(
+        _render_rebased_overlay_panel(
+            ticker="ABC", rebased_overlay_by_window=_full_overlay(), active_window="12M"
+        )
+    )
+    assert payload["base"] == 100.0
+    # First date sits at the left padding (x=48); the last at width-padding_right (720-24=696).
+    assert payload["ticks"][0] == ["2024-01-05", 48.0]
+    assert payload["ticks"][-1] == ["2024-02-09", 696.0]
+    # One tick per calendar day — keyspace matches byDate exactly (no desync).
+    tick_dates = [t[0] for t in payload["ticks"]]
+    assert len(tick_dates) == len(set(tick_dates))
+    abc = next(s for s in payload["series"] if s["label"] == "ABC")
+    # The rebased start (value 100 == base) maps to y=196.0 and the pct label is "0%".
+    assert abc["byDate"]["2024-01-05"] == [196.0, 100.0, "0%"]
+    # A risen point carries a signed pct produced by the SAME server formatter as the gridlines.
+    assert abc["byDate"]["2024-02-09"][1] == 130.0
+    assert abc["byDate"]["2024-02-09"][2] == "+30%"
+
+
+def test_overlay_embed_escapes_html_in_series_labels():
+    # The crosshair reads labels from data-overlay; a label with HTML metacharacters must be
+    # encoded in the attribute (and never appear raw anywhere in the SVG), so the innerHTML sink
+    # in overlay-crosshair.js cannot be fed unescaped markup.
+    dates = _window_dates()
+    html = _build_multiline_overlay_svg(
+        series_by_label={
+            "<img src=x onerror=alert(1)>": (dates, [100.0, 110.0, 105.0, 120.0, 118.0, 130.0]),
+            "Gold": (dates, [100.0, 102.0, 101.0, 104.0, 103.0, 106.0]),
+        }
+    )
+    assert "<img" not in html  # angle brackets are encoded, so no live <img> tag is emitted
+    assert "&lt;img" in html  # the label survives only in escaped form
+    payload = _overlay_payload(html)  # and the decoded data still carries the original label
+    assert any("<img" in s["label"] for s in payload["series"])
+
+
+def test_overlay_gridlines_bracket_a_tiny_low_volatility_span():
+    # A nearly-flat window (all series within ~1% of 100) must still draw +/- gridlines, not just
+    # the lone "0%" baseline label (finer step candidates below 5).
+    dates = _window_dates()
+    html = _build_multiline_overlay_svg(
+        series_by_label={
+            "ABC": (dates, [100.0, 100.5, 101.0, 100.8, 100.3, 101.0]),
+            "Gold": (dates, [100.0, 99.7, 99.2, 99.5, 99.8, 99.0]),
+        }
+    )
+    assert ">0%</text>" in html
+    assert ">+1%</text>" in html
+    assert ">-1%</text>" in html
+
+
+def test_overlay_crosshair_js_escapes_labels_and_has_no_percent_math():
+    # Pin the JS contract that complements the server embed: labels are HTML-escaped before the
+    # innerHTML write, and the percent is READ from the embed (no fmtPct recomputation in browser).
+    js = Path("golden_vector/serve/static/overlay-crosshair.js").read_text(encoding="utf-8")
+    assert "function esc(" in js
+    assert "esc(s.label)" in js  # label escaped before entering innerHTML
+    assert "esc(pt[2])" in js  # pre-formatted pct read from the embed
+    assert "fmtPct" not in js  # no percent arithmetic duplicated in JS
 
 
 def test_overlay_panel_degrades_when_a_benchmark_is_missing():

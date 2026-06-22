@@ -271,6 +271,19 @@ def test_render_filter_bar_emits_data_filter_target_and_data_filter_column():
         assert f'<option value="{value}">{value}</option>' in html
 
 
+def test_render_filter_bar_escapes_option_values():
+    # Option values come from rendered categorical data; a value with quote/angle brackets must
+    # be escaped in BOTH the value attribute and the label (no attribute breakout / injected tag).
+    html = _render_filter_bar(
+        target_table_id="t",
+        options={"verdict": ['STRONG"><script>']},
+        column_labels={"verdict": "Verdict"},
+    )
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+    assert "&quot;" in html  # the quote is encoded, so it cannot close the value attribute
+
+
 # ---------------------------------------------------------------------------
 # View integration — prove the HTML contract is honored end-to-end
 # ---------------------------------------------------------------------------
@@ -424,7 +437,10 @@ def test_workspace_tables_js_has_datatable_guard():
     )
     content = js_path.read_text(encoding="utf-8")
     assert "typeof window.DataTable !== 'function'" in content
-    assert "return" in content  # inside the guard
+    # The early-return must be the BODY of the guard, not just any return elsewhere in the file.
+    assert __import__("re").search(
+        r"typeof window\.DataTable !== 'function'\)\s*\{?\s*return", content
+    ), "the DataTable-missing guard must early-return"
 
 
 def test_tool_a_benchmark_reference_rows_render_in_tfoot():

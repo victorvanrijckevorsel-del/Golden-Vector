@@ -2372,10 +2372,12 @@ def test_workspace_tool_d_serve_layer_has_no_resilience_arithmetic():
 
 def test_workspace_tool_b_serve_layer_has_no_financial_arithmetic():
     """The Tool B page renders backend-resolved columns only. No ratio
-    math, no coalesce/fallback resolution, and no config-gold fallback may
-    creep into serve — the gold dial's correctness depends on the page
-    showing exactly what the one Tool B model computed (gold-dial plan,
-    Codex MEDIUM 4)."""
+    math, no pandas-frame coalesce (.fillna/.combine_first), and no config-gold
+    fallback may creep into serve — the gold dial's correctness depends on the
+    page showing exactly what the one Tool B model computed (gold-dial plan,
+    Codex MEDIUM 4). (Selecting which pre-resolved backend column to display —
+    e.g. our_view falling back to the base column — is display selection, not
+    data resolution, and is intentionally not scanned here.)"""
     source = Path("golden_vector/serve/overview_tool_b.py").read_text(encoding="utf-8")
 
     # The page must call the ONE Tool B model and the shared spot resolver.
@@ -2424,6 +2426,60 @@ def test_metric_formula_serve_layer_has_no_ratio_recompute():
         ".combine_first(",
     ):
         assert forbidden not in source, forbidden
+
+
+def test_charts_serve_layer_is_display_only():
+    """charts.py maps already-computed values to pixels (x_at/y_at) and formats display-axis
+    percents (_pct_label = value − base). Canon: every new serve surface gets a static-scan
+    guardrail. No ratio recompute, no pandas-frame coalesce, and no rank/source resolution may
+    creep into the chart layer — a chart must never become a second place business math lives."""
+    source = Path("golden_vector/serve/charts.py").read_text(encoding="utf-8")
+    for forbidden in (
+        "- aisc_usd_per_oz",
+        "net_debt_musd /",
+        "/ ebitda",
+        "/ forward_ebitda_musd",
+        "/ market_cap_musd",
+        "production_oz *",
+        ".fillna(",
+        ".combine_first(",
+        "_official",  # no our-view/Yahoo source-resolution in the chart layer
+        "resolve_gold_price",
+    ):
+        assert forbidden not in source, forbidden
+
+
+def test_snapshot_ratio_cell_is_compact_and_shows_yahoo_divergence():
+    """The ticker-detail snapshot renders dual-source ratios (ev_ebitda) with a compact value (no
+    'x' suffix) plus the SAME '(Yahoo X)' divergence accent the Tool B overview shows."""
+    from golden_vector.serve.detail_panels import _snapshot_metric_value
+
+    # Our View active, our-view 2.0 vs Yahoo 3.5, flagged as differing.
+    row = {
+        "ev_ebitda": 2.0,
+        "ev_ebitda_our_view": 2.0,
+        "ev_ebitda_official": 3.5,
+        "ev_ebitda_differs": True,
+    }
+    cell = _snapshot_metric_value("ev_ebitda", row, financials_source="our")
+    assert cell.startswith("2.0 ")  # compact active value, no unit suffix
+    assert "x" not in cell  # cell carries no 'x' (header/popover do)
+    assert "source-alternate" in cell and "(Yahoo 3.5)" in cell
+
+    # No divergence -> plain compact value, no accent.
+    assert _snapshot_metric_value(
+        "ev_ebitda", {"ev_ebitda": 2.0, "ev_ebitda_differs": False}, financials_source="our"
+    ) == "2.0"
+
+    # Yahoo source active (base materialized to the official value) -> alternate is Our View.
+    yahoo_row = {
+        "ev_ebitda": 3.5,
+        "ev_ebitda_our_view": 2.0,
+        "ev_ebitda_official": 3.5,
+        "ev_ebitda_differs": True,
+    }
+    ycell = _snapshot_metric_value("ev_ebitda", yahoo_row, financials_source="yahoo")
+    assert ycell.startswith("3.5 ") and "(Our View 2.0)" in ycell
 
 
 def test_workspace_candidate_finder_serve_layer_has_no_forked_tool_b_d_math():
