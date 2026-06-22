@@ -61,7 +61,10 @@ _METRIC_FORMULAS: dict[str, _MetricFormula] = {
     "leverage": _MetricFormula(
         help_key="tool_b_leverage",
         label="Net Debt/EBITDA",
-        components=(_Component("Net debt", "net_debt_musd"),),
+        components=(
+            _Component("Net debt", "net_debt_musd"),
+            _Component("EBITDA LTM", "ebitda_ltm_musd"),
+        ),
         result_field="leverage",
         result_decimals=2,
         result_suffix="x",

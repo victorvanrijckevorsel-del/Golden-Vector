@@ -26,10 +26,10 @@ from golden_vector.serve.column_help import help_term, help_th
 from golden_vector.serve.format_helpers import (
     _fmt_number,
     _fmt_numeric_td,
-    _fmt_percent,
     _metric_card,
 )
 from golden_vector.serve.fundamentals_provenance import ticker_provenance_icon
+from golden_vector.serve.metric_formula import metric_value_text
 from golden_vector.serve.model_state_banner import (
     render_model_state_banner,
     render_option_freshness_box,
@@ -89,11 +89,6 @@ _BLEND_HELP_KEYS: dict[str, str] = {
     "gold_beta_core": "tool_a_delta_blend",
 }
 
-# Criteria stored as fractions (0.57) but explained/shown as percents everywhere else; their
-# "Value" cell must render as a percent so it agrees with the metric the info button describes.
-_PERCENT_VALUE_CRITERIA: frozenset[str] = frozenset({"margin_pct", "fcf_yield"})
-
-
 def _criterion_help_key(criterion: ResolvedCriterion) -> str | None:
     """Rich help key for a criterion's Value column. For the beta criteria, pick the blend-basis
     entry when the displayed value is the cross-window `_core` blend, and the plain per-window
@@ -104,10 +99,11 @@ def _criterion_help_key(criterion: ResolvedCriterion) -> str | None:
 
 
 def _fmt_criterion_value(criterion: ResolvedCriterion, value: object) -> str:
-    """Format a top-list raw value, scaling fraction-valued criteria (margin %, FCF yield) to a
-    percent so the cell agrees with its info button and the same metric on the other tools."""
-    if criterion.id in _PERCENT_VALUE_CRITERIA:
-        return _fmt_percent(value)
+    """Format a top-list raw value using the shared metric formatter when available."""
+
+    metric_text = metric_value_text(criterion.id, value)
+    if metric_text is not None:
+        return metric_text
     return _fmt_number(value, decimals=2)
 
 

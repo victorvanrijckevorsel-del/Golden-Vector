@@ -11,7 +11,7 @@ from __future__ import annotations
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.hedge.option_trading import OptionTradingOverviewData
-from golden_vector.serve.column_help import column_help_text, help_term, help_th
+from golden_vector.serve.column_help import column_help_text, help_icon, help_term, help_th
 from golden_vector.serve.option_signal_render import option_signal_skew_hover
 from golden_vector.serve.overview_option_trading import (
     _render_liquidity_measurements,
@@ -133,6 +133,17 @@ def test_help_term_inline_uses_the_unified_click_panel():
     assert 'class="help-icon"' in custom
     # No key, no text -> plain escaped label.
     assert help_term("Plain") == "Plain"
+
+
+def test_help_icon_values_slot_escapes_untrusted_text():
+    html = help_icon(
+        "EV/EBITDA",
+        text="Formula explanation",
+        values='A"<script>alert(1)</script>',
+    )
+
+    assert 'data-help-values="A&quot;&lt;script&gt;alert(1)&lt;/script&gt;"' in html
+    assert "<script>" not in html
 
 
 def test_unknown_key_yields_no_tooltip():

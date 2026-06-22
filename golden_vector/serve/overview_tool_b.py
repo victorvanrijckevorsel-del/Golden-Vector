@@ -32,7 +32,6 @@ from golden_vector.serve.format_helpers import (
     _fmt_text,
     _frame_index_by_ticker,
     _optional_float,
-    resolve_dual_source,
     source_alternate_span,
 )
 from golden_vector.serve.fundamentals_provenance import (
@@ -112,17 +111,13 @@ def _comparison_numeric_td(
     rank_by: str,
     provenance_lookup: dict[tuple[str, str], str] | None = None,
 ) -> str:
-    # Resolve active/alternate via the shared helper (finite-aware, matching the formula popover):
-    # a non-finite ratio renders "-" on the cell AND suppresses the popover, so the two never
-    # disagree. The ticker-detail snapshot uses the SAME resolver, so both surfaces agree.
-    active, alternate, alternate_label, differs = resolve_dual_source(
-        tb, metric_name, prefer_official=(rank_by == "official")
-    )
+    # Active value and alternate-source display fields are materialized upstream by
+    # `materialize_tool_b_finance_source`; this renderer only formats them.
+    active = _optional_float(tb.get(metric_name))
+    alternate = _optional_float(tb.get(f"{metric_name}_alternate_value"))
+    alternate_label = str(tb.get(f"{metric_name}_alternate_label") or "")
     order_value = _MISSING_SORT_SENTINEL if active is None else f"{active}"
-    show_alternate = alternate is not None and (
-        (active is not None and differs)
-        or (active is None and rank_by == "official")
-    )
+    show_alternate = bool(tb.get(f"{metric_name}_show_alternate")) and alternate is not None
     if show_alternate:
         # Compact one-line divergence: the active value reads inline like every other row
         # (so the column stays scannable), and the differing alternate is a short accent

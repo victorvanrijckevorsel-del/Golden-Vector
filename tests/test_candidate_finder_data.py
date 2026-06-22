@@ -25,6 +25,11 @@ from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
 from golden_vector.hedge.option_trading import OptionTradingOverviewData
+from golden_vector.model.candidate_finder import (
+    CriterionDefinition,
+    CriterionSelection,
+    rank_candidates,
+)
 from golden_vector.model.tool_d import TOOL_D_OUTPUT_COLUMNS
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.screening.manual_store import upsert_company_input
@@ -254,6 +259,41 @@ def test_candidate_finder_presets_remain_eligible_with_stale_option_duplicates(t
     assert any(row.rank_eligible for row in bullish.ranking.rows)
     assert [row.ticker for row in down_beta.ranking.rows if row.rank_eligible]
     assert [row.ticker for row in up_beta.ranking.rows if row.rank_eligible] == ["AEM"]
+
+
+def test_candidate_finder_excludes_score_ineligible_rows_from_all_rankings():
+    frame = pd.DataFrame(
+        [
+            {"ticker": "DEG", "score_eligible": False, "ev_ebitda": 1.0},
+            {"ticker": "OK", "score_eligible": True, "ev_ebitda": 2.0},
+        ]
+    )
+    criteria = [
+        CriterionDefinition(
+            id="ev_ebitda",
+            label="EV/EBITDA",
+            description="Enterprise value over EBITDA.",
+            source_field="ev_ebitda",
+            group="Corporate Finance",
+            default_direction="low_good",
+        )
+    ]
+
+    result = rank_candidates(
+        frame,
+        criteria=criteria,
+        selections=[CriterionSelection(id="ev_ebitda")],
+        min_criteria_fraction=1.0,
+        top_n=10,
+    )
+
+    by_ticker = {row.ticker: row for row in result.rows}
+    assert by_ticker["DEG"].source_score_eligible is False
+    assert by_ticker["DEG"].rank_eligible is False
+    assert by_ticker["DEG"].rank is None
+    assert by_ticker["DEG"].score is None
+    assert by_ticker["OK"].rank == 1
+    assert [entry.ticker for entry in result.top_lists["ev_ebitda"]] == ["OK"]
 
 
 def test_candidate_finder_join_warns_when_configured_field_is_all_null(tmp_path):

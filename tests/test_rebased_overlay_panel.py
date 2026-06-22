@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from html import unescape
 from pathlib import Path
 
@@ -136,6 +137,34 @@ def test_overlay_gridlines_bracket_a_tiny_low_volatility_span():
     assert ">-1%</text>" in html
 
 
+def test_overlay_gridlines_bracket_a_sub_one_percent_span():
+    dates = _window_dates()
+    html = _build_multiline_overlay_svg(
+        series_by_label={
+            "ABC": (dates, [100.0, 100.05, 100.10, 100.08, 100.03, 100.10]),
+            "Gold": (dates, [100.0, 99.97, 99.92, 99.95, 99.98, 99.90]),
+        }
+    )
+
+    assert ">0%</text>" in html
+    assert ">+0.1%</text>" in html
+    assert ">-0.1%</text>" in html
+
+
+def test_overlay_gridlines_stay_bounded_for_huge_rebased_spans():
+    dates = _window_dates(2)
+    html = _build_multiline_overlay_svg(
+        series_by_label={
+            "ABC": (dates, [100.0, 1_000_000_000.0]),
+            "Gold": (dates, [100.0, 120.0]),
+        }
+    )
+
+    assert 'class="overlay-chart"' in html
+    assert html.count("<text") <= 20
+    assert len(html) < 20_000
+
+
 def test_overlay_crosshair_js_escapes_labels_and_has_no_percent_math():
     # Pin the JS contract that complements the server embed: labels are HTML-escaped before the
     # innerHTML write, and the percent is READ from the embed (no fmtPct recomputation in browser).
@@ -144,6 +173,99 @@ def test_overlay_crosshair_js_escapes_labels_and_has_no_percent_math():
     assert "esc(s.label)" in js  # label escaped before entering innerHTML
     assert "esc(pt[2])" in js  # pre-formatted pct read from the embed
     assert "fmtPct" not in js  # no percent arithmetic duplicated in JS
+
+
+def test_overlay_crosshair_js_runtime_escapes_clamps_and_dismisses():
+    script = r"""
+const assert = require("assert");
+const fs = require("fs");
+const vm = require("vm");
+
+class Element {
+  constructor(tag) {
+    this.tag = tag;
+    this.attrs = {};
+    this.children = [];
+    this.listeners = {};
+    this.style = {};
+    this.hidden = false;
+    this.className = "";
+    this.innerHTML = "";
+    this.rect = { left: 0, top: 0, width: 200, height: 240 };
+    this.viewBox = { baseVal: { width: 720, height: 240 } };
+  }
+  setAttribute(name, value) { this.attrs[name] = String(value); }
+  getAttribute(name) { return this.attrs[name] || null; }
+  appendChild(child) { this.children.push(child); return child; }
+  addEventListener(name, fn) { this.listeners[name] = fn; }
+  getBoundingClientRect() { return this.rect; }
+}
+
+const svg = new Element("svg");
+svg.setAttribute("data-overlay", JSON.stringify({
+  top: 20,
+  bottom: 212,
+  ticks: [["2024-01-01", 48], ["2024-01-02", 696]],
+  series: [{
+    label: "<img src=x onerror=alert(1)>",
+    color: "red' onclick='alert(1)",
+    byDate: {
+      "2024-01-02": [88, 100.1, "<pct>"]
+    }
+  }]
+}));
+
+const document = {
+  readyState: "complete",
+  body: new Element("body"),
+  listeners: {},
+  querySelectorAll(selector) { return selector === "svg.overlay-chart" ? [svg] : []; },
+  createElement(tag) {
+    const el = new Element(tag);
+    if (tag === "div") el.rect = { left: 0, top: 0, width: 80, height: 30 };
+    return el;
+  },
+  createElementNS(_ns, tag) { return new Element(tag); },
+  addEventListener(name, fn) { this.listeners[name] = fn; }
+};
+const window = {
+  innerWidth: 200,
+  innerHeight: 100,
+  listeners: {},
+  addEventListener(name, fn) { this.listeners[name] = fn; }
+};
+
+vm.runInNewContext(
+  fs.readFileSync("golden_vector/serve/static/overlay-crosshair.js", "utf8"),
+  { document, window, console }
+);
+
+const tip = document.body.children[0];
+svg.listeners.mousemove({ clientX: 196, clientY: 95 });
+assert.equal(tip.hidden, false);
+assert.ok(tip.innerHTML.includes("&lt;img src=x onerror=alert(1)&gt;"));
+assert.ok(!tip.innerHTML.includes("<img"));
+assert.ok(tip.innerHTML.includes("(&lt;pct&gt;)"));
+assert.equal(tip.style.left, "102px");
+assert.equal(tip.style.top, "51px");
+
+const firstLeft = tip.style.left;
+tip.innerHTML = "SENTINEL";
+svg.listeners.mousemove({ clientX: 190, clientY: 90 });
+assert.equal(tip.innerHTML, "SENTINEL");
+assert.notEqual(tip.style.left, firstLeft);
+
+window.listeners.blur();
+assert.equal(tip.hidden, true);
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        check=False,
+        cwd=Path.cwd(),
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_overlay_panel_degrades_when_a_benchmark_is_missing():
@@ -193,6 +315,25 @@ def test_overlay_panel_falls_back_when_fewer_than_two_drawable_series():
             # Only gold has data; an all-None stock line is not drawable.
             "Gold": (dates, [100.0, 101.0, 102.0]),
             "ABC": (dates, [None, None, None]),
+        }
+    }
+
+    html = _render_rebased_overlay_panel(
+        ticker="ABC",
+        rebased_overlay_by_window=overlay,
+        active_window="12M",
+    )
+
+    assert "Not Available Yet" in html
+    assert "<polyline" not in html
+
+
+def test_overlay_panel_falls_back_when_series_have_only_one_dated_point():
+    dates = [pd.Timestamp("2024-01-05")]
+    overlay = {
+        "12M": {
+            "Gold": (dates, [100.0]),
+            "ABC": (dates, [100.0]),
         }
     }
 

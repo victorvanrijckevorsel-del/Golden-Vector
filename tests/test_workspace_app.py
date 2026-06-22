@@ -2375,9 +2375,9 @@ def test_workspace_tool_b_serve_layer_has_no_financial_arithmetic():
     math, no pandas-frame coalesce (.fillna/.combine_first), and no config-gold
     fallback may creep into serve — the gold dial's correctness depends on the
     page showing exactly what the one Tool B model computed (gold-dial plan,
-    Codex MEDIUM 4). (Selecting which pre-resolved backend column to display —
-    e.g. our_view falling back to the base column — is display selection, not
-    data resolution, and is intentionally not scanned here.)"""
+    Codex MEDIUM 4). Dual-source ratio display fields are materialized upstream;
+    serve must not inspect our-view/Yahoo ratio suffixes to decide active or
+    alternate values."""
     source = Path("golden_vector/serve/overview_tool_b.py").read_text(encoding="utf-8")
 
     # The page must call the ONE Tool B model and the shared spot resolver.
@@ -2400,6 +2400,13 @@ def test_workspace_tool_b_serve_layer_has_no_financial_arithmetic():
         # Coalesce/fallback resolution belongs in the backend bundle.
         ".fillna(",
         ".combine_first(",
+        # Ratio source resolution belongs in materialize_tool_b_finance_source.
+        "resolve_dual_source",
+        "prefer_official",
+        "ev_ebitda_our_view",
+        "ev_ebitda_official",
+        "leverage_our_view",
+        "leverage_official",
     ):
         assert forbidden not in source, forbidden
 
@@ -2426,6 +2433,26 @@ def test_metric_formula_serve_layer_has_no_ratio_recompute():
         ".combine_first(",
     ):
         assert forbidden not in source, forbidden
+
+
+def test_dual_source_ratio_resolution_is_materialized_before_serve():
+    """Serve helpers may format alternate-source fields, but source/coalesce decisions stay in
+    the Tool B materializer."""
+
+    for path in (
+        Path("golden_vector/serve/detail_panels.py"),
+        Path("golden_vector/serve/format_helpers.py"),
+    ):
+        source = path.read_text(encoding="utf-8")
+        for forbidden in (
+            "resolve_dual_source",
+            "prefer_official",
+            "ev_ebitda_our_view",
+            "ev_ebitda_official",
+            "leverage_our_view",
+            "leverage_official",
+        ):
+            assert forbidden not in source, f"{path}: {forbidden}"
 
 
 def test_charts_serve_layer_is_display_only():
@@ -2464,20 +2491,36 @@ def test_one_info_affordance_no_legacy_hover_remains():
     assert "help-term" not in js  # hover handler removed; only the click panel remains
     css = (serve / "static" / "workspace.css").read_text(encoding="utf-8")
     assert ".help-term" not in css
+    assert "th[title]" not in css
 
 
 def test_snapshot_ratio_cell_is_compact_and_shows_yahoo_divergence():
     """The ticker-detail snapshot renders dual-source ratios (ev_ebitda) with a compact value (no
     'x' suffix) plus the SAME '(Yahoo X)' divergence accent the Tool B overview shows."""
+    import pandas as pd
+
+    from golden_vector.screening.pipeline import materialize_tool_b_finance_source
+    from golden_vector.screening.schema import TOOL_B_OUTPUT_COLUMNS
     from golden_vector.serve.detail_panels import _snapshot_metric_value
 
+    def materialized(row: dict[str, object], finance_source: str) -> dict[str, object]:
+        full_row = {column: None for column in TOOL_B_OUTPUT_COLUMNS}
+        full_row.update(row)
+        return materialize_tool_b_finance_source(
+            pd.DataFrame([full_row]),
+            finance_source=finance_source,
+        ).iloc[0].to_dict()
+
     # Our View active, our-view 2.0 vs Yahoo 3.5, flagged as differing.
-    row = {
-        "ev_ebitda": 2.0,
-        "ev_ebitda_our_view": 2.0,
-        "ev_ebitda_official": 3.5,
-        "ev_ebitda_differs": True,
-    }
+    row = materialized(
+        {
+            "ev_ebitda": 2.0,
+            "ev_ebitda_our_view": 2.0,
+            "ev_ebitda_official": 3.5,
+            "ev_ebitda_differs": True,
+        },
+        "our",
+    )
     cell = _snapshot_metric_value("ev_ebitda", row, financials_source="our")
     assert cell.startswith("2.0 ")  # compact active value, no unit suffix
     assert "x" not in cell  # cell carries no 'x' (header/popover do)
@@ -2485,18 +2528,37 @@ def test_snapshot_ratio_cell_is_compact_and_shows_yahoo_divergence():
 
     # No divergence -> plain compact value, no accent.
     assert _snapshot_metric_value(
-        "ev_ebitda", {"ev_ebitda": 2.0, "ev_ebitda_differs": False}, financials_source="our"
+        "ev_ebitda",
+        materialized({"ev_ebitda": 2.0, "ev_ebitda_differs": False}, "our"),
+        financials_source="our",
     ) == "2.0"
 
     # Yahoo source active (base materialized to the official value) -> alternate is Our View.
-    yahoo_row = {
-        "ev_ebitda": 3.5,
-        "ev_ebitda_our_view": 2.0,
-        "ev_ebitda_official": 3.5,
-        "ev_ebitda_differs": True,
-    }
+    yahoo_row = materialized(
+        {
+            "ev_ebitda": 2.0,
+            "ev_ebitda_our_view": 2.0,
+            "ev_ebitda_official": 3.5,
+            "ev_ebitda_differs": True,
+        },
+        "yahoo",
+    )
     ycell = _snapshot_metric_value("ev_ebitda", yahoo_row, financials_source="yahoo")
     assert ycell.startswith("3.5 ") and "(Our View 2.0)" in ycell
+
+    yahoo_missing_row = materialized(
+        {
+            "ev_ebitda": 2.0,
+            "ev_ebitda_our_view": 2.0,
+            "ev_ebitda_official": None,
+            "ev_ebitda_differs": True,
+        },
+        "yahoo",
+    )
+    assert (
+        _snapshot_metric_value("ev_ebitda", yahoo_missing_row, financials_source="yahoo")
+        == '- <span class="source-alternate">(Our View 2.0)</span>'
+    )
 
 
 def test_workspace_candidate_finder_serve_layer_has_no_forked_tool_b_d_math():

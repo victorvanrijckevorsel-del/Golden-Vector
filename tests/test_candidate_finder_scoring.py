@@ -186,19 +186,44 @@ def test_candidate_finder_score_ineligible_treats_tool_a_beta_as_missing():
     assert rows["B"].rank_eligible is True
 
 
-def test_score_eligible_gate_covers_per_window_beta_variants():
-    # Regression (fleet review HIGH): the Candidate Finder horizon picker repoints the gold-beta
-    # criteria from *_core to per-window columns; the score_eligible exclusion gate MUST recognise
-    # those variants or degraded tickers re-enter the ranking. Confidence is intentionally NOT gated.
-    from golden_vector.model.candidate_finder import TOOL_A_SCORE_ELIGIBLE_FIELDS
+def test_score_eligible_gate_applies_to_every_candidate_criterion():
+    # Degraded rows are excluded from rankings globally, not just for Tool A beta fields.
+    # That keeps non-beta screens (confidence, AISC, valuation, etc.) from re-admitting stale data.
+    frame = pd.DataFrame(
+        [
+            {
+                "ticker": "DEGRADED",
+                "confidence_score": 0.99,
+                "aisc_usd_per_oz": 900,
+                "score_eligible": False,
+            },
+            {
+                "ticker": "HEALTHY",
+                "confidence_score": 0.70,
+                "aisc_usd_per_oz": 1500,
+                "score_eligible": True,
+            },
+        ]
+    )
 
-    for column in (
-        "down_beta_core", "up_beta_core", "structural_delta_core",
-        "down_beta_6m", "up_beta_12m", "structural_delta_2y", "up_beta_3y", "down_beta_5y",
-        "downside_volatility_52w",
-    ):
-        assert column in TOOL_A_SCORE_ELIGIBLE_FIELDS, column
-    assert "confidence_score" not in TOOL_A_SCORE_ELIGIBLE_FIELDS
+    result = rank_candidates(
+        frame,
+        criteria=_criteria(),
+        selections=[
+            CriterionSelection("confidence"),
+            CriterionSelection("aisc"),
+        ],
+        min_criteria_fraction=1.0,
+    )
+    rows = {row.ticker: row for row in result.rows}
+
+    assert rows["DEGRADED"].raw_values["confidence"] is None
+    assert rows["DEGRADED"].raw_values["aisc"] is None
+    assert rows["DEGRADED"].rank_eligible is False
+    assert rows["DEGRADED"].score is None
+    assert rows["HEALTHY"].rank == 1
+    assert [entry.ticker for entry in result.top_lists["confidence"]] == ["HEALTHY"]
+    assert [entry.ticker for entry in result.top_lists["aisc"]] == ["HEALTHY"]
 
 
 def test_candidate_finder_per_window_beta_still_excludes_score_ineligible():

@@ -46,6 +46,7 @@ from golden_vector.screening.verdicts import (
 )
 
 FinanceSource = Literal["our", "yahoo"]
+DUAL_SOURCE_DISPLAY_METRICS = ("ev_ebitda", "leverage")
 
 YAHOO_FINANCE_SOURCE_COLUMN_MAP: dict[str, str] = {
     "screening_verdict": "screening_verdict_official",
@@ -55,6 +56,7 @@ YAHOO_FINANCE_SOURCE_COLUMN_MAP: dict[str, str] = {
     "layer1_fail_reasons": "layer1_fail_reasons_official",
     "layer2_incomplete_reasons": "layer2_incomplete_reasons_official",
     "net_debt_musd": "net_debt_musd_official",
+    "ebitda_ltm_musd": "ebitda_ltm_musd_official",
     "interest_expense_musd": "interest_expense_musd_official",
     "cash_margin_usd_per_oz": "cash_margin_usd_per_oz_official",
     "margin_pct": "margin_pct_official",
@@ -268,26 +270,64 @@ def materialize_tool_b_finance_source(
     scenario views can use this helper to make the existing active columns
     (`screening_verdict`, `ev_ebitda`, `fundamental_check_rank`, etc.) reflect
     Yahoo Fundamentals while preserving the flat `_our_view` / `_official`
-    comparison columns for renderers and backward-compatible consumers.
+    comparison columns for backward-compatible consumers. It also adds
+    display-ready alternate-source fields so renderers do not inspect `_our_view`
+    / `_official` columns to decide what source to show.
     """
 
     selected = normalize_finance_source(finance_source)
     materialized = frame.copy()
     if "finance_source" in materialized.columns:
         materialized["finance_source"] = selected
-    if selected == "our" or materialized.empty:
-        return materialized
-    required_columns = {"finance_source", *YAHOO_FINANCE_SOURCE_COLUMN_MAP.keys(), *YAHOO_FINANCE_SOURCE_COLUMN_MAP.values()}
-    missing_columns = sorted(required_columns.difference(materialized.columns))
-    if missing_columns:
-        raise ToolBStaleSchemaError(
-            "Tool B output is stale - re-run python main.py refresh "
-            "(Yahoo Fundamentals materialization missing columns: "
-            + ", ".join(missing_columns)
-            + ")"
-        )
-    for active_column, source_column in YAHOO_FINANCE_SOURCE_COLUMN_MAP.items():
-        materialized[active_column] = materialized[source_column]
+    if selected == "yahoo" and not materialized.empty:
+        required_columns = {
+            "finance_source",
+            *YAHOO_FINANCE_SOURCE_COLUMN_MAP.keys(),
+            *YAHOO_FINANCE_SOURCE_COLUMN_MAP.values(),
+        }
+        missing_columns = sorted(required_columns.difference(materialized.columns))
+        if missing_columns:
+            raise ToolBStaleSchemaError(
+                "Tool B output is stale - re-run python main.py refresh "
+                "(Yahoo Fundamentals materialization missing columns: "
+                + ", ".join(missing_columns)
+                + ")"
+            )
+        for active_column, source_column in YAHOO_FINANCE_SOURCE_COLUMN_MAP.items():
+            materialized[active_column] = materialized[source_column]
+    return _with_dual_source_display_fields(materialized, finance_source=selected)
+
+
+def _with_dual_source_display_fields(
+    frame: pd.DataFrame,
+    *,
+    finance_source: FinanceSource,
+) -> pd.DataFrame:
+    materialized = frame.copy()
+    prefer_official = finance_source == "yahoo"
+    for metric_name in DUAL_SOURCE_DISPLAY_METRICS:
+        alternate_values: list[float | None] = []
+        alternate_labels: list[str] = []
+        show_flags: list[bool] = []
+        for _, row in materialized.iterrows():
+            active = optional_finite_float(row.get(metric_name))
+            if prefer_official:
+                alternate = optional_finite_float(row.get(f"{metric_name}_our_view"))
+                alternate_label = "Our View"
+            else:
+                alternate = optional_finite_float(row.get(f"{metric_name}_official"))
+                alternate_label = "Yahoo Fundamentals"
+            differs = _coerce_bool(row.get(f"{metric_name}_differs"))
+            show_alternate = alternate is not None and (
+                (active is not None and differs)
+                or (active is None and prefer_official)
+            )
+            alternate_values.append(alternate)
+            alternate_labels.append(alternate_label)
+            show_flags.append(show_alternate)
+        materialized[f"{metric_name}_alternate_value"] = alternate_values
+        materialized[f"{metric_name}_alternate_label"] = alternate_labels
+        materialized[f"{metric_name}_show_alternate"] = show_flags
     return materialized
 
 
@@ -456,6 +496,7 @@ def _build_tool_b_rows(
                 "aisc_usd_per_oz": our_row.get("aisc_usd_per_oz"),
                 "cash_cost_usd_per_oz": our_row.get("cash_cost_usd_per_oz"),
                 "net_debt_musd": our_row.get("net_debt_musd"),
+                "ebitda_ltm_musd": our_row.get("ebitda_ltm_musd"),
                 "interest_expense_musd": our_row.get("interest_expense_musd"),
                 "reserve_life_years": our_row.get("reserve_life_years"),
                 "cash_margin_usd_per_oz": layer1["cash_margin_usd_per_oz"],
@@ -538,6 +579,8 @@ def _build_tool_b_rows(
                 ],
                 "net_debt_musd_our_view": our_row.get("net_debt_musd"),
                 "net_debt_musd_official": official_row.get("net_debt_musd"),
+                "ebitda_ltm_musd_our_view": our_row.get("ebitda_ltm_musd"),
+                "ebitda_ltm_musd_official": official_row.get("ebitda_ltm_musd"),
                 "interest_expense_musd_our_view": our_row.get(
                     "interest_expense_musd"
                 ),
@@ -757,6 +800,19 @@ def _values_differ(left: object, right: object) -> bool:
     return not math.isclose(left_float, right_float, rel_tol=1e-6)
 
 
+def _coerce_bool(value: object) -> bool:
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return bool(value)
+
+
 def _clean_status(value: object) -> str:
     if value is None or pd.isna(value):
         return "MISSING"
@@ -768,6 +824,10 @@ def _frame_from_rows(rows: list[dict[str, object]]) -> pd.DataFrame:
     tool_b_outputs = pd.DataFrame(rows, columns=TOOL_B_OUTPUT_COLUMNS)
     if not tool_b_outputs.empty:
         tool_b_outputs = rank_tool_b_outputs(tool_b_outputs)
+        tool_b_outputs = _with_dual_source_display_fields(
+            tool_b_outputs,
+            finance_source="our",
+        )
         tool_b_outputs = tool_b_outputs.sort_values(
             ["as_of_date", "gold_price_assumption", "fundamental_check_rank", "ticker"],
             ascending=[True, True, True, True],
