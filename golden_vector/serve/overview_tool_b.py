@@ -102,12 +102,15 @@ def _comparison_numeric_td(
         or (active is None and rank_by == "official")
     )
     if show_alternate:
+        # Compact one-line divergence: the active value reads inline like every other row
+        # (so the column stays scannable), and the differing alternate is a short accent
+        # parenthetical. The active source is not relabelled here — the page's source toggle
+        # already says which source is active. Keeps the row from ballooning to 3 lines.
+        short_alternate = "Yahoo" if alternate_label == "Yahoo Fundamentals" else alternate_label
         display = (
-            "<span class=\"market-ours-pair\">"
-            f"<span>{escape(active_label)} {_number_text(active, decimals=decimals)}</span>"
-            f"<span class=\"source-alternate\">{escape(alternate_label)} "
-            f"{_number_text(alternate, decimals=decimals)}</span>"
-            "</span>"
+            f"{_number_text(active, decimals=decimals)} "
+            f"<span class=\"source-alternate\">({escape(short_alternate)} "
+            f"{_number_text(alternate, decimals=decimals)})</span>"
         )
     else:
         display = _number_text(active, decimals=decimals)

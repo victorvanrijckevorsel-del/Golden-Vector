@@ -2482,8 +2482,11 @@ def test_workspace_tool_b_market_ours_controls_render_from_backend_columns(tmp_p
     body = response["body"]
     assert "Differences only" in body
     assert 'value="yahoo" selected>Yahoo Fundamentals</option>' in body
-    assert "Yahoo Fundamentals 3.2" in body
-    assert "Our View 2.4" in body
+    # Compact one-line divergence: active (Yahoo) value reads inline, the differing Our View
+    # value is a short accent parenthetical — not the old 3-line stacked cell.
+    assert "(Our View 2.4)" in body
+    assert "market-ours-pair" not in body
+    assert "Yahoo Fundamentals 3.2" not in body  # active source isn't relabelled in-cell
     assert "/ticker/NEM?fundamentals_source=yahoo" in body
     assert "/ticker/GOLD" not in body
 
