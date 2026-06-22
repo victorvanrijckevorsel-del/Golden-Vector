@@ -39,6 +39,7 @@ def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
   <script src="/static/vendor/datatables/datatables-2.1.8.min.js" defer></script>
   <script src="/static/workspace-tables.js" defer></script>
   <script src="/static/help-popover.js" defer></script>
+  <script src="/static/rug-tooltip.js" defer></script>
   <link rel="stylesheet" href="/static/workspace.css">
 </head>
 <body>

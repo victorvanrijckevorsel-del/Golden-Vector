@@ -6,6 +6,8 @@ from html import escape
 
 import pandas as pd
 
+from golden_vector.model.benchmark_comparison import BetaUniverseMark
+
 
 def _build_scatter_svg(
     *,
@@ -110,17 +112,18 @@ def _build_beta_strip_svg(
     *,
     axis_label: str,
     domain: tuple[float, float] | None,
-    universe_positions: list[float],
+    universe_marks: list[BetaUniverseMark],
     subject_pos: float | None,
     subject_label: str,
     benchmark_positions: list[float],
 ) -> str:
     """Render a slim "where does this stock rank" strip from BACKEND-resolved positions.
 
-    The full miner universe is drawn as a faint "rug" of ticks (so the distribution is visible),
-    the stock is the one labelled orange marker, and GDX/GDXJ are small dashed ticks (their exact
-    values live on the grouped Up-vs-Down bar, so they are intentionally not labelled here to avoid
-    clutter). Every position is a pre-computed 0..1 fraction; this builder only maps it to a pixel.
+    The full miner universe is drawn as a faint "rug" of ticks (so the distribution is visible);
+    each tick is identifiable on hover (ticker + beta) via an invisible wide hit-area. The stock
+    is the one labelled orange marker, and GDX/GDXJ are small dashed ticks (their exact values
+    live on the grouped Up-vs-Down bar). Every position is a pre-computed 0..1 fraction; this
+    builder only maps it to a pixel.
     """
 
     if domain is None:
@@ -145,11 +148,16 @@ def _build_beta_strip_svg(
         f"<text x=\"{padding}\" y=\"{track_y + 26}\" font-size=\"11\" fill=\"#9a917f\">{low:,.2f}</text>",
         f"<text x=\"{width - padding}\" y=\"{track_y + 26}\" text-anchor=\"end\" font-size=\"11\" fill=\"#9a917f\">{high:,.2f}</text>",
     ]
-    # Universe rug: one faint tick per scored miner (shows the distribution).
-    for pos in universe_positions:
-        x = px(float(pos))
+    # Universe rug: one faint tick per scored miner (shows the distribution). Each tick gets an
+    # invisible wide hit-area carrying a <title>, so hovering identifies the miner (ticker + beta)
+    # — a bare 1px tick is far too thin to hover precisely.
+    for mark in universe_marks:
+        x = px(float(mark.position))
+        label = f"{mark.ticker} · {mark.beta:,.2f}"
         parts.append(
             f"<line x1=\"{x:.1f}\" y1=\"{track_y - 7}\" x2=\"{x:.1f}\" y2=\"{track_y + 7}\" stroke=\"#d2c4a6\" stroke-width=\"1\" opacity=\"0.7\" />"
+            f"<line class=\"rug-tick\" data-rug=\"{escape(label)}\" x1=\"{x:.1f}\" y1=\"{track_y - 9}\" x2=\"{x:.1f}\" y2=\"{track_y + 9}\" stroke=\"transparent\" stroke-width=\"7\" pointer-events=\"all\">"
+            f"<title>{escape(label)}</title></line>"
         )
     # GDX/GDXJ context ticks (dashed, unlabelled — values are on the grouped bar).
     for pos in benchmark_positions:

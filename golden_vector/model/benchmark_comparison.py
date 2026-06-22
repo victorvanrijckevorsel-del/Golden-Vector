@@ -50,6 +50,19 @@ class BetaMarker:
 
 
 @dataclass(frozen=True)
+class BetaUniverseMark:
+    """One miner's tick on the universe rug: its ticker + beta + 0..1 axis position.
+
+    Carries the ticker so the strip can identify each otherwise-anonymous rug tick on hover
+    ("NEM · 1.40"); the page only places ``position`` and shows ``ticker``/``beta`` — no math.
+    """
+
+    ticker: str
+    beta: float
+    position: float
+
+
+@dataclass(frozen=True)
 class BetaUniverseComparison:
     window_id: str
     window_label: str
@@ -61,10 +74,10 @@ class BetaUniverseComparison:
     subject: BetaMarker | None
     benchmarks: tuple[BetaMarker, ...]
     note: str | None = None
-    # 0..1 positions of EVERY scored miner along the axis, for the universe "rug" on the strip
-    # (lets the page show the whole distribution instead of three crammed markers).
-    down_universe_positions: tuple[float, ...] = ()
-    up_universe_positions: tuple[float, ...] = ()
+    # EVERY scored miner as a (ticker, beta, 0..1 position) mark, for the universe "rug" on the
+    # strip — shows the whole distribution AND lets each tick be identified on hover.
+    down_universe_marks: tuple[BetaUniverseMark, ...] = ()
+    up_universe_marks: tuple[BetaUniverseMark, ...] = ()
 
 
 def _column_values(frame: pd.DataFrame | None, column: str) -> list[float]:
@@ -75,6 +88,27 @@ def _column_values(frame: pd.DataFrame | None, column: str) -> list[float]:
         for value in (optional_finite_float(raw) for raw in frame[column].tolist())
         if value is not None
     ]
+
+
+def _column_ticker_values(
+    frame: pd.DataFrame | None, column: str
+) -> list[tuple[str, float]]:
+    """(ticker, beta) for each universe row with a finite beta — keeps the ticker so the rug
+    tick can be identified on hover. Degrades per item: rows without a finite beta are skipped."""
+    if (
+        frame is None
+        or frame.empty
+        or column not in frame.columns
+        or "ticker" not in frame.columns
+    ):
+        return []
+    out: list[tuple[str, float]] = []
+    for raw_ticker, raw_value in zip(frame["ticker"].tolist(), frame[column].tolist()):
+        value = optional_finite_float(raw_value)
+        ticker = str(raw_ticker or "").strip().upper()
+        if value is not None and ticker:
+            out.append((ticker, value))
+    return out
 
 
 def _percentile(sorted_values: list[float], value: float | None) -> float | None:
@@ -194,8 +228,10 @@ def resolve_beta_universe_comparison(
         )
 
     down_col, up_col = f"down_beta_{suffix}", f"up_beta_{suffix}"
-    universe_down = _column_values(universe_df, down_col)
-    universe_up = _column_values(universe_df, up_col)
+    universe_down_pairs = _column_ticker_values(universe_df, down_col)
+    universe_up_pairs = _column_ticker_values(universe_df, up_col)
+    universe_down = [beta for _, beta in universe_down_pairs]
+    universe_up = [beta for _, beta in universe_up_pairs]
     if not universe_down and not universe_up:
         return BetaUniverseComparison(
             window_id=key,
@@ -255,11 +291,15 @@ def resolve_beta_universe_comparison(
         if down_value is not None or up_value is not None
     )
 
-    down_universe_positions = tuple(
-        p for p in (_position(v, down_domain) for v in universe_down) if p is not None
+    down_universe_marks = tuple(
+        BetaUniverseMark(ticker=tkr, beta=beta, position=pos)
+        for (tkr, beta) in universe_down_pairs
+        if (pos := _position(beta, down_domain)) is not None
     )
-    up_universe_positions = tuple(
-        p for p in (_position(v, up_domain) for v in universe_up) if p is not None
+    up_universe_marks = tuple(
+        BetaUniverseMark(ticker=tkr, beta=beta, position=pos)
+        for (tkr, beta) in universe_up_pairs
+        if (pos := _position(beta, up_domain)) is not None
     )
 
     return BetaUniverseComparison(
@@ -273,8 +313,8 @@ def resolve_beta_universe_comparison(
         subject=subject_marker,
         benchmarks=benchmark_markers,
         note=None,
-        down_universe_positions=down_universe_positions,
-        up_universe_positions=up_universe_positions,
+        down_universe_marks=down_universe_marks,
+        up_universe_marks=up_universe_marks,
     )
 
 

@@ -1709,13 +1709,18 @@ def _render_visual_panels(
     comparison_panel = _render_beta_comparison_panel(
         comparison, ticker=ticker, active_window=active_window
     )
+    # The Up-vs-Down bar and the universe-rank strips are two views of the same up/down beta, so
+    # they sit side by side (responsive — they stack on a narrow screen) instead of stacking and
+    # reading as a repeat. The regression scatter pairs with the rebased overlay.
     return (
         "<div class=\"two-up\">"
-        f"{_render_scatter_panel(ticker=ticker, tool_a_row=tool_a_row, anchor_metric=active_metric, anchor_sample=active_sample, active_window=active_window)}"
         f"{_render_up_down_beta_panel(tool_a_row, anchor_metric=active_metric, active_window=active_window, comparison=comparison)}"
-        "</div>"
-        f"{overlay_panel}"
         f"{comparison_panel}"
+        "</div>"
+        "<div class=\"two-up\">"
+        f"{_render_scatter_panel(ticker=ticker, tool_a_row=tool_a_row, anchor_metric=active_metric, anchor_sample=active_sample, active_window=active_window)}"
+        f"{overlay_panel}"
+        "</div>"
         "<div class=\"two-up\">"
         f"{_render_volatility_panel(tool_a_row, active_window=active_window, weekly_series=tool_a_detail.weekly_series, scoring_config=scoring_config)}"
         f"{_render_exploratory_horizon_panel(tool_a_detail.exploratory_horizons)}"
@@ -1959,7 +1964,7 @@ def _render_beta_comparison_panel(
     down_svg = _build_beta_strip_svg(
         axis_label=f"Down beta — weeks gold fell ({window_label_raw})",
         domain=comparison.down_domain,
-        universe_positions=list(comparison.down_universe_positions),
+        universe_marks=list(comparison.down_universe_marks),
         subject_pos=subject.down_pos if subject is not None else None,
         subject_label=_subject_strip_label(
             ticker, subject.down_beta if subject else None, subject.down_percentile if subject else None
@@ -1969,7 +1974,7 @@ def _render_beta_comparison_panel(
     up_svg = _build_beta_strip_svg(
         axis_label=f"Up beta — weeks gold rose ({window_label_raw})",
         domain=comparison.up_domain,
-        universe_positions=list(comparison.up_universe_positions),
+        universe_marks=list(comparison.up_universe_marks),
         subject_pos=subject.up_pos if subject is not None else None,
         subject_label=_subject_strip_label(
             ticker, subject.up_beta if subject else None, subject.up_percentile if subject else None

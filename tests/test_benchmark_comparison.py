@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 
 from golden_vector.model.benchmark_comparison import (
+    BetaUniverseMark,
     _percentile,
     _position,
     resolve_beta_universe_comparison,
@@ -167,24 +168,37 @@ def test_strip_chart_renders_universe_rug_and_only_labels_the_stock():
     svg = _build_beta_strip_svg(
         axis_label="Down beta (6-month)",
         domain=(0.5, 2.0),
-        universe_positions=[0.1, 0.35, 0.6, 0.9],
+        universe_marks=[
+            BetaUniverseMark("AAA", 0.6, 0.1),
+            BetaUniverseMark("BBB", 1.0, 0.35),
+            BetaUniverseMark("NEM", 1.33, 0.6),
+            BetaUniverseMark("CCC", 1.9, 0.9),
+        ],
         subject_pos=0.6,
         subject_label="SUBJ 1.33 · 60th percentile",
         benchmark_positions=[0.72, 0.85],
     )
     assert "<svg" in svg
     assert "SUBJ 1.33" in svg  # the one labelled marker
-    assert "GDX" not in svg and "GDXJ" not in svg  # ETFs are unlabelled ticks here (values on the bar)
+    # Each rug tick is identifiable on hover: a JS hover hook (class + data) plus a no-JS
+    # <title> fallback, both carrying the miner's ticker + beta.
+    assert 'class="rug-tick"' in svg
+    assert 'data-rug="NEM · 1.33"' in svg
+    assert "<title>NEM · 1.33</title>" in svg
+    assert "<title>AAA · 0.60</title>" in svg
+    assert "GDXJ" not in svg  # ETF context ticks stay unlabelled (values live on the grouped bar)
     assert "stroke-dasharray" in svg  # GDX/GDXJ context ticks are dashed
     assert "circle" in svg  # subject dot
-    assert svg.count("<line") >= 4 + 2 + 1  # 4 rug ticks + 2 benchmark ticks + subject tick (+ axis)
+    # 4 rug ticks each render a visible tick + a transparent hover hit-area (2 lines), plus 2
+    # benchmark ticks + the subject tick (+ axis).
+    assert svg.count("<line") >= (4 * 2) + 2 + 1
 
 
 def test_strip_chart_degrades_without_domain():
     out = _build_beta_strip_svg(
         axis_label="x",
         domain=None,
-        universe_positions=[],
+        universe_marks=[],
         subject_pos=None,
         subject_label="",
         benchmark_positions=[],
@@ -262,11 +276,14 @@ def test_degraded_row_excluded_but_healthy_control_retained_and_changes_percenti
     assert degraded.subject.down_percentile == 75.0
 
 
-def test_universe_positions_cover_every_member_in_unit_interval():
+def test_universe_marks_cover_every_member_in_unit_interval_with_ticker():
     c = resolve_beta_universe_comparison(ticker="SUBJ", window_id="6M", universe_df=_universe(), benchmark_df=_benchmarks())
-    assert len(c.down_universe_positions) == c.universe_down_n == 5
-    assert len(c.up_universe_positions) == c.universe_up_n == 5
-    assert all(0.0 <= p <= 1.0 for p in c.down_universe_positions)
+    assert len(c.down_universe_marks) == c.universe_down_n == 5
+    assert len(c.up_universe_marks) == c.universe_up_n == 5
+    assert all(0.0 <= m.position <= 1.0 for m in c.down_universe_marks)
+    # Each mark carries the miner's ticker + beta so the rug tick is identifiable on hover.
+    assert all(m.ticker and m.beta is not None for m in c.down_universe_marks)
+    assert {m.ticker for m in c.down_universe_marks} == set(_universe()["ticker"])
 
 
 def test_render_comparison_panel_shows_window_label_percentile_and_rug():

@@ -328,6 +328,26 @@
     .verification-edit > summary .hint {
       font-weight: 400;
     }
+    /* Universe-rug hover: a faint highlight on the tick + a floating label naming the miner. */
+    .rug-tick:hover {
+      stroke: #b26700;
+      stroke-opacity: 0.35;
+    }
+    .rug-tooltip {
+      position: fixed;
+      z-index: 9999;
+      background: #1f1d1a;
+      color: #fffdf8;
+      font-size: 0.82rem;
+      padding: 3px 8px;
+      border-radius: 6px;
+      pointer-events: none;
+      white-space: nowrap;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    }
+    .rug-tooltip[hidden] {
+      display: none;
+    }
     .full-width {
       grid-column: 1 / -1;
     }
