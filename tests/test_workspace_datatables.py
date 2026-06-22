@@ -208,6 +208,17 @@ def test_fmt_numeric_td_nan_uses_sort_sentinel():
     assert ">-</td>" in cell
 
 
+def test_fmt_numeric_td_extra_stays_outside_data_order():
+    # The info-icon HTML appended via `extra` must NOT pollute the numeric sort key, or
+    # DataTables would sort the column by HTML markup. It lives after the value, outside data-order.
+    icon = '<button class="help-icon">i</button>'
+    cell = _fmt_numeric_td(0.18, decimals=1, as_percent=True, extra=icon)
+    assert cell == f'<td data-order="0.18">18.0%{icon}</td>'
+    # None value: extra still appended after the dash, sort key still the sentinel.
+    none_cell = _fmt_numeric_td(None, decimals=2, extra=icon)
+    assert none_cell == f'<td data-order="9000000000000000">-{icon}</td>'
+
+
 def test_fmt_numeric_td_non_numeric_fallback_is_safe():
     cell = _fmt_numeric_td("not a number", decimals=1)
     assert 'data-order="9000000000000000"' in cell

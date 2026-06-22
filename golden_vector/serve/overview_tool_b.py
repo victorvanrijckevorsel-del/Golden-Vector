@@ -34,10 +34,13 @@ from golden_vector.serve.format_helpers import (
     _optional_float,
 )
 from golden_vector.serve.fundamentals_provenance import (
+    METRIC_FIELD_DEPENDENCIES,
     load_fundamentals_provenance_lookup,
     provenance_icon_for_metric,
+    provenance_text_for_fields,
     ticker_provenance_icon,
 )
+from golden_vector.serve.metric_formula import metric_formula_icon
 from golden_vector.serve.overview_helpers import (
     _collect_filter_options,
     _render_filter_bar,
@@ -73,6 +76,32 @@ def _checks_detail_cell(tb: dict[str, Any]) -> str:
     )
 
 
+def _overview_metric_icon(
+    metric_name: str,
+    tb: dict[str, Any],
+    *,
+    rank_by: str,
+    provenance_lookup: dict[tuple[str, str], str] | None,
+) -> str:
+    """Formula + live-numbers info button for an overview ratio cell. In Yahoo (official) mode
+    the underlying line items' source provenance is appended below the formula; if the ratio
+    value is unavailable (degraded row) we still surface the source-provenance icon so it is
+    not lost (same affordance the plain provenance icon gave before this feature)."""
+    extra = ""
+    if rank_by == "official" and provenance_lookup:
+        extra = provenance_text_for_fields(
+            tb.get("ticker"),
+            METRIC_FIELD_DEPENDENCIES.get(metric_name, ()),
+            provenance_lookup,
+        )
+    icon = metric_formula_icon(metric_name, tb, extra=extra)
+    if icon:
+        return icon
+    if rank_by == "official" and provenance_lookup:
+        return provenance_icon_for_metric(tb.get("ticker"), metric_name, provenance_lookup)
+    return ""
+
+
 def _comparison_numeric_td(
     tb: dict[str, Any],
     metric_name: str,
@@ -88,12 +117,10 @@ def _comparison_numeric_td(
     if rank_by == "official":
         active = official
         alternate = ours
-        active_label = "Yahoo Fundamentals"
         alternate_label = "Our View"
     else:
         active = ours
         alternate = official
-        active_label = "Our View"
         alternate_label = "Yahoo Fundamentals"
     order_value = _MISSING_SORT_SENTINEL if active is None else f"{active}"
     differs = _truthy(tb.get(f"{metric_name}_differs"))
@@ -114,13 +141,9 @@ def _comparison_numeric_td(
         )
     else:
         display = _number_text(active, decimals=decimals)
-    icon = ""
-    if rank_by == "official" and provenance_lookup:
-        icon = provenance_icon_for_metric(
-            tb.get("ticker"),
-            metric_name,
-            provenance_lookup,
-        )
+    icon = _overview_metric_icon(
+        metric_name, tb, rank_by=rank_by, provenance_lookup=provenance_lookup
+    )
     return f"<td data-order=\"{escape(order_value)}\">{display}{icon}</td>"
 
 
@@ -258,12 +281,12 @@ def _render_tool_b_overview_page(
             f"{_fmt_numeric_td(tb.get('market_cap_musd'), decimals=0)}"
             f"{_fmt_numeric_td(tb.get('enterprise_value_musd'), decimals=0)}"
             f"{_fmt_numeric_td(tb.get('aisc_usd_per_oz'), decimals=0)}"
-            f"{_fmt_numeric_td(tb.get('cash_margin_usd_per_oz'), decimals=0)}"
-            f"{_fmt_numeric_td(tb.get('margin_pct'), decimals=1, as_percent=True)}"
+            f"{_fmt_numeric_td(tb.get('cash_margin_usd_per_oz'), decimals=0, extra=_overview_metric_icon('cash_margin_usd_per_oz', tb, rank_by=rank_by, provenance_lookup=provenance_lookup))}"
+            f"{_fmt_numeric_td(tb.get('margin_pct'), decimals=1, as_percent=True, extra=_overview_metric_icon('margin_pct', tb, rank_by=rank_by, provenance_lookup=provenance_lookup))}"
             f"{_fmt_numeric_td(tb.get('forward_ebitda_musd'), decimals=0)}"
-            f"{_fmt_numeric_td(tb.get('forward_pe'), decimals=1)}"
+            f"{_fmt_numeric_td(tb.get('forward_pe'), decimals=2, extra=_overview_metric_icon('forward_pe', tb, rank_by=rank_by, provenance_lookup=provenance_lookup))}"
             f"{_comparison_numeric_td(tb, 'ev_ebitda', decimals=1, rank_by=rank_by, provenance_lookup=provenance_lookup)}"
-            f"{_fmt_numeric_td(tb.get('fcf_yield'), decimals=1, as_percent=True)}"
+            f"{_fmt_numeric_td(tb.get('fcf_yield'), decimals=1, as_percent=True, extra=_overview_metric_icon('fcf_yield', tb, rank_by=rank_by, provenance_lookup=provenance_lookup))}"
             f"{_comparison_numeric_td(tb, 'leverage', decimals=2, rank_by=rank_by, provenance_lookup=provenance_lookup)}"
             f"{_fmt_numeric_td(tb.get('reserve_life_years'), decimals=1)}"
             f"<td>{_fmt_text(tb.get('financial_data_status'))}</td>"

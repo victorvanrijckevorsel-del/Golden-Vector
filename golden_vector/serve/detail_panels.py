@@ -41,8 +41,15 @@ from golden_vector.serve.format_helpers import (
 )
 from golden_vector.serve.column_help import help_term, help_th
 from golden_vector.serve.fundamentals_provenance import (
+    METRIC_FIELD_DEPENDENCIES,
     provenance_icon_for_metric,
+    provenance_text_for_fields,
     ticker_provenance_icon,
+)
+from golden_vector.serve.metric_formula import (
+    has_metric_formula,
+    metric_formula_icon,
+    metric_result_text,
 )
 from golden_vector.serve.model_state_banner import render_option_freshness_box
 from golden_vector.serve.option_signal_charts import render_option_signal_charts
@@ -307,8 +314,8 @@ def _render_tool_b_snapshot_table(
     rows_html = "".join(
         "<tr>"
         f"<th>{escape(column_name.replace('_', ' ').strip().title())}</th>"
-        f"<td>{_fmt_value(row.get(column_name), column_name)}"
-        f"{_snapshot_metric_icon(ticker, column_name, financials_source, fundamentals_provenance)}</td>"
+        f"<td>{_snapshot_metric_value(column_name, row)}"
+        f"{_snapshot_metric_icon(ticker, column_name, financials_source, fundamentals_provenance, row)}</td>"
         "</tr>"
         for column_name in columns
         if column_name in row
@@ -316,12 +323,43 @@ def _render_tool_b_snapshot_table(
     return f"<table><tbody>{rows_html}</tbody></table>"
 
 
+def _snapshot_metric_value(column_name: str, row: dict[str, Any]) -> str:
+    """Render a snapshot cell value. Ratios use the SAME per-metric format (scale/decimals/unit)
+    as their formula popover, so the cell and its info button can never disagree (e.g. margin_pct
+    shows 57.1%, not the raw 0.57). Everything else uses the generic value formatter."""
+    if has_metric_formula(column_name):
+        formatted = metric_result_text(column_name, row)
+        if formatted is not None:
+            return formatted
+    return _fmt_value(row.get(column_name), column_name)
+
+
 def _snapshot_metric_icon(
     ticker: str,
     column_name: str,
     financials_source: str,
     fundamentals_provenance: dict[tuple[str, str], str],
+    row: dict[str, Any],
 ) -> str:
+    # Ratios get a formula + live-numbers info button (both source modes); in Yahoo mode the
+    # source provenance of the underlying line items is appended below the formula. Raw line
+    # items keep their plain provenance affordance (Yahoo mode only).
+    if has_metric_formula(column_name):
+        extra = ""
+        if financials_source == "yahoo":
+            extra = provenance_text_for_fields(
+                ticker,
+                METRIC_FIELD_DEPENDENCIES.get(column_name, ()),
+                fundamentals_provenance,
+            )
+        icon = metric_formula_icon(column_name, row, extra=extra)
+        if icon:
+            return icon
+        # Degraded ratio (value unavailable): don't lose the Yahoo source provenance the plain
+        # affordance used to show on these rows.
+        if financials_source == "yahoo":
+            return provenance_icon_for_metric(ticker, column_name, fundamentals_provenance)
+        return ""
     if financials_source != "yahoo":
         return ""
     return provenance_icon_for_metric(ticker, column_name, fundamentals_provenance)

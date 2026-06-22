@@ -190,7 +190,9 @@ def format_dte_suffix(days_to_expiry: object) -> str:
 _MISSING_SORT_SENTINEL = "9000000000000000"
 
 
-def _fmt_numeric_td(value: Any, *, decimals: int, as_percent: bool = False) -> str:
+def _fmt_numeric_td(
+    value: Any, *, decimals: int, as_percent: bool = False, extra: str = ""
+) -> str:
     """Render a numeric <td> with a DataTables-compatible sort key.
 
     Returns HTML like `<td data-order="1.074">107.4%</td>`. The
@@ -199,24 +201,27 @@ def _fmt_numeric_td(value: Any, *, decimals: int, as_percent: bool = False) -> s
     human-facing formatted display. For missing/None values, the
     display is "-" and the sort key is the `_MISSING_SORT_SENTINEL`.
 
+    `extra` is trusted HTML appended inside the cell after the value (e.g. a help/info
+    icon); it must NOT affect the sort key, so it lives outside `data-order`.
+
     Use this instead of wrapping `_fmt_number(...)` / `_fmt_percent(...)`
     inline in table rows whenever the column should be sortable
     numerically.
     """
     if value is None:
-        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">-</td>"
+        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">-{extra}</td>"
     try:
         numeric = float(value)
     except (TypeError, ValueError):
         # Non-numeric fallback: still wrap so the column stays sortable
         # by text; sentinel keeps the sort predictable.
-        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">{_fmt_text(value)}</td>"
+        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">{_fmt_text(value)}{extra}</td>"
     if pd.isna(numeric):
-        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">-</td>"
+        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">-{extra}</td>"
     display = (
         f"{numeric * 100:,.{decimals}f}%" if as_percent else f"{numeric:,.{decimals}f}"
     )
-    return f"<td data-order=\"{numeric}\">{escape(display)}</td>"
+    return f"<td data-order=\"{numeric}\">{escape(display)}{extra}</td>"
 
 
 def _fmt_value(value: Any, column_name: str) -> str:

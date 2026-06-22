@@ -1276,6 +1276,7 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     ),
     "tool_b_forward_pe": ColumnHelp(
         meaning="Share price divided by estimated forward earnings per share — how many years of earnings you pay for the stock.",
+        calculation="Share price / forward EPS.",
         direction="Lower is cheaper.",
     ),
     "tool_b_ev_ebitda": ColumnHelp(
@@ -1285,10 +1286,12 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     ),
     "tool_b_fcf_yield": ColumnHelp(
         meaning="Estimated free cash flow as a percent of market value.",
+        calculation="Sustainable free cash flow / market cap.",
         direction="Higher means more cash generation for the price.",
     ),
     "tool_b_leverage": ColumnHelp(
         meaning="Net debt divided by trailing (LTM) EBITDA — roughly how many years of earnings it would take to repay debt.",
+        calculation="Net debt / trailing (LTM) EBITDA.",
         thresholds=_tool_b_leverage_thresholds,
         direction="Lower is safer.",
     ),

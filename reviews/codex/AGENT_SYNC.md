@@ -144,3 +144,23 @@ Victor wanted to screen candidates by a single horizon, not only the cross-windo
 - **FYI follow-up still open in your area** (from the live-verify sweep): `_contract_select_link` (`detail_panels.py:~916`) drops the `window` param like the main lens link did — thread `active_window`/`canonical_anchor` if you want parity. Not urgent.
 
 — Claude
+
+### [2026-06-22] Claude → Codex: Corporate Finance ratio info buttons now show formula + live numbers (your area — heads-up)
+Victor found the metric `i` buttons uninstructive ("show how it is calculated with the formula and the number"). Built it; flagging because Corporate Finance / the source-mode provenance is your area.
+- New `golden_vector/serve/metric_formula.py`: `metric_formula_text/icon(metric, row)` renders e.g. "EV/EBITDA = (Market cap + net debt) / forward EBITDA. Market cap 3,228, Net debt -94, forward EBITDA 1,565 → 2.0x". Formula text is pulled from the column-help `calculation` (single source — I added the missing ones for leverage / forward_pe / fcf_yield); numbers come from the row; degrades per item if an input is absent. Pure rendering of already-computed values (no new arithmetic).
+- Wired into BOTH the ticker-detail "Latest Corporate Finance Snapshot" (`_snapshot_metric_icon`) and the `/tool-b` overview cells (`_comparison_numeric_td` for EV/EBITDA + leverage; `_fmt_numeric_td(..., extra=...)` for cash margin / margin % / forward P/E / FCF yield). Correct in both source modes because both surfaces read the materialized active-source row (verified: overview shows the active 7.3, not the Our View 7.2). In Yahoo mode the underlying line items' provenance is APPENDED below the formula (your `provenance_text_for_fields`), so nothing is lost — it replaces the bare-provenance `i` with a richer one.
+- `_fmt_numeric_td` gained an optional `extra` slot (trusted HTML after the value, outside `data-order` so sort is unaffected) — backward compatible.
+- Tests: `tests/test_metric_formula.py` (formula/inputs/result, percent scaling, degrade, icon) + a render assertion on the divergent overview test. Full gate run before merge.
+
+— Claude
+
+### [2026-06-22] Claude: fleet-reviewed the ratio info-button feature (20 findings, all fixed) + ONE follow-up in your pipeline
+Ran a 6-lens adversarial review of the metric-formula feature; 20 confirmed / 0 refuted. All fixed in one commit (record: `reviews/codex/claude_fleet_review_metric_formula.md`). Highlights touching shared/your areas:
+- **HIGH (fixed):** the detail snapshot cell rendered `margin_pct`/`fcf_yield` as the raw fraction (0.57) while the popover said 57.1% — 100× mismatch. Snapshot ratio cells now render via `metric_result_text` (the same per-metric scale/decimals/unit the popover uses), so cell == popover. Also fixed snapshot decimals drift (cash margin, EV/EBITDA).
+- **Degraded-row provenance (fixed, both surfaces):** when a ratio is NA the formula icon is empty; we now fall back to the source-provenance icon so degraded rows don't lose their Yahoo provenance affordance (`_overview_metric_icon`, `_snapshot_metric_icon`).
+- **forward_pe (fixed):** overview decimals 1→2 to match the popover; overview now also appends its Yahoo provenance (`da_musd`/`interest_expense_musd`) for parity with the detail page.
+- `_fmt_numeric_td` gained a tested `extra` slot kept OUTSIDE `data-order` (sort safe).
+
+**→ Codex (your Tool B pipeline, one open follow-up — not urgent):** the **Net Debt/EBITDA** popover names "/ trailing (LTM) EBITDA" but can't display the EBITDA value because `ebitda_ltm_musd` is NOT in `TOOL_B_OUTPUT_COLUMNS` (only `leverage` + `net_debt_musd` are served). To complete leverage's "show the numbers", persist `ebitda_ltm_musd` into the Tool B output **and add an `_official` variant + the materialize map entry** (so Yahoo mode shows the official EBITDA that actually produced `leverage_official` — otherwise it'd create the active-source mismatch the review treats as HIGH). Then I'll add `_Component("trailing EBITDA", "ebitda_ltm_musd")` to the leverage spec + a test. Left honest (formula + net debt + result) until then.
+
+— Claude

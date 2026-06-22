@@ -2374,6 +2374,30 @@ def test_workspace_tool_b_serve_layer_has_no_financial_arithmetic():
         assert forbidden not in source, forbidden
 
 
+def test_metric_formula_serve_layer_has_no_ratio_recompute():
+    """metric_formula.py renders pre-computed ratio results + component VALUES for the info
+    buttons; it must never recompute a ratio in serve (a recompute could make the popover
+    disagree with the backend-computed cell). Canon: every new serve surface gets a static-scan
+    guardrail (clone of the Tool-D/Tool-B serve-arithmetic tests)."""
+    source = Path("golden_vector/serve/metric_formula.py").read_text(encoding="utf-8")
+    # It reads the pre-computed result field by name (display only).
+    assert "result_field" in source
+    for forbidden in (
+        "- aisc_usd_per_oz",
+        "aisc_usd_per_oz -",
+        "net_debt_musd /",
+        "+ net_debt_musd",
+        "market_cap_musd +",
+        "/ forward_ebitda_musd",
+        "/ ebitda",
+        "/ market_cap_musd",
+        "share_price_usd /",
+        ".fillna(",
+        ".combine_first(",
+    ):
+        assert forbidden not in source, forbidden
+
+
 def test_workspace_candidate_finder_serve_layer_has_no_forked_tool_b_d_math():
     """Canon-required per-surface guardrail (previously missing): the Candidate Finder
     serve layer DELEGATES to the one Tool B / Tool D models and never reimplements
@@ -2487,6 +2511,12 @@ def test_workspace_tool_b_market_ours_controls_render_from_backend_columns(tmp_p
     assert "(Our View 2.4)" in body
     assert "market-ours-pair" not in body
     assert "Yahoo Fundamentals 3.2" not in body  # active source isn't relabelled in-cell
+    # The EV/EBITDA cell now carries a formula info button (formula + this ticker's numbers).
+    assert "EV/EBITDA = (Market cap + net debt) / forward EBITDA" in body
+    # Source consistency: in Yahoo (official) mode the popover result equals the DISPLAYED active
+    # value (3.2), not the Our View value (2.4) — the cell and its info button must agree.
+    assert "→ 3.2x" in body
+    assert "→ 2.4x" not in body
     assert "/ticker/NEM?fundamentals_source=yahoo" in body
     assert "/ticker/GOLD" not in body
 
