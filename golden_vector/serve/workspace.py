@@ -5,7 +5,7 @@ from __future__ import annotations
 import ipaddress
 from dataclasses import replace
 from typing import Any, Callable, Iterable
-from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 from wsgiref.simple_server import make_server
 
 from golden_vector.serve.screening_overrides import (
@@ -280,15 +280,21 @@ def create_workspace_app(
 
             if method == "POST" and path in ("/refresh", "/option-trading/refresh"):
                 form_data = _read_form_data(environ)
-                start_options_refresh(paths)
+                start_result = start_options_refresh(paths)
                 default_return_to = "/" if path == "/refresh" else "/option-trading"
-                return _redirect_response(
-                    start_response,
-                    _safe_return_to(
-                        form_data.get("return_to", [default_return_to])[0],
-                        fallback=default_return_to,
-                    ),
+                target = _safe_return_to(
+                    form_data.get("return_to", [default_return_to])[0],
+                    fallback=default_return_to,
                 )
+                if start_result.already_running:
+                    # D9: signal the no-op; the landing page renders the notice.
+                    parts = urlsplit(target)
+                    params = dict(parse_qsl(parts.query, keep_blank_values=True))
+                    params["refresh"] = "already-running"
+                    target = urlunsplit(
+                        (parts.scheme, parts.netloc, parts.path, urlencode(params), parts.fragment)
+                    )
+                return _redirect_response(start_response, target)
 
             if method == "GET" and path == "/":
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
@@ -404,7 +410,7 @@ def create_workspace_app(
                 )
 
             if method == "GET" and path.startswith("/lab/dial/"):
-                ticker = unquote(path[len("/lab/dial/") :]).strip().upper()
+                ticker = path[len("/lab/dial/") :].strip().upper()
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 scenario = query.get("scenario", ["gold_down"])[0] or "gold_down"
                 benchmark = (query.get("benchmark", ["GDX"])[0] or "GDX").upper()
@@ -461,6 +467,9 @@ def create_workspace_app(
                         model_state_manifest=load_current_model_state_manifest(paths),
                         app_config=app_config,
                         option_horizon=(option_query.get("option_horizon", [None]) or [None])[0],
+                        refresh_already_running=(
+                            (option_query.get("refresh", [""]) or [""])[0] == "already-running"
+                        ),
                     ),
                 )
 
@@ -496,7 +505,16 @@ def create_workspace_app(
                 option_vehicle_detail = False
                 prefetched_option_trading_data = None
                 if ticker not in allowed_tickers:
-                    if method == "GET" and action is None and detail_lens == DETAIL_OPTION_TRADING_LENS_ID:
+                    configured_benchmarks = {
+                        str(symbol).strip().upper()
+                        for symbol in app_config.hedge_readiness.benchmark_tickers
+                    }
+                    if (
+                        method == "GET"
+                        and action is None
+                        and detail_lens == DETAIL_OPTION_TRADING_LENS_ID
+                        and ticker in configured_benchmarks
+                    ):
                         prefetched_option_trading_data = load_option_trading_data(
                             paths,
                             app_config=app_config,
@@ -607,9 +625,15 @@ def create_workspace_app(
                                     continue
                                 company_values[field_name] = _coerce_form_numeric(raw_value)
                             if not company_values:
+                                # D2: nothing was written — return WITHOUT the
+                                # saved marker so the page never claims a save.
+                                no_op_fallback = f"/ticker/{ticker}"
                                 return _redirect_response(
                                     start_response,
-                                    _saved_ticker_return_to(form_data, ticker, "company"),
+                                    _safe_return_to(
+                                        form_data.get("return_to", [no_op_fallback])[0],
+                                        fallback=no_op_fallback,
+                                    ),
                                 )
                             upsert_company_input(paths, ticker=ticker, values=company_values)
                         except ValueError as exc:
@@ -843,7 +867,14 @@ def _portfolio_reconciliation_csv_path(paths: ProjectPaths):
 
 def _safe_return_to(raw_value: object, *, fallback: str = "/option-trading") -> str:
     value = str(raw_value or "").strip()
-    if not value or not value.startswith("/") or value.startswith("//") or "\\" in value:
+    if (
+        not value
+        or not value.startswith("/")
+        or value.startswith("//")
+        or "\\" in value
+        # D4: no control characters may reach the Location header.
+        or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
+    ):
         return fallback
     return value
 

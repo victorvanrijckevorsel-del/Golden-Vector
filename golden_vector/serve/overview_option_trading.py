@@ -95,6 +95,7 @@ def _render_option_trading_overview_page(
     model_state_manifest: dict[str, object] | None = None,
     app_config: AppConfig | None = None,
     option_horizon: str | None = None,
+    refresh_already_running: bool = False,
 ) -> str:
     display_horizons = _display_horizons(app_config)
     selected_horizon = _resolve_selected_horizon(option_horizon, display_horizons)
@@ -112,6 +113,14 @@ def _render_option_trading_overview_page(
         page_header(
             "Option Trading",
             lead_html=f"<p class=\"hint\">{snapshot_note}</p>",
+        ),
+        (
+            notice(
+                "info",
+                "A data refresh is already running; no new refresh was started.",
+            )
+            if refresh_already_running
+            else ""
         ),
         render_model_state_banner(model_state_manifest),
         render_option_freshness_box(model_state_manifest),

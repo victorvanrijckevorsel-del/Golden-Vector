@@ -327,3 +327,94 @@ def test_ticker_detail_section_nav_lists_every_present_section(tmp_path):
     ):
         assert f'href="#{fragment}">{label}</a>' in body
         assert f'id="{fragment}"' in body  # the anchor target really exists
+
+
+# ------------------------------------------------- defect-register regressions
+
+
+def test_all_blank_company_post_never_claims_a_save(tmp_path):
+    """D2 RESOLVED: an all-blank company POST writes nothing and redirects
+    WITHOUT the saved marker, so the page cannot claim 'Company inputs saved.'"""
+    _paths, app = _minimal_app(tmp_path)
+    response = call_wsgi_app(app, method="POST", path="/ticker/NEM/company", data={})
+    assert response["status"].startswith("303")
+    assert "saved=" not in response["headers"]["Location"]
+    page = call_wsgi_app(app, method="GET", path=response["headers"]["Location"])
+    assert "notice-success" not in page["body"]
+
+
+def test_return_to_rejects_control_characters(tmp_path):
+    """D4 RESOLVED: CR/LF (and other control chars) in return_to fall back to
+    the safe ticker path instead of reaching the Location header."""
+    _paths, app = _minimal_app(tmp_path)
+    for evil in ("/x\r\nInjected: 1", "/x\nInjected: 1", "//evil.example", "/x\evil"):
+        response = call_wsgi_app(
+            app,
+            method="POST",
+            path="/ticker/NEM/company",
+            data={"aisc_usd_per_oz": "1200", "return_to": evil},
+        )
+        assert response["status"].startswith("303"), evil
+        location = response["headers"]["Location"]
+        assert location.startswith("/ticker/NEM"), (evil, location)
+        assert "\r" not in location and "\n" not in location
+
+
+def test_unknown_ticker_option_lens_is_a_plain_404(tmp_path):
+    """D5 RESOLVED: only configured benchmark tickers attempt the option-vehicle
+    resolution, so an unknown ticker 404s without touching option artifacts."""
+    _paths, app = _minimal_app(tmp_path)
+    bogus = call_wsgi_app(app, method="GET", path="/ticker/BOGUS?lens=option-trading")
+    assert bogus["status"].startswith("404")
+    # A configured benchmark without a vehicle row in the (artifact-free)
+    # fixture still resolves to a clean 404, not an error page.
+    gdx = call_wsgi_app(app, method="GET", path="/ticker/GDX?lens=option-trading")
+    assert gdx["status"].startswith("404")
+
+
+def test_lab_dial_path_is_not_double_decoded(tmp_path, monkeypatch):
+    """D8 RESOLVED: PATH_INFO is already WSGI-decoded; a literal %-sequence in
+    the path stays literal instead of decoding a second time."""
+    import golden_vector.serve.workspace as workspace_module
+
+    _paths, app = _minimal_app(tmp_path)
+    seen: dict[str, str] = {}
+    real_loader = workspace_module.load_ticker_curve
+
+    def capturing_loader(paths, *, ticker, **kwargs):
+        seen["ticker"] = ticker
+        return real_loader(paths, ticker=ticker, **kwargs)
+
+    monkeypatch.setattr(workspace_module, "load_ticker_curve", capturing_loader)
+    call_wsgi_app(app, method="GET", path="/lab/dial/NEM%20X")
+    # PATH_INFO arrives WSGI-decoded; the route must NOT decode again.
+    assert seen["ticker"] == "NEM%20X"
+
+
+def test_refresh_post_signals_already_running(tmp_path, monkeypatch):
+    """D9 RESOLVED: an already-running refresh is signalled via the redirect and
+    rendered as an info notice instead of being silently discarded."""
+    import golden_vector.serve.workspace as workspace_module
+    from golden_vector.serve.option_refresh import (
+        OptionRefreshStartResult,
+        OptionRefreshStatus,
+    )
+
+    def read_status_stub():
+        return OptionRefreshStatus()
+
+    _paths, app = _minimal_app(tmp_path)
+    monkeypatch.setattr(
+        workspace_module,
+        "start_options_refresh",
+        lambda paths: OptionRefreshStartResult(
+            status=read_status_stub(), started=False, already_running=True
+        ),
+    )
+    response = call_wsgi_app(app, method="POST", path="/option-trading/refresh", data={})
+    assert response["status"].startswith("303")
+    assert "refresh=already-running" in response["headers"]["Location"]
+
+    page = call_wsgi_app(app, method="GET", path="/option-trading?refresh=already-running")
+    assert "A data refresh is already running; no new refresh was started." in page["body"]
+    assert "notice-info" in page["body"]
