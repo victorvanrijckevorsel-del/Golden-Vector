@@ -1,8 +1,62 @@
+import io
 import shutil
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlencode
 
 from golden_vector.app.paths import ProjectPaths
+
+
+def call_wsgi_app(
+    app,
+    *,
+    method: str,
+    path: str,
+    body: str = "",
+    data: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Invoke a workspace WSGI app in-process and capture the response.
+
+    Consolidated superset of the per-file ``_call_wsgi_app`` helpers (visual
+    redesign plan, Phase 0 task 16). ``path`` may carry a query string;
+    ``data`` is urlencoded into the body when given (``body`` used otherwise).
+    Returns ``status``, ``headers`` (last-wins dict), ``headers_list`` (exact
+    pairs), ``body`` (utf-8 text), and ``body_bytes``.
+    """
+    if data is not None:
+        body = urlencode(data)
+    payload = body.encode("utf-8")
+    captured: dict[str, object] = {}
+
+    def start_response(status, headers):
+        captured["status"] = status
+        captured["headers"] = headers
+
+    path_info, _, query_string = path.partition("?")
+    environ = {
+        "REQUEST_METHOD": method,
+        "PATH_INFO": path_info,
+        "QUERY_STRING": query_string,
+        "CONTENT_LENGTH": str(len(payload)),
+        "CONTENT_TYPE": "application/x-www-form-urlencoded",
+        "SERVER_NAME": "testserver",
+        "SERVER_PORT": "80",
+        "wsgi.url_scheme": "http",
+        "wsgi.input": io.BytesIO(payload),
+        "wsgi.errors": io.StringIO(),
+        "wsgi.version": (1, 0),
+        "wsgi.multithread": False,
+        "wsgi.multiprocess": False,
+        "wsgi.run_once": False,
+    }
+    body_bytes = b"".join(app(environ, start_response))
+    return {
+        "status": captured["status"],
+        "headers": dict(captured["headers"]),
+        "headers_list": list(captured["headers"]),
+        "body": body_bytes.decode("utf-8"),
+        "body_bytes": body_bytes,
+    }
 
 
 def build_test_paths(root: Path) -> ProjectPaths:
