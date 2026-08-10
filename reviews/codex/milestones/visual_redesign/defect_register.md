@@ -132,3 +132,17 @@ Severity: HIGH = misleads the user or corrupts workflow state; MEDIUM = wrong/in
 ---
 
 **Resolution log** (filled during post-Phase-8 follow-up): none yet.
+
+---
+
+## Codex interim review 2026-08-10 — GV-RD-CX-001…007 (ALL RESOLVED same day on dev-vic)
+
+Review record: `reviews/codex/2026-08-10_claude_visual_redesign_review_findings.md` (scope: Phase 1 commits + uncommitted Phase 2 shell). Fixes landed immediately after the Phase 2 commit, per the review's instruction to resolve before later phases.
+
+- **GV-RD-CX-001 (High) — mobile nav unavailable without JavaScript: RESOLVED.** All off-canvas drawer CSS in `responsive.css` is now scoped under `html.js`, set by an inline bootstrap in the page shell; without JavaScript the sidebar stays in normal document flow above the content and every route link remains reachable. Regression: `test_shell_dark_activation_and_no_js_fallback` (scoped-rule presence + unscoped-hiding scan) + JS-disabled check in the consolidated browser evidence.
+- **GV-RD-CX-002 (High) — inactive segmented/preset controls ~1.08:1: RESOLVED.** The shared control pattern (`.segmented-control a`, `.candidate-preset`) now uses `--paper` surface + `--ink` text (≈15:1). The misleading `--white` alias was deleted from tokens.css so the pairing cannot recur. Regression: `test_control_selectors_meet_contrast_with_their_actual_tokens` (actual selector declarations, active + inactive).
+- **GV-RD-CX-003 (Medium) — white on teal 2.44:1: RESOLVED.** New `--verified-fill` (#1F6E66) solid teal surface carries `--ink` text at ≥5.5:1 for `.benchmark-toggle.active` and `.winrate-fill`; the win-rate label also clears 4.5:1 on the empty track, which a dark-ink-on-teal fix would have broken. `--color-verified` stays the bright text/badge teal. Regression: selector-level contrast assertions incl. both win-rate backgrounds.
+- **GV-RD-CX-004 (Medium) — DataTables dark theme not activated: RESOLVED.** Shell renders `<html lang="en" class="dark">`, activating the vendored DataTables dark selectors. Regression: shell contract assertion + sorted-table check in the consolidated browser evidence.
+- **GV-RD-CX-005 (Medium) — drawer behaviour/semantics disagreement: RESOLVED (modal pattern).** The open drawer is now announced as `role="dialog"` `aria-modal="true"` with a visible "Close menu" button; the app content and skip link are made `inert`; focus moves to the close control on open, is trapped across all drawer focusables, and is restored on close (never on link-navigation close). Regression: `test_drawer_runtime_modal_semantics_focus_and_trap` (Node shim).
+- **GV-RD-CX-006 (Medium) — focused runner excluded redesign suites: RESOLVED.** `tests/test_design_tokens.py` and `tests/test_workspace_shell.py` added to `FOCUSED_TEST_FILES`; `test_focused_selection_includes_redesign_suites` pins the redesign-critical set so the gap cannot silently reopen.
+- **GV-RD-CX-007 (Low) — drawer-open state survives breakpoint changes: RESOLVED.** A `matchMedia("(min-width: 64rem)")` change listener normalises state (close without focus steal) when the layout crosses into desktop. Regression: Node-shim matchMedia assertion.

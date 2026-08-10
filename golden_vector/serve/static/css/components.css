@@ -156,7 +156,7 @@
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px 12px;
-  background: var(--white);
+  background: var(--paper);
   color: var(--ink);
   text-decoration: none;
   font-weight: 600;
@@ -189,7 +189,7 @@
   margin-right: 4px;
   font-weight: 600;
 }
-.benchmark-toggle.active { background: var(--teal); color: var(--white); border-color: var(--teal); }
+.benchmark-toggle.active { background: var(--verified-fill); color: var(--ink); border-color: var(--verified-fill); }
 /* Click-to-explain: the one info affordance across the app (no hover tooltip). */
 .help-anchor { display: inline-flex; margin-left: 5px; vertical-align: middle; }
 .help-icon {

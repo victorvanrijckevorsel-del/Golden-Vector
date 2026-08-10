@@ -4,7 +4,8 @@ This is the file-path-based selection required by the visual redesign plan
 (GOLDEN_VECTOR_VISUAL_REDESIGN_PLAN.md section 18.6). No pytest markers exist
 in this repository, so the selection is pinned here as an explicit file list:
 every test file that imports ``golden_vector.serve`` plus the route-adjacent
-model-state, URL, explanation, Portfolio, and CLI-workspace suites.
+model-state, URL, explanation, Portfolio, and CLI-workspace suites, plus the
+redesign guardrail suites (design tokens, workspace shell — GV-RD-CX-006).
 
 Run from the repository root (the guardrail scans resolve paths relative to
 the working directory)::
@@ -30,6 +31,7 @@ FOCUSED_TEST_FILES: tuple[str, ...] = (
     "tests/test_cli_workspace.py",
     "tests/test_column_help.py",
     "tests/test_common_helpers.py",
+    "tests/test_design_tokens.py",
     "tests/test_detail_volatility_context.py",
     "tests/test_explanations.py",
     "tests/test_finite_input_validation.py",
@@ -69,6 +71,7 @@ FOCUSED_TEST_FILES: tuple[str, ...] = (
     "tests/test_workspace_app.py",
     "tests/test_workspace_datatables.py",
     "tests/test_workspace_horizon_switcher.py",
+    "tests/test_workspace_shell.py",
 )
 
 

@@ -1,12 +1,18 @@
-/* Consolidated content-driven breakpoints (shell drawer + density). */
+/* Consolidated content-driven breakpoints (shell drawer + density).
+   Every off-canvas drawer rule is scoped to html.js (set by the page-shell
+   bootstrap script). Without JavaScript the sidebar keeps normal document
+   flow above the page content, so navigation stays reachable (GV-RD-CX-001). */
 @media (max-width: 63.9375rem) {
   .app-frame {
     grid-template-columns: minmax(0, 1fr);
   }
-  .nav-toggle {
+  html.js .nav-toggle {
     display: inline-block;
   }
-  .app-sidebar {
+  html.js .nav-close {
+    display: inline-block;
+  }
+  html.js .app-sidebar {
     position: fixed;
     inset: 0 auto 0 0;
     width: min(20rem, 86vw);
@@ -17,13 +23,13 @@
     /* Delay hiding until the slide-out completes (close direction only). */
     transition: transform var(--motion-fast) ease, visibility 0s linear var(--motion-fast);
   }
-  .app-frame[data-nav-open] .app-sidebar {
+  html.js .app-frame[data-nav-open] .app-sidebar {
     transform: translateX(0);
     visibility: visible;
     /* Opening: visibility flips instantly so focus can move into the menu. */
     transition: transform var(--motion-fast) ease;
   }
-  .app-frame[data-nav-open] .nav-backdrop {
+  html.js .app-frame[data-nav-open] .nav-backdrop {
     display: block;
     position: fixed;
     inset: 0;

@@ -109,6 +109,20 @@
 .nav-toggle:hover {
   background: var(--surface-hover);
 }
+/* Drawer-only close control; revealed by responsive.css under html.js. */
+.nav-close {
+  display: none;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 8px 14px;
+  min-height: 44px;
+  margin-bottom: 12px;
+}
+.nav-close:hover {
+  background: var(--surface-hover);
+}
 .nav-backdrop {
   display: none;
 }

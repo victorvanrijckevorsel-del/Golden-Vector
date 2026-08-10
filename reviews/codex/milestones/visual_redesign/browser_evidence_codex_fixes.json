@@ -1,0 +1,52 @@
+{
+  "when": "2026-08-10T16:09:40.771Z",
+  "gate": "codex-review-fixes GV-RD-CX-001..007",
+  "script": "one batched Playwright run (file-loaded); screenshots codex_fixes_*.png in this directory",
+  "results": {
+    "darkInfo": {
+      "htmlClasses": "dark js",
+      "dtDarkVar": "rgb(33, 37, 41)",
+      "bodyBg": "rgb(11, 13, 16)"
+    },
+    "sortState": {
+      "ariaSort": "ascending",
+      "cls": "dt-orderable-asc dt-orderable-desc dt-ordering-asc"
+    },
+    "drawer": {
+      "role": "dialog",
+      "modal": "true",
+      "label": "Navigation",
+      "contentInert": true,
+      "skipInert": true,
+      "focusedClass": "nav-close",
+      "sidebarVisibility": "visible"
+    },
+    "afterClose": {
+      "open": false,
+      "role": null,
+      "contentInert": false,
+      "focusedToggle": true
+    },
+    "afterWiden": {
+      "open": false,
+      "contentInert": false
+    },
+    "noJsInfo": {
+      "navLinkVisible": true,
+      "toggleVisible": false,
+      "closeVisible": false,
+      "sidebarBox": { "x": 0, "y": 0, "width": 384.67, "height": 646.58 }
+    },
+    "consoleErrors": [],
+    "pass": {
+      "dark_datatables": true,
+      "sort_works": true,
+      "drawer_modal": true,
+      "close_restores": true,
+      "breakpoint_reset": true,
+      "nojs_nav": true,
+      "zero_console_errors": true
+    }
+  },
+  "verdict": "ALL 7 CHECKS PASS"
+}

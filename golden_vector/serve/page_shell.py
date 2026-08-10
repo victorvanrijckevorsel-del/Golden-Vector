@@ -66,14 +66,20 @@ def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
     page label; an empty value (error pages) renders the full navigation with
     no current item — a documented intentional state (plan section 15.11).
     The signature is a preserved compatibility contract.
+
+    The ``dark`` root class activates the vendored DataTables dark theme
+    (GV-RD-CX-004). The inline bootstrap adds the ``js`` class that
+    responsive.css keys its drawer rules on, so without JavaScript the sidebar
+    stays in normal flow and navigation remains reachable (GV-RD-CX-001).
     """
     page_label = _PAGE_LABELS.get(active_nav, "Golden Vector")
     page_attr = escape(active_nav or "error")
     return f"""<!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>document.documentElement.classList.add("js");</script>
   <title>{escape(title)}</title>
   <link rel="stylesheet" href="/static/vendor/datatables/datatables-2.1.8.min.css">
   <script src="/static/vendor/datatables/jquery-3.7.1.min.js" defer></script>
@@ -89,6 +95,7 @@ def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <div class="app-frame">
     <aside class="app-sidebar" id="app-sidebar">
+      <button class="nav-close" type="button">Close menu</button>
       <div class="app-brand">
         <span class="app-wordmark">Golden Vector</span>
         <span class="app-descriptor">Gold-equities research</span>

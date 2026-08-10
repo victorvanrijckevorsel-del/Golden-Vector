@@ -30,7 +30,7 @@
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px 12px;
-  background: var(--white);
+  background: var(--paper);
   color: var(--ink);
   text-decoration: none;
   font-weight: 600;
@@ -224,15 +224,16 @@
   overflow: hidden;
   max-width: 480px;
 }
-.winrate-fill { height: 100%; background: var(--teal); }
+.winrate-fill { height: 100%; background: var(--verified-fill); }
 .winrate-label {
   position: absolute;
   top: 4px;
   left: 10px;
   font-weight: 700;
-  color: var(--white);
+  color: var(--ink);
   font-size: 0.9rem;
-  /* legible on both the filled (teal) and unfilled (beige) parts, incl. 0% */
+  /* --ink clears 4.5:1 on BOTH the darkened teal fill and the empty track
+     (GV-RD-CX-003); the shadow only smooths the fill/track seam. */
   text-shadow: var(--text-shadow-contrast);
 }
 .lab-curve-controls p { margin: 4px 0; }

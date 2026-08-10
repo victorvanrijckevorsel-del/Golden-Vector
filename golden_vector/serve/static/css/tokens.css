@@ -50,7 +50,6 @@
   --positive: var(--color-positive);
   --negative: var(--color-negative);
   --neutral: #AFBAC6;
-  --white: #ffffff;
   --button-ink: var(--color-brand-ink);
 
   /* Surfaces */
@@ -64,6 +63,9 @@
   --link: #7FB2E5;
   --selected-bg: #2B4562;
   --teal: var(--color-verified);
+  /* Solid verified/teal SURFACE dark enough to carry --ink text at AA
+     (GV-RD-CX-003); --color-verified itself stays the bright text/badge teal. */
+  --verified-fill: #1F6E66;
   --focus: var(--color-focus);
   --warn-ink: var(--color-warning);
 

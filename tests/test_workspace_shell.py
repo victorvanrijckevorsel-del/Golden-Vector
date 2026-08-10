@@ -97,7 +97,7 @@ def test_all_first_party_js_passes_node_check():
         assert result.returncode == 0, f"{script.name}: {result.stderr}"
 
 
-def test_drawer_runtime_open_close_focus_and_trap():
+def test_drawer_runtime_modal_semantics_focus_and_trap():
     script = r"""
 const assert = require("assert");
 const fs = require("fs");
@@ -109,7 +109,6 @@ class El {
     this.attrs = {};
     this.listeners = {};
     this.hidden = false;
-    this._links = [];
   }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
@@ -117,27 +116,43 @@ class El {
   removeAttribute(k) { delete this.attrs[k]; }
   addEventListener(n, f) { this.listeners[n] = f; }
   focus() { doc.activeElement = this; }
-  querySelector(sel) { return sel === "a" ? (this._links[0] || null) : null; }
-  querySelectorAll(sel) { return sel === "a" ? this._links : []; }
+  querySelector() { return null; }
+  querySelectorAll() { return []; }
 }
 
-const toggle = new El("button");
-const frame = new El("div");
-const sidebar = new El("aside");
-const backdrop = new El("div");
+const toggle = new El("toggle");
+const frame = new El("frame");
+const sidebar = new El("sidebar");
+const backdrop = new El("backdrop");
+const content = new El("content");
+const skipLink = new El("skip");
+const closeBtn = new El("close");
 backdrop.hidden = true;
-const link1 = new El("a");
-const link2 = new El("a");
+const link1 = new El("link1");
+const link2 = new El("link2");
 link1.closest = (s) => (s === "a" ? link1 : null);
 link2.closest = (s) => (s === "a" ? link2 : null);
-sidebar._links = [link1, link2];
+closeBtn.closest = () => null;
+sidebar.querySelector = (sel) =>
+  sel === ".nav-close" ? closeBtn : sel === "a" ? link1 : null;
+sidebar.querySelectorAll = (sel) =>
+  sel === "a, button" ? [closeBtn, link1, link2] : sel === "a" ? [link1, link2] : [];
+
+const mql = { matches: false, query: null, handler: null,
+  addEventListener(n, f) { this.handler = f; } };
 
 var doc = {
   readyState: "complete",
   activeElement: null,
   listeners: {},
   querySelector(sel) {
-    return { ".nav-toggle": toggle, ".app-frame": frame, ".nav-backdrop": backdrop }[sel] || null;
+    return {
+      ".nav-toggle": toggle,
+      ".app-frame": frame,
+      ".nav-backdrop": backdrop,
+      ".app-content": content,
+      ".skip-link": skipLink,
+    }[sel] || null;
   },
   getElementById(id) { return id === "app-sidebar" ? sidebar : null; },
   addEventListener(n, f) { this.listeners[n] = f; },
@@ -145,21 +160,39 @@ var doc = {
 
 vm.runInNewContext(
   fs.readFileSync("golden_vector/serve/static/workspace-shell.js", "utf8"),
-  { document: doc, window: {}, console }
+  { document: doc, window: { matchMedia(q) { mql.query = q; return mql; } }, console }
 );
 
-// Open: state, aria, backdrop, focus moves into the menu.
+// The desktop breakpoint listener is registered with the CSS breakpoint.
+assert.equal(mql.query, "(min-width: 64rem)");
+
+// Open: modal dialog semantics, inert background, focus on the close control.
 toggle.listeners.click();
 assert.ok(frame.hasAttribute("data-nav-open"));
 assert.equal(toggle.attrs["aria-expanded"], "true");
 assert.equal(backdrop.hidden, false);
-assert.equal(doc.activeElement, link1);
+assert.equal(sidebar.attrs["role"], "dialog");
+assert.equal(sidebar.attrs["aria-modal"], "true");
+assert.equal(sidebar.attrs["aria-label"], "Navigation");
+assert.ok(content.hasAttribute("inert"));
+assert.ok(skipLink.hasAttribute("inert"));
+assert.equal(doc.activeElement, closeBtn);
 
-// Escape closes and returns focus to the trigger.
-doc.listeners.keydown({ key: "Escape" });
+// The visible close control closes, restores focus, and removes modal state.
+closeBtn.listeners.click();
 assert.ok(!frame.hasAttribute("data-nav-open"));
 assert.equal(toggle.attrs["aria-expanded"], "false");
 assert.equal(backdrop.hidden, true);
+assert.ok(!sidebar.hasAttribute("role"));
+assert.ok(!sidebar.hasAttribute("aria-modal"));
+assert.ok(!content.hasAttribute("inert"));
+assert.ok(!skipLink.hasAttribute("inert"));
+assert.equal(doc.activeElement, toggle);
+
+// Escape closes and returns focus to the trigger.
+toggle.listeners.click();
+doc.listeners.keydown({ key: "Escape" });
+assert.ok(!frame.hasAttribute("data-nav-open"));
 assert.equal(doc.activeElement, toggle);
 
 // Backdrop click closes.
@@ -167,20 +200,35 @@ toggle.listeners.click();
 backdrop.listeners.click();
 assert.ok(!frame.hasAttribute("data-nav-open"));
 
-// Navigating via a link closes WITHOUT stealing focus back to the trigger.
+// Navigating via a link closes WITHOUT stealing focus back to the trigger,
+// and every close path restores the background.
 toggle.listeners.click();
 doc.activeElement = link1;
 sidebar.listeners.click({ target: link1 });
 assert.ok(!frame.hasAttribute("data-nav-open"));
 assert.equal(doc.activeElement, link1);
+assert.ok(!content.hasAttribute("inert"));
 
-// Tab wraps from the last link to the first while open (focus trap).
+// Tab wraps last -> first (the close control) and Shift+Tab wraps back.
 toggle.listeners.click();
 doc.activeElement = link2;
 let prevented = false;
 sidebar.listeners.keydown({ key: "Tab", shiftKey: false, preventDefault() { prevented = true; } });
 assert.ok(prevented);
-assert.equal(doc.activeElement, link1);
+assert.equal(doc.activeElement, closeBtn);
+doc.activeElement = closeBtn;
+prevented = false;
+sidebar.listeners.keydown({ key: "Tab", shiftKey: true, preventDefault() { prevented = true; } });
+assert.ok(prevented);
+assert.equal(doc.activeElement, link2);
+
+// Crossing into desktop normalises stale open state (GV-RD-CX-007).
+assert.ok(frame.hasAttribute("data-nav-open"));
+doc.activeElement = closeBtn;
+mql.handler({ matches: true });
+assert.ok(!frame.hasAttribute("data-nav-open"));
+assert.ok(!content.hasAttribute("inert"));
+assert.equal(doc.activeElement, closeBtn); // no focus steal to the hidden toggle
 """
     result = subprocess.run(
         ["node", "-e", script], check=False, cwd=Path.cwd(), text=True, capture_output=True
@@ -259,3 +307,92 @@ def test_dark_palette_meets_wcag_contrast():
         if ratio < minimum:
             failures.append(f"{fg} on {bg}: {ratio:.2f} < {minimum}")
     assert not failures, "Contrast failures: " + "; ".join(failures)
+
+
+def _declaration(css: str, selector: str, prop: str) -> str:
+    """Value of ``prop`` inside the exact ``selector { ... }`` block."""
+    block = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+    assert block, f"selector not found: {selector}"
+    decl = re.search(rf"(?<![\w-]){prop}\s*:\s*([^;]+);", block.group(1))
+    assert decl, f"{selector} lacks {prop}"
+    return decl.group(1).strip()
+
+
+def test_control_selectors_meet_contrast_with_their_actual_tokens():
+    """GV-RD-CX-002/003: check the foreground/background pairs the selectors
+    really declare (inactive AND active states), not just token definitions."""
+    tokens = _resolved_tokens()
+    comp = Path("golden_vector/serve/static/css/components.css").read_text(encoding="utf-8")
+    pages = Path("golden_vector/serve/static/css/pages.css").read_text(encoding="utf-8")
+
+    def resolve(value: str) -> str:
+        match = re.fullmatch(r"var\((--[\w-]+)\)", value)
+        assert match, f"expected a var() token, got: {value}"
+        resolved = tokens[match.group(1)]
+        assert resolved.startswith("#"), f"{value} resolves to non-hex {resolved}"
+        return resolved
+
+    def pair(css: str, selector: str, bg_selector: str | None = None, bg_prop: str = "background"):
+        fg = resolve(_declaration(css, selector, "color"))
+        bg = resolve(_declaration(css, bg_selector or selector, bg_prop))
+        return fg, bg
+
+    checks = [
+        ("segmented control (inactive)", *pair(comp, ".segmented-control a")),
+        ("segmented control (active)", *pair(comp, ".segmented-control a.active")),
+        ("benchmark toggle (active)", *pair(comp, ".benchmark-toggle.active")),
+        ("candidate preset (inactive)", *pair(pages, ".candidate-preset")),
+        ("candidate preset (active)", *pair(pages, ".candidate-preset.is-active")),
+        ("win-rate label on fill", *pair(pages, ".winrate-label", ".winrate-fill")),
+        ("win-rate label on empty track", *pair(pages, ".winrate-label", ".winrate-bar")),
+    ]
+    failures = [
+        f"{name}: {fg} on {bg} = {_ratio(fg, bg):.2f} < 4.5"
+        for name, fg, bg in checks
+        if _ratio(fg, bg) < 4.5
+    ]
+    assert not failures, "Selector contrast failures: " + "; ".join(failures)
+
+
+def test_shell_dark_activation_and_no_js_fallback():
+    """GV-RD-CX-001/004: the vendored DataTables dark theme is activated at the
+    root, and off-canvas drawer CSS only applies when JavaScript marked the
+    document — without JS the sidebar stays in flow and navigation works."""
+    html = _page_shell("T", "x")
+    assert '<html lang="en" class="dark">' in html
+    assert '<script>document.documentElement.classList.add("js");</script>' in html
+    assert '<button class="nav-close" type="button">Close menu</button>' in html
+    css = Path("golden_vector/serve/static/css/responsive.css").read_text(encoding="utf-8")
+    for scoped in (
+        "html.js .app-sidebar {",
+        "html.js .app-frame[data-nav-open] .app-sidebar {",
+        "html.js .app-frame[data-nav-open] .nav-backdrop {",
+        "html.js .nav-toggle {",
+        "html.js .nav-close {",
+    ):
+        assert scoped in css, f"missing js-scoped drawer rule: {scoped}"
+    # No unscoped rule may take the sidebar out of flow or hide it.
+    unscoped_hiding = re.search(
+        r"^\s*\.app-sidebar\s*\{[^}]*(visibility|transform|position)", css, re.M
+    )
+    assert unscoped_hiding is None, "drawer hiding must be scoped under html.js"
+
+
+def test_focused_selection_includes_redesign_suites():
+    """GV-RD-CX-006: the pinned release selection runs the redesign guardrails."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "run_focused_selection", Path("tests/tools/run_focused_selection.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    required = {
+        "tests/test_design_tokens.py",
+        "tests/test_workspace_shell.py",
+        "tests/test_redesign_routes.py",
+        "tests/test_workspace_app.py",
+        "tests/test_workspace_datatables.py",
+    }
+    missing = required - set(module.FOCUSED_TEST_FILES)
+    assert not missing, f"focused selection missing redesign suites: {sorted(missing)}"
