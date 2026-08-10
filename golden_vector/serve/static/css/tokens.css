@@ -1,137 +1,179 @@
 /* Canonical design tokens — the ONLY first-party file allowed to contain raw
-   colour literals (enforced by tests/test_design_tokens.py). Phase 1 holds the
-   pre-redesign light values for mechanical parity; the Phase 2 shell commit
-   flips these to the approved dark palette (plan §9.2). */
+   colour literals (enforced by tests/test_design_tokens.py).
+
+   Dark analytical workspace palette (redesign plan section 9.2, approved).
+   The legacy alias block keeps every pre-redesign token name resolving so
+   not-yet-migrated component CSS inherits the dark theme through indirection.
+   Rules: gold = brand/navigation/primary action, never "financially positive";
+   green/red only for genuine favourable/adverse states; verified is teal so it
+   cannot be read as investment upside; text on solid gold uses dark brand ink. */
 :root {
-  /* Legacy core palette (pre-redesign names, kept as the compatibility layer) */
-  --bg: #f5f1e7;
-  --canvas-top: #f1eadb;
-  --panel: #fffdf8;
-  --ink: #1f1d1a;
-  --ink-strong: #3d3529;
-  --muted: #6f685c;
-  --text-soft: #5f584e;
-  --text-brown: #5b4d33;
-  --text-dim: #555555;
-  --line: #d8cfbf;
-  --line-soft: #e4ddcd;
-  --border: #d9d2c4;
-  --border-soft: #cfc6b8;
-  --accent: #b26700;
-  --accent-soft: #f8ead4;
-  --positive: #2d6a4f;
-  --negative: #8a2d3b;
-  --neutral: #48566a;
+  /* Core dark palette (section 9.2) */
+  --color-canvas: #0B0D10;
+  --color-shell: #0E1116;
+  --color-surface-1: #141920;
+  --color-surface-2: #1A2028;
+  --color-surface-elevated: #202833;
+  --color-border-subtle: #2F3945;
+  --color-border-strong: #465362;
+  --color-text-primary: #F4F6F8;
+  --color-text-secondary: #B7C0CB;
+  --color-text-muted: #8D98A7;
+  --color-brand-gold: #D8B45A;
+  --color-brand-gold-hover: #E7C66D;
+  --color-brand-ink: #19150B;
+  --color-focus: #78B7FF;
+  --color-positive: #55C58A;
+  --color-negative: #F0787F;
+  --color-warning: #E2B65B;
+  --color-info: #69A9E6;
+  --color-verified: #4DB6AC;
+  --color-missing: #8D98A7;
+  --color-blocked: #F0787F;
+
+  /* Legacy aliases (compatibility layer for pre-redesign selectors) */
+  --bg: var(--color-canvas);
+  --canvas-top: var(--color-canvas);
+  --panel: var(--color-surface-1);
+  --ink: var(--color-text-primary);
+  --ink-strong: var(--color-text-primary);
+  --muted: var(--color-text-secondary);
+  --text-soft: var(--color-text-secondary);
+  --text-brown: var(--color-text-secondary);
+  --text-dim: var(--color-text-muted);
+  --line: var(--color-border-subtle);
+  --line-soft: var(--color-border-subtle);
+  --border: var(--color-border-subtle);
+  --border-soft: var(--color-border-subtle);
+  --accent: var(--color-brand-gold);
+  --accent-soft: #2B2213;
+  --positive: var(--color-positive);
+  --negative: var(--color-negative);
+  --neutral: #AFBAC6;
   --white: #ffffff;
+  --button-ink: var(--color-brand-ink);
 
   /* Surfaces */
-  --paper: #fbf9f4;
-  --surface-hover: #f7f0e2;
-  --surface-soft-hover: #efe9dc;
-  --surface-cream: #fffaf0;
-  --active-row-bg: #fdf6e3;
+  --paper: var(--color-surface-2);
+  --surface-hover: var(--color-surface-elevated);
+  --surface-soft-hover: var(--color-surface-elevated);
+  --surface-cream: var(--color-surface-2);
+  --active-row-bg: #262115;
 
-  /* Links and identity accents */
-  --link: #1d4b73;
-  --teal: #2f6f6d;
-  --focus: #2f6f6d;
-  --warn-ink: #8a5a00;
+  /* Links, selection, identity accents */
+  --link: #7FB2E5;
+  --selected-bg: #2B4562;
+  --teal: var(--color-verified);
+  --focus: var(--color-focus);
+  --warn-ink: var(--color-warning);
 
-  /* Badge / status tints */
-  --badge-neutral-bg: #efe6d3;
-  --tint-green: #d8eccf;
-  --tint-green-ink: #1f4c2a;
-  --tint-green-soft: #e7f0d4;
-  --tint-amber: #f4e3b6;
-  --tint-amber-ink: #6c4a16;
-  --tint-red: #f1cdcd;
-  --tint-red-ink: #6e1d1d;
-  --tint-tan: #e6dcc4;
-  --tint-gray: #d8d4cb;
-  --tint-gray-ink: #4b463c;
+  /* Badge / status tints (dark surfaces with bright state inks) */
+  --badge-neutral-bg: #242A31;
+  --tint-green: #16301F;
+  --tint-green-ink: #7BD8A5;
+  --tint-green-soft: #1D3A28;
+  --tint-amber: #33290F;
+  --tint-amber-ink: #E2B65B;
+  --tint-red: #38181B;
+  --tint-red-ink: #F59BA1;
+  --tint-tan: #2A251C;
+  --tint-gray: #242A31;
+  --tint-gray-ink: #B7C0CB;
 
   /* Notices */
-  --flash-border: #ebcd9f;
-  --flash-error-bg: #fbe5e9;
-  --flash-error-border: #c48191;
+  --flash-border: #4A3A1A;
+  --flash-error-bg: #38181B;
+  --flash-error-border: #6E2A31;
 
   /* Help popover internals */
-  --help-icon-border: #b9b0a0;
-  --formula-bg: #f3eee3;
-  --formula-label-ink: #7a7263;
-  --values-bg: #eef3ee;
-  --values-label-ink: #6a7a6a;
+  --help-icon-border: var(--color-border-strong);
+  --formula-bg: #10151B;
+  --formula-label-ink: var(--color-text-muted);
+  --values-bg: #101814;
+  --values-label-ink: #7FA98F;
 
   /* Scorecard verdict palette (evidence state, not investment quality) */
-  --verdict-supported-bg: #e3f5e6;
-  --verdict-supported-ink: #1d6b32;
-  --verdict-not-supported-bg: #fce4e4;
-  --verdict-not-supported-ink: #a11a1a;
-  --verdict-inconclusive-bg: #fff3da;
-  --verdict-partial-bg: #eef0f2;
-  --verdict-partial-ink: #41505c;
-  --verdict-accruing-bg: #e6eefb;
-  --verdict-accruing-ink: #2b4f8a;
+  --verdict-supported-bg: #16301F;
+  --verdict-supported-ink: #7BD8A5;
+  --verdict-not-supported-bg: #38181B;
+  --verdict-not-supported-ink: #F59BA1;
+  --verdict-inconclusive-bg: #33290F;
+  --verdict-partial-bg: #232A31;
+  --verdict-partial-ink: #AFBAC6;
+  --verdict-accruing-bg: #1B2536;
+  --verdict-accruing-ink: #8FB4E8;
 
-  /* Chart series (single source for SVG paint via semantic classes) */
-  --chart-positive: #2d6a4f;
-  --chart-negative: #8a2d3b;
-  --chart-stock: #b26700;
-  --chart-gdx: #1d4b73;
-  --chart-gdxj: #3f7cae;
-  --chart-context: #2f6f6d;
-  --chart-zero: #b9b0a0;
-  /* Chart furniture (axes, grids, labels — parity values from charts.py) */
-  --chart-bg: #fffdf8;
-  --chart-axis: #bfb5a2;
-  --chart-grid: #eadfca;
-  --chart-track: #cdbfa6;
-  --chart-tick: #d2c4a6;
-  --chart-marker: #1d4b73;
-  --chart-point: #1d4b73;
-  --chart-label: #6f685c;
-  --chart-label-minor: #9a917f;
-  --chart-label-soft: #8a8170;
-  --chart-label-strong: #5f594c;
-  --chart-value: #1f1d1a;
-  /* Rebased-overlay series (deliberately distinct from the beta-bar palette) */
-  --chart-gold: #b8860b;
-  --chart-overlay-stock: #1d4b73;
-  --chart-overlay-gdx: #5a3b8a;
-  --chart-overlay-gdxj: #2e7d5b;
+  /* Chart series (single source for SVG paint via semantic classes).
+     Stock = warm orange distinct from brand gold; gold commodity = brand gold;
+     GDX blue, GDXJ violet; green/red only for explicit up/down meaning. */
+  --chart-positive: var(--color-positive);
+  --chart-negative: var(--color-negative);
+  --chart-stock: #E8975A;
+  --chart-gdx: #69A9E6;
+  --chart-gdxj: #A78BDB;
+  --chart-context: var(--color-verified);
+  --chart-zero: #6B7684;
+  /* Chart furniture (axes, grids, labels) */
+  --chart-bg: var(--color-surface-2);
+  --chart-axis: var(--color-border-strong);
+  --chart-grid: #232B35;
+  --chart-track: var(--color-border-strong);
+  --chart-tick: #39424E;
+  --chart-marker: #69A9E6;
+  --chart-point: #69A9E6;
+  --chart-label: var(--color-text-secondary);
+  --chart-label-minor: var(--color-text-muted);
+  --chart-label-soft: var(--color-text-muted);
+  --chart-label-strong: var(--color-text-secondary);
+  --chart-value: var(--color-text-primary);
+  /* Rebased-overlay series (stock orange, gold brand-gold, GDX blue, GDXJ violet) */
+  --chart-gold: var(--color-brand-gold);
+  --chart-overlay-stock: #E8975A;
+  --chart-overlay-gdx: #69A9E6;
+  --chart-overlay-gdxj: #A78BDB;
   /* Option-signal strips */
-  --chart-put: #a45100;
-  --chart-call: #2f6f6d;
-  --chart-vol: #5b4a91;
+  --chart-put: var(--color-negative);
+  --chart-call: var(--color-verified);
+  --chart-vol: #A78BDB;
   --chart-skew: var(--chart-put);
   --chart-atm: var(--chart-call);
   --chart-ivrv: var(--chart-vol);
-  --chart-oi: #7b6f5e;
+  --chart-oi: var(--color-text-muted);
   /* Lab dial/behaviour charts */
-  --chart-beat: #1d6b32;
-  --chart-lag: #a11a1a;
-  --chart-warn: var(--chart-put);
-  --chart-strip: #cfc6b8;
-  --chart-zeroline: #8a8170;
-  --chart-strip-label: #5f584e;
-  --chart-ink: #3d3529;
-  --chart-axis-label: #7a7263;
-  --chart-band: #efe9dc;
+  --chart-beat: var(--color-positive);
+  --chart-lag: var(--color-negative);
+  --chart-warn: var(--color-warning);
+  --chart-strip: var(--color-border-strong);
+  --chart-zeroline: #6B7684;
+  --chart-strip-label: var(--color-text-secondary);
+  --chart-ink: #E8ECEF;
+  --chart-axis-label: var(--color-text-muted);
+  --chart-band: var(--color-surface-elevated);
 
-  /* Typography (parity values; Phase 2 moves to system sans + tabular nums) */
-  --font-ui: Georgia, "Times New Roman", serif;
-  --font-data: "Cascadia Code", Consolas, "Courier New", monospace;
+  /* Typography (section 9.4: local system stacks only) */
+  --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
 
-  /* Elevation */
-  --shadow-panel: 0 8px 24px rgba(98, 83, 57, 0.08);
-  --shadow-tooltip: 0 2px 6px rgba(0, 0, 0, 0.25);
-  --shadow-popover: 0 6px 22px rgba(0, 0, 0, 0.18);
+  /* Shape */
+  --radius-control: 0.375rem;
+  --radius-surface: 0.5rem;
+  --radius-panel: 0.75rem;
+
+  /* Elevation (borders carry hierarchy in dark mode; shadows stay subtle) */
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-tooltip: 0 2px 8px rgba(0, 0, 0, 0.55);
+  --shadow-popover: 0 8px 28px rgba(0, 0, 0, 0.6);
   --text-shadow-contrast: 0 0 2px rgba(0, 0, 0, 0.55);
 
-  /* Layers (documented scale; fixes the audited inversion where decorative
-     tooltips painted above the interactive help dialog) */
+  /* Overlay scrim behind the mobile navigation drawer */
+  --backdrop: rgba(0, 0, 0, 0.55);
+
+  /* Motion */
+  --motion-fast: 140ms;
+
+  /* Layers (documented scale; tooltips stay below the interactive dialog) */
   --z-sticky: 10;
   --z-drawer: 800;
-  --z-popover: 1000;
   --z-tooltip: 900;
+  --z-popover: 1000;
 }

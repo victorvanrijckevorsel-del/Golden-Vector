@@ -2007,7 +2007,7 @@ def test_workspace_tool_a_view_renders_only_tool_a_columns(tmp_path):
     assert "Corporate Finance Score" not in response["body"]
     assert "Verdict" not in response["body"]
     # Nav must mark this tab active
-    assert 'class="nav-tab active" href="/tool-a"' in response["body"]
+    assert 'aria-current="page" href="/tool-a"' in response["body"]
 
 
 def test_workspace_tool_b_view_renders_only_tool_b_columns(tmp_path):
@@ -2039,7 +2039,7 @@ def test_workspace_tool_b_view_renders_only_tool_b_columns(tmp_path):
     assert "Δ Core" not in response["body"]
     assert "Asymmetry" not in response["body"]
     # Nav must mark this tab active
-    assert 'class="nav-tab active" href="/tool-b"' in response["body"]
+    assert 'aria-current="page" href="/tool-b"' in response["body"]
 
 
 def test_workspace_tool_c_view_renders_gold_downside_page(tmp_path):
@@ -2059,7 +2059,7 @@ def test_workspace_tool_c_view_renders_gold_downside_page(tmp_path):
     assert "tool-c-table" in response["body"]
     assert "Downside Score" in response["body"]
     assert "Downside Rank" not in response["body"]
-    assert 'class="nav-tab active" href="/tool-c"' in response["body"]
+    assert 'aria-current="page" href="/tool-c"' in response["body"]
     # Phase 3: shared beta-window selector + a Gold-link trust column on Gold Downside.
     assert "window-switcher" in response["body"]
     assert "window=2Y" in response["body"] and "window=5Y" in response["body"]
@@ -2145,7 +2145,7 @@ def test_workspace_tool_d_view_renders_corporate_resilience_page(tmp_path):
     assert "Breakeven Gold" in response["body"]
     assert "Financials source" in response["body"]
     assert "/tool-d?gold_price=3400.00" in response["body"]
-    assert 'class="nav-tab active" href="/tool-d"' in response["body"]
+    assert 'aria-current="page" href="/tool-d"' in response["body"]
 
 
 def test_workspace_tool_d_yahoo_source_recomputes_and_preserves_links(
@@ -2918,7 +2918,7 @@ def test_workspace_root_renders_candidate_finder_home(tmp_path):
     assert ">Bull</a>" in root_response["body"]
     assert ">Bear</a>" in root_response["body"]
     assert "Full model refresh" in root_response["body"]
-    assert 'class="nav-tab active" href="/"' in root_response["body"]
+    assert 'aria-current="page" href="/"' in root_response["body"]
 
 
 def test_workspace_stale_tool_b_schema_renders_actionable_refresh_page(tmp_path):

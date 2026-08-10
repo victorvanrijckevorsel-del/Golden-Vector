@@ -3,6 +3,7 @@ table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.95rem;
+  font-variant-numeric: tabular-nums lining-nums;
 }
 .table-scroll {
   max-width: 100%;

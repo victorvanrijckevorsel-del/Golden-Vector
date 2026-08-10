@@ -93,7 +93,7 @@ class ContractParser(HTMLParser):
             link = {
                 "href": a.get("href", ""),
                 "class": classes,
-                "active": "active" in classes.split(),
+                "active": "active" in classes.split() or "aria-current" in a,
                 "label": "",
             }
             self.nav_links.append(link)

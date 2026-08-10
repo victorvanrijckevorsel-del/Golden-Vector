@@ -137,7 +137,7 @@ def test_static_route_serves_css_modules_with_correct_mime_and_content(tmp_path)
     shell = _call_wsgi_raw(app, method="GET", path="/static/css/shell.css")
     assert shell["status"].startswith("200")
     assert "text/css" in shell["headers"].get("Content-Type", "")
-    assert ".top-nav" in shell["body_text"]
+    assert ".app-sidebar" in shell["body_text"]
 
 
 def test_static_route_uses_resolved_path_for_cache_policy(tmp_path):

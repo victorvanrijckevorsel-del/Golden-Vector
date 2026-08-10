@@ -1,2 +1,58 @@
-/* Consolidated content-driven breakpoints.
-   Populated by the Phase 2 shell and Phase 6 responsive hardening. */
+/* Consolidated content-driven breakpoints (shell drawer + density). */
+@media (max-width: 63.9375rem) {
+  .app-frame {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .nav-toggle {
+    display: inline-block;
+  }
+  .app-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(20rem, 86vw);
+    transform: translateX(-100%);
+    visibility: hidden;
+    z-index: var(--z-drawer);
+    overflow-y: auto;
+    /* Delay hiding until the slide-out completes (close direction only). */
+    transition: transform var(--motion-fast) ease, visibility 0s linear var(--motion-fast);
+  }
+  .app-frame[data-nav-open] .app-sidebar {
+    transform: translateX(0);
+    visibility: visible;
+    /* Opening: visibility flips instantly so focus can move into the menu. */
+    transition: transform var(--motion-fast) ease;
+  }
+  .app-frame[data-nav-open] .nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: var(--backdrop);
+    z-index: calc(var(--z-drawer) - 1);
+  }
+  .nav-link {
+    padding: 12px 10px; /* comfortable touch targets in the drawer */
+  }
+}
+@media (max-width: 47.9375rem) {
+  main {
+    padding: 18px 14px 40px;
+  }
+}
+@media (max-width: 29.9375rem) {
+  main {
+    padding: 14px 10px 32px;
+  }
+  .app-header {
+    padding: 8px 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar {
+    transition: none;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

@@ -85,8 +85,8 @@
   background: var(--surface-hover);
 }
 .window-tab.active {
-  background: var(--link);
-  color: var(--panel);
+  background: var(--selected-bg);
+  color: var(--ink);
   font-weight: 600;
 }
 .window-canonical {

@@ -100,7 +100,7 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert 'class="nav-tab active" href="/option-trading"' in body
+    assert 'aria-current="page" href="/option-trading"' in body
     assert 'id="option-trading"' in body
     assert body.index("<h4>Puts</h4>") < body.index("<h4>Calls</h4>")
     assert "Option Candidates" in body
@@ -165,7 +165,7 @@ def test_workspace_default_detail_uses_lightweight_option_trading_link(
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert 'class="nav-tab active" href="/"' in body
+    assert 'aria-current="page" href="/"' in body
     assert "Open Option Trading for AEM" in body
     assert "/ticker/AEM?lens=option-trading#option-trading" in body
     assert "Option Candidates" not in body
@@ -463,8 +463,8 @@ def test_workspace_detail_invalid_lens_falls_back_to_candidate_finder_nav(tmp_pa
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert 'class="nav-tab active" href="/"' in body
-    assert 'class="nav-tab active" href="/option-trading"' not in body
+    assert 'aria-current="page" href="/"' in body
+    assert 'aria-current="page" href="/option-trading"' not in body
     assert 'id="option-trading"' in body
 
 

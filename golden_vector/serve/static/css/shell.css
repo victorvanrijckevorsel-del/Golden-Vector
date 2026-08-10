@@ -1,30 +1,115 @@
-/* Application frame and navigation. Phase 1 keeps the legacy top tab bar;
-   the Phase 2 shell (sidebar + drawer) replaces the rules in this file. */
-.top-nav {
-  max-width: 1240px;
-  margin: 0 auto;
-  padding: 18px 20px 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  border-bottom: 1px solid var(--line);
+/* Application frame: sidebar navigation, header, drawer, skip link. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: var(--z-popover);
+  background: var(--accent);
+  color: var(--button-ink);
+  padding: 10px 16px;
+  border-radius: 0 0 8px 0;
+  font-weight: 600;
+  text-decoration: none;
 }
-.nav-tab {
-  padding: 10px 18px;
-  border: 1px solid var(--line);
-  border-bottom: none;
-  border-radius: 8px 8px 0 0;
-  background: var(--panel);
-  color: var(--ink);
+.skip-link:focus-visible {
+  left: 0;
+}
+.app-frame {
+  display: grid;
+  grid-template-columns: 15rem minmax(0, 1fr);
+  min-height: 100vh;
+}
+.app-sidebar {
+  background: var(--color-shell);
+  border-right: 1px solid var(--line);
+  padding: 20px 14px;
+}
+.app-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 10px 16px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 14px;
+}
+.app-wordmark {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+}
+.app-descriptor {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+}
+.nav-group {
+  margin-bottom: 14px;
+}
+.nav-group-label {
+  margin: 0 0 4px;
+  padding: 0 10px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.nav-link {
+  display: block;
+  padding: 7px 10px;
+  border-radius: var(--radius-control);
+  border-left: 3px solid transparent;
+  color: var(--muted);
   text-decoration: none;
   font-weight: 600;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
 }
-.nav-tab.active {
-  background: var(--accent);
-  color: var(--white);
-  border-color: var(--accent);
+.nav-link:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
 }
-.nav-tab:hover:not(.active) {
+.nav-link[aria-current="page"] {
+  border-left-color: var(--accent);
   background: var(--accent-soft);
+  color: var(--accent);
 }
+.nav-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.app-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--color-shell);
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+}
+.app-header-title {
+  font-weight: 700;
+  color: var(--ink);
+}
+.nav-toggle {
+  display: none;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 8px 14px;
+  min-height: 44px;
+}
+.nav-toggle:hover {
+  background: var(--surface-hover);
+}
+.nav-backdrop {
+  display: none;
+}
+/* Drawer mode below the desktop breakpoint lives in responsive.css. */

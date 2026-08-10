@@ -1,14 +1,22 @@
 /* Reset, document, typography, links, generic media, base controls. */
+html {
+  color-scheme: dark;
+}
+*, *::before, *::after {
+  box-sizing: border-box;
+}
 body {
   margin: 0;
   font-family: var(--font-ui);
-  background: linear-gradient(180deg, var(--canvas-top) 0%, var(--bg) 100%);
+  background: var(--bg);
   color: var(--ink);
 }
 main {
   max-width: 1240px;
   margin: 0 auto;
   padding: 28px 20px 48px;
+  width: 100%;
+  min-width: 0;
 }
 h1, h2, h3 {
   margin-top: 0;
@@ -29,17 +37,26 @@ input, textarea, select, button {
 }
 input, textarea, select {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   padding: 10px 12px;
-  background: var(--white);
+  background: var(--paper);
+  color: var(--ink);
 }
 button {
   border: 0;
   border-radius: 999px;
   padding: 10px 16px;
   background: var(--accent);
-  color: var(--white);
+  color: var(--button-ink);
+  font-weight: 600;
   cursor: pointer;
+}
+button:hover {
+  background: var(--color-brand-gold-hover);
+}
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 .full-width {
   grid-column: 1 / -1;

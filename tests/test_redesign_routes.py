@@ -79,7 +79,7 @@ def test_scorecard_route_renders_not_built_state(tmp_path):
     body = response["body"]
     assert "<h1>Evidence Scorecard</h1>" in body
     assert "Scorecard is not built yet." in body
-    assert '<a class="nav-tab active" href="/scorecard">Scorecard</a>' in body
+    assert '<a class="nav-link" aria-current="page" href="/scorecard">Scorecard</a>' in body
 
 
 # ------------------------------------------------------- reporting POST route
