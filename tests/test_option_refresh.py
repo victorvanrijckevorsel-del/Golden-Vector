@@ -8,6 +8,7 @@ from golden_vector.app.config import load_app_config
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.serve.option_refresh import (
     REFRESH_JOB_ID_ENV,
+    OptionRefreshStartResult,
     OptionRefreshStatus,
     complete_options_refresh,
     option_refresh_status_path,
@@ -228,6 +229,16 @@ def test_complete_options_refresh_does_not_clobber_newer_job(tmp_path):
     assert persisted["status"] == "running"
 
 
+def _started_result() -> OptionRefreshStartResult:
+    """Realistic double: the real start_options_refresh ALWAYS returns a result
+    object (the route reads .already_running — a bare None double 500s)."""
+    return OptionRefreshStartResult(
+        status=OptionRefreshStatus(status="running"),
+        started=True,
+        already_running=False,
+    )
+
+
 def test_option_refresh_route_starts_job_and_returns_to_detail(tmp_path, monkeypatch):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
@@ -238,6 +249,7 @@ def test_option_refresh_route_starts_job_and_returns_to_detail(tmp_path, monkeyp
 
     def fake_start_options_refresh(received_paths):
         calls.append(received_paths)
+        return _started_result()
 
     monkeypatch.setattr(
         "golden_vector.serve.workspace.start_options_refresh",
@@ -267,6 +279,7 @@ def test_general_refresh_route_starts_job_and_returns_to_main_page(tmp_path, mon
 
     def fake_start_options_refresh(received_paths):
         calls.append(received_paths)
+        return _started_result()
 
     monkeypatch.setattr(
         "golden_vector.serve.workspace.start_options_refresh",
@@ -294,7 +307,7 @@ def test_general_refresh_route_rejects_external_return_to_main_page(tmp_path, mo
     bootstrap_manual_screening_data(paths, tickers=["AEM"])
     monkeypatch.setattr(
         "golden_vector.serve.workspace.start_options_refresh",
-        lambda _paths: None,
+        lambda _paths: _started_result(),
     )
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
 
@@ -317,7 +330,7 @@ def test_option_refresh_route_rejects_external_return_to(tmp_path, monkeypatch):
     bootstrap_manual_screening_data(paths, tickers=["AEM"])
     monkeypatch.setattr(
         "golden_vector.serve.workspace.start_options_refresh",
-        lambda _paths: None,
+        lambda _paths: _started_result(),
     )
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
 
