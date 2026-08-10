@@ -60,3 +60,19 @@ table.js-datatable thead th.dt-orderable-desc {
 .table-region > table {
   margin: 0;
 }
+/* Containment fallback until every table is region-wrapped (Phase 5):
+   panels and two-column cells never push the page sideways; wide bare tables
+   scroll inside their own section. Floating help panels/tooltips attach to
+   <body>, so this clips nothing interactive. */
+section.panel,
+section.nested-panel,
+article.nested-panel,
+.two-column > div {
+  min-width: 0;
+  overflow-x: auto;
+}
+/* Inputs inside table cells never widen the table past its container. */
+table input,
+table select {
+  max-width: 100%;
+}

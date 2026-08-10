@@ -1,0 +1,47 @@
+{
+  "when": "2026-08-10",
+  "gate": "Phase 3 pilot gate (one batched Playwright run + one re-probe after fix)",
+  "overflow_px_by_route_and_width": {
+    "/": {"400": 0, "768": 0, "1024": 0, "1440": 0},
+    "/tool-b": {"400": 0, "768": 0, "1024": 0, "1440": 0},
+    "/ticker/NEM_initial": {"400": 334, "768": 20, "1024": 12, "1440": 0},
+    "/ticker/NEM_after_containment_fix": {"400": 0, "768": 0, "1024": 0, "1440": 0},
+    "/option-trading": {"400": 0, "768": 0, "1024": 0, "1440": 0},
+    "/lab": {"400": 0, "768": 0, "1024": 0, "1440": 0},
+    "/portfolio": {"400": 0, "768": 0, "1024": 0, "1440": 0}
+  },
+  "zoom_200_percent_overflow_px": 0,
+  "keyboard_table_region": {
+    "found": true,
+    "focused": true,
+    "scrollable": true,
+    "label": "Corporate Finance comparison"
+  },
+  "no_js_fallback_tool_b": {
+    "tableRows": 61,
+    "filterBarPresent": 1,
+    "navVisible": true,
+    "note": "all rows server-rendered; nav reachable; filter bar present but inert without JS (unchanged contract)"
+  },
+  "alerts": {
+    "/portfolio": ["DataTables warning: table id=DataTables_Table_0 - Requested unknown parameter '16' for row"],
+    "all_other_pilot_routes": [],
+    "note": "known defect D11, deferred to post-Phase-8; captured via window.alert stub, never a blocking dialog"
+  },
+  "console_errors": [],
+  "help_popover_containment": {
+    "parent": "BODY",
+    "note": "help panel attaches to <body>, so panel-level overflow-x containment cannot clip it; behaviour pinned by the help-affordance unit suites"
+  },
+  "artifact_write_check": {
+    "files_snapshotted": 18253,
+    "changed_after_all_GET_browsing": 0,
+    "method": "size+mtime_ns snapshot before/after the browser gate (sha256-level proof recorded at Phase 0)"
+  },
+  "screenshots": [
+    "pilot_toolb_desktop.png",
+    "pilot_cf_mobile_drawer.png",
+    "pilot_ticker_nem.png"
+  ],
+  "verdict": "PASS after the detail containment fix; D11 remains open by design"
+}
