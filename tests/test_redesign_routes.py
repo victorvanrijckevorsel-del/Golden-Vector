@@ -791,3 +791,59 @@ def test_ticker_slug_and_zero_lot_cell_render_plainly():
     assert _ticker_slug("NEM") == "nem"
     assert _render_lots_link("NEM", 0) == "0 lots"
     assert _render_lots_link("BHP.AX", 2) == '<a href="#lots-bhp-ax">2 lots</a>'
+
+
+# ------------------------------------------------- deep-review H1 / M6 / M2
+
+
+def test_rejected_company_save_echoes_rate_verbatim_not_display_scaled(tmp_path):
+    """Deep-review H1: the error re-render echoes the SUBMITTED string. The old
+    row-overlay pushed it through _format_form_value, which display-scales
+    stored rate fractions — an echoed "5" became value="500", and a re-save
+    silently persisted a 500% royalty."""
+    _, app = _full_app(tmp_path)
+
+    response = call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/company",
+        data={"royalty_rate": "5", "aisc_usd_per_oz": "not-a-number"},
+    )
+
+    assert response["status"].startswith("400")
+    assert 'name="royalty_rate" type="number" value="5"' in response["body"]
+    assert 'value="500"' not in response["body"]
+
+
+def test_rejected_note_save_keeps_the_typed_note(tmp_path):
+    """Deep-review M6: a rejected note save must not discard the typed text."""
+    _, app = _full_app(tmp_path)
+
+    response = call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/note",
+        data={"note_text": "", "note_tag": "FOLLOW_UP-marker", "note_status": "OPEN"},
+    )
+
+    assert response["status"].startswith("400")
+    assert "notice-danger" in response["body"]
+    assert 'value="FOLLOW_UP-marker"' in response["body"]
+
+
+def test_percent_suffix_rate_saves_once_not_twice(tmp_path):
+    """Deep-review M2: one normalize boundary. Typing "30%" for a rate must
+    store 0.30 (round-tripping to a displayed 30), not 0.003 (double divide)."""
+    _, app = _full_app(tmp_path)
+
+    saved = call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/company",
+        data={"tax_rate": "30%"},
+    )
+    assert saved["status"].startswith("303")
+
+    page = call_wsgi_app(app, method="GET", path="/ticker/NEM")
+    assert 'name="tax_rate" type="number" value="30"' in page["body"]
+    assert 'name="tax_rate" type="number" value="0.3"' not in page["body"]

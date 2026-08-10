@@ -30,7 +30,7 @@ from golden_vector.common.windows import (
     resolve_window,
     window_suffix,
 )
-from golden_vector.serve.format_helpers import _optional_float
+from golden_vector.serve.format_helpers import _MISSING_SORT_SENTINEL, _optional_float
 
 __all__ = [
     "STRUCTURAL_WINDOWS",
@@ -113,14 +113,19 @@ def win_num_td(value: float | None, *, reliable: bool, decimals: int = 2) -> str
     Downside (C) overviews. Sorts by ``data-order``; when the selected window's gold-link
     is weak/thin the number is muted (weak evidence must DISPLAY as weak, not just warn)."""
     if value is None or value != value:
-        return "<td data-order=\"-999\"><span class=\"hint\">—</span></td>"
+        # One missing-value sort convention product-wide (deep-review M3): the
+        # shared sentinel sorts missing rows last, matching every other table.
+        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\"><span class=\"hint\">—</span></td>"
     txt = f"{value:.{decimals}f}"
-    body = (
-        txt
-        if reliable
-        else f"<span class=\"hint\" title=\"weak gold-link — treat with caution\">{txt}</span>"
+    if reliable:
+        return f"<td data-order=\"{value:.4f}\">{txt}</td>"
+    # Degraded evidence is EXCLUDED from ordering, not just muted (deep-review
+    # M4, per the exclusion canon): the number stays visible but sorts with the
+    # missing rows so a weak-gold-link name can't interleave with trusted ones.
+    return (
+        f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">"
+        f"<span class=\"hint\" title=\"weak gold-link — treat with caution\">{txt}</span></td>"
     )
-    return f"<td data-order=\"{value:.4f}\">{body}</td>"
 
 
 def gold_link_td(r_squared: float | None) -> str:
@@ -128,7 +133,7 @@ def gold_link_td(r_squared: float | None) -> str:
     Sortable by R² via ``data-order``; weak/none is muted. Shared by the A and C overviews."""
     band, fit_ok = r2_band(r_squared)
     if r_squared is None:
-        return "<td data-order=\"-1\"><span class=\"hint\">—</span></td>"
+        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\"><span class=\"hint\">—</span></td>"
     inner = f"{band} · {r_squared * 100:.0f}%"
     body = inner if fit_ok else f"<span class=\"hint\">{inner}</span>"
     return f"<td data-order=\"{r_squared:.4f}\">{body}</td>"

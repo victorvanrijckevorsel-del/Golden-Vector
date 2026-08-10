@@ -67,17 +67,15 @@ def render_detail_page(
     tool_b_row = _frame_index_by_ticker(state.latest_tool_b).get(ticker, {})
     verification_rows = _ticker_rows(state.source_verification, ticker)
     note_rows = _ticker_rows(state.stock_notes, ticker)
-    # Rejected-POST echo: overlay the raw submitted strings on top of the
-    # stored row so the user sees what they typed, not the old saved value.
-    # Only forms that actually render values can echo (the add-note form
-    # renders empty inputs, so a "note" override is a deliberate no-op).
+    # Rejected-POST echo: hand the raw submitted strings to the form renderers
+    # as display-verbatim overrides. They must NEVER be overlaid onto the row
+    # dicts — _format_form_value would reinterpret them (it multiplies stored
+    # rate FRACTIONS by 100 for display, so an echoed "5" became "500" and a
+    # re-save silently persisted a 500% rate — deep-review H1).
     overrides_by_section = dict(form_overrides or {})
     company_overrides = dict(overrides_by_section.get("company") or {})
-    if company_overrides:
-        company_row = {**company_row, **company_overrides}
     reporting_overrides = dict(overrides_by_section.get("reporting") or {})
-    if reporting_overrides:
-        reporting_row = {**reporting_row, **reporting_overrides}
+    note_overrides = dict(overrides_by_section.get("note") or {})
     verification_overrides = dict(overrides_by_section.get("verification") or {})
     verification_field = str(verification_overrides.get("field_name") or "").strip()
     if verification_field:
@@ -201,6 +199,7 @@ def render_detail_page(
                 company_row=company_row,
                 verification_rows=verification_rows,
                 return_to=return_to,
+                raw_overrides=company_overrides or None,
             )
         )
         body.append(
@@ -208,6 +207,7 @@ def render_detail_page(
                 ticker=ticker,
                 reporting_row=reporting_row,
                 return_to=return_to,
+                raw_overrides=reporting_overrides or None,
             )
         )
         body.append(
@@ -217,7 +217,14 @@ def render_detail_page(
                 return_to=return_to,
             )
         )
-        body.append(_render_note_section(ticker=ticker, note_rows=note_rows, return_to=return_to))
+        body.append(
+            _render_note_section(
+                ticker=ticker,
+                note_rows=note_rows,
+                return_to=return_to,
+                raw_overrides=note_overrides or None,
+            )
+        )
     active_nav = "option_trading" if option_lens_active else "candidate_finder"
     return _page_shell(
         f"Golden Vector Workspace - {ticker}",

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import os
+from collections import OrderedDict
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -74,7 +76,122 @@ class ToolADetailState:
     ] = field(default_factory=dict)
 
 
+# ---------------------------------------------------------------------------
+# Request-path memoization (deep-review perf fix, 2026-08-11).
+#
+# The canon is "compute once → persist → serve reads", but the detail page's
+# deep-dive state has always been ASSEMBLED per request from persisted inputs
+# (the accepted exception documented on _build_rebased_overlay_by_window).
+# Profiling the real /ticker/<T> request showed ~83% of every hit re-reading
+# ~11 parquet files and re-running the same assembly for UNCHANGED inputs
+# (~1.1-1.6s per page, paid again on every window/lens switch).
+#
+# These caches memoize the two per-request loaders keyed on the
+# (path, mtime_ns, size) signature of every file that can change their
+# output. The model-state manifest governs every resolve_current_* choice
+# (published artifacts are immutable run-stamped files, so WHICH file gets
+# read only changes when the manifest changes); the latest-* aliases cover
+# the manifest-less fallback route; the manual store covers user saves.
+# Publish is all-or-nothing, so an unchanged signature means byte-identical
+# inputs. Degraded detail loads (foundation_error) are never cached, so a
+# transient I/O failure retries on the next request.
+
+_STATE_CACHE: OrderedDict[tuple, WorkspaceState] = OrderedDict()
+_STATE_CACHE_MAX = 4
+_DETAIL_CACHE: OrderedDict[tuple, ToolADetailState] = OrderedDict()
+_DETAIL_CACHE_MAX = 24
+
+
+def clear_workspace_state_cache() -> None:
+    """Drop every memoized loader result (test hook)."""
+    _STATE_CACHE.clear()
+    _DETAIL_CACHE.clear()
+
+
+def _stat_entry(path: object) -> tuple:
+    if path is None:
+        return ("<none>", None, None)
+    try:
+        stat_result = os.stat(path)
+    except OSError:
+        return (str(path), None, None)
+    return (str(path), stat_result.st_mtime_ns, stat_result.st_size)
+
+
+def _loader_inputs_signature(paths: ProjectPaths) -> tuple:
+    return tuple(
+        _stat_entry(candidate)
+        for candidate in (
+            paths.latest_model_state_manifest_path,
+            paths.latest_foundation_manifest_path,
+            paths.latest_tool_a_snapshot_parquet_path,
+            paths.latest_tool_b_snapshot_parquet_path,
+            paths.latest_tool_c_snapshot_parquet_path,
+            paths.latest_tool_d_spot_snapshot_parquet_path,
+            paths.latest_tool_d_snapshot_parquet_path,
+            paths.latest_benchmark_betas_path,
+            paths.latest_tool_a_structural_metrics_path,
+            paths.manual_screening_store_path,
+        )
+    )
+
+
+def _fresh_state_view(state: WorkspaceState) -> WorkspaceState:
+    """Per-request view of a cached state. Frames are handed out as cheap
+    block-sharing copies so a renderer's column-level assignment can never
+    write into the cached object (no renderer mutates today; this keeps that
+    an invariant instead of a hope)."""
+    return replace(
+        state,
+        foundation_manifest=(
+            dict(state.foundation_manifest)
+            if state.foundation_manifest is not None
+            else None
+        ),
+        model_state_manifest=(
+            dict(state.model_state_manifest)
+            if state.model_state_manifest is not None
+            else None
+        ),
+        company_inputs=state.company_inputs.copy(deep=False),
+        source_verification=state.source_verification.copy(deep=False),
+        reporting_calendar=state.reporting_calendar.copy(deep=False),
+        stock_notes=state.stock_notes.copy(deep=False),
+        latest_tool_a=state.latest_tool_a.copy(deep=False),
+        latest_tool_b=state.latest_tool_b.copy(deep=False),
+        latest_tool_c=state.latest_tool_c.copy(deep=False),
+        latest_tool_d=state.latest_tool_d.copy(deep=False),
+        latest_benchmark_betas=state.latest_benchmark_betas.copy(deep=False),
+    )
+
+
+def _fresh_detail_view(detail: ToolADetailState) -> ToolADetailState:
+    return replace(
+        detail,
+        weekly_series=detail.weekly_series.copy(deep=False),
+        structural_window_metrics=detail.structural_window_metrics.copy(deep=False),
+        exploratory_horizons=detail.exploratory_horizons.copy(deep=False),
+        benchmark_comparison_by_window=dict(detail.benchmark_comparison_by_window),
+        rebased_overlay_by_window=dict(detail.rebased_overlay_by_window),
+    )
+
+
 def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> WorkspaceState:
+    cache_key = (tuple(tool_b_tickers), _loader_inputs_signature(paths))
+    cached = _STATE_CACHE.get(cache_key)
+    if cached is not None:
+        _STATE_CACHE.move_to_end(cache_key)
+        return _fresh_state_view(cached)
+    state = _load_workspace_state_uncached(paths, tool_b_tickers)
+    _STATE_CACHE[cache_key] = state
+    while len(_STATE_CACHE) > _STATE_CACHE_MAX:
+        _STATE_CACHE.popitem(last=False)
+    return _fresh_state_view(state)
+
+
+def _load_workspace_state_uncached(
+    paths: ProjectPaths, tool_b_tickers: list[str]
+) -> WorkspaceState:
     loaded = load_manual_screening_data(paths, tickers=tool_b_tickers)
     model_state_manifest = load_current_model_state_manifest(paths)
     foundation_manifest = read_current_model_json(
@@ -177,6 +294,31 @@ def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> Wor
 
 
 def _load_tool_a_detail(
+    paths: ProjectPaths,
+    *,
+    app_config: AppConfig,
+    ticker: str,
+    universe_tool_a: pd.DataFrame | None = None,
+) -> ToolADetailState:
+    # app_config is process-constant (one config per server) and
+    # universe_tool_a's content is covered by the same artifact signature,
+    # so neither needs to join the key.
+    cache_key = (str(ticker).upper(), _loader_inputs_signature(paths))
+    cached = _DETAIL_CACHE.get(cache_key)
+    if cached is not None:
+        _DETAIL_CACHE.move_to_end(cache_key)
+        return _fresh_detail_view(cached)
+    detail = _load_tool_a_detail_uncached(
+        paths, app_config=app_config, ticker=ticker, universe_tool_a=universe_tool_a
+    )
+    if detail.foundation_error is None:
+        _DETAIL_CACHE[cache_key] = detail
+        while len(_DETAIL_CACHE) > _DETAIL_CACHE_MAX:
+            _DETAIL_CACHE.popitem(last=False)
+    return _fresh_detail_view(detail)
+
+
+def _load_tool_a_detail_uncached(
     paths: ProjectPaths,
     *,
     app_config: AppConfig,

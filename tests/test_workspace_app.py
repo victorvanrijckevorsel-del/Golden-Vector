@@ -2121,8 +2121,11 @@ def test_workspace_tool_c_view_degrades_gracefully_for_old_artifact(tmp_path):
         assert "Gold Downside" in response["body"]
         assert "window-switcher" in response["body"]  # selector still renders
         assert "82.0" in response["body"]  # core-based downside rank still shown
-        # the windowed beta cells degrade to the muted None cell, not a crash or stale value
-        assert 'data-order="-999"' in response["body"], window
+        # the windowed beta cells degrade to the muted None cell, not a crash or
+        # stale value — missing values sort with the shared product-wide
+        # sentinel (deep-review M3), never the old -999 missing-first order.
+        assert 'data-order="9000000000000000"' in response["body"], window
+        assert 'data-order="-999"' not in response["body"], window
 
 
 def test_workspace_tool_d_view_renders_corporate_resilience_page(tmp_path):
@@ -3026,3 +3029,51 @@ def test_all_serve_modules_avoid_unsanctioned_analytics_tokens():
         "Unsanctioned analytics in serve (backend computes, serve renders): "
         + ", ".join(violations)
     )
+
+
+def test_model_state_banner_tone_is_warning_when_manifest_is_absent():
+    """Plan 10.5: danger is reserved for corrupt-class states. A missing manifest
+    (fresh clone, build never run) is a missing-with-action warning."""
+    from golden_vector.serve.model_state_banner import render_model_state_banner
+
+    html = render_model_state_banner(None)
+
+    assert "notice-warning" in html
+    assert "notice-danger" not in html
+    assert "Model build state needs attention" in html
+
+
+def test_model_state_banner_tone_is_danger_only_for_unreadable_manifest():
+    from golden_vector.serve.model_state_banner import render_model_state_banner
+
+    corrupt = render_model_state_banner(
+        {"state": "incomplete", "manifest_readable": False, "warnings": ["bad json"]}
+    )
+    readable = render_model_state_banner(
+        {"state": "incomplete", "manifest_readable": True, "warnings": ["missing tool_c"]}
+    )
+
+    assert "notice-danger" in corrupt
+    assert "notice-warning" in readable
+    assert "notice-danger" not in readable
+
+
+def test_overview_empty_states_drop_js_datatable_class(tmp_path):
+    """A colspan-only empty row does not match the explicit column model that
+    workspace-tables.js hands DataTables; keeping js-datatable raises a blocking
+    alert and kills every later table on the page. Same rule as Candidate Finder."""
+    from tests.helpers import call_wsgi_app
+    from tests.test_redesign_routes import _full_app
+
+    _paths, app = _full_app(tmp_path)
+    for path, table_id in (
+        ("/tool-a?search=ZZZNOMATCH", "tool-a-table"),
+        ("/tool-b?search=ZZZNOMATCH", "tool-b-table"),
+        ("/tool-c?search=ZZZNOMATCH", "tool-c-table"),
+        ("/tool-d?search=ZZZNOMATCH", "tool-d-table"),
+    ):
+        response = call_wsgi_app(app, method="GET", path=path)
+        assert response["status"].startswith("200"), path
+        body = response["body"]
+        assert f'id="{table_id}" class="empty-table"' in body, path
+        assert f'id="{table_id}" class="js-datatable"' not in body, path

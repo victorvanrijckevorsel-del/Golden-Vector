@@ -275,16 +275,17 @@ def _coerce_form_numeric(value: str) -> float | None:
     text = str(value).strip()
     if not text:
         return None
-    percent_suffix = text.endswith("%")
-    if percent_suffix:
+    # One normalize boundary (deep-review M2): a trailing "%" is stripped as a
+    # COSMETIC suffix only — no division here. The manual store owns percent→
+    # fraction conversion for rate fields (percent_to_fraction), so dividing
+    # here too turned "30%" into 0.3% (double divide).
+    if text.endswith("%"):
         text = text[:-1].strip()
     try:
         numeric = float(text)
     except ValueError as exc:
         raise ValueError("Numeric fields must be numeric.") from exc
     require_finite(numeric, field="Numeric fields")
-    if percent_suffix:
-        return numeric / 100.0
     return numeric
 
 

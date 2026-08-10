@@ -50,7 +50,12 @@ def _render_company_form(
     company_row: dict[str, Any],
     verification_rows: list[dict[str, Any]] | None = None,
     return_to: str | None = None,
+    raw_overrides: dict[str, str] | None = None,
 ) -> str:
+    # Rejected-POST echo (deep-review H1): raw submitted strings render
+    # VERBATIM — they must never pass through _format_form_value, which
+    # display-scales stored rate fractions ("5" would echo as "500").
+    echo = dict(raw_overrides or {})
     verification_status_by_field = {
         str(row.get("field_name") or "").strip(): str(row.get("verification_status") or "").strip().upper()
         for row in (verification_rows or [])
@@ -67,7 +72,11 @@ def _render_company_form(
     fields_html: list[str] = []
     for field_name, label, input_type in COMPANY_FORM_FIELDS:
         raw_value = company_row.get(field_name)
-        value = _format_form_value(field_name, raw_value)
+        value = (
+            str(echo[field_name])
+            if field_name in echo
+            else _format_form_value(field_name, raw_value)
+        )
         step_attr = " step=\"0.01\"" if input_type == "number" else ""
         is_present = bool(value.strip())
         clear_checkbox_html = (
@@ -144,18 +153,28 @@ def _render_reporting_form(
     ticker: str,
     reporting_row: dict[str, Any],
     return_to: str | None = None,
+    raw_overrides: dict[str, str] | None = None,
 ) -> str:
+    # Rejected-POST echo (deep-review H1): raw submitted strings render
+    # verbatim, never through _format_form_value.
+    echo = dict(raw_overrides or {})
+
+    def field_value(field_name: str) -> str:
+        if field_name in echo:
+            return str(echo[field_name])
+        return _format_form_value(field_name, reporting_row.get(field_name))
+
     fields_html = [
         "<label>"
         f"<span>{escape(label)}</span>"
-        f"<input name=\"{escape(field_name)}\" type=\"date\" value=\"{escape(_format_form_value(field_name, reporting_row.get(field_name)))}\">"
+        f"<input name=\"{escape(field_name)}\" type=\"date\" value=\"{escape(field_value(field_name))}\">"
         "</label>"
         for field_name, label in REPORTING_FORM_FIELDS[:2]
     ]
     fields_html.append(
         "<label class=\"full-width\">"
         "<span>Reporting Notes</span>"
-        f"<textarea name=\"notes\" rows=\"3\">{escape(_format_form_value('notes', reporting_row.get('notes')))}</textarea>"
+        f"<textarea name=\"notes\" rows=\"3\">{escape(field_value('notes'))}</textarea>"
         "</label>"
     )
     updated_at = _fmt_text(reporting_row.get("updated_at_utc"))
@@ -296,7 +315,11 @@ def _render_note_section(
     ticker: str,
     note_rows: list[dict[str, Any]],
     return_to: str | None = None,
+    raw_overrides: dict[str, str] | None = None,
 ) -> str:
+    # Rejected-POST echo (deep-review M6): a rejected note save must not
+    # discard the typed note — prefill the add-note form verbatim.
+    echo = dict(raw_overrides or {})
     open_count = sum(1 for r in note_rows if str(r.get("note_status") or "").upper() == "OPEN")
     watch_count = sum(1 for r in note_rows if str(r.get("note_status") or "").upper() == "WATCH")
     done_count = sum(1 for r in note_rows if str(r.get("note_status") or "").upper() == "DONE")
@@ -352,12 +375,17 @@ def _render_note_section(
         f"{note_table}"
         f"<form method=\"post\" action=\"/ticker/{escape(ticker)}/note\" class=\"note-form\">"
         f"{_return_to_input(return_to)}"
-        "<label class=\"full-width\"><span>Note</span><textarea name=\"note_text\" rows=\"3\" required></textarea></label>"
-        "<label><span>Tag</span><input name=\"note_tag\" type=\"text\" placeholder=\"e.g. FOLLOW_UP\"></label>"
+        "<label class=\"full-width\"><span>Note</span>"
+        f"<textarea name=\"note_text\" rows=\"3\" required>{escape(str(echo.get('note_text', '')))}</textarea></label>"
+        "<label><span>Tag</span>"
+        f"<input name=\"note_tag\" type=\"text\" placeholder=\"e.g. FOLLOW_UP\" value=\"{escape(str(echo.get('note_tag', '')), quote=True)}\"></label>"
         "<label><span>Status</span>"
         "<select name=\"note_status\">"
         + "".join(
-            f"<option value=\"{option}\">{option}</option>" for option in NOTE_STATUS_OPTIONS
+            f"<option value=\"{option}\""
+            + (" selected" if str(echo.get("note_status", "")).upper() == option else "")
+            + f">{option}</option>"
+            for option in NOTE_STATUS_OPTIONS
         )
         + "</select></label>"
         "<div class=\"form-actions\"><button type=\"submit\" class=\"btn btn-primary\">Add Note</button></div>"

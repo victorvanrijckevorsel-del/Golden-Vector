@@ -74,6 +74,7 @@ FOCUSED_TEST_FILES: tuple[str, ...] = (
     "tests/test_workspace_datatables.py",
     "tests/test_workspace_horizon_switcher.py",
     "tests/test_workspace_shell.py",
+    "tests/test_workspace_state_cache.py",
 )
 
 
