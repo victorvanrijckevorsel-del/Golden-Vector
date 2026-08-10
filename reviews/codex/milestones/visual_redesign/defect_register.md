@@ -133,7 +133,7 @@ Severity: HIGH = misleads the user or corrupts workflow state; MEDIUM = wrong/in
 
 **Resolution log** (post-Phase-8 follow-up, all resolved 2026-08-10 on dev-vic):
 
-- **D1** — RESOLVED, commit `45583e6`. `app_config` threaded through all four ticker-POST validation re-renders; errors return 400 with the full page + danger notice, never 500. Old 500-pinning characterizations flipped, plus a company-form variant.
+- **D1** — RESOLVED in two steps. Commit `45583e6`: `app_config` threaded through all four ticker-POST validation re-renders; errors return 400 with the full page + danger notice, never 500 (old 500-pinning characterizations flipped, plus a company-form variant). The context-preservation half (GV-RD-FINAL-001: `45583e6` still reset window/lens/source and discarded submitted values) completed in `ed756a9`: one shared helper resolves view state like the GET path — from the validated `return_to`, which is what real bare-action forms send — and echoes submitted values via `form_overrides`; bare-URL regression included.
 - **D2** — RESOLVED, commit `bdb3aa3`. An all-blank company POST redirects without the `saved` marker — no false "Saved" claim when nothing was written.
 - **D3** — RESOLVED, commit `83e4930`. The option sizing form carries the active `?window=` selection through submission.
 - **D4** — RESOLVED, commit `bdb3aa3`. `return_to` values containing control characters (0x00-0x1F, 0x7F) fall back to the safe ticker path.

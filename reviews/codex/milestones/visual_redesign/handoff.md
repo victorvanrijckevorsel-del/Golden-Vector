@@ -20,10 +20,18 @@ GV-RD-P34-1…6 — resolutions in `defect_register.md`).
 - **Every route migrated**: CF, Tools A–D, Option Trading, Portfolio, Lab
   (overview + drilldown), Scorecard, ticker detail (+forms). Header `scope`
   contract everywhere incl. the correlation matrix.
-- **A11y/responsive**: 0px body overflow on 11 routes × 4 widths + 200% zoom;
-  clamped popover/rug/crosshair (pointer events add touch); dashed benchmark
-  strokes (no colour-only charts); forced-colors + reduced-motion + long-content
-  handling; WCAG contrast enforced by token AND selector-level tests.
+- **A11y/responsive**: consolidated release matrix (browser_evidence_final_matrix.json):
+  0px overflow on 11 routes × 7 named widths 1440/1280/1024/768/640/390/320
+  (640 == 200% zoom, 320 == 400% zoom by WCAG reflow equivalence), 0 alerts,
+  error states + anchor visibility + 24px tap targets + skip-link first focus
+  + back/forward all recorded;
+  clamped popover/rug/crosshair; chart hover data ALSO rendered as collapsed
+  keyboard-accessible data tables (GV-RD-FINAL-002 remedy — pointer events alone
+  are not an operable touch/keyboard path); dashed benchmark strokes (no
+  colour-only charts); forced-colors + reduced-motion + long-content handling;
+  contrast: token pairs + curated control states + a self-maintaining scan that
+  fails on ANY new self-colored selector below AA (inherited/composited
+  combinations stay browser-gate territory, not statically claimed).
 - **Legacy removed**: bare `.flash`, dead selectors (incl. `segmented-control`),
   `table-scroll`; dead-selector scan with documented dynamic allowlist.
 
@@ -50,12 +58,15 @@ or shared-data change (boundary proof in the matrix evidence).
 
 ## Known limitations / open items
 
-- **Defect register D1–D11** (pre-existing, characterized, NOT yet fixed):
-  next step is separate labelled behavioural commits — D1 (ticker POST
-  validation 500s with real data) and D11 (Portfolio DataTables alert) are the
-  HIGHs. D11 still fires in the matrix, as expected.
-- Keyboard access to chart hover detail: documented accepted gap (Phase 6
-  evidence) — tables carry the numbers; pointer events cover touch.
+- **Defect register D1–D11: ALL RESOLVED** in labelled follow-up commits (see
+  the register's resolution log). D11's zero-alert proof:
+  browser_evidence_d11_fix.json + 0 alerts across the final matrix's 77 loads;
+  D1's context-preservation half completed under GV-RD-FINAL-001 (ed756a9).
+- Keyboard access to chart hover detail: CLOSED by GV-RD-FINAL-002 — every
+  pointer-revealed chart value (overlay crosshair, rug ticks) is also rendered
+  as a collapsed "Chart data (table)" disclosure in a labelled region,
+  equivalence pinned by tests/test_chart_data_tables.py (table rows ==
+  embedded payload entries).
 - Benchmark-ETF vehicle detail variant is exercised by flag logic + live
   matrix, not a dedicated fixture route test.
 - `--flash-*` token NAMES survive (values used by notice-danger); cosmetic

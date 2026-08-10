@@ -1,0 +1,34 @@
+{
+  "gate": "FINAL-004 consolidated release matrix (replaces the Phase 8 aggregate evidence)",
+  "date": "2026-08-10",
+  "tree_under_test": "ed756a9 + the matrix-found CSS fixes committed immediately after this run",
+  "method": "one scripted real-browser pass (.playwright-mcp/final_release_matrix.js); alert() stubbed as a recorder via addInitScript before navigation; pageerror + console-error listeners attached before first goto",
+  "zoom_equivalence": "WCAG 1.4.10 reflow: 640px width == 200% zoom at 1280; 320px width == 400% zoom at 1280. Zoom is therefore covered by the width matrix, not per-route zoom emulation.",
+  "routes": ["/", "/candidate-finder", "/tool-a", "/tool-b", "/tool-d", "/option-trading", "/lab", "/scorecard", "/portfolio", "/ticker/NEM", "/ticker/NEM?lens=option-trading"],
+  "widths_px": [1440, 1280, 1024, 768, 640, 390, 320],
+  "results": {
+    "horizontal_overflow_violations": [],
+    "alert_calls_across_77_loads": 0,
+    "console_errors": "3, all the browser's own resource-load messages for the deliberately-visited 400/404 error-state probes; zero on normal routes",
+    "error_states": {
+      "cf_parse_400": {"status": 400, "persisted_screen_rendered": true, "danger_notice": true},
+      "unknown_route_404": {"status": 404, "app_shell_rendered": true},
+      "unknown_ticker_404": {"status": 404},
+      "note": "no 403/503 surfaces exist: the app has no auth layer or upstream proxy; 400 + 404 are its real error states"
+    },
+    "refresh_already_running_notice_on_main_screen": true,
+    "anchor_visibility_390px": {"target_top": 68, "header_bottom": 61, "visible": true, "note": "section-nav is static below the desktop breakpoint (pills wrap to content-dependent rows); scroll-padding-top clears the sticky header"},
+    "chart_data_tables": {"disclosures_on_ticker_detail": 3, "first_table_rows": 61},
+    "tap_targets": {"min_px": 24, "below_24": 0},
+    "forms_without_submit_control": 0,
+    "first_tab_focus": "skip-link",
+    "back_forward_history": "ok"
+  },
+  "defects_found_by_this_gate_and_fixed": [
+    "auto-fit minmax(320px) grids forced 320px columns at the 320px stress width (44px document overflow on the three section-nav routes); all auto-fit grids now use minmax(min(Xpx, 100%), 1fr)",
+    "help-icon buttons were 16px tap targets (20 on ticker detail); now 24px boxes per WCAG 2.5.8 with the same glyph",
+    "sticky section-nav wrapped to ~107px tall at phone widths and covered its own anchor targets; it is static below the desktop breakpoint with token-driven scroll-padding for the sticky header"
+  ],
+  "qa_infrastructure_note": "single-threaded wsgiref wedges when Chrome opens speculative preconnect sockets that never send a request (accept()+recv() blocks forever); browser gates run the server via .playwright-mcp/serve_with_socket_timeout.py (socket default timeout 5s, gitignored, zero production change)",
+  "not_statically_claimed": "malformed-HTML validity is covered by the pytest HTMLParser structural guards, not this gate; composited/inherited color combinations are reviewed here visually, only self-colored selectors are statically contrast-checked"
+}

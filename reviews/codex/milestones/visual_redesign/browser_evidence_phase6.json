@@ -11,6 +11,7 @@
   "forced_colors_current_nav_cue": {"outlineStyle": "solid", "outlineWidth": "2px"},
   "skip_link_first_tab": {"focused": true, "visible": true},
   "console_errors_across_44_loads": 0,
-  "documented_gap": "Chart hover detail (rug ticks, overlay crosshair) has no keyboard equivalent. Mitigations: pointer events now cover touch taps; every decision-relevant number (betas, ranks, scores) is in keyboard-accessible tables on the same pages; the SVG <title> no-JS fallback remains. Recorded as an explicit accepted gap per the Phase 6 task wording.",
-  "verdict": "PASS"
+  "documented_gap": "Chart hover detail (rug ticks, overlay crosshair) had no keyboard equivalent at Phase 6. The original record here overclaimed that pointer events cover touch taps (flagged by GV-RD-FINAL-002: move/hover-only pointer listeners are not an operable tap/keyboard path).",
+  "gap_resolution_2026-08-10": "GV-RD-FINAL-002 closed the gap: every pointer-revealed value is also rendered as a collapsed keyboard-accessible 'Chart data (table)' disclosure; equivalence pinned by tests/test_chart_data_tables.py and re-verified in the final release matrix evidence.",
+  "verdict": "PASS with the gap above resolved post-review"
 }
