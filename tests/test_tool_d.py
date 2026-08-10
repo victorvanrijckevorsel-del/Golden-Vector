@@ -691,3 +691,30 @@ def test_yahoo_fallback_error_names_both_sources():
     assert "Yahoo Fundamentals" in message
     assert "Our View" in message
     assert "boom" in message
+
+
+def test_tool_d_route_warns_naming_requested_and_effective_source(tmp_path, monkeypatch):
+    """D7 RESOLVED at the RENDER level (GV-RD-FINAL-006).
+
+    A failing Yahoo-source computation must still render the page (200) with a
+    warning that names BOTH the requested source (Yahoo Fundamentals) and the
+    source actually shown (Our View) -- so the displayed basis and the stated
+    basis can never disagree silently."""
+    import golden_vector.serve.overview_tool_d as overview_tool_d
+    from tests.helpers import call_wsgi_app
+    from tests.test_redesign_routes import _full_app
+
+    _paths, app = _full_app(tmp_path)
+
+    def exploding_scenario(**kwargs):
+        raise RuntimeError("yahoo-source-boom")
+
+    monkeypatch.setattr(overview_tool_d, "_compute_scenario_frame", exploding_scenario)
+
+    response = call_wsgi_app(app, method="GET", path="/tool-d?fundamentals_source=yahoo")
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "Could not compute Yahoo Fundamentals view" in body
+    assert "yahoo-source-boom" in body
+    assert "Showing Our View data instead (requested Yahoo Fundamentals)." in body

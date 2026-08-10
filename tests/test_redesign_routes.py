@@ -184,6 +184,100 @@ def test_company_post_invalid_numeric_returns_400_with_tool_a_data(tmp_path):
     assert "Company Inputs" in response["body"]
 
 
+def _return_to_values(body: str) -> list[str]:
+    return re.findall(r'name="return_to" value="([^"]*)"', body)
+
+
+def test_reporting_error_rerender_preserves_query_state_and_submitted_values(tmp_path):
+    """GV-RD-FINAL-001: the rejected POST must come back on the SAME page the
+    user was on (window + fundamentals source), with the values they typed."""
+    _, app = _full_app(tmp_path)
+
+    response = call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/reporting?window=6M&fundamentals_source=yahoo",
+        data={
+            "next_financial_report_date": "not-a-date",
+            "notes": "typed marker",
+            "return_to": "/ticker/NEM?window=6M&fundamentals_source=yahoo",
+        },
+    )
+
+    assert response["status"].startswith("400")
+    body = response["body"]
+    assert "notice-danger" in body
+
+    # The window switcher marks 6M active (not the fixture's canonical anchor).
+    active_tabs = re.findall(r'<a class="window-tab active" href="([^"]*)"', body)
+    assert len(active_tabs) == 1
+    assert "window=6m" in active_tabs[0]
+
+    # Every hidden return_to carries the request's view state.
+    returns = _return_to_values(body)
+    assert returns
+    for value in returns:
+        assert "window=6M" in value
+        assert "fundamentals_source=yahoo" in value
+        assert value != "/ticker/NEM"
+
+    # And the submitted values are echoed back, not the stored row.
+    assert "typed marker" in body
+    assert 'value="not-a-date"' in body
+
+
+def test_reporting_error_rerender_recovers_state_from_return_to_only(tmp_path):
+    """Real browsers POST to the BARE form action (no query string) — the view
+    state travels only in the hidden return_to field."""
+    _, app = _full_app(tmp_path)
+
+    response = call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/reporting",
+        data={
+            "next_financial_report_date": "not-a-date",
+            "notes": "typed marker",
+            "return_to": "/ticker/NEM?window=6M&fundamentals_source=yahoo",
+        },
+    )
+
+    assert response["status"].startswith("400")
+    body = response["body"]
+    assert "notice-danger" in body
+    active_tabs = re.findall(r'<a class="window-tab active" href="([^"]*)"', body)
+    assert len(active_tabs) == 1
+    assert "window=6m" in active_tabs[0]
+    returns = _return_to_values(body)
+    assert returns
+    for value in returns:
+        assert "window=6M" in value
+        assert "fundamentals_source=yahoo" in value
+    assert "typed marker" in body
+
+
+def test_company_error_rerender_echoes_bad_value_and_window(tmp_path):
+    _, app = _full_app(tmp_path)
+
+    response = call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/company?window=6M",
+        data={"aisc_usd_per_oz": "not-a-number"},
+    )
+
+    assert response["status"].startswith("400")
+    body = response["body"]
+    assert 'value="not-a-number"' in body
+    active_tabs = re.findall(r'<a class="window-tab active" href="([^"]*)"', body)
+    assert len(active_tabs) == 1
+    assert "window=6m" in active_tabs[0]
+    returns = _return_to_values(body)
+    assert returns
+    for value in returns:
+        assert "window=6M" in value
+
+
 # ------------------------------------------- Portfolio lot edit/delete routes
 
 
@@ -336,11 +430,21 @@ def test_ticker_detail_section_nav_lists_every_present_section(tmp_path):
 
 def test_all_blank_company_post_never_claims_a_save(tmp_path):
     """D2 RESOLVED: an all-blank company POST writes nothing and redirects
-    WITHOUT the saved marker, so the page cannot claim 'Company inputs saved.'"""
-    _paths, app = _minimal_app(tmp_path)
+    WITHOUT the saved marker, so the page cannot claim 'Company inputs saved.'
+
+    The register's contract is "no manual-store content change", so the store
+    file's BYTES are compared before/after (not mtime, which a rewrite of
+    identical content would still bump)."""
+    paths, app = _minimal_app(tmp_path)
+    store_path = paths.manual_screening_store_path
+    assert store_path.exists(), "bootstrap must have created the company-inputs store"
+    before = store_path.read_bytes()
+
     response = call_wsgi_app(app, method="POST", path="/ticker/NEM/company", data={})
+
     assert response["status"].startswith("303")
     assert "saved=" not in response["headers"]["Location"]
+    assert store_path.read_bytes() == before, "all-blank POST must not touch the manual store"
     page = call_wsgi_app(app, method="GET", path=response["headers"]["Location"])
     assert "notice-success" not in page["body"]
 
@@ -372,6 +476,50 @@ def test_unknown_ticker_option_lens_is_a_plain_404(tmp_path):
     # fixture still resolves to a clean 404, not an error page.
     gdx = call_wsgi_app(app, method="GET", path="/ticker/GDX?lens=option-trading")
     assert gdx["status"].startswith("404")
+
+
+def test_unknown_ticker_option_lens_404s_under_a_stale_option_schema(tmp_path):
+    """D5 RESOLVED (full contract): with option artifacts ON DISK in a stale
+    schema state, an unknown ticker under ``lens=option-trading`` must still 404
+    -- the membership check runs BEFORE the option load, so the stale-schema 503
+    can never mask a plain 404.
+
+    Fixture: the repo's own stale-schema shape -- real option artifacts written
+    to disk, then the current model-state manifest edited so a required option
+    artifact (``option_signal_summary``) can no longer be resolved, which is what
+    ``load_option_trading_data`` raises ``OptionArtifactStaleSchemaError`` on.
+    """
+    import json as _json
+
+    from golden_vector.app.model_state import load_current_model_state_manifest
+    from golden_vector.serve.option_trading_data import clear_option_trading_cache
+    from tests.test_option_trading_data import _write_option_inputs
+
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+    payload = load_current_model_state_manifest(paths)
+    assert payload is not None
+    del payload["artifacts"]["option_signal_summary"]
+    paths.latest_model_state_manifest_path.write_text(_json.dumps(payload), encoding="utf-8")
+
+    app_config = _repo_app_config()
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    try:
+        bogus = call_wsgi_app(app, method="GET", path="/ticker/BOGUS?lens=option-trading")
+        assert bogus["status"].startswith("404"), bogus["status"]
+        assert "not an active Corporate Finance ticker" in bogus["body"]
+
+        # Healthy control: a CONFIGURED benchmark is not rejected as unknown --
+        # it proceeds into the option path (and there meets the stale schema),
+        # which is what proves the 404 above came from the membership check.
+        benchmark = str(app_config.hedge_readiness.benchmark_tickers[0]).strip().upper()
+        control = call_wsgi_app(app, method="GET", path=f"/ticker/{benchmark}?lens=option-trading")
+        assert not control["status"].startswith("404"), control["status"]
+    finally:
+        clear_option_trading_cache()
 
 
 def test_lab_dial_path_is_not_double_decoded(tmp_path, monkeypatch):
@@ -420,6 +568,35 @@ def test_refresh_post_signals_already_running(tmp_path, monkeypatch):
     page = call_wsgi_app(app, method="GET", path="/option-trading?refresh=already-running")
     assert "A data refresh is already running; no new refresh was started." in page["body"]
     assert "notice-info" in page["body"]
+
+
+_ALREADY_RUNNING_NOTICE = "A data refresh is already running; no new refresh was started."
+
+
+@pytest.mark.parametrize("path", ("/", "/candidate-finder"))
+def test_candidate_finder_renders_already_running_refresh_notice(tmp_path, path):
+    """GV-RD-FINAL-005: the main "Refresh all model data" control posts from the
+    Candidate Finder screen and redirects back here, so both landing surfaces
+    must show the same already-running info notice the Option Trading overview
+    shows."""
+    _paths, app = _full_app(tmp_path)
+
+    response = call_wsgi_app(app, method="GET", path=f"{path}?refresh=already-running")
+
+    assert response["status"].startswith("200")
+    assert "notice-info" in response["body"]
+    assert _ALREADY_RUNNING_NOTICE in response["body"]
+
+
+@pytest.mark.parametrize("path", ("/", "/candidate-finder"))
+def test_candidate_finder_has_no_refresh_notice_without_the_flag(tmp_path, path):
+    """Control: a plain GET must not claim a refresh is already running."""
+    _paths, app = _full_app(tmp_path)
+
+    response = call_wsgi_app(app, method="GET", path=path)
+
+    assert response["status"].startswith("200")
+    assert _ALREADY_RUNNING_NOTICE not in response["body"]
 
 
 @pytest.mark.parametrize("bad_value", ["abc", "0", "-1", "inf"])
@@ -506,21 +683,79 @@ _GUARD_FULL_ROUTES = (
     "/candidate-finder",
     "/tool-a",
     "/tool-b",
+    "/tool-c",
     "/tool-d",
     "/option-trading",
     "/lab",
     "/ticker/NEM",
 )
 
+# GV-RD-FINAL-010: every serve module that emits `class="js-datatable"` mapped to
+# a route this guard actually renders. `_test_js_datatable_emitter_inventory`
+# fails when a new emitter module appears without an entry here, so a new table
+# cannot silently escape the structural guard.
+_DATATABLE_EMITTER_ROUTES = {
+    "candidate_finder_page.py": "/candidate-finder",
+    "overview_lab.py": "/lab",
+    "overview_option_trading.py": "/option-trading",
+    "overview_tool_a.py": "/tool-a",
+    "overview_tool_b.py": "/tool-b",
+    "overview_tool_c.py": "/tool-c",
+    "overview_tool_d.py": "/tool-d",
+    "portfolio_page.py": "/portfolio",  # covered by the portfolio guard test below
+}
+
 
 @pytest.mark.parametrize("path", _GUARD_FULL_ROUTES)
 def test_js_datatables_have_ids_and_no_nested_tables(tmp_path, path):
+    """D11 structural guard.
+
+    Coverage is honest and bounded: it renders ONE fixture state (`_full_app`,
+    plus `_portfolio_app` in the sibling test) for each route listed in
+    `_GUARD_FULL_ROUTES` / `_DATATABLE_EMITTER_ROUTES`. It does NOT sweep every
+    query-parameter state (lenses, windows, search filters, empty states). What
+    it does guarantee beyond those renders is the emitter *inventory*: the
+    companion test below fails if any `golden_vector/serve/*.py` module emits
+    `js-datatable` without a route in the mapping above.
+    """
     _paths, app = _full_app(tmp_path)
 
     response = call_wsgi_app(app, method="GET", path=path)
 
     assert response["status"].startswith("200"), path
     assert _datatable_violations(response["body"]) == [], path
+
+
+def test_js_datatable_emitter_inventory_is_fully_covered():
+    """GV-RD-FINAL-010: no `js-datatable` emitter may exist without a guarded route."""
+    from pathlib import Path
+
+    import golden_vector.serve as serve_pkg
+
+    serve_dir = Path(serve_pkg.__file__).parent
+    emitters = sorted(
+        module.name
+        for module in serve_dir.glob("*.py")
+        if "js-datatable" in module.read_text(encoding="utf-8")
+    )
+    assert emitters, "static scan found no js-datatable emitters -- the scan is broken"
+    covered = set(_GUARD_FULL_ROUTES) | {"/portfolio"}
+
+    unmapped = [name for name in emitters if name not in _DATATABLE_EMITTER_ROUTES]
+    assert not unmapped, (
+        "serve modules emit js-datatable but have no covered route in "
+        f"_DATATABLE_EMITTER_ROUTES: {unmapped}. Add the module with the route the "
+        "D11 structural guard should render for it (and add that route to "
+        "_GUARD_FULL_ROUTES if it is not already guarded)."
+    )
+    stale = [name for name in _DATATABLE_EMITTER_ROUTES if name not in emitters]
+    assert not stale, f"_DATATABLE_EMITTER_ROUTES lists non-emitters: {stale}"
+    uncovered = {
+        name: route
+        for name, route in _DATATABLE_EMITTER_ROUTES.items()
+        if route not in covered
+    }
+    assert not uncovered, f"emitter routes not rendered by any guard test: {uncovered}"
 
 
 def test_portfolio_js_datatables_have_ids_and_no_nested_tables(tmp_path):

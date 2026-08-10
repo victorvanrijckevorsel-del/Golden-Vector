@@ -65,13 +65,17 @@ def render_portfolio_page(
     if not data.summary.empty:
         nav_links.append(("data-issues", "Data issues"))
         nav_links.append(("composition", "Composition"))
+        # Blueprint 15.7 asks for Gold-beta exposure and Currency as distinct
+        # targets; both live inside the composition section (GV-RD-FINAL-012).
+        nav_links.append(("gold-beta", "Gold-beta exposure"))
+        nav_links.append(("currency", "Currency"))
     nav_links.append(("hedge-sizing", "Hedge sizing"))
     nav_links.append(("correlations", "Correlations"))
     nav_links.append(("history", "History"))
     if not data.reconciliation_export.empty:
         nav_links.append(("reconciliation", "Reconciliation"))
     nav_links.append(("positions", "Positions"))
-    nav_links.append(("lots", "Add lots"))
+    nav_links.append(("lots", "Lots"))
     body.append(section_nav(nav_links))
     body.append(_render_summary(data))
     body.append(_render_data_issues(data))
@@ -191,7 +195,7 @@ def _render_composition(data: PortfolioData) -> str:
         "<p class=\"hint\">Corporate resilience coverage shows how much of NAV has a usable Tool D row. "
         f"Current coverage: {_fmt_percent(summary.get('resilience_coverage_fraction'))}.</p>"
         "<div class=\"two-column\">"
-        "<div><h3>Gold-beta exposure</h3>"
+        "<div id=\"gold-beta\"><h3>Gold-beta exposure</h3>"
         + table_region(
             "<table><thead><tr>"
             + help_th("Bucket", key="portfolio_exposure_bucket")
@@ -204,7 +208,7 @@ def _render_composition(data: PortfolioData) -> str:
             label="Gold-beta exposure",
         )
         + "</div>"
-        "<div><h3>Currency split</h3>"
+        "<div id=\"currency\"><h3>Currency split</h3>"
         "<p class=\"hint\">USD P&L at current FX blends security moves and currency moves.</p>"
         + table_region(
             "<table><thead><tr>"
@@ -548,7 +552,7 @@ def _render_lot_forms(data: PortfolioData, *, app_config: AppConfig) -> str:
         else None
     )
     add_form = (
-        "<section class=\"panel\" id=\"lots\">"
+        "<section class=\"panel\">"
         "<h2>Add Position Lot</h2>"
         "<p class=\"hint\">M1 records each buy in the selected ticker's configured currency. "
         "Dual-listing broker lines come later. For LSE/GBP tickers, enter buy prices in pounds; "
@@ -564,8 +568,11 @@ def _render_lot_forms(data: PortfolioData, *, app_config: AppConfig) -> str:
         "</form>"
         "</section>"
     )
+    # Blueprint 15.7: one "Lot management" region so the #lots anchor reaches
+    # BOTH Add Position Lot and Edit Lots (GV-RD-FINAL-012).
+    region_open = "<div id=\"lots\">"
     if data.lines.empty:
-        return add_form + _portfolio_currency_script()
+        return region_open + add_form + "</div>" + _portfolio_currency_script()
     edit_forms = ["<section class=\"panel\"><h2>Edit Lots</h2>"]
     for row in data.lines.sort_values(["ticker", "buy_date", "lot_id"]).to_dict(orient="records"):
         lot_id = str(row.get("lot_id") or "")
@@ -587,7 +594,9 @@ def _render_lot_forms(data: PortfolioData, *, app_config: AppConfig) -> str:
             "</details>"
         )
     edit_forms.append("</section>")
-    return add_form + "".join(edit_forms) + _portfolio_currency_script()
+    return (
+        region_open + add_form + "".join(edit_forms) + "</div>" + _portfolio_currency_script()
+    )
 
 
 def _render_lot_table(lots: list[dict[str, object]]) -> str:

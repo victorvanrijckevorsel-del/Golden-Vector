@@ -1,9 +1,18 @@
 # Workspace UI system — ownership map
 
 The visual system shipped by the 2026-08 redesign (plan: `GOLDEN_VECTOR_VISUAL_REDESIGN_PLAN.md`).
-Rule of the layer: **backend computes, serve renders, ui/ only formats markup** —
-modules here import nothing beyond the stdlib (enforced by
-`tests/test_ui_components.py::test_ui_package_imports_stay_presentation_pure`).
+Rule of the layer: **backend computes, serve renders, ui/ only formats markup**.
+
+What is mechanically ENFORCED (`tests/test_ui_components.py`):
+- stdlib-only imports (`__future__`, `html`, `re`) — no app/model/data modules
+  (`test_ui_package_imports_stay_presentation_pure`);
+- no computation constructs — arithmetic operators, ordering comparisons,
+  numeric builtins (`sum`/`min`/`max`/`sorted`/`round`/`abs`/`int`/`float`…),
+  numeric-literal addition (`test_ui_package_contains_no_computation_constructs`).
+
+What remains a REVIEW rule (not machine-checked): no semantic fallback or state
+resolution (e.g. `a or b` picking which value is "the" value), no tone/threshold
+decisions — call sites pass already-resolved state in.
 
 ## Python modules
 

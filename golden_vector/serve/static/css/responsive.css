@@ -39,6 +39,19 @@
   .nav-link {
     padding: 12px 10px; /* comfortable touch targets in the drawer */
   }
+  /* The drawer toggle makes the sticky header taller here, so the sticky
+     section nav and every anchor landing move down with it (FINAL-003). */
+  .app-header {
+    min-height: var(--app-header-height-narrow);
+  }
+  .section-nav {
+    top: var(--app-header-height-narrow);
+  }
+  html {
+    scroll-padding-top: calc(
+      var(--app-header-height-narrow) + var(--section-nav-height) + var(--anchor-scroll-gap)
+    );
+  }
 }
 @media (max-width: 47.9375rem) {
   main {
@@ -51,6 +64,15 @@
   }
   .app-header {
     padding: 8px 12px;
+    min-height: var(--app-header-height-compact);
+  }
+  .section-nav {
+    top: var(--app-header-height-compact);
+  }
+  html {
+    scroll-padding-top: calc(
+      var(--app-header-height-compact) + var(--section-nav-height) + var(--anchor-scroll-gap)
+    );
   }
 }
 @media (prefers-reduced-motion: reduce) {

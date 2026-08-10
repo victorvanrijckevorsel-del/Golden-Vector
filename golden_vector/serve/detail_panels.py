@@ -79,6 +79,13 @@ from golden_vector.serve.workspace_state import (
 from golden_vector.common.windows import resolve_window_or_none, window_label
 from golden_vector.serve.windows import SCORING_WINDOWS, WINDOW_LABELS
 
+def _id_token(value: object) -> str:
+    """Lowercase, id-safe slug for building page-unique element ids (e.g. chart data regions)."""
+
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", str(value)).strip("-").lower()
+    return slug or "x"
+
+
 def _sizing_query_parts(sizing_request: object | None) -> list[str]:
     """Serialize the option sizing request into URL query parts so window-tab
     navigation preserves the user's calculator state (audit L3). Only meaningful,
@@ -2024,6 +2031,7 @@ def _render_beta_comparison_panel(
             ticker, subject.down_beta if subject else None, subject.down_percentile if subject else None
         ),
         benchmark_positions=[m.down_pos for m in comparison.benchmarks if m.down_pos is not None],
+        data_table_id=f"chart-data-downbeta-{_id_token(ticker)}-{_id_token(window_label_raw)}",
     )
     up_svg = _build_beta_strip_svg(
         axis_label=f"Up beta — weeks gold rose ({window_label_raw})",
@@ -2034,6 +2042,7 @@ def _render_beta_comparison_panel(
             ticker, subject.up_beta if subject else None, subject.up_percentile if subject else None
         ),
         benchmark_positions=[m.up_pos for m in comparison.benchmarks if m.up_pos is not None],
+        data_table_id=f"chart-data-upbeta-{_id_token(ticker)}-{_id_token(window_label_raw)}",
     )
 
     # Build the lead per side, so a stock with only one side available is described correctly
@@ -2333,7 +2342,11 @@ def _render_rebased_overlay_panel(
         "GDX": "overlay-gdx",
         "GDXJ": "overlay-gdxj",
     }
-    svg = _build_multiline_overlay_svg(series_by_label=drawable, series_keys=series_keys)
+    svg = _build_multiline_overlay_svg(
+        series_by_label=drawable,
+        series_keys=series_keys,
+        data_table_id=f"chart-data-overlay-{_id_token(ticker)}-{_id_token(active_window)}",
+    )
     window_label = WINDOW_LABELS.get(active_window, active_window)
     # Caption names only the benchmarks that actually drew, so a missing GDX/GDXJ history
     # is never implied to be present (label every number with its real basis).

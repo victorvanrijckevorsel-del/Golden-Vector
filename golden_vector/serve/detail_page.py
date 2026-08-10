@@ -59,6 +59,7 @@ def render_detail_page(
     financials_source: str = "our",
     query_params: Mapping[str, str] | None = None,
     fundamentals_provenance: dict[tuple[str, str], str] | None = None,
+    form_overrides: Mapping[str, Mapping[str, str]] | None = None,
 ) -> str:
     company_row = _frame_index_by_ticker(state.company_inputs).get(ticker, {})
     reporting_row = _frame_index_by_ticker(state.reporting_calendar).get(ticker, {})
@@ -66,6 +67,36 @@ def render_detail_page(
     tool_b_row = _frame_index_by_ticker(state.latest_tool_b).get(ticker, {})
     verification_rows = _ticker_rows(state.source_verification, ticker)
     note_rows = _ticker_rows(state.stock_notes, ticker)
+    # Rejected-POST echo: overlay the raw submitted strings on top of the
+    # stored row so the user sees what they typed, not the old saved value.
+    # Only forms that actually render values can echo (the add-note form
+    # renders empty inputs, so a "note" override is a deliberate no-op).
+    overrides_by_section = dict(form_overrides or {})
+    company_overrides = dict(overrides_by_section.get("company") or {})
+    if company_overrides:
+        company_row = {**company_row, **company_overrides}
+    reporting_overrides = dict(overrides_by_section.get("reporting") or {})
+    if reporting_overrides:
+        reporting_row = {**reporting_row, **reporting_overrides}
+    verification_overrides = dict(overrides_by_section.get("verification") or {})
+    verification_field = str(verification_overrides.get("field_name") or "").strip()
+    if verification_field:
+        echoed = {
+            key: value
+            for key, value in verification_overrides.items()
+            if key in {"source_date", "source_url", "notes", "verification_status"}
+        }
+        matched = False
+        merged_rows = []
+        for row in verification_rows:
+            if str(row.get("field_name") or "").strip() == verification_field:
+                merged_rows.append({**row, **echoed})
+                matched = True
+            else:
+                merged_rows.append(row)
+        if not matched:
+            merged_rows.append({"field_name": verification_field, **echoed})
+        verification_rows = merged_rows
     current_query = dict(query_params or {})
     current_query.pop("saved", None)
     ticker_path = f"/ticker/{quote(str(ticker), safe='')}"

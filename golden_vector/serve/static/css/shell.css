@@ -82,10 +82,20 @@
   display: flex;
   flex-direction: column;
 }
+/* Anchor targets must land below BOTH sticky layers (app header + stuck
+   section nav) plus a small gap; responsive.css re-sizes this per breakpoint
+   from the same tokens (GV-RD-FINAL-003). */
+html {
+  scroll-padding-top: calc(
+    var(--app-header-height) + var(--section-nav-height) + var(--anchor-scroll-gap)
+  );
+}
 .app-header {
   display: flex;
   align-items: center;
   gap: 12px;
+  box-sizing: border-box;
+  min-height: var(--app-header-height);
   padding: 10px 20px;
   border-bottom: 1px solid var(--line);
   background: var(--color-shell);

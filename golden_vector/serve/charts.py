@@ -9,6 +9,7 @@ from html import escape
 import pandas as pd
 
 from golden_vector.model.benchmark_comparison import BetaUniverseMark
+from golden_vector.serve.ui.tables import table_region
 
 
 def _build_scatter_svg(
@@ -111,6 +112,26 @@ def _benchmark_series(label: str, index: int) -> str:
     return _BENCHMARK_SERIES.get(label.upper(), "gdxj" if index % 2 else "gdx")
 
 
+def _chart_data_disclosure(
+    *,
+    table_html: str,
+    region_id: str,
+    label: str,
+) -> str:
+    """Collapsed, keyboard-operable text equivalent for a pointer-only chart interaction.
+
+    Accessibility remedy for GV-RD-FINAL-002: the crosshair / rug tooltips are pointer-driven, so
+    every value they reveal is ALSO rendered as a plain table right after the chart. The table is
+    built from the exact payload the SVG was built from — no recomputation, no truncation."""
+
+    return (
+        "<details class=\"disclosure chart-data-details\">"
+        f"<summary>Chart data (table)</summary>"
+        f"{table_region(table_html, region_id=region_id, label=label)}"
+        "</details>"
+    )
+
+
 def _build_beta_strip_svg(
     *,
     axis_label: str,
@@ -119,6 +140,7 @@ def _build_beta_strip_svg(
     subject_pos: float | None,
     subject_label: str,
     benchmark_positions: list[float],
+    data_table_id: str | None = None,
 ) -> str:
     """Render a slim "where does this stock rank" strip from BACKEND-resolved positions.
 
@@ -184,10 +206,29 @@ def _build_beta_strip_svg(
         parts.append(
             f"<text x=\"{x:.1f}\" y=\"{track_y - 21}\" text-anchor=\"{anchor}\" font-size=\"11.5\" class=\"chart-value\">{escape(subject_label)}</text>"
         )
-    return (
+    svg = (
         f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"{escape(axis_label)} distribution\">"
         f"{''.join(parts)}"
         "</svg>"
+    )
+    if not data_table_id:
+        return svg
+    # Text equivalent of the rug tooltips: one row per tick, exactly the ticker + beta the
+    # hover <title> / rug-tooltip.js shows (same f-string as the tick label above).
+    rows = "".join(
+        f"<tr><td>{escape(mark.ticker)}</td><td>{escape(f'{mark.beta:,.2f}')}</td></tr>"
+        for mark in universe_marks
+    )
+    table_html = (
+        "<table>"
+        f"<caption>{escape(axis_label)} — every miner in the universe</caption>"
+        "<thead><tr><th scope=\"col\">Ticker</th><th scope=\"col\">Beta</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+    )
+    return svg + _chart_data_disclosure(
+        table_html=table_html,
+        region_id=data_table_id,
+        label=f"{axis_label} — chart data table",
     )
 
 
@@ -306,6 +347,7 @@ def _build_multiline_overlay_svg(
     series_by_label: dict[str, tuple[list[pd.Timestamp], list[float | None]]],
     series_keys: dict[str, str] | None = None,
     base: float = 100.0,
+    data_table_id: str | None = None,
 ) -> str:
     """SVG line chart of several already-rebased series sharing one indexed y-axis.
 
@@ -458,4 +500,38 @@ def _build_multiline_overlay_svg(
         f"{grid_lines}{baseline}{lines_html}{grid_labels}{date_labels}"
         "</svg>"
     )
-    return legend_html + svg
+    if not data_table_id:
+        return legend_html + svg
+    # Text equivalent of the crosshair: one row per snapped date, one column per series, each cell
+    # rendered from the SAME overlay_data payload the JS reads ("100.0 (+0.0%)" — value to one
+    # decimal, then the pre-formatted percent label). No new arithmetic; every date is listed.
+    series_entries = overlay_data["series"]
+    header_cells = "".join(
+        f"<th scope=\"col\">{escape(str(entry['label']))}</th>" for entry in series_entries
+    )
+    body_rows = ""
+    for date_key, _x in overlay_data["ticks"]:
+        cells = ""
+        for entry in series_entries:
+            point = entry["byDate"].get(date_key)
+            cells += (
+                f"<td>{escape(f'{point[1]:.1f}')} ({escape(str(point[2]))})</td>"
+                if point
+                else "<td>—</td>"
+            )
+        body_rows += f"<tr><th scope=\"row\">{escape(date_key)}</th>{cells}</tr>"
+    table_html = (
+        "<table>"
+        "<caption>Rebased price comparison — indexed value (change vs the rebase start)</caption>"
+        f"<thead><tr><th scope=\"col\">Date</th>{header_cells}</tr></thead>"
+        f"<tbody>{body_rows}</tbody></table>"
+    )
+    return (
+        legend_html
+        + svg
+        + _chart_data_disclosure(
+            table_html=table_html,
+            region_id=data_table_id,
+            label="Rebased price comparison — chart data table",
+        )
+    )

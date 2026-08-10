@@ -608,6 +608,96 @@ def create_workspace_app(
                 if method == "POST":
                     form_data = _read_form_data(environ)
 
+                    def _validation_error_response(
+                        exc: ValueError,
+                        *,
+                        submitted: dict[str, list[str]],
+                        section: str,
+                    ):
+                        """Re-render the detail page for a rejected form POST.
+
+                        One copy of the error re-render for all four manual
+                        sections: it resolves the SAME view state the GET
+                        detail branch resolves (window / anchor / lens /
+                        financials source / query params / provenance) so the
+                        user lands back on the page they were actually on,
+                        and echoes what they submitted instead of the stored
+                        row. Option-lens prefetch work is deliberately skipped
+                        — an error re-render never needs the option detail.
+                        """
+                        # Real browsers POST to the bare action URL, so the
+                        # view state travels in the submitted hidden
+                        # `return_to` field, not the POST query string. Merge
+                        # both, with any explicit POST-URL query winning per
+                        # key. Every merged value still passes through the
+                        # normal validators below.
+                        return_to_value = _safe_return_to(
+                            (submitted.get("return_to") or [""])[0],
+                            fallback=f"/ticker/{ticker}",
+                        )
+                        merged_query = dict(parse_qs(urlsplit(return_to_value).query))
+                        merged_query.update(query)
+                        error_state = _load_workspace_state(paths, normalized_tickers)
+                        error_source = normalize_finance_source(
+                            merged_query.get("fundamentals_source", ["our"])[0]
+                        )
+                        if error_source == "yahoo":
+                            error_state = replace(
+                                error_state,
+                                latest_tool_b=materialize_tool_b_finance_source(
+                                    error_state.latest_tool_b,
+                                    finance_source=error_source,
+                                ),
+                            )
+                        error_provenance = (
+                            load_fundamentals_provenance_lookup(paths)
+                            if error_source == "yahoo"
+                            else {}
+                        )
+                        error_lens = resolve_detail_lens(merged_query.get("lens", [""])[0])
+                        error_tool_a_row = _frame_index_by_ticker(
+                            error_state.latest_tool_a
+                        ).get(ticker, {})
+                        error_anchor = _canonical_anchor_window(error_tool_a_row)
+                        error_window = _resolve_active_window(
+                            merged_query.get("window", [""])[0], error_anchor,
+                        )
+                        return _html_response(
+                            start_response,
+                            render_detail_page(
+                                error_state,
+                                ticker=ticker,
+                                tool_a_detail=_load_tool_a_detail(
+                                    paths,
+                                    app_config=app_config,
+                                    ticker=ticker,
+                                    universe_tool_a=error_state.latest_tool_a,
+                                ),
+                                flash=None,
+                                error=str(exc),
+                                active_window=error_window,
+                                canonical_anchor=error_anchor,
+                                lens=error_lens,
+                                app_config=app_config,
+                                financials_source=error_source,
+                                query_params=_first_query_values(merged_query),
+                                fundamentals_provenance=error_provenance,
+                                model_state_manifest=(
+                                    load_current_model_state_manifest(paths)
+                                    if error_lens == DETAIL_OPTION_TRADING_LENS_ID
+                                    else None
+                                ),
+                                form_overrides={
+                                    section: {
+                                        key: str(values[0])
+                                        for key, values in submitted.items()
+                                        if values
+                                    }
+                                },
+                            ),
+                            status="400 Bad Request",
+                        )
+
                     if action == "company":
                         try:
                             company_values: dict[str, object] = {}
@@ -636,19 +726,8 @@ def create_workspace_app(
                                 )
                             upsert_company_input(paths, ticker=ticker, values=company_values)
                         except ValueError as exc:
-                            state = _load_workspace_state(paths, normalized_tickers)
-                            tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker, universe_tool_a=state.latest_tool_a)
-                            return _html_response(
-                                start_response,
-                                render_detail_page(
-                                    state,
-                                    ticker=ticker,
-                                    tool_a_detail=tool_a_detail,
-                                    flash=None,
-                                    error=str(exc),
-                                    app_config=app_config,
-                                ),
-                                status="400 Bad Request",
+                            return _validation_error_response(
+                                exc, submitted=form_data, section="company",
                             )
                         return _redirect_response(
                             start_response,
@@ -674,19 +753,8 @@ def create_workspace_app(
                                 values=reporting_values,
                             )
                         except ValueError as exc:
-                            state = _load_workspace_state(paths, normalized_tickers)
-                            tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker, universe_tool_a=state.latest_tool_a)
-                            return _html_response(
-                                start_response,
-                                render_detail_page(
-                                    state,
-                                    ticker=ticker,
-                                    tool_a_detail=tool_a_detail,
-                                    flash=None,
-                                    error=str(exc),
-                                    app_config=app_config,
-                                ),
-                                status="400 Bad Request",
+                            return _validation_error_response(
+                                exc, submitted=form_data, section="reporting",
                             )
                         return _redirect_response(
                             start_response,
@@ -726,19 +794,8 @@ def create_workspace_app(
                                 values=verification_values,
                             )
                         except ValueError as exc:
-                            state = _load_workspace_state(paths, normalized_tickers)
-                            tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker, universe_tool_a=state.latest_tool_a)
-                            return _html_response(
-                                start_response,
-                                render_detail_page(
-                                    state,
-                                    ticker=ticker,
-                                    tool_a_detail=tool_a_detail,
-                                    flash=None,
-                                    error=str(exc),
-                                    app_config=app_config,
-                                ),
-                                status="400 Bad Request",
+                            return _validation_error_response(
+                                exc, submitted=form_data, section="verification",
                             )
                         return _redirect_response(
                             start_response,
@@ -759,19 +816,8 @@ def create_workspace_app(
                                 ).upper(),
                             )
                         except ValueError as exc:
-                            state = _load_workspace_state(paths, normalized_tickers)
-                            tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker, universe_tool_a=state.latest_tool_a)
-                            return _html_response(
-                                start_response,
-                                render_detail_page(
-                                    state,
-                                    ticker=ticker,
-                                    tool_a_detail=tool_a_detail,
-                                    flash=None,
-                                    error=str(exc),
-                                    app_config=app_config,
-                                ),
-                                status="400 Bad Request",
+                            return _validation_error_response(
+                                exc, submitted=form_data, section="note",
                             )
                         return _redirect_response(
                             start_response,

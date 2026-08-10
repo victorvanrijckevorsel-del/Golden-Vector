@@ -27,6 +27,7 @@ FOCUSED_TEST_FILES: tuple[str, ...] = (
     "tests/test_benchmark_comparison.py",
     "tests/test_candidate_finder_data.py",
     "tests/test_candidate_finder_page.py",
+    "tests/test_chart_data_tables.py",
     "tests/test_cli_refresh_and_status.py",
     "tests/test_cli_workspace.py",
     "tests/test_column_help.py",

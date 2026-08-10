@@ -166,6 +166,55 @@ def test_ui_package_imports_stay_presentation_pure():
                 assert root in allowed_roots, f"{path.name} imports {name!r}"
 
 
+def test_ui_package_contains_no_computation_constructs():
+    """GV-RD-FINAL-007: import isolation alone cannot stop `sum(x)/len(x)`-style
+    logic written with builtins. This ratchet (green at introduction) forbids the
+    AST constructs computation needs: numeric/ordering operators, numeric
+    builtins, and numeric-literal arithmetic. String concatenation with `+` stays
+    allowed. Semantic purity beyond this (e.g. `or`-fallback state resolution)
+    remains a review rule — see serve/ui/README.md.
+    """
+    import ast
+    from pathlib import Path
+
+    forbidden_binops = (ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)
+    ordering_cmpops = (ast.Lt, ast.LtE, ast.Gt, ast.GtE)
+    forbidden_calls = {"sum", "min", "max", "sorted", "round", "abs", "divmod", "int", "float"}
+
+    def is_numeric_const(node: ast.AST) -> bool:
+        return isinstance(node, ast.Constant) and isinstance(node.value, (int, float, complex))
+
+    for path in sorted(Path("golden_vector/serve/ui").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.BinOp):
+                assert not isinstance(node.op, forbidden_binops), (
+                    f"{path.name}:{node.lineno} uses arithmetic operator "
+                    f"{type(node.op).__name__} — compute in the model layer, not ui/"
+                )
+                if isinstance(node.op, ast.Add):
+                    assert not (is_numeric_const(node.left) or is_numeric_const(node.right)), (
+                        f"{path.name}:{node.lineno} adds a numeric literal — "
+                        "compute in the model layer, not ui/"
+                    )
+            elif isinstance(node, ast.Compare):
+                for op in node.ops:
+                    assert not isinstance(op, ordering_cmpops), (
+                        f"{path.name}:{node.lineno} uses ordering comparison "
+                        f"{type(op).__name__} — thresholds live in the model layer"
+                    )
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                assert node.func.id not in forbidden_calls, (
+                    f"{path.name}:{node.lineno} calls {node.func.id}() — "
+                    "numeric builtins are computation, not presentation"
+                )
+            elif isinstance(node, ast.AugAssign):
+                assert isinstance(node.op, ast.Add), (
+                    f"{path.name}:{node.lineno} augmented-assigns with "
+                    f"{type(node.op).__name__} — compute in the model layer"
+                )
+
+
 def test_refresh_summary_missing_manifest_keeps_visible_context():
     """GV-RD-P34-6: the missing-snapshot branch keeps its visible section
     context, and the populated branch renders the same three labelled values."""

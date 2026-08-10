@@ -177,6 +177,17 @@
   /* Overlay scrim behind the mobile navigation drawer */
   --backdrop: rgba(0, 0, 0, 0.55);
 
+  /* Sticky-layout geometry (GV-RD-FINAL-003). Single source for the sticky
+     app-header height at each breakpoint, the sticky section-nav offset, and
+     the anchor landing gap. Nothing may restate these numbers: the header
+     sizing, .section-nav { top } and html { scroll-padding-top } all read
+     these tokens, so a header size change moves every dependent offset. */
+  --app-header-height: 2.5rem;          /* >=64rem: 10px padding x2 + 20px line */
+  --app-header-height-narrow: 4rem;     /* <64rem: 10px x2 + 44px menu button */
+  --app-header-height-compact: 3.75rem; /* <30rem: 8px x2 + 44px menu button */
+  --section-nav-height: 2.875rem;       /* one wrapped row of pill links */
+  --anchor-scroll-gap: 0.5rem;          /* breathing room under both bars */
+
   /* Motion */
   --motion-fast: 140ms;
 

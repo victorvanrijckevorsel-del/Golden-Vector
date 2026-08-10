@@ -163,7 +163,7 @@
    never becomes an anonymous horizontal scroll container. */
 .section-nav {
   position: sticky;
-  top: 2.5rem;
+  top: var(--app-header-height);
   z-index: calc(var(--z-sticky) - 1);
   display: flex;
   flex-wrap: wrap;

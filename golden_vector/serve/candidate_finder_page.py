@@ -133,6 +133,15 @@ def render_candidate_finder_page(
     # D6: a rejected gold-price scenario still renders this screen (computed without the
     # scenario); the danger notice explains why the request was refused.
     error_notice = notice("danger", escape(error_message)) if error_message else ""
+    # D9 / GV-RD-FINAL-005: "Refresh all model data" posts from this screen and
+    # redirects back with ?refresh=already-running. Render the same info notice
+    # the Option Trading overview renders (wording duplicated verbatim from
+    # overview_option_trading.py, where it lives inline -- no shared constant).
+    refresh_notice = (
+        notice("info", "A data refresh is already running; no new refresh was started.")
+        if _first(query, "refresh") == "already-running"
+        else ""
+    )
 
     body = "\n".join(
         (
@@ -146,6 +155,7 @@ def render_candidate_finder_page(
             ),
             error_notice,
             saved_notice,
+            refresh_notice,
             render_model_state_banner(data.model_state_manifest),
             render_option_freshness_box(data.model_state_manifest, only_when_stale=True),
             render_option_refresh_control(
@@ -455,8 +465,11 @@ def _render_builder(
             group_label,
             criteria,
             selected_by_id=selected_by_id,
+            group_index=index,
         )
-        for group_label, criteria in _criteria_groups(data.criteria_config.criteria)
+        for index, (group_label, criteria) in enumerate(
+            _criteria_groups(data.criteria_config.criteria)
+        )
     )
     active_custom = _first(query, "custom") == "1"
     custom_note = (
@@ -516,6 +529,7 @@ def _render_builder_group(
     criteria: Sequence[CandidateFinderCriterion],
     *,
     selected_by_id: Mapping[str, ResolvedCriterion],
+    group_index: int,
 ) -> str:
     selected_count = sum(1 for criterion in criteria if criterion.id in selected_by_id)
     open_attr = " open" if selected_count else ""
@@ -528,14 +542,7 @@ def _render_builder_group(
         _render_builder_row(criterion, selected_by_id.get(criterion.id))
         for criterion in criteria
     )
-    return f"""
-<details class="candidate-criteria-group"{open_attr}>
-  <summary>
-    <span>{escape(group_label)}</span>
-    <span class="hint">{escape(summary_meta)}</span>
-  </summary>
-  <div class="table-scroll">
-    <table class="candidate-criteria-table">
+    table_html = f"""<table class="candidate-criteria-table">
       <thead>
         <tr>
           <th scope="col">Use</th>
@@ -546,8 +553,21 @@ def _render_builder_group(
         </tr>
       </thead>
       <tbody>{rows}</tbody>
-    </table>
-  </div>
+    </table>"""
+    # One shared, labelled, keyboard-reachable scroll region per criteria group
+    # (GV-RD-FINAL-008); the group index keeps the id page-unique.
+    region = table_region(
+        table_html,
+        region_id=f"candidate-builder-criteria-table-region-{group_index}",
+        label=f"{group_label} screen criteria",
+    )
+    return f"""
+<details class="candidate-criteria-group"{open_attr}>
+  <summary>
+    <span>{escape(group_label)}</span>
+    <span class="hint">{escape(summary_meta)}</span>
+  </summary>
+  {region}
 </details>
 """
 

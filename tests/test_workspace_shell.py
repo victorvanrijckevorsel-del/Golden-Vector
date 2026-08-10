@@ -383,6 +383,59 @@ def test_control_selectors_meet_contrast_with_their_actual_tokens():
     assert not failures, "Selector contrast failures: " + "; ".join(failures)
 
 
+# GV-RD-FINAL-011: blocks whose contrast this scan cannot compute statically,
+# each with the reason and where the coverage actually lives instead.
+_CONTRAST_SCAN_EXEMPT: dict[str, str] = {}
+
+
+def test_every_self_colored_selector_meets_contrast_or_is_exempt():
+    """GV-RD-FINAL-011: the curated lists above cannot notice a NEW component
+    state. This scan finds EVERY first-party CSS block that declares both its
+    own text color and a var() background, and requires AA 4.5:1 (or an
+    explicit, reasoned exemption). A new self-colored component state therefore
+    cannot ship unchecked. Blocks that inherit color OR background from an
+    ancestor are out of scope here (token-level pairs above + the browser gate
+    cover composed/inherited combinations)."""
+    tokens = _resolved_tokens()
+    failures: list[str] = []
+    unexplained: list[str] = []
+    seen_exemptions: set[str] = set()
+    for name in ("components", "pages", "charts", "forms", "tables", "shell", "base", "responsive"):
+        css = Path(f"golden_vector/serve/static/css/{name}.css").read_text(encoding="utf-8")
+        css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+        for match in re.finditer(r"([^{}@;]+)\{([^{}]*)\}", css):
+            selector = " ".join(match.group(1).split())
+            body = match.group(2)
+            color_decl = re.search(r"(?<![\w-])color\s*:\s*([^;]+);", body)
+            bg_decl = re.search(r"(?<![\w-])background(?:-color)?\s*:\s*(var\([^;]+);", body)
+            if not (color_decl and bg_decl):
+                continue
+            key = f"{name}.css {selector}"
+            fg_var = re.fullmatch(r"var\((--[\w-]+)\)", color_decl.group(1).strip())
+            bg_var = re.fullmatch(r"var\((--[\w-]+)\)", bg_decl.group(1).strip())
+            fg = tokens.get(fg_var.group(1), "") if fg_var else ""
+            bg = tokens.get(bg_var.group(1), "") if bg_var else ""
+            if not (fg.startswith("#") and bg.startswith("#")):
+                if key in _CONTRAST_SCAN_EXEMPT:
+                    seen_exemptions.add(key)
+                else:
+                    unexplained.append(
+                        f"{key}: fg={color_decl.group(1).strip()!r} bg={bg_decl.group(1).strip()!r} "
+                        "not statically resolvable — add a reasoned exemption or use plain var() tokens"
+                    )
+                continue
+            ratio = _ratio(fg, bg)
+            if ratio < 4.5:
+                if key in _CONTRAST_SCAN_EXEMPT:
+                    seen_exemptions.add(key)
+                else:
+                    failures.append(f"{key}: {fg} on {bg} = {ratio:.2f} < 4.5")
+    stale = set(_CONTRAST_SCAN_EXEMPT) - seen_exemptions
+    assert not failures, "Self-colored selector contrast failures: " + "; ".join(failures)
+    assert not unexplained, "Unresolvable self-colored blocks: " + "; ".join(unexplained)
+    assert not stale, f"Stale contrast exemptions (block no longer exists): {sorted(stale)}"
+
+
 def test_shell_dark_activation_and_no_js_fallback():
     """GV-RD-CX-001/004: the vendored DataTables dark theme is activated at the
     root, and off-canvas drawer CSS only applies when JavaScript marked the

@@ -136,17 +136,76 @@ def test_z_index_values_use_the_token_scale():
 
 def test_horizontal_scroll_is_owned_by_table_region_only():
     """GV-RD-P34-1: anonymous scroll containers are an accessibility defect —
-    every overflow-x: auto|scroll declaration must live in a .table-region rule
-    (the labelled, keyboard-focusable wrapper)."""
+    every declaration that enables horizontal scrolling must live in a rule
+    whose EVERY comma-separated selector arm is/contains .table-region (the
+    labelled, keyboard-focusable wrapper). Covers the `overflow` shorthand as
+    well as `overflow-x`, so `overflow: auto` cannot slip through
+    (GV-RD-FINAL-009)."""
     offenders: list[str] = []
     for path in _first_party_css_files():
         text = _strip_css_comments(path.read_text(encoding="utf-8"))
         for selector, body in re.findall(r"([^{}]+)\{([^}]*)\}", text):
-            if re.search(r"overflow-x\s*:\s*(auto|scroll)\b", body) and (
-                ".table-region" not in selector
-            ):
-                offenders.append(f"{path.name}: {selector.strip()[:60]}")
+            enables_scroll = bool(re.search(r"overflow-x\s*:\s*(auto|scroll)\b", body))
+            for shorthand in re.findall(r"(?<![-\w])overflow\s*:([^;}]*)", body):
+                if re.search(r"\b(auto|scroll)\b", shorthand):
+                    enables_scroll = True
+            if not enables_scroll:
+                continue
+            arms = [arm.strip() for arm in selector.split(",") if arm.strip()]
+            for arm in arms:
+                if ".table-region" not in arm:
+                    offenders.append(f"{path.name}: {arm[:60]}")
     assert not offenders, "anonymous horizontal scroll containers: " + "; ".join(offenders)
+
+
+def test_sticky_offsets_and_anchor_scroll_padding_come_from_tokens():
+    """GV-RD-FINAL-003: the sticky app-header height, the sticky section-nav
+    offset and the anchor landing offset are one set of tokens — no hardcoded
+    twin may restate a header height, and anchors must clear both sticky bars."""
+    bodies = {
+        path.name: _strip_css_comments(path.read_text(encoding="utf-8"))
+        for path in _first_party_css_files()
+    }
+    tokens_body = bodies["tokens.css"]
+    header_tokens = {
+        name: value.strip()
+        for name, value in re.findall(
+            r"(--app-header-height[\w-]*)\s*:\s*([^;]+);", tokens_body
+        )
+    }
+    assert header_tokens, "no --app-header-height* token is defined"
+
+    # scroll-padding-top must exist, and every occurrence must be token-driven.
+    padding_decls = [
+        (name, decl)
+        for name, body in bodies.items()
+        for decl in re.findall(r"scroll-padding-top\s*:([^;}]*)", body)
+    ]
+    assert padding_decls, "no scroll-padding-top: anchors land behind the sticky bars"
+    assert all("var(--" in decl for _, decl in padding_decls), padding_decls
+
+    # .section-nav top offsets are token references, never literals.
+    nav_tops = [
+        decl
+        for body in bodies.values()
+        for selector, rule in re.findall(r"([^{}]+)\{([^}]*)\}", body)
+        if ".section-nav" in selector and "-link" not in selector
+        for decl in re.findall(r"(?<![-\w])top\s*:([^;}]*)", rule)
+    ]
+    assert nav_tops, ".section-nav declares no sticky top offset"
+    assert all("var(--" in decl for decl in nav_tops), nav_tops
+
+    # Each header-height value appears once only: in its token definition.
+    for token, value in header_tokens.items():
+        # (?<![\d.]) so 0.74rem is not read as a twin of 4rem.
+        value_re = re.compile(r"(?<![\d.])" + re.escape(value))
+        twins = [
+            f"{name}:{lineno}"
+            for name, body in bodies.items()
+            for lineno, line in enumerate(body.splitlines(), start=1)
+            if value_re.search(line) and f"{token}:" not in line.replace(" ", "")
+        ]
+        assert not twins, f"hardcoded twin of {token} ({value}) at: {twins}"
 
 
 # Class selectors with no literal emitter in first-party Python/JS. Each is
@@ -177,9 +236,15 @@ ALLOWED_DYNAMIC_SELECTORS = {
 
 
 def test_no_dead_first_party_selectors():
-    """Every simple class selector in first-party CSS must have an emitter in
-    the serve layer (Python or first-party JS) or a documented dynamic source.
-    Dead CSS is silent debt: it outlives its markup and misleads the next edit."""
+    """One direction only: every simple class selector in first-party CSS must
+    appear as a whole token in the serve layer (Python or first-party JS) or be
+    a documented dynamic source. Dead CSS is silent debt: it outlives its markup
+    and misleads the next edit.
+
+    This does NOT scan emitted markup for classes with no CSS owner — that
+    opposite drift (GV-RD-FINAL-008) is not covered here. The match is
+    word-boundary anchored so a longer unrelated token cannot count as an
+    emitter; a mention in a comment or docstring still can."""
     selectors: set[str] = set()
     for path in _first_party_css_files():
         body = _strip_css_comments(path.read_text(encoding="utf-8"))
@@ -193,9 +258,10 @@ def test_no_dead_first_party_selectors():
         for path in sorted(Path("golden_vector/serve").rglob("*.py"))
         + sorted(STATIC_DIR.glob("*.js"))
     )
+    emitted = set(re.findall(r"[A-Za-z][A-Za-z0-9_-]*", haystack))
     dead = sorted(
         name
         for name in selectors
-        if name not in haystack and name not in ALLOWED_DYNAMIC_SELECTORS
+        if name not in emitted and name not in ALLOWED_DYNAMIC_SELECTORS
     )
     assert not dead, "CSS selectors with no emitter or documented dynamic source: " + ", ".join(dead)
