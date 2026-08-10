@@ -243,7 +243,7 @@ vm.runInNewContext(
 );
 
 const tip = document.body.children[0];
-svg.listeners.mousemove({ clientX: 196, clientY: 95 });
+svg.listeners.pointermove({ clientX: 196, clientY: 95 });
 assert.equal(tip.hidden, false);
 assert.ok(tip.innerHTML.includes("&lt;img src=x onerror=alert(1)&gt;"));
 assert.ok(!tip.innerHTML.includes("<img"));
@@ -257,7 +257,7 @@ assert.equal(tip.style.top, "51px");
 
 const firstLeft = tip.style.left;
 tip.innerHTML = "SENTINEL";
-svg.listeners.mousemove({ clientX: 190, clientY: 90 });
+svg.listeners.pointermove({ clientX: 190, clientY: 90 });
 assert.equal(tip.innerHTML, "SENTINEL");
 assert.notEqual(tip.style.left, firstLeft);
 

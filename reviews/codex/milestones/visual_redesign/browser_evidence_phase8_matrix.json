@@ -1,0 +1,24 @@
+{
+  "when": "2026-08-10",
+  "gate": "Phase 8 release matrix (one batched Playwright run, alert stubbed)",
+  "warm_load_ms_at_1280": {
+    "/": 662, "/tool-a": 448, "/tool-b": 788, "/tool-c": 644, "/tool-d": 691,
+    "/option-trading": 607, "/portfolio": 630, "/lab": 339, "/scorecard": 176,
+    "/ticker/NEM": 2680, "/lab/dial/NEM": 479
+  },
+  "timing_vs_baseline": "ticker detail 2.68s vs 3.3-3.8s pre-redesign warm baseline (route_timings_before.json) — faster, no regression; all other routes sub-second, in line with baseline",
+  "overflow_px_all_routes": 0,
+  "console_errors": 0,
+  "external_hosts_contacted": [],
+  "alerts": {"/portfolio": "DataTables warning (known open defect D11, deferred to post-8 fixes)"},
+  "artifact_write_check": {"files": 18253, "changed": 0, "created": 0},
+  "after_screenshots": [
+    "after_candidate_finder.png", "after_tool_a.png", "after_tool_b.png",
+    "after_ticker_nem.png", "after_lab.png", "after_option_trading.png", "after_scorecard.png"
+  ],
+  "collection": "pytest --collect-only -q: 1632 tests collected, 0 errors (baseline 1555; +77 all from redesign suites)",
+  "changed_file_boundary": "git diff 6c5015d..HEAD touches only golden_vector/serve/**, tests/**, reviews/**, *.md, .gitignore — zero files outside the approved presentation/test/documentation boundary",
+  "branch_audit": "only dev-vic exists (+ its remote); one worktree; working tree clean at 7ed1527",
+  "full_suite_trigger": "no Section 18.6 trigger applies — no analytics, pipeline, loader, schema, contract, manifest, artifact, or shared-data change in the diff",
+  "verdict": "PASS pending the focused release selection result"
+}
