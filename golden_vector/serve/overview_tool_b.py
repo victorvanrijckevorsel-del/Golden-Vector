@@ -274,6 +274,10 @@ def _render_tool_b_overview_page(
             f"{_checks_detail_cell(tb)}"
             "</tr>"
         )
+    # Empty state: the colspan row does not match the explicit column model that
+    # workspace-tables.js hands DataTables, so drop js-datatable when there are no
+    # data rows (same pattern as candidate_finder_page.py).
+    table_class = "js-datatable" if rows_html else "empty-table"
     if not rows_html:
         rows_html.append(
             "<tr><td colspan=\"21\" class=\"hint\">No tickers match.</td></tr>"
@@ -399,7 +403,7 @@ def _render_tool_b_overview_page(
         column_labels={"verdict": "Verdict", "layer1": "Layer 1"},
     ))
     body.append(table_region(
-        "<table id=\"tool-b-table\" class=\"js-datatable\">"
+        f"<table id=\"tool-b-table\" class=\"{table_class}\">"
         "<thead><tr>"
         + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
         + help_th("Verdict", key="tool_b_verdict", app_config=app_config, col_name="verdict")

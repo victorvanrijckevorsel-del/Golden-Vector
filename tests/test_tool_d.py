@@ -718,3 +718,117 @@ def test_tool_d_route_warns_naming_requested_and_effective_source(tmp_path, monk
     assert "Could not compute Yahoo Fundamentals view" in body
     assert "yahoo-source-boom" in body
     assert "Showing Our View data instead (requested Yahoo Fundamentals)." in body
+
+
+def test_yahoo_fallback_error_states_requested_gold_price_was_not_applied():
+    """The form keeps showing the requested gold price, so the fallback notice
+    must say plainly that the price was NOT applied and the table is the spot run."""
+    from golden_vector.serve.overview_tool_d import _yahoo_fallback_error
+
+    message = _yahoo_fallback_error(
+        RuntimeError("boom"), requested_gold=1800.0, spot_gold=2400.0
+    )
+
+    assert "Yahoo Fundamentals" in message
+    assert "$1,800" in message
+    assert "NOT applied" in message
+    assert "persisted spot run" in message
+    assert "$2,400" in message
+
+
+def test_tool_d_route_yahoo_fallback_names_requested_gold_price(tmp_path, monkeypatch):
+    import golden_vector.serve.overview_tool_d as overview_tool_d
+    from tests.helpers import call_wsgi_app
+    from tests.test_redesign_routes import _full_app
+
+    _paths, app = _full_app(tmp_path)
+
+    def exploding_scenario(**kwargs):
+        raise RuntimeError("yahoo-source-boom")
+
+    monkeypatch.setattr(overview_tool_d, "_compute_scenario_frame", exploding_scenario)
+
+    response = call_wsgi_app(
+        app,
+        method="GET",
+        path="/tool-d?gold_price=1800&fundamentals_source=yahoo",
+    )
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "NOT applied" in body
+    assert "persisted spot run" in body
+
+
+def test_tool_d_route_renders_both_gold_price_and_yahoo_fallback_errors(
+    tmp_path, monkeypatch
+):
+    """A gold-price validation error must not be swallowed by a later
+    yahoo-fallback error -- both are independent facts the user needs."""
+    import golden_vector.serve.overview_tool_d as overview_tool_d
+    from tests.helpers import call_wsgi_app
+    from tests.test_redesign_routes import _full_app
+
+    _paths, app = _full_app(tmp_path)
+
+    def exploding_scenario(**kwargs):
+        raise RuntimeError("yahoo-source-boom")
+
+    monkeypatch.setattr(overview_tool_d, "_compute_scenario_frame", exploding_scenario)
+
+    response = call_wsgi_app(
+        app,
+        method="GET",
+        path="/tool-d?gold_price=abc&fundamentals_source=yahoo",
+    )
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "Gold price must be numeric" in body
+    assert "Could not compute Yahoo Fundamentals view" in body
+
+
+def test_tool_d_flip_panel_excludes_degraded_rows(tmp_path, monkeypatch):
+    """Canon: degraded rows are EXCLUDED from confident headlines. A flip-flagged
+    row whose resilience_data_status is not OK must not reach the flip panel,
+    while a healthy control row with the same flag does."""
+    import golden_vector.serve.overview_tool_d as overview_tool_d
+    from tests.helpers import call_wsgi_app
+    from tests.test_redesign_routes import _full_app
+
+    _paths, app = _full_app(tmp_path)
+
+    frame = pd.DataFrame(
+        [
+            {
+                "ticker": "HEALTHYCTL",
+                "resilience_flip_flags": "flips to thin margin",
+                "resilience_data_status": "OK",
+                "tool_d_quality_rank": 80.0,
+                "spot_gold_usd": 2400.0,
+                "gold_price_used": 1800.0,
+            },
+            {
+                "ticker": "DEGRADEDCO",
+                "resilience_flip_flags": "flips to margin negative",
+                "resilience_data_status": "INSUFFICIENT",
+                "tool_d_quality_rank": None,
+                "spot_gold_usd": 2400.0,
+                "gold_price_used": 1800.0,
+            },
+        ]
+    )
+    monkeypatch.setattr(
+        overview_tool_d, "_compute_scenario_frame", lambda **kwargs: frame
+    )
+
+    response = call_wsgi_app(app, method="GET", path="/tool-d?gold_price=1800")
+
+    assert response["status"].startswith("200")
+    flip_panel = response["body"].split("Who Flips Under This Stress", 1)[1].split(
+        "</section>", 1
+    )[0]
+    assert "HEALTHYCTL" in flip_panel
+    assert "DEGRADEDCO" not in flip_panel
+    # The degraded row still appears in the full table, just not the headline.
+    assert "DEGRADEDCO" in response["body"]

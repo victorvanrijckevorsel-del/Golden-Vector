@@ -142,6 +142,10 @@ def _render_tool_a_overview_page(
             + _fmt_numeric_td(row["note_count"], decimals=0)
             + "</tr>"
         )
+    # Empty state: the colspan row does not match the explicit column model that
+    # workspace-tables.js hands DataTables, so drop js-datatable when there are no
+    # data rows (same pattern as candidate_finder_page.py).
+    table_class = "js-datatable" if rows_html else "empty-table"
     if not rows_html:
         rows_html.append("<tr><td colspan=\"12\" class=\"hint\">No tickers match.</td></tr>")
 
@@ -192,7 +196,7 @@ def _render_tool_a_overview_page(
         column_labels={"profile": "Profile", "confidence": "Confidence", "volatility": "Volatility"},
     ))
     body.append(table_region(
-        "<table id=\"tool-a-table\" class=\"js-datatable\">"
+        f"<table id=\"tool-a-table\" class=\"{table_class}\">"
         "<thead><tr>"
         + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
         + help_th("Up-β", key="tool_a_up_beta", app_config=app_config, col_name="up_beta", sort_numeric=True)

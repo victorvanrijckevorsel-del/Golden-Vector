@@ -49,17 +49,34 @@ from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import WorkspaceState
 
 
-def _yahoo_fallback_error(exc: Exception) -> str:
+def _yahoo_fallback_error(
+    exc: Exception,
+    *,
+    requested_gold: float | None = None,
+    spot_gold: float | None = None,
+) -> str:
     """Message for the Yahoo-scenario failure that falls back to Our View data.
 
     Names BOTH the requested source and the source actually shown, so the page
-    never silently displays Our View numbers under a Yahoo request.
+    never silently displays Our View numbers under a Yahoo request. When a custom
+    gold price was also requested it says plainly that the price was NOT applied
+    and the table is the persisted spot run — the form still shows the requested
+    value, so silence there would read as "applied".
     """
 
-    return (
+    message = (
         f"Could not compute Yahoo Fundamentals view: {exc} "
         "Showing Our View data instead (requested Yahoo Fundamentals)."
     )
+    if requested_gold is not None:
+        message += (
+            f" Your requested gold price of ${requested_gold:,.0f} was NOT applied; "
+            "the table below is the persisted spot run"
+        )
+        message += (
+            f" (spot ${spot_gold:,.0f})." if spot_gold is not None else "."
+        )
+    return message
 
 
 def _render_tool_d_overview_page(
@@ -74,7 +91,10 @@ def _render_tool_d_overview_page(
     """Render the Tool D corporate-resilience stress lens."""
 
     query = query or {}
-    requested_gold, scenario_error = _requested_gold_price(query)
+    requested_gold, gold_price_error = _requested_gold_price(query)
+    # Accumulate notices: a gold-price validation error and a later Yahoo-fallback
+    # error are independent facts and must both reach the user.
+    scenario_errors: list[str] = [gold_price_error] if gold_price_error else []
     finance_source = normalize_finance_source(
         (query.get("fundamentals_source", ["our"])[0] or "our")
     )
@@ -104,34 +124,46 @@ def _render_tool_d_overview_page(
         except ToolBStaleSchemaError:
             raise
         except Exception as exc:
-            scenario_error = f"Could not compute stress scenario: {exc}"
             if finance_source == "yahoo":
-                scenario_error = _yahoo_fallback_error(exc)
+                scenario_errors.append(
+                    _yahoo_fallback_error(
+                        exc,
+                        requested_gold=requested_gold,
+                        spot_gold=_first_number(state.latest_tool_d, "spot_gold_usd"),
+                    )
+                )
                 finance_source = "our"
                 frame = state.latest_tool_d.copy()
+            else:
+                scenario_errors.append(f"Could not compute stress scenario: {exc}")
 
     search_term = str(search or "").strip().upper()
     if not frame.empty and search_term and "ticker" in frame.columns:
         frame = frame.loc[
             frame["ticker"].astype(str).str.upper().str.contains(search_term, na=False)
         ].copy()
-    if not frame.empty and {"tool_d_quality_rank", "ticker"}.issubset(frame.columns):
-        frame = frame.sort_values(
-            ["tool_d_quality_rank", "ticker"],
-            ascending=[False, True],
-            na_position="last",
-        )
+    # Row order is owned by the writer: golden_vector/model/tool_d.py sorts its
+    # output by (tool_d_quality_rank desc, ticker asc) before persisting, and the
+    # scenario recompute goes through the same writer. Serve never re-sorts.
 
     spot_gold = _first_number(frame, "spot_gold_usd") or _first_number(
         state.latest_tool_d,
         "spot_gold_usd",
     )
     active_gold = _first_number(frame, "gold_price_used") or requested_gold or spot_gold
-    flip_rows = (
-        frame.loc[frame["resilience_flip_flags"].notna()].copy()
-        if not frame.empty and "resilience_flip_flags" in frame.columns
-        else frame.iloc[0:0].copy()
-    )
+    # Canon: degraded rows are EXCLUDED from confident headlines, not just flagged.
+    # The writer already nulls tool_d_quality_rank when resilience_data_status is
+    # not OK, so the flip panel must apply the same gate.
+    if (
+        not frame.empty
+        and {"resilience_flip_flags", "resilience_data_status"}.issubset(frame.columns)
+    ):
+        flip_rows = frame.loc[
+            frame["resilience_flip_flags"].notna()
+            & frame["resilience_data_status"].astype(str).eq("OK")
+        ].copy()
+    else:
+        flip_rows = frame.iloc[0:0].copy()
     fundamentals_provenance = (
         load_fundamentals_provenance_lookup(paths)
         if finance_source == "yahoo"
@@ -150,7 +182,7 @@ def _render_tool_d_overview_page(
     )]
     if flash:
         body.append(notice("success", escape(flash)))
-    if scenario_error:
+    for scenario_error in scenario_errors:
         body.append(notice("danger", escape(scenario_error)))
     if scenario_message:
         body.append(notice("info", escape(scenario_message)))
@@ -399,11 +431,15 @@ def _render_table(
             f"{_fmt_numeric_td(row.get('fcf_yield'), decimals=1, as_percent=True)}"
             "</tr>"
         )
+    # Empty state: the colspan row does not match the explicit column model that
+    # workspace-tables.js hands DataTables, so drop js-datatable when there are no
+    # data rows (same pattern as candidate_finder_page.py).
+    table_class = "js-datatable" if rows_html else "empty-table"
     if not rows_html:
         rows_html.append("<tr><td colspan=\"20\" class=\"hint\">No Corporate Resilience rows found.</td></tr>")
 
     return table_region(
-        "<table id=\"tool-d-table\" class=\"js-datatable\">"
+        f"<table id=\"tool-d-table\" class=\"{table_class}\">"
         "<thead><tr>"
         "<th scope=\"col\" data-col-name=\"ticker\">Ticker</th>"
         + help_th("Resilience Score", key="tool_d_quality_rank", app_config=app_config, col_name="quality_rank", sort_numeric=True, panel=True)

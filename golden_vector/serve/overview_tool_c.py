@@ -51,12 +51,10 @@ def _render_tool_c_overview_page(
         frame = frame.loc[
             frame["ticker"].astype(str).str.upper().str.contains(search_term, na=False)
         ].copy()
-    if not frame.empty and {"tool_c_downside_rank", "ticker"}.issubset(frame.columns):
-        frame = frame.sort_values(
-            ["tool_c_downside_rank", "ticker"],
-            ascending=[False, True],
-            na_position="last",
-        )
+    # Row order is owned by the writer: golden_vector/model/tool_c.py sorts the
+    # persisted output by (tool_c_downside_rank desc, tool_c_upside_rank desc,
+    # ticker asc). Serve must not re-sort — a coarser re-sort here can only
+    # scramble the writer's tie-breaks.
 
     rows_html: list[str] = []
     for row in frame.to_dict(orient="records"):
@@ -80,6 +78,10 @@ def _render_tool_c_overview_page(
             + collapsible_text_td(row.get("tool_c_upside_tags"))
             + "</tr>"
         )
+    # Empty state: the colspan row does not match the explicit column model that
+    # workspace-tables.js hands DataTables, so drop js-datatable when there are no
+    # data rows (same pattern as candidate_finder_page.py).
+    table_class = "js-datatable" if rows_html else "empty-table"
     if not rows_html:
         rows_html.append("<tr><td colspan=\"10\" class=\"hint\">No Gold Downside rows found.</td></tr>")
 
@@ -116,7 +118,7 @@ def _render_tool_c_overview_page(
         "</section>"
     )
     body.append(table_region(
-        "<table id=\"tool-c-table\" class=\"js-datatable\">"
+        f"<table id=\"tool-c-table\" class=\"{table_class}\">"
         "<thead><tr>"
         + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
         + help_th("Downside Score", key="tool_c_downside_rank", app_config=app_config, col_name="downside_rank", sort_numeric=True)

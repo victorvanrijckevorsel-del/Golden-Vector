@@ -392,3 +392,32 @@ def test_scorecard_unavailable_state_to_tone_mapping():
         other = "notice-danger" if expected == "notice-warning" else "notice-warning"
         assert expected in html, status
         assert other not in html, status
+
+
+def test_scorecard_missing_share_renders_dash_not_zero_percent():
+    """A None share is missing, not 0% of periods; a NaN verdict is missing too."""
+    from golden_vector.serve.overview_scorecard import _render_backtest_card
+
+    html = _render_backtest_card({
+        "signal_id": "x", "claim": "Some claim", "verdict": "SUPPORTED",
+        "n_folds": 44, "mean_ic": 0.4, "nw_t": 3.0,
+        "share_folds_directional": None,
+        "tercile_spread_mean": 1.0, "tercile_spread_t": 2.0,
+        "baseline_lines": "[]",
+    })
+
+    assert "- of periods" in html
+    assert "0% of periods" not in html
+
+
+def test_scorecard_nan_verdict_is_neutral_not_the_string_nan():
+    from golden_vector.serve.overview_scorecard import _render_backtest_card, _verdict_class
+
+    assert _verdict_class(float("nan")) == "verdict-partial"
+    assert _verdict_class(None) == "verdict-partial"
+    html = _render_backtest_card({
+        "claim": "Some claim", "verdict": float("nan"), "n_folds": 1,
+        "share_folds_directional": 0.5, "baseline_lines": "[]",
+    })
+    assert "nan" not in html
+    assert "verdict-partial" in html

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -435,3 +436,17 @@ def test_overview_unavailable_state_to_tone_mapping(status, expected_tone):
     other = "notice-danger" if expected_tone == "notice-warning" else "notice-warning"
     assert expected_tone in html
     assert other not in html
+
+
+def test_lab_dial_table_drops_js_datatable_when_no_rows(tmp_path) -> None:
+    """A colspan-only empty row does not match the explicit column model that
+    workspace-tables.js hands DataTables, so the class must be dropped."""
+    paths = _write_artifacts(tmp_path)
+    data = load_dial_cells(paths, horizon=13, bucket="gold_down")  # type: ignore[arg-type]
+    empty = replace(data, rows=[])
+
+    html = _render_lab_overview_page(empty, selected_bucket="gold_down")
+
+    assert 'id="lab-dial-table" class="empty-table"' in html
+    assert 'id="lab-dial-table" class="js-datatable"' not in html
+    assert "No rows for this scenario." in html

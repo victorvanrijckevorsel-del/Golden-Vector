@@ -62,8 +62,13 @@ def render_model_state_banner(payload: dict[str, object] | None) -> str:
     if payload is not None and str(payload.get("state") or "").lower() == "complete":
         return ""
     lines = summarize_model_state_manifest(payload)
+    # Plan 10.5 tone mapping (same rule as the Lab and Scorecard pages): danger is
+    # reserved for corrupt-class states — a manifest that exists but cannot be
+    # parsed. A missing manifest (fresh clone, build never run) and other
+    # incomplete-but-readable states are actionable absence/freshness warnings.
+    tone = "danger" if (payload or {}).get("manifest_readable") is False else "warning"
     return notice(
-        "danger",
+        tone,
         "<p><strong>Model build state needs attention.</strong></p>"
         + "".join(f"<p>{escape(line)}</p>" for line in lines),
     )

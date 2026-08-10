@@ -17,8 +17,14 @@ from golden_vector.serve.ui.components import page_header
 from golden_vector.serve.ui.status import notice
 
 
-def _verdict_class(verdict: str) -> str:
-    v = verdict.upper()
+def _verdict_class(verdict: Any) -> str:
+    # A non-string / NaN verdict is a missing value, not a category: route it to
+    # the neutral presentation instead of letting "nan" render as a verdict.
+    if not isinstance(verdict, str):
+        return "verdict-partial"
+    v = verdict.strip().upper()
+    if v in ("", "NAN", "NONE", "NA"):
+        return "verdict-partial"
     if v.startswith("SUPPORTED"):
         return "verdict-supported"
     if v.startswith("NOT SUPPORTED"):
@@ -118,13 +124,39 @@ def _render_scorecard_page(data) -> str:
     )
 
 
+def _share_percent(value: Any) -> float | None:
+    """Scale a 0-1 share to percent; ``None`` when the writer emitted no value."""
+
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric):
+        return None
+    return numeric * 100
+
+
+def _verdict_text(value: Any) -> str:
+    """Verdict as displayable text; missing/NaN verdicts render blank, not 'nan'."""
+
+    if not isinstance(value, str):
+        return ""
+    return "" if value.strip().upper() in ("NAN", "NONE", "NA") else value
+
+
 def _render_backtest_card(row: dict[str, Any]) -> str:
-    verdict = str(row.get("verdict") or "")
-    cls = _verdict_class(verdict)
+    raw_verdict = row.get("verdict")
+    verdict = _verdict_text(raw_verdict)
+    cls = _verdict_class(raw_verdict)
+    # A missing share stays missing ("-"); it is not 0% of periods.
+    share = _share_percent(row.get("share_folds_directional"))
+    share_part = "- of periods" if share is None else f"{_fmt(share, 0)}% of periods"
     stats = (
         f"{int(row.get('n_folds') or 0)} test periods · "
         f"IC {_fmt(row.get('mean_ic'))} · t {_fmt(row.get('nw_t'), 1)} · "
-        f"{_fmt((row.get('share_folds_directional') or 0) * 100, 0)}% of periods · "
+        f"{share_part} · "
         f"spread {_fmt(row.get('tercile_spread_mean'))} (t {_fmt(row.get('tercile_spread_t'), 1)})"
     )
     try:
@@ -157,7 +189,7 @@ def _render_backtest_card(row: dict[str, Any]) -> str:
 def _render_accruing_card(row: dict[str, Any]) -> str:
     return (
         "<section class=\"panel scorecard-card\">"
-        f"<div class=\"scorecard-verdict verdict-accruing\">{escape(str(row.get('verdict') or ''))}</div>"
+        f"<div class=\"scorecard-verdict verdict-accruing\">{escape(_verdict_text(row.get('verdict')))}</div>"
         f"<div class=\"scorecard-claim\">{escape(str(row.get('claim') or ''))}</div>"
         f"<div class=\"hint\">{escape(str(row.get('caveat') or ''))}</div>"
         "</section>"

@@ -120,12 +120,16 @@ def _render_lab_overview_page(
         )
 
     rows_html = [_render_dial_row(row, selected_bucket=selected_bucket, horizon=horizon) for row in data.rows]
+    # Empty state: the colspan row does not match the explicit column model that
+    # workspace-tables.js hands DataTables, so drop js-datatable when there are no
+    # data rows (same pattern as candidate_finder_page.py).
+    dial_table_class = "js-datatable" if rows_html else "empty-table"
     if not rows_html:
         rows_html.append(
             "<tr><td colspan=\"10\" class=\"hint\">No rows for this scenario.</td></tr>"
         )
     body.append(table_region(
-        "<table id=\"lab-dial-table\" class=\"js-datatable\">"
+        f"<table id=\"lab-dial-table\" class=\"{dial_table_class}\">"
         "<thead><tr>"
         + help_th("Rank", key="lab_rank", col_name="rank", sort_numeric=True)
         + help_th("Ticker", key="ticker_symbol", col_name="ticker")
