@@ -51,6 +51,21 @@ def section_heading(
     )
 
 
+def section_nav(links, *, label: str = "On this page") -> str:
+    """In-page anchor navigation (plan 10.3): ``(fragment_id, text)`` pairs.
+
+    Anchors only — never routes. Callers include only the sections that exist
+    for the current lens/vehicle (plan 15/23 ticker-detail + Portfolio rules).
+    """
+    items = "".join(
+        f"<a class=\"section-nav-link\" href=\"#{escape(fragment)}\">{escape(text)}</a>"
+        for fragment, text in links
+    )
+    return (
+        f"<nav class=\"section-nav\" aria-label=\"{escape(label)}\">{items}</nav>"
+    )
+
+
 def toolbar(content_html: str, *, label: str) -> str:
     """Action/scenario toolbar shell grouping related controls."""
     return (

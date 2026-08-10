@@ -23,7 +23,7 @@ from golden_vector.serve.detail_panels import (
 )
 from golden_vector.serve.format_helpers import _frame_index_by_ticker, _ticker_rows
 from golden_vector.serve.page_shell import _page_shell
-from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.components import page_header, section_nav
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import ToolADetailState, WorkspaceState
@@ -108,6 +108,24 @@ def render_detail_page(
             "<p class=\"hint\">Option vehicle page. This ticker is used for listed "
             "option liquidity and scenarios, not as a Gold Sensitivity / Corporate Finance mining-company row.</p>"
         )
+    # Sticky in-page anchors (plan 15/23): only sections that exist for the
+    # current lens/vehicle. All targets are ids rendered by the panels/forms.
+    anchors: list[tuple[str, str]] = []
+    if show_workspace_panels:
+        anchors += [
+            ("gold-sensitivity", "Gold Sensitivity"),
+            ("charts", "Charts"),
+            ("corporate-finance", "Corporate Finance"),
+        ]
+    anchors.append(("option-trading", "Option Trading"))
+    if show_manual_sections:
+        anchors += [
+            ("inputs", "Inputs"),
+            ("reporting", "Reporting"),
+            ("verification", "Verification"),
+            ("notes", "Notes"),
+        ]
+    body.append(section_nav(anchors))
     if flash:
         body.append(notice("success", escape(flash)))
     if error:

@@ -24,7 +24,7 @@ from golden_vector.serve.format_helpers import (
 from golden_vector.serve.column_help import help_th
 from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.page_shell import _page_shell
-from golden_vector.serve.ui.components import empty_state, page_header
+from golden_vector.serve.ui.components import empty_state, page_header, section_nav
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
 
@@ -58,6 +58,20 @@ def render_portfolio_page(
     if error:
         body.append(notice("danger", escape(error)))
     body.append(render_model_state_banner(load_current_model_state_manifest(paths)))
+    # Anchors list only the sections this request actually renders; each condition
+    # mirrors the early-return guard in the matching _render_* helper below.
+    nav_links: list[tuple[str, str]] = [("summary", "Summary")]
+    if not data.summary.empty:
+        nav_links.append(("data-issues", "Data issues"))
+        nav_links.append(("composition", "Composition"))
+    nav_links.append(("hedge-sizing", "Hedge sizing"))
+    nav_links.append(("correlations", "Correlations"))
+    nav_links.append(("history", "History"))
+    if not data.reconciliation_export.empty:
+        nav_links.append(("reconciliation", "Reconciliation"))
+    nav_links.append(("positions", "Positions"))
+    nav_links.append(("lots", "Add lots"))
+    body.append(section_nav(nav_links))
     body.append(_render_summary(data))
     body.append(_render_data_issues(data))
     body.append(_render_composition(data))
@@ -84,7 +98,7 @@ def portfolio_form_payload(form_data: dict[str, list[str]]) -> dict[str, object]
 def _render_summary(data: PortfolioData) -> str:
     if data.artifacts_missing:
         return (
-            "<section class=\"panel\">"
+            "<section class=\"panel\" id=\"summary\">"
             "<h2>Current Book</h2>"
             "<p class=\"hint\">No portfolio artifacts exist yet. "
             "Add a position to build them from the current local snapshot.</p>"
@@ -92,7 +106,7 @@ def _render_summary(data: PortfolioData) -> str:
         )
     summary = _first_row(data.summary)
     return (
-        "<section class=\"metric-grid\">"
+        "<section class=\"metric-grid\" id=\"summary\">"
         f"{_metric_card('NAV', _fmt_money(summary.get('nav_value_usd'), 'USD'))}"
         f"{_metric_card('Total P&L at current FX', _fmt_money(summary.get('total_pnl_usd_at_current_fx'), 'USD'), help_text='Unrealized profit/loss on entered positions, valued at current prices and FX.')}"
         f"{_metric_card('Estimated linear loss if gold -10%', _fmt_money(summary.get('modeled_gold_down_10_loss_usd'), 'USD'), help_text='Modeled book loss if gold fell 10 percent, using each holding measured down-beta. Covers only positions with a measured beta.')}"
@@ -114,7 +128,7 @@ def _render_data_issues(data: PortfolioData) -> str:
     issues = _json_list(_first_row(data.summary).get("data_issues_json"))
     if not issues:
         return (
-            "<section class=\"panel\">"
+            "<section class=\"panel\" id=\"data-issues\">"
             "<h2>Data issues to fix</h2>"
             "<p>No portfolio data issues detected in the current artifacts.</p>"
             "</section>"
@@ -129,7 +143,7 @@ def _render_data_issues(data: PortfolioData) -> str:
             "</tr>"
         )
     return (
-        "<section class=\"panel\">"
+        "<section class=\"panel\" id=\"data-issues\">"
         "<h2>Data issues to fix</h2>"
         f"<p class=\"hint\">Showing all {len(issues)} current data issues.</p>"
         + table_region(
@@ -171,7 +185,7 @@ def _render_composition(data: PortfolioData) -> str:
         if isinstance(values, dict)
     ]
     return (
-        "<section class=\"panel\">"
+        "<section class=\"panel\" id=\"composition\">"
         "<h2>Composition and coverage</h2>"
         "<p class=\"hint\">Corporate resilience coverage shows how much of NAV has a usable Tool D row. "
         f"Current coverage: {_fmt_percent(summary.get('resilience_coverage_fraction'))}.</p>"
@@ -210,7 +224,7 @@ def _render_composition(data: PortfolioData) -> str:
 def _render_hedge_sizing(data: PortfolioData) -> str:
     if data.hedge_sizing.empty:
         return (
-            "<section class=\"panel\">"
+            "<section class=\"panel\" id=\"hedge-sizing\">"
             "<h2>Modeled GDX/GDXJ hedge size</h2>"
             "<p>GDX hedge size unavailable.</p>"
             "<p class=\"hint\">Benchmark beta artifacts are missing. Run python main.py refresh.</p>"
@@ -247,7 +261,7 @@ def _render_hedge_sizing(data: PortfolioData) -> str:
             "</tr>"
         )
     return (
-        "<section class=\"panel\">"
+        "<section class=\"panel\" id=\"hedge-sizing\">"
         "<h2>Modeled GDX/GDXJ hedge size</h2>"
         + table_region(
             "<table><thead><tr>"
@@ -273,7 +287,7 @@ def _render_hedge_sizing(data: PortfolioData) -> str:
 def _render_correlations(data: PortfolioData) -> str:
     if data.correlations.empty:
         return (
-            "<section class=\"panel\">"
+            "<section class=\"panel\" id=\"correlations\">"
             "<h2>Correlation map</h2>"
             "<p class=\"hint\">No covered position history is available yet.</p>"
             "</section>"
@@ -316,7 +330,7 @@ def _render_correlations(data: PortfolioData) -> str:
         f"<th scope=\"col\">{escape(ticker)}</th>" for ticker in tickers
     )
     return (
-        "<section class=\"panel\">"
+        "<section class=\"panel\" id=\"correlations\">"
         "<h2>Correlation map</h2>"
         "<p class=\"hint\">In a gold selloff, correlations often move toward 1.0. "
         "This is a normal-market history view, not a crash guarantee.</p>"
@@ -354,7 +368,7 @@ def _render_correlations(data: PortfolioData) -> str:
 def _render_value_history(data: PortfolioData) -> str:
     if data.value_history.empty:
         return (
-            "<section class=\"panel\">"
+            "<section class=\"panel\" id=\"history\">"
             "<h2>Market value over time</h2>"
             "<p class=\"hint\">No covered position history is available yet.</p>"
             "</section>"
@@ -376,7 +390,7 @@ def _render_value_history(data: PortfolioData) -> str:
             "</tr>"
         )
     return (
-        "<section class=\"panel\">"
+        "<section class=\"panel\" id=\"history\">"
         "<h2>Market value over time</h2>"
         "<p class=\"hint\">Market value of today's holdings, covered names "
         f"({_fmt_percent(latest.get('covered_book_weight_fraction'))} of book) - not profit/loss. "
@@ -403,7 +417,7 @@ def _render_reconciliation_export(data: PortfolioData) -> str:
     if data.reconciliation_export.empty:
         return ""
     return (
-        "<section class=\"panel\">"
+        "<section class=\"panel\" id=\"reconciliation\">"
         "<h2>Reconciliation export</h2>"
         "<p class=\"hint\">Raw manual lots mapped to the canonical positions used by this page.</p>"
         "<p><a class=\"btn btn-secondary\" href=\"/portfolio/reconciliation.csv\">Download reconciliation CSV</a></p>"
@@ -414,7 +428,7 @@ def _render_reconciliation_export(data: PortfolioData) -> str:
 def _render_positions(data: PortfolioData) -> str:
     if data.positions.empty:
         return (
-            "<section class=\"panel\">"
+            "<section class=\"panel\" id=\"positions\">"
             "<h2>Positions</h2>"
             "<p>Add your first position below. P&L uses the latest local snapshot price after artifacts are built.</p>"
             "</section>"
@@ -453,7 +467,7 @@ def _render_positions(data: PortfolioData) -> str:
             "</tr>"
         )
     return (
-        "<section class=\"panel\">"
+        "<section class=\"panel\" id=\"positions\">"
         "<h2>Positions</h2>"
         + table_region(
             "<table class=\"js-datatable\"><thead><tr>"
@@ -500,7 +514,7 @@ def _render_lot_forms(data: PortfolioData, *, app_config: AppConfig) -> str:
         else None
     )
     add_form = (
-        "<section class=\"panel\">"
+        "<section class=\"panel\" id=\"lots\">"
         "<h2>Add Position Lot</h2>"
         "<p class=\"hint\">M1 records each buy in the selected ticker's configured currency. "
         "Dual-listing broker lines come later. For LSE/GBP tickers, enter buy prices in pounds; "

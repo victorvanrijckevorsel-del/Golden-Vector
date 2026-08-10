@@ -13,6 +13,8 @@ from typing import Any
 
 from golden_vector.serve.column_help import help_term
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.status import notice
 
 
 def _verdict_class(verdict: str) -> str:
@@ -41,14 +43,16 @@ def _fmt(value: Any, decimals: int = 2) -> str:
 
 
 def _render_scorecard_page(data) -> str:
-    body = ["<h1>Evidence Scorecard</h1>"]
-    body.append(
-        "<p>Each ranking the product shows is tested out of sample, walk-forward, "
-        "against pass/fail bars locked before any number was computed. "
-        "<strong>SUPPORTED</strong> means the ranking passed that historical test "
-        "in the surviving-name universe; it is evidence, not proof. "
-        "<strong>NOT SUPPORTED</strong> ships just as plainly.</p>"
-    )
+    body = [page_header(
+        "Evidence Scorecard",
+        lead_html=(
+            "<p>Each ranking the product shows is tested out of sample, walk-forward, "
+            "against pass/fail bars locked before any number was computed. "
+            "<strong>SUPPORTED</strong> means the ranking passed that historical test "
+            "in the surviving-name universe; it is evidence, not proof. "
+            "<strong>NOT SUPPORTED</strong> ships just as plainly.</p>"
+        ),
+    )]
 
     if not data.available:
         if data.error_status == "CORRUPT":
@@ -57,10 +61,14 @@ def _render_scorecard_page(data) -> str:
             msg = "Scorecard artifact is from an older schema; rebuild it."
         else:
             msg = "Scorecard is not built yet."
-        body.append(
-            f"<div class=\"flash flash-warning\">{escape(msg)} "
-            "Run <code>python -m golden_vector.lab.scorecard</code>.</div>"
-        )
+        # Plan 10.5 mapping (same rule as the Lab pages): corrupt artifacts are
+        # danger; stale and not-built are freshness/absence warnings.
+        tone = "danger" if data.error_status == "CORRUPT" else "warning"
+        body.append(notice(
+            tone,
+            f"{escape(msg)} "
+            "Run <code>python -m golden_vector.lab.scorecard</code>.",
+        ))
         return _page_shell(
             "Evidence Scorecard - Golden Vector Workspace",
             "".join(body),
@@ -80,15 +88,16 @@ def _render_scorecard_page(data) -> str:
             f"{_fmt(leak.get('contaminated_mean_ic'))})."
         )
     if banner_bits:
-        body.append(f"<div class=\"flash\">{' '.join(banner_bits)}</div>")
+        body.append(notice("info", " ".join(banner_bits)))
     if meta.get("legacy_schema_assumed"):
-        body.append(
-            "<div class=\"flash flash-warning\">This scorecard artifact predates "
+        body.append(notice(
+            "warning",
+            "This scorecard artifact predates "
             "schema metadata. Its columns match the current reader, but rebuild it "
-            "when convenient with <code>python -m golden_vector.lab.scorecard</code>.</div>"
-        )
+            "when convenient with <code>python -m golden_vector.lab.scorecard</code>.",
+        ))
     for caveat in meta.get("caveats", []):
-        body.append(f"<div class=\"flash flash-warning\">{escape(str(caveat))}</div>")
+        body.append(notice("warning", escape(str(caveat))))
 
     body.append("<h2>Tested today (backtest)</h2>")
     for row in data.backtest_rows:

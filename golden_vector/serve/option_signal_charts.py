@@ -12,6 +12,7 @@ from golden_vector.serve.format_helpers import (
     _optional_float,
     format_dte_suffix,
 )
+from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.option_signal_render import format_vol_points
 
 
@@ -79,11 +80,16 @@ def _render_skew_curve_chart(points: Sequence[OptionSignalPoint]) -> str:
         "<section class=\"option-chart-block\">"
         "<h4>Skew Curve</h4>"
         f"{_render_skew_curve_svg(points)}"
-        "<table><thead><tr>"
-        "<th>Horizon</th><th>Side</th><th>Abs Delta</th><th>IV</th><th>Liquidity</th><th>Flags</th>"
-        "</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
-        "</section>"
+        + table_region(
+            "<table><thead><tr>"
+            "<th scope=\"col\">Horizon</th><th scope=\"col\">Side</th><th scope=\"col\">Abs Delta</th>"
+            "<th scope=\"col\">IV</th><th scope=\"col\">Liquidity</th><th scope=\"col\">Flags</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>",
+            region_id="option-skew-curve-table-region",
+            label="Skew curve points",
+        )
+        + "</section>"
     )
 
 
@@ -132,13 +138,18 @@ def _render_oi_strike_chart(
         "<section class=\"option-chart-block\">"
         "<h4>Open Interest by Strike</h4>"
         f"{_render_oi_strike_svg(shown)}"
-        "<table><thead><tr>"
-        "<th>Side</th><th>Strike</th><th>Open Interest</th><th>Volume</th>"
-        "<th>Expiry / DTE</th><th>Liquidity</th><th>Flags</th>"
-        "</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
-        f"{trim_note}"
-        "</section>"
+        + table_region(
+            "<table><thead><tr>"
+            "<th scope=\"col\">Side</th><th scope=\"col\">Strike</th><th scope=\"col\">Open Interest</th>"
+            "<th scope=\"col\">Volume</th><th scope=\"col\">Expiry / DTE</th>"
+            "<th scope=\"col\">Liquidity</th><th scope=\"col\">Flags</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>",
+            region_id="option-oi-strike-table-region",
+            label="Open interest by strike",
+        )
+        + f"{trim_note}"
+        + "</section>"
     )
 
 
@@ -233,11 +244,16 @@ def _render_signal_history_chart(
         "<section class=\"option-chart-block\">"
         "<h4>Signal History</h4>"
         f"{_render_signal_history_svg(points)}"
-        "<table><thead><tr>"
-        f"<th>Date</th><th>{label} Skew Residual</th><th>{label} ATM IV</th><th>IV/RV Ratio</th>"
-        "</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
-        "</section>"
+        + table_region(
+            "<table><thead><tr>"
+            f"<th scope=\"col\">Date</th><th scope=\"col\">{label} Skew Residual</th>"
+            f"<th scope=\"col\">{label} ATM IV</th><th scope=\"col\">IV/RV Ratio</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>",
+            region_id="option-signal-history-table-region",
+            label="Signal history",
+        )
+        + "</section>"
     )
 
 

@@ -120,7 +120,7 @@ def _render_company_form(
         "(The CLI <code>--clear-fields</code> path remains available for batch use.)</p>"
     )
     return (
-        "<section class=\"panel\">"
+        "<section id=\"inputs\" class=\"panel\">"
         "<h2>Company Inputs</h2>"
         f"<p><strong>Last Updated:</strong> {updated_at}</p>"
         f"<p class=\"tool-b-readiness\">"
@@ -160,7 +160,7 @@ def _render_reporting_form(
     )
     updated_at = _fmt_text(reporting_row.get("updated_at_utc"))
     return (
-        "<section class=\"panel\">"
+        "<section id=\"reporting\" class=\"panel\">"
         "<h2>Reporting Calendar</h2>"
         f"<p><strong>Last Updated:</strong> {updated_at}</p>"
         f"<form method=\"post\" action=\"/ticker/{escape(ticker)}/reporting\" class=\"form-grid\">"
@@ -275,7 +275,7 @@ def _render_verification_section(
         "To clear an existing value, tick the <em>Clear</em> checkbox under that field before saving.</p>"
     )
     return (
-        "<section class=\"panel\">"
+        "<section id=\"verification\" class=\"panel\">"
         "<h2>Source Verification</h2>"
         f"{hint}"
         + table_region(
@@ -346,7 +346,7 @@ def _render_note_section(
             label="Stock notes",
         )
     return (
-        "<section class=\"panel\">"
+        "<section id=\"notes\" class=\"panel\">"
         "<h2>Stock Notes</h2>"
         f"{summary}"
         f"{note_table}"

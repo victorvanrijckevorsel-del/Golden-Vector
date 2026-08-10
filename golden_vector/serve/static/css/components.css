@@ -169,6 +169,38 @@
   background: var(--badge-neutral-bg);
   border-color: var(--line);
 }
+/* Sticky in-page section navigation (plan 10.3; anchors, never routes).
+   Sits just under the sticky app header; wraps instead of scrolling so it
+   never becomes an anonymous horizontal scroll container. */
+.section-nav {
+  position: sticky;
+  top: 2.5rem;
+  z-index: calc(var(--z-sticky) - 1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 0;
+  margin: 0 0 12px;
+  background: var(--bg);
+}
+.section-nav-link {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.section-nav-link:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+.section-nav-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
 /* Compact data-status strip (plan 10.4) */
 .status-strip {
   display: flex;

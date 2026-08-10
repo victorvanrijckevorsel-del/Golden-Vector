@@ -375,3 +375,20 @@ def test_scorecard_serve_layer_has_no_analytics():
         for forbidden in (".mean(", ".std(", ".rank(", "newey_west", "spearman",
                           "_validity_experiment", "run_e1", "run_e3", ".quantile("):
             assert forbidden not in code, f"{module}: {forbidden}"
+
+
+def test_scorecard_unavailable_state_to_tone_mapping():
+    """Plan 10.5 at the scorecard render call site (same rule as the Lab pages):
+    corrupt -> danger; stale and not-built -> warning."""
+    from golden_vector.serve.overview_scorecard import _render_scorecard_page
+    from golden_vector.serve.scorecard_data import ScorecardData
+
+    for status, expected in (
+        ("CORRUPT", "notice-danger"),
+        ("STALE", "notice-warning"),
+        ("MISSING", "notice-warning"),
+    ):
+        html = _render_scorecard_page(ScorecardData(available=False, error_status=status))
+        other = "notice-danger" if expected == "notice-warning" else "notice-warning"
+        assert expected in html, status
+        assert other not in html, status

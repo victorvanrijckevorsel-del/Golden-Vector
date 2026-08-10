@@ -256,7 +256,7 @@ def _render_latest_panels(
             app_config=app_config,
         )
         + "<div class=\"two-up\">"
-        f"<section class=\"panel nested-panel\"><h3>Latest Corporate Finance Snapshot</h3>"
+        f"<section id=\"corporate-finance\" class=\"panel nested-panel\"><h3>Latest Corporate Finance Snapshot</h3>"
         f"{finance_controls}"
         f"{_render_tool_b_snapshot_table(ticker=ticker, row=tool_b_row, columns=['as_of_date', 'gold_price_assumption', 'fundamental_check_summary', 'fundamental_check_rank', 'screening_verdict', 'confidence', 'share_price_usd', 'market_cap_musd', 'cash_margin_usd_per_oz', 'margin_pct', 'fcf_yield', 'leverage', 'forward_pe', 'ev_ebitda', 'snapshot_refresh_run_id', 'snapshot_as_of_date', 'snapshot_normalization_status', 'fx_staleness_days'], financials_source=financials_source, fundamentals_provenance=provenance_lookup)}"
         "</section>"
@@ -1271,7 +1271,7 @@ def _render_tool_a_panel(
         if tool_a_detail.foundation_error:
             message += f" {escape(tool_a_detail.foundation_error)}"
         return (
-            "<section class=\"panel\">"
+            "<section id=\"gold-sensitivity\" class=\"panel\">"
             "<h2>Gold Sensitivity</h2>"
             f"<p>{message}</p>"
             "</section>"
@@ -1308,7 +1308,7 @@ def _render_tool_a_panel(
     ]
 
     body = [
-        "<section class=\"panel\">",
+        "<section id=\"gold-sensitivity\" class=\"panel\">",
         "<h2>Gold Sensitivity</h2>",
         "<p class=\"hint\">Gold Sensitivity uses weekly structural delta, regime-split gamma, explicit asymmetry, "
         "confidence, and volatility diagnostics. "
@@ -1698,10 +1698,14 @@ def _render_visual_panels(
         # scored betas, so it carries no structural-file provenance gate. It renders
         # whenever there is enough price history, even when the foundation snapshot is
         # misaligned (the misalignment is surfaced by the page-level notice above).
-        overlay_panel = _render_rebased_overlay_panel(
-            ticker=ticker,
-            rebased_overlay_by_window=tool_a_detail.rebased_overlay_by_window,
-            active_window=active_window,
+        overlay_panel = (
+            "<div id=\"charts\">"
+            + _render_rebased_overlay_panel(
+                ticker=ticker,
+                rebased_overlay_by_window=tool_a_detail.rebased_overlay_by_window,
+                active_window=active_window,
+            )
+            + "</div>"
         )
         # Mirror the aligned branch's ordering (Fix #10 follow-up): chart sits
         # between the scatter row and the volatility row in BOTH branches so the
@@ -1735,10 +1739,16 @@ def _render_visual_panels(
     # Rebased price overlay (gold / stock / GDX / GDXJ indexed to 100 over the active
     # window). The beta NUMBERS live in the structural-window table above; this chart
     # answers co-movement — did the miner beat gold and the gold-miner ETFs?
-    overlay_panel = _render_rebased_overlay_panel(
-        ticker=ticker,
-        rebased_overlay_by_window=tool_a_detail.rebased_overlay_by_window,
-        active_window=active_window,
+    # The charts anchor wraps the overlay in BOTH alignment branches so the
+    # in-page section navigation always resolves (plan 15/23).
+    overlay_panel = (
+        "<div id=\"charts\">"
+        + _render_rebased_overlay_panel(
+            ticker=ticker,
+            rebased_overlay_by_window=tool_a_detail.rebased_overlay_by_window,
+            active_window=active_window,
+        )
+        + "</div>"
     )
     # Chart placement: the overlay sits immediately under the scatter / up-down-beta
     # row, above the volatility and exploratory panels.

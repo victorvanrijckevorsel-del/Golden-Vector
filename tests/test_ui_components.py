@@ -49,6 +49,16 @@ def test_section_heading_levels_help_and_actions():
         components.section_heading("Bad", level=7)
 
 
+def test_section_nav_is_anchor_only_and_escaped():
+    html = components.section_nav(
+        [("gold-sensitivity", "Gold Sensitivity"), ("notes", "No<tes>")]
+    )
+    assert html.startswith('<nav class="section-nav" aria-label="On this page">')
+    assert '<a class="section-nav-link" href="#gold-sensitivity">Gold Sensitivity</a>' in html
+    assert "No&lt;tes&gt;" in html
+    assert 'href="/' not in html  # anchors, never routes
+
+
 def test_toolbar_role_group_and_escaped_label():
     html = components.toolbar("<button>Go</button>", label='Scenario "controls"')
     assert 'role="group"' in html
