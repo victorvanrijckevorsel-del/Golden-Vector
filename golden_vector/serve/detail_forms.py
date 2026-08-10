@@ -12,6 +12,7 @@ from golden_vector.serve.format_helpers import (
     _format_form_value,
     _humanize_column_name,
 )
+from golden_vector.serve.ui.tables import table_region
 
 
 VERIFICATION_STATUS_OPTIONS: tuple[str, ...] = ("VERIFIED", "ESTIMATED", "INCOMPLETE")
@@ -277,11 +278,16 @@ def _render_verification_section(
         "<section class=\"panel\">"
         "<h2>Source Verification</h2>"
         f"{hint}"
-        "<table class=\"verification-table\">"
-        "<thead><tr><th>Field</th><th>Current Status</th><th>Edit</th></tr></thead>"
-        f"<tbody>{''.join(rows_html)}</tbody>"
-        "</table>"
-        "</section>"
+        + table_region(
+            "<table class=\"verification-table\">"
+            "<thead><tr><th scope=\"col\">Field</th><th scope=\"col\">Current Status</th>"
+            "<th scope=\"col\">Edit</th></tr></thead>"
+            f"<tbody>{''.join(rows_html)}</tbody>"
+            "</table>",
+            region_id="detail-verification-table-region",
+            label="Source verification",
+        )
+        + "</section>"
     )
 
 
@@ -320,9 +326,10 @@ def _render_note_section(
             key=lambda r: status_order.get(str(r.get("note_status") or "").upper(), 3),
         )
 
-        note_table = (
+        note_table = table_region(
             "<table class=\"note-table\">"
-            "<thead><tr><th>Status</th><th>Tag</th><th>Note</th><th>Updated</th></tr></thead>"
+            "<thead><tr><th scope=\"col\">Status</th><th scope=\"col\">Tag</th>"
+            "<th scope=\"col\">Note</th><th scope=\"col\">Updated</th></tr></thead>"
             "<tbody>"
             + "".join(
                 "<tr>"
@@ -334,7 +341,9 @@ def _render_note_section(
                 "</tr>"
                 for row in sorted_rows
             )
-            + "</tbody></table>"
+            + "</tbody></table>",
+            region_id="detail-notes-table-region",
+            label="Stock notes",
         )
     return (
         "<section class=\"panel\">"

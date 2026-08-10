@@ -276,11 +276,12 @@ def _render_lab_curve_page(curve: LabCurveData) -> str:
         rebuild = "" if status == "UNKNOWN_SCENARIO" else (
             " Rebuild: <code>python -m golden_vector.lab.conditional_dial</code>."
         )
-        # Broken/stale artifacts are danger; absent data and URL problems are
-        # warnings (plan 10.5). UNKNOWN_SCENARIO carries no rebuild action.
-        tone = "warning" if status in ("UNKNOWN_SCENARIO", "EMPTY") else "danger"
-        if status not in reason_map:
-            tone = "warning"
+        # Plan 10.5 mapping: corrupt/unreadable artifacts are danger; STALE /
+        # CELLS_STALE are freshness states and stay warning, as do empty
+        # builds, URL problems, and simply-absent episode data.
+        # UNKNOWN_SCENARIO carries no rebuild action.
+        danger_statuses = ("CORRUPT", "META_MISSING", "META_CORRUPT", "CELLS_MISSING", "CELLS_CORRUPT")
+        tone = "danger" if status in danger_statuses else "warning"
         body.append(notice(tone, f"{escape(reason)}{rebuild}"))
         return _page_shell(title, "".join(body), active_nav="lab")
 

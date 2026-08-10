@@ -103,3 +103,78 @@ def test_table_region_contract():
     assert 'aria-label="Candidate &quot;results&quot;"' in html
     assert 'tabindex="0"' in html
     assert html.endswith("</table></div>")
+
+
+def test_table_region_rejects_bad_id_and_empty_label():
+    """GV-RD-P34-4/5: ids are code constants — fail loud, never emit broken attrs."""
+    with pytest.raises(ValueError):
+        tables.table_region("<table></table>", region_id="", label="x")
+    with pytest.raises(ValueError):
+        tables.table_region("<table></table>", region_id='a" onfocus="1', label="x")
+    with pytest.raises(ValueError):
+        tables.table_region("<table></table>", region_id="ok-id", label="   ")
+
+
+def test_notice_extra_classes_are_validated_class_tokens():
+    """GV-RD-P34-4: extra_classes can never break out of the class attribute."""
+    html = status.notice("warning", "x", extra_classes="option-freshness option-freshness-stale")
+    assert 'class="flash notice notice-warning option-freshness option-freshness-stale"' in html
+    for hostile in ('a" onmouseover="1', "a<b>", 'x="y"', "a\nb"):
+        with pytest.raises(ValueError):
+            status.notice("warning", "x", extra_classes=hostile)
+
+
+def test_status_strip_escapes_labels_and_passes_value_fragments():
+    html = status.status_strip(
+        (('Refresh <"Run">', "<code>run-1</code>"),),
+        label='Snapshot "status"',
+    )
+    assert 'aria-label="Snapshot &quot;status&quot;"' in html
+    assert "Refresh &lt;&quot;Run&quot;&gt;" in html  # label escaped here
+    assert '<span class="status-item-value"><code>run-1</code></span>' in html  # trusted fragment
+    assert 'role="group"' in html
+
+
+def test_ui_package_imports_stay_presentation_pure():
+    """GV-RD-P34-5: serve/ui may import only stdlib presentation basics — never
+    app/model/workspace/data modules, so no state decision can migrate in."""
+    import ast
+    from pathlib import Path
+
+    allowed_roots = {"__future__", "html", "re"}
+    for path in sorted(Path("golden_vector/serve/ui").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                root = name.split(".")[0]
+                assert root in allowed_roots, f"{path.name} imports {name!r}"
+
+
+def test_refresh_summary_missing_manifest_keeps_visible_context():
+    """GV-RD-P34-6: the missing-snapshot branch keeps its visible section
+    context, and the populated branch renders the same three labelled values."""
+    from golden_vector.serve.overview_helpers import _render_refresh_summary
+
+    empty = _render_refresh_summary(None)
+    assert "notice-neutral" in empty
+    assert "Latest Market Snapshot." in empty
+    assert "No validated local market-data snapshot is available yet." in empty
+
+    populated = _render_refresh_summary(
+        {
+            "refresh_run_id": "run-42",
+            "snapshot_as_of_date": "2026-08-08",
+            "foundation_status": "VALIDATED",
+        }
+    )
+    assert 'class="status-strip"' in populated
+    for label in ("Refresh Run", "Snapshot As Of", "Foundation Status"):
+        assert label in populated
+    for value in ("run-42", "2026-08-08", "VALIDATED"):
+        assert value in populated

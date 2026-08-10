@@ -132,3 +132,18 @@ def test_z_index_values_use_the_token_scale():
             if re.search(r"z-index\s*:", line) and "var(" not in line:
                 offenders.append(f"{path.name}:{lineno}: {line.strip()}")
     assert not offenders, "z-index outside the token scale: " + "; ".join(offenders)
+
+
+def test_horizontal_scroll_is_owned_by_table_region_only():
+    """GV-RD-P34-1: anonymous scroll containers are an accessibility defect —
+    every overflow-x: auto|scroll declaration must live in a .table-region rule
+    (the labelled, keyboard-focusable wrapper)."""
+    offenders: list[str] = []
+    for path in _first_party_css_files():
+        text = _strip_css_comments(path.read_text(encoding="utf-8"))
+        for selector, body in re.findall(r"([^{}]+)\{([^}]*)\}", text):
+            if re.search(r"overflow-x\s*:\s*(auto|scroll)\b", body) and (
+                ".table-region" not in selector
+            ):
+                offenders.append(f"{path.name}: {selector.strip()[:60]}")
+    assert not offenders, "anonymous horizontal scroll containers: " + "; ".join(offenders)

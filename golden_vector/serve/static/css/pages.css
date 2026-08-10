@@ -102,9 +102,6 @@
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 14px;
 }
-.candidate-top-list-card {
-  overflow-x: auto;
-}
 .candidate-view-section {
   margin-top: 22px;
 }

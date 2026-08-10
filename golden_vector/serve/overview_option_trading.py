@@ -283,7 +283,7 @@ def _render_liquidity_measurements(
         "the latest snapshot yet. Proxy alternatives stay hidden unless this cached check supports them.</p>"
         + table_region(
         "<table><thead><tr>"
-        "<th>Group</th><th>Tickers</th>"
+        "<th scope=\"col\">Group</th><th scope=\"col\">Tickers</th>"
         + help_th("Measured Contracts", key="measured_contracts", app_config=app_config)
         + help_th("Tradable", key="tradable_count", app_config=app_config)
         + help_th("Watch", key="watch_count", app_config=app_config)

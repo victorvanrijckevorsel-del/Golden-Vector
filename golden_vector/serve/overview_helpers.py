@@ -80,8 +80,12 @@ def _render_refresh_summary(manifest: dict[str, Any] | None) -> str:
     """One compact data-status strip (plan 10.2/10.4); manifest interpretation
     and every visible value are unchanged from the metric-card version."""
     if not manifest:
+        # Keep the section context VISIBLE, not just the populated strip's
+        # ARIA label (GV-RD-P34-6).
         return notice(
-            "neutral", "No validated local market-data snapshot is available yet."
+            "neutral",
+            "<strong>Latest Market Snapshot.</strong> "
+            "No validated local market-data snapshot is available yet.",
         )
     return status_strip(
         (

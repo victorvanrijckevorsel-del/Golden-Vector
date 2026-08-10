@@ -143,6 +143,7 @@ def help_th(
     sort_numeric: bool = False,
     text: str | None = None,
     panel: bool = True,
+    scope: str = "col",
 ) -> str:
     """Render a ``<th>`` whose label carries a registry-driven help affordance.
 
@@ -150,9 +151,14 @@ def help_th(
     that opens the persistent explanation panel (meaning + formula + Read more) —
     header-click still sorts. ``panel=False`` is kept for old call sites, but still
     renders the same unified click panel through ``help_term``.
+
+    ``scope`` declares the header relationship (plan 11.1): ``"col"`` (default)
+    for column headers, ``"row"`` for row headers in label/value tables.
     """
 
-    attrs: list[str] = []
+    if scope not in ("col", "row"):
+        raise ValueError(f"unsupported th scope: {scope!r}")
+    attrs: list[str] = [f" scope=\"{scope}\""]
     if col_name:
         attrs.append(f" data-col-name=\"{escape(col_name)}\"")
     if sort_numeric:

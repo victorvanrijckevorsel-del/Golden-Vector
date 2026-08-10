@@ -1167,3 +1167,36 @@ def tmp_path_for() -> Path:
     import tempfile
 
     return Path(tempfile.mkdtemp(prefix="lab_curve_test_"))
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_tone"),
+    [
+        ("CORRUPT", "notice-danger"),
+        ("META_MISSING", "notice-danger"),
+        ("META_CORRUPT", "notice-danger"),
+        ("CELLS_MISSING", "notice-danger"),
+        ("CELLS_CORRUPT", "notice-danger"),
+        ("STALE", "notice-warning"),  # plan 10.5: stale = freshness warning
+        ("CELLS_STALE", "notice-warning"),
+        ("CELLS_EMPTY", "notice-warning"),
+        ("EMPTY", "notice-warning"),
+        ("UNKNOWN_SCENARIO", "notice-warning"),
+        ("SOMETHING_NEW", "notice-warning"),  # unknown -> "no episodes" copy, never danger
+    ],
+)
+def test_drilldown_unavailable_state_to_tone_mapping(status, expected_tone):
+    """Codex Phases-3/4 finding 2: section-10.5 mapping at the drilldown call
+    site — corrupt/unreadable stays danger, stale/empty/URL problems warn."""
+    from golden_vector.serve.lab_curve_page import _render_lab_curve_page
+
+    from golden_vector.serve.lab_curve_data import LabCurveData
+
+    html = _render_lab_curve_page(
+        LabCurveData(available=False, ticker="NEM", benchmark="GDX", error_status=status)
+    )
+    other = "notice-danger" if expected_tone == "notice-warning" else "notice-warning"
+    assert expected_tone in html
+    assert other not in html
+    if status == "UNKNOWN_SCENARIO":
+        assert "Rebuild:" not in html  # URL typo advice must not say rebuild

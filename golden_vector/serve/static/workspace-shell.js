@@ -6,7 +6,27 @@
 // close control, focus containment, and focus restoration on close.
 // Presentation-only: no routing, storage, fetch, or analytics.
 (function () {
+  // Table regions keep a keyboard tab stop only while they actually overflow
+  // (GV-RD-P34-1): the server-rendered tabindex="0" is the no-JS-safe default;
+  // with JS running, redundant stops are removed and restored on layout change.
+  function syncRegionFocusability() {
+    if (!document.querySelectorAll) return;
+    var regions = document.querySelectorAll(".table-region");
+    for (var i = 0; i < regions.length; i += 1) {
+      var region = regions[i];
+      if (region.scrollWidth > region.clientWidth) {
+        region.setAttribute("tabindex", "0");
+      } else {
+        region.removeAttribute("tabindex");
+      }
+    }
+  }
+
   function init() {
+    syncRegionFocusability();
+    if (window.addEventListener) {
+      window.addEventListener("resize", syncRegionFocusability);
+    }
     var toggle = document.querySelector(".nav-toggle");
     var frame = document.querySelector(".app-frame");
     var sidebar = document.getElementById("app-sidebar");

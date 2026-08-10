@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import pandas as pd
 
 from golden_vector.lab.conditional_dial import (
@@ -407,3 +409,29 @@ def test_dial_rows_have_one_cell_per_header_column() -> None:
         html = _render_dial_row(row, selected_bucket="gold_down", horizon=13)
         assert len(re.findall(r"<td", html)) == 10
         assert "colspan" not in html
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_tone"),
+    [
+        ("CORRUPT", "notice-danger"),
+        ("META_MISSING", "notice-danger"),
+        ("META_CORRUPT", "notice-danger"),
+        ("STALE", "notice-warning"),  # plan 10.5: stale is a freshness WARNING
+        ("EMPTY", "notice-warning"),
+        ("MISSING", "notice-warning"),
+    ],
+)
+def test_overview_unavailable_state_to_tone_mapping(status, expected_tone):
+    """Codex Phases-3/4 finding 2: the section-10.5 state-to-tone mapping at the
+    real overview render call site — STALE must never escalate to danger."""
+    from golden_vector.serve.lab_curve_data import LabCellsData
+    from golden_vector.serve.overview_lab import _render_lab_overview_page
+
+    html = _render_lab_overview_page(
+        LabCellsData(available=False, error_status=status),
+        selected_bucket="gold_down_big",
+    )
+    other = "notice-danger" if expected_tone == "notice-warning" else "notice-warning"
+    assert expected_tone in html
+    assert other not in html

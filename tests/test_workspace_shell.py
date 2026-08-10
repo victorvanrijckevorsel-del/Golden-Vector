@@ -141,6 +141,14 @@ sidebar.querySelectorAll = (sel) =>
 const mql = { matches: false, query: null, handler: null,
   addEventListener(n, f) { this.handler = f; } };
 
+// Table regions: one genuinely overflowing, one not (GV-RD-P34-1).
+const regionWide = new El("regionWide");
+regionWide.scrollWidth = 500; regionWide.clientWidth = 300;
+regionWide.attrs["tabindex"] = "0";
+const regionSmall = new El("regionSmall");
+regionSmall.scrollWidth = 200; regionSmall.clientWidth = 300;
+regionSmall.attrs["tabindex"] = "0";
+
 var doc = {
   readyState: "complete",
   activeElement: null,
@@ -154,17 +162,36 @@ var doc = {
       ".skip-link": skipLink,
     }[sel] || null;
   },
+  querySelectorAll(sel) {
+    return sel === ".table-region" ? [regionWide, regionSmall] : [];
+  },
   getElementById(id) { return id === "app-sidebar" ? sidebar : null; },
+  addEventListener(n, f) { this.listeners[n] = f; },
+};
+
+const win = {
+  matchMedia(q) { mql.query = q; return mql; },
+  listeners: {},
   addEventListener(n, f) { this.listeners[n] = f; },
 };
 
 vm.runInNewContext(
   fs.readFileSync("golden_vector/serve/static/workspace-shell.js", "utf8"),
-  { document: doc, window: { matchMedia(q) { mql.query = q; return mql; } }, console }
+  { document: doc, window: win, console }
 );
 
 // The desktop breakpoint listener is registered with the CSS breakpoint.
 assert.equal(mql.query, "(min-width: 64rem)");
+
+// Region focus stops: overflowing keeps its server-rendered tab stop, the
+// non-overflowing one loses it; a layout change flips both via resize.
+assert.equal(regionWide.attrs["tabindex"], "0");
+assert.ok(!("tabindex" in regionSmall.attrs));
+regionSmall.scrollWidth = 900;
+regionWide.scrollWidth = 100;
+win.listeners.resize();
+assert.equal(regionSmall.attrs["tabindex"], "0");
+assert.ok(!("tabindex" in regionWide.attrs));
 
 // Open: modal dialog semantics, inert background, focus on the close control.
 toggle.listeners.click();

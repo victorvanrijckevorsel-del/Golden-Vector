@@ -527,10 +527,10 @@ def _render_builder_group(
     <table class="candidate-criteria-table">
       <thead>
         <tr>
-          <th>Use</th>
-          <th>Criterion</th>
-          <th>Direction</th>
-          <th>Weight</th>
+          <th scope="col">Use</th>
+          <th scope="col">Criterion</th>
+          <th scope="col">Direction</th>
+          <th scope="col">Weight</th>
           <th>Meaning</th>
         </tr>
       </thead>

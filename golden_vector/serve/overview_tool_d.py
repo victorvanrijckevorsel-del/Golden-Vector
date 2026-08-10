@@ -392,7 +392,7 @@ def _render_table(
     return table_region(
         "<table id=\"tool-d-table\" class=\"js-datatable\">"
         "<thead><tr>"
-        "<th data-col-name=\"ticker\">Ticker</th>"
+        "<th scope=\"col\" data-col-name=\"ticker\">Ticker</th>"
         + help_th("Resilience Score", key="tool_d_quality_rank", app_config=app_config, col_name="quality_rank", sort_numeric=True, panel=True)
         + help_th("Gold @ G", key="tool_d_gold_used", app_config=app_config, col_name="gold_price", sort_numeric=True, panel=True)
         + help_th("Interest-Cover Line", key="tool_d_interest_cover", app_config=app_config, col_name="interest_cover", sort_numeric=True, panel=True)

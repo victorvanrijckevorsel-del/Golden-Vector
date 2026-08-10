@@ -1,0 +1,10 @@
+{
+  "when": "2026-08-10",
+  "gate": "GV-RD-P34-1 fix verification (one batched Playwright run, alert stubbed)",
+  "ticker_nem_body_overflow_px": {"400": 0, "768": 0, "1024": 0, "1440": 0},
+  "note": "panel containment fallback fully removed before this run — regions own all horizontal scroll",
+  "regions_at_400px": {"total": 4, "scrollable": 3, "tab_stops": 3},
+  "keyboard_scroll_verification_region": {"focusedWasRegion": true, "scrollLeft_after_ArrowRight": 40},
+  "tool_b_at_1440px": {"total": 1, "scrollable": 1, "tab_stops": 1, "bodyOverflow": 0},
+  "verdict": "PASS — conditional tab stops exact (scrollable == tab stops), keyboard scrolling real, zero body overflow"
+}

@@ -320,11 +320,11 @@ def test_tool_b_view_numeric_columns_marked_data_sort_numeric(tmp_path):
     body = _response_body(app, "/tool-b")
     # Score/Rank/standard finance columns must carry the numeric marker so
     # workspace-tables.js activates numeric sort on them.
-    assert '<th data-col-name="score" data-sort-numeric>' in body
-    assert '<th data-col-name="rank" data-sort-numeric>' in body
-    assert '<th data-col-name="forward_pe" data-sort-numeric>' in body
-    assert '<th data-col-name="ev_ebitda" data-sort-numeric>' in body
-    assert '<th data-col-name="fcf_yield" data-sort-numeric>' in body
+    assert '<th scope="col" data-col-name="score" data-sort-numeric>' in body
+    assert '<th scope="col" data-col-name="rank" data-sort-numeric>' in body
+    assert '<th scope="col" data-col-name="forward_pe" data-sort-numeric>' in body
+    assert '<th scope="col" data-col-name="ev_ebitda" data-sort-numeric>' in body
+    assert '<th scope="col" data-col-name="fcf_yield" data-sort-numeric>' in body
 
 
 def test_tool_a_view_is_wired_as_a_datatable(tmp_path):
@@ -335,7 +335,7 @@ def test_tool_a_view_is_wired_as_a_datatable(tmp_path):
     assert '<table id="tool-a-table" class="js-datatable">' in body
     assert 'data-filter-target="#tool-a-table"' in body
     # A representative numeric column is marked
-    assert '<th data-col-name="delta" data-sort-numeric>' in body
+    assert '<th scope="col" data-col-name="delta" data-sort-numeric>' in body
 
 
 def test_tool_a_overview_has_window_selector_and_direction_betas(tmp_path):
@@ -351,9 +351,9 @@ def test_tool_a_overview_has_window_selector_and_direction_betas(tmp_path):
     assert 'name="window" value="12M"' in body  # default resolved to 12M
     assert ">1Y</a>" in body  # 12M shown to the trader as "1Y"
     # direction-split + trust columns are the new headline
-    assert '<th data-col-name="up_beta" data-sort-numeric>' in body
-    assert '<th data-col-name="down_beta" data-sort-numeric>' in body
-    assert '<th data-col-name="gold_link" data-sort-numeric>' in body
+    assert '<th scope="col" data-col-name="up_beta" data-sort-numeric>' in body
+    assert '<th scope="col" data-col-name="down_beta" data-sort-numeric>' in body
+    assert '<th scope="col" data-col-name="gold_link" data-sort-numeric>' in body
     # the opaque composite score is gone (Victor: drop it)
     assert "Gold Sensitivity Score" not in body
     assert 'data-col-name="score"' not in body

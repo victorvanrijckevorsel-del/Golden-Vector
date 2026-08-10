@@ -62,6 +62,7 @@ from golden_vector.serve.option_signal_render import (
     render_option_signal_badge,
     signal_horizon_from_row,
 )
+from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import (
     DETAIL_ALIGNMENT_ALIGNED,
@@ -315,14 +316,18 @@ def _render_tool_b_snapshot_table(
         return "<p>No latest output is available yet.</p>"
     rows_html = "".join(
         "<tr>"
-        f"<th>{escape(column_name.replace('_', ' ').strip().title())}</th>"
+        f"<th scope=\"row\">{escape(column_name.replace('_', ' ').strip().title())}</th>"
         f"<td>{_snapshot_metric_value(column_name, row, financials_source=financials_source)}"
         f"{_snapshot_metric_icon(ticker, column_name, financials_source, fundamentals_provenance, row)}</td>"
         "</tr>"
         for column_name in columns
         if column_name in row
     )
-    return f"<table><tbody>{rows_html}</tbody></table>"
+    return table_region(
+        f"<table><tbody>{rows_html}</tbody></table>",
+        region_id="detail-snapshot-table-region",
+        label="Corporate finance snapshot",
+    )
 
 
 def _snapshot_metric_value(
@@ -603,14 +608,18 @@ def _render_option_skew_overlay(
     return (
         "<section class=\"nested-panel\">"
         f"<h3>Name vs Sector 25-Delta Skew ({benchmark})</h3>"
-        "<table><thead><tr>"
-        + help_th("Horizon", key="option_signal_horizon")
-        + help_th("Name", key="option_name_skew")
-        + help_th("Sector", key="option_sector_skew")
-        + help_th("Residual", key="skew_vs_benchmark", app_config=app_config)
-        + "</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
-        "</section>"
+        + table_region(
+            "<table><thead><tr>"
+            + help_th("Horizon", key="option_signal_horizon")
+            + help_th("Name", key="option_name_skew")
+            + help_th("Sector", key="option_sector_skew")
+            + help_th("Residual", key="skew_vs_benchmark", app_config=app_config)
+            + "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>",
+            region_id="detail-skew-table-region",
+            label="Name vs sector 25-delta skew",
+        )
+        + "</section>"
     )
 
 
@@ -663,7 +672,7 @@ def _render_option_proxy_fallback(
         note = f"<p class=\"hint\">{escape(detail.proxy_fallback_note)}</p>"
     table = ""
     if rows:
-        table = (
+        table = table_region(
             "<table><thead><tr>"
             + help_th("Vehicle", key="ticker_symbol")
             + help_th("Candidate", key="option_candidate_label")
@@ -674,7 +683,9 @@ def _render_option_proxy_fallback(
             + help_th("OI", key="option_open_interest")
             + help_th("Basis Risk", key="option_proxy_basis_risk")
             + "</tr></thead>"
-            f"<tbody>{''.join(rows)}</tbody></table>"
+            f"<tbody>{''.join(rows)}</tbody></table>",
+            region_id="detail-vehicles-table-region",
+            label="ETF proxy alternatives",
         )
     heading = "ETF Proxy Alternatives" if rows else "ETF Proxy Check"
     intro = (
@@ -725,24 +736,26 @@ def _render_option_trading_context_table(detail: OptionTradingDetailData) -> str
     )
     snapshot_date = context.as_of_date if context is not None else None
     refresh_run = context.refresh_run_id if context is not None else None
-    return (
+    return table_region(
         "<table><tbody>"
         "<tr>"
-        + help_th("Stock Price", key="option_stock_price")
+        + help_th("Stock Price", key="option_stock_price", scope="row")
         + f"<td>{_fmt_number(stock_price, decimals=2)}</td></tr>"
         "<tr>"
-        + help_th("Option Snapshot Date", key="option_snapshot_date")
+        + help_th("Option Snapshot Date", key="option_snapshot_date", scope="row")
         + f"<td>{_fmt_text(snapshot_date)}</td></tr>"
         "<tr>"
-        + help_th("Source", key="option_data_source")
+        + help_th("Source", key="option_data_source", scope="row")
         + f"<td>{escape(source)}</td></tr>"
         "<tr>"
-        + help_th("Risk-Free Rate", key="option_risk_free_rate")
+        + help_th("Risk-Free Rate", key="option_risk_free_rate", scope="row")
         + f"<td>{risk_free_label}</td></tr>"
         "<tr>"
-        + help_th("Run", key="option_refresh_run")
+        + help_th("Run", key="option_refresh_run", scope="row")
         + f"<td>{_fmt_text(refresh_run)}</td></tr>"
-        "</tbody></table>"
+        "</tbody></table>",
+        region_id="detail-option-context-table-region",
+        label="Option data context",
     )
 
 
@@ -827,7 +840,7 @@ def _render_option_candidate_side_section(
             header += f" · expiry {escape(expiration)}"
         rows.append(
             "<tr class=\"option-horizon-row\">"
-            f"<th colspan=\"7\">{header}</th>"
+            f"<th colspan=\"7\" scope=\"colgroup\">{header}</th>"
             "</tr>"
         )
         for slot in grouped[horizon]:
@@ -841,19 +854,23 @@ def _render_option_candidate_side_section(
     return (
         "<section class=\"option-side-candidates\">"
         f"<h4>{escape(title)}</h4>"
-        "<table>"
-        "<thead><tr>"
-        + help_th("Candidate", key="option_candidate_label")
-        + help_th("Strike · Expiry (DTE)", key="option_strike_expiry")
-        + help_th("Delta", key="option_candidate_delta")
-        + help_th("Mid", key="option_mid_price")
-        + help_th("Spread", key="option_rel_spread")
-        + help_th("Liquidity", key="option_candidate_status", app_config=app_config)
-        + help_th("Actions", key="option_actions")
-        + "</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody>"
-        "</table>"
-        "</section>"
+        + table_region(
+            "<table>"
+            "<thead><tr>"
+            + help_th("Candidate", key="option_candidate_label")
+            + help_th("Strike · Expiry (DTE)", key="option_strike_expiry")
+            + help_th("Delta", key="option_candidate_delta")
+            + help_th("Mid", key="option_mid_price")
+            + help_th("Spread", key="option_rel_spread")
+            + help_th("Liquidity", key="option_candidate_status", app_config=app_config)
+            + help_th("Actions", key="option_actions")
+            + "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody>"
+            "</table>",
+            region_id=f"detail-option-candidates-{title.strip().lower()}-table-region",
+            label=f"{title} candidates",
+        )
+        + "</section>"
     )
 
 
@@ -1220,19 +1237,23 @@ def _render_option_sizing_result(sizing: OptionSizingResult) -> str:
         "<div class=\"option-sizing-result\">"
         f"<p>Selected: {escape(bundle.horizon)} {escape(selected_bucket)} {escape(label)}. "
         f"Contracts: {sizing.contracts}.{spend}{leftover}{escape(watch_warning)}</p>"
-        "<table>"
-        "<thead><tr>"
-        + help_th("Gold Move", key="option_scenario_gold_move")
-        + help_th("Modeled Stock", key="option_scenario_modeled_stock")
-        + help_th("P&L/share Now", key="option_scenario_pnl")
-        + help_th("P&L/share Expiry", key="option_scenario_pnl")
-        + help_th("Net P&L Now", key="option_scenario_pnl")
-        + help_th("Net P&L Expiry", key="option_scenario_pnl")
-        + help_th("Model Note", key="option_scenario_model_note")
-        + "</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody>"
-        "</table>"
-        "</div>"
+        + table_region(
+            "<table>"
+            "<thead><tr>"
+            + help_th("Gold Move", key="option_scenario_gold_move")
+            + help_th("Modeled Stock", key="option_scenario_modeled_stock")
+            + help_th("P&L/share Now", key="option_scenario_pnl")
+            + help_th("P&L/share Expiry", key="option_scenario_pnl")
+            + help_th("Net P&L Now", key="option_scenario_pnl")
+            + help_th("Net P&L Expiry", key="option_scenario_pnl")
+            + help_th("Model Note", key="option_scenario_model_note")
+            + "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody>"
+            "</table>",
+            region_id="detail-option-sizing-scenarios-table-region",
+            label="Option sizing scenarios",
+        )
+        + "</div>"
     )
 
 
@@ -1616,21 +1637,25 @@ def _render_structural_window_table(
         "<h3>Structural windows — all lookbacks</h3>"
         "<p class=\"hint\">Cross-window reference: 6M / 1Y / 3Y are the scoring windows; "
         "2Y / 5Y are display-only longer lookbacks (computed but never scored or ranked).</p>"
-        "<table>"
-        "<thead><tr>"
-        + help_th("Window", key="tool_a_structural_window")
-        + help_th("Delta", key="tool_a_delta")
-        + help_th("Gamma", key="tool_a_gamma")
-        + help_th("Up Beta", key="tool_c_up_beta")
-        + help_th("Down Beta", key="tool_c_down_beta")
-        + help_th("Asymmetry", key="tool_a_asymmetry")
-        + help_th("R^2", key="tool_a_r_squared")
-        + help_th("Weeks", key="tool_a_window_weeks")
-        + help_th("Status", key="tool_a_window_status")
-        + "</tr></thead>"
-        f"<tbody>{''.join(window_rows)}</tbody>"
-        "</table>"
-        "</section>"
+        + table_region(
+            "<table>"
+            "<thead><tr>"
+            + help_th("Window", key="tool_a_structural_window")
+            + help_th("Delta", key="tool_a_delta")
+            + help_th("Gamma", key="tool_a_gamma")
+            + help_th("Up Beta", key="tool_c_up_beta")
+            + help_th("Down Beta", key="tool_c_down_beta")
+            + help_th("Asymmetry", key="tool_a_asymmetry")
+            + help_th("R^2", key="tool_a_r_squared")
+            + help_th("Weeks", key="tool_a_window_weeks")
+            + help_th("Status", key="tool_a_window_status")
+            + "</tr></thead>"
+            f"<tbody>{''.join(window_rows)}</tbody>"
+            "</table>",
+            region_id="detail-windows-table-region",
+            label="Beta windows",
+        )
+        + "</section>"
     )
 
 
@@ -2195,17 +2220,21 @@ def _render_exploratory_horizon_panel(exploratory_horizons: pd.DataFrame) -> str
         "<section class=\"panel nested-panel\">"
         "<h3>Exploratory Horizon Ladder</h3>"
         "<p class=\"hint\">This preserves the older horizon-return lens for tactical context only. The ratio below is a single-period return ratio, not a structural beta, and it does not drive the Gold Sensitivity score.</p>"
-        "<table>"
-        "<thead><tr>"
-        + help_th("Horizon", key="exploratory_horizon")
-        + help_th("Equity Return", key="exploratory_equity_return")
-        + help_th("Gold Return", key="exploratory_gold_return")
-        + help_th("Single-Period Ratio", key="exploratory_single_period_ratio")
-        + help_th("Status", key="exploratory_coverage_status")
-        + "</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody>"
-        "</table>"
-        "</section>"
+        + table_region(
+            "<table>"
+            "<thead><tr>"
+            + help_th("Horizon", key="exploratory_horizon")
+            + help_th("Equity Return", key="exploratory_equity_return")
+            + help_th("Gold Return", key="exploratory_gold_return")
+            + help_th("Single-Period Ratio", key="exploratory_single_period_ratio")
+            + help_th("Status", key="exploratory_coverage_status")
+            + "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody>"
+            "</table>",
+            region_id="detail-exploratory-horizons-table-region",
+            label="Exploratory horizon ladder",
+        )
+        + "</section>"
     )
 
 

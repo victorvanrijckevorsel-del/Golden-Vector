@@ -291,7 +291,7 @@ def _render_correlations(data: PortfolioData) -> str:
     }
     heat_rows = []
     for left in tickers:
-        cells = [f"<th>{escape(left)}</th>"]
+        cells = [f"<th scope=\"row\">{escape(left)}</th>"]
         for right in tickers:
             row = lookup.get((left, right), {})
             bucket = escape(str(row.get("correlation_heat_bucket") or "unavailable"))
@@ -312,6 +312,9 @@ def _render_correlations(data: PortfolioData) -> str:
         )
     if not pair_rows:
         pair_rows.append("<tr><td colspan=\"5\">No paired covered exposures yet.</td></tr>")
+    heatmap_header_cells = "".join(
+        f"<th scope=\"col\">{escape(ticker)}</th>" for ticker in tickers
+    )
     return (
         "<section class=\"panel\">"
         "<h2>Correlation map</h2>"
@@ -321,7 +324,8 @@ def _render_correlations(data: PortfolioData) -> str:
         "<div><h3>Covered names heatmap</h3>"
         + table_region(
             "<table class=\"correlation-heatmap\"><thead><tr><th></th>"
-            f"{''.join(f'<th>{escape(ticker)}</th>' for ticker in tickers)}</tr></thead>"
+            + heatmap_header_cells
+            + "</tr></thead>"
             f"<tbody>{''.join(heat_rows)}</tbody></table>",
             region_id="portfolio-correlation-heatmap-region",
             label="Correlation heatmap",

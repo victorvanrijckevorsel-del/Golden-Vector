@@ -68,11 +68,12 @@ def _render_lab_overview_page(
             )
         else:
             msg = f"Lab artifacts are not built yet. Run {rebuild} first."
-        # Broken artifacts (corrupt/stale/bad metadata) are danger; absent or
-        # empty builds are warnings with the rebuild action (plan 10.5).
+        # Plan 10.5 mapping: corrupt/unreadable-metadata artifacts are danger;
+        # STALE (older schema/config) is a freshness state and stays warning,
+        # as do absent and empty builds — all with the rebuild action.
         tone = (
             "danger"
-            if status in ("CORRUPT", "META_MISSING", "META_CORRUPT", "STALE")
+            if status in ("CORRUPT", "META_MISSING", "META_CORRUPT")
             else "warning"
         )
         body.append(notice(tone, msg))
