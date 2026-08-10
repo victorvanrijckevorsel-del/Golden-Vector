@@ -1,6 +1,6 @@
 # Golden Vector Full Visual and Usability Redesign Plan
 
-**Status:** Review-ready implementation plan. No redesign code has been authorized or started by this document.
+**Status:** Corrected and approved for implementation. Claude Code's repository audit corrections and Codex's five decision answers (2026-08-10) are applied inline; the correction record and final verdict live in Section 27. Implementation of Phases 0-8 is authorized on `dev-vic` from base commit `6c5015d`.
 
 **Primary reviewer:** Victor
 
@@ -87,7 +87,12 @@ The styling baseline is also fragmented:
 - there are no `@media` rules in the main stylesheet;
 - `--border` and `--paper` are referenced but undefined, so the affected declarations are discarded by browsers;
 - `.flash-warning` and several other emitted component classes have no canonical styling rule;
-- colour literals and inline colour styles also appear in chart and tooltip rendering code;
+- colour literals also appear in chart and tooltip rendering code: 86 occurrences in serve Python (61 of them SVG `fill=`/`stroke=` paint attributes) and exactly one in first-party JavaScript (`overlay-crosshair.js:35`); the only colour-bearing inline `style=` attribute interpolates a server-chosen series-colour variable rather than a literal;
+- the audited 192-occurrence/69-distinct figure counts `workspace.css` plus serve Python plus first-party JavaScript, minus two HTML-entity false positives;
+- `--positive`, `--negative`, and `--neutral` are defined in `:root` but never referenced; their values are re-hardcoded in chart code (`charts.py:82`);
+- the interactive help dialog (`.help-panel`, z-index 1000) currently paints beneath both decorative tooltips (`.rug-tooltip`/`.overlay-tooltip`, z-index 9999) — the only three z-index declarations in the stylesheet;
+- exactly one inline `<script>` exists (the Portfolio ticker-to-currency synchronizer, `portfolio_page.py:653-668`);
+- every error page currently renders with Candidate Finder marked as the active navigation item (`http_helpers.py:37-43`);
 - the shared shell currently exposes nine equal-weight wrapping tabs.
 
 The current accent also sits just below WCAG AA for normal text in common uses (approximately 4.35:1 for white on `#b26700`, where 4.5:1 is required). The redesign therefore needs verified token contrast rather than a visual guess.
@@ -175,7 +180,7 @@ This matrix is a release checklist, not just documentation. Each entry must have
 | `/tool-d` | GET | Corporate Resilience overview | Search, gold stress presets/custom price, financial source, scenario output, and flip table remain intact. |
 | `/option-trading` | GET | Option Trading overview | Cached-snapshot language, horizon selection, liquidity tables, method disclosure, and candidate links remain intact. |
 | `/portfolio` | GET | Portfolio workspace | Enabled and disabled states, summary, issues, analytics, positions, forms, and privacy boundary remain intact. |
-| `/portfolio/reconciliation.csv` | GET | Reconciliation download | Content type, filename, no-cache behaviour, enabled/disabled response, payload, and existing bodyless missing-file `404` remain unchanged. |
+| `/portfolio/reconciliation.csv` | GET | Reconciliation download | Content type, filename, no-cache behaviour, enabled/disabled response, and payload remain unchanged. Audit correction: a missing manifest entry raises `PortfolioStaleSchemaError` → `503`; the bodyless `404` occurs only when the manifest-named file itself is unreadable. Both outcomes remain as-is. |
 | `/portfolio/lots` | POST | Add a position lot | All field names, validation, artifact rebuild, errors, and 303 redirect remain unchanged. |
 | `/portfolio/lots/{id}/edit` | POST | Edit a position lot | Same validation, rebuild, and redirect behaviour. |
 | `/portfolio/lots/{id}/delete` | POST | Delete a position lot | Same target semantics and rebuild behaviour; a visual danger style must not silently add or remove confirmation behaviour. |
@@ -189,12 +194,12 @@ This matrix is a release checklist, not just documentation. Each entry must have
 | `/ticker/{ticker}/verification` | POST | Source-verification update | Required-field allowlist, blank optional fields, clear semantics, placeholder status, validation, and redirects remain intact. |
 | `/ticker/{ticker}/note` | POST | Add stock note | Text/tag/status limits, ordering, badges, errors, and redirects remain intact. |
 | `/refresh` | POST | Start full model refresh from Candidate Finder | Safe `return_to`, status display, and asynchronous refresh behaviour remain intact. |
-| `/option-trading/refresh` | POST | Start refresh from Option Trading | Same behaviour with its existing default return route. |
+| `/option-trading/refresh` | POST | Start refresh (route currently unreferenced) | Audit correction: no form anywhere targets this route today (`render_option_refresh_control` is called only from Candidate Finder with `action="/refresh"`). Preserve the live route exactly and do not add a UI entry point for it. |
 | `/hedge-readiness` | GET | Legacy compatibility route | Continues to redirect to `/option-trading`. |
-| `/hedge-readiness/latest.md` | GET | Holdings-bearing report download | Continues to enforce Portfolio enablement and return the same download/403 behaviour. |
+| `/hedge-readiness/latest.md` | GET | Holdings-bearing report download | Continues to enforce Portfolio enablement and return the same download/403 behaviour; a missing report file returns the existing bodyless `404`. Audit note: neither `/hedge-readiness` route has any UI entry point — both are URL-only legacy contracts. |
 | `/static/*` | GET | First-party and vendored assets | Path traversal protection, MIME allowlist, and cache policy remain intact. |
 | `/favicon.ico` | GET | Empty favicon response | Continues to return 204 unless a separately reviewed asset change is approved. |
-| unknown routes, unknown tickers/actions, and unsupported methods | mixed | Error handling | Existing 400, 403, 404, 405-style/current unsupported-method behaviour, 500, and 503 families remain understandable and status-correct; the redesign does not normalize status codes unless separately approved. |
+| unknown routes, unknown tickers/actions, and unsupported methods | mixed | Error handling | Audit correction: the app has no `405` and no `HEAD` support anywhere; every method mismatch (including `HEAD`) falls through to a `404` in one of two flavours — the generic `Page not found.` page or the scoped `Unsupported portfolio route.`/`Unsupported workspace route.` pages — and `/portfolio/lots*` checks the Portfolio-disabled `403` before the method check. The 400, 403, 404, 500, and 503 families remain understandable and status-correct; the route-matrix tests pin exactly this behaviour, and the redesign does not normalize status codes unless separately approved. |
 
 ### 6.1 Query-string contract inventory
 
@@ -214,6 +219,14 @@ The redesign must preserve query names, multiplicity, defaults, validation, and 
 | Ticker detail | `lens`, `window`, `fundamentals_source`, `saved`; option lens also preserves `side`, `horizon`, `bucket`, `size_mode`, `quantity`, and `budget` |
 
 Critical state-carry tests must prove that changing one control does not erase unrelated active state. Existing hidden-input and URL-building helpers should be reused rather than reimplemented.
+
+Audit corrections to this inventory (all current behaviour, to preserve exactly):
+
+- Candidate Finder's three GET forms round-trip **every** unrecognised query parameter (repeated values included) via `_hidden_query_inputs`; preset links deliberately carry only `preset`/`gold_price`/`fundamentals_source`/`beta_window` and therefore reset custom Screen Builder state; `saved` is never read on Candidate Finder, so a ticker-save redirect that returns there shows no flash.
+- Tool B reads `rank_by` only as a fallback when `fundamentals_source` is absent and never re-emits it, so legacy `rank_by` URLs survive exactly one round trip. `differences_only` is truthy only for `1/true/yes/on`.
+- Tool D's form has **no hidden inputs**; its preset/reset links carry only `gold_price`, `search`, and `fundamentals_source`. On a Yahoo-source scenario failure it silently renders the `our`-source view while the URL still says `fundamentals_source=yahoo` (defect register D7 tracks the display mismatch).
+- Ticker detail `return_to` carries **all** first-value query parameters except `lens` (kept only when it equals `option-trading`), with `saved` stripped on render; the option sizing form does **not** carry `window` (defect register D3).
+- Invalid `beta_window` silently degrades to the cross-window blend; Lab `horizon`/`bucket` fall back silently (requested → default → first); `option_horizon` also accepts the configured most-liquid sentinel value.
 
 ---
 
@@ -359,6 +372,13 @@ golden_vector/serve/static/css/
 No bundler or build step is introduced. Imports must appear before other rules, and all assets remain locally served through the existing static-file security boundary.
 
 During migration, legacy selectors may temporarily remain in `workspace.css`, but every temporary selector must have a named consumer and removal phase. A permanent `legacy.css` dumping ground is not acceptable.
+
+Audit findings that shape this migration (decided with Codex, 2026-08-10):
+
+- The static server already serves nested paths with the correct `text/css` MIME and `no-cache` policy, so the `css/` module directory needs **zero** server changes.
+- `tests/test_workspace_datatables.py:114-135` currently asserts that `:root` and `.top-nav` appear in the raw `/static/workspace.css` body; both tests are updated intentionally, in the same commit that moves those rules, to target the module files.
+- Every consistency scan and CSS custom-property validator covers `golden_vector/serve/static/css/**` recursively, not just `workspace.css`.
+- The server sends no `ETag`/`Last-Modified`, so the module files re-download serially behind the render-blocking `@import` chain on every navigation. Phase 8 measures real warm route timings against the Phase 0 baseline; only a measured material regression justifies falling back to multiple `<link>` elements emitted by the shell.
 
 ### 9.2 Candidate dark palette
 
@@ -613,7 +633,7 @@ The current forms intentionally do not all treat blank values alike. Preserve th
 - reporting fields: blank clears the stored value;
 - verification optional fields: blank is no-op unless the corresponding clear control is active, and clear wins;
 - note and Portfolio lot fields: keep their current required/optional validation and coercion rules;
-- validation failures: retain current status code, message, entered values, and redirect/render target. The known ticker-detail validation branches that currently lose some lens/window/source/calculator query context are a pre-existing behavioural issue to fix only in a separately reviewed change, not opportunistically during markup migration.
+- validation failures: retain current status code, message, entered values, and redirect/render target. Audit correction: the four ticker-detail validation branches (`workspace.py:615/652/703/735`) currently re-render with **no** lens/window/source/calculator/query context, a hardcoded `12M` canonical anchor, the success-styled `flash` class for the error, and `app_config=None` (which strips column help); an all-blank company POST also redirects to a `Company inputs saved.` flash without saving anything. All of this is defect register D1/D2 — pre-existing behaviour to characterize and preserve during the redesign, then fix in the post-Phase-8 defect follow-up, never opportunistically during markup migration.
 
 ### 12.2 Visual hierarchy
 
@@ -650,7 +670,7 @@ The current forms intentionally do not all treat blank values alike. Preserve th
 
 ### 13.2 Unified floating-layer behaviour
 
-The current help panel, rug tooltip, and overlay crosshair use separate floating-layer logic. Introduce one small presentation-only positioning/dismissal primitive, or clearly share equivalent utilities, so all floating elements:
+The current help panel, rug tooltip, and overlay crosshair use separate floating-layer logic, with measured divergence: the interactive help dialog sits at z-index 1000 beneath both decorative tooltips at 9999, the rug tooltip has no viewport clamping and no Escape/scroll/resize dismissal, and only the overlay crosshair clamps all four edges. Introduce one small presentation-only positioning/dismissal primitive, or clearly share equivalent utilities, so all floating elements:
 
 - clamp to every viewport edge;
 - use one documented z-index scale;
@@ -724,7 +744,7 @@ Safety checks:
 - custom direction/weight state survives scenario/source/window changes;
 - no criterion or result row is hidden;
 - ticker links retain the existing option-trading lens/anchors;
-- scenario failures continue falling back to the persisted screen with a visible warning.
+- scenario failures keep their current two-path behaviour: a *runtime* scenario failure falls back to the persisted screen with a visible warning, while a *parse* failure (`gold_price` non-numeric, zero, negative, or non-finite) returns the current bare 400 error page with no screen (defect register D6 tracks the harshness inconsistency; do not change it in this milestone);
 - the current refresh form returns to the Candidate Finder base path rather than preserving the custom query; do not change that workflow incidentally during a visual refactor.
 
 ### 15.2 Gold Sensitivity (`/tool-a`)
@@ -824,7 +844,7 @@ Safety checks:
 - no forms submit merely because a disclosure opens;
 - all 7+ data issues remain visible, never truncated;
 - correlation and history no-data states remain explicit;
-- all 17 current tables and 25 forms are accounted for in the coverage checklist;
+- every Portfolio table, form, and disclosure is accounted for in the coverage checklist — audit correction: the "17 tables / 25 forms / 22 disclosures" figures are data-dependent (lot forms are 1 add + 2 per lot), so the checklist enumerates render sites in `portfolio_page.py`, not fixed counts;
 - reconciliation CSV remains byte/contract compatible.
 
 ### 15.8 Lab overview and dial (`/lab`, `/lab/dial/{ticker}`)
@@ -865,7 +885,7 @@ Important limits:
 - alignment suppression and corrupt/missing metric distinctions remain exact;
 - chart order covered by existing tests remains intentional unless a separate reviewed change updates that expectation.
 
-Pre-existing behaviour issue to keep separate: ticker-form validation-error branches currently re-render the default detail state without carrying every active lens/window/source/calculator argument. That can make a 400 response visually fall back from the submitted state. This is a real workflow defect, but fixing it changes behaviour outside this visual plan. Log it as a prerequisite/separate bugfix rather than silently changing it inside markup migration.
+Pre-existing behaviour issue to keep separate: the four ticker-form validation-error branches re-render the default detail state without carrying any active lens/window/source/calculator argument, mark the wrong canonical anchor (`12M` hardcoded), present the error in the success flash style, and drop column help (`app_config=None`). A 400 response therefore visually falls back from the submitted state, and the collapsed `return_to` compounds the loss on the next successful save. This is defect register D1: characterized during the redesign, fixed in the post-Phase-8 defect follow-up, never silently changed inside markup migration.
 
 ### 15.11 Errors, disabled, empty, and stale states
 
@@ -885,6 +905,8 @@ The shared error presentation must cover and visually distinguish:
 - successful save/refresh status.
 
 The recovery action must be visible when the backend already supplies one. Do not convert a failure into a reassuring empty card.
+
+Deliberate presentational correction: error pages currently render with Candidate Finder highlighted as the active navigation item. The redesigned error shell renders **no** active navigation item (and no `aria-current`) — a documented, intentional markup-only change.
 
 ---
 
@@ -929,12 +951,15 @@ Tasks:
 5. Compare touched files on any branch that changes `serve/`, Candidate Finder, Option Trading, Portfolio, model-state, schemas, or manifests.
 6. Use a temporary integration branch if another unmerged branch touches the same presentation/data spine.
 7. Run and record test collection plus the focused UI/route/form/Portfolio/model-state-rendering baseline defined in Section 18.6; do not run the complete repository suite by default.
-8. Save read-only baseline screenshots and DOM measurements for the route/viewport matrix.
+8. Save read-only baseline evidence for the route/viewport matrix: automated DOM, overflow, and interaction measurements for the complete matrix, plus roughly 10-15 representative sanitized screenshots. No mass screenshot matrix is created or committed; extra debugging screenshots stay untracked.
 9. Record warm real-route response timings for representative routes.
 10. Record current HTML contracts for forms, query carry-forward, table IDs/classes, status codes, and navigation links.
 11. Generate a machine-readable baseline contract matrix covering every route/method, query parameter, form action/control, table header/key, link target, warning/state label, redirect, and download response.
 12. Hash representative persisted artifacts before and after ordinary GET-route smoke checks to prove rendering is read-only.
-13. Add missing pre-migration route coverage for `/scorecard`, reporting POST, Portfolio edit/delete, unknown ticker/action, and unsupported methods before shared markup is extracted.
+13. Add missing pre-migration route coverage for `/scorecard`, reporting POST, Portfolio edit/delete, unknown ticker/action, and unsupported methods before shared markup is extracted — pinning the current no-405/no-HEAD, two-flavour-404 behaviour exactly, with clearly labelled characterization tests wherever current behaviour is a registered defect.
+14. Create the milestone evidence directory `reviews/codex/milestones/visual_redesign/` and the defect register (`defect_register.md`) seeded with audit defects D1-D8; every later phase appends new defects to the register rather than losing findings in commentary.
+15. Pin the exact file-path-based focused release selection command (no pytest markers or config file exist) and record that all guardrail scans are CWD-dependent (run everything from the repository root).
+16. Consolidate the five near-duplicate WSGI test helpers into `tests/helpers.py` while building the route-matrix tests, instead of adding a sixth copy.
 
 Exit gate:
 
@@ -1010,7 +1035,7 @@ Exit gate:
 - pilots establish the final reusable patterns;
 - no body overflow at target widths;
 - targeted route/form/query/DataTables/chart tests green;
-- Victor accepts the visual direction;
+- sanitized pilot evidence is captured and a serious self-review is recorded; per the approved autonomy decision (2026-08-10), implementation continues automatically when the result matches the approved guide and plan, pausing only for a genuine product ambiguity — Victor reviews the complete product before any `main` merge;
 - any component exception is documented before other pages copy it.
 
 ### Phase 4 - Remaining analysis overviews
@@ -1117,6 +1142,16 @@ Exit gate:
 - Claude Code or Codex completes an independent final review;
 - no pending overlapping branch changes are silently lost.
 
+### Post-Phase-8 defect follow-up (required before release)
+
+After Phase 8 and before final integration:
+
+1. Resolve every actionable entry in the defect register in separate, clearly labelled behavioural follow-up commits — never mixed into visual-refactoring commits.
+2. Add regression tests for every fix and re-run the affected focused selections.
+3. Apply the Section 18.6 complete-suite triggers if any fix touches analytics, pipelines, loaders, schemas, contracts, manifests, artifacts, or shared data logic.
+4. Leave a defect unresolved only when it genuinely requires Victor's product decision or external information, documenting the exact blocker, impact, and recommended decision.
+5. Then perform the independent final review, fix all high/medium findings, and only afterwards run the `dev-vic` to `main` integration.
+
 ### Phase rollback design
 
 Keep the work code-only and independently revertible at these boundaries:
@@ -1162,12 +1197,19 @@ The most important existing protections and review anchors are:
 | Table sort/filter metadata | `tests/test_workspace_datatables.py`, Candidate ranking tests, and Lab row/header/missing-sort tests |
 | Persisted-read/data semantics | Candidate alignment tests, horizon-switch tests, `tests/test_option_trading_overview.py`, Lab curve invariants, and Portfolio degraded/empty-state tests |
 | Explanations/help/provenance | `tests/test_explanations.py`, `tests/test_column_help.py`, `tests/test_metric_formula.py`, `tests/test_fundamentals_provenance.py`, and Scorecard caveat tests |
-| No serve-side analytics | The Tool B/D, charts, Candidate Finder, Lab, Scorecard, and global serve scans in `tests/test_workspace_app.py`, `tests/test_lab_page.py`, and `tests/test_lab_scorecard.py` |
+| No serve-side analytics | The Tool B/D, charts, Candidate Finder, Lab, Scorecard, and global serve scans in `tests/test_workspace_app.py`, `tests/test_lab_page.py`, and `tests/test_lab_scorecard.py`, plus (audit addition) the chart/beta-strip scans in `tests/test_benchmark_comparison.py` and the `overlay-crosshair.js` scan and Node runtime test in `tests/test_rebased_overlay_panel.py` |
 | Privacy/security | Portfolio loopback/disabled/private-input scans, static path-traversal tests, safe-return tests, and raw-exception suppression tests |
 | Model-state/freshness | `tests/test_model_state.py`, Candidate mixed-refresh warnings, and Option carry-forward/freshness tests |
 | JavaScript/static assets | Static MIME/asset tests and the existing real Node runtime test for `overlay-crosshair.js`/rebased overlay behaviour |
 
 Known pre-redesign test gaps are themselves Phase 0 work: no exhaustive WSGI route/method matrix; no WSGI integration coverage for `/scorecard`, reporting POST, and Portfolio edit/delete; no whole-page accessibility or responsive suite; no design-token consistency guard; and no real runtime test for DataTables, help popovers, or rug tooltips.
+
+Additional audit facts the verification work must absorb:
+
+- The global serve no-analytics sweep (`tests/test_workspace_app.py:2978`) globs `serve/*.py` **non-recursively**; it must become a recursive scan in the same commit that creates any `serve/` subpackage, or new presentation modules silently escape it.
+- `tests/test_lab_curve.py:624` asserts a hardcoded chart colour (`stroke="#2f6f6d"`); it is updated intentionally when chart colours become semantic tokens/classes.
+- The Node runtime test hard-fails when `node` is unavailable, and per Codex's decision that stays a hard failure: required JavaScript coverage must not silently skip.
+- The focused selection is file-path-based (no pytest markers or config file exist), and every guardrail scan resolves `golden_vector/...` relative to the working directory — all commands run from the repository root.
 
 ### 18.2 New automated contract tests
 
@@ -1189,8 +1231,8 @@ Add focused tests for:
 14. Empty, missing, stale, corrupt, misaligned, withheld, disabled, refreshing, failed, and success markup/tone labels, with no colour-only communication.
 15. Help-popover runtime tests for click, keyboard activation, Escape, focus return, outside click, scroll/resize dismissal, viewport clamping, read-more behaviour, and no sort-trigger conflict.
 16. Rug-tooltip and chart runtime tests for mouse, keyboard focus, touch/pointer dismissal, clamping, semantic series classes, and non-colour differentiation.
-17. Real DataTables runtime tests for ascending/descending numeric sort, missing-value placement, global search, exact dropdown filters, filter clearing, combined filters, regex-special values, preserved initial order, and graceful no-JavaScript fallback.
-18. `node --check` for every first-party JavaScript file plus runtime coverage for `workspace-tables.js`, `help-popover.js`, `rug-tooltip.js`, `overlay-crosshair.js`, the new navigation-drawer helper, and extracted Portfolio form helper.
+17. Real DataTables verification (decided with Codex, 2026-08-10): ascending/descending numeric sort, missing-value placement, global search, exact dropdown filters, filter clearing, combined filters, regex-special values, preserved initial order, and graceful no-JavaScript fallback are proven in the scripted real-browser matrix with recorded evidence, because the vendored DataTables build requires jQuery, which the zero-dependency Node shim cannot host. No `jsdom`, `package.json`, or any other new dependency is added; static/semantic DataTables contracts remain pytest-enforced.
+18. `node --check` for every first-party JavaScript file plus zero-dependency Node shim runtime coverage where feasible — `help-popover.js`, `rug-tooltip.js`, `overlay-crosshair.js` (existing), the new navigation-drawer helper, and the extracted Portfolio form helper; `workspace-tables.js` gets `node --check`, its guard-branch test, and the browser evidence above. Missing Node remains a hard failure.
 19. New serve presentation modules contain no forbidden analytics tokens; existing global no-arithmetic scans are expanded rather than bypassed by file moves.
 20. The Combined route remains removed, persisted-artifact hashes remain unchanged after GET smoke tests, and readers continue resolving existing state.
 21. Portfolio remains loopback/private, disabled/download states fail closed, safe return paths reject external targets, and error redaction remains intact.
@@ -1201,7 +1243,7 @@ Tests should assert important semantic fragments rather than snapshotting entire
 
 ### 18.3 Browser route matrix
 
-Run the full matrix at 1,440px, 1,280px, 1,024px, 768px, and 390px widths, plus a 320px narrow stress pass on the shell, forms, popovers, and widest table regions:
+Run the full matrix at 1,440px, 1,280px, 1,024px, 768px, and 390px widths, plus a 320px narrow stress pass on the shell, forms, popovers, and widest table regions. The complete matrix is verified with automated DOM/overflow/accessibility/interaction measurements; only the curated 10-15 image set from Section 18.5 is committed, and any extra debugging screenshots stay untracked:
 
 - `/`;
 - `/tool-a?window=12M` and a non-default window;
@@ -1264,7 +1306,7 @@ Capture before/after images for:
 - mobile navigation and one mobile wide table;
 - warning, error, missing, estimated, verified, and stale states.
 
-Screenshots support review; they do not replace DOM/behaviour tests.
+Screenshots support review; they do not replace DOM/behaviour tests. Per the evidence decision (2026-08-10), this curated sanitized set (roughly 10-15 images) is the only screenshot collection committed to the repository; the full route/viewport matrix is recorded as measurements, and debugging screenshots remain untracked. No real Portfolio or other private data ever appears in committed images.
 
 ### 18.6 Proportional test-scope policy
 
@@ -1424,6 +1466,7 @@ The redesign is complete only when all statements below are true.
 ### Delivery
 
 - baseline and final review evidence exists;
+- the defect register is complete and every actionable entry is resolved in separate labelled follow-up commits (or explicitly blocked on a documented Victor decision);
 - Claude Code/Codex independent review findings are resolved or explicitly accepted;
 - branch/worktree integration audit is documented;
 - architecture map and UI documentation describe the new system;
@@ -1491,6 +1534,8 @@ Claude Code should correct this plan directly and record:
 
 After reconciling all high/medium findings, Claude Code should begin implementation immediately. The product choices are already approved in Sections 2 and 23.
 
+This review was completed on 2026-08-10; the findings, applied corrections, Codex decisions, and final verdict are recorded in Section 27.
+
 ---
 
 ## 25. Handoff summary
@@ -1530,7 +1575,7 @@ Implement Phase 0 through Phase 8 sequentially using these working batches:
 5. Phases 6-7 together;
 6. Phase 8 alone.
 
-Treat the redesign as one coherent shippable product milestone. Use small reversible checkpoints on `dev-vic`, validate every batch before continuing, and do not merge a visibly partial old/new product into `main`.
+Treat the redesign as one coherent shippable product milestone. Use small reversible checkpoints on `dev-vic`, validate every batch before continuing, and do not merge a visibly partial old/new product into `main`. After Phase 8, complete the post-Phase-8 defect follow-up (Section 17) and the independent final review before final integration.
 
 ### 26.3 Autonomy and stop conditions
 
@@ -1581,3 +1626,47 @@ The final handoff must report:
 - independent-review findings and fixes;
 - Git/branch/integration status;
 - any residual limitations.
+
+---
+
+## 27. Audit correction record and verdict (Claude Code, 2026-08-10)
+
+Claude Code audited this plan against the live repository at commit `6c5015d` (all seven required documents read completely; three read-only repository sweeps covering routes/forms/queries, CSS/JS/static contracts, and the test suite). Every measurable Section 3 claim verified exactly (868 CSS lines; 107/55 hex occurrences/unique; 192/69 non-vendor colour literals; 24 HTML-emitting files; 33/20/13 table/form/SVG sites; 0 captions/`scope=`/`@media`; undefined `--border`/`--paper`; 2 `.table-scroll` sites; unstyled `.flash-warning`; 1,555 collected tests). Branch state was clean: `dev-vic` == `origin/dev-vic`, `origin/main` synchronized, `origin/codex-source-mode` fully merged, one worktree, no overlapping in-flight work, `naukri.md` intentionally untracked.
+
+### 27.1 Findings and applied corrections
+
+| # | Severity | Plan section | Finding | Correction applied |
+|---|---|---|---|---|
+| H1 | High | 18.2, 10.1 | Global serve no-analytics sweep globs `serve/*.py` non-recursively; the planned `serve/ui/` package would escape it | Recursive-scan requirement recorded in 18.1; bound to the commit that creates any `serve/` subpackage |
+| H2 | High | 6 | App has no `405` and no `HEAD` handling; method mismatches produce two 404 flavours; `/portfolio/lots*` checks 403 before method | Error-handling row rewritten; route-matrix tests pin actual behaviour |
+| H3 | High | 9.1 | CSS split breaks `tests/test_workspace_datatables.py:114-135` (`:root`/`.top-nav` asserted in raw `workspace.css`); server has no `ETag`, so `@import` chain serializes re-downloads | Migration notes added to 9.1: intentional test updates, recursive `css/**` scans, Phase 8 timing gate with `<link>` fallback rule |
+| H4 | High | 12.1, 15.10 | Ticker validation branches worse than described (hardcoded `12M` anchor, success-styled error flash, `app_config=None` strips help); empty company POST reports a save that never happened | Sections corrected; defects D1/D2 registered; characterize-then-fix-post-Phase-8 policy recorded |
+| H5 | High | 18.2.17 | Real DataTables runtime tests infeasible without a new dependency (vendored build requires jQuery; only a 20-line Node DOM shim exists) | Item 17 rewritten per Codex decision: real-browser evidence + pytest static contracts; no jsdom |
+| M1 | Medium | 6 | Reconciliation CSV: missing manifest entry → 503, not the bodyless 404 (unreadable file only) | Row corrected |
+| M2 | Medium | 6, 15.6 | `POST /option-trading/refresh` is live but unreferenced by any form | Row corrected; preserve without adding UI |
+| M3 | Medium | 6.1 | Missing contracts: CF arbitrary-param round-trip and `saved` dead-end; preset links reset builder state; Tool B `rank_by` one-round-trip degrade; `differences_only` truthy set; Tool D formless hidden-input situation and silent source reset; ticker `return_to` all-params rule; sizing form drops `window`; silent `beta_window`/Lab/option-horizon fallbacks | Addendum block added to 6.1 |
+| M4 | Medium | 15.1 | Scenario-failure wording conflated runtime fallback (warm warning) with parse failure (bare 400) | Safety check split into the two real paths; D6 registered |
+| M5 | Medium | 15.11 | Every error page highlights Candidate Finder as active navigation | Documented intentional presentational correction: error shell renders no active navigation item |
+| M6 | Medium | 13.2 | Floating layers measurably diverge: help dialog z-index 1000 under tooltips 9999; rug tooltip unclamped, no Escape/scroll/resize dismissal | Evidence recorded in 13.2 |
+| M7 | Medium | 18.1 | Guardrail inventory missing `tests/test_benchmark_comparison.py` and `tests/test_rebased_overlay_panel.py`; `tests/test_lab_curve.py:624` asserts a hardcoded chart colour; Node test hard-fails without node; scans CWD-dependent; no pytest markers | 18.1 table and gap notes extended |
+| M8 | Medium | 15.7 | Portfolio "17 tables / 25 forms / 22 disclosures" are data-dependent (1 + 2×lots) | Coverage checklist keyed to render sites, not counts |
+| M9 | Medium | 18.2 | Five near-duplicate WSGI helpers across test files | Phase 0 task 16: consolidate into `tests/helpers.py` |
+| L1 | Low | 3, 9.2 | `--positive`/`--negative`/`--neutral` defined but never referenced; values re-hardcoded in `charts.py` | Baseline bullet added |
+| L2 | Low | 3 | 192/69 scope includes `workspace.css`; no colour-bearing inline `style=` literal exists in Python | Baseline bullets corrected |
+| L3 | Low | 3 | Single inline script; z-index inventory; error-nav fact | Baseline bullets added |
+
+Defects D3-D8 (option sizing form drops `window`; `_safe_return_to` accepts CR/LF; unknown ticker + option lens can 503 before 404; CF parse failure renders bare 400; Tool D silent source reset display mismatch; `/lab/dial` double-decodes PATH_INFO) are recorded in the defect register with full detail, per the register requirement below.
+
+### 27.2 Codex decisions adopted (2026-08-10)
+
+| Q | Decision |
+|---|---|
+| Q1 Evidence | Commit text/JSON matrices, DOM/overflow measurements, artifact hashes, route timings, and ~10-15 representative sanitized screenshots under `reviews/codex/milestones/visual_redesign/`. No full screenshot matrix; automated measurements cover the complete route/viewport matrix; debug screenshots stay untracked; never commit private data. |
+| Q2 JS testing | Option (b): no jsdom/`package.json`/new dependency. Scripted real-browser DataTables verification with recorded evidence; `node --check` on every first-party file; zero-dependency Node shim harnesses where feasible; pytest static/semantic contracts. Missing Node stays a hard failure — required JS coverage must not silently skip. |
+| Q3 Defects | Option (a): Phases 0-8 stay presentation-only. Defects are documented in one maintained register (identifier, severity, route/files, observable behaviour, likely cause, discovery date, deferral reason, proposed fix, required regression tests, security/data/analytics impact), characterized where needed without describing broken behaviour as the desired contract, and resolved in separate labelled follow-up commits after Phase 8 and before final release. |
+| Q4 Phase 3 gate | Option (b): capture sanitized pilot evidence, serious self-review, continue autonomously when the result matches the approved guide/plan; pause only for genuine product ambiguity; no `main` merge before final approval and all gates. |
+| Q5 CSS | Option (a): `workspace.css` stays the stable `@import` entry point over modular `css/` files; tests and consistency scans cover `css/**` recursively; measure real local route performance; fall back to multiple `<link>` elements only on a measured material regression. |
+
+### 27.3 Verdict
+
+**APPROVE (with the corrections above applied).** Coverage: the route matrix, query inventory, and test inventory are correct after the listed corrections; no missing route was found beyond the documented nuances. Architecture: no proposed helper duplicates an existing primitive; the CSS module structure works with the current static server unchanged; the no-framework/no-dependency approach is confirmed as the safest option. UX: the grouped sidebar hierarchy, page templates, and state-visibility priorities are sound. Testing/release: gaps and guardrails are correctly identified after the 18.1/18.2 extensions; the branch/rollback/integration gates are safe for the current single-owner implementation. Implementation begins immediately per Section 26.
