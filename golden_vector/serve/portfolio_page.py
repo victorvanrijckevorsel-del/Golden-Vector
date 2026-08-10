@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from html import escape
 from typing import Any
 
@@ -21,6 +20,9 @@ from golden_vector.serve.format_helpers import (
     _fmt_text,
     _metric_card,
     collapsible_text_td,
+    # ONE slug rule for element ids / in-page anchors, shared with the detail page.
+    # Kept importable under the old local name so existing call sites and pins hold.
+    id_token as _ticker_slug,
 )
 from golden_vector.serve.column_help import help_th
 from golden_vector.serve.model_state_banner import render_model_state_banner
@@ -510,11 +512,6 @@ def _render_positions(data: PortfolioData) -> str:
         + breakdown
         + "</section>"
     )
-
-
-def _ticker_slug(ticker: str) -> str:
-    """Lowercase id-safe slug for a ticker (``BHP.AX`` -> ``bhp-ax``)."""
-    return re.sub(r"[^a-z0-9]", "-", str(ticker).lower())
 
 
 def _render_lots_link(ticker: str, count: int) -> str:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re as _re
 from html import escape
 from typing import Any
 
@@ -321,3 +322,15 @@ def _first_frame_text(frame: pd.DataFrame, column: str) -> str | None:
         return None
     text = str(series.iloc[0]).strip()
     return text or None
+
+
+def id_token(value: object) -> str:
+    """Lowercase, id-safe slug for element ids and in-page anchors (``BHP.AX`` -> ``bhp-ax``).
+
+    ONE copy of the slug rule: runs of non-alphanumerics collapse to a single dash,
+    leading/trailing dashes are stripped, and an empty result falls back to ``x`` so
+    an id is never blank.
+    """
+
+    slug = _re.sub(r"[^A-Za-z0-9]+", "-", str(value)).strip("-").lower()
+    return slug or "x"

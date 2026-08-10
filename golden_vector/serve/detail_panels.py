@@ -8,6 +8,7 @@ from html import escape
 from typing import Any, Mapping
 from urllib.parse import quote
 
+import numpy as np
 import pandas as pd
 
 from golden_vector.common.eligibility import is_score_eligible
@@ -39,6 +40,7 @@ from golden_vector.serve.format_helpers import (
     _optional_float,
     source_alternate_span,
     format_dte_suffix as _dte_suffix,
+    id_token as _id_token,
 )
 from golden_vector.serve.column_help import help_term, help_th
 from golden_vector.serve.fundamentals_provenance import (
@@ -73,17 +75,11 @@ from golden_vector.serve.workspace_state import (
     StructuralHistoryLoad,
     ToolADetailState,
     _STRUCTURAL_WINDOWS,
-    _WINDOW_WEEKS,
     _structural_history_matches_tool_a,
 )
+from golden_vector.common.strings import ordinal_percentile as _ordinal_percentile
 from golden_vector.common.windows import resolve_window_or_none, window_label
 from golden_vector.serve.windows import SCORING_WINDOWS, WINDOW_LABELS
-
-def _id_token(value: object) -> str:
-    """Lowercase, id-safe slug for building page-unique element ids (e.g. chart data regions)."""
-
-    slug = re.sub(r"[^A-Za-z0-9]+", "-", str(value)).strip("-").lower()
-    return slug or "x"
 
 
 def _sizing_query_parts(sizing_request: object | None) -> list[str]:
@@ -742,10 +738,17 @@ def _render_option_trading_context_table(detail: OptionTradingDetailData) -> str
         else None
     )
     risk_free_label = _fmt_percent(risk_free_rate, decimals=2)
-    if detail.risk_free_rate_is_fallback or (
+    is_fallback = detail.risk_free_rate_is_fallback or (
         context is not None and context.risk_free_rate_is_fallback
-    ):
-        risk_free_label = f"{risk_free_label} fallback"
+    )
+    if is_fallback:
+        # With no rate at all the label was the nonsense string "- fallback"; say
+        # plainly that the rate is missing instead of qualifying an absent number.
+        risk_free_label = (
+            f"{risk_free_label} (fallback estimate)"
+            if risk_free_rate is not None
+            else "Not available"
+        )
     source = (
         context.source_label
         if context is not None
@@ -1319,7 +1322,28 @@ def _render_tool_a_panel(
         weekly_series=tool_a_detail.weekly_series,
         scoring_config=scoring_config,
     )
-    vol_context_display = volatility_diag.get("volatility_context") or tool_a_row.get("volatility_context")
+    # The metric-grid card must obey the SAME eligibility gate as the Volatility
+    # Diagnostics panel below (item 3): an ineligible window shows "not eligible",
+    # never a number/label built on thin observations. And when the per-window
+    # recompute yields nothing we fall back to the PUBLISHED 52-week value — which
+    # must be labelled with its true basis (item 4), exactly like the Interaction /
+    # Summary cards, instead of hiding under the active window's name.
+    active_window_status = _window_status(tool_a_row, active_window)
+    if active_window_status != "ELIGIBLE":
+        volatility_context_card = _metric_card(
+            f"Volatility Context ({win_label})",
+            f"Not eligible ({escape(str(active_window_status))})",
+        )
+    elif volatility_diag.get("volatility_context"):
+        volatility_context_card = _metric_card(
+            f"Volatility Context ({win_label})",
+            _fmt_text(volatility_diag.get("volatility_context")),
+        )
+    else:
+        volatility_context_card = _metric_card(
+            "Volatility Context (52w, published)",
+            _fmt_text(tool_a_row.get("volatility_context")),
+        )
 
     # The narrative cards split by horizon-dependence: Delta/Gamma/Asymmetry/Volatility track
     # the selected window, while Confidence/Interaction/Summary are cross-window aggregates.
@@ -1358,7 +1382,7 @@ def _render_tool_a_panel(
         _metric_card(f"Asymmetry ({win_label})", _fmt_number(tool_a_row.get(f"asymmetry_ratio_{win}"), decimals=2)),
         _metric_card(f"R² ({win_label})", _fmt_percent(tool_a_row.get(f"r_squared_{win}"), decimals=1)),
         _metric_card(f"Weeks ({win_label})", _fmt_number(tool_a_row.get(f"weeks_{win}"), decimals=0)),
-        _metric_card(f"Volatility Context ({win_label})", _fmt_text(vol_context_display)),
+        volatility_context_card,
         "</div>",
         # Per-window narrative (tracks the switcher) sits under the active-window block, so the
         # cross-window "does not change" hint below can never be misread as applying to it.
@@ -1391,6 +1415,7 @@ def _render_tool_a_panel(
             alignment=alignment,
             active_window=active_window,
             scoring_config=scoring_config,
+            volatility_diag=volatility_diag,
         ),
         "</section>",
     ]
@@ -1694,7 +1719,11 @@ def _render_visual_panels(
     alignment: str,
     active_window: str = "12M",
     scoring_config: Any = None,
+    volatility_diag: dict[str, Any] | None = None,
 ) -> str:
+    # volatility_diag is computed ONCE per render by the caller and threaded down:
+    # the estimator re-ran 2-3x per page before, and a live estimator must not be
+    # a function of how many panels happen to ask for it.
     # Alignment check fires first so every documented non-aligned state — including
     # FOUNDATION_MISSING, where load_latest_foundation_snapshot raises and sets
     # tool_a_detail.foundation_error — gets the per-panel suppressed-card treatment
@@ -1749,6 +1778,7 @@ def _render_visual_panels(
                 active_window=active_window,
                 weekly_series=tool_a_detail.weekly_series,
                 scoring_config=scoring_config,
+                volatility_diag=volatility_diag,
             )
             + _render_suppressed_panel("Exploratory Horizon Ladder", reason, command)
             + "</div>"
@@ -1796,7 +1826,7 @@ def _render_visual_panels(
         f"{overlay_panel}"
         "</div>"
         "<div class=\"two-up\">"
-        f"{_render_volatility_panel(tool_a_row, active_window=active_window, weekly_series=tool_a_detail.weekly_series, scoring_config=scoring_config)}"
+        f"{_render_volatility_panel(tool_a_row, active_window=active_window, weekly_series=tool_a_detail.weekly_series, scoring_config=scoring_config, volatility_diag=volatility_diag)}"
         f"{_render_exploratory_horizon_panel(tool_a_detail.exploratory_horizons)}"
         "</div>"
     )
@@ -1808,7 +1838,7 @@ def _active_window_metric(
 ) -> dict[str, Any]:
     """Return the structural_window_metrics row for the active window.
 
-    Replaces _anchor_window_metric which keyed on the ticker's canonical
+    Keyed on the active window rather than the ticker's canonical
     anchor. Looking up by active_window lets the scatter + beta-bar
     panels follow the switcher.
     """
@@ -1841,22 +1871,6 @@ def _active_window_sample(
     )
 
 
-def _anchor_window_metric(
-    tool_a_row: dict[str, Any],
-    tool_a_detail: ToolADetailState,
-) -> dict[str, Any]:
-    anchor_window_id = str(tool_a_row.get("anchor_window_id") or "").upper()
-    metrics = tool_a_detail.structural_window_metrics
-    if not anchor_window_id or metrics.empty:
-        return {}
-    window_rows = metrics.loc[
-        metrics["window_id"].astype(str).str.upper().eq(anchor_window_id)
-    ].copy()
-    if window_rows.empty:
-        return {}
-    return window_rows.sort_values("as_of_date").iloc[-1].to_dict()
-
-
 
 
 def _render_scatter_panel(
@@ -1876,9 +1890,26 @@ def _render_scatter_panel(
         )
     regression_beta = _optional_float(anchor_metric.get("structural_delta"))
     regression_alpha = _optional_float(anchor_metric.get("intercept_alpha"))
+    # A week missing either leg is not a plottable point — drop the pair before the
+    # builder rather than letting NaN reach the axis scaling.
+    plot_x = pd.to_numeric(anchor_sample["gold_weekly_log_return"], errors="coerce")
+    plot_y = pd.to_numeric(anchor_sample["stock_weekly_log_return"], errors="coerce")
+    # np.isfinite (not notna): +/-inf is just as unplottable as NaN.
+    finite = np.isfinite(plot_x.to_numpy(dtype=float)) & np.isfinite(
+        plot_y.to_numpy(dtype=float)
+    )
+    plot_x = plot_x[finite]
+    plot_y = plot_y[finite]
+    if plot_x.empty:
+        return (
+            "<section class=\"panel nested-panel\">"
+            "<h3>Weekly Return Scatter</h3>"
+            f"<p>No weekly return detail is available yet for the {escape(WINDOW_LABELS.get(active_window, active_window))} window.</p>"
+            "</section>"
+        )
     svg = _build_scatter_svg(
-        x_values=anchor_sample["gold_weekly_log_return"].tolist(),
-        y_values=anchor_sample["stock_weekly_log_return"].tolist(),
+        x_values=plot_x.tolist(),
+        y_values=plot_y.tolist(),
         regression_beta=regression_beta,
         regression_alpha=regression_alpha,
     )
@@ -1944,18 +1975,32 @@ def _render_up_down_beta_panel(
         )
         # Swatch classes come from the SAME semantic series keys the bars use, so the legend
         # can never drift from the bars it labels (one copy of the palette, in css/tokens.css).
+        # The legend enumerates the benchmarks that were ACTUALLY resolved into the
+        # bars (same objects, same series keys), so it can never name a GDX/GDXJ the
+        # chart did not draw.
+        legend_items = [
+            f"<span class=\"legend-swatch-{_STOCK_SERIES}\">■ this stock</span>"
+        ]
+        for index, marker in enumerate(comparison.benchmarks):
+            legend_items.append(
+                f"<span class=\"legend-swatch-{_benchmark_series(marker.label, index)}\">"
+                f"■ {escape(str(marker.label))}</span>"
+            )
         legend = (
-            f"<p class=\"hint\">Bars: <span class=\"legend-swatch-{_STOCK_SERIES}\">■ this stock</span>, "
-            f"<span class=\"legend-swatch-{_benchmark_series('GDX', 0)}\">■ GDX</span>, "
-            f"<span class=\"legend-swatch-{_benchmark_series('GDXJ', 1)}\">■ GDXJ</span> — all on the "
-            f"{escape(WINDOW_LABELS.get(active_window, active_window))} window, so they are directly comparable.</p>"
+            "<p class=\"hint\">Bars: "
+            + ", ".join(legend_items)
+            + " — all on the "
+            + f"{escape(WINDOW_LABELS.get(active_window, active_window))} window, so they are directly comparable.</p>"
         )
     else:
+        # Pass None through for a missing side: the builder draws an explicit n/a
+        # marker. `up_beta or 0.0` used to draw a real-looking 0.00 bar, which reads
+        # as "measured zero beta" rather than "not available".
         svg = _build_dual_bar_svg(
             left_label="Up-Gold",
-            left_value=up_beta or 0.0,
+            left_value=up_beta,
             right_label="Down-Gold",
-            right_value=down_beta or 0.0,
+            right_value=down_beta,
         )
         legend = ""
     return (
@@ -1969,19 +2014,6 @@ def _render_up_down_beta_panel(
         f"{svg}"
         "</section>"
     )
-
-
-def _ordinal_percentile(percentile: float | None) -> str:
-    """Format a backend-resolved 0..100 percentile as '1st/2nd/3rd/Nth percentile' text."""
-
-    if percentile is None:
-        return "n/a"
-    n = int(round(percentile))
-    if 10 <= (n % 100) <= 20:
-        suffix = "th"
-    else:
-        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-    return f"{n}{suffix} percentile"
 
 
 def _subject_strip_label(ticker: str, beta: float | None, percentile: float | None) -> str:
@@ -2010,8 +2042,10 @@ def _render_beta_comparison_panel(
     title = "Where its gold beta ranks vs the miner universe"
     if comparison is None or not getattr(comparison, "available", False):
         note = getattr(comparison, "note", None) if comparison is not None else None
+        # Escaped once, at render (below) — pre-escaping here double-escaped the
+        # window label into "&amp;" sequences for any label carrying punctuation.
         message = note or (
-            f"No universe comparison is available for the {escape(WINDOW_LABELS.get(active_window, active_window))} window yet."
+            f"No universe comparison is available for the {WINDOW_LABELS.get(active_window, active_window)} window yet."
         )
         return (
             "<section class=\"panel nested-panel\">"
@@ -2019,7 +2053,7 @@ def _render_beta_comparison_panel(
             "</section>"
         )
 
-    window_label = escape(str(comparison.window_label))
+    window_label_text = escape(str(comparison.window_label))
     window_label_raw = str(comparison.window_label)
     subject = comparison.subject
     down_svg = _build_beta_strip_svg(
@@ -2050,7 +2084,7 @@ def _render_beta_comparison_panel(
     if subject is None:
         lead = (
             f"{escape(ticker)} is not in the scored miner universe, so only the universe spread "
-            f"and the GDX/GDXJ ticks are shown for the {window_label} window. "
+            f"and the GDX/GDXJ ticks are shown for the {window_label_text} window. "
         )
     else:
         side_phrases = []
@@ -2066,13 +2100,13 @@ def _render_beta_comparison_panel(
             )
         if side_phrases:
             lead = (
-                f"Over the {window_label} window, {escape(ticker)}'s "
+                f"Over the {window_label_text} window, {escape(ticker)}'s "
                 + ", and ".join(side_phrases)
                 + ". "
             )
         else:
             lead = (
-                f"{escape(ticker)}'s gold beta is not available for the {window_label} window; "
+                f"{escape(ticker)}'s gold beta is not available for the {window_label_text} window; "
                 "the universe spread and GDX/GDXJ ticks are shown for context. "
             )
     return (
@@ -2093,6 +2127,7 @@ def _render_volatility_panel(
     active_window: str = "12M",
     weekly_series: pd.DataFrame | None = None,
     scoring_config: Any = None,
+    volatility_diag: dict[str, Any] | None = None,
 ) -> str:
     """Render the volatility card group for the active window.
 
@@ -2117,16 +2152,30 @@ def _render_volatility_panel(
             "</section>"
         )
 
-    diag = _compute_window_volatility(
-        tool_a_row=tool_a_row,
-        active_window=active_window,
-        weekly_series=weekly_series,
-        scoring_config=scoring_config,
+    # Reuse the caller's single per-render computation when it was threaded in.
+    diag = (
+        volatility_diag
+        if volatility_diag is not None
+        else _compute_window_volatility(
+            tool_a_row=tool_a_row,
+            active_window=active_window,
+            weekly_series=weekly_series,
+            scoring_config=scoring_config,
+        )
     )
     context_label = diag.get("volatility_context") or "UNKNOWN"
+    # Label every number with its basis: for a non-canonical window these are a live
+    # serve-side estimate off the weekly series, not the pipeline's published fields.
+    basis_hint = (
+        "<p class=\"hint\">Estimated live from the weekly series (published values "
+        "are 52-week), so these can differ slightly from the pipeline numbers.</p>"
+        if diag.get("estimated")
+        else ""
+    )
     return (
         "<section class=\"panel nested-panel\">"
         f"<h3>Volatility Diagnostics ({escape(win_label)})</h3>"
+        f"{basis_hint}"
         "<div class=\"metric-grid\">"
         f"{_metric_card('Total Volatility (Annualized Log Vol)', _fmt_percent(diag.get('total_volatility'), decimals=1))}"
         f"{_metric_card('Residual Volatility (Annualized Log Vol)', _fmt_percent(diag.get('residual_volatility'), decimals=1))}"
@@ -2178,6 +2227,7 @@ def _compute_window_volatility(
             "residual_volatility": tool_a_row.get("residual_volatility_52w"),
             "downside_volatility": tool_a_row.get("downside_volatility_52w"),
             "volatility_context": tool_a_row.get("volatility_context"),
+            "estimated": False,
         }
 
     # Non-canonical window: recompute from the window's weekly slice.
@@ -2187,9 +2237,25 @@ def _compute_window_volatility(
         annualize_weekly_volatility,
         annualize_downside_volatility,
     )
-    weeks = _WINDOW_WEEKS.get(active_window, 52)
+    # ONE definition of "the window's sample": the same date-masked model helper the
+    # scatter panel uses (build_trailing_window_rows), not a private tail-by-count
+    # slice. A count slice and a date mask disagree whenever the weekly series has
+    # gaps, which would silently build the scatter and the volatility card on
+    # different weeks. When the row carries no usable as_of_date we anchor on the
+    # series' own last observation (the week a tail slice would have ended on).
     ordered = weekly_series.sort_values("as_of_date").reset_index(drop=True)
-    trailing = ordered.tail(weeks)
+    as_of_date = pd.to_datetime(tool_a_row.get("as_of_date"), errors="coerce")
+    if pd.isna(as_of_date):
+        as_of_date = pd.to_datetime(ordered["as_of_date"], errors="coerce").max()
+    if pd.isna(as_of_date):
+        return {}
+    trailing = build_trailing_window_rows(
+        weekly_series=ordered,
+        as_of_date=pd.Timestamp(as_of_date),
+        window_id=active_window,
+    )
+    if trailing.empty:
+        return {}
     stock_returns = pd.to_numeric(
         trailing.get("stock_weekly_log_return"), errors="coerce"
     )
@@ -2203,7 +2269,6 @@ def _compute_window_volatility(
     # structural_window_metrics history. Approximate via OLS over the
     # trailing slice to keep things simple; drift vs the pipeline is tiny.
     residual_vol = None
-    import numpy as np
     x = gold_returns.to_numpy(dtype=float)
     y = stock_returns.to_numpy(dtype=float)
     mask = np.isfinite(x) & np.isfinite(y)
@@ -2233,6 +2298,10 @@ def _compute_window_volatility(
         "residual_volatility": residual_vol,
         "downside_volatility": downside_vol,
         "volatility_context": context,
+        # Basis flag: these came from a live serve-side estimate over the weekly
+        # series, NOT from the published pipeline fields (which are 52-week). The
+        # renderer must say so — an unlabelled number implies published provenance.
+        "estimated": True,
     }
 
 
@@ -2347,7 +2416,7 @@ def _render_rebased_overlay_panel(
         series_keys=series_keys,
         data_table_id=f"chart-data-overlay-{_id_token(ticker)}-{_id_token(active_window)}",
     )
-    window_label = WINDOW_LABELS.get(active_window, active_window)
+    window_label_display = WINDOW_LABELS.get(active_window, active_window)
     # Caption names only the benchmarks that actually drew, so a missing GDX/GDXJ history
     # is never implied to be present (label every number with its real basis).
     gold_drawn = "Gold" in drawable
@@ -2369,7 +2438,7 @@ def _render_rebased_overlay_panel(
     return (
         "<section class=\"panel nested-panel\">"
         f"<h3>{escape(title)}</h3>"
-        f"<p class=\"hint\">Each line is indexed to 100 at the start of the {escape(window_label)} "
+        f"<p class=\"hint\">Each line is indexed to 100 at the start of the {escape(window_label_display)} "
         f"window (USD) — so you can see whether {escape(ticker)} outpaced {benchmark_phrase} "
         "over the lookback. Use the window toggle above to change the period.</p>"
         f"{svg}"

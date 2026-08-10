@@ -62,14 +62,23 @@ def _build_scatter_svg(
 def _build_dual_bar_svg(
     *,
     left_label: str,
-    left_value: float,
+    left_value: float | None,
     right_label: str,
-    right_value: float,
+    right_value: float | None,
 ) -> str:
+    """Two-bar up/down beta chart.
+
+    A ``None`` value means "not available for this side" and renders an explicit
+    n/a marker — never a 0.00 bar, which would read as a genuine measured zero.
+    Mirrors the grouped-bar builder's n/a handling so the two beta charts agree
+    on what "missing" looks like.
+    """
+
     width = 360
     height = 220
     padding = 28
-    max_value = max(abs(left_value), abs(right_value), 0.25)
+    present = [abs(float(value)) for value in (left_value, right_value) if value is not None]
+    max_value = max(present + [0.25])
     plot_height = height - (2 * padding) - 30
     baseline = padding + (plot_height / 2)
 
@@ -84,6 +93,15 @@ def _build_dual_bar_svg(
 
     bars = []
     for x_pos, label, value in ((95, left_label, left_value), (235, right_label, right_value)):
+        if value is None:
+            bars.append(
+                f"<text x=\"{x_pos + 20}\" y=\"{baseline - 8:.1f}\" text-anchor=\"middle\" font-size=\"12\" class=\"chart-label-minor\">n/a</text>"
+            )
+            bars.append(
+                f"<text x=\"{x_pos + 20}\" y=\"{height - 18}\" text-anchor=\"middle\" font-size=\"12\" class=\"chart-label\">{escape(label)}</text>"
+            )
+            continue
+        value = float(value)
         height_value = bar_height(value)
         bars.append(
             f"<rect x=\"{x_pos}\" y=\"{bar_y(value):.1f}\" width=\"40\" height=\"{height_value:.1f}\" class=\"{bar_class(value)}\" opacity=\"0.85\" rx=\"6\" ry=\"6\" />"

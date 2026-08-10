@@ -224,11 +224,19 @@ def _render_signal_history_chart(
     # fallback for points predating the horizon column.
     horizon = signal_horizon_days or _signal_history_horizon(points)
     if horizon is not None:
-        points = [
+        filtered = [
             point
             for point in points
             if _optional_float(point.get("signal_horizon_days")) == horizon
         ]
+        if filtered:
+            points = filtered
+        else:
+            # The row's horizon matched nothing — every persisted point predates the
+            # signal_horizon_days column. Showing an empty chart there reads as "no
+            # history exists"; fall back to the unfiltered points and label them with
+            # the horizon the points themselves carry (None -> the generic label).
+            horizon = _signal_history_horizon(points)
     label = f"{horizon}d" if horizon is not None else "Signal"
     rows = []
     for point in sorted(points, key=lambda item: str(item.get("as_of_date") or "")):

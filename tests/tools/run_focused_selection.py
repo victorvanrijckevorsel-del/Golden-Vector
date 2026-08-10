@@ -33,6 +33,7 @@ FOCUSED_TEST_FILES: tuple[str, ...] = (
     "tests/test_column_help.py",
     "tests/test_common_helpers.py",
     "tests/test_design_tokens.py",
+    "tests/test_detail_panel_review_fixes.py",
     "tests/test_detail_volatility_context.py",
     "tests/test_explanations.py",
     "tests/test_finite_input_validation.py",

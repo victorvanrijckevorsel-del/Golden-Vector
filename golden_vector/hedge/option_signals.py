@@ -14,7 +14,7 @@ from typing import Any, Protocol
 import pandas as pd
 
 from golden_vector.common.parquet import write_parquet_atomic
-from golden_vector.common.strings import normalize_ticker
+from golden_vector.common.strings import normalize_ticker, ordinal_percentile
 from golden_vector.contracts.config_models import (
     SIGNAL_AREA_DTE_MAX as _SIGNAL_AREA_DTE_MAX,
     SIGNAL_AREA_DTE_MIN as _SIGNAL_AREA_DTE_MIN,
@@ -780,7 +780,7 @@ def _cost_reason(
     ratio_text = "-" if iv_rv_ratio is None else f"{iv_rv_ratio:.2f}x realized"
     if cost_label == "LIMITED_HISTORY":
         return f"Only {history_depth}/{min_history} clean snapshots; IV/RV is {ratio_text}."
-    rank_text = "-" if iv_rank is None else f"{iv_rank:.0f}th percentile"
+    rank_text = "-" if iv_rank is None else ordinal_percentile(iv_rank)
     return f"IV/RV is {ratio_text}; own-history IV rank is {rank_text}."
 
 
