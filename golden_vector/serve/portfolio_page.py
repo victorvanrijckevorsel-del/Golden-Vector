@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from html import escape
 from typing import Any
 
@@ -438,6 +439,7 @@ def _render_positions(data: PortfolioData) -> str:
         for ticker, group in data.lines.groupby("ticker", dropna=False)
     }
     rows = []
+    lot_blocks: list[str] = []
     for row in data.positions.sort_values("ticker").to_dict(orient="records"):
         ticker = str(row.get("ticker") or "")
         lot_rows = lines_by_ticker.get(ticker, [])
@@ -463,14 +465,19 @@ def _render_positions(data: PortfolioData) -> str:
             f"<td>{_fmt_percent(row.get('beta_contribution_fraction'))}</td>"
             f"<td>{_fmt_text(row.get('resilience_bucket'))}</td>"
             f"<td>{_fmt_text(row.get('position_status'))}</td>"
-            f"<td><details><summary>{len(lot_rows)} lots</summary>{_render_lot_table(lot_rows)}</details></td>"
+            f"<td>{_render_lots_link(ticker, len(lot_rows))}</td>"
             "</tr>"
         )
+        if lot_rows:
+            lot_blocks.append(_render_lot_breakdown_block(ticker, lot_rows))
+    breakdown = (
+        "<h3>Lot breakdown</h3>" + "".join(lot_blocks) if lot_blocks else ""
+    )
     return (
         "<section class=\"panel\" id=\"positions\">"
         "<h2>Positions</h2>"
         + table_region(
-            "<table class=\"js-datatable\"><thead><tr>"
+            "<table class=\"js-datatable\" id=\"portfolio-positions-table\"><thead><tr>"
             + help_th("Ticker", key="ticker_symbol")
         + help_th("Company")
         + help_th("Shares")
@@ -496,7 +503,34 @@ def _render_positions(data: PortfolioData) -> str:
         + "<p class=\"hint\">Cost and P&L are shown in GBP (the reporting currency); value and "
         "current price are in each stock's trading currency (e.g. AUD for .AX). The gold-loss "
         "column is a positive USD loss estimate.</p>"
-        "</section>"
+        + breakdown
+        + "</section>"
+    )
+
+
+def _ticker_slug(ticker: str) -> str:
+    """Lowercase id-safe slug for a ticker (``BHP.AX`` -> ``bhp-ax``)."""
+    return re.sub(r"[^a-z0-9]", "-", str(ticker).lower())
+
+
+def _render_lots_link(ticker: str, count: int) -> str:
+    if count == 0:
+        return "0 lots"
+    slug = _ticker_slug(ticker)
+    return f"<a href=\"#lots-{escape(slug)}\">{count} lots</a>"
+
+
+def _render_lot_breakdown_block(ticker: str, lot_rows: list[dict[str, object]]) -> str:
+    slug = _ticker_slug(ticker)
+    return (
+        f"<details id=\"lots-{escape(slug)}\">"
+        f"<summary>{escape(ticker)} - {len(lot_rows)} lots</summary>"
+        + table_region(
+            _render_lot_table(lot_rows),
+            region_id=f"portfolio-lots-{slug}",
+            label=f"{ticker} lots",
+        )
+        + "</details>"
     )
 
 

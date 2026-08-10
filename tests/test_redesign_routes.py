@@ -13,10 +13,12 @@ what the app DOES today, not the desired contract.
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
 
 import pytest
 
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
+from golden_vector.serve.portfolio_page import _render_lots_link, _ticker_slug
 from golden_vector.serve.workspace import create_workspace_app
 from tests.helpers import build_test_paths, call_wsgi_app
 from tests.test_portfolio_m1 import _portfolio_config, _write_foundation_snapshot
@@ -455,3 +457,102 @@ def test_candidate_finder_valid_gold_price_has_no_danger_notice(tmp_path):
     assert response["status"].startswith("200")
     # No D6 parse-error notice (the model-state banner may legitimately use notice-danger).
     assert "gold_price must be" not in response["body"]
+
+
+# --------------------------------------------------------------- D11 guards
+
+
+class _DataTableStructureChecker(HTMLParser):
+    """Walk a rendered page and record js-datatable structural violations.
+
+    Contract (defect D11): every ``<table class="js-datatable">`` must carry a
+    non-empty ``id`` (DataTables filter-bar targeting) and must contain NO
+    nested ``<table>`` — a nested table corrupts the DataTables column model
+    and triggers the blocking "Requested unknown parameter" alert.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.violations: list[str] = []
+        self._stack: list[str | None] = []  # per open <table>: its js-datatable id or None
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "table":
+            return
+        attr = dict(attrs)
+        classes = (attr.get("class") or "").split()
+        is_dt = "js-datatable" in classes
+        table_id = (attr.get("id") or "").strip()
+        enclosing = next((entry for entry in reversed(self._stack) if entry is not None), None)
+        if enclosing is not None:
+            self.violations.append(f"nested <table> inside js-datatable id={enclosing!r}")
+        if is_dt and not table_id:
+            self.violations.append("js-datatable table has no id")
+        self._stack.append(table_id if is_dt else None)
+
+    def handle_endtag(self, tag):
+        if tag == "table" and self._stack:
+            self._stack.pop()
+
+
+def _datatable_violations(body: str) -> list[str]:
+    checker = _DataTableStructureChecker()
+    checker.feed(body)
+    return checker.violations
+
+
+_GUARD_FULL_ROUTES = (
+    "/",
+    "/candidate-finder",
+    "/tool-a",
+    "/tool-b",
+    "/tool-d",
+    "/option-trading",
+    "/lab",
+    "/ticker/NEM",
+)
+
+
+@pytest.mark.parametrize("path", _GUARD_FULL_ROUTES)
+def test_js_datatables_have_ids_and_no_nested_tables(tmp_path, path):
+    _paths, app = _full_app(tmp_path)
+
+    response = call_wsgi_app(app, method="GET", path=path)
+
+    assert response["status"].startswith("200"), path
+    assert _datatable_violations(response["body"]) == [], path
+
+
+def test_portfolio_js_datatables_have_ids_and_no_nested_tables(tmp_path):
+    _paths, app = _portfolio_app(tmp_path)
+    _add_lot_and_get_id(app)
+
+    response = call_wsgi_app(app, method="GET", path="/portfolio")
+
+    assert response["status"].startswith("200")
+    assert _datatable_violations(response["body"]) == []
+
+
+def test_portfolio_positions_table_has_id_and_lots_link_out(tmp_path):
+    """D11: the lots cell is a link to a sibling Lot breakdown block, and the
+    lot table no longer lives inside a positions row."""
+    _paths, app = _portfolio_app(tmp_path)
+    _add_lot_and_get_id(app)
+
+    body = call_wsgi_app(app, method="GET", path="/portfolio")["body"]
+
+    assert 'id="portfolio-positions-table"' in body
+    assert 'href="#lots-nem"' in body
+    assert '<details id="lots-nem"' in body
+    assert "<h3>Lot breakdown</h3>" in body
+    assert 'aria-label="NEM lots"' in body
+    assert 'id="portfolio-lots-nem"' in body
+    # The old nested markup (a <details> wrapping the lot table inside a row).
+    assert "</summary><table" not in body
+
+
+def test_ticker_slug_and_zero_lot_cell_render_plainly():
+    assert _ticker_slug("BHP.AX") == "bhp-ax"
+    assert _ticker_slug("NEM") == "nem"
+    assert _render_lots_link("NEM", 0) == "0 lots"
+    assert _render_lots_link("BHP.AX", 2) == '<a href="#lots-bhp-ax">2 lots</a>'
