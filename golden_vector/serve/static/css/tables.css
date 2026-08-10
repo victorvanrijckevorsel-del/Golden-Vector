@@ -38,3 +38,29 @@ table.js-datatable thead th.dt-orderable-asc,
 table.js-datatable thead th.dt-orderable-desc {
   color: var(--ink);
 }
+/* Accessible table-scroll region (plan 11.1): the region owns horizontal
+   overflow so the page body never scrolls sideways. Scroll-shadow edges hint
+   at off-screen columns; covers match the panel surface so shadows fade out
+   at the ends of travel. */
+.table-region {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  background-image:
+    linear-gradient(to right, var(--panel) 40%, transparent),
+    linear-gradient(to left, var(--panel) 40%, transparent),
+    linear-gradient(to right, var(--scroll-shadow), transparent),
+    linear-gradient(to left, var(--scroll-shadow), transparent);
+  background-position: 0 0, 100% 0, 0 0, 100% 0;
+  background-size: 36px 100%, 36px 100%, 12px 100%, 12px 100%;
+  background-repeat: no-repeat;
+  background-attachment: local, local, scroll, scroll;
+}
+.table-region:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.table-region > table {
+  margin: 0;
+}

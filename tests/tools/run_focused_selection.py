@@ -65,6 +65,7 @@ FOCUSED_TEST_FILES: tuple[str, ...] = (
     "tests/test_redesign_routes.py",
     "tests/test_screening_overrides.py",
     "tests/test_tradable_liquidity.py",
+    "tests/test_ui_components.py",
     "tests/test_url_helpers.py",
     "tests/test_windows.py",
     "tests/test_windows_registry.py",

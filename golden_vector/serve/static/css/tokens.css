@@ -81,6 +81,12 @@
   --tint-tan: #2A251C;
   --tint-gray: #242A31;
   --tint-gray-ink: #B7C0CB;
+  --tint-blue: #1B2536;
+  --tint-blue-ink: #8FB4E8;
+
+  /* Notice tone borders (section 10.5 shells) */
+  --notice-success-border: #2E5C41;
+  --notice-info-border: #2C4A73;
 
   /* Notices */
   --flash-border: #4A3A1A;
@@ -102,8 +108,8 @@
   --verdict-inconclusive-bg: #33290F;
   --verdict-partial-bg: #232A31;
   --verdict-partial-ink: #AFBAC6;
-  --verdict-accruing-bg: #1B2536;
-  --verdict-accruing-ink: #8FB4E8;
+  --verdict-accruing-bg: var(--tint-blue);
+  --verdict-accruing-ink: var(--tint-blue-ink);
 
   /* Chart series (single source for SVG paint via semantic classes).
      Stock = warm orange distinct from brand gold; gold commodity = brand gold;
@@ -163,6 +169,7 @@
 
   /* Elevation (borders carry hierarchy in dark mode; shadows stay subtle) */
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --scroll-shadow: rgba(0, 0, 0, 0.45);
   --shadow-tooltip: 0 2px 8px rgba(0, 0, 0, 0.55);
   --shadow-popover: 0 8px 28px rgba(0, 0, 0, 0.6);
   --text-shadow-contrast: 0 0 2px rgba(0, 0, 0, 0.55);

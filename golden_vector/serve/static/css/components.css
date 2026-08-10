@@ -146,6 +146,147 @@
   background: var(--flash-error-bg);
   border-color: var(--flash-error-border);
 }
+/* Semantic notice tones (plan 10.5). The base .flash look IS the warning tone;
+   these modifiers refine it. Legacy bare .flash is removed in Phase 7. */
+.notice-success {
+  background: var(--tint-green);
+  border-color: var(--notice-success-border);
+}
+.notice-info {
+  background: var(--tint-blue);
+  border-color: var(--notice-info-border);
+}
+.notice-danger {
+  background: var(--flash-error-bg);
+  border-color: var(--flash-error-border);
+}
+.notice-degraded {
+  background: var(--tint-amber);
+  border-color: var(--color-warning);
+  border-left-width: 3px;
+}
+.notice-neutral {
+  background: var(--badge-neutral-bg);
+  border-color: var(--line);
+}
+/* Shared page header (plan 10.3) */
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 16px;
+}
+.page-header h1 {
+  margin: 0;
+}
+.page-lead {
+  max-width: 72ch;
+  color: var(--text-soft);
+}
+.page-lead p {
+  margin: 6px 0 0;
+}
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* Section heading with optional right-aligned actions */
+.section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 18px 0 8px;
+}
+.section-heading h2,
+.section-heading h3,
+.section-heading h4 {
+  margin: 0;
+}
+.section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* Action/scenario toolbar shell */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+}
+/* Empty/unavailable state shell */
+.empty-state {
+  padding: 22px 16px;
+  text-align: center;
+  color: var(--text-soft);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-surface);
+  background: var(--panel);
+}
+.empty-state-title {
+  margin: 0 0 6px;
+  font-weight: 600;
+  color: var(--ink);
+}
+/* Generic disclosure treatment (purpose-built details keep their own styles) */
+.disclosure > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.disclosure[open] > summary {
+  margin-bottom: 8px;
+}
+/* Button/link visual variants (plan 10.3) */
+.btn {
+  display: inline-block;
+  padding: 8px 14px;
+  border-radius: var(--radius-control);
+  border: 1px solid transparent;
+  font-weight: 600;
+  font-size: 0.92rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn-primary {
+  background: var(--accent);
+  color: var(--button-ink);
+}
+.btn-primary:hover {
+  background: var(--color-brand-gold-hover);
+}
+.btn-secondary {
+  background: var(--paper);
+  color: var(--ink);
+  border-color: var(--line);
+}
+.btn-secondary:hover {
+  background: var(--surface-hover);
+}
+.btn-danger {
+  background: var(--flash-error-bg);
+  color: var(--tint-red-ink);
+  border-color: var(--flash-error-border);
+}
+.btn-tertiary {
+  background: transparent;
+  color: var(--link);
+  text-decoration: underline;
+}
+.btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.btn[disabled],
+.btn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .segmented-control {
   display: flex;
   flex-wrap: wrap;
