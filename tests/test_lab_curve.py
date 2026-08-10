@@ -621,7 +621,7 @@ def test_profile_svg_never_bridges_a_gap() -> None:
 
     from golden_vector.serve.lab_curve_page import _build_profile_svg
 
-    connector = "stroke=\"#2f6f6d\""  # the colour used ONLY for the connecting line
+    connector = "class=\"series-context\""  # the class used ONLY for the connecting line
     gapped = [  # usable, GAP, usable -> no adjacent usable pair -> zero connectors
         _profile_pt("gold_down_big", True), _profile_pt("gold_down", False),
         _profile_pt("gold_flat", True),
@@ -987,14 +987,14 @@ def test_distribution_strip_all_negative_keeps_zero_on_axis() -> None:
     """An all-lagged scenario still renders a valid strip with the zero baseline on
     the axis (the [*alphas, 0.0] guard) and lag-coloured ticks."""
 
-    from golden_vector.serve.lab_curve_page import _LAG_COLOR, _render_distribution
+    from golden_vector.serve.lab_curve_page import _LAG_CLASS, _render_distribution
 
     pts = [_strip_pt("a", -0.30, False), _strip_pt("b", -0.10, False), _strip_pt("c", -0.05, False)]
     cell = {"median_alpha_gdx": -0.10, "gdx_insufficient_history": False, "p_beat_gdx": 0.0}
     html = _render_distribution(_strip_curve(pts, cell))
     assert "lab-dist-svg" in html
     assert ">0</text>" in html  # zero baseline label present (stays on-axis)
-    assert _LAG_COLOR in html  # ticks carry the lag colour
+    assert _LAG_CLASS in html  # ticks carry the lag series class
 
 
 def test_distribution_strip_renders_for_gdxj() -> None:

@@ -1672,7 +1672,7 @@ def test_workspace_detail_renders_rebased_overlay_chart_when_aligned(tmp_path):
     # Two lines draw (gold + stock); the legend must name both so we know WHICH lines drew,
     # and there must be exactly two legend chips (legend count tracks the drawn-line count).
     assert body.count("<polyline points=") == 2
-    assert body.count('<span class="chart-legend-item"') == 2
+    assert body.count('<span class="chart-legend-item legend-swatch-') == 2
     assert "&#9632; NEM" in body
     assert "&#9632; Gold" in body
     # The caption is indexed-to-100 and names the active window's human label (12M -> "1Y").
@@ -3011,7 +3011,9 @@ def test_all_serve_modules_avoid_unsanctioned_analytics_tokens():
         "].div(",
     )
     violations: list[str] = []
-    for module in sorted(Path("golden_vector/serve").glob("*.py")):
+    # rglob, not glob: new serve subpackages (e.g. serve/ui/) must never
+    # escape this sweep (redesign audit finding H1, 2026-08-10).
+    for module in sorted(Path("golden_vector/serve").rglob("*.py")):
         source = module.read_text(encoding="utf-8")
         # strip comments so documentation can mention banned tokens
         code_lines = [line.split("#", 1)[0] for line in source.splitlines()]

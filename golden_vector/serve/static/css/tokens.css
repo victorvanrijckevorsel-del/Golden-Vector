@@ -81,6 +81,42 @@
   --chart-gdxj: #3f7cae;
   --chart-context: #2f6f6d;
   --chart-zero: #b9b0a0;
+  /* Chart furniture (axes, grids, labels — parity values from charts.py) */
+  --chart-bg: #fffdf8;
+  --chart-axis: #bfb5a2;
+  --chart-grid: #eadfca;
+  --chart-track: #cdbfa6;
+  --chart-tick: #d2c4a6;
+  --chart-marker: #1d4b73;
+  --chart-point: #1d4b73;
+  --chart-label: #6f685c;
+  --chart-label-minor: #9a917f;
+  --chart-label-soft: #8a8170;
+  --chart-label-strong: #5f594c;
+  --chart-value: #1f1d1a;
+  /* Rebased-overlay series (deliberately distinct from the beta-bar palette) */
+  --chart-gold: #b8860b;
+  --chart-overlay-stock: #1d4b73;
+  --chart-overlay-gdx: #5a3b8a;
+  --chart-overlay-gdxj: #2e7d5b;
+  /* Option-signal strips */
+  --chart-put: #a45100;
+  --chart-call: #2f6f6d;
+  --chart-vol: #5b4a91;
+  --chart-skew: var(--chart-put);
+  --chart-atm: var(--chart-call);
+  --chart-ivrv: var(--chart-vol);
+  --chart-oi: #7b6f5e;
+  /* Lab dial/behaviour charts */
+  --chart-beat: #1d6b32;
+  --chart-lag: #a11a1a;
+  --chart-warn: var(--chart-put);
+  --chart-strip: #cfc6b8;
+  --chart-zeroline: #8a8170;
+  --chart-strip-label: #5f584e;
+  --chart-ink: #3d3529;
+  --chart-axis-label: #7a7263;
+  --chart-band: #efe9dc;
 
   /* Typography (parity values; Phase 2 moves to system sans + tabular nums) */
   --font-ui: Georgia, "Times New Roman", serif;

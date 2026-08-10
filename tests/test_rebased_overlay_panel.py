@@ -172,6 +172,8 @@ def test_overlay_crosshair_js_escapes_labels_and_has_no_percent_math():
     assert "function esc(" in js
     assert "esc(s.label)" in js  # label escaped before entering innerHTML
     assert "esc(pt[2])" in js  # pre-formatted pct read from the embed
+    assert "esc(s.series)" in js  # semantic series key escaped in the class attribute
+    assert "s.color" not in js  # colour literals left the JS contract (semantic classes only)
     assert "fmtPct" not in js  # no percent arithmetic duplicated in JS
 
 
@@ -208,7 +210,7 @@ svg.setAttribute("data-overlay", JSON.stringify({
   ticks: [["2024-01-01", 48], ["2024-01-02", 696]],
   series: [{
     label: "<img src=x onerror=alert(1)>",
-    color: "red' onclick='alert(1)",
+    series: "gold\" onclick=\"alert(1)",
     byDate: {
       "2024-01-02": [88, 100.1, "<pct>"]
     }
@@ -246,6 +248,10 @@ assert.equal(tip.hidden, false);
 assert.ok(tip.innerHTML.includes("&lt;img src=x onerror=alert(1)&gt;"));
 assert.ok(!tip.innerHTML.includes("<img"));
 assert.ok(tip.innerHTML.includes("(&lt;pct&gt;)"));
+// The semantic series key flows through esc() into the class attribute of the
+// innerHTML sink: a double-quote breakout attempt must arrive fully encoded.
+assert.ok(tip.innerHTML.includes("legend-swatch-gold&quot; onclick=&quot;alert(1)"));
+assert.ok(!tip.innerHTML.includes("onclick=\"alert"));
 assert.equal(tip.style.left, "102px");
 assert.equal(tip.style.top, "51px");
 

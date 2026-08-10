@@ -32,7 +32,7 @@
     svg.appendChild(layer);
 
     var vline = document.createElementNS(NS, "line");
-    vline.setAttribute("stroke", "#6f685c");
+    vline.setAttribute("class", "overlay-cursor-line");
     vline.setAttribute("stroke-width", "1");
     vline.setAttribute("stroke-dasharray", "3 2");
     vline.setAttribute("y1", data.top);
@@ -42,7 +42,8 @@
     var dots = data.series.map(function (s) {
       var c = document.createElementNS(NS, "circle");
       c.setAttribute("r", "3.5");
-      c.setAttribute("fill", s.color);
+      // Semantic series key from the server; paint lives in css/charts.css.
+      c.setAttribute("class", "series-" + s.series);
       layer.appendChild(c);
       return c;
     });
@@ -106,7 +107,7 @@
           dots[idx].setAttribute("cx", xpx);
           dots[idx].setAttribute("cy", pt[0]);
           rows +=
-            "<br><span style='color:" + esc(s.color) + "'>■</span> " +
+            "<br><span class=\"legend-swatch-" + esc(s.series) + "\">■</span> " +
             esc(s.label) + ": " + pt[1].toFixed(1) + " (" + esc(pt[2]) + ")";
         } else {
           dots[idx].style.display = "none";

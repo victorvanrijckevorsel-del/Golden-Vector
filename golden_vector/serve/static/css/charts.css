@@ -106,3 +106,61 @@ text.series-context { fill: var(--chart-context); stroke: none; }
 .legend-swatch-gdx { color: var(--chart-gdx); }
 .legend-swatch-gdxj { color: var(--chart-gdxj); }
 .legend-swatch-context { color: var(--chart-context); }
+.chart-legend [class^="legend-swatch-"], .chart-legend [class*=" legend-swatch-"] { font-weight: 600; }
+/* Chart furniture: backgrounds, axes, grids, labels (SVG paints). */
+rect.chart-bg { fill: var(--chart-bg); }
+line.chart-axis-line { stroke: var(--chart-axis); }
+line.chart-grid-line { stroke: var(--chart-grid); }
+line.chart-track-line { stroke: var(--chart-track); }
+line.chart-tick-line { stroke: var(--chart-tick); }
+line.chart-marker { stroke: var(--chart-marker); }
+circle.chart-point { fill: var(--chart-point); }
+line.chart-fit-line { stroke: var(--chart-stock); }
+text.chart-label { fill: var(--chart-label); }
+text.chart-label-minor { fill: var(--chart-label-minor); }
+text.chart-label-soft { fill: var(--chart-label-soft); }
+text.chart-label-strong { fill: var(--chart-label-strong); }
+text.chart-value { fill: var(--chart-value); }
+text.chart-strip-label { fill: var(--chart-strip-label); }
+text.chart-ink { fill: var(--chart-ink); }
+path.chart-ink { fill: var(--chart-ink); }
+text.chart-axis-label { fill: var(--chart-axis-label); }
+rect.chart-band { fill: var(--chart-band); }
+/* Extended series keys (overlay, option strips, lab dial). Shape rules follow
+   the same pattern as the base series-* set above. */
+.series-gold { fill: var(--chart-gold); }
+.series-overlay-stock { fill: var(--chart-overlay-stock); }
+.series-overlay-gdx { fill: var(--chart-overlay-gdx); }
+.series-overlay-gdxj { fill: var(--chart-overlay-gdxj); }
+.series-put { fill: var(--chart-put); }
+.series-call { fill: var(--chart-call); }
+.series-vol { fill: var(--chart-vol); }
+.series-skew { fill: var(--chart-skew); }
+.series-atm { fill: var(--chart-atm); }
+.series-ivrv { fill: var(--chart-ivrv); }
+.series-oi { fill: var(--chart-oi); }
+.series-beat { fill: var(--chart-beat); }
+.series-lag { fill: var(--chart-lag); }
+.series-warn { fill: var(--chart-warn); }
+.series-strip { fill: var(--chart-strip); }
+.series-zeroline { fill: var(--chart-zeroline); }
+line.series-gold, polyline.series-gold, path.series-gold { fill: none; stroke: var(--chart-gold); }
+line.series-overlay-stock, polyline.series-overlay-stock, path.series-overlay-stock { fill: none; stroke: var(--chart-overlay-stock); }
+line.series-overlay-gdx, polyline.series-overlay-gdx, path.series-overlay-gdx { fill: none; stroke: var(--chart-overlay-gdx); }
+line.series-overlay-gdxj, polyline.series-overlay-gdxj, path.series-overlay-gdxj { fill: none; stroke: var(--chart-overlay-gdxj); }
+line.series-put, polyline.series-put { fill: none; stroke: var(--chart-put); }
+line.series-call, polyline.series-call { fill: none; stroke: var(--chart-call); }
+line.series-vol, polyline.series-vol { fill: none; stroke: var(--chart-vol); }
+line.series-skew, polyline.series-skew { fill: none; stroke: var(--chart-skew); }
+line.series-atm, polyline.series-atm { fill: none; stroke: var(--chart-atm); }
+line.series-ivrv, polyline.series-ivrv { fill: none; stroke: var(--chart-ivrv); }
+line.series-beat, polyline.series-beat { fill: none; stroke: var(--chart-beat); }
+line.series-lag, polyline.series-lag { fill: none; stroke: var(--chart-lag); }
+line.series-warn, polyline.series-warn { fill: none; stroke: var(--chart-warn); }
+line.series-strip, polyline.series-strip { fill: none; stroke: var(--chart-strip); }
+line.series-zeroline, polyline.series-zeroline { fill: none; stroke: var(--chart-zeroline); }
+text.series-zero { fill: var(--chart-zero); stroke: none; }
+.legend-swatch-gold { color: var(--chart-gold); }
+.legend-swatch-overlay-stock { color: var(--chart-overlay-stock); }
+.legend-swatch-overlay-gdx { color: var(--chart-overlay-gdx); }
+.legend-swatch-overlay-gdxj { color: var(--chart-overlay-gdxj); }

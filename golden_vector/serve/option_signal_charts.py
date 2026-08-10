@@ -265,10 +265,10 @@ def _render_skew_curve_svg(points: Sequence[OptionSignalPoint]) -> str:
         bar_height = 0 if max_iv <= 0 else max(1, iv / max_iv * usable_height)
         x = 44 + index * 24
         y = baseline - bar_height
-        color = "#a45100" if str(row.get("side") or "").upper() == "P" else "#2f6f6d"
+        cls = "series-put" if str(row.get("side") or "").upper() == "P" else "series-call"
         bars.append(
             f"<rect x=\"{x}\" y=\"{y:.1f}\" width=\"14\" height=\"{bar_height:.1f}\" "
-            f"fill=\"{color}\"><title>{escape(str(row.get('horizon_days') or '-'))}d "
+            f"class=\"{cls}\"><title>{escape(str(row.get('horizon_days') or '-'))}d "
             f"{escape(str(row.get('side') or '-'))} delta "
             f"{escape(str(row.get('delta_bucket') or '-'))}: "
             f"{_fmt_percent(iv, decimals=1)}</title></rect>"
@@ -276,16 +276,16 @@ def _render_skew_curve_svg(points: Sequence[OptionSignalPoint]) -> str:
         if index % 3 == 0:
             labels.append(
                 f"<text x=\"{x + 7}\" y=\"{baseline + 16}\" text-anchor=\"middle\" "
-                "font-size=\"10\" fill=\"#5f584e\">"
+                "font-size=\"10\" class=\"chart-strip-label\">"
                 f"{escape(str(row.get('horizon_days') or '-'))}d</text>"
             )
     return (
         f"<svg class=\"option-chart-svg\" viewBox=\"0 0 {width} {height}\" "
         "role=\"img\" aria-label=\"Persisted option IV by side, delta, and horizon\">"
         f"<line x1=\"36\" y1=\"{baseline}\" x2=\"{width - 20}\" y2=\"{baseline}\" "
-        "stroke=\"#cfc6b8\"/>"
+        "class=\"series-strip\"/>"
         f"{''.join(bars)}{''.join(labels)}"
-        "<text x=\"36\" y=\"18\" font-size=\"11\" fill=\"#5f584e\">IV</text>"
+        "<text x=\"36\" y=\"18\" font-size=\"11\" class=\"chart-strip-label\">IV</text>"
         "</svg>"
     )
 
@@ -317,10 +317,10 @@ def _render_oi_strike_svg(points: Sequence[OptionSignalPoint]) -> str:
         y = 24 + index * row_height
         label = f"{str(row.get('side') or '-')} {_fmt_number(row.get('strike'), decimals=2)}"
         bars.append(
-            f"<text x=\"8\" y=\"{y + 11}\" font-size=\"10\" fill=\"#3d3529\">"
+            f"<text x=\"8\" y=\"{y + 11}\" font-size=\"10\" class=\"chart-ink\">"
             f"{escape(label)}</text>"
             f"<rect x=\"115\" y=\"{y}\" width=\"{bar_width:.1f}\" height=\"12\" "
-            "fill=\"#7b6f5e\"><title>"
+            "class=\"series-oi\"><title>"
             f"Open interest {_fmt_number(oi, decimals=0)}; "
             f"volume {_fmt_number(row.get('volume'), decimals=0)}</title></rect>"
         )
@@ -340,22 +340,22 @@ def _render_signal_history_svg(points: Sequence[OptionSignalPoint]) -> str:
         (
             f"{label} skew residual",
             [_optional_float(point.get("skew_residual")) for point in ordered],
-            "#a45100",
+            "skew",
         ),
         (
             f"{label} ATM IV",
             [_optional_float(point.get("atm_iv")) for point in ordered],
-            "#2f6f6d",
+            "atm",
         ),
         (
             "IV/RV ratio",
             [_optional_float(point.get("iv_rv_ratio")) for point in ordered],
-            "#5b4a91",
+            "ivrv",
         ),
     ]
     numeric_values = [
         value
-        for _label, values, _color in series
+        for _label, values, _series_key in series
         for value in values
         if value is not None
     ]
@@ -371,7 +371,7 @@ def _render_signal_history_svg(points: Sequence[OptionSignalPoint]) -> str:
     bottom = height - 34
     span = max_value - min_value
     lines = []
-    for label, values, color in series:
+    for label, values, series_key in series:
         coords = []
         for index, value in enumerate(values):
             if value is None:
@@ -381,8 +381,8 @@ def _render_signal_history_svg(points: Sequence[OptionSignalPoint]) -> str:
             coords.append(f"{x:.1f},{y:.1f}")
         if len(coords) >= 2:
             lines.append(
-                f"<polyline points=\"{' '.join(coords)}\" fill=\"none\" "
-                f"stroke=\"{color}\" stroke-width=\"2\">"
+                f"<polyline points=\"{' '.join(coords)}\" "
+                f"class=\"series-{series_key}\" stroke-width=\"2\">"
                 f"<title>{escape(label)}</title></polyline>"
             )
     if not lines:
@@ -391,9 +391,9 @@ def _render_signal_history_svg(points: Sequence[OptionSignalPoint]) -> str:
         f"<svg class=\"option-chart-svg\" viewBox=\"0 0 {width} {height}\" "
         "role=\"img\" aria-label=\"Persisted option signal history\">"
         f"<line x1=\"32\" y1=\"{bottom}\" x2=\"{width - 24}\" y2=\"{bottom}\" "
-        "stroke=\"#cfc6b8\"/>"
+        "class=\"series-strip\"/>"
         f"{''.join(lines)}"
-        "<text x=\"36\" y=\"18\" font-size=\"11\" fill=\"#5f584e\">history</text>"
+        "<text x=\"36\" y=\"18\" font-size=\"11\" class=\"chart-strip-label\">history</text>"
         "</svg>"
     )
 

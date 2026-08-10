@@ -24,10 +24,10 @@ from golden_vector.serve.column_help import help_term
 from golden_vector.serve.lab_curve_data import LabCurveData
 from golden_vector.serve.page_shell import _page_shell
 
-_CONTEXT_COLOR = "#cfc6b8"
-_BEAT_COLOR = "#1d6b32"
-_LAG_COLOR = "#a11a1a"
-_ZERO_COLOR = "#8a8170"
+_CONTEXT_CLASS = "series-strip"
+_BEAT_CLASS = "series-beat"
+_LAG_CLASS = "series-lag"
+_ZERO_CLASS = "series-zeroline"
 
 _BENCHMARK_BLURB = {
     "GDX": "GDX — the broad gold-miner ETF (large, established producers).",
@@ -476,9 +476,9 @@ def _build_profile_svg(
     y50 = y_at(50.0)
     parts.append(
         f"<line x1=\"{left}\" y1=\"{y50:.1f}\" x2=\"{width - right}\" y2=\"{y50:.1f}\" "
-        "stroke=\"#cfc6b8\" stroke-dasharray=\"4 3\"/>"
+        "class=\"series-strip\" stroke-dasharray=\"4 3\"/>"
         f"<text x=\"{left - 4}\" y=\"{y50 + 3:.1f}\" text-anchor=\"end\" font-size=\"9\" "
-        "fill=\"#5f584e\">50%</text>"
+        "class=\"chart-strip-label\">50%</text>"
     )
     def _raw_pct(point: dict[str, Any]) -> float:
         return float(point["p_beat_raw"]) * 100
@@ -489,7 +489,7 @@ def _build_profile_svg(
             parts.append(
                 f"<line x1=\"{x_at(i):.1f}\" y1=\"{y_at(_raw_pct(a)):.1f}\" "
                 f"x2=\"{x_at(i + 1):.1f}\" y2=\"{y_at(_raw_pct(b)):.1f}\" "
-                "stroke=\"#2f6f6d\" stroke-width=\"2\"/>"
+                "class=\"series-context\" stroke-width=\"2\"/>"
             )
     usable_n = 0
     for i, p in enumerate(points):
@@ -498,29 +498,29 @@ def _build_profile_svg(
             usable_n += 1
             pct = _raw_pct(p)  # the counted (raw) rate — same basis as the win-rate bar
             y = y_at(pct)
-            color = "#1d6b32" if pct >= 50 else "#a45100"
+            cls = "series-beat" if pct >= 50 else "series-warn"
             shr = f"{float(p['p_beat_shrunk']) * 100:.0f}%" if p["p_beat_shrunk"] is not None else "-"
             med = f"{float(p['median_alpha']) * 100:+.0f}%" if p["median_alpha"] is not None else "-"
             eff = p["effective_n"]
             eff_s = f"{float(eff):.1f}" if eff is not None and eff == eff else "-"
             parts.append(
-                f"<circle cx=\"{x:.1f}\" cy=\"{y:.1f}\" r=\"5\" fill=\"{color}\">"
+                f"<circle cx=\"{x:.1f}\" cy=\"{y:.1f}\" r=\"5\" class=\"{cls}\">"
                 f"<title>{escape(p['label'])}: beat {escape(benchmark)} {pct:.0f}% of weeks "
                 f"(ranked/smoothed {shr}), median {med}, N={eff_s}</title></circle>"
                 f"<text x=\"{x:.1f}\" y=\"{y - 9:.1f}\" text-anchor=\"middle\" font-size=\"9\" "
-                f"fill=\"#3d3529\">{pct:.0f}%</text>"
+                f"class=\"chart-ink\">{pct:.0f}%</text>"
             )
         else:
             parts.append(
                 f"<text x=\"{x:.1f}\" y=\"{bottom - 4:.1f}\" text-anchor=\"middle\" "
-                "font-size=\"8\" fill=\"#b9b0a0\">no data</text>"
+                "font-size=\"8\" class=\"series-zero\">no data</text>"
             )
         parts.append(
             f"<text x=\"{x:.1f}\" y=\"{bottom + 16:.1f}\" text-anchor=\"middle\" "
-            f"font-size=\"9\" fill=\"#5f584e\">{escape(BUCKET_SHORT_LABELS.get(p['bucket'], p['bucket']))}</text>"
+            f"font-size=\"9\" class=\"chart-strip-label\">{escape(BUCKET_SHORT_LABELS.get(p['bucket'], p['bucket']))}</text>"
         )
     parts.append(
-        f"<text x=\"{left}\" y=\"{top - 6:.1f}\" font-size=\"10\" fill=\"#5f584e\">"
+        f"<text x=\"{left}\" y=\"{top - 6:.1f}\" font-size=\"10\" class=\"chart-strip-label\">"
         f"% of weeks {escape(ticker)} beat {escape(benchmark)}  ·  gold falling &rarr; rising</text>"
     )
     aria = (
@@ -664,22 +664,22 @@ def _build_distribution_svg(
 
     parts: list[str] = [
         f"<line x1=\"{left}\" y1=\"{axis_y}\" x2=\"{width - right}\" y2=\"{axis_y}\" "
-        f"stroke=\"{_CONTEXT_COLOR}\"/>"
+        f"class=\"{_CONTEXT_CLASS}\"/>"
     ]
     zero_x = x_at(0.0)
     parts.append(
         f"<line x1=\"{zero_x:.1f}\" y1=\"{top}\" x2=\"{zero_x:.1f}\" y2=\"{axis_y + 7:.1f}\" "
-        f"stroke=\"{_ZERO_COLOR}\" stroke-dasharray=\"4 3\"/>"
+        f"class=\"{_ZERO_CLASS}\" stroke-dasharray=\"4 3\"/>"
         f"<text x=\"{zero_x:.1f}\" y=\"{axis_y + 19:.1f}\" text-anchor=\"middle\" "
-        "font-size=\"9\" fill=\"#5f584e\">0</text>"
+        "font-size=\"9\" class=\"chart-strip-label\">0</text>"
     )
     for point in scenario_points:
         alpha = float(point["alpha_simple"])
         x = x_at(alpha)
-        color = _BEAT_COLOR if point["beat"] else _LAG_COLOR  # persisted decision
+        cls = _BEAT_CLASS if point["beat"] else _LAG_CLASS  # persisted decision
         parts.append(
             f"<line x1=\"{x:.1f}\" y1=\"{top + 6:.1f}\" x2=\"{x:.1f}\" y2=\"{axis_y:.1f}\" "
-            f"stroke=\"{color}\" stroke-opacity=\"0.5\"><title>{escape(str(point['date']))}: "
+            f"class=\"{cls}\" stroke-opacity=\"0.5\"><title>{escape(str(point['date']))}: "
             f"{alpha * 100:+.0f}% vs {escape(benchmark)}</title></line>"
         )
     median_label = ""
@@ -696,21 +696,21 @@ def _build_distribution_svg(
             " (off scale)" if pinned else ""
         )
         parts.append(
-            f"<path d=\"M {mx:.1f} {axis_y - 1:.1f} l -4 -7 l 8 0 z\" fill=\"#3d3529\">"
+            f"<path d=\"M {mx:.1f} {axis_y - 1:.1f} l -4 -7 l 8 0 z\" class=\"chart-ink\">"
             f"<title>{escape(median_label)}</title></path>"
             f"<text x=\"{mx:.1f}\" y=\"{top + 2:.1f}\" text-anchor=\"middle\" font-size=\"8\" "
-            f"fill=\"#3d3529\">{escape(median_label)}</text>"
+            f"class=\"chart-ink\">{escape(median_label)}</text>"
         )
     # Axis end-labels (suppress the lo label when it coincides with the zero tick,
     # i.e. an all-positive spread, to avoid '0' and '+0%' colliding at the left edge).
     if lo < 0:
         parts.append(
             f"<text x=\"{left}\" y=\"{axis_y + 19:.1f}\" text-anchor=\"start\" font-size=\"8\" "
-            f"fill=\"#7a7263\">{lo * 100:+.0f}%</text>"
+            f"class=\"chart-axis-label\">{lo * 100:+.0f}%</text>"
         )
     parts.append(
         f"<text x=\"{width - right}\" y=\"{axis_y + 19:.1f}\" text-anchor=\"end\" font-size=\"8\" "
-        f"fill=\"#7a7263\">{hi * 100:+.0f}%</text>"
+        f"class=\"chart-axis-label\">{hi * 100:+.0f}%</text>"
     )
     aria = (
         f"Spread of {len(scenario_points)} scenario-week outcomes vs {escape(benchmark)} "
@@ -795,21 +795,21 @@ def _build_dots_svg(points: list[dict[str, Any]], *, horizon: int, benchmark: st
     # than letting the line run to the edge.
     parts.append(
         f"<rect x=\"{plot_right:.1f}\" y=\"{top:.1f}\" width=\"{width - right - plot_right:.1f}\" "
-        f"height=\"{bottom - top:.1f}\" fill=\"#efe9dc\" fill-opacity=\"0.7\"/>"
+        f"height=\"{bottom - top:.1f}\" class=\"chart-band\" fill-opacity=\"0.7\"/>"
         f"<line x1=\"{plot_right:.1f}\" y1=\"{top:.1f}\" x2=\"{plot_right:.1f}\" y2=\"{bottom:.1f}\" "
-        f"stroke=\"{_CONTEXT_COLOR}\" stroke-dasharray=\"3 3\"/>"
-        f"<text x=\"{plot_right + 4:.1f}\" y=\"{top + 10:.1f}\" font-size=\"8\" fill=\"#7a7263\">"
+        f"class=\"{_CONTEXT_CLASS}\" stroke-dasharray=\"3 3\"/>"
+        f"<text x=\"{plot_right + 4:.1f}\" y=\"{top + 10:.1f}\" font-size=\"8\" class=\"chart-axis-label\">"
         f"+{int(horizon)}w</text>"
-        f"<text x=\"{plot_right + 4:.1f}\" y=\"{top + 20:.1f}\" font-size=\"8\" fill=\"#7a7263\">"
+        f"<text x=\"{plot_right + 4:.1f}\" y=\"{top + 20:.1f}\" font-size=\"8\" class=\"chart-axis-label\">"
         "pending</text>"
     )
     # zero baseline (across the data region only)
     if zero_y is not None:
         parts.append(
             f"<line x1=\"{left}\" y1=\"{zero_y:.1f}\" x2=\"{plot_right:.1f}\" "
-            f"y2=\"{zero_y:.1f}\" stroke=\"{_ZERO_COLOR}\" stroke-dasharray=\"4 3\"/>"
+            f"y2=\"{zero_y:.1f}\" class=\"{_ZERO_CLASS}\" stroke-dasharray=\"4 3\"/>"
             f"<text x=\"{left - 6}\" y=\"{zero_y + 3:.1f}\" text-anchor=\"end\" "
-            "font-size=\"9\" fill=\"#5f584e\">0</text>"
+            "font-size=\"9\" class=\"chart-strip-label\">0</text>"
         )
     # context dots first (so highlighted draw on top)
     for index, point in enumerate(usable):
@@ -818,7 +818,7 @@ def _build_dots_svg(points: list[dict[str, Any]], *, horizon: int, benchmark: st
         cx = x_at(index)
         cy = y_at(float(point["alpha_simple"]))
         parts.append(
-            f"<circle cx=\"{cx:.1f}\" cy=\"{cy:.1f}\" r=\"1.4\" fill=\"{_CONTEXT_COLOR}\"/>"
+            f"<circle cx=\"{cx:.1f}\" cy=\"{cy:.1f}\" r=\"1.4\" class=\"{_CONTEXT_CLASS}\"/>"
         )
     for index, point in enumerate(usable):
         if not point["is_scenario"]:
@@ -826,10 +826,10 @@ def _build_dots_svg(points: list[dict[str, Any]], *, horizon: int, benchmark: st
         cx = x_at(index)
         alpha = float(point["alpha_simple"])
         cy = y_at(alpha)
-        color = _BEAT_COLOR if point["beat"] else _LAG_COLOR  # persisted decision
+        cls = _BEAT_CLASS if point["beat"] else _LAG_CLASS  # persisted decision
         radius = 3.2 if point["is_anchor"] else 2.0
         parts.append(
-            f"<circle cx=\"{cx:.1f}\" cy=\"{cy:.1f}\" r=\"{radius}\" fill=\"{color}\" "
+            f"<circle cx=\"{cx:.1f}\" cy=\"{cy:.1f}\" r=\"{radius}\" class=\"{cls}\" "
             f"fill-opacity=\"0.85\"><title>{escape(str(point['date']))}: "
             f"{alpha * 100:+.1f}% vs {escape(benchmark)}</title></circle>"
         )
@@ -837,10 +837,10 @@ def _build_dots_svg(points: list[dict[str, Any]], *, horizon: int, benchmark: st
     for index in (0, n // 2, n - 1):
         parts.append(
             f"<text x=\"{x_at(index):.1f}\" y=\"{bottom + 16}\" text-anchor=\"middle\" "
-            f"font-size=\"9\" fill=\"#5f584e\">{escape(str(usable[index]['date']))}</text>"
+            f"font-size=\"9\" class=\"chart-strip-label\">{escape(str(usable[index]['date']))}</text>"
         )
     parts.append(
-        f"<text x=\"{left}\" y=\"{top - 4}\" font-size=\"10\" fill=\"#5f584e\">"
+        f"<text x=\"{left}\" y=\"{top - 4}\" font-size=\"10\" class=\"chart-strip-label\">"
         f"outperformance vs {escape(benchmark)} (next {int(horizon)} wks)</text>"
     )
     return (
@@ -909,24 +909,24 @@ def _build_line_svg(points: list[dict[str, Any]], *, benchmark: str) -> str:
     base_y = y_at(100.0) if lo <= 100 <= hi else None
     base_line = (
         f"<line x1=\"{left}\" y1=\"{base_y:.1f}\" x2=\"{width - right}\" y2=\"{base_y:.1f}\" "
-        f"stroke=\"{_ZERO_COLOR}\" stroke-dasharray=\"4 3\"/>"
+        f"class=\"{_ZERO_CLASS}\" stroke-dasharray=\"4 3\"/>"
         f"<text x=\"{left - 6}\" y=\"{base_y + 3:.1f}\" text-anchor=\"end\" font-size=\"9\" "
-        "fill=\"#5f584e\">100</text>"
+        "class=\"chart-strip-label\">100</text>"
         if base_y is not None
         else ""
     )
     ticks = "".join(
         f"<text x=\"{x_at(i):.1f}\" y=\"{bottom + 14}\" text-anchor=\"middle\" "
-        f"font-size=\"9\" fill=\"#5f584e\">{escape(values[i][0])}</text>"
+        f"font-size=\"9\" class=\"chart-strip-label\">{escape(values[i][0])}</text>"
         for i in (0, n // 2, n - 1)
     )
     return (
         f"<svg class=\"option-chart-svg lab-relstrength-svg\" viewBox=\"0 0 {width} {height}\" "
         f"role=\"img\" aria-label=\"Relative strength vs {escape(benchmark)} rebased to 100\">"
         f"{base_line}"
-        f"<polyline points=\"{coords}\" fill=\"none\" stroke=\"#2f6f6d\" stroke-width=\"2\"/>"
+        f"<polyline points=\"{coords}\" fill=\"none\" class=\"series-context\" stroke-width=\"2\"/>"
         f"{ticks}"
-        f"<text x=\"{left}\" y=\"{top - 2}\" font-size=\"10\" fill=\"#5f584e\">"
+        f"<text x=\"{left}\" y=\"{top - 2}\" font-size=\"10\" class=\"chart-strip-label\">"
         f"{escape(benchmark)} = 100 at start</text>"
         "</svg>"
     )

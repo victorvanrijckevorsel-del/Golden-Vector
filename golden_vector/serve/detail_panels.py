@@ -21,8 +21,8 @@ from golden_vector.hedge.options_liquidity import bucket_label, slot_tier_counts
 from golden_vector.hedge.scenarios import scenario_model_note
 from golden_vector.model.structural import build_trailing_window_rows
 from golden_vector.serve.charts import (
-    _STOCK_COLOR,
-    _benchmark_color,
+    _STOCK_SERIES,
+    _benchmark_series,
     _build_multiline_overlay_svg,
     _build_beta_strip_svg,
     _build_dual_bar_svg,
@@ -1841,7 +1841,7 @@ def _grouped_beta_bars(comparison: Any, side: str) -> list[dict[str, Any]]:
             {
                 "label": comparison.subject.label,
                 "value": getattr(comparison.subject, f"{side}_beta"),
-                "color": _STOCK_COLOR,
+                "series": _STOCK_SERIES,
             }
         )
     for index, marker in enumerate(comparison.benchmarks):
@@ -1849,7 +1849,7 @@ def _grouped_beta_bars(comparison: Any, side: str) -> list[dict[str, Any]]:
             {
                 "label": marker.label,
                 "value": getattr(marker, f"{side}_beta"),
-                "color": _benchmark_color(marker.label, index),
+                "series": _benchmark_series(marker.label, index),
             }
         )
     return bars
@@ -1880,12 +1880,12 @@ def _render_up_down_beta_panel(
                 {"label": "Down-Gold (weeks gold fell)", "bars": _grouped_beta_bars(comparison, "down")},
             ],
         )
-        # Swatch colors come from the SAME _benchmark_color source the bars use, so the legend
-        # can never drift from the bars it labels (one copy of the palette).
+        # Swatch classes come from the SAME semantic series keys the bars use, so the legend
+        # can never drift from the bars it labels (one copy of the palette, in css/tokens.css).
         legend = (
-            f"<p class=\"hint\">Bars: <span style=\"color:{_STOCK_COLOR}\">■ this stock</span>, "
-            f"<span style=\"color:{_benchmark_color('GDX', 0)}\">■ GDX</span>, "
-            f"<span style=\"color:{_benchmark_color('GDXJ', 1)}\">■ GDXJ</span> — all on the "
+            f"<p class=\"hint\">Bars: <span class=\"legend-swatch-{_STOCK_SERIES}\">■ this stock</span>, "
+            f"<span class=\"legend-swatch-{_benchmark_series('GDX', 0)}\">■ GDX</span>, "
+            f"<span class=\"legend-swatch-{_benchmark_series('GDXJ', 1)}\">■ GDXJ</span> — all on the "
             f"{escape(WINDOW_LABELS.get(active_window, active_window))} window, so they are directly comparable.</p>"
         )
     else:
@@ -2015,7 +2015,7 @@ def _render_beta_comparison_panel(
         "<section class=\"panel nested-panel\">"
         f"<h3>{escape(title)}</h3>"
         f"<p class=\"hint\">{lead}Each light tick is one of the miners; the "
-        f"<span style=\"color:{_STOCK_COLOR}\">orange marker</span> is {escape(ticker)}; the dashed "
+        f"<span class=\"legend-swatch-{_STOCK_SERIES}\">orange marker</span> is {escape(ticker)}; the dashed "
         "blue ticks are GDX/GDXJ (values on the chart above). Switch the window above to re-base all "
         "of them to the same period.</p>"
         f"{down_svg}{up_svg}"
@@ -2268,13 +2268,13 @@ def _render_rebased_overlay_panel(
             "Run <code>python main.py refresh</code> to fetch fresh prices.",
         )
 
-    colors = {
-        ticker: "#1d4b73",
-        "Gold": "#b8860b",
-        "GDX": "#5a3b8a",
-        "GDXJ": "#2e7d5b",
+    series_keys = {
+        ticker: "overlay-stock",
+        "Gold": "gold",
+        "GDX": "overlay-gdx",
+        "GDXJ": "overlay-gdxj",
     }
-    svg = _build_multiline_overlay_svg(series_by_label=drawable, colors=colors)
+    svg = _build_multiline_overlay_svg(series_by_label=drawable, series_keys=series_keys)
     window_label = WINDOW_LABELS.get(active_window, active_window)
     # Caption names only the benchmarks that actually drew, so a missing GDX/GDXJ history
     # is never implied to be present (label every number with its real basis).

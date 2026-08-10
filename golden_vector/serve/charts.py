@@ -33,7 +33,7 @@ def _build_scatter_svg(
         return height - padding - ((value + domain) / (2 * domain)) * (height - (2 * padding))
 
     points = "".join(
-        f"<circle cx=\"{sx(float(x)):.1f}\" cy=\"{sy(float(y)):.1f}\" r=\"3.2\" fill=\"#1d4b73\" opacity=\"0.72\" />"
+        f"<circle cx=\"{sx(float(x)):.1f}\" cy=\"{sy(float(y)):.1f}\" r=\"3.2\" class=\"chart-point\" opacity=\"0.72\" />"
         for x, y in zip(x_values, y_values, strict=False)
     )
     line = ""
@@ -44,16 +44,16 @@ def _build_scatter_svg(
         y2 = regression_alpha + (regression_beta * x2)
         line = (
             f"<line x1=\"{sx(x1):.1f}\" y1=\"{sy(y1):.1f}\" "
-            f"x2=\"{sx(x2):.1f}\" y2=\"{sy(y2):.1f}\" stroke=\"#b26700\" stroke-width=\"2\" />"
+            f"x2=\"{sx(x2):.1f}\" y2=\"{sy(y2):.1f}\" class=\"chart-fit-line\" stroke-width=\"2\" />"
         )
     return (
         f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Weekly return scatter\">"
-        f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#fffdf8\" rx=\"12\" ry=\"12\" />"
-        f"<line x1=\"{padding}\" y1=\"{sy(0):.1f}\" x2=\"{width - padding}\" y2=\"{sy(0):.1f}\" stroke=\"#bfb5a2\" stroke-width=\"1\" />"
-        f"<line x1=\"{sx(0):.1f}\" y1=\"{padding}\" x2=\"{sx(0):.1f}\" y2=\"{height - padding}\" stroke=\"#bfb5a2\" stroke-width=\"1\" />"
+        f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" class=\"chart-bg\" rx=\"12\" ry=\"12\" />"
+        f"<line x1=\"{padding}\" y1=\"{sy(0):.1f}\" x2=\"{width - padding}\" y2=\"{sy(0):.1f}\" class=\"chart-axis-line\" stroke-width=\"1\" />"
+        f"<line x1=\"{sx(0):.1f}\" y1=\"{padding}\" x2=\"{sx(0):.1f}\" y2=\"{height - padding}\" class=\"chart-axis-line\" stroke-width=\"1\" />"
         f"{line}{points}"
-        f"<text x=\"{padding}\" y=\"20\" font-size=\"12\" fill=\"#6f685c\">Stock weekly return</text>"
-        f"<text x=\"{width - 150}\" y=\"{height - 10}\" font-size=\"12\" fill=\"#6f685c\">Gold weekly return</text>"
+        f"<text x=\"{padding}\" y=\"20\" font-size=\"12\" class=\"chart-label\">Stock weekly return</text>"
+        f"<text x=\"{width - 150}\" y=\"{height - 10}\" font-size=\"12\" class=\"chart-label\">Gold weekly return</text>"
         "</svg>"
     )
 
@@ -78,36 +78,37 @@ def _build_dual_bar_svg(
     def bar_y(value: float) -> float:
         return baseline - bar_height(value) if value >= 0 else baseline
 
-    def bar_color(value: float) -> str:
-        return "#2d6a4f" if value >= 0 else "#8a2d3b"
+    def bar_class(value: float) -> str:
+        return "series-positive" if value >= 0 else "series-negative"
 
     bars = []
     for x_pos, label, value in ((95, left_label, left_value), (235, right_label, right_value)):
         height_value = bar_height(value)
         bars.append(
-            f"<rect x=\"{x_pos}\" y=\"{bar_y(value):.1f}\" width=\"40\" height=\"{height_value:.1f}\" fill=\"{bar_color(value)}\" opacity=\"0.85\" rx=\"6\" ry=\"6\" />"
+            f"<rect x=\"{x_pos}\" y=\"{bar_y(value):.1f}\" width=\"40\" height=\"{height_value:.1f}\" class=\"{bar_class(value)}\" opacity=\"0.85\" rx=\"6\" ry=\"6\" />"
         )
         bars.append(
-            f"<text x=\"{x_pos + 20}\" y=\"{height - 18}\" text-anchor=\"middle\" font-size=\"12\" fill=\"#6f685c\">{escape(label)}</text>"
+            f"<text x=\"{x_pos + 20}\" y=\"{height - 18}\" text-anchor=\"middle\" font-size=\"12\" class=\"chart-label\">{escape(label)}</text>"
         )
         bars.append(
-            f"<text x=\"{x_pos + 20}\" y=\"{bar_y(value) - 8 if value >= 0 else bar_y(value) + height_value + 16:.1f}\" text-anchor=\"middle\" font-size=\"12\" fill=\"#1f1d1a\">{value:,.2f}</text>"
+            f"<text x=\"{x_pos + 20}\" y=\"{bar_y(value) - 8 if value >= 0 else bar_y(value) + height_value + 16:.1f}\" text-anchor=\"middle\" font-size=\"12\" class=\"chart-value\">{value:,.2f}</text>"
         )
     return (
         f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Up beta versus down beta\">"
-        f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#fffdf8\" rx=\"12\" ry=\"12\" />"
-        f"<line x1=\"{padding}\" y1=\"{baseline:.1f}\" x2=\"{width - padding}\" y2=\"{baseline:.1f}\" stroke=\"#bfb5a2\" stroke-width=\"1\" />"
+        f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" class=\"chart-bg\" rx=\"12\" ry=\"12\" />"
+        f"<line x1=\"{padding}\" y1=\"{baseline:.1f}\" x2=\"{width - padding}\" y2=\"{baseline:.1f}\" class=\"chart-axis-line\" stroke-width=\"1\" />"
         f"{''.join(bars)}"
         "</svg>"
     )
 
 
-_BENCHMARK_COLORS = {"GDX": "#1d4b73", "GDXJ": "#3f7cae"}
-_STOCK_COLOR = "#b26700"
+_BENCHMARK_SERIES = {"GDX": "gdx", "GDXJ": "gdxj"}
+_STOCK_SERIES = "stock"
 
 
-def _benchmark_color(label: str, index: int) -> str:
-    return _BENCHMARK_COLORS.get(label.upper(), "#3f7cae" if index % 2 else "#1d4b73")
+def _benchmark_series(label: str, index: int) -> str:
+    """Semantic series key for a label; paint lives in css/charts.css."""
+    return _BENCHMARK_SERIES.get(label.upper(), "gdxj" if index % 2 else "gdx")
 
 
 def _build_beta_strip_svg(
@@ -144,11 +145,11 @@ def _build_beta_strip_svg(
 
     low, high = domain
     parts = [
-        f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#fffdf8\" rx=\"12\" ry=\"12\" />",
-        f"<text x=\"{padding}\" y=\"18\" font-size=\"12\" fill=\"#6f685c\">{escape(axis_label)}</text>",
-        f"<line x1=\"{padding}\" y1=\"{track_y}\" x2=\"{width - padding}\" y2=\"{track_y}\" stroke=\"#cdbfa6\" stroke-width=\"3\" stroke-linecap=\"round\" />",
-        f"<text x=\"{padding}\" y=\"{track_y + 26}\" font-size=\"11\" fill=\"#9a917f\">{low:,.2f}</text>",
-        f"<text x=\"{width - padding}\" y=\"{track_y + 26}\" text-anchor=\"end\" font-size=\"11\" fill=\"#9a917f\">{high:,.2f}</text>",
+        f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" class=\"chart-bg\" rx=\"12\" ry=\"12\" />",
+        f"<text x=\"{padding}\" y=\"18\" font-size=\"12\" class=\"chart-label\">{escape(axis_label)}</text>",
+        f"<line x1=\"{padding}\" y1=\"{track_y}\" x2=\"{width - padding}\" y2=\"{track_y}\" class=\"chart-track-line\" stroke-width=\"3\" stroke-linecap=\"round\" />",
+        f"<text x=\"{padding}\" y=\"{track_y + 26}\" font-size=\"11\" class=\"chart-label-minor\">{low:,.2f}</text>",
+        f"<text x=\"{width - padding}\" y=\"{track_y + 26}\" text-anchor=\"end\" font-size=\"11\" class=\"chart-label-minor\">{high:,.2f}</text>",
     ]
     # Universe rug: one faint tick per scored miner (shows the distribution). Each tick gets an
     # invisible wide hit-area carrying a <title>, so hovering identifies the miner (ticker + beta)
@@ -157,7 +158,7 @@ def _build_beta_strip_svg(
         x = px(float(mark.position))
         label = f"{mark.ticker} · {mark.beta:,.2f}"
         parts.append(
-            f"<line x1=\"{x:.1f}\" y1=\"{track_y - 7}\" x2=\"{x:.1f}\" y2=\"{track_y + 7}\" stroke=\"#d2c4a6\" stroke-width=\"1\" opacity=\"0.7\" />"
+            f"<line x1=\"{x:.1f}\" y1=\"{track_y - 7}\" x2=\"{x:.1f}\" y2=\"{track_y + 7}\" class=\"chart-tick-line\" stroke-width=\"1\" opacity=\"0.7\" />"
             f"<line class=\"rug-tick\" data-rug=\"{escape(label)}\" x1=\"{x:.1f}\" y1=\"{track_y - 9}\" x2=\"{x:.1f}\" y2=\"{track_y + 9}\" stroke=\"transparent\" stroke-width=\"7\" pointer-events=\"all\">"
             f"<title>{escape(label)}</title></line>"
         )
@@ -165,15 +166,15 @@ def _build_beta_strip_svg(
     for pos in benchmark_positions:
         x = px(float(pos))
         parts.append(
-            f"<line x1=\"{x:.1f}\" y1=\"{track_y - 11}\" x2=\"{x:.1f}\" y2=\"{track_y + 11}\" stroke=\"#1d4b73\" stroke-width=\"2\" stroke-dasharray=\"3 2\" />"
+            f"<line x1=\"{x:.1f}\" y1=\"{track_y - 11}\" x2=\"{x:.1f}\" y2=\"{track_y + 11}\" class=\"chart-marker\" stroke-width=\"2\" stroke-dasharray=\"3 2\" />"
         )
     # The stock: the one labelled marker.
     if subject_pos is not None:
         x = px(float(subject_pos))
         parts.append(
-            f"<line x1=\"{x:.1f}\" y1=\"{track_y - 15}\" x2=\"{x:.1f}\" y2=\"{track_y + 15}\" stroke=\"{_STOCK_COLOR}\" stroke-width=\"2\" />"
+            f"<line x1=\"{x:.1f}\" y1=\"{track_y - 15}\" x2=\"{x:.1f}\" y2=\"{track_y + 15}\" class=\"series-{_STOCK_SERIES}\" stroke-width=\"2\" />"
         )
-        parts.append(f"<circle cx=\"{x:.1f}\" cy=\"{track_y:.1f}\" r=\"5\" fill=\"{_STOCK_COLOR}\" />")
+        parts.append(f"<circle cx=\"{x:.1f}\" cy=\"{track_y:.1f}\" r=\"5\" class=\"series-{_STOCK_SERIES}\" />")
         # Keep the label inside the canvas at the extremes.
         anchor = "middle"
         if x < padding + 40:
@@ -181,7 +182,7 @@ def _build_beta_strip_svg(
         elif x > width - padding - 40:
             anchor = "end"
         parts.append(
-            f"<text x=\"{x:.1f}\" y=\"{track_y - 21}\" text-anchor=\"{anchor}\" font-size=\"11.5\" fill=\"#1f1d1a\">{escape(subject_label)}</text>"
+            f"<text x=\"{x:.1f}\" y=\"{track_y - 21}\" text-anchor=\"{anchor}\" font-size=\"11.5\" class=\"chart-value\">{escape(subject_label)}</text>"
         )
     return (
         f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"{escape(axis_label)} distribution\">"
@@ -228,12 +229,12 @@ def _build_grouped_beta_bar_svg(
         return (abs(value) / max_abs) * (baseline - plot_top if value >= 0 else plot_bottom - baseline)
 
     parts = [
-        f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#fffdf8\" rx=\"12\" ry=\"12\" />",
-        f"<line x1=\"{padding}\" y1=\"{baseline:.1f}\" x2=\"{width - padding}\" y2=\"{baseline:.1f}\" stroke=\"#bfb5a2\" stroke-width=\"1\" />",
+        f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" class=\"chart-bg\" rx=\"12\" ry=\"12\" />",
+        f"<line x1=\"{padding}\" y1=\"{baseline:.1f}\" x2=\"{width - padding}\" y2=\"{baseline:.1f}\" class=\"chart-axis-line\" stroke-width=\"1\" />",
     ]
     if title:
         parts.append(
-            f"<text x=\"{width / 2:.0f}\" y=\"20\" text-anchor=\"middle\" font-size=\"12\" fill=\"#6f685c\">{escape(title)}</text>"
+            f"<text x=\"{width / 2:.0f}\" y=\"20\" text-anchor=\"middle\" font-size=\"12\" class=\"chart-label\">{escape(title)}</text>"
         )
     for center, group in zip(group_centers, groups, strict=False):
         bars = group["bars"]
@@ -243,27 +244,27 @@ def _build_grouped_beta_bar_svg(
             value = bar.get("value")
             x = start + i * (bar_w + gap)
             label = escape(str(bar.get("label", "")))
-            color = str(bar.get("color", "#1d4b73"))
+            series_key = str(bar.get("series", "gdx"))
             if value is None:
                 parts.append(
-                    f"<text x=\"{x + bar_w / 2:.1f}\" y=\"{baseline - 6:.1f}\" text-anchor=\"middle\" font-size=\"10\" fill=\"#9a917f\">n/a</text>"
+                    f"<text x=\"{x + bar_w / 2:.1f}\" y=\"{baseline - 6:.1f}\" text-anchor=\"middle\" font-size=\"10\" class=\"chart-label-minor\">n/a</text>"
                 )
                 continue
             value = float(value)
             bh = bar_height(value)
             y = baseline - bh if value >= 0 else baseline
             parts.append(
-                f"<rect x=\"{x:.1f}\" y=\"{y:.1f}\" width=\"{bar_w}\" height=\"{bh:.1f}\" fill=\"{color}\" opacity=\"0.9\" rx=\"5\" ry=\"5\" />"
+                f"<rect x=\"{x:.1f}\" y=\"{y:.1f}\" width=\"{bar_w}\" height=\"{bh:.1f}\" class=\"series-{escape(series_key)}\" opacity=\"0.9\" rx=\"5\" ry=\"5\" />"
             )
             value_y = (y - 6) if value >= 0 else (y + bh + 14)
             parts.append(
-                f"<text x=\"{x + bar_w / 2:.1f}\" y=\"{value_y:.1f}\" text-anchor=\"middle\" font-size=\"11\" fill=\"#1f1d1a\">{value:,.2f}</text>"
+                f"<text x=\"{x + bar_w / 2:.1f}\" y=\"{value_y:.1f}\" text-anchor=\"middle\" font-size=\"11\" class=\"chart-value\">{value:,.2f}</text>"
             )
             parts.append(
-                f"<text x=\"{x + bar_w / 2:.1f}\" y=\"{height - 26:.1f}\" text-anchor=\"middle\" font-size=\"9.5\" fill=\"#8a8170\">{label}</text>"
+                f"<text x=\"{x + bar_w / 2:.1f}\" y=\"{height - 26:.1f}\" text-anchor=\"middle\" font-size=\"9.5\" class=\"chart-label-soft\">{label}</text>"
             )
         parts.append(
-            f"<text x=\"{center:.1f}\" y=\"{height - 10:.1f}\" text-anchor=\"middle\" font-size=\"12\" fill=\"#5f594c\">{escape(str(group['label']))}</text>"
+            f"<text x=\"{center:.1f}\" y=\"{height - 10:.1f}\" text-anchor=\"middle\" font-size=\"12\" class=\"chart-label-strong\">{escape(str(group['label']))}</text>"
         )
     return (
         f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Up versus down beta vs benchmarks\">"
@@ -303,7 +304,7 @@ def _nice_overlay_grid_step(span: float, *, max_intervals: int = 6) -> float:
 def _build_multiline_overlay_svg(
     *,
     series_by_label: dict[str, tuple[list[pd.Timestamp], list[float | None]]],
-    colors: dict[str, str] | None = None,
+    series_keys: dict[str, str] | None = None,
     base: float = 100.0,
 ) -> str:
     """SVG line chart of several already-rebased series sharing one indexed y-axis.
@@ -314,7 +315,7 @@ def _build_multiline_overlay_svg(
     are skipped within each line. The x-axis spans the union of dates so different-length series
     align. Serve-render only: it maps pre-computed values to pixels, no business arithmetic."""
 
-    colors = colors or {}
+    series_keys = series_keys or {}
     width = 720
     height = 240
     padding_left = 48
@@ -368,25 +369,25 @@ def _build_multiline_overlay_svg(
         baseline = (
             f"<line x1=\"{padding_left}\" y1=\"{y_at(base):.1f}\" "
             f"x2=\"{width - padding_right}\" y2=\"{y_at(base):.1f}\" "
-            f"stroke=\"#bfb5a2\" stroke-width=\"1\" stroke-dasharray=\"3 3\" />"
+            f"class=\"chart-axis-line\" stroke-width=\"1\" stroke-dasharray=\"3 3\" />"
         )
 
-    series_colors = {
-        label: colors.get(label, _benchmark_color(label, index))
+    resolved_series = {
+        label: series_keys.get(label, _benchmark_series(label, index))
         for index, label in enumerate(cleaned)
     }
 
     lines_html = ""
     legend_parts: list[str] = []
     for label, points in cleaned.items():
-        color = series_colors[label]
+        series_key = escape(resolved_series[label])
         coords = " ".join(f"{x_at(d):.1f},{y_at(v):.1f}" for d, v in points)
         lines_html += (
-            f"<polyline points=\"{coords}\" fill=\"none\" stroke=\"{color}\" "
+            f"<polyline points=\"{coords}\" class=\"series-{series_key}\" "
             f"stroke-width=\"1.8\" opacity=\"0.9\" />"
         )
         legend_parts.append(
-            f"<span class=\"chart-legend-item\" style=\"color:{color};font-weight:600\">"
+            f"<span class=\"chart-legend-item legend-swatch-{series_key}\">"
             f"&#9632; {escape(label)}</span>"
         )
     legend_html = "<p class=\"chart-legend\">" + " ".join(legend_parts) + "</p>"
@@ -406,21 +407,21 @@ def _build_multiline_overlay_svg(
             if not is_base:  # the dashed baseline already marks 0%
                 grid_lines += (
                     f"<line x1=\"{padding_left}\" y1=\"{gy:.1f}\" x2=\"{width - padding_right}\" "
-                    f"y2=\"{gy:.1f}\" stroke=\"#eadfca\" stroke-width=\"1\" />"
+                    f"y2=\"{gy:.1f}\" class=\"chart-grid-line\" stroke-width=\"1\" />"
                 )
             label_text = _pct_label(tick - base)
             grid_labels += (
                 f"<text x=\"{padding_left - 6}\" y=\"{gy + 4:.1f}\" text-anchor=\"end\" "
-                f"font-size=\"11\" fill=\"#6f685c\">{label_text}</text>"
+                f"font-size=\"11\" class=\"chart-label\">{label_text}</text>"
             )
         tick += step
         tick_count += 1
 
     date_labels = (
-        f"<text x=\"{padding_left}\" y=\"{height - 8}\" font-size=\"11\" fill=\"#6f685c\">"
+        f"<text x=\"{padding_left}\" y=\"{height - 8}\" font-size=\"11\" class=\"chart-label\">"
         f"{min_date.strftime('%Y-%m-%d')}</text>"
         f"<text x=\"{width - padding_right}\" y=\"{height - 8}\" text-anchor=\"end\" "
-        f"font-size=\"11\" fill=\"#6f685c\">{max_date.strftime('%Y-%m-%d')}</text>"
+        f"font-size=\"11\" class=\"chart-label\">{max_date.strftime('%Y-%m-%d')}</text>"
     )
 
     # Embed the data so the hover crosshair (overlay-crosshair.js) can show each line's value +
@@ -439,7 +440,7 @@ def _build_multiline_overlay_svg(
         "series": [
             {
                 "label": label,
-                "color": series_colors[label],
+                "series": resolved_series[label],
                 "byDate": {
                     d.strftime("%Y-%m-%d"): [round(y_at(v), 1), round(v, 2), _pct_label(v - base)]
                     for d, v in points
@@ -453,7 +454,7 @@ def _build_multiline_overlay_svg(
     svg = (
         f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Rebased price comparison\" "
         f"class=\"overlay-chart\" data-overlay=\"{data_attr}\">"
-        f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#fffdf8\" rx=\"12\" ry=\"12\" />"
+        f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" class=\"chart-bg\" rx=\"12\" ry=\"12\" />"
         f"{grid_lines}{baseline}{lines_html}{grid_labels}{date_labels}"
         "</svg>"
     )
