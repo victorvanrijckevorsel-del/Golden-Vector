@@ -7,7 +7,6 @@ from typing import Any
 
 import pandas as pd
 
-from golden_vector.common.numeric import optional_finite_float
 from golden_vector.common.numeric import optional_float as _optional_float
 from golden_vector.common.numeric import require_finite
 

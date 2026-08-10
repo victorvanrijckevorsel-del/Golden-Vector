@@ -1795,21 +1795,6 @@ def _anchor_window_metric(
     return window_rows.sort_values("as_of_date").iloc[-1].to_dict()
 
 
-def _anchor_window_sample(
-    tool_a_row: dict[str, Any],
-    tool_a_detail: ToolADetailState,
-) -> pd.DataFrame:
-    anchor_window_id = str(tool_a_row.get("anchor_window_id") or "").upper()
-    if not anchor_window_id or tool_a_detail.weekly_series.empty:
-        return pd.DataFrame()
-    as_of_date = pd.to_datetime(tool_a_row.get("as_of_date"), errors="coerce")
-    if pd.isna(as_of_date):
-        return pd.DataFrame()
-    return build_trailing_window_rows(
-        weekly_series=tool_a_detail.weekly_series,
-        as_of_date=pd.Timestamp(as_of_date),
-        window_id=anchor_window_id,
-    )
 
 
 def _render_scatter_panel(

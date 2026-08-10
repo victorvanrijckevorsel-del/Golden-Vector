@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -210,30 +209,6 @@ def _resolve_start_positions(
     return positions
 
 
-def _coverage_row(
-    *,
-    ticker: str,
-    as_of_date: date,
-    horizon: ParsedHorizon,
-    coverage_reason: str,
-    start_date: date | None = None,
-) -> dict[str, object]:
-    return {
-        "ticker": ticker,
-        "as_of_date": as_of_date,
-        "horizon_id": horizon.horizon_id,
-        "horizon_mode": horizon.mode,
-        "horizon_unit": horizon.unit,
-        "horizon_value": horizon.value,
-        "start_date": start_date,
-        "end_date": as_of_date,
-        "equity_return": None,
-        "gold_return": None,
-        "gold_delta": None,
-        "coverage_flag": "FAIL",
-        "coverage_reason": coverage_reason,
-        "official_scoring_eligible": False,
-    }
 
 
 def _positive_numeric_mask(values: np.ndarray) -> np.ndarray:

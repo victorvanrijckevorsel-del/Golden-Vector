@@ -80,14 +80,6 @@ class BetaUniverseComparison:
     up_universe_marks: tuple[BetaUniverseMark, ...] = ()
 
 
-def _column_values(frame: pd.DataFrame | None, column: str) -> list[float]:
-    if frame is None or frame.empty or column not in frame.columns:
-        return []
-    return [
-        value
-        for value in (optional_finite_float(raw) for raw in frame[column].tolist())
-        if value is not None
-    ]
 
 
 def _column_ticker_values(
