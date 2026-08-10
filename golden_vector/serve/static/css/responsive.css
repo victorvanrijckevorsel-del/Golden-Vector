@@ -39,17 +39,20 @@
   .nav-link {
     padding: 12px 10px; /* comfortable touch targets in the drawer */
   }
-  /* The drawer toggle makes the sticky header taller here, so the sticky
-     section nav and every anchor landing move down with it (FINAL-003). */
+  /* The drawer toggle makes the sticky header taller here (FINAL-003).
+     The section nav stops sticking below the desktop breakpoint: its pills
+     WRAP to a content-dependent number of rows at phone widths, so a stuck
+     multi-row nav would eat the viewport and no fixed token can size the
+     anchor offset. Narrow anchors clear just the sticky header. */
   .app-header {
     min-height: var(--app-header-height-narrow);
   }
   .section-nav {
-    top: var(--app-header-height-narrow);
+    position: static;
   }
   html {
     scroll-padding-top: calc(
-      var(--app-header-height-narrow) + var(--section-nav-height) + var(--anchor-scroll-gap)
+      var(--app-header-height-narrow) + var(--anchor-scroll-gap)
     );
   }
 }
@@ -67,11 +70,11 @@
     min-height: var(--app-header-height-compact);
   }
   .section-nav {
-    top: var(--app-header-height-compact);
+    position: static;
   }
   html {
     scroll-padding-top: calc(
-      var(--app-header-height-compact) + var(--section-nav-height) + var(--anchor-scroll-gap)
+      var(--app-header-height-compact) + var(--anchor-scroll-gap)
     );
   }
 }

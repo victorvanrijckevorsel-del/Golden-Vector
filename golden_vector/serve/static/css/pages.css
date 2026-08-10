@@ -50,7 +50,7 @@
 }
 .candidate-form-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
   gap: 10px;
   align-items: end;
 }
@@ -92,7 +92,7 @@
 }
 .candidate-top-list-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
   gap: 14px;
 }
 .candidate-view-section {
@@ -113,7 +113,7 @@
 }
 .option-signal-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
   gap: 10px;
   margin-top: 10px;
 }
@@ -140,7 +140,7 @@
 }
 .option-sizing-form {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
   gap: 10px;
   align-items: end;
   margin: 12px 0;
@@ -233,7 +233,7 @@
 .lab-behaviour h2 { margin-bottom: 10px; }
 .beh-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
   gap: 12px;
 }
 .beh-card {

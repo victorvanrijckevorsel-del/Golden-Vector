@@ -1,7 +1,7 @@
 /* Form layouts, filter bars, validation-adjacent structures. */
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
   gap: 14px;
 }
 .form-grid label, .note-form label, .verification-form label {
@@ -18,7 +18,7 @@
 }
 .overview-filters-form {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
   gap: 10px;
   align-items: end;
 }
@@ -37,7 +37,7 @@
 }
 .screening-params-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
   gap: 10px;
   align-items: end;
   margin-bottom: 10px;
@@ -74,7 +74,7 @@
 }
 .verification-form {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
   gap: 10px;
   align-items: end;
 }
