@@ -82,9 +82,9 @@ def test_disclosure_expanded_flag_and_class():
     assert '<details class="disclosure pilot-x" open>' in opened
 
 
-def test_notice_tones_roles_and_legacy_flash_class():
+def test_notice_tones_and_roles():
     html = status.notice("success", "<p>Saved gold price.</p>")
-    assert '<div class="flash notice notice-success" role="status">' in html
+    assert '<div class="notice notice-success" role="status">' in html
     assert status.notice("danger", "x").count('role="alert"') == 1
     assert 'role="status"' in status.notice("info", "x")
     assert 'role="alert"' in status.notice("degraded", "x")
@@ -128,7 +128,7 @@ def test_table_region_rejects_bad_id_and_empty_label():
 def test_notice_extra_classes_are_validated_class_tokens():
     """GV-RD-P34-4: extra_classes can never break out of the class attribute."""
     html = status.notice("warning", "x", extra_classes="option-freshness option-freshness-stale")
-    assert 'class="flash notice notice-warning option-freshness option-freshness-stale"' in html
+    assert 'class="notice notice-warning option-freshness option-freshness-stale"' in html
     for hostile in ('a" onmouseover="1', "a<b>", 'x="y"', "a\nb"):
         with pytest.raises(ValueError):
             status.notice("warning", "x", extra_classes=hostile)

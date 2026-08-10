@@ -156,9 +156,10 @@ class ContractParser(HTMLParser):
             )
         elif tag == "tfoot" and self._open_table is not None:
             self._open_table["has_tfoot"] = True
-        elif tag == "div" and "flash" in classes.split():
-            pass  # plain success/info flash without modifier
-        if tag == "div" and any(c.startswith("flash") for c in classes.split()):
+        if tag == "div" and any(
+            c.startswith("flash") or c == "notice" or c.startswith("notice-")
+            for c in classes.split()
+        ):
             if self._flash_depth == 0:
                 self._flash_class = classes
                 self._flash_buffer = []

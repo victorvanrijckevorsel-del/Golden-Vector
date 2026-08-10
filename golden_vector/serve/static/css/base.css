@@ -68,7 +68,6 @@ button:hover {
    labels wrap instead of widening their containers. break-word only splits
    when a value would otherwise overflow. */
 .notice,
-.flash,
 td,
 .status-item-value {
   overflow-wrap: break-word;

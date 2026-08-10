@@ -62,6 +62,7 @@ from golden_vector.serve.option_signal_render import (
     render_option_signal_badge,
     signal_horizon_from_row,
 )
+from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import (
@@ -213,7 +214,7 @@ def _render_detail_alignment_notice(alignment: str) -> str:
             "so provenance cannot be confirmed. Re-run <code>python main.py tool-a</code>."
         ),
     }
-    return f"<div class=\"flash\"><p>{messages[alignment]}</p></div>"
+    return notice("warning", f"<p>{messages[alignment]}</p>")
 
 
 def _render_suppressed_panel(title: str, reason: str, command: str) -> str:
@@ -713,7 +714,7 @@ def _render_option_context_warnings(context: object | None) -> str:
     if not warnings:
         return ""
     paragraphs = "".join(f"<p>{escape(str(warning))}</p>" for warning in warnings)
-    return f"<div class=\"flash option-context-warning\">{paragraphs}</div>"
+    return notice("warning", paragraphs)
 
 
 def _render_option_trading_context_table(detail: OptionTradingDetailData) -> str:
@@ -1393,7 +1394,7 @@ def _render_structural_metrics_load_notice(
                 "windows panels below may not match the headline row. "
                 "Re-run <code>python main.py tool-a</code> to realign."
             )
-            return f"<div class=\"flash\"><p>{message}</p></div>"
+            return notice("warning", f"<p>{message}</p>")
         return ""
     if metrics_load.status == "missing":
         message = (
@@ -1418,7 +1419,7 @@ def _render_structural_metrics_load_notice(
         )
     else:
         return ""
-    return f"<div class=\"flash\"><p>{message}</p></div>"
+    return notice("warning", f"<p>{message}</p>")
 
 
 def _render_signal_notice(tool_a_row: dict[str, Any]) -> str:
@@ -1439,11 +1440,7 @@ def _render_signal_notice(tool_a_row: dict[str, Any]) -> str:
         notices.append(f"Observed normalization issues in the trailing sample: {normalization_issue_summary}.")
     if not notices:
         return ""
-    return (
-        "<div class=\"flash\">"
-        + "".join(f"<p>{notice}</p>" for notice in notices)
-        + "</div>"
-    )
+    return notice("warning", "".join(f"<p>{item}</p>" for item in notices))
 
 
 # Narrative cards split by horizon-dependence. Delta/Gamma/Asymmetry/Volatility are computed

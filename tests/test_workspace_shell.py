@@ -365,8 +365,10 @@ def test_control_selectors_meet_contrast_with_their_actual_tokens():
         return fg, bg
 
     checks = [
-        ("segmented control (inactive)", *pair(comp, ".segmented-control a")),
-        ("segmented control (active)", *pair(comp, ".segmented-control a.active")),
+        # The product's real segmented control is the window selector
+        # (.segmented-control CSS was dead and deleted in Phase 7).
+        ("window tab (inactive)", *pair(comp, ".window-tab", ".window-tabs")),
+        ("window tab (active)", *pair(comp, ".window-tab.active")),
         ("benchmark toggle (active)", *pair(comp, ".benchmark-toggle.active")),
         ("candidate preset (inactive)", *pair(pages, ".candidate-preset")),
         ("candidate preset (active)", *pair(pages, ".candidate-preset.is-active")),

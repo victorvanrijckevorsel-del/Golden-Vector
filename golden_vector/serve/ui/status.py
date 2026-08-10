@@ -22,9 +22,6 @@ _CLASS_TOKENS_RE = re.compile(r"[A-Za-z0-9_-]+(?: [A-Za-z0-9_-]+)*")
 def notice(tone: str, body_html: str, *, extra_classes: str = "") -> str:
     """One notice/banner shell for every flash, warning, and status message.
 
-    Emits the legacy ``flash`` class alongside the semantic classes during
-    migration so existing styling, tests, and the semantic-contract extractor
-    keep matching; the bare legacy class is removed in Phase 7.
     ``extra_classes`` preserves purpose-specific hooks (e.g. option-freshness).
     """
     if tone not in NOTICE_TONES:
@@ -35,7 +32,7 @@ def notice(tone: str, body_html: str, *, extra_classes: str = "") -> str:
     role = "alert" if tone in _ASSERTIVE_TONES else "status"
     extra = f" {stripped}" if stripped else ""
     return (
-        f"<div class=\"flash notice notice-{tone}{extra}\" role=\"{role}\">"
+        f"<div class=\"notice notice-{tone}{extra}\" role=\"{role}\">"
         f"{body_html}</div>"
     )
 

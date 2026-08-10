@@ -8,13 +8,6 @@
 .chart-legend-item {
   margin-right: 14px;
 }
-.chart-legend-link {
-  text-decoration: none;
-  cursor: pointer;
-}
-.chart-legend-link:hover {
-  text-decoration: underline;
-}
 /* Universe-rug hover: a faint highlight on the tick naming the miner. */
 .rug-tick:hover {
   stroke: var(--accent);
