@@ -141,12 +141,11 @@ def test_reporting_post_blank_clears_stored_values(tmp_path):
     assert "Q3 update marker" not in page["body"]
 
 
-def test_reporting_post_invalid_date_crashes_to_500_with_tool_a_data(tmp_path):
-    """known-defect D1: with Tool A artifacts present (every real ticker), the
-    validation-error re-render passes app_config=None, build_delta_explanation
-    raises AttributeError, and the user sees the generic 500 page instead of a
-    400 with their input context. Pinned as current behaviour; the fix is a
-    post-Phase-8 defect-register commit, not part of the visual migration."""
+def test_reporting_post_invalid_date_returns_400_with_tool_a_data(tmp_path):
+    """D1 RESOLVED: with Tool A artifacts present (every real ticker), the
+    validation-error re-render now threads app_config through, so the user
+    gets a 400 with the full detail page and a danger notice — never the
+    generic 500 the pre-fix characterization pinned."""
     _, app = _full_app(tmp_path)
 
     response = call_wsgi_app(
@@ -160,8 +159,27 @@ def test_reporting_post_invalid_date_crashes_to_500_with_tool_a_data(tmp_path):
         },
     )
 
-    assert response["status"].startswith("500")
-    assert "The workspace hit an unexpected error." in response["body"]
+    assert response["status"].startswith("400")
+    assert "The workspace hit an unexpected error." not in response["body"]
+    assert "notice-danger" in response["body"]
+    # The full page renders around the error (nav + the reporting form itself).
+    assert "Reporting Calendar" in response["body"]
+
+
+def test_company_post_invalid_numeric_returns_400_with_tool_a_data(tmp_path):
+    """D1 RESOLVED (company branch): same contract for the company form."""
+    _, app = _full_app(tmp_path)
+
+    response = call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/company",
+        data={"aisc_usd_per_oz": "not-a-number"},
+    )
+
+    assert response["status"].startswith("400")
+    assert "notice-danger" in response["body"]
+    assert "Company Inputs" in response["body"]
 
 
 # ------------------------------------------- Portfolio lot edit/delete routes

@@ -623,6 +623,7 @@ def create_workspace_app(
                                     tool_a_detail=tool_a_detail,
                                     flash=None,
                                     error=str(exc),
+                                    app_config=app_config,
                                 ),
                                 status="400 Bad Request",
                             )
@@ -660,6 +661,7 @@ def create_workspace_app(
                                     tool_a_detail=tool_a_detail,
                                     flash=None,
                                     error=str(exc),
+                                    app_config=app_config,
                                 ),
                                 status="400 Bad Request",
                             )
@@ -711,6 +713,7 @@ def create_workspace_app(
                                     tool_a_detail=tool_a_detail,
                                     flash=None,
                                     error=str(exc),
+                                    app_config=app_config,
                                 ),
                                 status="400 Bad Request",
                             )
@@ -743,6 +746,7 @@ def create_workspace_app(
                                     tool_a_detail=tool_a_detail,
                                     flash=None,
                                     error=str(exc),
+                                    app_config=app_config,
                                 ),
                                 status="400 Bad Request",
                             )
