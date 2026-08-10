@@ -29,6 +29,9 @@ from golden_vector.serve.format_helpers import (
 )
 from golden_vector.serve.overview_helpers import _collect_filter_options, _render_filter_bar
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.ui.components import disclosure, empty_state, page_header
+from golden_vector.serve.ui.status import notice
+from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.option_signal_render import (
     option_signal_skew_display_value,
     option_signal_skew_hover,
@@ -78,7 +81,7 @@ def _render_horizon_selector(selected_horizon: str, display_horizons: tuple[int,
         f"<select name=\"option_horizon\">{rendered}</select></label>"
         "<div class=\"overview-filters-actions\">"
         f"<span class=\"hint\">{escape(caption)}</span>"
-        "<button type=\"submit\">Apply</button>"
+        "<button type=\"submit\" class=\"btn btn-primary\">Apply</button>"
         "</div>"
         "</form>"
         "</section>"
@@ -106,18 +109,21 @@ def _render_option_trading_overview_page(
         else "Cached options snapshot unavailable; screening only - live prices may differ."
     )
     body = [
-        "<h1>Option Trading</h1>",
-        f"<p class=\"hint\">{snapshot_note}</p>",
+        page_header(
+            "Option Trading",
+            lead_html=f"<p class=\"hint\">{snapshot_note}</p>",
+        ),
         render_model_state_banner(model_state_manifest),
         render_option_freshness_box(model_state_manifest),
         _render_most_liquid_indicator(overview),
         _render_horizon_selector(selected_horizon, display_horizons),
         _render_context_warnings(overview.source_context),
-        "<details class=\"method-disclosure\"><summary>Method</summary>"
-        "<p>Contracts are selected from cached Yahoo Finance option-chain data. "
-        "Last is informational only; bid, ask, spread, open interest, premium, "
-        "DTE, moneyness, and delta drive the screening labels.</p>"
-        "</details>",
+        disclosure(
+            "Method",
+            "<p>Contracts are selected from cached Yahoo Finance option-chain data. "
+            "Last is informational only; bid, ask, spread, open interest, premium, "
+            "DTE, moneyness, and delta drive the screening labels.</p>",
+        ),
     ]
     if overview.risk_free_rate_is_fallback:
         body.append(
@@ -133,10 +139,13 @@ def _render_option_trading_overview_page(
     if not overview.rows:
         reason = overview.reason or "No optionable tickers are available."
         body.append(
-            "<section class=\"panel\">"
-            f"<p>{escape(reason)}</p>"
-            "<p class=\"hint\">Run <code>python main.py update-data</code> to refresh options data.</p>"
-            "</section>"
+            empty_state(
+                reason,
+                body_html=(
+                    "<p class=\"hint\">Run <code>python main.py update-data</code> "
+                    "to refresh options data.</p>"
+                ),
+            )
         )
         return _page_shell(
             "Option Trading - Golden Vector Workspace",
@@ -182,7 +191,7 @@ def _render_option_trading_overview_page(
         )
         for row in overview.rows
     )
-    body.append(
+    body.append(table_region(
         "<table id=\"option-trading-table\" class=\"js-datatable\">"
         "<thead><tr>"
         + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
@@ -229,8 +238,10 @@ def _render_option_trading_overview_page(
         + help_th("Notes", key="option_notes", app_config=app_config, col_name="notes")
         + "</tr></thead>"
         f"<tbody>{rows_html}</tbody>"
-        "</table>"
-    )
+        "</table>",
+        region_id="option-trading-table-region",
+        label="Option Trading screening",
+    ))
     return _page_shell(
         "Option Trading - Golden Vector Workspace",
         "".join(body),
@@ -270,6 +281,7 @@ def _render_liquidity_measurements(
         "contracts in the cached snapshot. "
         "If Benchmark ETFs show zero contracts, GDX/GDXJ option chains are not measured in "
         "the latest snapshot yet. Proxy alternatives stay hidden unless this cached check supports them.</p>"
+        + table_region(
         "<table><thead><tr>"
         "<th>Group</th><th>Tickers</th>"
         + help_th("Measured Contracts", key="measured_contracts", app_config=app_config)
@@ -285,8 +297,11 @@ def _render_liquidity_measurements(
             app_config=app_config,
         )
         + "</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
-        "</section>"
+        f"<tbody>{''.join(rows)}</tbody></table>",
+        region_id="option-liquidity-table-region",
+        label="Cached liquidity check",
+        )
+        + "</section>"
     )
 
 
@@ -320,7 +335,7 @@ def _render_context_warnings(context: object | None) -> str:
     if not warnings:
         return ""
     paragraphs = "".join(f"<p>{escape(str(warning))}</p>" for warning in warnings)
-    return f"<div class=\"flash option-context-warning\">{paragraphs}</div>"
+    return notice("warning", paragraphs)
 
 
 MOST_LIQUID_HORIZON = "most_liquid"

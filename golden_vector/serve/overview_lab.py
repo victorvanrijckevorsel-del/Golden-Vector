@@ -21,6 +21,9 @@ from golden_vector.serve.format_helpers import (
 )
 from golden_vector.serve.lab_curve_data import LabCellsData
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.status import notice
+from golden_vector.serve.ui.tables import table_region
 
 _DEFAULT_HORIZON = 13 if 13 in DIAL_HORIZONS_WEEKS else DIAL_HORIZONS_WEEKS[0]
 
@@ -30,13 +33,17 @@ def _render_lab_overview_page(
     *,
     selected_bucket: str,
 ) -> str:
-    body = ["<h1>Lab — Gold Scenario Analogs</h1>"]
-    body.append(
-        "<p>Pick a hypothetical gold move and a look-ahead window. The table counts "
-        "every historical episode where gold did that, and shows how often each miner "
-        "beat the benchmark in those episodes — counted history, not a prediction. "
-        "Click a ticker to see which weeks it happened.</p>"
-    )
+    body = [
+        page_header(
+            "Lab — Gold Scenario Analogs",
+            lead_html=(
+                "<p>Pick a hypothetical gold move and a look-ahead window. The table counts "
+                "every historical episode where gold did that, and shows how often each miner "
+                "beat the benchmark in those episodes — counted history, not a prediction. "
+                "Click a ticker to see which weeks it happened.</p>"
+            ),
+        )
+    ]
 
     if not data.available:
         rebuild = "<code>python -m golden_vector.lab.conditional_dial</code>"
@@ -61,7 +68,14 @@ def _render_lab_overview_page(
             )
         else:
             msg = f"Lab artifacts are not built yet. Run {rebuild} first."
-        body.append(f"<div class=\"flash flash-warning\">{msg}</div>")
+        # Broken artifacts (corrupt/stale/bad metadata) are danger; absent or
+        # empty builds are warnings with the rebuild action (plan 10.5).
+        tone = (
+            "danger"
+            if status in ("CORRUPT", "META_MISSING", "META_CORRUPT", "STALE")
+            else "warning"
+        )
+        body.append(notice(tone, msg))
         return _page_shell(
             "Lab - Golden Vector Workspace", "".join(body), active_nav="lab"
         )
@@ -76,9 +90,12 @@ def _render_lab_overview_page(
         banner_bits.append(f"Built {escape(built_at)}.")
     if banner_bits:
         body.append(
-            f"<div class=\"flash\">{' '.join(banner_bits)} "
-            "Confidence ranges use episode-adjusted sample counts (overlapping "
-            "weekly windows are not independent observations).</div>"
+            notice(
+                "info",
+                f"{' '.join(banner_bits)} "
+                "Confidence ranges use episode-adjusted sample counts (overlapping "
+                "weekly windows are not independent observations).",
+            )
         )
 
     body.append(_render_filters(data, selected_bucket=selected_bucket, horizon=horizon))
@@ -106,7 +123,7 @@ def _render_lab_overview_page(
         rows_html.append(
             "<tr><td colspan=\"10\" class=\"hint\">No rows for this scenario.</td></tr>"
         )
-    body.append(
+    body.append(table_region(
         "<table id=\"lab-dial-table\" class=\"js-datatable\">"
         "<thead><tr>"
         + help_th("Rank", key="lab_rank", col_name="rank", sort_numeric=True)
@@ -121,8 +138,10 @@ def _render_lab_overview_page(
         + help_th("History", key="lab_history", col_name="history")
         + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
-        "</table>"
-    )
+        "</table>",
+        region_id="lab-dial-table-region",
+        label="Gold scenario analog ranking",
+    ))
     return _page_shell(
         "Lab - Golden Vector Workspace", "".join(body), active_nav="lab"
     )
@@ -158,7 +177,7 @@ def _render_filters(data: LabCellsData, *, selected_bucket: str, horizon: int) -
         f"<select name=\"bucket\">{''.join(bucket_options)}</select></label>"
         "<div class=\"overview-filters-actions\">"
         f"<span class=\"hint\">{len(data.rows)} tickers.</span>"
-        "<button type=\"submit\">Apply</button>"
+        "<button type=\"submit\" class=\"btn btn-primary\">Apply</button>"
         "</div>"
         "</form>"
         "</section>"
@@ -187,22 +206,20 @@ def _render_thin_banner(
             )
         else:
             switch = "Pick another gold scenario"
-        return (
-            "<div class=\"flash flash-warning\">"
+        return notice(
+            "warning",
             f"<strong>No miner has countable history against GDX at {int(horizon)} weeks "
             f"for &ldquo;{escape(str(scenario_label))}&rdquo;.</strong> About three years "
             "of weekly data leaves too few <em>independent</em> episodes over a window "
             "this long to count anything reliably, so the rows below are shown for "
             f"completeness but can't be ranked or opened. {switch} for counted, "
-            "clickable results."
-            "</div>"
+            "clickable results.",
         )
-    return (
-        "<div class=\"flash\">"
+    return notice(
+        "info",
         f"{usable} of {total} miners have enough independent history against GDX at "
         f"{int(horizon)} weeks for this scenario. The greyed rows below don't, so they "
-        "can't be ranked or opened."
-        "</div>"
+        "can't be ranked or opened.",
     )
 
 

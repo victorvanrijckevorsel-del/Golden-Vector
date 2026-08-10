@@ -24,6 +24,9 @@ from golden_vector.serve.format_helpers import (
 from golden_vector.serve.column_help import help_th
 from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.ui.components import empty_state, page_header
+from golden_vector.serve.ui.status import notice
+from golden_vector.serve.ui.tables import table_region
 
 
 def render_portfolio_page(
@@ -37,20 +40,23 @@ def render_portfolio_page(
         return _page_shell(
             "Portfolio",
             (
-                "<h1>Portfolio</h1>"
-                "<section class=\"panel\">"
-                "<p>Portfolio tracking is disabled in local config.</p>"
-                "<p class=\"hint\">Enable portfolio.enabled locally before entering holdings.</p>"
-                "</section>"
+                page_header("Portfolio")
+                + empty_state(
+                    "Portfolio tracking is disabled in local config.",
+                    body_html=(
+                        "<p class=\"hint\">Enable portfolio.enabled locally "
+                        "before entering holdings.</p>"
+                    ),
+                )
             ),
             active_nav="portfolio",
         )
     data = load_portfolio_data(paths)
-    body: list[str] = ["<h1>Portfolio</h1>"]
+    body: list[str] = [page_header("Portfolio")]
     if flash:
-        body.append(f"<div class=\"flash\">{escape(flash)}</div>")
+        body.append(notice("success", escape(flash)))
     if error:
-        body.append(f"<div class=\"flash flash-error\">{escape(error)}</div>")
+        body.append(notice("danger", escape(error)))
     body.append(render_model_state_banner(load_current_model_state_manifest(paths)))
     body.append(_render_summary(data))
     body.append(_render_data_issues(data))
@@ -126,13 +132,17 @@ def _render_data_issues(data: PortfolioData) -> str:
         "<section class=\"panel\">"
         "<h2>Data issues to fix</h2>"
         f"<p class=\"hint\">Showing all {len(issues)} current data issues.</p>"
-        "<table><thead><tr>"
-        + help_th("Ticker", key="ticker_symbol")
-        + help_th("Issue", key="portfolio_data_issue_code")
-        + help_th("Why it matters", key="portfolio_data_issue_message")
-        + "</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
-        "</section>"
+        + table_region(
+            "<table><thead><tr>"
+            + help_th("Ticker", key="ticker_symbol")
+            + help_th("Issue", key="portfolio_data_issue_code")
+            + help_th("Why it matters", key="portfolio_data_issue_message")
+            + "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>",
+            region_id="portfolio-issues-table-region",
+            label="Portfolio data issues",
+        )
+        + "</section>"
     )
 
 
@@ -167,21 +177,31 @@ def _render_composition(data: PortfolioData) -> str:
         f"Current coverage: {_fmt_percent(summary.get('resilience_coverage_fraction'))}.</p>"
         "<div class=\"two-column\">"
         "<div><h3>Gold-beta exposure</h3>"
-        "<table><thead><tr>"
-        + help_th("Bucket", key="portfolio_exposure_bucket")
-        + help_th("Positions", key="portfolio_exposure_position_count")
-        + help_th("Value", key="portfolio_exposure_value_usd")
-        + help_th("NAV weight", key="portfolio_exposure_nav_weight")
-        + "</tr></thead>"
-        f"<tbody>{''.join(exposure_rows)}</tbody></table></div>"
+        + table_region(
+            "<table><thead><tr>"
+            + help_th("Bucket", key="portfolio_exposure_bucket")
+            + help_th("Positions", key="portfolio_exposure_position_count")
+            + help_th("Value", key="portfolio_exposure_value_usd")
+            + help_th("NAV weight", key="portfolio_exposure_nav_weight")
+            + "</tr></thead>"
+            f"<tbody>{''.join(exposure_rows)}</tbody></table>",
+            region_id="portfolio-exposure-table-region",
+            label="Gold-beta exposure",
+        )
+        + "</div>"
         "<div><h3>Currency split</h3>"
         "<p class=\"hint\">USD P&L at current FX blends security moves and currency moves.</p>"
-        "<table><thead><tr>"
-        + help_th("Currency", key="portfolio_currency_code")
-        + help_th("Value", key="portfolio_currency_value_usd")
-        + help_th("P&L at current FX", key="portfolio_currency_pnl_usd")
-        + "</tr></thead>"
-        f"<tbody>{''.join(currency_rows)}</tbody></table></div>"
+        + table_region(
+            "<table><thead><tr>"
+            + help_th("Currency", key="portfolio_currency_code")
+            + help_th("Value", key="portfolio_currency_value_usd")
+            + help_th("P&L at current FX", key="portfolio_currency_pnl_usd")
+            + "</tr></thead>"
+            f"<tbody>{''.join(currency_rows)}</tbody></table>",
+            region_id="portfolio-currency-table-region",
+            label="Currency split",
+        )
+        + "</div>"
         "</div>"
         "</section>"
     )
@@ -229,8 +249,9 @@ def _render_hedge_sizing(data: PortfolioData) -> str:
     return (
         "<section class=\"panel\">"
         "<h2>Modeled GDX/GDXJ hedge size</h2>"
-        "<table><thead><tr>"
-        + help_th("Proxy", key="portfolio_hedge_proxy")
+        + table_region(
+            "<table><thead><tr>"
+            + help_th("Proxy", key="portfolio_hedge_proxy")
         + help_th("Label", key="portfolio_hedge_proxy_label")
         + help_th("Status", key="portfolio_hedge_status")
         + help_th("Down beta", key="tool_c_down_beta_blend")
@@ -238,10 +259,13 @@ def _render_hedge_sizing(data: PortfolioData) -> str:
         + help_th("Effective exposure", key="portfolio_hedge_effective_exposure")
         + help_th("Short notional", key="portfolio_hedge_short_notional")
         + help_th("Modeled puts", key="portfolio_hedge_modeled_puts")
-        + help_th("Note", key="portfolio_hedge_basis_note")
-        + "</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
-        f"<p class=\"hint\">{_fmt_text(note)}</p>"
+            + help_th("Note", key="portfolio_hedge_basis_note")
+            + "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>",
+            region_id="portfolio-hedge-table-region",
+            label="Modeled hedge size",
+        )
+        + f"<p class=\"hint\">{_fmt_text(note)}</p>"
         "</section>"
     )
 
@@ -295,20 +319,29 @@ def _render_correlations(data: PortfolioData) -> str:
         "This is a normal-market history view, not a crash guarantee.</p>"
         "<div class=\"two-column\">"
         "<div><h3>Covered names heatmap</h3>"
-        "<table class=\"correlation-heatmap\"><thead><tr><th></th>"
-        f"{''.join(f'<th>{escape(ticker)}</th>' for ticker in tickers)}</tr></thead>"
-        f"<tbody>{''.join(heat_rows)}</tbody></table></div>"
+        + table_region(
+            "<table class=\"correlation-heatmap\"><thead><tr><th></th>"
+            f"{''.join(f'<th>{escape(ticker)}</th>' for ticker in tickers)}</tr></thead>"
+            f"<tbody>{''.join(heat_rows)}</tbody></table>",
+            region_id="portfolio-correlation-heatmap-region",
+            label="Correlation heatmap",
+        )
+        + "</div>"
         "<div><h3>Largest paired exposures</h3>"
         f"<details><summary>Show all {len(ranked.index)} paired exposures</summary>"
-        "<table><thead><tr>"
-        + help_th("Pair", key="portfolio_corr_pair")
-        + help_th("Book weight", key="portfolio_corr_pair_weight")
-        + help_th("Correlation", key="portfolio_corr_correlation")
-        + help_th("Overlap days", key="portfolio_corr_overlap_days")
-        + help_th("Status", key="portfolio_corr_status")
-        + "</tr></thead>"
-        f"<tbody>{''.join(pair_rows)}</tbody></table>"
-        "</details></div>"
+        + table_region(
+            "<table><thead><tr>"
+            + help_th("Pair", key="portfolio_corr_pair")
+            + help_th("Book weight", key="portfolio_corr_pair_weight")
+            + help_th("Correlation", key="portfolio_corr_correlation")
+            + help_th("Overlap days", key="portfolio_corr_overlap_days")
+            + help_th("Status", key="portfolio_corr_status")
+            + "</tr></thead>"
+            f"<tbody>{''.join(pair_rows)}</tbody></table>",
+            region_id="portfolio-pairs-table-region",
+            label="Largest paired exposures",
+        )
+        + "</details></div>"
         "</div>"
         "</section>"
     )
@@ -348,13 +381,17 @@ def _render_value_history(data: PortfolioData) -> str:
         "aria-label=\"Covered portfolio market value over time\">"
         f"<polyline points=\"{escape(points)}\"></polyline>"
         "</svg>"
-        "<table><thead><tr>"
-        + help_th("Date", key="portfolio_value_history_date")
-        + help_th("Covered value", key="portfolio_covered_market_value")
-        + help_th("Book weight", key="portfolio_covered_book_weight")
-        + "</tr></thead>"
-        f"<tbody>{''.join(recent_rows)}</tbody></table>"
-        "</section>"
+        + table_region(
+            "<table><thead><tr>"
+            + help_th("Date", key="portfolio_value_history_date")
+            + help_th("Covered value", key="portfolio_covered_market_value")
+            + help_th("Book weight", key="portfolio_covered_book_weight")
+            + "</tr></thead>"
+            f"<tbody>{''.join(recent_rows)}</tbody></table>",
+            region_id="portfolio-history-table-region",
+            label="Market value over time",
+        )
+        + "</section>"
     )
 
 
@@ -365,7 +402,7 @@ def _render_reconciliation_export(data: PortfolioData) -> str:
         "<section class=\"panel\">"
         "<h2>Reconciliation export</h2>"
         "<p class=\"hint\">Raw manual lots mapped to the canonical positions used by this page.</p>"
-        "<p><a href=\"/portfolio/reconciliation.csv\">Download reconciliation CSV</a></p>"
+        "<p><a class=\"btn btn-secondary\" href=\"/portfolio/reconciliation.csv\">Download reconciliation CSV</a></p>"
         "</section>"
     )
 
@@ -414,8 +451,9 @@ def _render_positions(data: PortfolioData) -> str:
     return (
         "<section class=\"panel\">"
         "<h2>Positions</h2>"
-        "<table class=\"js-datatable\"><thead><tr>"
-        + help_th("Ticker", key="ticker_symbol")
+        + table_region(
+            "<table class=\"js-datatable\"><thead><tr>"
+            + help_th("Ticker", key="ticker_symbol")
         + help_th("Company")
         + help_th("Shares")
         + help_th("Avg Cost", key="portfolio_avg_cost")
@@ -430,11 +468,14 @@ def _render_positions(data: PortfolioData) -> str:
         + help_th("Loss Share", key="portfolio_loss_share")
         + help_th("Resilience", key="portfolio_resilience")
         + help_th("Status", key="portfolio_position_status")
-        + help_th("Lots")
-        + "</tr></thead><tbody>"
-        f"{''.join(rows)}"
-        "</tbody></table>"
-        "<p class=\"hint\">Cost and P&L are shown in GBP (the reporting currency); value and "
+            + help_th("Lots")
+            + "</tr></thead><tbody>"
+            f"{''.join(rows)}"
+            "</tbody></table>",
+            region_id="portfolio-positions-table-region",
+            label="Positions",
+        )
+        + "<p class=\"hint\">Cost and P&L are shown in GBP (the reporting currency); value and "
         "current price are in each stock's trading currency (e.g. AUD for .AX). The gold-loss "
         "column is a positive USD loss estimate.</p>"
         "</section>"
@@ -467,7 +508,7 @@ def _render_lot_forms(data: PortfolioData, *, app_config: AppConfig) -> str:
         f"{_currency_select(default_currency)}"
         "<label><span>Buy date</span><input name=\"buy_date\" type=\"date\" required></label>"
         "<label><span>Note</span><input name=\"note\" type=\"text\" maxlength=\"200\"></label>"
-        "<button type=\"submit\">Add lot</button>"
+        "<button type=\"submit\" class=\"btn btn-primary\">Add lot</button>"
         "</form>"
         "</section>"
     )
@@ -486,10 +527,10 @@ def _render_lot_forms(data: PortfolioData, *, app_config: AppConfig) -> str:
             f"{_currency_select(str(row.get('buy_currency') or ''))}"
             f"{_date_input(row.get('buy_date'))}"
             f"{_text_input('note', 'Note', row.get('note'), maxlength=200)}"
-            "<button type=\"submit\">Save lot</button>"
+            "<button type=\"submit\" class=\"btn btn-secondary\">Save lot</button>"
             "</form>"
             f"<form method=\"post\" action=\"/portfolio/lots/{escape(lot_id)}/delete\">"
-            "<button type=\"submit\">Delete lot</button>"
+            "<button type=\"submit\" class=\"btn btn-danger\">Delete lot</button>"
             "</form>"
             "</details>"
         )

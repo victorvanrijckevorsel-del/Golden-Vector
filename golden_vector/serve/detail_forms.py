@@ -132,7 +132,7 @@ def _render_company_form(
         f"<form method=\"post\" action=\"/ticker/{escape(ticker)}/company\" class=\"form-grid\">"
         f"{_return_to_input(return_to)}"
         f"{''.join(fields_html)}"
-        "<div class=\"form-actions\"><button type=\"submit\">Save Company Inputs</button></div>"
+        "<div class=\"form-actions\"><button type=\"submit\" class=\"btn btn-primary\">Save Company Inputs</button></div>"
         "</form>"
         "</section>"
     )
@@ -165,7 +165,7 @@ def _render_reporting_form(
         f"<form method=\"post\" action=\"/ticker/{escape(ticker)}/reporting\" class=\"form-grid\">"
         f"{_return_to_input(return_to)}"
         f"{''.join(fields_html)}"
-        "<div class=\"form-actions\"><button type=\"submit\">Save Reporting Calendar</button></div>"
+        "<div class=\"form-actions\"><button type=\"submit\" class=\"btn btn-primary\">Save Reporting Calendar</button></div>"
         "</form>"
         "</section>"
     )
@@ -261,7 +261,7 @@ def _render_verification_section(
             f"<label class=\"verification-cell full-width\"><span>Notes</span>"
             f"<textarea name=\"notes\" rows=\"2\">{escape(notes)}</textarea>{notes_clear_html}</label>"
             f"<div class=\"verification-actions\">"
-            f"<button type=\"submit\">Save</button>"
+            f"<button type=\"submit\" class=\"btn btn-secondary\">Save</button>"
             f"</div>"
             f"</form>"
             f"</details>"
@@ -351,7 +351,7 @@ def _render_note_section(
             f"<option value=\"{option}\">{option}</option>" for option in NOTE_STATUS_OPTIONS
         )
         + "</select></label>"
-        "<div class=\"form-actions\"><button type=\"submit\">Add Note</button></div>"
+        "<div class=\"form-actions\"><button type=\"submit\" class=\"btn btn-primary\">Add Note</button></div>"
         "</form>"
         "</section>"
     )

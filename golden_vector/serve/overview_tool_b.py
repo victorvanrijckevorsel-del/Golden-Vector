@@ -52,6 +52,9 @@ from golden_vector.serve.overview_helpers import (
 from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.column_help import help_th
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.status import notice
+from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.screening_overrides import ScreeningOverrides, apply_overrides
 from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import WorkspaceState
@@ -285,31 +288,34 @@ def _render_tool_b_overview_page(
         ],
     )
 
-    body = ["<h1>Corporate Finance</h1>"]
     gold_basis = _gold_basis_sentence(
         active_gold=active_gold,
         spot_gold=spot_gold,
         spot_gold_date=spot_gold_date,
         gold_price_basis=gold_price_basis,
     )
-    body.append(
-        "<p>Industry-standard corporate finance checks. "
-        f"{gold_basis} "
-        "The score is the number of visible checks passed, not a model target price. "
-        "Click a ticker to edit the manual mining inputs.</p>"
-    )
-    if flash:
-        body.append(f"<div class=\"flash\">{escape(flash)}</div>")
-    if override_error:
-        body.append(
-            f"<div class=\"flash flash-error\">Invalid override: {escape(override_error)}</div>"
+    body = [
+        page_header(
+            "Corporate Finance",
+            lead_html=(
+                "<p>Industry-standard corporate finance checks. "
+                f"{gold_basis} "
+                "The score is the number of visible checks passed, not a model target price. "
+                "Click a ticker to edit the manual mining inputs.</p>"
+            ),
         )
+    ]
+    if flash:
+        body.append(notice("success", escape(flash)))
+    if override_error:
+        body.append(notice("danger", f"Invalid override: {escape(override_error)}"))
     if override_runtime_error:
         body.append(
-            "<div class=\"flash flash-error\">"
-            f"Could not recompute with overrides: {escape(override_runtime_error)}. "
-            "Showing the last persisted Corporate Finance snapshot at its own gold price."
-            "</div>"
+            notice(
+                "danger",
+                f"Could not recompute with overrides: {escape(override_runtime_error)}. "
+                "Showing the last persisted Corporate Finance snapshot at its own gold price.",
+            )
         )
     if resolution.recompute_active:
         timing = (
@@ -319,18 +325,24 @@ def _render_tool_b_overview_page(
             else ""
         )
         body.append(
-            "<div class=\"flash\"><strong>Scenario active:</strong> "
-            f"{timing}"
-            "Recomputed live from manual data + latest snapshot; the persisted "
-            "spot output was not changed. <a href=\"/tool-b\">Reset to spot</a>.</div>"
+            notice(
+                "info",
+                "<strong>Scenario active:</strong> "
+                f"{timing}"
+                "Recomputed live from manual data + latest snapshot; the persisted "
+                "spot output was not changed. <a href=\"/tool-b\">Reset to spot</a>.",
+            )
         )
     if rank_by == "official":
         body.append(
-            "<div class=\"flash\"><strong>Yahoo Fundamentals view:</strong> "
-            "dual-source financial fields and derived finance checks are "
-            "materialized from Yahoo Fundamentals for this page. Mining "
-            "assumptions still come from Our View. The persisted decision "
-            "artifact remains Our View.</div>"
+            notice(
+                "info",
+                "<strong>Yahoo Fundamentals view:</strong> "
+                "dual-source financial fields and derived finance checks are "
+                "materialized from Yahoo Fundamentals for this page. Mining "
+                "assumptions still come from Our View. The persisted decision "
+                "artifact remains Our View.",
+            )
         )
     body.append(render_model_state_banner(state.model_state_manifest))
     body.append(_render_provenance_warnings(state))
@@ -375,8 +387,8 @@ def _render_tool_b_overview_page(
         f"{_render_rank_controls(rank_by=rank_by, differences_only=differences_only)}"
         "<div class=\"overview-filters-actions\">"
         f"<span class=\"hint\">{len(derived)} tickers shown.</span>"
-        "<button type=\"submit\">Apply</button>"
-        "<a class=\"hint\" href=\"/tool-b\">Reset</a>"
+        "<button type=\"submit\" class=\"btn btn-primary\">Apply</button>"
+        "<a class=\"btn btn-tertiary\" href=\"/tool-b\">Reset</a>"
         "</div>"
         "</form>"
         "</section>"
@@ -386,7 +398,7 @@ def _render_tool_b_overview_page(
         options=filter_options,
         column_labels={"verdict": "Verdict", "layer1": "Layer 1"},
     ))
-    body.append(
+    body.append(table_region(
         "<table id=\"tool-b-table\" class=\"js-datatable\">"
         "<thead><tr>"
         + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
@@ -412,8 +424,10 @@ def _render_tool_b_overview_page(
         + help_th("Checks", key="tool_b_check_summary", app_config=app_config, col_name="check_summary")
         + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
-        "</table>"
-    )
+        "</table>",
+        region_id="tool-b-table-region",
+        label="Corporate Finance comparison",
+    ))
     return _page_shell("Corporate Finance - Golden Vector Workspace", "".join(body), active_nav="tool_b")
 
 

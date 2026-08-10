@@ -39,6 +39,9 @@ from golden_vector.serve.option_refresh import (
     render_option_refresh_control,
 )
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.ui.components import page_header, section_heading
+from golden_vector.serve.ui.status import notice
+from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.url_helpers import build_page_url
 
 _DEFAULT_PRESET_ID = "bull"
@@ -125,8 +128,13 @@ def render_candidate_finder_page(
     body = "\n".join(
         (
             "<section class=\"workspace-section\">",
-            "<h1>Candidate Finder</h1>",
-            "<p class=\"lead\">Choose a lens, then decide whether to scan every stock or only optionable names.</p>",
+            page_header(
+                "Candidate Finder",
+                lead_html=(
+                    "<p class=\"lead\">Choose a lens, then decide whether to "
+                    "scan every stock or only optionable names.</p>"
+                ),
+            ),
             render_model_state_banner(data.model_state_manifest),
             render_option_freshness_box(data.model_state_manifest, only_when_stale=True),
             render_option_refresh_control(
@@ -375,11 +383,10 @@ def _render_warning_banner(warnings: Sequence[str]) -> str:
     if not warnings:
         return ""
     items = "".join(f"<li>{escape(warning)}</li>" for warning in warnings)
-    return (
-        "<div class=\"flash flash-warning\">"
+    return notice(
+        "warning",
         "<strong>Review this screen before using it.</strong>"
-        f"<ul class=\"candidate-warning-list\">{items}</ul>"
-        "</div>"
+        f"<ul class=\"candidate-warning-list\">{items}</ul>",
     )
 
 
@@ -449,12 +456,15 @@ def _render_builder(
     # Preserve query state the builder form does NOT own -- especially gold_price --
     # so applying criteria does not silently reset an active gold scenario.
     hidden = _hidden_query_inputs(query, exclude=_builder_form_controls(data))
+    heading = section_heading(
+        "Screen Builder",
+        actions_html=(
+            f"<a class=\"btn btn-tertiary\" href=\"{escape(base_path, quote=True)}\">Reset</a>"
+        ),
+    )
     return f"""
 <section class="panel candidate-builder-panel">
-  <div class="candidate-panel-heading">
-    <h2>Screen Builder</h2>
-    <a href="{escape(base_path, quote=True)}">Reset</a>
-  </div>
+  {heading}
   {custom_note}
   <form method="get" action="{escape(base_path, quote=True)}" class="candidate-finder-form">
     <input type="hidden" name="custom" value="1">
@@ -468,7 +478,7 @@ def _render_builder(
         Top rows per criterion
         <input type="number" name="top_n" min="1" max="25" step="1" value="{screen.top_n}">
       </label>
-      <button type="submit">Apply Screen</button>
+      <button type="submit" class="btn btn-primary">Apply Screen</button>
     </div>
     <div class="candidate-criteria-groups">{groups}</div>
   </form>
@@ -610,16 +620,23 @@ def _render_top_list_card(
     if not body:
         body = "<tr><td colspan=\"3\">No rows found.</td></tr>"
     direction = "High" if criterion.direction == "high_good" else "Low"
+    table = (
+        "<table><thead>"
+        f"<tr>{help_th('Ticker', key='ticker_symbol')}"
+        f"{help_th('Value', key=_criterion_help_key(criterion), text=criterion.description, app_config=app_config)}"
+        f"{help_th('Percentile', key='candidate_finder_top_list_percentile')}</tr>"
+        f"</thead><tbody>{body}</tbody></table>"
+    )
+    region = table_region(
+        table,
+        region_id=f"top-list-{criterion.id}-region",
+        label=f"{criterion.label} top rows",
+    )
     return f"""
 <article class="nested-panel candidate-top-list-card">
   <h3>{escape(criterion.label)}</h3>
   <p class="hint">{escape(criterion.description)} {direction} values rank higher. Weight {_fmt_weight(criterion.weight)}.</p>
-  <table>
-    <thead>
-      <tr>{help_th("Ticker", key="ticker_symbol")}{help_th("Value", key=_criterion_help_key(criterion), text=criterion.description, app_config=app_config)}{help_th("Percentile", key="candidate_finder_top_list_percentile")}</tr>
-    </thead>
-    <tbody>{body}</tbody>
-  </table>
+  {region}
 </article>
 """
 
@@ -695,11 +712,7 @@ def _render_score_table(
         if body_rows
         else "candidate-ranking-table"
     )
-    return f"""
-<section class="nested-panel candidate-ranking-panel">
-  <h3>{escape(title)}</h3>
-  <div class="table-scroll">
-    <table id="{escape(table_id, quote=True)}" class="{table_class}">
+    table = f"""<table id="{escape(table_id, quote=True)}" class="{table_class}">
       <thead>
         <tr>
           {help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")}
@@ -711,8 +724,12 @@ def _render_score_table(
         </tr>
       </thead>
       <tbody>{body}</tbody>
-    </table>
-  </div>
+    </table>"""
+    region = table_region(table, region_id=f"{table_id}-region", label=title)
+    return f"""
+<section class="nested-panel candidate-ranking-panel">
+  <h3>{escape(title)}</h3>
+  {region}
 </section>
 """
 

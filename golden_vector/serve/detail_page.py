@@ -23,6 +23,8 @@ from golden_vector.serve.detail_panels import (
 )
 from golden_vector.serve.format_helpers import _frame_index_by_ticker, _ticker_rows
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.status import notice
 from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import ToolADetailState, WorkspaceState
 
@@ -80,8 +82,8 @@ def render_detail_page(
         ),
     )
     body = [
-        f"<p><a href=\"{escape(back_href, quote=True)}\">Back to workspace</a></p>",
-        f"<h1>{escape(ticker)}</h1>",
+        f"<p class=\"back-link\"><a href=\"{escape(back_href, quote=True)}\">Back to workspace</a></p>",
+        page_header(ticker),
     ]
     if show_workspace_panels:
         body.append(
@@ -107,9 +109,9 @@ def render_detail_page(
             "option liquidity and scenarios, not as a Gold Sensitivity / Corporate Finance mining-company row.</p>"
         )
     if flash:
-        body.append(f"<div class=\"flash\">{escape(flash)}</div>")
+        body.append(notice("success", escape(flash)))
     if error:
-        body.append(f"<div class=\"flash\">{escape(error)}</div>")
+        body.append(notice("danger", escape(error)))
     alignment = _detail_alignment(tool_a_row, state.foundation_manifest)
     if show_workspace_panels:
         body.append(

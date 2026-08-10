@@ -23,6 +23,8 @@ from golden_vector.lab.conditional_dial import BUCKET_SHORT_LABELS
 from golden_vector.serve.column_help import help_term
 from golden_vector.serve.lab_curve_data import LabCurveData
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.status import notice
 
 _CONTEXT_CLASS = "series-strip"
 _BEAT_CLASS = "series-beat"
@@ -237,15 +239,18 @@ def _render_behaviour(curve: LabCurveData) -> str:
 def _render_lab_curve_page(curve: LabCurveData) -> str:
     title = f"{curve.ticker or 'Ticker'} relative performance - Golden Vector"
     body: list[str] = []
-    body.append("<p><a href=\"/lab\">&larr; Back to the Lab scenario table</a></p>")
     body.append(
-        f"<h1>{escape(curve.ticker or '')} — relative performance vs "
-        f"{escape(curve.benchmark)}</h1>"
+        "<p class=\"back-link\"><a href=\"/lab\">&larr; Back to the Lab scenario table</a></p>"
+    )
+    body.append(
+        page_header(
+            f"{curve.ticker or ''} — relative performance vs {curve.benchmark}"
+        )
     )
 
     if not curve.available:
         status = str(curve.error_status)
-        reason = {
+        reason_map = {
             "CORRUPT": "Lab artifact is corrupt and could not be read.",
             "EMPTY": "Lab artifact built but contains no rows (empty universe).",
             "STALE": "Lab artifact was built by an older version (missing this "
@@ -264,13 +269,19 @@ def _render_lab_curve_page(curve: LabCurveData) -> str:
                 f"Unknown gold scenario “{curve.scenario_bucket}”. Choose one "
                 "of: gold_down_big, gold_down, gold_flat, gold_up, gold_up_big."
             ),
-        }.get(status, "No persisted episodes for this ticker yet.")
+        }
+        reason = reason_map.get(status, "No persisted episodes for this ticker yet.")
         # A mistyped scenario is a URL problem, not a build problem — don't tell the
         # operator to rebuild for it.
         rebuild = "" if status == "UNKNOWN_SCENARIO" else (
             " Rebuild: <code>python -m golden_vector.lab.conditional_dial</code>."
         )
-        body.append(f"<div class=\"flash flash-warning\">{escape(reason)}{rebuild}</div>")
+        # Broken/stale artifacts are danger; absent data and URL problems are
+        # warnings (plan 10.5). UNKNOWN_SCENARIO carries no rebuild action.
+        tone = "warning" if status in ("UNKNOWN_SCENARIO", "EMPTY") else "danger"
+        if status not in reason_map:
+            tone = "warning"
+        body.append(notice(tone, f"{escape(reason)}{rebuild}"))
         return _page_shell(title, "".join(body), active_nav="lab")
 
     body.append(_render_controls(curve))
