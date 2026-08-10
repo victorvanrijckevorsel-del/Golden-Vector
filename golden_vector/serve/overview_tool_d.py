@@ -49,6 +49,19 @@ from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import WorkspaceState
 
 
+def _yahoo_fallback_error(exc: Exception) -> str:
+    """Message for the Yahoo-scenario failure that falls back to Our View data.
+
+    Names BOTH the requested source and the source actually shown, so the page
+    never silently displays Our View numbers under a Yahoo request.
+    """
+
+    return (
+        f"Could not compute Yahoo Fundamentals view: {exc} "
+        "Showing Our View data instead (requested Yahoo Fundamentals)."
+    )
+
+
 def _render_tool_d_overview_page(
     state: WorkspaceState,
     *,
@@ -93,7 +106,7 @@ def _render_tool_d_overview_page(
         except Exception as exc:
             scenario_error = f"Could not compute stress scenario: {exc}"
             if finance_source == "yahoo":
-                scenario_error = f"Could not compute Yahoo Fundamentals view: {exc}"
+                scenario_error = _yahoo_fallback_error(exc)
                 finance_source = "our"
                 frame = state.latest_tool_d.copy()
 

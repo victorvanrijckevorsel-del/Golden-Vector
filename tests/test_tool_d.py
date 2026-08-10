@@ -681,3 +681,13 @@ def _tool_b_row(
         "net_debt_musd": net_debt,
         "interest_expense_musd": interest_expense,
     }
+
+
+def test_yahoo_fallback_error_names_both_sources():
+    from golden_vector.serve.overview_tool_d import _yahoo_fallback_error
+
+    message = _yahoo_fallback_error(RuntimeError("boom"))
+
+    assert "Yahoo Fundamentals" in message
+    assert "Our View" in message
+    assert "boom" in message
