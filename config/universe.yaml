@@ -397,11 +397,17 @@ tickers:
     tool_a_enabled: true
     tool_b_enabled: true
   - ticker: ORLA
-    company: Orla Mining Ltd
+    company: Orla Mining Ltd (delisted 2026-07-31, acquired by Equinox Gold / EQX)
     exchange: US
     currency: USD
     jurisdiction_tier: 2
-    active: true
+    # Equinox Gold completed its all-share acquisition of Orla on 2026-07-31
+    # (1 EQX share per ORLA share); Orla was delisted from the TSX and NYSE
+    # American. Yahoo returns "possibly delisted; no price data found", so ORLA
+    # can never resolve a market cap again. Disabled because Orla's mines now
+    # sit inside EQX, which is already in this universe — keeping both would
+    # double-count the same assets. Manual-data record is retained for history.
+    active: false
     tool_a_enabled: true
     tool_b_enabled: true
   - ticker: PAF.L

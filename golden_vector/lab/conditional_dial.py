@@ -941,6 +941,7 @@ def build_and_save(
     import time
     from datetime import datetime, timezone
 
+    from golden_vector.app.config import load_app_config
     from golden_vector.common.files import atomic_write_text, optional_sha256_file
     from golden_vector.features.weekly_returns import build_weekly_return_frame
     from golden_vector.lab.ledger import n_trials, register_variant
@@ -983,10 +984,29 @@ def build_and_save(
         raise FileNotFoundError(f"No raw gold parquet found in {paths.raw_gold_dir}")
     gold_path = gold_candidates[0]
     gold = pd.read_parquet(gold_path)
+    # usd_equities/ files outlive a universe retirement, so globbing the directory
+    # keeps feeding delisted tickers into the panel. That is not merely cosmetic:
+    # a delisted name stops mid-week, so its final week_period is a PARTIAL week
+    # whose gold/benchmark return differs from every other ticker's, which trips
+    # the one-calendar-value-per-week invariant in assert_calendar_values and
+    # aborts the whole build. (ORLA, delisted 2026-07-31, did exactly this.)
+    # This panel already documents itself as survivor-only pending a dead-miner
+    # registry, so restricting to the active universe changes no stated property;
+    # when that registry lands, retired names should come back in with their
+    # partial final week trimmed rather than by re-globbing the directory.
+    active_tickers = {
+        entry.ticker
+        for entry in load_app_config(paths).app.universe.tickers
+        if entry.active
+    }
     equity_paths = sorted(paths.intermediate_usd_equities_dir.glob("*.parquet"))
+    retired_tickers_excluded = sorted(
+        path.stem for path in equity_paths if path.stem not in active_tickers
+    )
     histories = {
         path.stem: pd.read_parquet(path)
         for path in equity_paths
+        if path.stem in active_tickers
     }
     benchmark_paths = {
         ticker: paths.benchmarks_dir / f"{ticker}.parquet"
@@ -1143,7 +1163,15 @@ def build_and_save(
             "dial_table_13w_latest.parquet": "Superseded by dial_cells_latest.parquet.",
             "dial_table_13w_meta.json": "Superseded by dial_meta.json.",
         },
-        "caveat": "Exploratory, survivor-only universe (no dead-miner records yet); GDX-era weeks only.",
+        # Named, not just counted: a silently shrunk panel is how a coverage
+        # change gets mistaken for a signal change.
+        "retired_tickers_excluded": retired_tickers_excluded,
+        "retired_tickers_excluded_count": len(retired_tickers_excluded),
+        "caveat": (
+            "Exploratory, survivor-only universe (no dead-miner records yet); "
+            "GDX-era weeks only. Inputs are restricted to the ACTIVE universe: "
+            "retired tickers are listed in retired_tickers_excluded."
+        ),
     }
     atomic_write_text(target_dir / DIAL_ARTIFACT_META_FILENAME, json.dumps(meta, indent=2))
     return cells
