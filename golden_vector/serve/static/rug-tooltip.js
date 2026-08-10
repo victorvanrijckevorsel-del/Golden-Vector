@@ -4,6 +4,12 @@
 // is over a tick (and CSS gives the tick a faint highlight). The <title> stays as a no-JS fallback.
 (function () {
   function init() {
+    // Every page loads this script; only the ticker detail page has rug ticks.
+    // Bail before creating the tooltip node and binding four document-level
+    // listeners (mirrors overlay-crosshair.js).
+    var ticks = document.querySelectorAll(".rug-tick");
+    if (!ticks.length) return;
+
     var tip = document.createElement("div");
     tip.className = "rug-tooltip";
     tip.setAttribute("role", "status");

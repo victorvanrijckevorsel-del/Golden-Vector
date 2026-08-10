@@ -52,7 +52,12 @@ def test_shell_renders_landmarks_skip_link_and_grouped_nav():
         assert f'<p class="nav-group-label">{group}</p>' in html
     assert '<span class="app-wordmark">Golden Vector</span>' in html
     assert '<span class="app-descriptor">Gold-equities research</span>' in html
-    assert '<button class="nav-toggle" type="button" aria-expanded="false" aria-controls="app-nav">' in html
+    # aria-controls points at the element that becomes the dialog (#app-sidebar),
+    # not the inner <nav>.
+    assert (
+        '<button class="nav-toggle" type="button" aria-expanded="false" '
+        'aria-controls="app-sidebar">' in html
+    )
     assert 'data-page="tool_a"' in html
     for _nav_id, href, label in EXPECTED_NAV:
         assert f'href="{href}">{label}</a>' in html
@@ -125,6 +130,7 @@ const frame = new El("frame");
 const sidebar = new El("sidebar");
 const backdrop = new El("backdrop");
 const content = new El("content");
+const main = new El("main");
 const skipLink = new El("skip");
 const closeBtn = new El("close");
 backdrop.hidden = true;
@@ -135,19 +141,30 @@ link2.closest = (s) => (s === "a" ? link2 : null);
 closeBtn.closest = () => null;
 sidebar.querySelector = (sel) =>
   sel === ".nav-close" ? closeBtn : sel === "a" ? link1 : null;
+// The trap's broadened focusable selector; the shim returns the drawer's
+// controls plus one disabled link that must be filtered out of the cycle.
+const deadLink = new El("deadLink");
+deadLink.disabled = true;
 sidebar.querySelectorAll = (sel) =>
-  sel === "a, button" ? [closeBtn, link1, link2] : sel === "a" ? [link1, link2] : [];
+  sel.indexOf("a[href]") === 0 ? [closeBtn, link1, deadLink, link2] : sel === "a" ? [link1, link2] : [];
+sidebar.contains = (node) => [sidebar, closeBtn, link1, link2, deadLink].indexOf(node) !== -1;
+// The header (and therefore the drawer's own toggle) lives inside .app-content.
+content.contains = (node) => [content, toggle, main].indexOf(node) !== -1;
 
 const mql = { matches: false, query: null, handler: null,
   addEventListener(n, f) { this.handler = f; } };
 
-// Table regions: one genuinely overflowing, one not (GV-RD-P34-1).
+// Table regions: one genuinely overflowing, one not (GV-RD-P34-1), plus one
+// inside a closed <details> that measures 0 until the disclosure opens.
 const regionWide = new El("regionWide");
 regionWide.scrollWidth = 500; regionWide.clientWidth = 300;
 regionWide.attrs["tabindex"] = "0";
 const regionSmall = new El("regionSmall");
 regionSmall.scrollWidth = 200; regionSmall.clientWidth = 300;
 regionSmall.attrs["tabindex"] = "0";
+const regionInDetails = new El("regionInDetails");
+regionInDetails.scrollWidth = 0; regionInDetails.clientWidth = 0;
+regionInDetails.attrs["tabindex"] = "0";
 
 var doc = {
   readyState: "complete",
@@ -163,9 +180,11 @@ var doc = {
     }[sel] || null;
   },
   querySelectorAll(sel) {
-    return sel === ".table-region" ? [regionWide, regionSmall] : [];
+    return sel === ".table-region" ? [regionWide, regionSmall, regionInDetails] : [];
   },
-  getElementById(id) { return id === "app-sidebar" ? sidebar : null; },
+  getElementById(id) {
+    return id === "app-sidebar" ? sidebar : id === "main-content" ? main : null;
+  },
   addEventListener(n, f) { this.listeners[n] = f; },
 };
 
@@ -173,6 +192,7 @@ const win = {
   matchMedia(q) { mql.query = q; return mql; },
   listeners: {},
   addEventListener(n, f) { this.listeners[n] = f; },
+  requestAnimationFrame(f) { f(); return 1; },
 };
 
 vm.runInNewContext(
@@ -193,6 +213,13 @@ win.listeners.resize();
 assert.equal(regionSmall.attrs["tabindex"], "0");
 assert.ok(!("tabindex" in regionWide.attrs));
 
+// A region inside a closed <details> measures 0, so it starts with no tab stop;
+// opening the disclosure fires a (non-bubbling) "toggle" that re-syncs it.
+assert.ok(!("tabindex" in regionInDetails.attrs));
+regionInDetails.scrollWidth = 500; regionInDetails.clientWidth = 300;
+doc.listeners.toggle();
+assert.equal(regionInDetails.attrs["tabindex"], "0");
+
 // Open: modal dialog semantics, inert background, focus on the close control.
 toggle.listeners.click();
 assert.ok(frame.hasAttribute("data-nav-open"));
@@ -201,9 +228,21 @@ assert.equal(backdrop.hidden, false);
 assert.equal(sidebar.attrs["role"], "dialog");
 assert.equal(sidebar.attrs["aria-modal"], "true");
 assert.equal(sidebar.attrs["aria-label"], "Navigation");
-assert.ok(content.hasAttribute("inert"));
+assert.ok(main.hasAttribute("inert"));
 assert.ok(skipLink.hasAttribute("inert"));
+// The header wrapper is NOT inerted: it contains this drawer's own .nav-toggle,
+// which must stay operable (and its aria-expanded readable) while open.
+assert.ok(!content.hasAttribute("inert"));
+assert.ok(!toggle.hasAttribute("inert"));
 assert.equal(doc.activeElement, closeBtn);
+
+// ...so the toggle's own "already open -> close" branch is reachable.
+toggle.listeners.click();
+assert.ok(!frame.hasAttribute("data-nav-open"));
+assert.equal(toggle.attrs["aria-expanded"], "false");
+assert.ok(!main.hasAttribute("inert"));
+toggle.listeners.click();
+assert.ok(frame.hasAttribute("data-nav-open"));
 
 // The visible close control closes, restores focus, and removes modal state.
 closeBtn.listeners.click();
@@ -212,7 +251,7 @@ assert.equal(toggle.attrs["aria-expanded"], "false");
 assert.equal(backdrop.hidden, true);
 assert.ok(!sidebar.hasAttribute("role"));
 assert.ok(!sidebar.hasAttribute("aria-modal"));
-assert.ok(!content.hasAttribute("inert"));
+assert.ok(!main.hasAttribute("inert"));
 assert.ok(!skipLink.hasAttribute("inert"));
 assert.equal(doc.activeElement, toggle);
 
@@ -227,14 +266,15 @@ toggle.listeners.click();
 backdrop.listeners.click();
 assert.ok(!frame.hasAttribute("data-nav-open"));
 
-// Navigating via a link closes WITHOUT stealing focus back to the trigger,
-// and every close path restores the background.
+// Navigating via a link closes WITHOUT stealing focus back to the trigger; focus
+// lands on #main-content rather than being stranded on the hidden drawer link.
 toggle.listeners.click();
 doc.activeElement = link1;
 sidebar.listeners.click({ target: link1 });
 assert.ok(!frame.hasAttribute("data-nav-open"));
-assert.equal(doc.activeElement, link1);
-assert.ok(!content.hasAttribute("inert"));
+assert.notEqual(doc.activeElement, toggle);
+assert.equal(doc.activeElement, main);
+assert.ok(!main.hasAttribute("inert"));
 
 // Tab wraps last -> first (the close control) and Shift+Tab wraps back.
 toggle.listeners.click();
@@ -254,8 +294,11 @@ assert.ok(frame.hasAttribute("data-nav-open"));
 doc.activeElement = closeBtn;
 mql.handler({ matches: true });
 assert.ok(!frame.hasAttribute("data-nav-open"));
-assert.ok(!content.hasAttribute("inert"));
-assert.equal(doc.activeElement, closeBtn); // no focus steal to the hidden toggle
+assert.ok(!main.hasAttribute("inert"));
+// No focus steal to the now-hidden toggle, and focus does not stay stranded on
+// the hidden sidebar either: it moves to #main-content (tabindex="-1").
+assert.notEqual(doc.activeElement, toggle);
+assert.equal(doc.activeElement, main);
 """
     result = subprocess.run(
         ["node", "-e", script], check=False, cwd=Path.cwd(), text=True, capture_output=True

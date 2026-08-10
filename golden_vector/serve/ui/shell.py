@@ -105,7 +105,7 @@ def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
     <div class="nav-backdrop" hidden></div>
     <div class="app-content">
       <header class="app-header">
-        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="app-nav">Menu</button>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="app-sidebar">Menu</button>
         <span class="app-header-title">{escape(page_label)}</span>
       </header>
       <main id="main-content" tabindex="-1">{body}</main>

@@ -18,6 +18,22 @@
       .replace(/'/g, "&#39;");
   }
 
+  // Ticks arrive sorted by x from the server, so the nearest one is found by
+  // bisection instead of a full scan on every pointermove.
+  function nearestTick(ticks, sx) {
+    var lo = 0;
+    var hi = ticks.length - 1;
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1;
+      if (ticks[mid][1] < sx) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0 && Math.abs(ticks[lo - 1][1] - sx) <= Math.abs(ticks[lo][1] - sx)) {
+      return ticks[lo - 1];
+    }
+    return ticks[lo];
+  }
+
   function setupChart(svg, tip, state) {
     var data;
     try {
@@ -48,10 +64,14 @@
       return c;
     });
 
+    // Per-chart, not shared: two charts can sit on the same snapped date, and a
+    // single shared value only stayed correct via the lastChart tiebreak below.
+    var lastDate = null;
+
     function hide() {
       layer.style.display = "none";
       tip.hidden = true;
-      state.lastDate = null;
+      lastDate = null;
     }
     hide();
     state.hiders.push(hide);
@@ -74,26 +94,18 @@
       var vb = svg.viewBox.baseVal;
       var sx = ((event.clientX - box.left) / box.width) * vb.width;
 
-      var nearest = data.ticks[0];
-      var best = Infinity;
-      for (var i = 0; i < data.ticks.length; i++) {
-        var dx = Math.abs(data.ticks[i][1] - sx);
-        if (dx < best) {
-          best = dx;
-          nearest = data.ticks[i];
-        }
-      }
+      var nearest = nearestTick(data.ticks, sx);
       var date = nearest[0];
       var xpx = nearest[1];
 
       layer.style.display = "";
       // The snapped date hasn't changed since the last pixel: only reposition, skip the rebuild
       // (and the innerHTML write) to avoid needless DOM churn while gliding within one column.
-      if (date === state.lastDate && tip.lastChart === svg) {
+      if (date === lastDate && tip.lastChart === svg) {
         position(event);
         return;
       }
-      state.lastDate = date;
+      lastDate = date;
       tip.lastChart = svg;
 
       vline.setAttribute("x1", xpx);
@@ -133,7 +145,7 @@
 
     // Shared dismissal: clear the tooltip if the pointer leaves the document, the tab is
     // backgrounded, or the page scrolls — events the per-SVG mouseleave can miss.
-    var state = { lastDate: null, hiders: [] };
+    var state = { hiders: [] };
     function hideAll() {
       state.hiders.forEach(function (h) {
         h();

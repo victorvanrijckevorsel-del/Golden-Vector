@@ -17,6 +17,7 @@
     if (!panel) {
       panel = document.createElement("div");
       panel.className = "help-panel";
+      panel.id = "help-panel"; // stable target for each icon's aria-controls
       panel.setAttribute("role", "dialog");
       panel.setAttribute("aria-label", "Column explanation");
       panel.setAttribute("tabindex", "-1"); // so focus can move in (non-modal dialog semantics)
@@ -25,14 +26,23 @@
     return panel;
   }
 
+  // Close, and if focus is still inside the panel move it back to the icon that
+  // opened it — otherwise focus is stranded on a hidden element.
   function closePanel() {
+    var icon = openIcon;
+    var hadFocus =
+      panel && icon && document.activeElement && panel.contains
+        ? panel.contains(document.activeElement)
+        : false;
     if (panel) {
       panel.classList.remove("is-visible");
     }
-    if (openIcon) {
-      openIcon.setAttribute("aria-expanded", "false");
+    if (icon) {
+      icon.setAttribute("aria-expanded", "false");
+      icon.removeAttribute("aria-controls");
       openIcon = null;
     }
+    if (hadFocus && icon.focus) icon.focus();
   }
 
   function build(icon) {
@@ -134,6 +144,7 @@
       openIcon = icon;
       icon.setAttribute("aria-expanded", "true");
       place(build(icon), icon);
+      if (panel && panel.id) icon.setAttribute("aria-controls", panel.id);
       if (panel) {
         panel.focus(); // read the explanation immediately for keyboard/SR users; Esc returns focus to the icon
       }

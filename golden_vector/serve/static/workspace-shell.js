@@ -22,11 +22,31 @@
     }
   }
 
+  // Coalesce bursty layout events (resize/toggle) into one measurement per frame
+  // so a drag-resize does not force a layout read per pixel.
+  var syncQueued = false;
+  function queueRegionSync() {
+    if (typeof window.requestAnimationFrame !== "function") {
+      syncRegionFocusability();
+      return;
+    }
+    if (syncQueued) return;
+    syncQueued = true;
+    window.requestAnimationFrame(function () {
+      syncQueued = false;
+      syncRegionFocusability();
+    });
+  }
+
   function init() {
     syncRegionFocusability();
     if (window.addEventListener) {
-      window.addEventListener("resize", syncRegionFocusability);
+      window.addEventListener("resize", queueRegionSync);
     }
+    // A .table-region inside a closed <details> measures 0 and would keep a
+    // stale tab stop forever; <details> "toggle" does not bubble, so listen in
+    // the capture phase (GV-RD-P34-1).
+    document.addEventListener("toggle", queueRegionSync, true);
     var toggle = document.querySelector(".nav-toggle");
     var frame = document.querySelector(".app-frame");
     var sidebar = document.getElementById("app-sidebar");
@@ -35,11 +55,14 @@
     var closeButton = sidebar.querySelector(".nav-close");
 
     // Page regions removed from the tab order and assistive tech while the
-    // modal drawer is open (the backdrop stays clickable to close).
+    // modal drawer is open (the backdrop stays clickable to close). Only the
+    // main region is inerted: the header lives inside .app-content, so inerting
+    // that would also disable this drawer's own .nav-toggle (it could not close
+    // the drawer and its aria-expanded="true" would be hidden from AT).
     var inertTargets = [];
-    var content = document.querySelector(".app-content");
+    var main = document.getElementById("main-content");
     var skipLink = document.querySelector(".skip-link");
-    if (content) inertTargets.push(content);
+    if (main) inertTargets.push(main);
     if (skipLink) inertTargets.push(skipLink);
 
     function isOpen() {
@@ -70,7 +93,21 @@
       for (var i = 0; i < inertTargets.length; i += 1) {
         inertTargets[i].removeAttribute("inert");
       }
-      if (returnFocus !== false && toggle.focus) toggle.focus();
+      if (returnFocus !== false && toggle.focus) {
+        toggle.focus();
+        return;
+      }
+      // No-restore close (link navigation, desktop breakpoint): focus must not
+      // stay on a now-hidden sidebar element. #main-content has tabindex="-1".
+      if (
+        sidebar.contains &&
+        document.activeElement &&
+        sidebar.contains(document.activeElement) &&
+        main &&
+        main.focus
+      ) {
+        main.focus();
+      }
     }
 
     toggle.addEventListener("click", function () {
@@ -99,7 +136,19 @@
     // Keep Tab cycling inside the open drawer (close control <-> last link).
     sidebar.addEventListener("keydown", function (event) {
       if (event.key !== "Tab" || !isOpen()) return;
-      var focusables = sidebar.querySelectorAll("a, button");
+      // Computed per keydown so it reflects the live DOM. Filtered to elements
+      // that can actually take focus: disabled controls and hidden ones
+      // (offsetParent === null) would otherwise become dead ends in the cycle.
+      var candidates = sidebar.querySelectorAll(
+        "a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex=\"-1\"])"
+      );
+      var focusables = [];
+      for (var i = 0; i < candidates.length; i += 1) {
+        var node = candidates[i];
+        if (node.disabled) continue;
+        if ("offsetParent" in node && node.offsetParent === null) continue;
+        focusables.push(node);
+      }
       if (!focusables.length) return;
       var first = focusables[0];
       var last = focusables[focusables.length - 1];
