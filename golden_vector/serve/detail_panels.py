@@ -429,6 +429,8 @@ def _render_option_trading_panel(
     model_state_manifest: dict[str, object] | None = None,
     app_config: AppConfig | None = None,
     financials_source: str = "our",
+    active_window: str | None = None,
+    canonical_anchor: str | None = None,
 ) -> str:
     body = [
         "<section id=\"option-trading\" class=\"panel\">",
@@ -475,7 +477,14 @@ def _render_option_trading_panel(
             "<p class=\"hint\">Risk-free rate was missing from the options manifest; "
             "scenario values use a 0% rate fallback.</p>"
         )
-    body.append(_render_option_sizing_calculator(detail, financials_source=financials_source))
+    body.append(
+        _render_option_sizing_calculator(
+            detail,
+            financials_source=financials_source,
+            active_window=active_window,
+            canonical_anchor=canonical_anchor,
+        )
+    )
     body.append(_render_option_proxy_fallback(detail, financials_source=financials_source))
     chain_detail = "".join(
         [
@@ -1059,6 +1068,8 @@ def _render_option_sizing_calculator(
     detail: OptionTradingDetailData,
     *,
     financials_source: str = "our",
+    active_window: str | None = None,
+    canonical_anchor: str | None = None,
 ) -> str:
     sizing = detail.sizing
     if sizing is None:
@@ -1106,6 +1117,17 @@ def _render_option_sizing_calculator(
         if str(financials_source).strip().lower() == "yahoo"
         else ""
     )
+    # Preserve the selected structural window across the GET recompute. Mirrors the
+    # window switcher: the param is omitted for the canonical anchor, carried otherwise.
+    window_input = (
+        f"<input type=\"hidden\" name=\"window\" value=\"{escape(str(active_window).lower(), quote=True)}\">"
+        if (
+            active_window
+            and canonical_anchor
+            and str(active_window).upper() != str(canonical_anchor).upper()
+        )
+        else ""
+    )
     notes_html = (
         "<ul class=\"hint\">"
         + "".join(f"<li>{escape(note)}</li>" for note in notes)
@@ -1120,6 +1142,7 @@ def _render_option_sizing_calculator(
         f"<form method=\"get\" action=\"/ticker/{quote(detail.ticker, safe='')}#option-sizing\" class=\"option-sizing-form\">"
         "<input type=\"hidden\" name=\"lens\" value=\"option-trading\">"
         f"{source_input}"
+        f"{window_input}"
         "<label>Side "
         f"<select name=\"side\">{side_options}</select>"
         "</label>"

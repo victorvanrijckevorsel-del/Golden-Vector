@@ -152,6 +152,8 @@ def render_detail_page(
             model_state_manifest=model_state_manifest,
             app_config=app_config,
             financials_source=financials_source,
+            active_window=active_window,
+            canonical_anchor=canonical_anchor,
         )
         if option_lens_active
         else _render_option_trading_link_panel(

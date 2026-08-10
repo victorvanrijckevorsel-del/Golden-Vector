@@ -4,11 +4,16 @@ from datetime import datetime, timezone
 
 from golden_vector.hedge.candidate_puts import OptionCandidate, OptionCandidateSlot
 from golden_vector.hedge.option_trading import (
+    OptionSizingRequest,
+    OptionSizingResult,
     OptionTradingDetailData,
     OptionTradingRow,
     OptionTradingSourceContext,
 )
-from golden_vector.serve.detail_panels import _render_option_trading_panel
+from golden_vector.serve.detail_panels import (
+    _render_option_sizing_calculator,
+    _render_option_trading_panel,
+)
 
 
 def test_option_trading_detail_renders_watch_candidate_without_half_spread_column():
@@ -121,3 +126,35 @@ def _row() -> OptionTradingRow:
         notes=(),
         current_stock_price=175.0,
     )
+
+
+def _sizing_detail() -> OptionTradingDetailData:
+    return OptionTradingDetailData(
+        ticker="AEM",
+        row=_row(),
+        put_candidates=(),
+        put_bundles=(),
+        sizing=OptionSizingResult(
+            request=OptionSizingRequest(),
+            contracts=0,
+            premium_spend=None,
+            leftover_cash=None,
+            bundle=None,
+        ),
+    )
+
+
+def test_sizing_form_carries_active_window_when_not_canonical():
+    html = _render_option_sizing_calculator(
+        _sizing_detail(), active_window="36M", canonical_anchor="12M"
+    )
+
+    assert '<input type="hidden" name="window" value="36m">' in html
+
+
+def test_sizing_form_omits_window_input_at_canonical_anchor():
+    html = _render_option_sizing_calculator(
+        _sizing_detail(), active_window="12M", canonical_anchor="12M"
+    )
+
+    assert 'name="window"' not in html
