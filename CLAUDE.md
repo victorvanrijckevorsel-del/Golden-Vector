@@ -92,7 +92,7 @@ Be conscious of token consumption at all times and manage it PROACTIVELY — fla
 - **MCP tool results (especially Playwright) stay in context for the whole session.** Use real-browser checks only at major gates (pilot review, accessibility hardening, release matrix) — one batched script per gate, minimal return values, evidence written to files, scripts loaded from a file rather than echoed inline. Suggest disabling unused MCP servers between gates.
 - **Never depend on Victor manually compacting — he must be able to leave Claude working for hours.** Claude Code auto-compacts/summarizes when context fills; the job is to make that lossless: update memory files, the in-flight planning note, and committed evidence BEFORE each phase gate so an auto-compact at any moment drops nothing. Keep context growth low so compaction stays rare. Mentioning `/compact` to Victor is optional icing when he's at the screen, never a dependency.
 - **Prefer pytest/CLI verification over browser verification** whenever they prove the same thing — terminal output is cheap, MCP output is permanent.
-- **Subagents run their own requests:** use cheaper models (haiku/sonnet) for mechanical sweeps and searches; reserve the top model for judgment-heavy review only.
+- **The top model (Fable) is the organiser, not the workhorse — standing default.** Delegate any task that doesn't need top-model judgment to subagents (opus for substantial specified coding, sonnet/haiku for mechanical sweeps, searches, test runs); the orchestrator's context stays small so every request stays cheap. Tight written specs, verify the diff yourself.
 - Keep context lean generally: targeted file reads over full re-reads, no redundant tool output, batch related checks.
 
 ## Search and display rules
