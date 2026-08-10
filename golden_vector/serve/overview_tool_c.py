@@ -13,6 +13,9 @@ from golden_vector.serve.overview_helpers import (
 )
 from golden_vector.serve.column_help import help_th
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.status import notice
+from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.windows import (
     WINDOW_LABELS,
     gold_link_td,
@@ -80,17 +83,21 @@ def _render_tool_c_overview_page(
     if not rows_html:
         rows_html.append("<tr><td colspan=\"10\" class=\"hint\">No Gold Downside rows found.</td></tr>")
 
-    body = ["<h1>Gold Downside</h1>"]
-    body.append(
-        "<p>Ranks symmetric gold-downside and gold-upside behavior from persisted outputs.</p>"
-    )
+    body = [page_header(
+        "Gold Downside",
+        lead_html=(
+            "<p>Ranks symmetric gold-downside and gold-upside behavior "
+            "from persisted outputs.</p>"
+        ),
+    )]
     if flash:
-        body.append(f"<div class=\"flash\">{escape(flash)}</div>")
+        body.append(notice("success", escape(flash)))
     if not state.tool_c_alias_present:
-        body.append(
-            "<div class=\"flash flash-warning\">Gold Downside output is missing. "
-            "Run <code>python main.py tool-c</code> after a refresh.</div>"
-        )
+        body.append(notice(
+            "warning",
+            "Gold Downside output is missing. "
+            "Run <code>python main.py tool-c</code> after a refresh.",
+        ))
     body.append(render_model_state_banner(state.model_state_manifest))
     body.append(_render_provenance_warnings(state))
     body.append(_render_refresh_summary(state.foundation_manifest))
@@ -102,13 +109,13 @@ def _render_tool_c_overview_page(
         f"<label><span>Search ticker</span><input name=\"search\" type=\"text\" value=\"{escape(search)}\" placeholder=\"NEM\"></label>"
         "<div class=\"overview-filters-actions\">"
         f"<span class=\"hint\">{len(frame.index)} rows shown · {escape(WINDOW_LABELS[active_window])} beta window.</span>"
-        "<button type=\"submit\">Apply</button>"
-        f"<a class=\"hint\" href=\"/tool-c?window={escape(active_window)}\">Reset</a>"
+        "<button type=\"submit\" class=\"btn btn-primary\">Apply</button>"
+        f"<a class=\"btn btn-tertiary\" href=\"/tool-c?window={escape(active_window)}\">Reset</a>"
         "</div>"
         "</form>"
         "</section>"
     )
-    body.append(
+    body.append(table_region(
         "<table id=\"tool-c-table\" class=\"js-datatable\">"
         "<thead><tr>"
         + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
@@ -123,8 +130,10 @@ def _render_tool_c_overview_page(
         + help_th("Up Tags", key="tool_c_upside_tags", app_config=app_config, col_name="up_tags")
         + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
-        "</table>"
-    )
+        "</table>",
+        region_id="tool-c-table-region",
+        label="Gold Downside comparison",
+    ))
     return _page_shell(
         "Gold Downside - Golden Vector Workspace",
         "".join(body),

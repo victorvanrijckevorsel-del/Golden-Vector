@@ -42,6 +42,9 @@ from golden_vector.serve.overview_helpers import (
 )
 from golden_vector.serve.column_help import help_th
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.status import notice
+from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import WorkspaceState
 
@@ -122,26 +125,28 @@ def _render_tool_d_overview_page(
         else {}
     )
 
-    body = ["<h1>Corporate Resilience</h1>"]
-    body.append(
-        "<p>Stress-test view: how far gold can fall before a miner reaches its survival lines, "
-        "and how quickly balance-sheet risk deteriorates.</p>"
-    )
-    body.append(
-        "<p class=\"hint\">Simple transparent model. It does not model cash-runway duration, "
-        "debt maturity walls, or gold hedging because those inputs are not in the local data.</p>"
-    )
+    body = [page_header(
+        "Corporate Resilience",
+        lead_html=(
+            "<p>Stress-test view: how far gold can fall before a miner reaches "
+            "its survival lines, and how quickly balance-sheet risk deteriorates.</p>"
+            "<p class=\"hint\">Simple transparent model. It does not model "
+            "cash-runway duration, debt maturity walls, or gold hedging because "
+            "those inputs are not in the local data.</p>"
+        ),
+    )]
     if flash:
-        body.append(f"<div class=\"flash\">{escape(flash)}</div>")
+        body.append(notice("success", escape(flash)))
     if scenario_error:
-        body.append(f"<div class=\"flash flash-warning\">{escape(scenario_error)}</div>")
+        body.append(notice("danger", escape(scenario_error)))
     if scenario_message:
-        body.append(f"<div class=\"flash\">{escape(scenario_message)}</div>")
+        body.append(notice("info", escape(scenario_message)))
     if not state.tool_d_alias_present:
-        body.append(
-            "<div class=\"flash flash-warning\">Corporate Resilience output is missing. "
-            "Run <code>python main.py tool-d</code> after Corporate Finance.</div>"
-        )
+        body.append(notice(
+            "warning",
+            "Corporate Resilience output is missing. "
+            "Run <code>python main.py tool-d</code> after Corporate Finance.",
+        ))
     body.append(render_model_state_banner(state.model_state_manifest))
     body.append(_render_provenance_warnings(state))
     body.append(_render_refresh_summary(state.foundation_manifest))
@@ -281,7 +286,7 @@ def _render_scenario_form(
         "</select></label>"
         "<div class=\"overview-filters-actions\">"
         f"{''.join(links)}"
-        "<button type=\"submit\">Apply</button>"
+        "<button type=\"submit\" class=\"btn btn-primary\">Apply</button>"
         f"<a class=\"hint\" href=\"{escape(reset_link)}\">Reset gold price to spot</a>"
         "</div>"
         "</form>"
@@ -325,6 +330,7 @@ def _render_flip_section(
         )
     return (
         "<section class=\"panel\"><h2>Who Flips Under This Stress</h2>"
+        + table_region(
         "<table class=\"compact-table\"><thead><tr>"
         + help_th("Ticker", key="ticker_symbol", app_config=app_config)
         + help_th("Flip", key="tool_d_resilience_flip", app_config=app_config)
@@ -332,7 +338,11 @@ def _render_flip_section(
         + help_th("Leverage @ G", key="tool_d_leverage", app_config=app_config)
         + help_th("Headroom @ G", key="tool_d_headroom", app_config=app_config)
         + "</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table></section>"
+        f"<tbody>{''.join(rows)}</tbody></table>",
+        region_id="tool-d-flip-table-region",
+        label="Who flips under this stress",
+        )
+        + "</section>"
     )
 
 
@@ -379,7 +389,7 @@ def _render_table(
     if not rows_html:
         rows_html.append("<tr><td colspan=\"20\" class=\"hint\">No Corporate Resilience rows found.</td></tr>")
 
-    return (
+    return table_region(
         "<table id=\"tool-d-table\" class=\"js-datatable\">"
         "<thead><tr>"
         "<th data-col-name=\"ticker\">Ticker</th>"
@@ -404,7 +414,9 @@ def _render_table(
         + help_th("FCF Yield Context", key="tool_d_fcf_yield_context", app_config=app_config, col_name="fcf_yield", sort_numeric=True, panel=True)
         + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
-        "</table>"
+        "</table>",
+        region_id="tool-d-table-region",
+        label="Corporate Resilience comparison",
     )
 
 

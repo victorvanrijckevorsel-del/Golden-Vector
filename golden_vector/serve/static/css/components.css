@@ -169,6 +169,35 @@
   background: var(--badge-neutral-bg);
   border-color: var(--line);
 }
+/* Compact data-status strip (plan 10.4) */
+.status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  align-items: baseline;
+  padding: 8px 12px;
+  margin: 12px 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-surface);
+}
+.status-item {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.status-item-label {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.status-item-value {
+  color: var(--ink);
+  font-family: var(--font-data);
+  font-size: 0.85rem;
+}
 /* Shared page header (plan 10.3) */
 .page-header {
   display: flex;

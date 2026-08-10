@@ -10,8 +10,8 @@ import pandas as pd
 from golden_vector.serve.format_helpers import (
     _column_unique,
     _fmt_text,
-    _metric_card,
 )
+from golden_vector.serve.ui.status import notice, status_strip
 from golden_vector.serve.workspace_state import WorkspaceState
 
 
@@ -73,30 +73,23 @@ def _render_provenance_warnings(state: WorkspaceState) -> str:
 
     if not notices:
         return ""
-    return (
-        "<div class=\"flash\">"
-        + "".join(f"<p>{notice}</p>" for notice in notices)
-        + "</div>"
-    )
+    return notice("warning", "".join(f"<p>{item}</p>" for item in notices))
 
 
 def _render_refresh_summary(manifest: dict[str, Any] | None) -> str:
+    """One compact data-status strip (plan 10.2/10.4); manifest interpretation
+    and every visible value are unchanged from the metric-card version."""
     if not manifest:
-        return (
-            "<div class=\"panel\">"
-            "<h2>Latest Market Snapshot</h2>"
-            "<p>No validated local market-data snapshot is available yet.</p>"
-            "</div>"
+        return notice(
+            "neutral", "No validated local market-data snapshot is available yet."
         )
-    refresh_run_id = _fmt_text(manifest.get("refresh_run_id"))
-    snapshot_as_of_date = _fmt_text(manifest.get("snapshot_as_of_date"))
-    foundation_status = _fmt_text(manifest.get("foundation_status"))
-    return (
-        "<div class=\"panel metric-grid\">"
-        f"{_metric_card('Refresh Run', refresh_run_id)}"
-        f"{_metric_card('Snapshot As Of', snapshot_as_of_date)}"
-        f"{_metric_card('Foundation Status', foundation_status)}"
-        "</div>"
+    return status_strip(
+        (
+            ("Refresh Run", _fmt_text(manifest.get("refresh_run_id"))),
+            ("Snapshot As Of", _fmt_text(manifest.get("snapshot_as_of_date"))),
+            ("Foundation Status", _fmt_text(manifest.get("foundation_status"))),
+        ),
+        label="Latest market snapshot status",
     )
 
 

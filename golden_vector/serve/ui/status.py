@@ -7,22 +7,44 @@ renderer never creates new state thresholds.
 
 from __future__ import annotations
 
+from html import escape
+
 NOTICE_TONES = ("success", "info", "warning", "danger", "degraded", "neutral")
 
 _ASSERTIVE_TONES = {"warning", "danger", "degraded"}
 
 
-def notice(tone: str, body_html: str) -> str:
+def notice(tone: str, body_html: str, *, extra_classes: str = "") -> str:
     """One notice/banner shell for every flash, warning, and status message.
 
     Emits the legacy ``flash`` class alongside the semantic classes during
     migration so existing styling, tests, and the semantic-contract extractor
     keep matching; the bare legacy class is removed in Phase 7.
+    ``extra_classes`` preserves purpose-specific hooks (e.g. option-freshness).
     """
     if tone not in NOTICE_TONES:
         raise ValueError(f"unknown notice tone: {tone!r}")
     role = "alert" if tone in _ASSERTIVE_TONES else "status"
+    extra = f" {extra_classes.strip()}" if extra_classes.strip() else ""
     return (
-        f"<div class=\"flash notice notice-{tone}\" role=\"{role}\">"
+        f"<div class=\"flash notice notice-{tone}{extra}\" role=\"{role}\">"
         f"{body_html}</div>"
+    )
+
+
+def status_strip(items, *, label: str = "Data status") -> str:
+    """Compact data-status strip (plan 10.4): label/value pairs from
+    already-resolved manifest summaries. Values are trusted pre-escaped
+    fragments (``_fmt_text`` output); this renderer adds no interpretation.
+    """
+    parts = "".join(
+        "<span class=\"status-item\">"
+        f"<span class=\"status-item-label\">{escape(str(item_label))}</span>"
+        f"<span class=\"status-item-value\">{value}</span>"
+        "</span>"
+        for item_label, value in items
+    )
+    return (
+        f"<div class=\"status-strip\" role=\"group\" aria-label=\"{escape(label)}\">"
+        f"{parts}</div>"
     )

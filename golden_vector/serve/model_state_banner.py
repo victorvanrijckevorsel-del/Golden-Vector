@@ -8,6 +8,7 @@ from golden_vector.app.model_state import (
     summarize_model_state_manifest,
     summarize_option_freshness,
 )
+from golden_vector.serve.ui.status import notice
 
 
 def render_option_freshness_box(
@@ -41,10 +42,10 @@ def render_option_freshness_box(
         label = "Option data misaligned"
     else:
         label = "Option data unavailable"
-    return (
-        "<div class=\"flash option-freshness option-freshness-stale\">"
-        f"<p><strong>{escape(label)}.</strong> {escape(message)}</p>"
-        "</div>"
+    return notice(
+        "warning",
+        f"<p><strong>{escape(label)}.</strong> {escape(message)}</p>",
+        extra_classes="option-freshness option-freshness-stale",
     )
 
 
@@ -61,9 +62,8 @@ def render_model_state_banner(payload: dict[str, object] | None) -> str:
     if payload is not None and str(payload.get("state") or "").lower() == "complete":
         return ""
     lines = summarize_model_state_manifest(payload)
-    return (
-        "<div class=\"flash\">"
+    return notice(
+        "danger",
         "<p><strong>Model build state needs attention.</strong></p>"
-        + "".join(f"<p>{escape(line)}</p>" for line in lines)
-        + "</div>"
+        + "".join(f"<p>{escape(line)}</p>" for line in lines),
     )

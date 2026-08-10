@@ -20,6 +20,9 @@ from golden_vector.serve.overview_helpers import (
     note_counts_by_ticker,
 )
 from golden_vector.serve.page_shell import _page_shell
+from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.status import notice
+from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.windows import (
     WINDOW_LABELS,
     gold_link_td,
@@ -151,8 +154,9 @@ def _render_tool_a_overview_page(
         ],
     )
 
-    body = ["<h1>Gold Sensitivity</h1>"]
-    body.append(
+    body = [page_header(
+        "Gold Sensitivity",
+        lead_html=(
         "<p>Which miners react strongly or weakly to the gold price — split by direction "
         "(up vs down). The beta columns (up/down beta, delta, gamma, asymmetry, gold-link) "
         "follow the window selector below; <strong>Confidence, Profile and Rank are computed "
@@ -161,9 +165,10 @@ def _render_tool_a_overview_page(
         "much of each stock's movement gold actually explains in the chosen window — a "
         "'weak'/'none' beta barely tracks gold, so treat it with caution. Click a ticker for "
         "the full breakdown and the gold / stock / ETF overlay.</p>"
-    )
+        ),
+    )]
     if flash:
-        body.append(f"<div class=\"flash\">{escape(flash)}</div>")
+        body.append(notice("success", escape(flash)))
     body.append(render_model_state_banner(state.model_state_manifest))
     body.append(_render_provenance_warnings(state))
     body.append(_render_refresh_summary(state.foundation_manifest))
@@ -175,8 +180,8 @@ def _render_tool_a_overview_page(
         f"<label><span>Search ticker</span><input name=\"search\" type=\"text\" value=\"{escape(search)}\" placeholder=\"NEM\"></label>"
         "<div class=\"overview-filters-actions\">"
         f"<span class=\"hint\">{len(derived)} tickers shown · {escape(WINDOW_LABELS[active_window])} beta window.</span>"
-        "<button type=\"submit\">Apply</button>"
-        f"<a class=\"hint\" href=\"/tool-a?window={escape(active_window)}\">Reset</a>"
+        "<button type=\"submit\" class=\"btn btn-primary\">Apply</button>"
+        f"<a class=\"btn btn-tertiary\" href=\"/tool-a?window={escape(active_window)}\">Reset</a>"
         "</div>"
         "</form>"
         "</section>"
@@ -186,7 +191,7 @@ def _render_tool_a_overview_page(
         options=filter_options,
         column_labels={"profile": "Profile", "confidence": "Confidence", "volatility": "Volatility"},
     ))
-    body.append(
+    body.append(table_region(
         "<table id=\"tool-a-table\" class=\"js-datatable\">"
         "<thead><tr>"
         + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
@@ -204,6 +209,8 @@ def _render_tool_a_overview_page(
         + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
         + _benchmark_reference_rows(state.latest_benchmark_betas, active_window)
-        + "</table>"
-    )
+        + "</table>",
+        region_id="tool-a-table-region",
+        label="Gold Sensitivity comparison",
+    ))
     return _page_shell("Gold Sensitivity - Golden Vector Workspace", "".join(body), active_nav="tool_a")
