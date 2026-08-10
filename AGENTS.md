@@ -89,6 +89,14 @@ agents have been coding in parallel.
 - Treat unmerged branch inventory as part of the handoff. Report what is
   merged, what is pending, and what must be reconciled next.
 
+## Token efficiency (always apply — learned 2026-08-10)
+Be conscious of token/context consumption and manage it proactively — flag waste yourself instead of letting Victor discover it in his usage panel.
+
+- Browser/MCP tool results stay in the session context permanently: batch real-browser verification into one scripted pass at major gates only; keep return values minimal; write evidence to files; prefer file-loaded scripts over inline echoes.
+- Prefer terminal/pytest verification over browser verification when both prove the same thing.
+- Never rely on the user manually compacting context: keep persistent notes + committed evidence current at every boundary so automatic compaction/summarization is always lossless and long unattended runs stay safe.
+- Use cheaper models for mechanical subagent work; reserve the strongest model for judgment-heavy review.
+
 ## Fix bugs immediately
 When a bug or code smell is identified, fix it now unless there's a concrete reason to defer. "It works for now" is NOT a valid reason to defer.
 
