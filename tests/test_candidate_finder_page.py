@@ -533,3 +533,18 @@ def test_finder_value_column_scales_percent_criteria():
     assert _fmt_criterion_value(_resolved_criterion("ev_ebitda"), 7.31) == "7.3"
     # Unknown criteria fall back to the generic 2-decimal number.
     assert _fmt_criterion_value(_resolved_criterion("custom_metric"), 7.31) == "7.31"
+
+
+def test_candidate_finder_page_renders_saved_confirmation():
+    from golden_vector.serve.http_helpers import _flash_message
+
+    html = render_candidate_finder_page(_candidate_finder_data(), query={"saved": ["company"]})
+
+    assert "notice notice-success" in html
+    assert _flash_message("company") in html
+
+
+def test_candidate_finder_page_ignores_unknown_saved_token():
+    html = render_candidate_finder_page(_candidate_finder_data(), query={"saved": ["bogus"]})
+
+    assert "notice notice-success" not in html

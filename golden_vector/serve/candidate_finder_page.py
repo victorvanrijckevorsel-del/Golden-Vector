@@ -29,6 +29,7 @@ from golden_vector.serve.format_helpers import (
     _metric_card,
 )
 from golden_vector.serve.fundamentals_provenance import ticker_provenance_icon
+from golden_vector.serve.http_helpers import _flash_message
 from golden_vector.serve.metric_formula import metric_value_text
 from golden_vector.serve.model_state_banner import (
     render_model_state_banner,
@@ -124,6 +125,10 @@ def render_candidate_finder_page(
     spec = _screen_spec_from_query(query, data.criteria_config)
     screen = run_candidate_finder_screen(data, spec=spec)
     active_preset_id = _active_preset_id(query, data.criteria_config)
+    # Manual-input saves redirect back here with ?saved=...; confirm with the same
+    # wording the ticker page uses.
+    saved_flash = _flash_message(_first(query, "saved"))
+    saved_notice = notice("success", saved_flash) if saved_flash else ""
 
     body = "\n".join(
         (
@@ -135,6 +140,7 @@ def render_candidate_finder_page(
                     "scan every stock or only optionable names.</p>"
                 ),
             ),
+            saved_notice,
             render_model_state_banner(data.model_state_manifest),
             render_option_freshness_box(data.model_state_manifest, only_when_stale=True),
             render_option_refresh_control(
