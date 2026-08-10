@@ -1,0 +1,19 @@
+{
+  "gate": "D11 zero-alert proof",
+  "date": "2026-08-10",
+  "commit_under_test": "c25416e",
+  "route": "/portfolio",
+  "method": "real browser via Playwright MCP; window.alert stubbed via addInitScript BEFORE navigation (recorder, not dismisser); pageerror + console-error listeners attached before goto; networkidle",
+  "baseline": "browser_measurements_before.json results[8].meta.alerts recorded the blocking DataTables 'Requested unknown parameter 16' alert on every load",
+  "results": {
+    "alerts": [],
+    "positions_table_has_explicit_id": true,
+    "datatables_enhanced": true,
+    "lots_links": 9,
+    "lot_breakdown_details": 9,
+    "nested_tables_inside_js_datatable": 0,
+    "console_errors": []
+  },
+  "verdict": "PASS - zero alert() calls, clean DataTables init, every position links to its anchored lot-breakdown disclosure",
+  "note": "counts and booleans only; no portfolio holdings content is recorded in this evidence"
+}

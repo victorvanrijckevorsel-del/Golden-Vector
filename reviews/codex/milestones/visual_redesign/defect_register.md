@@ -131,7 +131,19 @@ Severity: HIGH = misleads the user or corrupts workflow state; MEDIUM = wrong/in
 
 ---
 
-**Resolution log** (filled during post-Phase-8 follow-up): none yet.
+**Resolution log** (post-Phase-8 follow-up, all resolved 2026-08-10 on dev-vic):
+
+- **D1** — RESOLVED, commit `45583e6`. `app_config` threaded through all four ticker-POST validation re-renders; errors return 400 with the full page + danger notice, never 500. Old 500-pinning characterizations flipped, plus a company-form variant.
+- **D2** — RESOLVED, commit `bdb3aa3`. An all-blank company POST redirects without the `saved` marker — no false "Saved" claim when nothing was written.
+- **D3** — RESOLVED, commit `83e4930`. The option sizing form carries the active `?window=` selection through submission.
+- **D4** — RESOLVED, commit `bdb3aa3`. `return_to` values containing control characters (0x00-0x1F, 0x7F) fall back to the safe ticker path.
+- **D5** — RESOLVED, commit `bdb3aa3`. Option-vehicle resolution is gated to configured `hedge_readiness.benchmark_tickers`; unknown tickers get clean 404s.
+- **D6** — RESOLVED, commit `f130e89`. Parse failures re-render the persisted Candidate Finder screen (computed without the bad scenario) with a danger notice, preserving 400, on both `/` and `/candidate-finder` via one shared helper.
+- **D7** — RESOLVED, commit `f658fb6`. The Tool D fallback warning names both the requested (Yahoo) and effective (our) source.
+- **D8** — RESOLVED, commit `bdb3aa3`. The extra `unquote()` dropped; `%`-bearing dial path segments decode once (regression via loader-kwarg capture).
+- **D9** — RESOLVED, commit `bdb3aa3`. A refresh POST while one is running redirects with `?refresh=already-running` and the option overview renders an info notice.
+- **D10** — RESOLVED, commit `ce99899`. Candidate Finder reads `saved` and renders the shared success notice.
+- **D11** — RESOLVED, commit `c25416e`. Positions table has an explicit id (`portfolio-positions-table`); per-position lot tables moved out of the DataTables-managed table into an anchored "Lot breakdown" block (Lots cells link down); structural guard test (every `js-datatable` has an id, no nested `<table>`, all fixture routes); real-browser zero-alert proof in `browser_evidence_d11_fix.json`.
 
 ---
 
