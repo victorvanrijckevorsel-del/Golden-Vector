@@ -1,0 +1,101 @@
+/* Canonical design tokens — the ONLY first-party file allowed to contain raw
+   colour literals (enforced by tests/test_design_tokens.py). Phase 1 holds the
+   pre-redesign light values for mechanical parity; the Phase 2 shell commit
+   flips these to the approved dark palette (plan §9.2). */
+:root {
+  /* Legacy core palette (pre-redesign names, kept as the compatibility layer) */
+  --bg: #f5f1e7;
+  --canvas-top: #f1eadb;
+  --panel: #fffdf8;
+  --ink: #1f1d1a;
+  --ink-strong: #3d3529;
+  --muted: #6f685c;
+  --text-soft: #5f584e;
+  --text-brown: #5b4d33;
+  --text-dim: #555555;
+  --line: #d8cfbf;
+  --line-soft: #e4ddcd;
+  --border: #d9d2c4;
+  --border-soft: #cfc6b8;
+  --accent: #b26700;
+  --accent-soft: #f8ead4;
+  --positive: #2d6a4f;
+  --negative: #8a2d3b;
+  --neutral: #48566a;
+  --white: #ffffff;
+
+  /* Surfaces */
+  --paper: #fbf9f4;
+  --surface-hover: #f7f0e2;
+  --surface-soft-hover: #efe9dc;
+  --surface-cream: #fffaf0;
+  --active-row-bg: #fdf6e3;
+
+  /* Links and identity accents */
+  --link: #1d4b73;
+  --teal: #2f6f6d;
+  --focus: #2f6f6d;
+  --warn-ink: #8a5a00;
+
+  /* Badge / status tints */
+  --badge-neutral-bg: #efe6d3;
+  --tint-green: #d8eccf;
+  --tint-green-ink: #1f4c2a;
+  --tint-green-soft: #e7f0d4;
+  --tint-amber: #f4e3b6;
+  --tint-amber-ink: #6c4a16;
+  --tint-red: #f1cdcd;
+  --tint-red-ink: #6e1d1d;
+  --tint-tan: #e6dcc4;
+  --tint-gray: #d8d4cb;
+  --tint-gray-ink: #4b463c;
+
+  /* Notices */
+  --flash-border: #ebcd9f;
+  --flash-error-bg: #fbe5e9;
+  --flash-error-border: #c48191;
+
+  /* Help popover internals */
+  --help-icon-border: #b9b0a0;
+  --formula-bg: #f3eee3;
+  --formula-label-ink: #7a7263;
+  --values-bg: #eef3ee;
+  --values-label-ink: #6a7a6a;
+
+  /* Scorecard verdict palette (evidence state, not investment quality) */
+  --verdict-supported-bg: #e3f5e6;
+  --verdict-supported-ink: #1d6b32;
+  --verdict-not-supported-bg: #fce4e4;
+  --verdict-not-supported-ink: #a11a1a;
+  --verdict-inconclusive-bg: #fff3da;
+  --verdict-partial-bg: #eef0f2;
+  --verdict-partial-ink: #41505c;
+  --verdict-accruing-bg: #e6eefb;
+  --verdict-accruing-ink: #2b4f8a;
+
+  /* Chart series (single source for SVG paint via semantic classes) */
+  --chart-positive: #2d6a4f;
+  --chart-negative: #8a2d3b;
+  --chart-stock: #b26700;
+  --chart-gdx: #1d4b73;
+  --chart-gdxj: #3f7cae;
+  --chart-context: #2f6f6d;
+  --chart-zero: #b9b0a0;
+
+  /* Typography (parity values; Phase 2 moves to system sans + tabular nums) */
+  --font-ui: Georgia, "Times New Roman", serif;
+  --font-data: "Cascadia Code", Consolas, "Courier New", monospace;
+
+  /* Elevation */
+  --shadow-panel: 0 8px 24px rgba(98, 83, 57, 0.08);
+  --shadow-tooltip: 0 2px 6px rgba(0, 0, 0, 0.25);
+  --shadow-popover: 0 6px 22px rgba(0, 0, 0, 0.18);
+  --text-shadow-contrast: 0 0 2px rgba(0, 0, 0, 0.55);
+
+  /* Layers (documented scale; fixes the audited inversion where decorative
+     tooltips painted above the interactive help dialog) */
+  --z-sticky: 10;
+  --z-drawer: 800;
+  --z-popover: 1000;
+  --z-tooltip: 900;
+}

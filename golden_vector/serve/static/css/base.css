@@ -1,0 +1,49 @@
+/* Reset, document, typography, links, generic media, base controls. */
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  background: linear-gradient(180deg, var(--canvas-top) 0%, var(--bg) 100%);
+  color: var(--ink);
+}
+main {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 28px 20px 48px;
+}
+h1, h2, h3 {
+  margin-top: 0;
+}
+p, li {
+  line-height: 1.5;
+}
+a {
+  color: var(--link);
+}
+svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+input, textarea, select, button {
+  font: inherit;
+}
+input, textarea, select {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--white);
+}
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: var(--accent);
+  color: var(--white);
+  cursor: pointer;
+}
+.full-width {
+  grid-column: 1 / -1;
+}
+.hint {
+  color: var(--muted);
+}

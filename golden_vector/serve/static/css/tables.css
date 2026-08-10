@@ -1,0 +1,39 @@
+/* Table structure, scroll containment, DataTables overrides. */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+th, td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  text-align: left;
+}
+thead th {
+  background: var(--surface-hover);
+}
+.active-row {
+  background: var(--active-row-bg);
+}
+.active-row td {
+  font-weight: 600;
+}
+table.verification-table td, table.verification-table th {
+  vertical-align: top;
+}
+/* Override DataTables defaults to match our palette + hide built-ins */
+.dt-search, .dt-paging, .dt-length, .dt-info {
+  display: none !important;
+}
+table.js-datatable thead th {
+  cursor: pointer;
+}
+table.js-datatable thead th.dt-orderable-asc,
+table.js-datatable thead th.dt-orderable-desc {
+  color: var(--ink);
+}

@@ -1,0 +1,108 @@
+/* Chart, SVG series, legend, and floating-tooltip presentation.
+   Semantic series classes are the single paint source for inline SVG
+   (Python emits class names, never colour literals). */
+.chart-legend {
+  font-size: 0.85rem;
+  margin: 0 0 8px 0;
+}
+.chart-legend-item {
+  margin-right: 14px;
+}
+.chart-legend-link {
+  text-decoration: none;
+  cursor: pointer;
+}
+.chart-legend-link:hover {
+  text-decoration: underline;
+}
+/* Universe-rug hover: a faint highlight on the tick naming the miner. */
+.rug-tick:hover {
+  stroke: var(--accent);
+  stroke-opacity: 0.35;
+}
+.rug-tooltip {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  background: var(--ink);
+  color: var(--panel);
+  font-size: 0.82rem;
+  padding: 3px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: var(--shadow-tooltip);
+}
+.rug-tooltip[hidden] {
+  display: none;
+}
+/* Overlay-chart hover crosshair tooltip (one row per series). */
+.overlay-tooltip {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  background: var(--ink);
+  color: var(--panel);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  padding: 6px 10px;
+  border-radius: 6px;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: var(--shadow-tooltip);
+}
+.overlay-tooltip[hidden] {
+  display: none;
+}
+svg.overlay-chart {
+  cursor: crosshair;
+}
+.overlay-cursor-line {
+  stroke: var(--muted);
+}
+.portfolio-line-chart {
+  height: 180px;
+  margin: 12px 0 16px;
+  border: 1px solid var(--line);
+  background: var(--surface-cream);
+}
+.portfolio-line-chart polyline {
+  fill: none;
+  stroke: var(--chart-gdx);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.lab-profile-svg { width: 100%; max-width: 720px; height: auto; background: var(--paper); border-radius: 6px; }
+.lab-dist-svg { width: 100%; max-width: 760px; height: auto; background: var(--paper); border-radius: 6px; }
+.lab-dots-svg {
+  width: 100%;
+  max-width: 860px;
+  height: auto;
+  background: var(--paper);
+  border-radius: 6px;
+}
+/* Semantic SVG series paint (fill/stroke follow the element kind). */
+.series-positive { fill: var(--chart-positive); }
+.series-negative { fill: var(--chart-negative); }
+.series-stock { fill: var(--chart-stock); }
+.series-gdx { fill: var(--chart-gdx); }
+.series-gdxj { fill: var(--chart-gdxj); }
+.series-context { fill: var(--chart-context); }
+.series-zero { fill: var(--chart-zero); }
+line.series-positive, polyline.series-positive, path.series-positive { fill: none; stroke: var(--chart-positive); }
+line.series-negative, polyline.series-negative, path.series-negative { fill: none; stroke: var(--chart-negative); }
+line.series-stock, polyline.series-stock, path.series-stock { fill: none; stroke: var(--chart-stock); }
+line.series-gdx, polyline.series-gdx, path.series-gdx { fill: none; stroke: var(--chart-gdx); }
+line.series-gdxj, polyline.series-gdxj, path.series-gdxj { fill: none; stroke: var(--chart-gdxj); }
+line.series-context, polyline.series-context, path.series-context { fill: none; stroke: var(--chart-context); }
+line.series-zero, polyline.series-zero, path.series-zero { fill: none; stroke: var(--chart-zero); }
+text.series-positive { fill: var(--chart-positive); stroke: none; }
+text.series-negative { fill: var(--chart-negative); stroke: none; }
+text.series-stock { fill: var(--chart-stock); stroke: none; }
+text.series-gdx { fill: var(--chart-gdx); stroke: none; }
+text.series-gdxj { fill: var(--chart-gdxj); stroke: none; }
+text.series-context { fill: var(--chart-context); stroke: none; }
+.legend-swatch-positive { color: var(--chart-positive); }
+.legend-swatch-negative { color: var(--chart-negative); }
+.legend-swatch-stock { color: var(--chart-stock); }
+.legend-swatch-gdx { color: var(--chart-gdx); }
+.legend-swatch-gdxj { color: var(--chart-gdxj); }
+.legend-swatch-context { color: var(--chart-context); }

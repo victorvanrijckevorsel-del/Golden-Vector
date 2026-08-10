@@ -112,6 +112,8 @@ def test_static_route_serves_vendored_datatables_css_with_correct_mime(tmp_path)
 
 
 def test_static_route_serves_workspace_css_with_revalidation(tmp_path):
+    """workspace.css is the stable entrypoint; since the redesign split it is an
+    ordered @import manifest over the css/ modules (plan section 9.1)."""
     _, app = _workspace_fixture(tmp_path)
     response = _call_wsgi_raw(
         app, method="GET", path="/static/workspace.css",
@@ -120,8 +122,22 @@ def test_static_route_serves_workspace_css_with_revalidation(tmp_path):
     assert "text/css" in response["headers"].get("Content-Type", "")
     assert response["headers"].get("Cache-Control") == "no-cache"
     body = response["body_text"]
-    assert ":root" in body
-    assert ".top-nav" in body
+    assert '@import url("css/tokens.css");' in body
+    # Import order is load-bearing: tokens must come first, shell before pages.
+    assert body.index("css/tokens.css") < body.index("css/base.css") < body.index("css/shell.css")
+
+
+def test_static_route_serves_css_modules_with_correct_mime_and_content(tmp_path):
+    _, app = _workspace_fixture(tmp_path)
+    tokens = _call_wsgi_raw(app, method="GET", path="/static/css/tokens.css")
+    assert tokens["status"].startswith("200")
+    assert "text/css" in tokens["headers"].get("Content-Type", "")
+    assert tokens["headers"].get("Cache-Control") == "no-cache"
+    assert ":root" in tokens["body_text"]
+    shell = _call_wsgi_raw(app, method="GET", path="/static/css/shell.css")
+    assert shell["status"].startswith("200")
+    assert "text/css" in shell["headers"].get("Content-Type", "")
+    assert ".top-nav" in shell["body_text"]
 
 
 def test_static_route_uses_resolved_path_for_cache_policy(tmp_path):
@@ -132,7 +148,7 @@ def test_static_route_uses_resolved_path_for_cache_policy(tmp_path):
     assert response["status"].startswith("200")
     assert "text/css" in response["headers"].get("Content-Type", "")
     assert response["headers"].get("Cache-Control") == "no-cache"
-    assert ":root" in response["body_text"]
+    assert "@import" in response["body_text"]
 
 
 def test_static_route_serves_workspace_tables_js_with_correct_mime(tmp_path):

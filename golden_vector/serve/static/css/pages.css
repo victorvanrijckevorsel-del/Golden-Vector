@@ -1,0 +1,258 @@
+/* Page-specific modifiers (kept deliberately small). */
+/* Tool B */
+.tool-b-readiness {
+  background: var(--accent-soft);
+  border: 1px solid var(--flash-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+/* Tool B "Checks" column: compact by default, click-to-expand breakdown */
+.checks-summary-cell summary { cursor: pointer; white-space: nowrap; }
+.checks-summary-cell .checks-detail {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.85em;
+  color: var(--text-dim);
+  max-width: 340px;
+  white-space: normal;
+}
+/* Tool D Failure-Ladder cell: keep survival lines on one row. */
+.tool-d-ladder { white-space: nowrap; font-size: 0.82rem; }
+/* Candidate Finder */
+.candidate-preset-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 16px;
+}
+.candidate-preset {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--white);
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+.candidate-preset:hover {
+  background: var(--accent-soft);
+}
+.candidate-preset.is-active {
+  background: var(--accent);
+  color: var(--panel);
+  border-color: var(--accent);
+}
+.candidate-panel-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.candidate-finder-form {
+  display: grid;
+  gap: 14px;
+}
+.candidate-form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+.candidate-form-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.88rem;
+}
+.candidate-warning-list {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+.candidate-criteria-groups {
+  display: grid;
+  gap: 10px;
+}
+.candidate-criteria-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.candidate-criteria-group summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 700;
+  background: var(--paper);
+}
+.candidate-criteria-table input[type="checkbox"] {
+  width: auto;
+}
+.candidate-criteria-table input[type="number"] {
+  max-width: 90px;
+}
+.candidate-top-list-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+.candidate-top-list-card {
+  overflow-x: auto;
+}
+.candidate-view-section {
+  margin-top: 22px;
+}
+.candidate-ranking-panel {
+  margin-bottom: 16px;
+}
+.candidate-ranking-table {
+  margin-bottom: 18px;
+}
+/* Option Trading */
+.option-sizing-calculator {
+  margin-top: 16px;
+}
+.option-signal-card {
+  margin: 14px 0;
+}
+.option-signal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.option-signal-lane {
+  border: 1px solid var(--line);
+  background: var(--surface-cream);
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-height: 92px;
+}
+.option-signal-lane h4 {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.option-signal-lane p {
+  margin: 0 0 6px;
+}
+.option-side-candidates {
+  margin-top: 16px;
+}
+.option-side-candidates h4 {
+  margin: 0 0 8px;
+}
+.option-sizing-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin: 12px 0;
+}
+.option-sizing-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+.option-sizing-form .radio-label {
+  flex-direction: row;
+  align-items: center;
+  min-height: 42px;
+}
+.option-sizing-form input[type="radio"] {
+  margin: 0 4px 0 0;
+}
+.option-sizing-form button {
+  align-self: end;
+}
+.option-sizing-result {
+  margin-top: 12px;
+}
+.yahoo-chain-icon {
+  text-decoration: none;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.yahoo-chain-icon:hover { background: var(--verdict-partial-bg); }
+.option-chain-detail {
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.option-chain-detail > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 0;
+}
+.option-chain-detail[open] > summary { margin-bottom: 8px; }
+/* Portfolio */
+.correlation-heatmap th,
+.correlation-heatmap td {
+  text-align: center;
+  white-space: nowrap;
+}
+.corr-very-high { background: var(--tint-green); }
+.corr-high      { background: var(--tint-green-soft); }
+.corr-medium    { background: var(--tint-amber); }
+.corr-low       { background: var(--surface-hover); }
+.corr-unavailable {
+  background: var(--badge-neutral-bg);
+  color: var(--muted);
+}
+/* Lab: scenario-analog drill-down */
+.lab-row-insufficient { opacity: 0.62; }
+.lab-row-insufficient .lab-no-data { font-style: italic; cursor: default; }
+.lab-dist h2 { margin-bottom: 4px; }
+.lab-curve-chart > summary { cursor: pointer; font-weight: 600; }
+.lab-curve-chart[open] > summary { margin-bottom: 8px; }
+.lab-winrate { padding-top: 6px; }
+.lab-winrate p { margin: 0 0 8px; }
+.winrate-bar {
+  position: relative;
+  height: 26px;
+  background: var(--surface-soft-hover);
+  border-radius: 6px;
+  overflow: hidden;
+  max-width: 480px;
+}
+.winrate-fill { height: 100%; background: var(--teal); }
+.winrate-label {
+  position: absolute;
+  top: 4px;
+  left: 10px;
+  font-weight: 700;
+  color: var(--white);
+  font-size: 0.9rem;
+  /* legible on both the filled (teal) and unfilled (beige) parts, incl. 0% */
+  text-shadow: var(--text-shadow-contrast);
+}
+.lab-curve-controls p { margin: 4px 0; }
+.lab-curve-headline p { margin: 4px 0; }
+.lab-curve-headline strong { font-size: 1.15rem; }
+/* Behaviour panel: symmetric capture / peer / behaviour-change cards. */
+.lab-behaviour h2 { margin-bottom: 10px; }
+.beh-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+.beh-card {
+  background: var(--paper);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.beh-card h3 { margin: 0 0 8px; font-size: 0.98rem; }
+.beh-card p { margin: 6px 0; }
+.beh-badge { font-size: 1.05rem; }
+.beh-list { margin: 6px 0; padding-left: 18px; }
+.beh-list li { margin: 4px 0; }

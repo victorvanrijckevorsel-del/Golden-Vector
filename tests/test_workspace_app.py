@@ -2489,9 +2489,12 @@ def test_one_info_affordance_no_legacy_hover_remains():
         assert 'data-help="' not in src, py  # bare data-help= is the dead hover; data-help-* is fine
     js = (serve / "static" / "help-popover.js").read_text(encoding="utf-8")
     assert "help-term" not in js  # hover handler removed; only the click panel remains
-    css = (serve / "static" / "workspace.css").read_text(encoding="utf-8")
-    assert ".help-term" not in css
-    assert "th[title]" not in css
+    css_files = [serve / "static" / "workspace.css"]
+    css_files.extend(sorted((serve / "static" / "css").glob("*.css")))
+    for css_path in css_files:
+        css = css_path.read_text(encoding="utf-8")
+        assert ".help-term" not in css, css_path
+        assert "th[title]" not in css, css_path
 
 
 def test_snapshot_ratio_cell_is_compact_and_shows_yahoo_divergence():

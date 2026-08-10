@@ -18,9 +18,10 @@ from golden_vector.serve.format_helpers import (
     _fmt_number,
     _fmt_percent,
     _fmt_text,
+    _metric_card,
     collapsible_text_td,
 )
-from golden_vector.serve.column_help import help_term, help_th
+from golden_vector.serve.column_help import help_th
 from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.page_shell import _page_shell
 
@@ -557,11 +558,6 @@ def _currency_select(selected: str | None) -> str:
         f"{''.join(options)}"
         "</select></label>"
     )
-
-
-def _metric_card(title: str, value: str, *, help_text: str | None = None) -> str:
-    heading = help_term(title, text=help_text) if help_text else escape(title)
-    return f"<article class=\"panel metric-card\"><h3>{heading}</h3><p>{value}</p></article>"
 
 
 def _number_input(name: str, label: str, value: object | None = None) -> str:

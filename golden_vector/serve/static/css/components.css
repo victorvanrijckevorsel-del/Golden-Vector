@@ -1,0 +1,306 @@
+/* Shared components: panels, cards, badges, notices, controls, disclosures,
+   window switcher, segmented controls, help popover. */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin-bottom: 18px;
+  box-shadow: var(--shadow-panel);
+}
+.nested-panel {
+  margin-bottom: 0;
+}
+.two-up {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+  margin-bottom: 18px;
+}
+.two-column {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+}
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.metric-card {
+  margin-bottom: 0;
+  min-height: 88px;
+}
+.metric-card h3 {
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.metric-card p {
+  font-size: 1.05rem;
+  margin: 0;
+}
+.explanation-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.explanation-card {
+  margin-bottom: 0;
+}
+.window-switcher {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.window-switcher-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.window-tabs {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.window-tab {
+  padding: 6px 14px;
+  font-size: 0.9rem;
+  color: var(--text-brown);
+  text-decoration: none;
+  border-right: 1px solid var(--line);
+}
+.window-tab:last-child {
+  border-right: none;
+}
+.window-tab:hover {
+  background: var(--surface-hover);
+}
+.window-tab.active {
+  background: var(--link);
+  color: var(--panel);
+  font-weight: 600;
+}
+.window-canonical {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.window-mismatch {
+  font-size: 0.82rem;
+  color: var(--warn-ink);
+  font-weight: 600;
+}
+.badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-left: 6px;
+  vertical-align: middle;
+  background: var(--badge-neutral-bg);
+  color: var(--text-brown);
+}
+.badge-verified  { background: var(--tint-green); color: var(--tint-green-ink); }
+.badge-estimated { background: var(--tint-amber); color: var(--tint-amber-ink); }
+.badge-incomplete{ background: var(--tint-red); color: var(--tint-red-ink); }
+.badge-needs     { background: var(--tint-tan); color: var(--text-brown); }
+.badge-missing   { background: var(--tint-red); color: var(--tint-red-ink); }
+.note-badge      { margin-left: 0; }
+.note-open       { background: var(--tint-green); color: var(--tint-green-ink); }
+.note-watch      { background: var(--tint-amber); color: var(--tint-amber-ink); }
+.note-done       { background: var(--tint-gray); color: var(--tint-gray-ink); }
+.note-tag        { background: var(--badge-neutral-bg); color: var(--text-brown); margin-left: 0; }
+.note-text       { white-space: pre-wrap; }
+.clear-toggle    {
+  font-size: 0.78rem;
+  color: var(--muted);
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  margin-top: 4px;
+}
+.clear-toggle input {
+  width: auto;
+  padding: 0;
+  margin: 0;
+}
+.flash {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: var(--accent-soft);
+  border: 1px solid var(--flash-border);
+  border-radius: 10px;
+}
+.flash-error {
+  background: var(--flash-error-bg);
+  border-color: var(--flash-error-border);
+}
+.segmented-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 16px;
+}
+.segmented-control a {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--white);
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+.segmented-control a:hover {
+  background: var(--accent-soft);
+}
+.segmented-control a.active {
+  background: var(--accent);
+  color: var(--panel);
+  border-color: var(--accent);
+}
+.score-help {
+  border-bottom: 1px dotted var(--muted);
+  cursor: help;
+}
+.source-alternate {
+  color: var(--accent);
+  font-size: 0.86rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.benchmark-toggle {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  text-decoration: none;
+  margin-right: 4px;
+  font-weight: 600;
+}
+.benchmark-toggle.active { background: var(--teal); color: var(--white); border-color: var(--teal); }
+/* Click-to-explain: the one info affordance across the app (no hover tooltip). */
+.help-anchor { display: inline-flex; margin-left: 5px; vertical-align: middle; }
+.help-icon {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--help-icon-border);
+  background: var(--paper);
+  color: var(--text-soft);
+  font: italic 700 10px/14px var(--font-ui);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.help-icon:hover { background: var(--surface-soft-hover); color: var(--ink-strong); }
+.help-icon:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.help-icon[aria-expanded="true"] { background: var(--ink-strong); color: var(--paper); border-color: var(--ink-strong); }
+.help-panel {
+  position: fixed;
+  z-index: var(--z-popover);
+  display: none;
+  max-width: 340px;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  box-shadow: var(--shadow-popover);
+  padding: 12px 14px;
+  font: 0.82rem/1.5 var(--font-ui);
+  color: var(--ink-strong);
+  text-align: left;
+  font-weight: 400;
+}
+.help-panel.is-visible { display: block; }
+.help-panel-title { font-weight: 700; margin-bottom: 4px; }
+.help-panel-meaning { margin: 0 0 8px; white-space: pre-line; }
+.help-panel-formula {
+  background: var(--formula-bg);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+}
+.help-panel-formula-label {
+  display: block;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--formula-label-ink);
+  margin-bottom: 3px;
+}
+.help-panel-formula code {
+  font: 0.74rem/1.45 var(--font-data);
+  color: var(--ink-strong);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* "This stock" section: this row's instantiation of the formula. */
+.help-panel-values {
+  background: var(--values-bg);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+}
+.help-panel-values-label {
+  display: block;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--values-label-ink);
+  margin-bottom: 3px;
+}
+.help-panel-values-text {
+  font: 0.78rem/1.45 var(--font-data);
+  color: var(--ink-strong);
+  white-space: pre-line;
+  word-break: break-word;
+}
+.help-readmore {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--teal);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.help-readmore:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.help-panel-more { margin-top: 8px; white-space: pre-line; color: var(--text-soft); }
+/* Scorecard verdict cards (evidence state, not investment quality) */
+.scorecard-group {
+  margin-bottom: 18px;
+}
+.scorecard-group-heading {
+  font-size: 0.82rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  margin: 0 0 8px 0;
+}
+.scorecard-card { margin-bottom: 12px; }
+.scorecard-verdict {
+  display: inline-block;
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding: 3px 10px;
+  border-radius: 999px;
+  margin-bottom: 6px;
+}
+.verdict-supported { background: var(--verdict-supported-bg); color: var(--verdict-supported-ink); }
+.verdict-not-supported { background: var(--verdict-not-supported-bg); color: var(--verdict-not-supported-ink); }
+.verdict-inconclusive { background: var(--verdict-inconclusive-bg); color: var(--warn-ink); }
+.verdict-partial { background: var(--verdict-partial-bg); color: var(--verdict-partial-ink); }
+.verdict-accruing { background: var(--verdict-accruing-bg); color: var(--verdict-accruing-ink); }
+.scorecard-claim { font-weight: 600; margin-bottom: 4px; }

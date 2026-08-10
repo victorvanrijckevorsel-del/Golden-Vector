@@ -75,10 +75,22 @@ def _fmt_note_tag(value: Any) -> str:
     return f"<span class=\"badge note-tag\">{text}</span>"
 
 
-def _metric_card(title: str, value: str) -> str:
+def _metric_card(title: str, value: str, *, help_text: str | None = None) -> str:
+    """The one shared metric-card renderer (plan section 10.2).
+
+    ``help_text`` opts into the standard click-to-explain icon next to the
+    title; imported lazily so this formatting module stays import-light for
+    callers that never use help.
+    """
+    if help_text:
+        from golden_vector.serve.column_help import help_term
+
+        heading = help_term(title, text=help_text)
+    else:
+        heading = escape(title)
     return (
         "<article class=\"panel metric-card\">"
-        f"<h3>{escape(title)}</h3><p>{value}</p>"
+        f"<h3>{heading}</h3><p>{value}</p>"
         "</article>"
     )
 

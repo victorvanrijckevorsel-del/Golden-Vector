@@ -1,0 +1,30 @@
+/* Application frame and navigation. Phase 1 keeps the legacy top tab bar;
+   the Phase 2 shell (sidebar + drawer) replaces the rules in this file. */
+.top-nav {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 18px 20px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.nav-tab {
+  padding: 10px 18px;
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: var(--panel);
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.nav-tab.active {
+  background: var(--accent);
+  color: var(--white);
+  border-color: var(--accent);
+}
+.nav-tab:hover:not(.active) {
+  background: var(--accent-soft);
+}
