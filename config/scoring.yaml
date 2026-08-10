@@ -17,8 +17,9 @@ confidence_thresholds:
   low_max: 0.45
   high_min: 0.8
   minimum_rankable: 0.55
-  fit_warn_r_squared: 0.15
-  fit_good_r_squared: 0.3
+  gold_link_r2_strong: 0.4
+  gold_link_r2_moderate: 0.25
+  gold_link_r2_weak: 0.1
   minimum_observations_6m: 20
   minimum_observations_12m: 40
   minimum_observations_3y: 120

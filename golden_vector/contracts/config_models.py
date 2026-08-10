@@ -1013,8 +1013,15 @@ class ConfidenceThresholds(StrictConfigModel):
     low_max: float = 0.5
     high_min: float = 0.8
     minimum_rankable: float = 0.45
-    fit_warn_r_squared: float = 0.15
-    fit_good_r_squared: float = 0.3
+    # Gold-link (R²) display bands: how much of a stock's moves gold explains
+    # before a window's numbers render as trusted (strong/moderate reliable;
+    # weak/none muted + excluded from ordering). These replaced the dead
+    # fit_warn_r_squared/fit_good_r_squared pair (declared, read by nothing,
+    # and numerically disagreeing with the live serve literals — deep-review
+    # F3, 2026-08-11). Values preserve the previously hardcoded behavior.
+    gold_link_r2_strong: float = 0.40
+    gold_link_r2_moderate: float = 0.25
+    gold_link_r2_weak: float = 0.10
     minimum_observations_6m: int = 20
     minimum_observations_12m: int = 40
     minimum_observations_3y: int = 120
@@ -1033,10 +1040,15 @@ class ConfidenceThresholds(StrictConfigModel):
             )
         if not (0.0 <= self.minimum_rankable <= 1.0):
             raise ValueError("minimum_rankable must be between 0 and 1")
-        if not (0.0 <= self.fit_warn_r_squared < self.fit_good_r_squared <= 1.0):
+        if not (
+            0.0 <= self.gold_link_r2_weak
+            < self.gold_link_r2_moderate
+            < self.gold_link_r2_strong
+            <= 1.0
+        ):
             raise ValueError(
-                "fit R-squared thresholds must satisfy "
-                "0 <= fit_warn_r_squared < fit_good_r_squared <= 1"
+                "gold-link R-squared bands must satisfy "
+                "0 <= weak < moderate < strong <= 1"
             )
         if min(
             self.minimum_observations_6m,

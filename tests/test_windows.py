@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from golden_vector.contracts.config_models import ConfidenceThresholds
 from golden_vector.serve.windows import (
     DEFAULT_WINDOW,
     DISPLAY_WINDOWS,
@@ -27,12 +28,15 @@ def test_resolve_window_normalises_aliases_and_defaults():
     assert resolve_window(None) == DEFAULT_WINDOW
 
 
+_BANDS = ConfidenceThresholds()
+
+
 def test_r2_band_thresholds():
-    assert r2_band(0.55) == ("strong", True)
-    assert r2_band(0.30) == ("moderate", True)
-    assert r2_band(0.15) == ("weak", False)
-    assert r2_band(0.02) == ("none", False)
-    assert r2_band(None) == ("—", False)
+    assert r2_band(0.55, thresholds=_BANDS) == ("strong", True)
+    assert r2_band(0.30, thresholds=_BANDS) == ("moderate", True)
+    assert r2_band(0.15, thresholds=_BANDS) == ("weak", False)
+    assert r2_band(0.02, thresholds=_BANDS) == ("none", False)
+    assert r2_band(None, thresholds=_BANDS) == ("—", False)
 
 
 def test_window_is_reliable_treats_ELIGIBLE_as_usable():
@@ -42,20 +46,20 @@ def test_window_is_reliable_treats_ELIGIBLE_as_usable():
     per-window sample-size floor lives in config and is enforced upstream via the status
     (a thin window is written LOW_OBSERVATION, not ELIGIBLE) — there is no serve weeks gate."""
     strong_eligible = {"r_squared": 0.54, "status": "ELIGIBLE", "weeks": 52}
-    assert window_is_reliable(strong_eligible) is True
+    assert window_is_reliable(strong_eligible, thresholds=_BANDS) is True
     # weak fit stays muted even when ELIGIBLE
-    assert window_is_reliable({"r_squared": 0.12, "status": "ELIGIBLE", "weeks": 52}) is False
+    assert window_is_reliable({"r_squared": 0.12, "status": "ELIGIBLE", "weeks": 52}, thresholds=_BANDS) is False
     # a thin sample is muted via its status (the model routes it to LOW_OBSERVATION) — this
     # is the canonical degraded-data signal, NOT a hardcoded serve week floor.
-    assert window_is_reliable({"r_squared": 0.54, "status": "LOW_OBSERVATION", "weeks": 8}) is False
-    assert window_is_reliable({"r_squared": 0.54, "status": "INELIGIBLE", "weeks": 52}) is False
+    assert window_is_reliable({"r_squared": 0.54, "status": "LOW_OBSERVATION", "weeks": 8}, thresholds=_BANDS) is False
+    assert window_is_reliable({"r_squared": 0.54, "status": "INELIGIBLE", "weeks": 52}, thresholds=_BANDS) is False
     # plain OK / explicit empty still count as usable (defensive legacy blank status),
     # but a missing/null status is degraded, not silently treated as trustworthy.
-    assert window_is_reliable({"r_squared": 0.54, "status": "OK", "weeks": 52}) is True
-    assert window_is_reliable({"r_squared": 0.54, "status": "", "weeks": 52}) is True
-    assert window_is_reliable({"r_squared": 0.54, "status": None, "weeks": 52}) is False
-    assert window_is_reliable({"r_squared": 0.54, "status": pd.NA, "weeks": 52}) is False
-    assert window_is_reliable({"r_squared": 0.54, "weeks": 52}) is False
+    assert window_is_reliable({"r_squared": 0.54, "status": "OK", "weeks": 52}, thresholds=_BANDS) is True
+    assert window_is_reliable({"r_squared": 0.54, "status": "", "weeks": 52}, thresholds=_BANDS) is True
+    assert window_is_reliable({"r_squared": 0.54, "status": None, "weeks": 52}, thresholds=_BANDS) is False
+    assert window_is_reliable({"r_squared": 0.54, "status": pd.NA, "weeks": 52}, thresholds=_BANDS) is False
+    assert window_is_reliable({"r_squared": 0.54, "weeks": 52}, thresholds=_BANDS) is False
 
 
 def test_window_metrics_reads_the_selected_window_columns():
@@ -84,8 +88,8 @@ def test_window_metrics_reads_the_selected_window_columns():
     assert m5y["up_beta"] == 1.45 and m5y["down_beta"] == 1.10 and m5y["status"] == "LOW_OBSERVATION"
     # a thin 5Y window (LOW_OBSERVATION) is muted even with a moderate fit; a healthy
     # control (2Y ELIGIBLE, moderate fit) stays reliable.
-    assert window_is_reliable(m5y) is False
-    assert window_is_reliable(m2y) is True
+    assert window_is_reliable(m5y, thresholds=_BANDS) is False
+    assert window_is_reliable(m2y, thresholds=_BANDS) is True
 
 
 def test_scoring_and_display_window_split_is_consistent():
@@ -105,3 +109,14 @@ def test_render_window_selector_offers_all_five_windows_with_1y_label():
     # the active window carries the 'active' class; the search term is preserved
     assert "window-tab active" in html and "window=2Y" in html
     assert "search=GOLD" in html
+
+
+def test_r2_bands_come_from_config_not_literals():
+    """Deep-review F3: editing the config MUST change the banding (the old
+    literals ignored config entirely; the dead fit_* keys are gone)."""
+    custom = ConfidenceThresholds(
+        gold_link_r2_strong=0.9, gold_link_r2_moderate=0.6, gold_link_r2_weak=0.3
+    )
+    assert r2_band(0.55, thresholds=_BANDS) == ("strong", True)
+    assert r2_band(0.55, thresholds=custom) == ("weak", False)
+    assert r2_band(0.65, thresholds=custom) == ("moderate", True)

@@ -18,6 +18,7 @@ from typing import Any
 from urllib.parse import quote
 
 from golden_vector.common.numeric import is_missing
+from golden_vector.contracts.config_models import ConfidenceThresholds
 # Window topology comes from the ONE registry (golden_vector/common/windows.py). This module
 # re-exports the names serve surfaces already import from here, and keeps the serve-only
 # render helpers (selector, cells, reliability) below.
@@ -64,19 +65,22 @@ def window_metrics(row: dict[str, Any], window_id: str) -> dict[str, Any]:
     }
 
 
-def r2_band(r_squared: float | None) -> tuple[str, bool]:
+def r2_band(
+    r_squared: float | None, *, thresholds: "ConfidenceThresholds"
+) -> tuple[str, bool]:
     """How much of the stock's moves gold explains in this window → (label, reliable).
 
-    Bands: strong ≥0.40, moderate ≥0.25 (both reliable); weak ≥0.10, none <0.10 (NOT
-    reliable — the beta is barely meaningful, e.g. a name that doesn't really track gold).
-    """
+    Bands come from config (deep-review F3 — the literals here used to twin,
+    and disagree with, dead scoring.yaml keys): strong/moderate are reliable;
+    weak/none are NOT (the beta is barely meaningful, e.g. a name that doesn't
+    really track gold)."""
     if r_squared is None:
         return ("—", False)
-    if r_squared >= 0.40:
+    if r_squared >= thresholds.gold_link_r2_strong:
         return ("strong", True)
-    if r_squared >= 0.25:
+    if r_squared >= thresholds.gold_link_r2_moderate:
         return ("moderate", True)
-    if r_squared >= 0.10:
+    if r_squared >= thresholds.gold_link_r2_weak:
         return ("weak", False)
     return ("none", False)
 
@@ -88,7 +92,9 @@ def r2_band(r_squared: float | None) -> tuple[str, bool]:
 _USABLE_WINDOW_STATUSES = ("", "OK", "ELIGIBLE")
 
 
-def window_is_reliable(metrics: dict[str, Any]) -> bool:
+def window_is_reliable(
+    metrics: dict[str, Any], *, thresholds: "ConfidenceThresholds"
+) -> bool:
     """A window's betas are trustworthy only when the window status is usable
     (ELIGIBLE/OK) and the fit is at least moderate.
 
@@ -98,7 +104,7 @@ def window_is_reliable(metrics: dict[str, Any]) -> bool:
     serve-side week floor would be a hardcoded twin of that config value, and a single
     flat floor is wrong per-window (20 weeks is fine for 6M but far below the 200 a 5Y
     window needs). So reliability defers to the backend status, never a literal here."""
-    _band, fit_ok = r2_band(metrics.get("r_squared"))
+    _band, fit_ok = r2_band(metrics.get("r_squared"), thresholds=thresholds)
     raw_status = metrics.get("status") if "status" in metrics else None
     status_ok = (
         raw_status is not None
@@ -128,10 +134,10 @@ def win_num_td(value: float | None, *, reliable: bool, decimals: int = 2) -> str
     )
 
 
-def gold_link_td(r_squared: float | None) -> str:
+def gold_link_td(r_squared: float | None, *, thresholds: "ConfidenceThresholds") -> str:
     """The trust column: how much of the stock's moves gold explains in this window.
     Sortable by R² via ``data-order``; weak/none is muted. Shared by the A and C overviews."""
-    band, fit_ok = r2_band(r_squared)
+    band, fit_ok = r2_band(r_squared, thresholds=thresholds)
     if r_squared is None:
         return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\"><span class=\"hint\">—</span></td>"
     inner = f"{band} · {r_squared * 100:.0f}%"

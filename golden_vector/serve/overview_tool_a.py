@@ -23,6 +23,7 @@ from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.ui.components import page_header
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
+from golden_vector.contracts.config_models import ConfidenceThresholds
 from golden_vector.serve.windows import (
     WINDOW_LABELS,
     gold_link_td,
@@ -117,11 +118,18 @@ def _render_tool_a_overview_page(
                                  r["tool_a_rank"] if r["tool_a_rank"] is not None else 0.0,
                                  r["ticker"]))
 
+    # Gold-link bands live once, in config (deep-review F3); the defaults
+    # mirror config so a config-less test render behaves identically.
+    bands = (
+        app_config.scoring.confidence_thresholds
+        if app_config is not None
+        else ConfidenceThresholds()
+    )
     rows_html: list[str] = []
     for row in derived:
         ta = row["tool_a_row"]
         m = window_metrics(ta, active_window)
-        reliable = window_is_reliable(m)
+        reliable = window_is_reliable(m, thresholds=bands)
         # Carry the active window through to the detail page so the selection isn't lost on
         # click-through (the detail page honours scoring windows and falls back gracefully
         # for the display-only 2Y/5Y). Reuse the shared suffix helper — no inline .lower().
@@ -131,7 +139,7 @@ def _render_tool_a_overview_page(
             f"<td><a href=\"{ticker_href}\">{escape(row['ticker'])}</a></td>"
             + win_num_td(m["up_beta"], reliable=reliable)
             + win_num_td(m["down_beta"], reliable=reliable)
-            + gold_link_td(m["r_squared"])
+            + gold_link_td(m["r_squared"], thresholds=bands)
             + win_num_td(m["delta"], reliable=reliable)
             + win_num_td(m["gamma"], reliable=reliable)
             + win_num_td(m["asymmetry"], reliable=reliable)

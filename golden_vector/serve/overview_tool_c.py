@@ -16,6 +16,7 @@ from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.ui.components import page_header
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
+from golden_vector.contracts.config_models import ConfidenceThresholds
 from golden_vector.serve.windows import (
     WINDOW_LABELS,
     gold_link_td,
@@ -56,13 +57,19 @@ def _render_tool_c_overview_page(
     # ticker asc). Serve must not re-sort — a coarser re-sort here can only
     # scramble the writer's tie-breaks.
 
+    # Gold-link bands live once, in config (deep-review F3).
+    bands = (
+        app_config.scoring.confidence_thresholds
+        if app_config is not None
+        else ConfidenceThresholds()
+    )
     rows_html: list[str] = []
     for row in frame.to_dict(orient="records"):
         ticker = str(row.get("ticker") or "")
         # Windowed up/down beta + Gold-link for the selected lookback (muted when the
         # window's gold-link is weak/thin). The rank columns stay on the *_core scores.
         m = window_metrics(row, active_window)
-        reliable = window_is_reliable(m)
+        reliable = window_is_reliable(m, thresholds=bands)
         ticker_href = f"/ticker/{escape(ticker)}?window={window_suffix(active_window)}"
         rows_html.append(
             "<tr>"
@@ -71,7 +78,7 @@ def _render_tool_c_overview_page(
             f"{_fmt_numeric_td(row.get('tool_c_upside_rank'), decimals=1)}"
             + win_num_td(m["down_beta"], reliable=reliable)
             + win_num_td(m["up_beta"], reliable=reliable)
-            + gold_link_td(m["r_squared"])
+            + gold_link_td(m["r_squared"], thresholds=bands)
             + f"{_fmt_numeric_td(row.get('downside_hit_rate_10pct'), decimals=1, as_percent=True)}"
             + f"{_fmt_numeric_td(row.get('upside_hit_rate_10pct'), decimals=1, as_percent=True)}"
             + collapsible_text_td(row.get("tool_c_downside_tags"))
