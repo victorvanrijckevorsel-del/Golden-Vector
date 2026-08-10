@@ -117,6 +117,18 @@ Severity: HIGH = misleads the user or corrupts workflow state; MEDIUM = wrong/in
 - **Regression tests:** GET `/` with `?saved=company` asserts the notice.
 - **Affects analytics/data:** no.
 
+## D11 — Portfolio positions DataTable throws a blocking alert on every real-browser load
+- **Severity:** HIGH · **Impact:** P
+- **Route/files:** `/portfolio` — `golden_vector/serve/portfolio_page.py:416` (positions table `<table class="js-datatable">` with **no `id` attribute**), nested per-position lots tables rendered inside its rows.
+- **Observable behaviour:** on the live workspace, loading `/portfolio` in a real browser pops a modal `alert()`: `DataTables warning: table id=DataTables_Table_0 - Requested unknown parameter '16' for row 0, column 16`. The user must dismiss it on every visit; the positions table's sort/filter behaviour is unreliable after the error. Captured 2026-08-10 during the Phase 0 baseline browser matrix (`browser_measurements_before.json`, results[8].meta.alerts).
+- **Likely cause:** DataTables initializes over a table whose rows embed nested `<table>` disclosures (per-lot detail), so the column model it derives disagrees with the outer rows' cell count; the table also lacks an explicit `id` (auto `DataTables_Table_0`), which additionally breaks the `data-filter-target="#<id>"` named-filter contract used everywhere else.
+- **Why never caught:** zero JavaScript runtime coverage existed (the §18.2 gap) — every DataTables test asserts static markup only, and fixture pages were never loaded in a real browser.
+- **Discovered:** 2026-08-10 Phase 0 browser matrix.
+- **Why deferred:** behavioural (JS/table-structure) change. Exception note: the Phase 3/5 Portfolio migration restructures this exact markup into the shared table region; if the alert blocks migration QA, Codex's "blocks safe implementation" exception applies and the structural fix (lots disclosures out of the datatable-managed table + explicit id) may land with the migration, clearly labelled.
+- **Proposed fix:** give the positions table an explicit id; move nested lots tables out of the DataTables-managed table (or stop marking that table `js-datatable`); add a static guard test that every `js-datatable` table has an id and contains no nested `<table>`.
+- **Regression tests:** static guard above + browser-matrix zero-alert assertion on `/portfolio`.
+- **Affects analytics/data:** no.
+
 ---
 
 **Resolution log** (filled during post-Phase-8 follow-up): none yet.

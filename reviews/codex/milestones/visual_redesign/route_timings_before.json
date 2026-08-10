@@ -1,0 +1,79 @@
+{
+  "/": {
+    "status": 200,
+    "html_bytes": 95378,
+    "warm_ms_median": 339.7,
+    "warm_ms_min": 313.0,
+    "warm_ms_max": 400.7
+  },
+  "/tool-a": {
+    "status": 200,
+    "html_bytes": 111528,
+    "warm_ms_median": 123.3,
+    "warm_ms_min": 111.4,
+    "warm_ms_max": 136.5
+  },
+  "/tool-b": {
+    "status": 200,
+    "html_bytes": 226180,
+    "warm_ms_median": 161.9,
+    "warm_ms_min": 129.4,
+    "warm_ms_max": 275.4
+  },
+  "/tool-c": {
+    "status": 200,
+    "html_bytes": 38294,
+    "warm_ms_median": 147.1,
+    "warm_ms_min": 127.2,
+    "warm_ms_max": 313.3
+  },
+  "/tool-d": {
+    "status": 200,
+    "html_bytes": 66236,
+    "warm_ms_median": 238.3,
+    "warm_ms_min": 231.5,
+    "warm_ms_max": 284.7
+  },
+  "/option-trading": {
+    "status": 200,
+    "html_bytes": 38789,
+    "warm_ms_median": 457.6,
+    "warm_ms_min": 364.7,
+    "warm_ms_max": 583.1
+  },
+  "/portfolio": {
+    "status": 200,
+    "html_bytes": 149184,
+    "warm_ms_median": 700.1,
+    "warm_ms_min": 558.7,
+    "warm_ms_max": 812.0
+  },
+  "/lab": {
+    "status": 200,
+    "html_bytes": 31642,
+    "warm_ms_median": 104.4,
+    "warm_ms_min": 80.2,
+    "warm_ms_max": 129.2
+  },
+  "/scorecard": {
+    "status": 200,
+    "html_bytes": 7889,
+    "warm_ms_median": 33.4,
+    "warm_ms_min": 18.6,
+    "warm_ms_max": 45.9
+  },
+  "/ticker/NEM": {
+    "status": 200,
+    "html_bytes": 103794,
+    "warm_ms_median": 3261.4,
+    "warm_ms_min": 3205.2,
+    "warm_ms_max": 3379.4
+  },
+  "/ticker/NEM?lens=option-trading": {
+    "status": 200,
+    "html_bytes": 162589,
+    "warm_ms_median": 3808.3,
+    "warm_ms_min": 3713.8,
+    "warm_ms_max": 3950.1
+  }
+}
