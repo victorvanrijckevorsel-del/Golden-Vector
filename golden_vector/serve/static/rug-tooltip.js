@@ -18,11 +18,21 @@
     });
 
     function place(x, y) {
-      tip.style.left = x + 14 + "px";
-      tip.style.top = y + 14 + "px";
+      // Clamp so the (nowrap) label never clips at the viewport edges.
+      var left = x + 14;
+      var top = y + 14;
+      var rect = tip.getBoundingClientRect();
+      if (rect.width && left + rect.width > window.innerWidth - 4) {
+        left = Math.max(4, x - 14 - rect.width);
+      }
+      if (rect.height && top + rect.height > window.innerHeight - 4) {
+        top = Math.max(4, y - 14 - rect.height);
+      }
+      tip.style.left = left + "px";
+      tip.style.top = top + "px";
     }
 
-    document.addEventListener("mouseover", function (event) {
+    document.addEventListener("pointerover", function (event) {
       var tick = event.target.closest && event.target.closest(".rug-tick");
       if (!tick) return;
       var label = tick.getAttribute("data-rug");
@@ -32,7 +42,7 @@
       place(event.clientX, event.clientY);
     });
 
-    document.addEventListener("mousemove", function (event) {
+    document.addEventListener("pointermove", function (event) {
       if (tip.hidden) return;
       if (event.target.closest && event.target.closest(".rug-tick")) {
         place(event.clientX, event.clientY);
@@ -41,7 +51,7 @@
       }
     });
 
-    document.addEventListener("mouseout", function (event) {
+    document.addEventListener("pointerout", function (event) {
       if (event.target.closest && event.target.closest(".rug-tick")) {
         tip.hidden = true;
       }
@@ -49,7 +59,7 @@
 
     // Belt-and-braces: clear the label if the pointer leaves the page entirely or the tab is
     // backgrounded while still over a tick (mouseout/mousemove may not fire in those cases).
-    document.addEventListener("mouseleave", function () {
+    document.addEventListener("pointerleave", function () {
       tip.hidden = true;
     });
     window.addEventListener("blur", function () {

@@ -68,7 +68,7 @@
       tip.style.top = Math.max(0, top) + "px";
     }
 
-    svg.addEventListener("mousemove", function (event) {
+    svg.addEventListener("pointermove", function (event) {
       var box = svg.getBoundingClientRect();
       if (!box.width) return;
       var vb = svg.viewBox.baseVal;
@@ -119,7 +119,7 @@
       position(event);
     });
 
-    svg.addEventListener("mouseleave", hide);
+    svg.addEventListener("pointerleave", hide);
   }
 
   function init() {
@@ -139,7 +139,7 @@
         h();
       });
     }
-    document.addEventListener("mouseleave", hideAll);
+    document.addEventListener("pointerleave", hideAll);
     window.addEventListener("blur", hideAll);
     window.addEventListener("scroll", hideAll, true);
 

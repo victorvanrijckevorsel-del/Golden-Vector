@@ -164,3 +164,19 @@ text.series-zero { fill: var(--chart-zero); stroke: none; }
 .legend-swatch-overlay-stock { color: var(--chart-overlay-stock); }
 .legend-swatch-overlay-gdx { color: var(--chart-overlay-gdx); }
 .legend-swatch-overlay-gdxj { color: var(--chart-overlay-gdxj); }
+/* Non-colour series distinction (plan phase 6 gate: no colour-only chart
+   distinction): the stock line stays solid; each benchmark gets its own dash
+   pattern so overlapping lines separate without relying on hue. */
+line.series-gold, polyline.series-gold, path.series-gold { stroke-dasharray: 8 4; }
+line.series-gdx, polyline.series-gdx, path.series-gdx,
+line.series-overlay-gdx, polyline.series-overlay-gdx, path.series-overlay-gdx { stroke-dasharray: 5 3; }
+line.series-gdxj, polyline.series-gdxj, path.series-gdxj,
+line.series-overlay-gdxj, polyline.series-overlay-gdxj, path.series-overlay-gdxj { stroke-dasharray: 2 3; }
+/* Charts keep author colours under forced-colors: colour IS the data channel
+   (WCAG-sanctioned for data visualisation); everything else adapts to the
+   forced palette naturally. */
+@media (forced-colors: active) {
+  svg [class^="series-"], svg [class*=" series-"], svg [class^="chart-"] {
+    forced-color-adjust: none;
+  }
+}

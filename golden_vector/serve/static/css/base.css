@@ -64,3 +64,23 @@ button:hover {
 .hint {
   color: var(--muted);
 }
+/* Long-content hardening (plan phase 6): long run ids, error strings, and
+   labels wrap instead of widening their containers. break-word only splits
+   when a value would otherwise overflow. */
+.notice,
+.flash,
+td,
+.status-item-value {
+  overflow-wrap: break-word;
+}
+.status-item-value {
+  overflow-wrap: anywhere;
+}
+/* Forced colors: the background tint that marks the current nav entry
+   disappears, so restore the cue with a system-colour outline. */
+@media (forced-colors: active) {
+  .nav-link[aria-current="page"] {
+    outline: 2px solid CanvasText;
+    outline-offset: -2px;
+  }
+}

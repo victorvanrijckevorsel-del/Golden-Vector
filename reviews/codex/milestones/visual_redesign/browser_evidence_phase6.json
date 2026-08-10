@@ -1,0 +1,16 @@
+{
+  "when": "2026-08-10",
+  "gate": "Phase 6 accessibility/responsive gate (one batched Playwright run)",
+  "overflow_worst_px_across_4_widths": {
+    "/": 0, "/tool-a": 0, "/tool-b": 0, "/tool-c": 0, "/tool-d": 0,
+    "/option-trading": 0, "/portfolio": 0, "/lab": 0, "/scorecard": 0,
+    "/ticker/NEM": 0, "/lab/dial/NEM": 0
+  },
+  "popover_edge_clamp_400px": {"found": true, "fits": true, "panel_width": 333},
+  "rug_tooltip": {"pointerover_shows": true, "clamps_at_right_edge": true},
+  "forced_colors_current_nav_cue": {"outlineStyle": "solid", "outlineWidth": "2px"},
+  "skip_link_first_tab": {"focused": true, "visible": true},
+  "console_errors_across_44_loads": 0,
+  "documented_gap": "Chart hover detail (rug ticks, overlay crosshair) has no keyboard equivalent. Mitigations: pointer events now cover touch taps; every decision-relevant number (betas, ranks, scores) is in keyboard-accessible tables on the same pages; the SVG <title> no-JS fallback remains. Recorded as an explicit accepted gap per the Phase 6 task wording.",
+  "verdict": "PASS"
+}
