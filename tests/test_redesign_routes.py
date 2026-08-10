@@ -347,7 +347,7 @@ def test_return_to_rejects_control_characters(tmp_path):
     """D4 RESOLVED: CR/LF (and other control chars) in return_to fall back to
     the safe ticker path instead of reaching the Location header."""
     _paths, app = _minimal_app(tmp_path)
-    for evil in ("/x\r\nInjected: 1", "/x\nInjected: 1", "//evil.example", "/x\evil"):
+    for evil in ("/x\r\nInjected: 1", "/x\nInjected: 1", "//evil.example", r"/x\evil"):
         response = call_wsgi_app(
             app,
             method="POST",
@@ -418,3 +418,40 @@ def test_refresh_post_signals_already_running(tmp_path, monkeypatch):
     page = call_wsgi_app(app, method="GET", path="/option-trading?refresh=already-running")
     assert "A data refresh is already running; no new refresh was started." in page["body"]
     assert "notice-info" in page["body"]
+
+
+@pytest.mark.parametrize("bad_value", ["abc", "0", "-1", "inf"])
+def test_candidate_finder_bad_gold_price_renders_screen_at_400(tmp_path, bad_value):
+    """D6 RESOLVED: a rejected gold-price scenario still returns the persisted Candidate
+    Finder screen (computed without the scenario) at 400, with a danger notice."""
+    _paths, app = _full_app(tmp_path)
+
+    response = call_wsgi_app(app, method="GET", path=f"/candidate-finder?gold_price={bad_value}")
+    assert response["status"].startswith("400")
+    assert "notice notice-danger" in response["body"]
+    assert "gold_price must be" in response["body"]
+    # The real screen rendered, not the bare workspace-error page.
+    assert "candidate-gold-scenario-panel" in response["body"]
+    assert "Workspace Error" not in response["body"]
+
+
+def test_landing_bad_gold_price_renders_screen_at_400(tmp_path):
+    """D6 RESOLVED: the landing route ("/") behaves identically to /candidate-finder."""
+    _paths, app = _full_app(tmp_path)
+
+    response = call_wsgi_app(app, method="GET", path="/?gold_price=abc")
+    assert response["status"].startswith("400")
+    assert "notice notice-danger" in response["body"]
+    assert "gold_price must be numeric" in response["body"]
+    assert "candidate-gold-scenario-panel" in response["body"]
+    assert "Workspace Error" not in response["body"]
+
+
+def test_candidate_finder_valid_gold_price_has_no_danger_notice(tmp_path):
+    """Control: a valid gold price is accepted (200, no danger notice)."""
+    _paths, app = _full_app(tmp_path)
+
+    response = call_wsgi_app(app, method="GET", path="/candidate-finder?gold_price=2500")
+    assert response["status"].startswith("200")
+    # No D6 parse-error notice (the model-state banner may legitimately use notice-danger).
+    assert "gold_price must be" not in response["body"]

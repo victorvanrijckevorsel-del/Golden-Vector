@@ -118,6 +118,7 @@ def render_candidate_finder_page(
     base_path: str = "/candidate-finder",
     refresh_status: OptionRefreshStatus | None = None,
     app_config: AppConfig | None = None,
+    error_message: str | None = None,
 ) -> str:
     """Render the Candidate Finder workspace page."""
 
@@ -129,6 +130,9 @@ def render_candidate_finder_page(
     # wording the ticker page uses.
     saved_flash = _flash_message(_first(query, "saved"))
     saved_notice = notice("success", saved_flash) if saved_flash else ""
+    # D6: a rejected gold-price scenario still renders this screen (computed without the
+    # scenario); the danger notice explains why the request was refused.
+    error_notice = notice("danger", escape(error_message)) if error_message else ""
 
     body = "\n".join(
         (
@@ -140,6 +144,7 @@ def render_candidate_finder_page(
                     "scan every stock or only optionable names.</p>"
                 ),
             ),
+            error_notice,
             saved_notice,
             render_model_state_banner(data.model_state_manifest),
             render_option_freshness_box(data.model_state_manifest, only_when_stale=True),

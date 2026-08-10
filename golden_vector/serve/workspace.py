@@ -296,14 +296,26 @@ def create_workspace_app(
                     )
                 return _redirect_response(start_response, target)
 
-            if method == "GET" and path == "/":
-                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+            def _candidate_finder_response(
+                query: dict[str, list[str]],
+                base_path: str,
+            ) -> list[bytes]:
                 try:
                     candidate_data = _candidate_finder_data_for_query(query)
                 except CandidateFinderScenarioError as exc:
+                    # D6: parse failure re-renders the persisted screen at 400.
+                    safe_query = {k: v for k, v in query.items() if k != "gold_price"}
+                    candidate_data = _candidate_finder_data_for_query(safe_query)
                     return _html_response(
                         start_response,
-                        _render_error_page(str(exc)),
+                        render_candidate_finder_page(
+                            candidate_data,
+                            query=query,
+                            base_path=base_path,
+                            refresh_status=read_option_refresh_status(paths),
+                            app_config=app_config,
+                            error_message=str(exc),
+                        ),
                         status="400 Bad Request",
                     )
                 return _html_response(
@@ -311,11 +323,15 @@ def create_workspace_app(
                     render_candidate_finder_page(
                         candidate_data,
                         query=query,
-                        base_path="/",
+                        base_path=base_path,
                         refresh_status=read_option_refresh_status(paths),
                         app_config=app_config,
                     ),
                 )
+
+            if method == "GET" and path == "/":
+                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+                return _candidate_finder_response(query, "/")
 
             if method == "GET" and path == "/tool-a":
                 state = _load_workspace_state(paths, normalized_tickers)
@@ -475,24 +491,7 @@ def create_workspace_app(
 
             if method == "GET" and path == "/candidate-finder":
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
-                try:
-                    candidate_data = _candidate_finder_data_for_query(query)
-                except CandidateFinderScenarioError as exc:
-                    return _html_response(
-                        start_response,
-                        _render_error_page(str(exc)),
-                        status="400 Bad Request",
-                    )
-                return _html_response(
-                    start_response,
-                    render_candidate_finder_page(
-                        candidate_data,
-                        query=query,
-                        base_path="/candidate-finder",
-                        refresh_status=read_option_refresh_status(paths),
-                        app_config=app_config,
-                    ),
-                )
+                return _candidate_finder_response(query, "/candidate-finder")
 
             if path.startswith("/ticker/"):
                 ticker, action = _parse_ticker_route(path)
