@@ -44,3 +44,6 @@ body.txt
 *.png
 CODE_REVIEW.md
 SESSION_HANDOFF.md
+
+# Visual redesign curated evidence screenshots (Codex Q1 decision 2026-08-10)
+!reviews/codex/milestones/visual_redesign/**/*.png
