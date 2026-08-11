@@ -595,6 +595,7 @@ def run_ticker_page_stage(
             "percentiles": int(len(percentiles.index)),
             "performance": int(len(performance.index)),
             "research_series": int(len(research_series.index)),
+            "fx_attribution": int(len(fx_attribution.index)),
             "linearity_diagnostics": int(len(diagnostics.index)),
         },
         "timings": timings,
