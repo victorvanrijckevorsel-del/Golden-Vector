@@ -3843,34 +3843,7 @@ def _run_refresh_unlocked(
             return fault_exit
 
         print()
-        print(f"== Step 6/{total_steps}: ticker-page ==")
-        started_at = perf_counter()
-        # Identity comes from the LIVE refresh context: mid-refresh the model-state
-        # manifest still names the PREVIOUS generation (it is published at the end
-        # of this function), so the stage reads the aliases step 1-5 just wrote and
-        # takes parent_refresh_id from this run (plan §5.5).
-        ticker_page_exit = run_ticker_page(
-            paths,
-            parent_refresh_id=parent_refresh_id,
-            _use_model_state_inputs=False,
-        )
-        record_step("ticker_page", started_at, ticker_page_exit)
-        if ticker_page_exit != 0:
-            deferred_ticker_page_exit = ticker_page_exit
-            print()
-            print(
-                "WARNING: ticker-page failed (exit code {}). Continuing the "
-                "refresh — option publication and portfolio must not be lost "
-                "to a page-layer failure. The model-state manifest will name "
-                "the ticker-page artifacts as missing or stale, and the "
-                "refresh exits non-zero at the end.".format(ticker_page_exit)
-            )
-        fault_exit = injected_fault_after("ticker_page")
-        if fault_exit is not None:
-            return fault_exit
-
-        print()
-        print(f"== Step 7/{total_steps}: option-artifacts ==")
+        print(f"== Step 6/{total_steps}: option-artifacts ==")
         started_at = perf_counter()
         option_outcome = run_option_artifacts_outcome(
             paths,
@@ -3906,6 +3879,38 @@ def _run_refresh_unlocked(
                 "option snapshot is carried forward if one exists."
             )
         fault_exit = injected_fault_after("option_artifacts")
+        if fault_exit is not None:
+            return fault_exit
+
+        print()
+        print(f"== Step 7/{total_steps}: ticker-page ==")
+        started_at = perf_counter()
+        # Runs AFTER option-artifacts so the performance producer resolves
+        # GDX/GDXJ from THIS generation's options manifest, not the previous
+        # one (self-review P1-3). Identity comes from the LIVE refresh context:
+        # mid-refresh the model-state manifest still names the PREVIOUS
+        # generation (it is published at the end of this function), so the
+        # stage reads the aliases the earlier steps just wrote and takes
+        # parent_refresh_id from this run (plan §5.5). A BLOCKED options
+        # publish leaves the previous manifest current; the benchmark
+        # staleness rule then marks those series honestly.
+        ticker_page_exit = run_ticker_page(
+            paths,
+            parent_refresh_id=parent_refresh_id,
+            _use_model_state_inputs=False,
+        )
+        record_step("ticker_page", started_at, ticker_page_exit)
+        if ticker_page_exit != 0:
+            deferred_ticker_page_exit = ticker_page_exit
+            print()
+            print(
+                "WARNING: ticker-page failed (exit code {}). Continuing the "
+                "refresh — option publication and portfolio must not be lost "
+                "to a page-layer failure. The model-state manifest will name "
+                "the ticker-page artifacts as missing or stale, and the "
+                "refresh exits non-zero at the end.".format(ticker_page_exit)
+            )
+        fault_exit = injected_fault_after("ticker_page")
         if fault_exit is not None:
             return fault_exit
 

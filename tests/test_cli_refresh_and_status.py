@@ -417,8 +417,8 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
         "tool-b@None",
         "tool-c",
         "tool-d@None",
-        "ticker-page",
         "option-artifacts",
+        "ticker-page",
         "portfolio",
     ]
     assert paths.latest_model_state_manifest_path.exists()
@@ -437,8 +437,11 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     assert "Step 3/8: tool-b" in out
     assert "Step 4/8: tool-c" in out
     assert "Step 5/8: tool-d (spot gold)" in out
-    assert "Step 6/8: ticker-page" in out
-    assert "Step 7/8: option-artifacts" in out
+    # Step order (self-review P1-3): option-artifacts publishes THIS
+    # generation's options manifest BEFORE ticker-page reads it for the
+    # benchmark performance series.
+    assert "Step 6/8: option-artifacts" in out
+    assert "Step 7/8: ticker-page" in out
     assert "Step 8/8: portfolio" in out
     assert "Model state manifest published:" in out
     assert "Refresh complete" in out
@@ -681,7 +684,8 @@ def test_refresh_option_artifact_failure_keeps_previous_manifest(
         "tool-b",
         "tool-c",
         "tool-d",
-        "ticker-page",
+        # option-artifacts FAILED aborts the refresh at step 6 — ticker-page
+        # (now step 7, after the options manifest it reads) never runs.
         "option-artifacts",
     ]
     assert current_manifest == previous_manifest

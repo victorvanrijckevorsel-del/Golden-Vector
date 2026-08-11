@@ -546,9 +546,11 @@ def test_refresh_continues_past_blocked_options_and_runs_portfolio(
 
     assert exit_code == 0, out
     assert "portfolio" in call_order
-    assert call_order.index("ticker-page") > call_order.index("tool-d")
-    assert call_order.index("option-artifacts") > call_order.index("ticker-page")
-    assert call_order.index("portfolio") > call_order.index("option-artifacts")
+    assert call_order.index("option-artifacts") > call_order.index("tool-d")
+    # ticker-page runs AFTER option-artifacts so it reads THIS generation's
+    # options manifest for the benchmark series (self-review P1-3).
+    assert call_order.index("ticker-page") > call_order.index("option-artifacts")
+    assert call_order.index("portfolio") > call_order.index("ticker-page")
     manifest = json.loads(
         paths.latest_model_state_manifest_path.read_text(encoding="utf-8")
     )
