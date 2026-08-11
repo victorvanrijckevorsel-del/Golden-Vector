@@ -99,6 +99,8 @@ CHAIN_HISTORY_COLUMNS: tuple[str, ...] = (
     # capture diagnostics
     "n_contracts",
     "n_expirations",
+    "put_n_contracts",
+    "call_n_contracts",
     "capture_quality",
     "row_status",
     # provenance (plan §6.2)

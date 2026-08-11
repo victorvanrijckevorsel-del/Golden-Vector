@@ -364,3 +364,64 @@ def test_unknown_open_interest_stays_unknown_while_volume_is_counted():
     assert features["put_call_oi_ratio_otm"] is None
     assert features["put_volume"] == 4
     assert features["call_volume"] == 3
+
+
+def test_per_horizon_source_expiry_and_side_counts_are_emitted():
+    chain = pd.read_parquet("tests/fixtures/options/aem_chain_20260529.parquet")
+
+    features = compute_options_features(
+        target_horizons_days=(30, 60, 90),
+        chain=chain,
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        price_history=_price_history(),
+        as_of_date=date(2026, 5, 29),
+        optionability_open_interest_threshold=100,
+    )
+
+    normalized_expirations = set(
+        pd.to_datetime(chain["expiration"]).dt.strftime("%Y-%m-%d")
+    )
+    for horizon in (30, 60, 90):
+        expiration = features[f"source_expiration_{horizon}d"]
+        dte = features[f"source_dte_{horizon}d"]
+        assert str(expiration)[:10] in normalized_expirations
+        assert isinstance(dte, int) and dte > 0
+
+    # 0 is a genuine count for a side; the chain here has both sides.
+    assert features["put_n_contracts"] + features["call_n_contracts"] == 8
+    assert features["put_n_contracts"] > 0
+    assert features["call_n_contracts"] > 0
+
+
+def test_one_sided_chain_counts_zero_but_an_empty_chain_is_unknown():
+    puts_only = pd.DataFrame(
+        [
+            _contract("P", 48.0, 1.0, 1.2, 0.40, 20, 5),
+            _contract("P", 50.0, 1.5, 1.7, 0.42, 30, 6),
+        ]
+    )
+    features = compute_options_features(
+        target_horizons_days=(30,),
+        chain=puts_only,
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        price_history=_price_history(),
+        as_of_date=date(2026, 5, 29),
+    )
+    assert features["put_n_contracts"] == 2
+    assert features["call_n_contracts"] == 0
+
+    empty = compute_options_features(
+        target_horizons_days=(30,),
+        chain=pd.DataFrame(),
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        price_history=pd.DataFrame(),
+        as_of_date=date(2026, 5, 29),
+    )
+    assert empty["put_n_contracts"] is None
+    assert empty["call_n_contracts"] is None
+    # Unresolved horizons still expose the provenance keys as explicit unknowns.
+    assert empty["source_expiration_30d"] is None
+    assert empty["source_dte_30d"] is None

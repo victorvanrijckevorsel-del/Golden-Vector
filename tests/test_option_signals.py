@@ -743,3 +743,55 @@ def test_widened_schema_merges_with_a_legacy_narrow_history(tmp_path):
     # New row keeps the widened fields.
     assert stored.loc["2026-06-11", "implied_move"] == pytest.approx(0.07)
     assert stored.loc["2026-06-11", "source_expiration"] == "2026-09-18"
+
+
+def test_history_carries_the_producers_real_expiry_and_dte_end_to_end(tmp_path):
+    """The keys compute_options_features actually emits reach the history row."""
+
+    from datetime import date
+
+    from golden_vector.features.options import compute_options_features
+
+    produced = compute_options_features(
+        chain=pd.read_parquet("tests/fixtures/options/aem_chain_20260529.parquet"),
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        price_history=pd.DataFrame(),
+        as_of_date=date(2026, 5, 29),
+        target_horizons_days=(90,),
+    )
+    expected_expiration = produced["source_expiration_90d"]
+    expected_dte = produced["source_dte_90d"]
+    assert expected_expiration is not None and expected_dte is not None
+
+    app_config = load_app_config(build_test_paths(tmp_path)).app
+    feature = _feature("AEM", skew_60=0.08, skew_90=0.07)
+    # Overlay ONLY the producer's real provenance keys onto the signal fixture.
+    feature.update(
+        {
+            "source_expiration_90d": expected_expiration,
+            "source_dte_90d": expected_dte,
+        }
+    )
+    artifacts = build_option_signal_artifacts(
+        app_config=app_config,
+        options_features=pd.DataFrame(
+            [
+                feature,
+                _feature("GDX", skew_60=0.03, skew_90=0.02, vehicle="benchmark_etf"),
+                _feature("GDXJ", skew_60=0.04, skew_90=0.03, vehicle="benchmark_etf"),
+            ]
+        ),
+        contract_metrics=tuple(
+            metric
+            for ticker in ("AEM", "GDX", "GDXJ")
+            for metric in _metrics(ticker, bid=3.0, ask=3.2)
+        ),
+        manifest={"refresh_run_id": "options-run", "as_of_date": "2026-06-08"},
+    )
+    history = artifacts.next_history
+    row = history[
+        (history["ticker"] == "AEM") & (history["signal_horizon_days"] == 90)
+    ].iloc[0]
+    assert row["source_expiration"] == expected_expiration
+    assert int(row["source_dte"]) == int(expected_dte)

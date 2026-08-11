@@ -161,6 +161,12 @@ def run_options_ingestion_phase(
                 options_available=result.options_available,
                 message=result.message,
             )
+            # Carry the fetch's numeric expiration evidence into the manifest so
+            # availability readers never have to parse the message prose.
+            record = replace(
+                record,
+                expiration_count_available=_expiration_count_available(result),
+            )
         except Exception as exc:  # noqa: BLE001 - per-ticker best effort by design.
             status_counts[OPTIONS_STATUS_ERROR] = (
                 status_counts.get(OPTIONS_STATUS_ERROR, 0) + 1
@@ -393,6 +399,19 @@ def _fetch_option_target(
             "message": result.message,
         },
     )
+
+
+def _expiration_count_available(result: OptionsChainResult) -> int | None:
+    """Expirations the vendor enumeration returned, or None when unrecorded."""
+
+    stats = getattr(result, "collection_stats", None) or {}
+    value = stats.get("expiration_count_available")
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _price_history_for_target(

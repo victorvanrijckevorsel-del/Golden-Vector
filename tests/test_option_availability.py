@@ -89,3 +89,69 @@ def test_no_snapshots_at_all_gives_unknown_for_everyone():
         capture_date="2026-08-10",
     )
     assert set(frame["availability_status"]) == {"UNKNOWN"}
+
+
+def test_numeric_expiration_evidence_outranks_the_message_text():
+    """A post-threading manifest decides on the count, not the prose."""
+
+    frame = build_option_availability(
+        universe_tickers=["ZERO", "WINDOW", "MISLABELLED"],
+        snapshot_records=[
+            # Enumeration succeeded and returned zero expirations.
+            {"ticker": "ZERO", "options_available": False, "row_count": 1,
+             "message": NO_LISTED_OPTIONS_MESSAGE, "feature_status": "OK",
+             "expiration_count_available": 0},
+            # Expirations existed; the configured window filtered them away.
+            {"ticker": "WINDOW", "options_available": False, "row_count": 1,
+             "message": WINDOW_FILTERED_MESSAGE, "feature_status": "OK",
+             "expiration_count_available": 14},
+            # Message says "no listed options" but 9 expirations were enumerated:
+            # the number wins, so the page never hides a name that has options.
+            {"ticker": "MISLABELLED", "options_available": False, "row_count": 1,
+             "message": NO_LISTED_OPTIONS_MESSAGE, "feature_status": "OK",
+             "expiration_count_available": 9},
+        ],
+        capture_date="2026-08-10",
+    ).set_index("ticker")
+
+    assert frame.loc["ZERO", "availability_status"] == "NONE_LISTED"
+    assert frame.loc["ZERO", "expirations_enumerated"] == 0
+    assert frame.loc["WINDOW", "availability_status"] == "FILTERED_WINDOW_EMPTY"
+    assert frame.loc["WINDOW", "expirations_enumerated"] == 14
+    assert frame.loc["MISLABELLED", "availability_status"] == "FILTERED_WINDOW_EMPTY"
+    assert frame.loc["MISLABELLED", "expirations_enumerated"] == 9
+
+
+def test_legacy_manifests_without_the_field_keep_their_old_statuses():
+    """Regression: the message mapping is unchanged for pre-threading entries."""
+
+    legacy = build().set_index("ticker")
+    assert legacy.loc["NOOPT", "availability_status"] == "NONE_LISTED"
+    assert legacy.loc["FILT", "availability_status"] == "FILTERED_WINDOW_EMPTY"
+    assert legacy.loc["BOOM", "availability_status"] == "FETCH_FAILED"
+    # An explicit None is as legacy as an absent key.
+    none_valued = build_option_availability(
+        universe_tickers=["NOOPT"],
+        snapshot_records=[
+            {"ticker": "NOOPT", "options_available": False, "row_count": 1,
+             "message": NO_LISTED_OPTIONS_MESSAGE, "feature_status": "OK",
+             "expiration_count_available": None},
+        ],
+        capture_date="2026-08-10",
+    )
+    assert none_valued.iloc[0]["availability_status"] == "NONE_LISTED"
+
+
+def test_a_failed_fetch_stays_fetch_failed_even_with_a_zero_count():
+    """The ERROR path records a zero count; it must not read as NONE_LISTED."""
+
+    frame = build_option_availability(
+        universe_tickers=["BOOM"],
+        snapshot_records=[
+            {"ticker": "BOOM", "options_available": False, "row_count": 1,
+             "message": "HTTPError: 500 from Yahoo", "feature_status": "ERROR",
+             "expiration_count_available": 0},
+        ],
+        capture_date="2026-08-10",
+    )
+    assert frame.iloc[0]["availability_status"] == "FETCH_FAILED"

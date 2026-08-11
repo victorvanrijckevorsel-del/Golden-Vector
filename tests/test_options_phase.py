@@ -65,6 +65,10 @@ def test_run_options_ingestion_phase_writes_manifest_snapshots_and_features(tmp_
         "GDX",
         "GDXJ",
     }.issubset({item["ticker"] for item in latest_manifest["snapshots"]})
+    # Numeric expiration evidence reaches the manifest, so availability readers
+    # never have to parse the message prose.
+    entries = {item["ticker"]: item for item in latest_manifest["snapshots"]}
+    assert entries["AEM"]["expiration_count_available"] == 2
     manifest = read_manifest(context.run_dir)
     assert manifest["options_manifest_status"] == "captured"
     source_asset_names = {

@@ -59,13 +59,20 @@ _RATIO_FIELDS: tuple[str, ...] = (
     "put_call_oi_ratio_total",
     "put_call_oi_ratio_otm",
 )
-# Trailing-coverage floors are judged on these (plan §6.3 also wants per-SIDE
-# contract counts; `compute_options_features` does not emit them yet — see the
-# follow-up in the handoff note).
+# Trailing-coverage floors are judged on these three always-present fields...
 _COVERAGE_FIELDS: tuple[str, ...] = (
     "n_expirations",
     "n_contracts",
     "total_open_interest",
+)
+# ...plus the per-SIDE contract counts (plan §6.3) when they are available.
+# These are OPTIONAL: `compute_options_features` emits them, but history rows
+# written before it did carry neither column nor value. A field only earns a
+# floor when BOTH today's capture and the trailing rows supply real numbers;
+# otherwise the row degrades silently to the three mandatory floors above.
+_OPTIONAL_COVERAGE_FIELDS: tuple[str, ...] = (
+    "put_n_contracts",
+    "call_n_contracts",
 )
 
 
@@ -181,6 +188,15 @@ def _gated_row(capture: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             flags.append(f"negative:{field}")
             value = None
         row[field] = value
+    for field in _OPTIONAL_COVERAGE_FIELDS:
+        # Presence gate: an old capture without the key contributes nothing.
+        if field not in capture:
+            continue
+        value = optional_int(capture.get(field))
+        if value is not None and value < 0:
+            flags.append(f"negative:{field}")
+            value = None
+        row[field] = value
     return row, flags
 
 
@@ -204,7 +220,7 @@ def _coverage_flags(
         return []
     floor_ratio = float(quality.coverage_floor_ratio)
     flags: list[str] = []
-    for field in _COVERAGE_FIELDS:
+    for field in (*_COVERAGE_FIELDS, *_OPTIONAL_COVERAGE_FIELDS):
         if field not in trailing.columns:
             continue
         median = pd.to_numeric(trailing[field], errors="coerce").dropna().median()

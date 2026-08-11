@@ -264,3 +264,97 @@ def test_empty_inputs_return_the_declared_schema():
     result = build({}, previous=None)
     assert result.empty
     assert list(result.columns) == list(CHAIN_HISTORY_COLUMNS)
+
+
+def _previous_with_side_counts(dates: list[str]) -> pd.DataFrame:
+    """Trailing history that DOES carry the per-side contract counts."""
+
+    previous = _healthy_previous(dates)
+    previous["put_n_contracts"] = 200
+    previous["call_n_contracts"] = 200
+    return previous
+
+
+def test_collapsed_put_side_is_flagged_while_a_control_capture_passes():
+    previous = _previous_with_side_counts(["2026-08-0%d" % day for day in range(1, 8)])
+    collapsed = build(
+        {
+            "AEM": [
+                capture(
+                    as_of_date="2026-08-10",
+                    run_id="20260810T140000Z-refresh-00000009",
+                    total_open_interest=500_000,
+                    put_n_contracts=5,  # << 0.5 x trailing median of 200
+                    call_n_contracts=200,
+                )
+            ]
+        },
+        previous=previous,
+    )
+    today = collapsed[collapsed["as_of_date"] == "2026-08-10"].iloc[0]
+    assert "below_trailing_floor:put_n_contracts" in today["capture_quality"]
+    assert "below_trailing_floor:call_n_contracts" not in today["capture_quality"]
+
+    control = build(
+        {
+            "AEM": [
+                capture(
+                    as_of_date="2026-08-10",
+                    run_id="20260810T140000Z-refresh-00000009",
+                    total_open_interest=500_000,
+                    put_n_contracts=198,
+                    call_n_contracts=202,
+                )
+            ]
+        },
+        previous=previous,
+    )
+    row = control[control["as_of_date"] == "2026-08-10"].iloc[0]
+    assert row["capture_quality"] == CAPTURE_QUALITY_COMPLETE
+    # The optional counts never leak into the contracted schema.
+    assert list(control.columns) == list(CHAIN_HISTORY_COLUMNS)
+
+
+def test_old_rows_without_side_counts_do_not_trip_the_new_floors():
+    # Trailing history predates the per-side counts entirely...
+    previous = _healthy_previous(["2026-08-0%d" % day for day in range(1, 8)])
+    result = build(
+        {
+            "AEM": [
+                capture(
+                    as_of_date="2026-08-10",
+                    run_id="20260810T140000Z-refresh-00000009",
+                    total_open_interest=500_000,
+                    put_n_contracts=1,
+                    call_n_contracts=1,
+                )
+            ]
+        },
+        previous=previous,
+    )
+    assert (
+        result[result["as_of_date"] == "2026-08-10"].iloc[0]["capture_quality"]
+        == CAPTURE_QUALITY_COMPLETE
+    )
+
+    # ...and the mirror case: trailing history has them, today's capture does not.
+    today_missing = build(
+        {
+            "AEM": [
+                capture(
+                    as_of_date="2026-08-10",
+                    run_id="20260810T140000Z-refresh-00000009",
+                    total_open_interest=500_000,
+                )
+            ]
+        },
+        previous=_previous_with_side_counts(
+            ["2026-08-0%d" % day for day in range(1, 8)]
+        ),
+    )
+    assert (
+        today_missing[today_missing["as_of_date"] == "2026-08-10"].iloc[0][
+            "capture_quality"
+        ]
+        == CAPTURE_QUALITY_COMPLETE
+    )

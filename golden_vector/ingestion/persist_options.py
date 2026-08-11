@@ -32,6 +32,11 @@ class OptionsSnapshotRecord:
     # snapshot persisted but feature computation failed. Recording the ERROR ticker
     # (instead of dropping it) lets readers tell "errored" from "not in this run".
     feature_status: str = "OK"
+    # How many expirations the vendor enumeration returned (fetch collection
+    # stats). Numeric evidence for availability: 0 with a successful fetch means
+    # "nothing listed"; >0 with no rows means the configured window filtered them
+    # away. None = legacy/unknown, and readers fall back to the message text.
+    expiration_count_available: int | None = None
 
     def manifest_entry(self, paths: ProjectPaths) -> dict[str, object]:
         return {
@@ -42,6 +47,7 @@ class OptionsSnapshotRecord:
             "sha256": self.sha256,
             "message": self.message,
             "feature_status": self.feature_status,
+            "expiration_count_available": self.expiration_count_available,
         }
 
 

@@ -79,6 +79,11 @@ def compute_options_features(
         "total_volume": _numeric_sum(frame, "volume"),
         "put_volume": put_volume,
         "call_volume": call_volume,
+        # Per-side contract COUNTS (not sums): 0 is a genuine count for a
+        # one-sided chain, but an EMPTY chain is unknown, not zero — same
+        # unknown-vs-zero convention as the OI splits above.
+        "put_n_contracts": _side_contract_count(frame, "P"),
+        "call_n_contracts": _side_contract_count(frame, "C"),
         "iv_percentile_cross_sectional": None,
         # No float() coercion: an unknown side is None and _ratio propagates it.
         "put_call_oi_ratio_total": _ratio(put_oi_total, call_oi_total),
@@ -97,6 +102,11 @@ def compute_options_features(
         row[f"implied_move_{suffix}_gates_ok"] = False
         row[f"realized_vol_{suffix}"] = _realized_vol(price_history, window_days=horizon)
         row[f"iv_rv_ratio_{suffix}"] = None
+        # Provenance for the horizon label: which expiry it actually resolved
+        # to. Defaults live here so an unresolved horizon still emits explicit
+        # unknowns rather than a missing key (option_signals reads these).
+        row[f"source_expiration_{suffix}"] = None
+        row[f"source_dte_{suffix}"] = None
 
     if frame.empty:
         row["optionability_tier"] = "none"
@@ -122,6 +132,11 @@ def compute_options_features(
             continue
 
         expiry_slice = frame[frame["expiration"] == expiry].copy()
+        row[f"source_expiration_{suffix}"] = str(expiry)
+        # Representative DTE = the MINIMUM days_to_expiry across the slice.
+        # Every row of one expiry normally carries the same value; min() is a
+        # deterministic pick that never depends on row order.
+        row[f"source_dte_{suffix}"] = _slice_min_dte(expiry_slice)
         with_delta = add_black_scholes_delta(
             expiry_slice,
             underlying_price=underlying_price,
@@ -335,6 +350,23 @@ def _put_call_sums(
         return int(values.sum())
 
     return _side_sum("P"), _side_sum("C")
+
+
+def _side_contract_count(frame: pd.DataFrame, side: str) -> int | None:
+    """Chain rows on one side after normalization; None when the chain is empty."""
+
+    if frame.empty or "option_type" not in frame.columns:
+        return None
+    return int((frame["option_type"] == side).sum())
+
+
+def _slice_min_dte(expiry_slice: pd.DataFrame) -> int | None:
+    if expiry_slice.empty or "days_to_expiry" not in expiry_slice.columns:
+        return None
+    values = pd.to_numeric(expiry_slice["days_to_expiry"], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return int(values.min())
 
 
 def _numeric_sum(frame: pd.DataFrame, column: str) -> int:

@@ -114,6 +114,18 @@ def _availability_row(*, ticker: str, record: dict[str, Any] | None) -> dict[str
         status = AVAILABILITY_FETCH_FAILED
         fetch_status = FETCH_STATUS_ERROR
         expirations = None
+    elif (expiration_count := optional_int(record.get("expiration_count_available"))) is not None:
+        # Numeric evidence beats prose. Present only on manifests written after
+        # the field was threaded through; legacy entries fall through to the
+        # message mapping below and keep their historical statuses.
+        if expiration_count == 0:
+            status = AVAILABILITY_NONE_LISTED
+            fetch_status = FETCH_STATUS_EMPTY
+            expirations = 0
+        else:
+            status = AVAILABILITY_FILTERED_WINDOW_EMPTY
+            fetch_status = FETCH_STATUS_EMPTY
+            expirations = expiration_count
     elif message == NO_LISTED_OPTIONS_MESSAGE:
         status = AVAILABILITY_NONE_LISTED
         fetch_status = FETCH_STATUS_EMPTY
