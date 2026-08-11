@@ -665,3 +665,44 @@ scenario-aware rankings (H2); `/lab` default alignment (D-5); persisting the §9
 computations; percentile-implementation merge (`benchmark_comparison._percentile` vs
 `oriented_percentile` — different tie semantics, would move rug markers); richer put/call
 status vocabulary.
+
+---
+
+## 15. Codex consolidated-review amendments (2026-08-11/12 overnight run) — APPLIED
+
+Per `claude_phase_one_consolidated_review_and_fx_aisc_downside_plan.md` §5, with Victor's
+approvals recorded that evening:
+
+1. **Phase One status:** corrections applied on `dev-vic` (commits `eb6c261` Gate A,
+   `06b5b5e` Gate B, `c1ab14f` Gate C, `691ea63` rebuild, `ef7f0fb` M2/M3a). Live acceptance
+   still requires the mandatory REAL refresh at this pin + the M4 browser gate.
+2. **Five persisted ticker artifacts** — `ticker_page_fx_attribution` v1 added (contract,
+   producer, stage substep, five-artifact all-or-nothing publish, loader, model-state path map).
+   AISC/downside reuses **percentiles v2** (evidence columns), not a sixth artifact.
+3. **Versions:** performance v2 (actual dates, shared anchor, disclosure columns),
+   research_series v2 (full horizon ladder + per-kind status), percentiles v2 (metric
+   evidence), Tool D schema v3 (rename + fcf_breakeven removal).
+4. ProjectPaths/model-state/loaders extended for the FX artifact. (The atomic
+   ticker-generation POINTER itself is part of deferred C10 — see §16.)
+5. `Cost position and downside record` card added within Market Behaviour; top-level page
+   order unchanged.
+6. Stale `(+ lab_dial.yaml move)` in the M3 row of §13: **struck** — that refactor is outside
+   this project (per §10).
+7. M2 loaders (`serve/ticker_page/data.py`) consume only manifest-resolved artifacts and
+   assemble view selections; no analytics in request handlers (guardrail test in
+   `tests/test_ticker_page_sections.py`).
+8. M3 keeps the approved order. **Shipped this run:** M2 spine, Performance section (v2
+   artifact), Currency attribution block, Cost/downside card + explainers.
+   **Remaining M3/M4 (next session):** full mock-v3 page reorder + section removals/rewrites,
+   gold-dial JS rework (precomputed exact lines), options section rebuild, score builder,
+   composite-prose sweep, M4 budgets/browser gate/real refresh.
+
+## 16. Deferrals from the consolidated review (Victor approved 2026-08-11)
+
+| Finding | Status | Why deferred |
+|---|---|---|
+| C10 atomic ticker-generation pointer, benchmark manifest via model state, full provenance plumbing | DEFERRED | Heaviest item, purely defensive — nothing wrong today; needs its own session |
+| C12 finite Greeks + intra-frame capture priority | DEFERRED | Option domain, unrelated to ticker-page correctness |
+| C13 option v4 version-set health | DEFERRED | Same |
+| C8 full semantic-validator framework | PARTIAL | Lean coverage/status rows + configured-universe shipped; the general validator framework intentionally not built |
+| Layer1 `MISSING_SUSTAINING_CAPEX` completeness gate | KEPT AS-IS | After C1 nothing consumes sustaining capex; the gate was kept so the rebuild diff stayed attributable to the formula fix alone. All 56 active tickers carry the field, so zero practical impact. Revisit deliberately. |

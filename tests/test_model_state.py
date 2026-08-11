@@ -26,6 +26,7 @@ from golden_vector.contracts.option_artifacts import (
 )
 from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.contracts.ticker_page import (
+    FX_ATTRIBUTION_COLUMNS,
     GOLD_RESPONSE_COLUMNS,
     PERCENTILES_COLUMNS,
     PERFORMANCE_COLUMNS,
@@ -816,6 +817,12 @@ TICKER_PAGE_ARTIFACT_SPECS = {
         "latest_ticker_page_research_series_path",
         RESEARCH_SERIES_COLUMNS,
         {"ticker": "NEM", "kind": "weekly", "date": "2026-06-01"},
+    ),
+    # Feature A: the fifth ticker artifact is part of a complete generation.
+    "fx_attribution": (
+        "latest_ticker_page_fx_attribution_path",
+        FX_ATTRIBUTION_COLUMNS,
+        {"ticker": "NEM", "horizon": "1Y"},
     ),
 }
 
