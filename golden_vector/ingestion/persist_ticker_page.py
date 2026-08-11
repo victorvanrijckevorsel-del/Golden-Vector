@@ -75,9 +75,23 @@ def persist_ticker_page_artifacts(
     output_dir = paths.output_ticker_page_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    written_paths: list[Path] = []
-    for prefix in TICKER_PAGE_ARTIFACT_PREFIXES:
-        stamped = stamp_ticker_page_provenance(
+    # Publication is ALL-OR-NOTHING across the four artifacts, in two passes.
+    #
+    # Pass 1 writes every immutable + run-stamped file. Nothing a reader can see
+    # changes: the mutable `_latest.parquet` aliases still name the previous
+    # generation, so a crash anywhere in pass 1 — including between artifacts —
+    # leaves the last good generation fully intact and self-consistent.
+    #
+    # Pass 2 flips the four aliases. Writing all three files per artifact in one
+    # loop (the previous shape) meant a failure on artifact 2 left artifact 1's
+    # alias already pointing at the new generation and the other three at the
+    # old: a split-brain the manifest could not describe and the page would
+    # render as one coherent state.
+    #
+    # The model-state pointer is published later in the refresh and is unchanged
+    # by this function.
+    stamped_frames: dict[str, pd.DataFrame] = {
+        prefix: stamp_ticker_page_provenance(
             frames[prefix],
             artifact=prefix,
             source_run_id=source_run_id,
@@ -85,18 +99,25 @@ def persist_ticker_page_artifacts(
             parent_refresh_id=parent_refresh_id,
             config_hash=config_hash,
         )
-        written_paths.extend(
-            [
-                write_parquet_atomic(
-                    stamped,
-                    output_dir / f"{prefix}_output_{run_context.run_id}.parquet",
-                ),
-                write_parquet_atomic(
-                    stamped,
-                    output_dir / f"{prefix}_latest_{run_context.run_id}.parquet",
-                ),
-                write_parquet_atomic(stamped, output_dir / f"{prefix}_latest.parquet"),
-            ]
+        for prefix in TICKER_PAGE_ARTIFACT_PREFIXES
+    }
+
+    written_paths: list[Path] = []
+
+    # --- pass 1: immutable + run-stamped files (no reader-visible change) ----
+    for prefix in TICKER_PAGE_ARTIFACT_PREFIXES:
+        stamped = stamped_frames[prefix]
+        written_paths.append(
+            write_parquet_atomic(
+                stamped,
+                output_dir / f"{prefix}_output_{run_context.run_id}.parquet",
+            )
+        )
+        written_paths.append(
+            write_parquet_atomic(
+                stamped,
+                output_dir / f"{prefix}_latest_{run_context.run_id}.parquet",
+            )
         )
 
     if diagnostics is not None:
@@ -104,6 +125,14 @@ def persist_ticker_page_artifacts(
             write_parquet_atomic(
                 diagnostics,
                 run_context.run_dir / LINEARITY_DIAGNOSTICS_FILE_NAME,
+            )
+        )
+
+    # --- pass 2: flip every mutable alias -----------------------------------
+    for prefix in TICKER_PAGE_ARTIFACT_PREFIXES:
+        written_paths.append(
+            write_parquet_atomic(
+                stamped_frames[prefix], output_dir / f"{prefix}_latest.parquet"
             )
         )
 

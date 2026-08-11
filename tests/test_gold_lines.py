@@ -6,6 +6,7 @@ import pytest
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import ToolDConfig
 from golden_vector.model.gold_lines import (
+    MIN_INVERTIBLE_SLOPE,
     GoldLine,
     evaluate,
     line_from_two_points,
@@ -136,3 +137,30 @@ def test_tool_d_gold_thresholds_match_hand_computed_line_inversion():
     assert row["interest_cover_gold_usd"] == pytest.approx(1100.0)
     assert row["debt_stress_gold_usd"] == pytest.approx(1666.6666667)
     assert row["fcf_breakeven_gold_usd"] == pytest.approx(1450.0)
+
+
+def test_x_for_value_rejects_a_near_flat_slope():
+    """The flat-slope guard is REAL, not decorative.
+
+    ``MIN_INVERTIBLE_SLOPE`` used to be 0.0, so only an exactly-flat line was
+    rejected and a slope of 1e-300 produced a confident-looking gold price made
+    entirely of floating-point noise.
+    """
+
+    assert MIN_INVERTIBLE_SLOPE > 0.0
+
+    exactly_flat = GoldLine(slope=0.0, intercept=5.0)
+    assert x_for_value(exactly_flat, 10.0) is None
+
+    at_the_threshold = GoldLine(slope=MIN_INVERTIBLE_SLOPE, intercept=5.0)
+    assert x_for_value(at_the_threshold, 10.0) is None
+
+    negative_near_flat = GoldLine(slope=-MIN_INVERTIBLE_SLOPE / 2.0, intercept=5.0)
+    assert x_for_value(negative_near_flat, 10.0) is None
+
+    # Healthy control: an ordinary slope still inverts exactly.
+    usable = GoldLine(slope=2.0, intercept=5.0)
+    assert x_for_value(usable, 25.0) == pytest.approx(10.0)
+    # And a slope just above the threshold is still accepted (not over-guarded).
+    just_above = GoldLine(slope=MIN_INVERTIBLE_SLOPE * 10.0, intercept=0.0)
+    assert x_for_value(just_above, MIN_INVERTIBLE_SLOPE * 10.0) == pytest.approx(1.0)

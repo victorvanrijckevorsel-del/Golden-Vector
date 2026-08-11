@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from golden_vector.common.eligibility import is_score_eligible
@@ -32,6 +33,7 @@ from golden_vector.contracts.ticker_page import (
     RESEARCH_SERIES_COLUMNS,
     RESEARCH_SERIES_KIND_KEY_COLUMNS,
     TICKER_PAGE_PROVENANCE_COLUMNS,
+    apply_expected_dtypes,
     validate_frame_schema,
 )
 from golden_vector.features.percentile_ranks import oriented_percentile
@@ -84,8 +86,13 @@ def _validated(
     columns: tuple[str, ...],
     key_columns: tuple[str, ...],
     name: str,
+    artifact: str,
 ) -> pd.DataFrame:
-    frame = pd.DataFrame(rows, columns=list(columns))
+    # Type first, then validate: an empty build and a populated build must leave
+    # this function with byte-identical schemas (see contracts EXPECTED_DTYPES).
+    frame = apply_expected_dtypes(
+        pd.DataFrame(rows, columns=list(columns)), artifact=artifact
+    )
     violations = validate_frame_schema(frame, columns=columns, key_columns=key_columns)
     if violations:
         raise ValueError(f"{name} does not satisfy its contract: " + "; ".join(violations))
@@ -184,8 +191,17 @@ def build_gold_response_pack(
             continue
         evaluations[finance_source] = per_gold
 
-    reference = evaluations.get("our", {}).get(spot_key, {})
-    tickers = sorted(reference)
+    # Union across BOTH sources' spot evaluations, not just Our View. A ticker
+    # that only the yahoo source can price (no manual inputs yet) still deserves
+    # its yahoo row plus an explicit our-source DEGRADED_INPUTS row; keying off
+    # `our` alone silently erased it from the artifact entirely.
+    tickers = sorted(
+        {
+            ticker
+            for per_gold in evaluations.values()
+            for ticker in per_gold.get(spot_key, {})
+        }
+    )
 
     rows: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
@@ -206,6 +222,11 @@ def build_gold_response_pack(
                 **{column: None for column in GOLD_RESPONSE_CONSTANT_COLUMNS},
                 **{column: None for column in _SPOT_DISPLAY_SOURCE_COLUMNS},
                 "spot_leverage_stressed": None,
+                # Label every number with its basis: `cash_margin_usd_per_oz` is
+                # gold - AISC (screening/layer1.py), NOT gold - cash cost, and the
+                # pack ships both cost constants. Machine-readable so no reader has
+                # to infer it from a column name that says "cash".
+                "spot_margin_basis": "aisc",
                 **_null_provenance(),
             }
 
@@ -237,6 +258,7 @@ def build_gold_response_pack(
             )
 
             missing_metrics: list[str] = []
+            untested_probes: list[str] = []
             failures: list[str] = []
             max_residual: float | None = None
 
@@ -256,6 +278,11 @@ def build_gold_response_pack(
                 for gold in grid:
                     actual = optional_float(per_gold[gold][ticker].get(metric))
                     if actual is None:
+                        # The line is fitted from the OUTER probes only. An interior
+                        # probe (or true spot) with no value means the fit was never
+                        # tested where the page actually reads it — that is untested,
+                        # not linear. Never ship it as OK.
+                        untested_probes.append(f"{metric} at gold {gold:g}")
                         continue
                     expected = evaluate(line, gold)
                     if expected is None or not math.isfinite(expected):
@@ -294,6 +321,12 @@ def build_gold_response_pack(
                 base["gold_response_status"] = "DEGRADED_NONLINEAR"
                 base["gold_response_reason"] = "; ".join(failures)
                 nonlinear_tickers.add(ticker)
+            elif untested_probes:
+                base["gold_response_status"] = "DEGRADED_INPUTS"
+                base["gold_response_reason"] = (
+                    "linearity is untested at probe(s) with no Tool B value: "
+                    + ", ".join(untested_probes)
+                )
             rows.append(base)
 
     if len(nonlinear_tickers) >= int(dial.systemic_min_tickers):
@@ -318,6 +351,7 @@ def build_gold_response_pack(
         columns=GOLD_RESPONSE_COLUMNS,
         key_columns=GOLD_RESPONSE_KEY_COLUMNS,
         name="ticker_page_gold_response",
+        artifact="gold_response",
     )
     diagnostics_frame = pd.DataFrame(
         diagnostics,
@@ -460,6 +494,15 @@ def build_score_percentiles(
                     elif down_beta <= 0 and up_beta > 0:
                         # Maximally favourable regime — mirrors model/scoring.py:59-60,
                         # which scores this case 1.0 outright rather than via the ratio.
+                        # The row STAYS available and rank-eligible: the ratio itself is
+                        # undefined (division by a non-positive down beta), but the
+                        # *ranking* is defined and maximal, so the row is ranked top
+                        # rather than dropped. It is excluded from the percentile pool
+                        # (`in_pool=False`) so its absent raw value cannot distort peers,
+                        # and carries a forced 100/0 percentile instead. 100 is the
+                        # `rank(pct=True)` ceiling, so the forced value ties (never
+                        # exceeds) the best in-pool row — the honest representation of
+                        # "at least as favourable as anything in the pool".
                         in_pool = False
                         forced_pct = (100.0, 0.0)
                         metric_reason = "max_favourable_beta_regime"
@@ -469,7 +512,9 @@ def build_score_percentiles(
                         rank_eligible = False
                         exclusion_reason = "ratio_undefined_for_beta_signs"
 
-                if available and raw_value is None:
+                # A max-favourable row legitimately has no finite raw ratio; the
+                # generic "no value" downgrade must not undo its availability.
+                if available and raw_value is None and forced_pct is None:
                     available = False
                     metric_reason = metric_reason or "value_missing"
 
@@ -477,6 +522,7 @@ def build_score_percentiles(
                     rank_eligible = False
                     exclusion_reason = exclusion_reason or metric_reason
                     in_pool = False
+                    forced_pct = None
 
                 metric_rows.append(
                     {
@@ -522,6 +568,12 @@ def build_score_percentiles(
                 row["eligible_peer_count"] = peer_count
                 if row["_forced_pct"] is not None:
                     row["pct_high_good"], row["pct_low_good"] = row["_forced_pct"]
+                # Invariant: a percentile is a RANK. A row that is not available or
+                # not rank-eligible must never carry one — a leaked percentile reads
+                # on the page as a real standing against peers.
+                if not row["metric_available"] or not row["rank_eligible"]:
+                    row["pct_high_good"] = None
+                    row["pct_low_good"] = None
                 row.pop("_in_pool")
                 row.pop("_forced_pct")
             rows.extend(metric_rows)
@@ -531,6 +583,7 @@ def build_score_percentiles(
         columns=PERCENTILES_COLUMNS,
         key_columns=PERCENTILES_KEY_COLUMNS,
         name="ticker_page_percentiles",
+        artifact="percentiles",
     )
 
 
@@ -540,22 +593,48 @@ def build_score_percentiles(
 
 
 def _usd_series(frame: pd.DataFrame | None, columns: tuple[str, ...]) -> pd.Series:
-    """Resolve one history frame to a USD value series indexed by date."""
+    """Resolve one history frame to a USD value series indexed by date.
+
+    ONE basis column is chosen for the WHOLE series — the first candidate that
+    carries any non-null data — and its nulls are kept as visible gaps. Never a
+    per-row coalesce across candidates: the candidates are *different price
+    bases* (dividend-adjusted vs unadjusted levels), so splicing them mid-series
+    fabricates a step that reads as a real price move and poisons every rebased
+    percentage after it. A gap is honest; a spliced level is not.
+    """
     if frame is None or frame.empty or "date" not in frame.columns:
         return pd.Series(dtype="float64")
     working = frame.copy()
     working["date"] = pd.to_datetime(working["date"], errors="coerce").dt.normalize()
-    values = pd.Series(pd.NA, index=working.index, dtype="object")
+    numeric = pd.Series(float("nan"), index=working.index, dtype="float64")
     for column in columns:
         if column not in working.columns:
             continue
         candidate = pd.to_numeric(working[column], errors="coerce")
-        values = values.where(pd.notna(values), candidate)
-    numeric = pd.to_numeric(values, errors="coerce")
+        if candidate.notna().any():
+            numeric = candidate
+            break
     resolved = pd.Series(numeric.to_numpy(), index=working["date"])
     resolved = resolved[resolved.index.notna() & resolved.notna()]
     resolved = resolved[~resolved.index.duplicated(keep="last")]
     return resolved.sort_index()
+
+
+def _trading_day_lag(last_observation: pd.Timestamp, as_of: pd.Timestamp) -> int:
+    """Trading days (Mon-Fri) between ``last_observation`` and ``as_of``.
+
+    The staleness budget is a *market* budget: a Friday close read on Monday is
+    one trading day old, not three. Measuring in calendar days made every normal
+    weekend look like a 3-day outage and would omit healthy benchmarks. Holidays
+    are not modelled (no exchange calendar in this repo), so the count is a
+    conservative upper bound on true trading-day lag.
+    """
+
+    start = last_observation.normalize().to_numpy().astype("datetime64[D]")
+    end = as_of.normalize().to_numpy().astype("datetime64[D]")
+    if end <= start:
+        return 0
+    return int(np.busday_count(start, end))
 
 
 def build_performance_series(
@@ -596,13 +675,13 @@ def build_performance_series(
             statuses[name] = ("MISSING", f"{name} history is unavailable")
             continue
         if name in _BENCHMARK_SERIES:
-            lag = int((as_of - series.index[-1]).days)
+            lag = _trading_day_lag(series.index[-1], as_of)
             if lag > int(chart.benchmark_max_staleness_days):
                 statuses[name] = (
                     "STALE_OMITTED",
                     (
-                        f"{name} last observation {series.index[-1].date()} is {lag} day(s) "
-                        f"behind the equity as-of {as_of.date()} "
+                        f"{name} last observation {series.index[-1].date()} is {lag} "
+                        f"trading day(s) behind the equity as-of {as_of.date()} "
                         f"(limit {int(chart.benchmark_max_staleness_days)})"
                     ),
                 )
@@ -617,6 +696,7 @@ def build_performance_series(
             columns=PERFORMANCE_COLUMNS,
             key_columns=PERFORMANCE_KEY_COLUMNS,
             name="ticker_page_performance",
+            artifact="performance",
         )
 
     # Common ending date = the earliest last-observation among included series.
@@ -677,10 +757,20 @@ def build_performance_series(
                     )
 
         # One marker row per (series, view, horizon) for omitted/missing series —
-        # never a drawn line, never a silent absence.
-        for name, (status, reason) in statuses.items():
-            if status == "OK":
-                continue
+        # never a drawn line, never a silent absence. An OK series with zero
+        # observations inside THIS window is the same user-visible situation
+        # (the line is absent), so it gets a marker too rather than vanishing.
+        markers: list[tuple[str, str, str | None]] = [
+            (name, status, reason)
+            for name, (status, reason) in statuses.items()
+            if status != "OK"
+        ]
+        markers.extend(
+            (name, "MISSING", f"{name} has no observations in the {horizon} window")
+            for name in included
+            if name not in live
+        )
+        for name, status, reason in markers:
             series = resolved[name]
             series_as_of = series.index[-1] if not series.empty else as_of
             for view in ("price", "rebased"):
@@ -708,6 +798,7 @@ def build_performance_series(
         columns=PERFORMANCE_COLUMNS,
         key_columns=PERFORMANCE_KEY_COLUMNS,
         name="ticker_page_performance",
+        artifact="performance",
     )
 
 
@@ -746,31 +837,38 @@ def build_research_series(
     if weekly_series_frame is not None and not weekly_series_frame.empty:
         weekly = weekly_series_frame.copy()
         date_column = "as_of_date" if "as_of_date" in weekly.columns else "date"
-        if date_column in weekly.columns:
-            weekly[date_column] = pd.to_datetime(weekly[date_column], errors="coerce")
-            weekly = weekly[weekly[date_column].notna()]
-            weekly = weekly.sort_values(date_column).drop_duplicates(
-                subset=[date_column], keep="last"
+        if date_column not in weekly.columns:
+            # Fail loud on a REQUIRED input: a non-empty weekly frame with no date
+            # column silently produced zero weekly rows, which renders as "this
+            # ticker has no weekly history" rather than "the input changed shape".
+            raise ValueError(
+                "weekly_series_frame is non-empty but has neither of the accepted "
+                "date columns: as_of_date, date"
             )
-            for record in weekly.to_dict(orient="records"):
-                rows.append(
-                    _row(
-                        "weekly",
-                        date=pd.Timestamp(record[date_column]).normalize(),
-                        stock_return=optional_float(
-                            _first_column(record, "stock_weekly_log_return", "stock_return")
-                        ),
-                        gold_return=optional_float(
-                            _first_column(record, "gold_weekly_log_return", "gold_return")
-                        ),
-                        gdx_return=optional_float(
-                            _first_column(record, "gdx_weekly_log_return", "gdx_return")
-                        ),
-                        gdxj_return=optional_float(
-                            _first_column(record, "gdxj_weekly_log_return", "gdxj_return")
-                        ),
-                    )
+        weekly[date_column] = pd.to_datetime(weekly[date_column], errors="coerce")
+        weekly = weekly[weekly[date_column].notna()]
+        weekly = weekly.sort_values(date_column).drop_duplicates(
+            subset=[date_column], keep="last"
+        )
+        for record in weekly.to_dict(orient="records"):
+            rows.append(
+                _row(
+                    "weekly",
+                    date=pd.Timestamp(record[date_column]).normalize(),
+                    stock_return=optional_float(
+                        _first_column(record, "stock_weekly_log_return", "stock_return")
+                    ),
+                    gold_return=optional_float(
+                        _first_column(record, "gold_weekly_log_return", "gold_return")
+                    ),
+                    gdx_return=optional_float(
+                        _first_column(record, "gdx_weekly_log_return", "gdx_return")
+                    ),
+                    gdxj_return=optional_float(
+                        _first_column(record, "gdxj_weekly_log_return", "gdxj_return")
+                    ),
                 )
+            )
 
     if exploratory_horizons_frame is not None and not exploratory_horizons_frame.empty:
         horizons = exploratory_horizons_frame.copy()
@@ -802,7 +900,10 @@ def build_research_series(
             windows = windows.sort_values("as_of_date")
         windows = windows.drop_duplicates(subset=["window_id"], keep="last")
         for record in windows.to_dict(orient="records"):
-            weeks = optional_float(_first_column(record, "week_count", "weeks"))
+            # A week count is a COUNT — emit it as a nullable integer, not a
+            # float that renders "104.0" on the page.
+            weeks_value = optional_float(_first_column(record, "week_count", "weeks"))
+            weeks = None if weeks_value is None else int(round(weeks_value))
             rows.append(
                 _row(
                     "window_fit",
@@ -819,7 +920,10 @@ def build_research_series(
                 )
             )
 
-    frame = pd.DataFrame(rows, columns=list(RESEARCH_SERIES_COLUMNS))
+    frame = apply_expected_dtypes(
+        pd.DataFrame(rows, columns=list(RESEARCH_SERIES_COLUMNS)),
+        artifact="research_series",
+    )
     violations = validate_frame_schema(
         frame,
         columns=RESEARCH_SERIES_COLUMNS,

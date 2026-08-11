@@ -377,6 +377,9 @@ def _identity(**values) -> dict[str, object]:
     foundation manifest below so the manifest never flags the row as stale)."""
 
     return {
+        # Every artifact is at schema_version 1; the loader rejects a row that
+        # cannot prove which version wrote it.
+        "schema_version": 1,
         "source_run_id": FOUNDATION_RUN_ID,
         "snapshot_refresh_run_id": FOUNDATION_RUN_ID,
         "parent_refresh_id": FOUNDATION_RUN_ID,
@@ -519,3 +522,51 @@ def test_asymmetry_is_higher_good_and_banned_metrics_absent(tmp_path) -> None:
     assert "cost_curve_aisc_percentile" not in metrics
     assert not any("cost_curve" in key for key in metrics)
     assert not any("confidence" in key for key in metrics)
+
+
+# --- (e) dtype map + margin basis -------------------------------------------
+
+
+def test_every_contract_column_declares_an_expected_dtype():
+    """An undeclared column silently falls back to object on an empty build."""
+
+    from golden_vector.contracts.ticker_page import ARTIFACT_COLUMNS, EXPECTED_DTYPES
+
+    assert set(EXPECTED_DTYPES) == set(ARTIFACT_COLUMNS)
+    for artifact, columns in ARTIFACT_COLUMNS.items():
+        undeclared = [c for c in columns if c not in EXPECTED_DTYPES[artifact]]
+        assert not undeclared, (artifact, undeclared)
+        extra = [c for c in EXPECTED_DTYPES[artifact] if c not in columns]
+        assert not extra, (artifact, extra)
+
+
+def test_empty_artifact_frames_are_schema_typed_not_object():
+    from golden_vector.contracts.ticker_page import (
+        ARTIFACT_COLUMNS,
+        EXPECTED_DTYPES,
+        empty_artifact_frame,
+    )
+
+    for artifact, columns in ARTIFACT_COLUMNS.items():
+        frame = empty_artifact_frame(artifact)
+        assert frame.empty
+        assert list(frame.columns) == list(columns)
+        for column in columns:
+            assert str(frame[column].dtype) == EXPECTED_DTYPES[artifact][column], (
+                artifact,
+                column,
+            )
+
+
+def test_gold_response_carries_a_machine_readable_margin_basis():
+    """The pack ships BOTH aisc and cash_cost, so 'margin' must name its basis."""
+
+    from golden_vector.contracts.ticker_page import (
+        GOLD_RESPONSE_COLUMNS,
+        GOLD_RESPONSE_MARGIN_BASES,
+    )
+
+    assert "spot_margin_basis" in GOLD_RESPONSE_COLUMNS
+    assert "aisc_usd_per_oz" in GOLD_RESPONSE_COLUMNS
+    assert "cash_cost_usd_per_oz" in GOLD_RESPONSE_COLUMNS
+    assert "aisc" in GOLD_RESPONSE_MARGIN_BASES

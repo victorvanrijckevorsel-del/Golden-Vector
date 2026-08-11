@@ -37,6 +37,7 @@ from golden_vector.common.stage_timing import record_step_timing
 from golden_vector.contracts.ticker_page import (
     PERFORMANCE_COLUMNS,
     RESEARCH_SERIES_COLUMNS,
+    empty_artifact_frame,
 )
 from golden_vector.features.horizons import build_core_horizons
 from golden_vector.features.returns import compute_horizon_returns_for_ticker
@@ -396,7 +397,9 @@ def run_ticker_page_stage(
             )
         except Exception as error:  # noqa: BLE001 - degrade per item (senior rule)
             performance_failures.append(f"{ticker}: {error}")
-    performance = _concat(performance_frames, columns=PERFORMANCE_COLUMNS)
+    performance = _concat(
+        performance_frames, columns=PERFORMANCE_COLUMNS, artifact="performance"
+    )
     if performance_failures:
         warnings.append(
             f"performance series unavailable for {len(performance_failures)} ticker(s): "
@@ -461,7 +464,9 @@ def run_ticker_page_stage(
             )
         except Exception as error:  # noqa: BLE001 - degrade per item (senior rule)
             research_failures.append(f"{ticker}: {error}")
-    research_series = _concat(research_frames, columns=RESEARCH_SERIES_COLUMNS)
+    research_series = _concat(
+        research_frames, columns=RESEARCH_SERIES_COLUMNS, artifact="research_series"
+    )
     if research_failures:
         warnings.append(
             f"research series unavailable for {len(research_failures)} ticker(s): "
@@ -542,12 +547,20 @@ def _tool_b_universe(app_config: Any) -> list[str]:
     )
 
 
-def _concat(frames: list[pd.DataFrame], *, columns: tuple[str, ...]) -> pd.DataFrame:
-    """Concatenate per-ticker frames, always keeping the contract column set."""
+def _concat(
+    frames: list[pd.DataFrame], *, columns: tuple[str, ...], artifact: str
+) -> pd.DataFrame:
+    """Concatenate per-ticker frames, always keeping the contract column set.
+
+    A fully degraded build (no ticker produced rows) must still write a frame
+    with the artifact's real DTYPES, not an all-object placeholder — otherwise
+    the persisted schema silently changes shape under every reader on exactly
+    the day the build went wrong.
+    """
 
     live = [frame for frame in frames if frame is not None and not frame.empty]
     if not live:
-        return pd.DataFrame(columns=list(columns))
+        return empty_artifact_frame(artifact)
     return pd.concat(live, ignore_index=True)[list(columns)]
 
 

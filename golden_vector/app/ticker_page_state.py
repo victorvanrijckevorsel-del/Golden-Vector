@@ -35,6 +35,8 @@ from golden_vector.contracts.ticker_page import (
     RESEARCH_SERIES_COLUMNS,
     RESEARCH_SERIES_KEY_COLUMNS,
     RESEARCH_SERIES_KIND_KEY_COLUMNS,
+    TICKER_PAGE_SCHEMA_VERSIONS,
+    empty_artifact_frame,
     validate_frame_schema,
 )
 
@@ -66,17 +68,31 @@ def _empty_frame(columns: tuple[str, ...]) -> pd.DataFrame:
     return pd.DataFrame(columns=list(columns))
 
 
-def _manifest_entry(paths: ProjectPaths, name: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Return ``(manifest, artifact_entry)`` for ``name`` from current model state."""
+def _manifest_entry(
+    paths: ProjectPaths, name: str
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
+    """Return ``(manifest, artifact_entry, unreadable_reason)`` for ``name``.
+
+    ``unreadable_reason`` is set only when the manifest FILE exists but could not
+    be parsed. That is corruption, not a fresh install: reporting it as
+    PENDING_FIRST_PUBLISH told the user to wait for a refresh that had already
+    run, and hid the real failure behind a reassuring message.
+    """
 
     manifest = load_current_model_state_manifest(paths)
+    if manifest is None:
+        # No manifest file at all — genuinely "nothing has been published yet".
+        return None, None, None
     if not isinstance(manifest, dict) or manifest.get("manifest_readable") is False:
-        return None, None
+        detail = ""
+        if isinstance(manifest, dict):
+            detail = str(manifest.get("read_error") or "").strip()
+        return None, None, "model-state manifest unreadable" + (f": {detail}" if detail else "")
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict):
-        return manifest, None
+        return manifest, None, None
     entry = artifacts.get(name)
-    return manifest, entry if isinstance(entry, dict) else None
+    return manifest, entry if isinstance(entry, dict) else None, None
 
 
 def _alignment_reason(manifest: dict[str, Any] | None, name: str) -> str | None:
@@ -99,7 +115,13 @@ def _resolve_artifact_path(
 ) -> tuple[Path | None, TickerPageArtifactState | None]:
     """Manifest-first resolution. Returns ``(path, terminal_state)``."""
 
-    manifest, entry = _manifest_entry(paths, name)
+    manifest, entry, unreadable = _manifest_entry(paths, name)
+    if unreadable is not None:
+        return None, TickerPageArtifactState(
+            status=STATUS_CORRUPT,
+            reason=f"{name} cannot be resolved: {unreadable}",
+            frame=_empty_frame(()),
+        )
     if entry is None:
         if alias_path.exists():
             return None, TickerPageArtifactState(
@@ -173,6 +195,7 @@ def _load_artifact(
     name: str,
     columns: tuple[str, ...],
     key_columns: tuple[str, ...],
+    artifact: str,
     check_duplicate_keys: bool = True,
 ) -> TickerPageArtifactState:
     path, terminal = _resolve_artifact_path(paths, name=name, alias_path=alias_path)
@@ -180,7 +203,7 @@ def _load_artifact(
         return TickerPageArtifactState(
             status=terminal.status,
             reason=terminal.reason,
-            frame=_empty_frame(columns),
+            frame=empty_artifact_frame(artifact),
         )
     assert path is not None  # narrowed by _resolve_artifact_path
     try:
@@ -189,7 +212,7 @@ def _load_artifact(
         return TickerPageArtifactState(
             status=STATUS_CORRUPT,
             reason=f"{name} artifact could not be read from {path}: {error}",
-            frame=_empty_frame(columns),
+            frame=empty_artifact_frame(artifact),
         )
 
     violations = validate_frame_schema(
@@ -213,9 +236,63 @@ def _load_artifact(
         return TickerPageArtifactState(
             status=STATUS_CORRUPT,
             reason=f"{name} artifact failed schema validation: " + "; ".join(violations),
-            frame=_empty_frame(columns),
+            frame=empty_artifact_frame(artifact),
         )
+
+    version_state = _schema_version_state(
+        frame, name=name, artifact=artifact, columns=columns
+    )
+    if version_state is not None:
+        return version_state
     return TickerPageArtifactState(status=STATUS_OK, reason=None, frame=frame)
+
+
+def _schema_version_state(
+    frame: pd.DataFrame,
+    *,
+    name: str,
+    artifact: str,
+    columns: tuple[str, ...],
+) -> TickerPageArtifactState | None:
+    """Validate the persisted ``schema_version`` against the contract.
+
+    The column set matching is NOT proof the rows mean what this reader thinks:
+    a version bump can reuse the same column names with different semantics. An
+    unparsable/absent version is corruption; a parsable but different one is a
+    stale generation this build cannot interpret — never silently OK.
+    """
+
+    expected = int(TICKER_PAGE_SCHEMA_VERSIONS[artifact])
+    if frame.empty:
+        return None
+    if "schema_version" not in frame.columns:
+        return TickerPageArtifactState(
+            status=STATUS_CORRUPT,
+            reason=f"{name} artifact carries no schema_version column",
+            frame=empty_artifact_frame(artifact),
+        )
+    parsed = pd.to_numeric(frame["schema_version"], errors="coerce").dropna()
+    if len(parsed.index) != len(frame.index):
+        return TickerPageArtifactState(
+            status=STATUS_CORRUPT,
+            reason=(
+                f"{name} artifact has a missing or unparsable schema_version in "
+                f"{len(frame.index) - len(parsed.index)} row(s)"
+            ),
+            frame=empty_artifact_frame(artifact),
+        )
+    observed = sorted({int(value) for value in parsed})
+    if observed != [expected]:
+        return TickerPageArtifactState(
+            status=STATUS_STALE,
+            reason=(
+                f"{name} artifact was written at schema_version "
+                + ", ".join(str(value) for value in observed)
+                + f" but this build reads schema_version {expected}"
+            ),
+            frame=empty_artifact_frame(artifact),
+        )
+    return None
 
 
 def load_gold_response(paths: ProjectPaths) -> TickerPageArtifactState:
@@ -225,6 +302,7 @@ def load_gold_response(paths: ProjectPaths) -> TickerPageArtifactState:
         name="ticker_page_gold_response",
         columns=GOLD_RESPONSE_COLUMNS,
         key_columns=GOLD_RESPONSE_KEY_COLUMNS,
+        artifact="gold_response",
     )
 
 
@@ -235,6 +313,7 @@ def load_score_percentiles(paths: ProjectPaths) -> TickerPageArtifactState:
         name="ticker_page_percentiles",
         columns=PERCENTILES_COLUMNS,
         key_columns=PERCENTILES_KEY_COLUMNS,
+        artifact="percentiles",
     )
 
 
@@ -245,6 +324,7 @@ def load_performance_series(paths: ProjectPaths) -> TickerPageArtifactState:
         name="ticker_page_performance",
         columns=PERFORMANCE_COLUMNS,
         key_columns=PERFORMANCE_KEY_COLUMNS,
+        artifact="performance",
     )
 
 
@@ -256,6 +336,7 @@ def load_research_series(paths: ProjectPaths) -> TickerPageArtifactState:
         name="ticker_page_research_series",
         columns=RESEARCH_SERIES_COLUMNS,
         key_columns=RESEARCH_SERIES_KEY_COLUMNS,
+        artifact="research_series",
         check_duplicate_keys=False,
     )
     if state.status != STATUS_OK:
@@ -285,6 +366,6 @@ def load_research_series(paths: ProjectPaths) -> TickerPageArtifactState:
                 "ticker_page_research_series artifact failed schema validation: "
                 + "; ".join(violations)
             ),
-            frame=_empty_frame(RESEARCH_SERIES_COLUMNS),
+            frame=empty_artifact_frame("research_series"),
         )
     return state

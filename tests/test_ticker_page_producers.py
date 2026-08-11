@@ -796,3 +796,294 @@ def test_persist_writes_run_stamped_and_latest_artifacts_readable_by_the_real_re
         assert set(state.frame["config_hash"]) == {"config-hash-1"}
         assert set(state.frame["snapshot_refresh_run_id"]) == {"refresh-run"}
         assert state.frame["schema_version"].eq(1).all()
+
+
+# --------------------------------------------------------------------------
+# 6. adversarial-review regression gates
+# --------------------------------------------------------------------------
+
+
+def _asymmetry_only_config(app_config):
+    return _score_config(app_config, ["asymmetry_ratio_core"])
+
+
+def test_percentiles_never_leak_a_rank_onto_an_ineligible_row(score_config):
+    """A percentile IS a rank. No row may carry one while rank_eligible is False."""
+
+    frame = _percentiles(score_config)
+    eligible = frame["rank_eligible"].astype("boolean").fillna(False)
+    available = frame["metric_available"].astype("boolean").fillna(False)
+    has_pct = frame["pct_high_good"].notna() | frame["pct_low_good"].notna()
+
+    leaked = frame[(~eligible) & has_pct]
+    assert leaked.empty, leaked[["ticker", "metric_key", "pct_high_good"]].to_dict("records")
+    assert frame[~available]["pct_high_good"].isna().all()
+    assert frame[~available]["pct_low_good"].isna().all()
+
+
+def test_percentiles_max_favourable_row_with_a_null_ratio_stays_ranked_at_the_ceiling():
+    """down_beta == 0 with a positive up beta and NO finite ratio.
+
+    The ratio is undefined (divide by zero) but the RANKING is defined and
+    maximal, so the row stays available + rank-eligible and carries the forced
+    100/0 percentile. It must not be silently downgraded by the generic
+    "no raw value" rule, and its forced percentile must not exceed the pool's
+    own maximum -- 100 is the rank(pct=True) ceiling, so it ties it.
+    """
+
+    app_config = _asymmetry_only_config(load_app_config(ProjectPaths.discover()).app)
+    tool_a = pd.DataFrame(
+        [
+            {
+                "ticker": "AAA",
+                "as_of_date": "2026-06-01",
+                "score_eligible": True,
+                "down_beta_core": 1.0,
+                "up_beta_core": 1.5,
+                "asymmetry_ratio_core": 1.5,
+            },
+            {
+                "ticker": "BBB",
+                "as_of_date": "2026-06-01",
+                "score_eligible": True,
+                "down_beta_core": 1.0,
+                "up_beta_core": 3.0,
+                "asymmetry_ratio_core": 3.0,
+            },
+            {  # subject: down beta exactly 0, ratio genuinely undefined/None
+                "ticker": "ZERO",
+                "as_of_date": "2026-06-01",
+                "score_eligible": True,
+                "down_beta_core": 0.0,
+                "up_beta_core": 1.2,
+                "asymmetry_ratio_core": None,
+            },
+        ]
+    )
+    frame = build_score_percentiles(
+        app_config=app_config,
+        tool_a_latest=tool_a,
+        tool_b_latest_by_source={"our": pd.DataFrame(), "yahoo": pd.DataFrame()},
+        tool_c_latest=pd.DataFrame(),
+        tool_d_latest=pd.DataFrame(),
+    )
+    ours = frame[frame["finance_source"] == "our"].set_index("ticker")
+
+    assert bool(ours.loc["ZERO", "metric_available"])
+    assert bool(ours.loc["ZERO", "rank_eligible"])
+    assert ours.loc["ZERO", "metric_reason"] == "max_favourable_beta_regime"
+    assert pd.isna(ours.loc["ZERO", "raw_value"])
+    assert ours.loc["ZERO", "pct_high_good"] == pytest.approx(100.0)
+    assert ours.loc["ZERO", "pct_low_good"] == pytest.approx(0.0)
+
+    # The forced percentile is at/above every in-pool row's (it ties the ceiling).
+    in_pool_max = ours.loc[["AAA", "BBB"], "pct_high_good"].max()
+    assert ours.loc["ZERO", "pct_high_good"] >= in_pool_max
+    assert in_pool_max == pytest.approx(100.0)
+
+
+def test_usd_series_picks_one_basis_and_keeps_its_gaps():
+    """Never splice two price bases together.
+
+    ``return_basis_usd`` (dividend-adjusted) and ``adj_close_usd`` sit at
+    different LEVELS here. Coalescing per row would fill the middle gap with
+    adj_close values and invent a price step that never happened.
+    """
+
+    dates = pd.bdate_range("2025-01-01", periods=10)
+    return_basis = [100.0 + index for index in range(10)]
+    for index in (4, 5, 6):
+        return_basis[index] = None
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "return_basis_usd": return_basis,
+            "adj_close_usd": [900.0 + index for index in range(10)],
+        }
+    )
+
+    series = ticker_page_module._usd_series(frame, ("return_basis_usd", "adj_close_usd"))
+
+    # The chosen basis keeps its gap: the three null dates simply are not there,
+    # and NO adj_close level (>= 900) leaked into the series.
+    assert len(series.index) == 7
+    assert series.max() < 900.0
+    for index in (4, 5, 6):
+        assert dates[index] not in series.index
+
+
+def test_usd_series_falls_back_only_when_the_first_basis_is_entirely_null():
+    dates = pd.bdate_range("2025-01-01", periods=5)
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "return_basis_usd": [None] * 5,
+            "adj_close_usd": [900.0 + index for index in range(5)],
+        }
+    )
+    series = ticker_page_module._usd_series(frame, ("return_basis_usd", "adj_close_usd"))
+    assert len(series.index) == 5
+    assert series.iloc[0] == pytest.approx(900.0)
+
+
+def test_benchmark_staleness_is_measured_in_trading_days_across_a_weekend(chart_config):
+    """A Friday close read on the following Monday is ONE trading day old.
+
+    Calendar-day counting made every normal weekend look like a 3-day outage.
+    Config stays benchmark_max_staleness_days: 5, now honestly trading days.
+    """
+
+    equity = _daily("2024-01-01", 300, column="return_basis_usd", base=100.0)
+    equity = equity[equity["date"] <= pd.Timestamp("2025-01-13")]
+    gold = _daily("2024-01-01", 300, column="adj_close_usd", base=2000.0)
+    gdx_all = _daily("2024-01-01", 300, column="adj_close_local", base=30.0)
+    assert pd.Timestamp("2025-01-10").dayofweek == 4  # Friday
+    assert pd.Timestamp("2025-01-13").dayofweek == 0  # Monday
+
+    fresh = gdx_all[gdx_all["date"] <= pd.Timestamp("2025-01-10")]
+    frame = build_performance_series(
+        app_config=chart_config,
+        equity_history=equity,
+        gold_history=gold,
+        benchmark_histories={"gdx": fresh},
+        ticker="AEM",
+        equity_as_of_date=pd.Timestamp("2025-01-13"),
+    )
+    assert set(frame[frame["series"] == "gdx"]["series_status"]) == {"OK"}
+
+    # Healthy control: a genuine >5 trading-day gap is still omitted.
+    old = gdx_all[gdx_all["date"] <= pd.Timestamp("2025-01-02")]
+    stale_frame = build_performance_series(
+        app_config=chart_config,
+        equity_history=equity,
+        gold_history=gold,
+        benchmark_histories={"gdx": old},
+        ticker="AEM",
+        equity_as_of_date=pd.Timestamp("2025-01-13"),
+    )
+    gdx_rows = stale_frame[stale_frame["series"] == "gdx"]
+    assert set(gdx_rows["series_status"]) == {"STALE_OMITTED"}
+    assert gdx_rows["series_reason"].str.contains("trading day").all()
+
+
+def test_performance_emits_a_marker_when_an_ok_series_has_no_rows_in_a_window(
+    chart_config,
+):
+    """An OK (fresh) series with zero in-window observations must never vanish."""
+
+    equity = _daily("2019-01-01", 1900, column="return_basis_usd", base=100.0)
+    gold = _daily("2019-01-01", 1900, column="adj_close_usd", base=2000.0)
+    as_of = pd.Timestamp(equity["date"].max())
+    # GDX is fresh (its last observation IS the as-of, so never STALE_OMITTED)
+    # but has a single ancient block plus that one recent point, leaving the
+    # shorter windows with (nearly) nothing.
+    gdx_all = _daily("2019-01-01", 1900, column="adj_close_local", base=30.0)
+    gdx = gdx_all[
+        (gdx_all["date"] <= pd.Timestamp("2019-06-01")) | (gdx_all["date"] == as_of)
+    ]
+
+    frame = build_performance_series(
+        app_config=chart_config,
+        equity_history=equity,
+        gold_history=gold,
+        benchmark_histories={"gdx": gdx},
+        ticker="AEM",
+        equity_as_of_date=as_of,
+    )
+    for horizon in chart_config.ticker_page.chart.horizons:
+        rows = frame[(frame["series"] == "gdx") & (frame["horizon"] == horizon)]
+        assert not rows.empty, f"gdx vanished from the {horizon} window"
+
+
+def test_gold_response_degrades_when_an_interior_probe_has_no_value(
+    pack_inputs, monkeypatch
+):
+    """Outer probes present but the interior/spot probe missing = UNTESTED.
+
+    The line is fitted from the outer probes only, so a missing interior value
+    means linearity was never checked where the page actually reads the line.
+    """
+
+    real = ticker_page_module.compute_tool_b_in_memory
+
+    def patched(**kwargs):
+        frame = real(**kwargs)
+        gold = float(kwargs["gold_price_assumption"])
+        if abs(gold - SPOT_GOLD) < 0.01:
+            frame = frame.copy()
+            mask = frame["ticker"].astype(str).str.upper() == "AEM"
+            frame.loc[mask, "forward_ebitda_musd"] = None
+        return frame
+
+    monkeypatch.setattr(ticker_page_module, "compute_tool_b_in_memory", patched)
+    pack, _ = build_gold_response_pack(**_builder_kwargs(pack_inputs))
+    ours = pack[pack["finance_source"] == "our"].set_index("ticker")
+
+    assert ours.loc["AEM", "gold_response_status"] == "DEGRADED_INPUTS"
+    assert "forward_ebitda_musd" in ours.loc["AEM", "gold_response_reason"]
+    assert ours.loc["AGI", "gold_response_status"] == "OK"  # healthy control
+
+
+def test_gold_response_covers_yahoo_only_tickers(pack_inputs, monkeypatch):
+    """A ticker only the yahoo source can price still gets BOTH rows."""
+
+    real = ticker_page_module.compute_tool_b_in_memory
+
+    def patched(**kwargs):
+        frame = real(**kwargs)
+        if str(kwargs.get("finance_source")) == "our":
+            frame = frame[frame["ticker"].astype(str).str.upper() != "AGI"].copy()
+        return frame
+
+    monkeypatch.setattr(ticker_page_module, "compute_tool_b_in_memory", patched)
+    pack, _ = build_gold_response_pack(**_builder_kwargs(pack_inputs))
+
+    assert set(pack[pack["ticker"] == "AGI"]["finance_source"]) == {"our", "yahoo"}
+    agi = pack[pack["ticker"] == "AGI"].set_index("finance_source")
+    assert agi.loc["our", "gold_response_status"] == "DEGRADED_INPUTS"
+    assert "no Tool B row for AGI" in agi.loc["our", "gold_response_reason"]
+    # The yahoo row is REAL (it found its spot Tool B row and carries the
+    # constants), not a "no Tool B row" placeholder. In this fixture yahoo has no
+    # official forward fundamentals, so its own status is degraded for that
+    # separate reason -- what matters is that the ticker was not erased.
+    assert "no Tool B row" not in str(agi.loc["yahoo", "gold_response_reason"])
+    assert pd.notna(agi.loc["yahoo", "market_cap_musd"])
+    # Healthy control: the ticker present in BOTH runs still reads our=OK.
+    aem = pack[pack["ticker"] == "AEM"].set_index("finance_source")
+    assert aem.loc["our", "gold_response_status"] == "OK"
+
+
+def test_gold_response_labels_the_margin_basis(pack_inputs):
+    pack, _ = build_gold_response_pack(**_builder_kwargs(pack_inputs))
+    assert set(pack["spot_margin_basis"]) == {"aisc"}
+
+
+def test_research_weekly_frame_without_a_date_column_raises():
+    weekly = pd.DataFrame(
+        [{"stock_weekly_log_return": 0.01, "gold_weekly_log_return": 0.02}]
+    )
+    with pytest.raises(ValueError, match="as_of_date, date"):
+        build_research_series(
+            ticker="AEM",
+            weekly_series_frame=weekly,
+            exploratory_horizons_frame=None,
+            structural_window_metrics_frame=None,
+        )
+    # An EMPTY frame is still a legitimate zero-row contribution.
+    empty = build_research_series(
+        ticker="AEM",
+        weekly_series_frame=pd.DataFrame(),
+        exploratory_horizons_frame=None,
+        structural_window_metrics_frame=None,
+    )
+    assert empty.empty
+
+
+def test_research_weeks_is_a_nullable_integer():
+    frame = build_research_series(
+        ticker="AEM",
+        weekly_series_frame=None,
+        exploratory_horizons_frame=None,
+        structural_window_metrics_frame=_windows_frame(),
+    )
+    assert str(frame["weeks"].dtype) == "Int64"

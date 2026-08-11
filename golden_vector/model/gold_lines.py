@@ -14,8 +14,12 @@ from dataclasses import dataclass
 #: Two gold prices closer than this are treated as the same point (degenerate).
 MIN_X_SEPARATION = 0.01
 
-#: Slopes with magnitude at or below this cannot be inverted safely.
-MIN_INVERTIBLE_SLOPE = 0.0
+#: Slopes with magnitude at or below this cannot be inverted safely. A truly flat
+#: line never reaches a target value, and a near-flat one reaches it at an
+#: absurd, numerically meaningless gold price — dividing by ~1e-300 produces a
+#: confident-looking number that is pure floating-point noise. Guarding only
+#: against an exact 0.0 (the previous value) left that entire noise band open.
+MIN_INVERTIBLE_SLOPE = 1e-9
 
 
 @dataclass(frozen=True)
@@ -57,7 +61,8 @@ def x_for_value(line: GoldLine | None, y: float | None) -> float | None:
     """Invert the line: the x at which it reaches ``y``.
 
     Returns ``None`` when the line is missing, the target is missing, or the
-    slope is flat enough that the inversion is undefined.
+    slope's magnitude is at or below :data:`MIN_INVERTIBLE_SLOPE` — flat enough
+    that the inversion is undefined or numerically meaningless.
     """
     if line is None or y is None:
         return None

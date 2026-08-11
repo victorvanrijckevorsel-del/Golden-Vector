@@ -30,6 +30,7 @@ from golden_vector.app.ticker_page_stage import (
 )
 from golden_vector.app import ticker_page_state
 from golden_vector.app.ticker_page_state import (
+    STATUS_CORRUPT,
     STATUS_MISSING,
     STATUS_OK,
     STATUS_PENDING_FIRST_PUBLISH,
@@ -39,8 +40,15 @@ from golden_vector.app.ticker_page_state import (
     load_research_series,
     load_score_percentiles,
 )
-from golden_vector.contracts.ticker_page import TICKER_PAGE_PROVENANCE_COLUMNS
+from golden_vector.contracts.ticker_page import (
+    TICKER_PAGE_PROVENANCE_COLUMNS,
+    empty_artifact_frame,
+)
 from golden_vector.ingestion import persist_ticker_page as persist_module
+from golden_vector.ingestion.persist_ticker_page import (
+    LINEARITY_DIAGNOSTICS_FILE_NAME,
+    stamp_ticker_page_provenance,
+)
 from golden_vector.screening.manual_data import (
     bootstrap_manual_screening_data,
     load_manual_screening_data,
@@ -576,3 +584,254 @@ def test_pruning_covers_ticker_page_outputs_and_keeps_the_current_generation(sta
     assert current_immutables
     for name in current_immutables:
         assert name not in candidate_names
+
+
+# ---------------------------------------------------------------------------
+# 7. two-pass atomic publish (adversarial-review regression gates)
+# ---------------------------------------------------------------------------
+
+
+_ALL_ALIAS_ATTRS = (
+    "latest_ticker_page_gold_response_path",
+    "latest_ticker_page_percentiles_path",
+    "latest_ticker_page_performance_path",
+    "latest_ticker_page_research_series_path",
+)
+
+
+def _published_generation(stage_env):
+    """Run the stage once and publish model state; return the four alias bytes."""
+
+    paths = stage_env["paths"]
+    _run_stage(stage_env)
+    _write_foundation_manifest(paths)
+    write_current_model_state_manifest(
+        paths=paths,
+        config_hash=stage_env["config_hash"],
+        parent_refresh_id=FOUNDATION_RUN_ID,
+        stage_timings={},
+    )
+    return {
+        attr: getattr(paths, attr).read_bytes() for attr in _ALL_ALIAS_ATTRS
+    }
+
+
+def _assert_previous_generation_intact(paths, before, manifest_before):
+    for attr, expected in before.items():
+        actual = getattr(paths, attr).read_bytes()
+        assert actual == expected, f"{attr} alias was flipped by a failed publish"
+    assert paths.latest_model_state_manifest_path.read_bytes() == manifest_before
+    for loader in (
+        load_gold_response,
+        load_score_percentiles,
+        load_performance_series,
+        load_research_series,
+    ):
+        assert loader(paths).status == STATUS_OK, loader.__name__
+
+
+@pytest.mark.parametrize(
+    ("label", "fail_on"),
+    [
+        # (a) between two artifacts of PASS 1 (immutable/run-stamped writes).
+        ("between_pass1_artifacts", lambda name: name.startswith("performance_output_")),
+        # (b) between PASS 1 and PASS 2 (the diagnostics write sits on the seam).
+        ("between_pass1_and_pass2", lambda name: name == LINEARITY_DIAGNOSTICS_FILE_NAME),
+    ],
+)
+def test_a_failed_publish_never_flips_any_alias(stage_env, monkeypatch, label, fail_on):
+    """Publication is all-or-nothing across ALL FOUR artifacts.
+
+    A crash anywhere in pass 1 must leave every alias -- gold_response included
+    -- pointing at the previous complete generation.
+    """
+
+    paths = stage_env["paths"]
+    before = _published_generation(stage_env)
+    manifest_before = paths.latest_model_state_manifest_path.read_bytes()
+
+    real_write = persist_module.write_parquet_atomic
+    calls: list[str] = []
+
+    def failing_write(frame, path):
+        calls.append(path.name)
+        if fail_on(path.name):
+            raise OSError("injected fault")
+        return real_write(frame, path)
+
+    monkeypatch.setattr(persist_module, "write_parquet_atomic", failing_write)
+    with pytest.raises(OSError, match="injected fault"):
+        _run_stage(stage_env)
+
+    assert label  # parametrize label kept for readable failure output
+    # No alias write was even attempted before the fault.
+    assert not [name for name in calls if name.endswith("_latest.parquet")]
+    _assert_previous_generation_intact(paths, before, manifest_before)
+
+
+def test_pass_one_writes_every_immutable_before_any_alias_flips(stage_env, monkeypatch):
+    """Order gate: all eight run-stamped files precede the first alias write."""
+
+    real_write = persist_module.write_parquet_atomic
+    calls: list[str] = []
+
+    def recording_write(frame, path):
+        calls.append(path.name)
+        return real_write(frame, path)
+
+    monkeypatch.setattr(persist_module, "write_parquet_atomic", recording_write)
+    _run_stage(stage_env)
+
+    first_alias = min(
+        index for index, name in enumerate(calls) if name.endswith("_latest.parquet")
+    )
+    pass_one = calls[:first_alias]
+    for prefix in persist_module.TICKER_PAGE_ARTIFACT_PREFIXES:
+        assert any(name.startswith(f"{prefix}_output_") for name in pass_one), prefix
+        assert any(
+            name.startswith(f"{prefix}_latest_") and name != f"{prefix}_latest.parquet"
+            for name in pass_one
+        ), prefix
+    # And the tail is exactly the four alias flips.
+    assert sorted(calls[first_alias:]) == sorted(
+        f"{prefix}_latest.parquet"
+        for prefix in persist_module.TICKER_PAGE_ARTIFACT_PREFIXES
+    )
+
+
+# ---------------------------------------------------------------------------
+# 8. loader hardening (schema_version + unreadable manifest)
+# ---------------------------------------------------------------------------
+
+
+def test_an_unreadable_model_state_manifest_reads_corrupt_not_pending(stage_env):
+    """A manifest that exists but cannot be parsed is CORRUPT, never PENDING.
+
+    PENDING_FIRST_PUBLISH tells the user "wait for the next refresh" -- exactly
+    the wrong instruction when a refresh already ran and its manifest is broken.
+    """
+
+    paths = stage_env["paths"]
+    _published_generation(stage_env)
+    assert load_gold_response(paths).status == STATUS_OK  # healthy control
+
+    paths.latest_model_state_manifest_path.write_text("{not json", encoding="utf-8")
+    for loader in (
+        load_gold_response,
+        load_score_percentiles,
+        load_performance_series,
+        load_research_series,
+    ):
+        state = loader(paths)
+        assert state.status == STATUS_CORRUPT, loader.__name__
+        assert "model-state manifest unreadable" in (state.reason or "")
+
+    # A manifest that is READABLE but simply has no entry stays PENDING.
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps({"artifacts": {}}), encoding="utf-8"
+    )
+    assert load_gold_response(paths).status == STATUS_PENDING_FIRST_PUBLISH
+
+
+def test_a_missing_schema_version_reads_corrupt(stage_env):
+    paths = stage_env["paths"]
+    _published_generation(stage_env)
+    assert load_gold_response(paths).status == STATUS_OK  # healthy control
+
+    _rewrite_published(stage_env, "gold_response", lambda frame: frame.drop(columns=["schema_version"]))
+    state = load_gold_response(paths)
+    assert state.status == STATUS_CORRUPT
+    assert "schema_version" in (state.reason or "")
+    # Control: an untouched artifact still reads OK.
+    assert load_score_percentiles(paths).status == STATUS_OK
+
+
+def test_an_unparsable_schema_version_reads_corrupt(stage_env):
+    paths = stage_env["paths"]
+    _published_generation(stage_env)
+
+    def _garble(frame):
+        frame = frame.copy()
+        frame["schema_version"] = "not-a-version"
+        return frame
+
+    _rewrite_published(stage_env, "gold_response", _garble)
+    state = load_gold_response(paths)
+    assert state.status == STATUS_CORRUPT
+    assert "unparsable schema_version" in (state.reason or "")
+
+
+def test_a_different_schema_version_reads_stale_and_names_both_versions(stage_env):
+    paths = stage_env["paths"]
+    _published_generation(stage_env)
+
+    def _bump(frame):
+        frame = frame.copy()
+        frame["schema_version"] = 99
+        return frame
+
+    _rewrite_published(stage_env, "gold_response", _bump)
+    state = load_gold_response(paths)
+    assert state.status == STATUS_STALE
+    assert "99" in (state.reason or "")
+    assert "1" in (state.reason or "")
+    assert state.frame.empty
+    assert load_score_percentiles(paths).status == STATUS_OK  # healthy control
+
+
+def _rewrite_published(stage_env, prefix: str, transform) -> None:
+    """Rewrite the published immutable in place and re-publish model state."""
+
+    paths = stage_env["paths"]
+    for path in sorted(paths.output_ticker_page_dir.glob(f"{prefix}_*.parquet")):
+        transform(pd.read_parquet(path)).to_parquet(path, index=False)
+    write_current_model_state_manifest(
+        paths=paths,
+        config_hash=stage_env["config_hash"],
+        parent_refresh_id=FOUNDATION_RUN_ID,
+        stage_timings={},
+    )
+
+
+# ---------------------------------------------------------------------------
+# 9. schema-typed empty frames
+# ---------------------------------------------------------------------------
+
+
+def test_empty_and_populated_artifacts_round_trip_with_identical_dtypes(stage_env, tmp_path):
+    """A degraded (zero-row) build must not silently change the persisted schema."""
+
+    paths = stage_env["paths"]
+    _run_stage(stage_env)
+
+    for artifact, prefix in (
+        ("gold_response", "gold_response"),
+        ("percentiles", "percentiles"),
+        ("performance", "performance"),
+        ("research_series", "research_series"),
+    ):
+        populated_path = paths.output_ticker_page_dir / f"{prefix}_latest.parquet"
+        populated = pd.read_parquet(populated_path)
+        if populated.empty:
+            continue
+
+        empty = stamp_ticker_page_provenance(
+            empty_artifact_frame(artifact),
+            artifact=artifact,
+            source_run_id="r",
+            snapshot_refresh_run_id="r",
+            parent_refresh_id="r",
+            config_hash="c",
+        )
+        empty_path = tmp_path / f"empty_{prefix}.parquet"
+        empty.to_parquet(empty_path, index=False)
+        round_tripped = pd.read_parquet(empty_path)
+
+        assert list(round_tripped.columns) == list(populated.columns), artifact
+        for column in populated.columns:
+            assert str(round_tripped[column].dtype) == str(populated[column].dtype), (
+                artifact,
+                column,
+                str(round_tripped[column].dtype),
+                str(populated[column].dtype),
+            )
