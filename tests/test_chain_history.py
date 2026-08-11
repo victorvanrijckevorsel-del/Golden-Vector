@@ -251,9 +251,14 @@ def test_merge_keeps_legacy_rows_intact():
     )
     carried = merged[merged["as_of_date"] == "2026-08-03"].iloc[0]
     original = previous[previous["as_of_date"] == "2026-08-03"].iloc[0]
-    # Every field except the current-publisher stamp is byte-identical.
+    # Every legacy field except the current-publisher stamp is byte-identical;
+    # columns the legacy schema predates (per-side counts) must be explicit
+    # unknowns on carried rows, never invented values.
     for column in CHAIN_HISTORY_COLUMNS:
         if column == "published_run_id":
+            continue
+        if column not in original.index:
+            assert pd.isna(carried[column]), column
             continue
         assert carried[column] == original[column], column
     assert carried["published_run_id"] == "20260811T120000Z-refresh-bbbbbbbb"
