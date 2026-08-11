@@ -242,8 +242,10 @@ def test_lab_route_serves_table_and_drilldown(tmp_path) -> None:
     paths.ensure_runtime_dirs()
     _write_artifacts(Path(paths.data_dir))
 
+    # WIN is the lab fixture's drilldown ticker; the dial route now gates on
+    # the allowed universe (deep-review L3), so it must be in the app's list.
     app = create_workspace_app(
-        paths, app_config=_repo_app_config(), tool_b_tickers=["NEM"]
+        paths, app_config=_repo_app_config(), tool_b_tickers=["NEM", "WIN"]
     )
     response = _call_wsgi_app(app, method="GET", path="/lab?bucket=not_a_bucket&horizon=13")
     assert str(response["status"]).startswith("200")

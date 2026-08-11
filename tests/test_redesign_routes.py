@@ -527,7 +527,15 @@ def test_lab_dial_path_is_not_double_decoded(tmp_path, monkeypatch):
     the path stays literal instead of decoding a second time."""
     import golden_vector.serve.workspace as workspace_module
 
-    _paths, app = _minimal_app(tmp_path)
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    # The dial route gates on the allowed universe (deep-review L3), so the
+    # %-bearing ticker must itself be allowed for the decode probe to reach
+    # the loader.
+    app = create_workspace_app(
+        paths, app_config=_repo_app_config(), tool_b_tickers=["NEM", "NEM%20X"]
+    )
     seen: dict[str, str] = {}
     real_loader = workspace_module.load_ticker_curve
 
