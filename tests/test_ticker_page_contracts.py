@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+import json
+import shutil
+
 import pandas as pd
 import pytest
 from pydantic import ValidationError
 
 from golden_vector.app.config import EXPECTED_CONFIG_FILES, load_app_config
+from golden_vector.app.model_state import write_current_model_state_manifest
 from golden_vector.app.ticker_page_state import (
     STATUS_CORRUPT,
     STATUS_MISSING,
     STATUS_OK,
+    STATUS_PENDING_FIRST_PUBLISH,
     load_gold_response,
     load_performance_series,
     load_research_series,
     load_score_percentiles,
 )
+from golden_vector.common.files import sha256_file
 from golden_vector.contracts.config_models import (
     TICKER_PAGE_SCORE_BUDGET_POINTS,
     TickerPageConfig,
@@ -363,13 +369,83 @@ def test_loader_reports_missing_on_empty_tree(tmp_path, name) -> None:
     assert state.frame.empty
 
 
+FOUNDATION_RUN_ID = "20260601T120000Z-refresh"
+
+
+def _identity(**values) -> dict[str, object]:
+    """Provenance every published artifact row carries (kept aligned with the
+    foundation manifest below so the manifest never flags the row as stale)."""
+
+    return {
+        "source_run_id": FOUNDATION_RUN_ID,
+        "snapshot_refresh_run_id": FOUNDATION_RUN_ID,
+        "parent_refresh_id": FOUNDATION_RUN_ID,
+        **values,
+    }
+
+
+def _write_foundation_manifest(paths) -> None:
+    paths.latest_foundation_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_foundation_manifest_path.write_text(
+        json.dumps(
+            {
+                "refresh_run_id": FOUNDATION_RUN_ID,
+                "foundation_status": "PASS",
+                "snapshot_as_of_date": "2026-08-10",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _publish(paths, name: str, path_attr: str, frame: pd.DataFrame) -> None:
+    """Write ``frame`` as a run-stamped immutable + its alias and publish a
+    model-state manifest naming it, so the manifest-first loaders resolve it.
+
+    Mirrors ``test_ticker_page_stage.py`` -- the alias alone is never the
+    loading authority.
+    """
+
+    paths.output_ticker_page_dir.mkdir(parents=True, exist_ok=True)
+    immutable = paths.output_ticker_page_dir / f"{name}_latest_{FOUNDATION_RUN_ID}.parquet"
+    frame.to_parquet(immutable, index=False)
+    alias = getattr(paths, path_attr)
+    alias.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(immutable, alias)
+    _write_foundation_manifest(paths)
+    write_current_model_state_manifest(
+        paths=paths,
+        config_hash="abc",
+        parent_refresh_id=FOUNDATION_RUN_ID,
+        stage_timings={},
+    )
+
+
 @pytest.mark.parametrize("name", sorted(LOADERS))
-def test_loader_reports_ok_on_healthy_frame(tmp_path, name) -> None:
+def test_loader_reports_pending_first_publish_on_an_alias_no_manifest_names(
+    tmp_path, name
+) -> None:
+    """A standalone build writes the alias but no refresh published it: the
+    loader must say PENDING_FIRST_PUBLISH, never OK."""
+
     loader, path_attr, columns, keys, _ = LOADERS[name]
     paths = build_test_paths(tmp_path / f"repo_{name}")
     path = getattr(paths, path_attr)
     path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame([_row(columns, **keys)]).to_parquet(path)
+    pd.DataFrame([_row(columns, **_identity(**keys))]).to_parquet(path)
+
+    state = loader(paths)
+    assert state.status == STATUS_PENDING_FIRST_PUBLISH, state.reason
+    assert "awaiting first refresh publication" in (state.reason or "")
+    assert state.frame.empty
+
+
+@pytest.mark.parametrize("name", sorted(LOADERS))
+def test_loader_reports_ok_on_healthy_frame(tmp_path, name) -> None:
+    loader, path_attr, columns, keys, _ = LOADERS[name]
+    paths = build_test_paths(tmp_path / f"repo_{name}")
+    _publish(paths, name, path_attr, pd.DataFrame([_row(columns, **_identity(**keys))]))
 
     state = loader(paths)
     assert state.status == STATUS_OK, state.reason
@@ -381,24 +457,37 @@ def test_loader_reports_ok_on_healthy_frame(tmp_path, name) -> None:
 def test_loader_reports_corrupt_when_key_column_missing(tmp_path, name) -> None:
     loader, path_attr, columns, keys, dropped_key = LOADERS[name]
     paths = build_test_paths(tmp_path / f"repo_{name}")
-    path = getattr(paths, path_attr)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame = pd.DataFrame([_row(columns, **keys)]).drop(columns=[dropped_key])
-    frame.to_parquet(path)
+    frame = pd.DataFrame([_row(columns, **_identity(**keys))]).drop(columns=[dropped_key])
+    _publish(paths, name, path_attr, frame)
 
+    # The manifest resolves the artifact; schema validation is what fails.
     state = loader(paths)
-    assert state.status == STATUS_CORRUPT
+    assert state.status == STATUS_CORRUPT, state.reason
     assert state.reason and dropped_key in state.reason
     assert state.frame.empty
 
 
 def test_loader_reports_corrupt_on_unreadable_file(tmp_path) -> None:
+    """A manifest-vouched file that is not readable parquet is CORRUPT (not
+    STALE): the sha still matches, so only the content is bad."""
+
+    loader, path_attr, columns, keys, _ = LOADERS["gold_response"]
     paths = build_test_paths(tmp_path / "repo_corrupt")
-    path = paths.latest_ticker_page_gold_response_path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"not a parquet file")
+    _publish(
+        paths, "gold_response", path_attr, pd.DataFrame([_row(columns, **_identity(**keys))])
+    )
+    assert loader(paths).status == STATUS_OK  # healthy control before corruption
+
+    manifest_path = paths.latest_model_state_manifest_path
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entry = manifest["artifacts"]["ticker_page_gold_response"]
+    immutable = paths.resolve_repo_relative(entry["path"])
+    immutable.write_bytes(b"not a parquet file")
+    entry["sha256"] = sha256_file(immutable)
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
     state = load_gold_response(paths)
-    assert state.status == STATUS_CORRUPT
+    assert state.status == STATUS_CORRUPT, state.reason
     assert state.frame.empty
 
 

@@ -32,6 +32,9 @@ from golden_vector.contracts.fundamentals import (
     FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
     fetched_fundamentals_latest_path,
 )
+from golden_vector.contracts.ticker_page import (
+    TICKER_PAGE_SCHEMA_VERSIONS as _TICKER_PAGE_SCHEMA_VERSIONS,
+)
 from golden_vector.contracts.option_artifacts import (
     OPTION_ARTIFACT_NAMES,
     OPTION_ARTIFACT_PREFIXES,
@@ -45,6 +48,15 @@ CURRENT_FOUNDATION_UNAVAILABLE_MESSAGE = (
     "Current model-state manifest does not expose a usable immutable foundation artifact."
 )
 
+# The four ticker-page artifacts, keyed by manifest name -> file prefix in
+# ``paths.output_ticker_page_dir`` (plan §5.4). Names carry the ``ticker_page_``
+# prefix so the manifest namespace stays unambiguous; the on-disk prefix stays
+# the short one the producer writes.
+TICKER_PAGE_ARTIFACT_PREFIXES: dict[str, str] = {
+    f"ticker_page_{name}": name for name in sorted(_TICKER_PAGE_SCHEMA_VERSIONS)
+}
+TICKER_PAGE_ARTIFACT_NAMES: tuple[str, ...] = tuple(TICKER_PAGE_ARTIFACT_PREFIXES)
+
 REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "foundation",
     "options",
@@ -53,6 +65,9 @@ REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "tool_c",
     "tool_d",
     *REQUIRED_OPTION_ARTIFACT_NAMES,
+    # Required from the same commit that ships the refresh stage, so the next
+    # refresh produces them and a missing set is loudly incomplete (plan §5.4).
+    *TICKER_PAGE_ARTIFACT_NAMES,
 )
 
 PLANNED_I3_ARTIFACTS: tuple[str, ...] = OPTION_ARTIFACT_NAMES
@@ -624,7 +639,23 @@ def _artifact_map(
     }
     for name in PLANNED_I3_ARTIFACTS:
         artifacts[name] = _optional_i3_parquet_artifact(paths=paths, name=name)
+    for name in TICKER_PAGE_ARTIFACT_NAMES:
+        artifacts[name] = _parquet_artifact(
+            paths=paths,
+            name=name,
+            path=_ticker_page_latest_path(paths, name),
+            required_for_complete=True,
+        )
     return artifacts
+
+
+def _ticker_page_latest_path(paths: ProjectPaths, name: str) -> Path:
+    return {
+        "ticker_page_gold_response": paths.latest_ticker_page_gold_response_path,
+        "ticker_page_percentiles": paths.latest_ticker_page_percentiles_path,
+        "ticker_page_performance": paths.latest_ticker_page_performance_path,
+        "ticker_page_research_series": paths.latest_ticker_page_research_series_path,
+    }[name]
 
 
 def _optional_i3_parquet_artifact(
@@ -1009,6 +1040,15 @@ def _alignment(
         expected_run_id=option_expected_run_id,
         expected_label=option_expected_label,
     )
+    # Ticker-page artifacts belong to the tool generation: they are derived from
+    # all four tool frames, so a mismatch means the page would render one
+    # generation's numbers under another's identity (plan §5.4).
+    ticker_page_ids, ticker_page_warnings = _refresh_alignment(
+        artifacts,
+        names=TICKER_PAGE_ARTIFACT_NAMES,
+        expected_run_id=foundation_id,
+        expected_label="foundation",
+    )
     portfolio_ids, portfolio_warnings = _refresh_alignment(
         artifacts,
         names=PORTFOLIO_ALIGNMENT_ARTIFACTS,
@@ -1017,6 +1057,7 @@ def _alignment(
     )
     warnings.extend(tool_warnings)
     warnings.extend(option_warnings)
+    warnings.extend(ticker_page_warnings)
     warnings.extend(portfolio_warnings)
     status = "OK" if not warnings else "WARN"
     result = {
@@ -1025,6 +1066,8 @@ def _alignment(
         "options_refresh_run_id": options_id,
         "tool_refresh_run_ids": tool_ids,
         "option_artifact_refresh_run_ids": option_ids,
+        "ticker_page_artifact_refresh_run_ids": ticker_page_ids,
+        "ticker_page_artifact_warnings": list(ticker_page_warnings),
         "portfolio_artifact_refresh_run_ids": portfolio_ids,
         "warnings": warnings,
         # Option-artifact alignment warnings, kept separate so option freshness can
@@ -1678,6 +1721,8 @@ def _tool_latest_directory_and_prefix(paths: ProjectPaths, name: str) -> tuple[P
         return paths.output_fundamentals_dir, FETCHED_FUNDAMENTALS_PREFIX
     if name in OPTION_ARTIFACT_PREFIXES:
         return paths.output_options_dir, OPTION_ARTIFACT_PREFIXES[name]
+    if name in TICKER_PAGE_ARTIFACT_PREFIXES:
+        return paths.output_ticker_page_dir, TICKER_PAGE_ARTIFACT_PREFIXES[name]
     if name in PORTFOLIO_ARTIFACTS:
         return paths.output_portfolio_dir, name
     if name == "portfolio_reconciliation_export_csv":

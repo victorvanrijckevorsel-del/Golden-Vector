@@ -1,5 +1,6 @@
 """Ticker-page producer tests (plan §11 model-unit gates)."""
 
+import json
 from datetime import date
 
 import pandas as pd
@@ -7,6 +8,7 @@ import pytest
 
 import golden_vector.model.ticker_page as ticker_page_module
 from golden_vector.app.config import load_app_config
+from golden_vector.app.model_state import write_current_model_state_manifest
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.app.ticker_page_state import (
@@ -759,6 +761,27 @@ def test_persist_writes_run_stamped_and_latest_artifacts_readable_by_the_real_re
         assert f"{prefix}_latest.parquet" in names
     assert "ticker_page_linearity_diagnostics.parquet" in names
     assert all(path.exists() for path in written)
+
+    # The loaders are manifest-first: a refresh must publish model state naming
+    # these artifacts before they read OK (see test_ticker_page_stage.py).
+    paths.latest_foundation_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.latest_foundation_manifest_path.write_text(
+        json.dumps(
+            {
+                "refresh_run_id": "refresh-run",
+                "foundation_status": "PASS",
+                "snapshot_as_of_date": "2026-08-10",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    write_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash-1",
+        parent_refresh_id="parent-refresh",
+        stage_timings={},
+    )
 
     for loader in (
         load_gold_response,

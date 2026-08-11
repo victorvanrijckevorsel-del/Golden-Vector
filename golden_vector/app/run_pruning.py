@@ -265,6 +265,13 @@ def _artifact_file_candidates(paths: ProjectPaths) -> list[PruneCandidate]:
             paths.output_portfolio_dir,
             ("*_latest_*.*",),
         ),
+        # Ticker-page artifacts follow the tool-output retention semantics: the
+        # current generation's immutables are protected by the retained model
+        # states; older run-stamped files are candidates (plan §5, pruning row).
+        (
+            paths.output_ticker_page_dir,
+            ("*_output_*.*", "*_latest_*.*"),
+        ),
         (
             paths.raw_fundamentals_dir,
             (

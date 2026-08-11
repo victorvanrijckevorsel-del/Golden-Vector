@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import date
 
 import pandas as pd
 
 from golden_vector.app.model_state import (
+    TICKER_PAGE_ARTIFACT_NAMES,
     build_current_model_state_manifest,
     load_current_model_state_manifest,
     read_current_model_json,
@@ -23,6 +25,13 @@ from golden_vector.contracts.option_artifacts import (
     option_artifact_run_stamped_path,
 )
 from golden_vector.common.parquet import write_parquet_atomic
+from golden_vector.contracts.ticker_page import (
+    GOLD_RESPONSE_COLUMNS,
+    PERCENTILES_COLUMNS,
+    PERFORMANCE_COLUMNS,
+    RESEARCH_SERIES_COLUMNS,
+    TICKER_PAGE_SCHEMA_VERSIONS,
+)
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
@@ -65,6 +74,24 @@ def test_model_state_manifest_records_complete_aligned_build(tmp_path):
     assert payload["artifacts"]["option_candidate_slots"]["immutable"] is True
     assert payload["artifacts"]["option_candidate_slots"]["row_count"] == 1
     assert payload["stage_timings"]["tool_a"]["duration_seconds"] == 1.25
+    for name in TICKER_PAGE_ARTIFACT_NAMES:
+        assert payload["artifacts"][name]["required_for_complete"] is True
+        assert payload["artifacts"][name]["immutable"] is True
+
+
+def test_model_state_manifest_requires_the_ticker_page_artifacts(tmp_path):
+    """Same build as the complete case minus ticker-page: now 'incomplete', and
+    every missing ticker-page artifact is named."""
+
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(paths, refresh_run_id="refresh-A", include_ticker_page=False)
+
+    payload = build_current_model_state_manifest(paths=paths, config_hash="config-hash")
+
+    assert payload["state"] == "incomplete"
+    for name in TICKER_PAGE_ARTIFACT_NAMES:
+        assert f"Required artifact is missing: {name}." in payload["warnings"]
 
 
 def test_model_state_manifest_warns_when_tool_c_and_tool_d_are_missing(tmp_path):
@@ -665,6 +692,7 @@ def _write_tool_outputs(
     include_tool_c: bool = True,
     include_tool_d: bool = True,
     include_option_artifacts: bool = True,
+    include_ticker_page: bool = True,
 ) -> None:
     tool_a_context = RunContext.start(
         paths=paths,
@@ -758,6 +786,64 @@ def _write_tool_outputs(
         )
     if include_option_artifacts:
         _write_i3_option_artifacts(paths, refresh_run_id=refresh_run_id)
+    if include_ticker_page:
+        _write_ticker_page_artifacts(paths, refresh_run_id=refresh_run_id)
+
+
+TICKER_PAGE_ARTIFACT_SPECS = {
+    "gold_response": (
+        "latest_ticker_page_gold_response_path",
+        GOLD_RESPONSE_COLUMNS,
+        {"ticker": "NEM", "finance_source": "our"},
+    ),
+    "percentiles": (
+        "latest_ticker_page_percentiles_path",
+        PERCENTILES_COLUMNS,
+        {"ticker": "NEM", "finance_source": "our", "metric_key": "margin_pct"},
+    ),
+    "performance": (
+        "latest_ticker_page_performance_path",
+        PERFORMANCE_COLUMNS,
+        {
+            "ticker": "NEM",
+            "series": "stock",
+            "view": "rebased",
+            "horizon": "1Y",
+            "date": "2026-06-01",
+        },
+    ),
+    "research_series": (
+        "latest_ticker_page_research_series_path",
+        RESEARCH_SERIES_COLUMNS,
+        {"ticker": "NEM", "kind": "weekly", "date": "2026-06-01"},
+    ),
+}
+
+
+def _write_ticker_page_artifacts(paths: ProjectPaths, *, refresh_run_id: str) -> None:
+    """Write the four ticker-page artifacts (run-stamped immutable + alias).
+
+    They are REQUIRED artifacts, so a build without them is 'incomplete'.
+    """
+
+    source_run_id = "20260601T000000Z-ticker-page"
+    paths.output_ticker_page_dir.mkdir(parents=True, exist_ok=True)
+    for prefix, (path_attr, columns, keys) in TICKER_PAGE_ARTIFACT_SPECS.items():
+        row: dict[str, object] = dict.fromkeys(columns, None)
+        row.update(keys)
+        row.update(
+            {
+                "schema_version": TICKER_PAGE_SCHEMA_VERSIONS[prefix],
+                "snapshot_refresh_run_id": refresh_run_id,
+                "source_run_id": source_run_id,
+                "parent_refresh_id": "parent-refresh-A",
+                "config_hash": "config-hash",
+            }
+        )
+        frame = pd.DataFrame([row])
+        run_stamped = paths.output_ticker_page_dir / f"{prefix}_latest_{source_run_id}.parquet"
+        frame.to_parquet(run_stamped, index=False)
+        shutil.copyfile(run_stamped, getattr(paths, path_attr))
 
 
 def _write_i3_option_artifacts(paths: ProjectPaths, *, refresh_run_id: str) -> None:
