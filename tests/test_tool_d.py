@@ -356,8 +356,12 @@ def test_tool_d_resilience_rank_uses_survival_components_fcf_context_only():
 
     assert rows.loc["AAA", "tool_d_quality_rank"] == 100.0
     assert rows.loc["BBB", "tool_d_quality_rank"] == 50.0
-    assert rows.loc["BBB", "fcf_yield"] > rows.loc["AAA", "fcf_yield"]
-    assert rows.loc["BBB", "fcf_yield"] == 0.90
+    # The context yield carries the STRESSED run's value, with the spot pair
+    # kept alongside — a stressed row must never quietly show spot economics.
+    assert rows.loc["BBB", "fcf_yield_at_g"] == 0.02
+    assert rows.loc["BBB", "fcf_yield_at_spot"] == 0.90
+    assert rows.loc["AAA", "fcf_yield_at_g"] == 0.01
+    assert rows.loc["AAA", "fcf_yield_at_spot"] == 0.05
     component_cols = [
         "survival_distance_component",
         "cost_curve_resilience_component",

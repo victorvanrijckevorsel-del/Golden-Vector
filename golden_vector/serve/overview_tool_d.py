@@ -428,7 +428,7 @@ def _render_table(
             f"{_fmt_numeric_td(row.get('fragility_resilience_component'), decimals=1)}"
             f"{_fmt_numeric_td(row.get('balance_sheet_resilience_component'), decimals=1)}"
             f"{_fmt_numeric_td(row.get('ev_ebitda_at_g'), decimals=2)}"
-            f"{_fmt_numeric_td(row.get('fcf_yield'), decimals=1, as_percent=True)}"
+            f"{_fmt_numeric_td(row.get('fcf_yield_at_g'), decimals=1, as_percent=True)}"
             "</tr>"
         )
     # Empty state: the colspan row does not match the explicit column model that
@@ -460,7 +460,7 @@ def _render_table(
         + help_th("Fragility Component", key="tool_d_fragility_component", app_config=app_config, col_name="fragility_component", sort_numeric=True, panel=True)
         + help_th("Balance-Sheet Component", key="tool_d_balance_sheet_component", app_config=app_config, col_name="balance_sheet_component", sort_numeric=True, panel=True)
         + help_th("EV/EBITDA Context", key="tool_d_ev_ebitda_context", app_config=app_config, col_name="ev_ebitda", sort_numeric=True, panel=True)
-        + help_th("FCF Yield Context", key="tool_d_fcf_yield_context", app_config=app_config, col_name="fcf_yield", sort_numeric=True, panel=True)
+        + help_th("FCF Yield @ G", key="tool_d_fcf_yield_context", app_config=app_config, col_name="fcf_yield_at_g", sort_numeric=True, panel=True)
         + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
         "</table>",

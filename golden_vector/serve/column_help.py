@@ -1380,8 +1380,8 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         direction="Lower is cheaper.",
     ),
     "tool_d_fcf_yield_context": ColumnHelp(
-        meaning="FCF yield shown for context only — it is not used in the resilience score.",
-        calculation="Free cash flow ÷ market value (from the spot valuation).",
+        meaning="FCF yield at the selected gold price — context only, not used in the resilience score.",
+        calculation="Free cash flow at the selected gold price ÷ market value. The spot-gold pair is kept alongside it (fcf_yield_at_spot).",
         direction="Higher means more cash generation for the price.",
     ),
     "tool_d_failure_ladder": ColumnHelp(
