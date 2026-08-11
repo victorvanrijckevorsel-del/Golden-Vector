@@ -14,7 +14,8 @@ from typing import Any, Protocol
 import pandas as pd
 
 from golden_vector.common.parquet import write_parquet_atomic
-from golden_vector.common.strings import normalize_ticker, ordinal_percentile
+from golden_vector.common.numeric import optional_int
+from golden_vector.common.strings import clean_string, normalize_ticker, ordinal_percentile
 from golden_vector.contracts.config_models import (
     SIGNAL_AREA_DTE_MAX as _SIGNAL_AREA_DTE_MAX,
     SIGNAL_AREA_DTE_MIN as _SIGNAL_AREA_DTE_MIN,
@@ -68,6 +69,13 @@ LONG_HISTORY_COLUMNS: tuple[str, ...] = (
     "skew_residual",
     "atm_iv",
     "iv_rv_ratio",
+    # Plan §6.1/§6.2: implied_move joins the canonical horizon-keyed history
+    # (one authority per field), and every NEW observation records the actual
+    # expiry the horizon resolved to. Legacy rows read as NA — _normalize_history
+    # widens any narrower stored frame, so old files load unchanged.
+    "implied_move",
+    "source_expiration",
+    "source_dte",
 )
 SIGNAL_HISTORY_POINT_COLUMNS: tuple[str, ...] = (
     "ticker",
@@ -191,17 +199,24 @@ def prepare_option_signal_history(
     """
     path = option_signal_history_path(paths)
     normalized = _normalize_history(history)
-    # Shrink guard: the cumulative history may only grow in as-of dates.
+    # Shrink guard, PER (ticker, signal_horizon_days) (plan §6.2 / P7).
+    # A global distinct-date count can grow while one ticker's whole series
+    # silently disappears, so the guard compares date-key SETS per key: the new
+    # file's dates for every existing key must be a superset of the old file's.
     # Refusing a shrinking write turns any silent-wipe bug upstream into a
     # loud error instead of irreversible data loss.
     if path.exists():
-        existing_dates = _distinct_as_of_dates(pd.read_parquet(path))
-        next_dates = _distinct_as_of_dates(normalized)
-        if next_dates < existing_dates:
+        existing = _normalize_history(pd.read_parquet(path))
+        lost = _lost_history_keys(existing=existing, candidate=normalized)
+        if lost:
+            preview = "; ".join(
+                f"{ticker}/{horizon}d missing {len(dates)} date(s)"
+                for (ticker, horizon), dates in lost[:5]
+            )
             raise ValueError(
-                "Refusing to overwrite option signal history: new history has "
-                f"{next_dates} distinct as-of dates, file on disk has "
-                f"{existing_dates}. This would destroy accumulated IV history."
+                "Refusing to overwrite option signal history: "
+                f"{len(lost)} (ticker, horizon) series would lose observed "
+                f"as-of dates ({preview}). This would destroy accumulated IV history."
             )
     return path, normalized
 
@@ -220,6 +235,39 @@ def _distinct_as_of_dates(frame: pd.DataFrame) -> int:
     if frame.empty or "as_of_date" not in frame.columns:
         return 0
     return int(frame["as_of_date"].astype(str).nunique())
+
+
+def _history_dates_by_key(frame: pd.DataFrame) -> dict[tuple[str, int], set[str]]:
+    """Map (ticker, signal_horizon_days) -> observed as-of date strings."""
+
+    keyed: dict[tuple[str, int], set[str]] = {}
+    if frame.empty or "as_of_date" not in frame.columns:
+        return keyed
+    for record in frame.to_dict(orient="records"):
+        ticker = clean_string(record.get("ticker"))
+        horizon = optional_int(record.get("signal_horizon_days"))
+        as_of = clean_string(record.get("as_of_date"))
+        if ticker is None or horizon is None or as_of is None:
+            continue
+        keyed.setdefault((ticker, horizon), set()).add(as_of)
+    return keyed
+
+
+def _lost_history_keys(
+    *,
+    existing: pd.DataFrame,
+    candidate: pd.DataFrame,
+) -> list[tuple[tuple[str, int], set[str]]]:
+    """Return per-key date sets present on disk but absent from the candidate."""
+
+    existing_keyed = _history_dates_by_key(existing)
+    candidate_keyed = _history_dates_by_key(candidate)
+    lost: list[tuple[tuple[str, int], set[str]]] = []
+    for key, dates in sorted(existing_keyed.items()):
+        missing = dates - candidate_keyed.get(key, set())
+        if missing:
+            lost.append((key, missing))
+    return lost
 
 
 def _summary_row(
@@ -401,7 +449,13 @@ def _history_rows(
         skew_residual = row.get(f"skew_residual_{horizon}d")
         atm_iv = row_float(feature, f"atm_iv_{horizon}d")
         iv_rv_ratio = row_float(feature, f"iv_rv_ratio_{horizon}d")
-        if skew_residual is None and atm_iv is None and iv_rv_ratio is None:
+        implied_move = row_float(feature, f"implied_move_{horizon}d")
+        if (
+            skew_residual is None
+            and atm_iv is None
+            and iv_rv_ratio is None
+            and implied_move is None
+        ):
             continue
         rows.append(
             {
@@ -413,6 +467,15 @@ def _history_rows(
                 "skew_residual": skew_residual,
                 "atm_iv": atm_iv,
                 "iv_rv_ratio": iv_rv_ratio,
+                "implied_move": implied_move,
+                # The expiry this horizon actually resolved to (plan §6.2 / P7).
+                # compute_options_features does not yet emit these keys — see the
+                # follow-up noted in the handoff — so they read as explicit
+                # unknowns until it does, never as a silently wrong expiry.
+                "source_expiration": clean_string(
+                    feature.get(f"source_expiration_{horizon}d")
+                ),
+                "source_dte": optional_int(feature.get(f"source_dte_{horizon}d")),
             }
         )
     return rows

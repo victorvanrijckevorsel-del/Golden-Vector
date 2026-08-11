@@ -9,6 +9,7 @@ from golden_vector.app.model_state import write_current_model_state_manifest
 from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.option_artifacts import (
     OPTION_ARTIFACT_NAMES,
+    OPTION_ARTIFACT_SCHEMA_VERSION,
     option_artifact_latest_path,
     option_artifact_run_stamped_path,
 )
@@ -500,3 +501,98 @@ def _option(
         "days_to_expiry": 46,
         "options_available": True,
     }
+
+
+def _greeks_build_result() -> OptionArtifactBuildResult:
+    tradable = _candidate("AEM", liquidity_tier="tradable")
+    return OptionArtifactBuildResult(
+        overview=OptionTradingOverviewData(rows=(), liquidity_measurements=()),
+        candidate_grids={"AEM": [tradable]},
+        call_candidate_grids={},
+        candidate_slots={"AEM": [_slot("AEM", candidate=tradable)]},
+        call_candidate_slots={},
+        liquidity_measurements=(),
+        source_context=OptionTradingSourceContext(refresh_run_id="options-run"),
+    )
+
+
+def _greeks_frames() -> dict[str, pd.DataFrame]:
+    return build_option_artifact_frames(
+        built=_greeks_build_result(),
+        contract_metrics=(),
+        options_features=pd.DataFrame([{"ticker": "AEM", "run_id": "options-run"}]),
+        manifest={"refresh_run_id": "options-run", "as_of_date": "2026-06-01"},
+        source_run_id="20260601T000000Z-option-artifacts",
+        parent_refresh_id="parent-refresh",
+        config_hash="config-hash",
+        risk_free_rate=0.04,
+        risk_free_rate_is_fallback=False,
+    )
+
+
+def test_candidate_frames_carry_greeks_and_contract_metrics_do_not():
+    """Plan §6.4: greeks are stamped on selected candidate / slot rows ONLY."""
+
+    from golden_vector.features.black_scholes import black_scholes_greeks
+    from golden_vector.features.options_chain import CALENDAR_DAYS_PER_YEAR
+
+    frames = _greeks_frames()
+    selected = frames["option_selected_candidates"]
+    slots = frames["option_candidate_slots"]
+
+    expected = black_scholes_greeks(
+        option_type="P",
+        spot=100.0,
+        strike=95.0,
+        time_to_expiry_years=42 / CALENDAR_DAYS_PER_YEAR,
+        risk_free_rate=0.04,
+        implied_volatility=0.4,
+    )
+    for column in ("gamma", "vega", "theta"):
+        assert selected.iloc[0][column] == pytest.approx(expected[column])
+        assert slots.iloc[0][f"candidate_{column}"] == pytest.approx(expected[column])
+    assert selected.iloc[0]["greeks_model_version"] == "black_scholes_q0_v1"
+
+    # The big global chain frame stays greek-free.
+    metrics = frames["option_contract_metrics"]
+    assert "gamma" not in metrics.columns
+    assert "vega" not in metrics.columns
+    assert "theta" not in metrics.columns
+
+
+def test_greek_columns_are_dormant_additive_only():
+    """v3 publishing is unchanged: same artifact names, same schema_version."""
+
+    frames = _greeks_frames()
+    assert set(frames) == set(OPTION_ARTIFACT_NAMES)
+    for frame in frames.values():
+        assert set(frame["schema_version"]) <= {OPTION_ARTIFACT_SCHEMA_VERSION}
+
+
+def test_versioned_artifact_name_sets_and_active_resolution():
+    """Plan §6.4: versioned name sets, ACTIVE stays 3, read-set == the v3 ten."""
+
+    from golden_vector.contracts.option_artifacts import (
+        ACTIVE_OPTION_SCHEMA_VERSION,
+        OPTION_ARTIFACT_SETS,
+        OPTION_TRADING_READ_SET,
+        option_artifact_names_for_version,
+    )
+
+    v3 = OPTION_ARTIFACT_SETS[3]
+    v4 = OPTION_ARTIFACT_SETS[4]
+    assert set(v4) > set(v3)
+    assert set(v4) - set(v3) == {"option_chain_history_daily", "option_availability"}
+    assert len(v3) == 10
+
+    # Dormancy control: the active version and the runtime name tuple are v3.
+    assert ACTIVE_OPTION_SCHEMA_VERSION == 3 == OPTION_ARTIFACT_SCHEMA_VERSION
+    assert OPTION_ARTIFACT_NAMES == v3
+    assert option_artifact_names_for_version(ACTIVE_OPTION_SCHEMA_VERSION) == v3
+    assert option_artifact_names_for_version(4) == v4
+
+    # The overview loader's reads exclude the two page-only v4 artifacts.
+    assert OPTION_TRADING_READ_SET == v3
+
+    with pytest.raises(ValueError):
+        option_artifact_names_for_version(99)

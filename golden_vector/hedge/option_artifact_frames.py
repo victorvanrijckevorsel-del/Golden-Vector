@@ -10,6 +10,8 @@ import pandas as pd
 
 from golden_vector.common.strings import normalize_ticker_series
 from golden_vector.contracts.option_artifacts import OPTION_ARTIFACT_SCHEMA_VERSION
+from golden_vector.features.black_scholes import black_scholes_greeks
+from golden_vector.features.options_chain import CALENDAR_DAYS_PER_YEAR
 from golden_vector.hedge.candidate_puts import (
     CandidateSlotStatus,
     OptionCandidate,
@@ -128,13 +130,23 @@ def build_option_artifact_frames(
         "option_liquidity_measurements": _liquidity_measurements_frame(
             built.overview.liquidity_measurements
         ),
-        "option_candidate_slots": _candidate_slots_frame(
-            built.candidate_slots,
-            built.call_candidate_slots,
+        # Greeks are stamped on SELECTED candidate / slot rows only (plan §6.4) —
+        # never on the full option_contract_metrics chain frame.
+        "option_candidate_slots": _add_candidate_greeks(
+            _candidate_slots_frame(
+                built.candidate_slots,
+                built.call_candidate_slots,
+            ),
+            prefix="candidate_",
+            risk_free_rate=risk_free_rate,
         ),
-        "option_selected_candidates": _selected_candidates_frame(
-            built.candidate_grids,
-            built.call_candidate_grids,
+        "option_selected_candidates": _add_candidate_greeks(
+            _selected_candidates_frame(
+                built.candidate_grids,
+                built.call_candidate_grids,
+            ),
+            prefix="",
+            risk_free_rate=risk_free_rate,
         ),
         "option_trading_overview": overview_frame,
         "candidate_finder_inputs": _candidate_finder_inputs_frame(
@@ -538,6 +550,77 @@ def _summary_signal_horizon(signal_summary: pd.DataFrame | None) -> int | None:
         signal_summary["signal_horizon_days"], errors="coerce"
     ).dropna()
     return int(values.iloc[0]) if not values.empty else None
+
+
+GREEKS_MODEL_VERSION = "black_scholes_q0_v1"
+
+
+def _add_candidate_greeks(
+    frame: pd.DataFrame,
+    *,
+    prefix: str,
+    risk_free_rate: float,
+) -> pd.DataFrame:
+    """Stamp gamma / vega / theta on candidate-facing rows (plan §6.4, B9).
+
+    Units: gamma per $1 underlying, vega per 1.00 vol, theta per calendar day.
+    Inputs are the row's own quote IV, actual DTE and the run's risk_free_rate;
+    q = 0. Rows without a selected candidate get None. Dormant additive columns:
+    option artifact validation checks names + schema_version only, never a
+    strict column list, so v3 publishing is unchanged.
+    """
+
+    result = frame.copy()
+    required = [f"{prefix}{name}" for name in ("strike", "underlying_price", "days_to_expiry")]
+    if result.empty or any(column not in result.columns for column in required):
+        for name in ("gamma", "vega", "theta"):
+            if f"{prefix}{name}" not in result.columns:
+                result[f"{prefix}{name}"] = None
+        result[f"{prefix}greeks_model_version"] = GREEKS_MODEL_VERSION
+        return result
+
+    gammas: list[float | None] = []
+    vegas: list[float | None] = []
+    thetas: list[float | None] = []
+    for _, row in result.iterrows():
+        greeks = _row_greeks(row, prefix=prefix, risk_free_rate=risk_free_rate)
+        gammas.append(greeks["gamma"])
+        vegas.append(greeks["vega"])
+        thetas.append(greeks["theta"])
+    result[f"{prefix}gamma"] = gammas
+    result[f"{prefix}vega"] = vegas
+    result[f"{prefix}theta"] = thetas
+    result[f"{prefix}greeks_model_version"] = GREEKS_MODEL_VERSION
+    return result
+
+
+def _row_greeks(
+    row: pd.Series,
+    *,
+    prefix: str,
+    risk_free_rate: float,
+) -> dict[str, float | None]:
+    empty: dict[str, float | None] = {"gamma": None, "vega": None, "theta": None}
+    spot = as_float(row.get(f"{prefix}underlying_price"))
+    strike = as_float(row.get(f"{prefix}strike"))
+    days = as_float(row.get(f"{prefix}days_to_expiry"))
+    iv = as_float(row.get(f"{prefix}implied_volatility"))
+    option_type = str(row.get(f"{prefix}option_type") or "").upper()
+    if option_type not in {"P", "C"}:
+        # option_selected_candidates rows carry option_type; slot rows fall back
+        # to the slot's own option_type column.
+        option_type = str(row.get("option_type") or "").upper()
+    if spot is None or strike is None or days is None or option_type not in {"P", "C"}:
+        return empty
+    return black_scholes_greeks(
+        option_type=cast(Literal["P", "C"], option_type),
+        spot=spot,
+        strike=strike,
+        # Same calendar day-count as add_black_scholes_delta.
+        time_to_expiry_years=days / CALENDAR_DAYS_PER_YEAR,
+        risk_free_rate=float(risk_free_rate),
+        implied_volatility=iv,
+    )
 
 
 def _candidate_slot_row(slot: OptionCandidateSlot) -> dict[str, Any]:
