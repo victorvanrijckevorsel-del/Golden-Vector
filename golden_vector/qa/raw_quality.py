@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 from golden_vector.contracts.config_models import AppConfig
@@ -94,6 +95,7 @@ def evaluate_raw_quality(
                 warn_on_duplicates=app_config.qa.warn_on_duplicate_rows,
             )
         )
+        results.append(_fx_rate_validity_check(currency=currency, frame=frame))
 
     results.extend(
         _history_checks(
@@ -361,3 +363,50 @@ def _snapshot_message(
     if not tickers:
         return success_message
     return failure_prefix + ", ".join(tickers)
+
+
+def _fx_rate_validity_check(*, currency: str, frame: pd.DataFrame) -> QaCheckResult:
+    """C7: zero/negative/non-finite FX rates fail loud at raw QA.
+
+    A null rate is ordinary missing data (covered by history checks); a PRESENT
+    invalid rate means the feed is corrupt and silently converting with it would
+    fabricate USD values.
+    """
+    if frame.empty or "fx_rate_to_usd" not in frame.columns:
+        return QaCheckResult(
+            check_name="fx_rate_validity",
+            status="PASS",
+            dataset="fx",
+            entity=currency,
+            message="No FX rate rows to validate.",
+        )
+    raw = frame["fx_rate_to_usd"]
+    numeric = pd.to_numeric(raw, errors="coerce")
+    present = raw.notna()
+    invalid = present & (numeric.isna() | ~np.isfinite(numeric.fillna(0.0)) | (numeric <= 0))
+    invalid_count = int(invalid.sum())
+    if invalid_count == 0:
+        return QaCheckResult(
+            check_name="fx_rate_validity",
+            status="PASS",
+            dataset="fx",
+            entity=currency,
+            message="All present FX rates are finite and positive.",
+        )
+    bad_dates = (
+        pd.to_datetime(frame.loc[invalid, "date"], errors="coerce").dt.date.astype(str).tolist()
+        if "date" in frame.columns
+        else []
+    )
+    suffix = "..." if len(bad_dates) > 5 else ""
+    return QaCheckResult(
+        check_name="fx_rate_validity",
+        status="FAIL",
+        dataset="fx",
+        entity=currency,
+        message=(
+            f"{invalid_count} FX rate row(s) are zero, negative, or non-finite "
+            f"(dates: {', '.join(bad_dates[:5])}{suffix}). "
+            "Invalid rates never convert prices; fix the feed or the stored history."
+        ),
+    )

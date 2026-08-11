@@ -202,8 +202,8 @@ def test_pack_spot_values_match_the_spot_run_and_use_true_spot(pack_inputs):
         assert our.loc[ticker, "spot_margin_usd_per_oz"] == pytest.approx(
             float(spot_run.loc[ticker, "cash_margin_usd_per_oz"])
         )
-        assert our.loc[ticker, "spot_fcf_yield"] == pytest.approx(
-            float(spot_run.loc[ticker, "fcf_yield"])
+        assert our.loc[ticker, "spot_aisc_margin_yield"] == pytest.approx(
+            float(spot_run.loc[ticker, "aisc_margin_yield"])
         )
         # Stressed forward leverage is derived (Tool B ships only trailing `leverage`).
         assert our.loc[ticker, "spot_leverage_stressed"] == pytest.approx(

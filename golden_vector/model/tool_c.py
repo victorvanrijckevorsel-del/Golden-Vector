@@ -123,15 +123,15 @@ def compute_tool_c_outputs(
         weekly_returns,
         rolling_weeks=config.regime_rolling_weeks,
         min_weeks=config.regime_min_weeks,
-        downside_hit_rate_threshold=config.downside_hit_rate_threshold,
-        upside_hit_rate_threshold=config.upside_hit_rate_threshold,
+        downside_hit_rate_log_threshold=config.downside_hit_rate_log_threshold,
+        upside_hit_rate_log_threshold=config.upside_hit_rate_log_threshold,
     )
     relative_metrics = compute_relative_behavior_metrics(
         weekly_returns=weekly_returns,
         gold_regimes=gold_regimes,
         min_events=config.min_events,
-        downside_hit_rate_threshold=config.downside_hit_rate_threshold,
-        upside_hit_rate_threshold=config.upside_hit_rate_threshold,
+        downside_hit_rate_log_threshold=config.downside_hit_rate_log_threshold,
+        upside_hit_rate_log_threshold=config.upside_hit_rate_log_threshold,
     )
     return build_tool_c_output_frame(
         tool_a_latest=inputs.tool_a_latest,

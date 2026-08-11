@@ -50,7 +50,7 @@ def test_candidate_finder_page_renders_default_bull_screen():
     assert 'data-col-name="criterion_down_beta" data-sort-numeric' not in html
     assert "weighted-average percentile across the criteria you chose" in html
     assert "Model build state needs attention" in html
-    assert 'aria-label="Use FCF yield"' in html
+    assert 'aria-label="Use AISC margin yield"' in html
     assert "Profit cushion per ounce vs the gold price." in html
     assert "<th>Meaning</th>" in html
     assert "<th>Field</th>" not in html
@@ -387,7 +387,7 @@ def _candidate_finder_data() -> CandidateFinderData:
                 "forward_pe": 8.0,
                 "iv_percentile_cross_sectional": 30.0,
                 "confidence_score": 0.92,
-                "fcf_yield": 0.05,
+                "aisc_margin_yield": 0.05,
                 "reserve_life_years": 12.0,
                 "fundamental_check_score": 85.7143,
                 "interest_cover_gold_usd": 1500.0,
@@ -412,7 +412,7 @@ def _candidate_finder_data() -> CandidateFinderData:
                 "forward_pe": 7.0,
                 "iv_percentile_cross_sectional": 55.0,
                 "confidence_score": 0.84,
-                "fcf_yield": 0.03,
+                "aisc_margin_yield": 0.03,
                 "reserve_life_years": 18.0,
                 "fundamental_check_score": 100.0,
                 "interest_cover_gold_usd": 1200.0,
@@ -523,12 +523,12 @@ def test_beta_criterion_help_keys_match_blend_vs_window_basis():
 
 
 def test_finder_value_column_scales_percent_criteria():
-    """margin_pct / fcf_yield are stored as fractions; the Value cell must render them as percents
+    """margin_pct / aisc_margin_yield are stored as fractions; the Value cell must render them as percents
     so it agrees with the metric its info button explains (and the same metric on the other tools)."""
     from golden_vector.serve.candidate_finder_page import _fmt_criterion_value
 
     assert _fmt_criterion_value(_resolved_criterion("margin_pct"), 0.571) == "57.1%"
-    assert _fmt_criterion_value(_resolved_criterion("fcf_yield"), 0.3935) == "39.4%"
+    assert _fmt_criterion_value(_resolved_criterion("aisc_margin_yield"), 0.3935) == "39.4%"
     # Registered Tool B criteria use the same compact formatter as the other Tool B surfaces.
     assert _fmt_criterion_value(_resolved_criterion("ev_ebitda"), 7.31) == "7.3"
     # Unknown criteria fall back to the generic 2-decimal number.

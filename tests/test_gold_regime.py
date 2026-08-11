@@ -1,3 +1,5 @@
+import math
+
 import pandas as pd
 
 from golden_vector.features.gold_regime import (
@@ -25,8 +27,8 @@ def test_build_gold_regime_frame_uses_rolling_tail_thresholds():
         weekly_returns,
         rolling_weeks=3,
         min_weeks=3,
-        downside_hit_rate_threshold=-0.10,
-        upside_hit_rate_threshold=0.10,
+        downside_hit_rate_log_threshold=math.log1p(-0.10),
+        upside_hit_rate_log_threshold=math.log1p(0.10),
     )
 
     assert list(regimes.columns) == GOLD_REGIME_COLUMNS

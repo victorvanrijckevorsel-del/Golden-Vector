@@ -46,7 +46,7 @@ def test_parse_query_overrides_maps_gold_price_and_thresholds():
         "gold_price": ["4500"],
         "pe_target": ["8"],
         "aisc_target": ["1600"],
-        "fcf_yield_target": ["20"],  # percent -> 0.20
+        "aisc_margin_yield_target": ["20"],  # percent -> 0.20
         "margin_target": ["50"],
         "reserve_life_target": ["8"],
         "leverage_target": ["2"],
@@ -58,7 +58,7 @@ def test_parse_query_overrides_maps_gold_price_and_thresholds():
     assert overrides.gold_price == 4500.0
     assert overrides.verdict["strong_candidate_forward_pe_max"] == 8.0
     assert overrides.layer1["aisc_max"] == 1600.0
-    assert overrides.layer1["fcf_yield_min"] == pytest.approx(0.20)
+    assert overrides.layer1["aisc_margin_yield_min"] == pytest.approx(0.20)
     assert overrides.layer1["margin_min"] == pytest.approx(0.50)
     assert overrides.layer1["reserve_life_min"] == 8.0
     assert overrides.layer1["leverage_max"] == 2.0
@@ -69,10 +69,10 @@ def test_parse_query_overrides_maps_gold_price_and_thresholds():
 
 def test_parse_query_overrides_accepts_fractional_percent_input():
     """Users who type 0.15 directly should get the same fraction as '15'."""
-    ovr_int = parse_query_overrides({"fcf_yield_target": ["15"]})
-    ovr_frac = parse_query_overrides({"fcf_yield_target": ["0.15"]})
-    assert ovr_int.layer1["fcf_yield_min"] == pytest.approx(0.15)
-    assert ovr_frac.layer1["fcf_yield_min"] == pytest.approx(0.15)
+    ovr_int = parse_query_overrides({"aisc_margin_yield_target": ["15"]})
+    ovr_frac = parse_query_overrides({"aisc_margin_yield_target": ["0.15"]})
+    assert ovr_int.layer1["aisc_margin_yield_min"] == pytest.approx(0.15)
+    assert ovr_frac.layer1["aisc_margin_yield_min"] == pytest.approx(0.15)
 
 
 def test_parse_query_overrides_ignores_blank_values():

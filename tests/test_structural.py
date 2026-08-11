@@ -722,3 +722,95 @@ def test_build_rebased_comparison_series_window_weeks_zero_keeps_full_series():
 
     assert out["ABC"][0] == dates  # all dates retained, not a tail slice
     assert out["ABC"][1] == pytest.approx([100.0, 110.0, 120.0, 130.0])
+
+
+def test_weekly_as_of_date_is_the_later_input_date_thursday_stock_friday_gold():
+    """C3: a Thursday stock close paired with Friday gold uses Friday's gold
+
+    value, so the row is only knowable on Friday — it must be dated Friday.
+    """
+    equity_history = pd.DataFrame(
+        [
+            {"ticker": "NEM", "date": date(2026, 4, 3), "return_basis_usd": 10.0, "normalization_status": "OK"},
+            # Thursday close only in week 2 (exchange holiday Friday)
+            {"ticker": "NEM", "date": date(2026, 4, 9), "return_basis_usd": 10.5, "normalization_status": "OK"},
+            {"ticker": "NEM", "date": date(2026, 4, 17), "return_basis_usd": 11.0, "normalization_status": "OK"},
+        ]
+    )
+    gold_history = pd.DataFrame(
+        [
+            {"date": date(2026, 4, 3), "adj_close_usd": 3000.0, "close_usd": 3000.0},
+            {"date": date(2026, 4, 10), "adj_close_usd": 3010.0, "close_usd": 3010.0},  # Friday
+            {"date": date(2026, 4, 17), "adj_close_usd": 3020.0, "close_usd": 3020.0},
+        ]
+    )
+
+    weekly_series, _ = build_structural_weekly_series(
+        usd_equity_history=equity_history,
+        gold_history=gold_history,
+    )
+
+    week2 = weekly_series.loc[weekly_series["stock_week_date"].eq(pd.Timestamp("2026-04-09"))]
+    assert len(week2) == 1
+    assert week2.iloc[0]["as_of_date"] == date(2026, 4, 10)  # the LATER input
+    # provenance keeps both source dates
+    assert week2.iloc[0]["gold_week_date"] == pd.Timestamp("2026-04-10")
+
+
+def test_weekly_as_of_date_is_the_later_input_date_friday_stock_thursday_gold():
+    """C3 mirror: gold missing Friday, stock trades Friday -> dated Friday."""
+    equity_history = pd.DataFrame(
+        [
+            {"ticker": "NEM", "date": date(2026, 4, 3), "return_basis_usd": 10.0, "normalization_status": "OK"},
+            {"ticker": "NEM", "date": date(2026, 4, 10), "return_basis_usd": 10.5, "normalization_status": "OK"},
+            {"ticker": "NEM", "date": date(2026, 4, 17), "return_basis_usd": 11.0, "normalization_status": "OK"},
+        ]
+    )
+    gold_history = pd.DataFrame(
+        [
+            {"date": date(2026, 4, 3), "adj_close_usd": 3000.0, "close_usd": 3000.0},
+            {"date": date(2026, 4, 9), "adj_close_usd": 3010.0, "close_usd": 3010.0},  # Thursday only
+            {"date": date(2026, 4, 17), "adj_close_usd": 3020.0, "close_usd": 3020.0},
+        ]
+    )
+
+    weekly_series, _ = build_structural_weekly_series(
+        usd_equity_history=equity_history,
+        gold_history=gold_history,
+    )
+
+    week2 = weekly_series.loc[weekly_series["gold_week_date"].eq(pd.Timestamp("2026-04-09"))]
+    assert len(week2) == 1
+    assert week2.iloc[0]["as_of_date"] == date(2026, 4, 10)
+
+
+def test_weekly_as_of_date_never_precedes_either_input_date():
+    """C3 invariant: every row's date is >= both of its source observation dates."""
+    equity_history = pd.DataFrame(
+        [
+            {"ticker": "NEM", "date": date(2026, 3, 20), "return_basis_usd": 9.0, "normalization_status": "OK"},
+            {"ticker": "NEM", "date": date(2026, 3, 26), "return_basis_usd": 9.5, "normalization_status": "OK"},
+            {"ticker": "NEM", "date": date(2026, 4, 2), "return_basis_usd": 10.0, "normalization_status": "OK"},
+            {"ticker": "NEM", "date": date(2026, 4, 10), "return_basis_usd": 10.5, "normalization_status": "OK"},
+            {"ticker": "NEM", "date": date(2026, 4, 17), "return_basis_usd": 11.0, "normalization_status": "OK"},
+        ]
+    )
+    gold_history = pd.DataFrame(
+        [
+            {"date": date(2026, 3, 20), "adj_close_usd": 2990.0, "close_usd": 2990.0},
+            {"date": date(2026, 3, 27), "adj_close_usd": 2995.0, "close_usd": 2995.0},
+            {"date": date(2026, 4, 3), "adj_close_usd": 3000.0, "close_usd": 3000.0},
+            {"date": date(2026, 4, 9), "adj_close_usd": 3010.0, "close_usd": 3010.0},
+            {"date": date(2026, 4, 17), "adj_close_usd": 3020.0, "close_usd": 3020.0},
+        ]
+    )
+
+    weekly_series, _ = build_structural_weekly_series(
+        usd_equity_history=equity_history,
+        gold_history=gold_history,
+    )
+
+    assert not weekly_series.empty
+    as_of = pd.to_datetime(weekly_series["as_of_date"])
+    assert (as_of >= weekly_series["stock_week_date"]).all()
+    assert (as_of >= weekly_series["gold_week_date"]).all()

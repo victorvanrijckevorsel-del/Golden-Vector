@@ -262,7 +262,7 @@ def _render_latest_panels(
         + "<div class=\"two-up\">"
         f"<section id=\"corporate-finance\" class=\"panel nested-panel\"><h3>Latest Corporate Finance Snapshot</h3>"
         f"{finance_controls}"
-        f"{_render_tool_b_snapshot_table(ticker=ticker, row=tool_b_row, columns=['as_of_date', 'gold_price_assumption', 'fundamental_check_summary', 'fundamental_check_rank', 'screening_verdict', 'confidence', 'share_price_usd', 'market_cap_musd', 'cash_margin_usd_per_oz', 'margin_pct', 'fcf_yield', 'leverage', 'forward_pe', 'ev_ebitda', 'snapshot_refresh_run_id', 'snapshot_as_of_date', 'snapshot_normalization_status', 'fx_staleness_days'], financials_source=financials_source, fundamentals_provenance=provenance_lookup)}"
+        f"{_render_tool_b_snapshot_table(ticker=ticker, row=tool_b_row, columns=['as_of_date', 'gold_price_assumption', 'fundamental_check_summary', 'fundamental_check_rank', 'screening_verdict', 'confidence', 'share_price_usd', 'market_cap_musd', 'cash_margin_usd_per_oz', 'margin_pct', 'aisc_margin_yield', 'leverage', 'forward_pe', 'ev_ebitda', 'snapshot_refresh_run_id', 'snapshot_as_of_date', 'snapshot_normalization_status', 'fx_staleness_days'], financials_source=financials_source, fundamentals_provenance=provenance_lookup)}"
         "</section>"
         "</div>"
     )

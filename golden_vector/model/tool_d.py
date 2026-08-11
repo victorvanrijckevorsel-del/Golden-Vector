@@ -15,7 +15,7 @@ from golden_vector.model.gold_lines import GoldLine, line_from_two_points, x_for
 from golden_vector.screening.manual_data import LoadedManualScreeningData
 from golden_vector.screening.pipeline import compute_tool_b_in_memory
 
-TOOL_D_SCHEMA_VERSION = 2
+TOOL_D_SCHEMA_VERSION = 3
 
 TOOL_D_OUTPUT_COLUMNS = [
     "ticker",
@@ -32,8 +32,8 @@ TOOL_D_OUTPUT_COLUMNS = [
     "market_cap_musd",
     "screening_verdict",
     "confidence",
-    "fcf_yield_at_g",
-    "fcf_yield_at_spot",
+    "aisc_margin_yield_at_g",
+    "aisc_margin_yield_at_spot",
     "reserve_life_years",
     "cash_cost_usd_per_oz",
     "production_oz",
@@ -50,7 +50,6 @@ TOOL_D_OUTPUT_COLUMNS = [
     "headroom_to_breakeven_pct_at_spot",
     "headroom_delta_vs_spot",
     "breaks_even_at_gold_usd",
-    "fcf_breakeven_gold_usd",
     "interest_cover_gold_usd",
     "debt_stress_gold_usd",
     "survival_distance_to_interest_cover_pct",
@@ -333,11 +332,6 @@ def _build_tool_d_row(
         anchor_gold_price=ebitda_anchor_gold_price,
         ebitda_at_anchor=anchor_ebitda,
     )
-    fcf_breakeven = _fcf_breakeven_gold(
-        aisc=aisc,
-        sustaining_capex=sustaining_capex,
-        production=production,
-    )
     interest_cover_gold = _threshold_gold(
         ebitda_model=ebitda_model,
         target_ebitda=interest_expense,
@@ -359,7 +353,6 @@ def _build_tool_d_row(
     missing_inputs = _missing_inputs(
         production=production,
         aisc=aisc,
-        sustaining_capex=sustaining_capex,
         interest_expense=interest_expense,
         net_debt=net_debt,
         forward_ebitda=forward_ebitda,
@@ -391,8 +384,8 @@ def _build_tool_d_row(
         "market_cap_musd": market_cap,
         "screening_verdict": stressed_row.get("screening_verdict"),
         "confidence": stressed_row.get("confidence"),
-        "fcf_yield_at_g": _optional_float(stressed_row.get("fcf_yield")),
-        "fcf_yield_at_spot": _optional_float(spot_row.get("fcf_yield")),
+        "aisc_margin_yield_at_g": _optional_float(stressed_row.get("aisc_margin_yield")),
+        "aisc_margin_yield_at_spot": _optional_float(spot_row.get("aisc_margin_yield")),
         "reserve_life_years": _optional_float(manual_row.get("reserve_life_years")),
         "cash_cost_usd_per_oz": cash_cost,
         "production_oz": production,
@@ -409,7 +402,6 @@ def _build_tool_d_row(
         "headroom_to_breakeven_pct_at_spot": spot_headroom,
         "headroom_delta_vs_spot": _difference(headroom, spot_headroom),
         "breaks_even_at_gold_usd": aisc,
-        "fcf_breakeven_gold_usd": fcf_breakeven,
         "interest_cover_gold_usd": interest_cover_gold,
         "debt_stress_gold_usd": debt_stress_gold,
         "survival_distance_to_interest_cover_pct": survival_distance,
@@ -422,7 +414,6 @@ def _build_tool_d_row(
         "ebitda_pct_change_vs_spot": ebitda_change,
         "survival_order_ladder": _survival_order_ladder(
             breakeven=aisc,
-            fcf_breakeven=fcf_breakeven,
             interest_cover=interest_cover_gold,
         ),
         "resilience_flip_flags": None,
@@ -647,17 +638,6 @@ def _threshold_gold(
     return x_for_value(ebitda_model, target_ebitda)
 
 
-def _fcf_breakeven_gold(
-    *,
-    aisc: float | None,
-    sustaining_capex: float | None,
-    production: float | None,
-) -> float | None:
-    if aisc is None or sustaining_capex is None or production is None or production <= 0:
-        return None
-    return max(aisc, aisc + (sustaining_capex * 1_000_000.0 / production))
-
-
 def _debt_stress_gold(
     *,
     ebitda_model: GoldLine | None,
@@ -723,7 +703,6 @@ def _missing_inputs(
     *,
     production: float | None,
     aisc: float | None,
-    sustaining_capex: float | None,
     interest_expense: float | None,
     net_debt: float | None,
     forward_ebitda: float | None,
@@ -733,8 +712,6 @@ def _missing_inputs(
         missing.append("production_oz")
     if aisc is None:
         missing.append("aisc_usd_per_oz")
-    if sustaining_capex is None:
-        missing.append("sustaining_capex_musd")
     if interest_expense is None:
         missing.append("interest_expense_musd")
     if net_debt is None:
@@ -763,12 +740,10 @@ def _resilience_data_status(
 def _survival_order_ladder(
     *,
     breakeven: float | None,
-    fcf_breakeven: float | None,
     interest_cover: float | None,
 ) -> str | None:
     levels = [
         ("Breakeven", breakeven),
-        ("FCF breakeven", fcf_breakeven),
         ("Interest cover", interest_cover),
     ]
     available = [(label, value) for label, value in levels if value is not None]

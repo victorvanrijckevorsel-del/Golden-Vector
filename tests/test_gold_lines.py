@@ -77,7 +77,8 @@ def test_tool_d_gold_thresholds_match_hand_computed_line_inversion():
     Stressed EBITDA 2000 at gold 3000 and anchor EBITDA 3000 at gold 4000 give
     slope 1.0 and intercept -1000. Interest cover (100) therefore lands at gold
     1100; debt stress needs EBITDA = net debt 2000 / danger 3.0 = 666.67, at
-    gold 1666.67. FCF breakeven is AISC 1300 + 900m capex / 6m oz = 1450.
+    gold 1666.67. Cost breakeven is reported AISC (1300) — C1 removed the
+    double-counted "FCF breakeven" concept.
     """
     manual_data = LoadedManualScreeningData(
         company_inputs=pd.DataFrame(
@@ -115,7 +116,7 @@ def test_tool_d_gold_thresholds_match_hand_computed_line_inversion():
             "market_cap_musd": 3000,
             "screening_verdict": "WATCHLIST",
             "confidence": "VERIFIED",
-            "fcf_yield": 0.01,
+            "aisc_margin_yield": 0.01,
             "forward_ebitda_musd": forward_ebitda,
             "net_debt_musd": None,
             "interest_expense_musd": None,
@@ -136,7 +137,8 @@ def test_tool_d_gold_thresholds_match_hand_computed_line_inversion():
 
     assert row["interest_cover_gold_usd"] == pytest.approx(1100.0)
     assert row["debt_stress_gold_usd"] == pytest.approx(1666.6666667)
-    assert row["fcf_breakeven_gold_usd"] == pytest.approx(1450.0)
+    assert row["breaks_even_at_gold_usd"] == pytest.approx(1300.0)
+    assert "fcf_breakeven_gold_usd" not in row.index
 
 
 def test_x_for_value_rejects_a_near_flat_slope():

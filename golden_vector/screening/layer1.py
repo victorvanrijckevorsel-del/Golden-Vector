@@ -51,16 +51,17 @@ def evaluate_layer1(
         if cash_margin_usd_per_oz is not None and gold_price_assumption > 0
         else None
     )
-    sustainable_fcf_musd = (
-        ((cash_margin_usd_per_oz * production_oz) / 1_000_000.0) - sustaining_capex_musd
-        if cash_margin_usd_per_oz is not None
-        and production_oz is not None
-        and sustaining_capex_musd is not None
+    # Reported AISC already includes sustaining capital (WGC definition), so the
+    # margin estimate charges it exactly once: (gold - AISC) x production.
+    # sustaining_capex_musd stays as sourced context but is NOT subtracted again.
+    aisc_margin_est_musd = (
+        (cash_margin_usd_per_oz * production_oz) / 1_000_000.0
+        if cash_margin_usd_per_oz is not None and production_oz is not None
         else None
     )
-    fcf_yield = (
-        sustainable_fcf_musd / market_cap_musd
-        if sustainable_fcf_musd is not None and market_cap_musd is not None and market_cap_musd > 0
+    aisc_margin_yield = (
+        aisc_margin_est_musd / market_cap_musd
+        if aisc_margin_est_musd is not None and market_cap_musd is not None and market_cap_musd > 0
         else None
     )
     leverage = (
@@ -73,7 +74,7 @@ def evaluate_layer1(
         "data_complete": "PASS" if not reasons else "FAIL",
         "aisc": _threshold_check(aisc, max_value=thresholds.aisc_max),
         "margin": _threshold_check(margin_pct, min_value=thresholds.margin_min),
-        "fcf_yield": _threshold_check(fcf_yield, min_value=thresholds.fcf_yield_min),
+        "aisc_margin_yield": _threshold_check(aisc_margin_yield, min_value=thresholds.aisc_margin_yield_min),
         "reserve_life": _threshold_check(reserve_life_years, min_value=thresholds.reserve_life_min),
         "leverage": _leverage_check(
             leverage=leverage,
@@ -89,8 +90,8 @@ def evaluate_layer1(
             "layer1_fail_reasons": ";".join(sorted(set(reasons))),
             "cash_margin_usd_per_oz": cash_margin_usd_per_oz,
             "margin_pct": margin_pct,
-            "sustainable_fcf_musd": sustainable_fcf_musd,
-            "fcf_yield": fcf_yield,
+            "aisc_margin_est_musd": aisc_margin_est_musd,
+            "aisc_margin_yield": aisc_margin_yield,
             "leverage": leverage,
             "layer1_check_statuses": checks,
         }
@@ -107,8 +108,8 @@ def evaluate_layer1(
         reasons.append("AISC_FAIL")
     if margin_pct < thresholds.margin_min:
         reasons.append("MARGIN_FAIL")
-    if fcf_yield is None or fcf_yield < thresholds.fcf_yield_min:
-        reasons.append("FCF_FAIL")
+    if aisc_margin_yield is None or aisc_margin_yield < thresholds.aisc_margin_yield_min:
+        reasons.append("AISC_MARGIN_YIELD_FAIL")
     if reserve_life_years < thresholds.reserve_life_min:
         reasons.append("RESERVE_LIFE_FAIL")
 
@@ -124,8 +125,8 @@ def evaluate_layer1(
         "layer1_fail_reasons": None if not reasons else ";".join(sorted(set(reasons))),
         "cash_margin_usd_per_oz": cash_margin_usd_per_oz,
         "margin_pct": margin_pct,
-        "sustainable_fcf_musd": sustainable_fcf_musd,
-        "fcf_yield": fcf_yield,
+        "aisc_margin_est_musd": aisc_margin_est_musd,
+        "aisc_margin_yield": aisc_margin_yield,
         "leverage": leverage,
         "layer1_check_statuses": checks,
     }

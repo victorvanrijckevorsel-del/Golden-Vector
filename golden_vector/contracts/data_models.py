@@ -285,8 +285,8 @@ class ToolBOutput(StrictDataModel):
     forward_eps: float | None = None
     forward_pe: float | None = None
     ev_ebitda: float | None = None
-    sustainable_fcf_musd: float | None = None
-    fcf_yield: float | None = None
+    aisc_margin_est_musd: float | None = None
+    aisc_margin_yield: float | None = None
     leverage: float | None = None
     fundamental_check_score: float | None = None
     fundamental_check_rank: int | None = None

@@ -212,10 +212,10 @@ def _render_tool_d_overview_page(
             fundamentals_provenance=fundamentals_provenance,
         )
     )
-    # Truthful legacy state: a pre-v2 Tool D artifact has only the old `fcf_yield`
+    # Truthful legacy state: a pre-v2 Tool D artifact has only the old `aisc_margin_yield`
     # column, so the FCF Yield @ G cells would silently render the missing-value
     # placeholder. Say so instead. Presence check only — no arithmetic in serve.
-    legacy_fcf_schema = not frame.empty and "fcf_yield_at_g" not in frame.columns
+    legacy_fcf_schema = not frame.empty and "aisc_margin_yield_at_g" not in frame.columns
     if legacy_fcf_schema:
         body.append(notice(
             "warning",
@@ -346,7 +346,7 @@ def _render_scenario_form(
         f"<a class=\"hint\" href=\"{escape(reset_link)}\">Reset gold price to spot</a>"
         "</div>"
         "</form>"
-        "<p class=\"hint\">Formulas: breakeven = AISC; FCF breakeven = AISC plus sustaining capex per ounce; "
+        "<p class=\"hint\">Formulas: breakeven = AISC (reported AISC already includes sustaining capital); "
         "interest-cover line is the gold price where modeled EBITDA equals interest expense; "
         "debt-stress line is where Net Debt/EBITDA crosses the configured danger band.</p>"
         "</section>"
@@ -427,7 +427,6 @@ def _render_table(
             f"{_fmt_numeric_td(row.get('interest_cover_gold_usd'), decimals=0)}"
             f"{_fmt_numeric_td(row.get('survival_distance_to_interest_cover_pct'), decimals=1, as_percent=True)}"
             f"{_fmt_numeric_td(row.get('breaks_even_at_gold_usd'), decimals=0)}"
-            f"{_fmt_numeric_td(row.get('fcf_breakeven_gold_usd'), decimals=0)}"
             f"{_fmt_numeric_td(row.get('debt_stress_gold_usd'), decimals=0)}"
             f"{_fmt_numeric_td(row.get('cost_curve_aisc_percentile'), decimals=1)}"
             f"{_fmt_numeric_td(row.get('fragility_ebitda_pct_per_10pct_gold'), decimals=1, as_percent=True)}"
@@ -443,7 +442,7 @@ def _render_table(
             + (
                 "<td class=\"hint\">pending rebuild</td>"
                 if legacy_fcf_schema
-                else _fmt_numeric_td(row.get("fcf_yield_at_g"), decimals=1, as_percent=True)
+                else _fmt_numeric_td(row.get("aisc_margin_yield_at_g"), decimals=1, as_percent=True)
             )
             + "</tr>"
         )
@@ -452,7 +451,7 @@ def _render_table(
     # data rows (same pattern as candidate_finder_page.py).
     table_class = "js-datatable" if rows_html else "empty-table"
     if not rows_html:
-        rows_html.append("<tr><td colspan=\"20\" class=\"hint\">No Corporate Resilience rows found.</td></tr>")
+        rows_html.append("<tr><td colspan=\"19\" class=\"hint\">No Corporate Resilience rows found.</td></tr>")
 
     return table_region(
         f"<table id=\"tool-d-table\" class=\"{table_class}\">"
@@ -463,7 +462,6 @@ def _render_table(
         + help_th("Interest-Cover Line", key="tool_d_interest_cover", app_config=app_config, col_name="interest_cover", sort_numeric=True, panel=True)
         + help_th("Distance To Line", key="tool_d_survival_distance", app_config=app_config, col_name="survival_distance", sort_numeric=True, panel=True)
         + help_th("Breakeven Gold", key="tool_d_breakeven", app_config=app_config, col_name="breakeven", sort_numeric=True, panel=True)
-        + help_th("FCF Breakeven", key="tool_d_fcf_breakeven", app_config=app_config, col_name="fcf_breakeven", sort_numeric=True, panel=True)
         + help_th("Debt-Stress Line", key="tool_d_debt_stress", app_config=app_config, col_name="debt_stress", sort_numeric=True, panel=True)
         + help_th("Cost-Curve %ile", key="tool_d_cost_curve", app_config=app_config, col_name="cost_curve", sort_numeric=True, panel=True)
         + help_th("Fragility Slope", key="tool_d_fragility", app_config=app_config, col_name="fragility", sort_numeric=True, panel=True)
@@ -476,7 +474,7 @@ def _render_table(
         + help_th("Fragility Component", key="tool_d_fragility_component", app_config=app_config, col_name="fragility_component", sort_numeric=True, panel=True)
         + help_th("Balance-Sheet Component", key="tool_d_balance_sheet_component", app_config=app_config, col_name="balance_sheet_component", sort_numeric=True, panel=True)
         + help_th("EV/EBITDA Context", key="tool_d_ev_ebitda_context", app_config=app_config, col_name="ev_ebitda", sort_numeric=True, panel=True)
-        + help_th("FCF Yield @ G", key="tool_d_fcf_yield_context", app_config=app_config, col_name="fcf_yield_at_g", sort_numeric=True, panel=True)
+        + help_th("AISC Margin Yield @ G", key="tool_d_aisc_margin_yield_context", app_config=app_config, col_name="aisc_margin_yield_at_g", sort_numeric=True, panel=True)
         + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody>"
         "</table>",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 from golden_vector.normalize.calendar import merge_fx_asof
@@ -165,17 +167,24 @@ def _equity_statuses(
 ) -> pd.Series:
     statuses = pd.Series("OK", index=frame.index, dtype="object")
     missing_fx_mask = frame["fx_rate_to_usd"].isna()
+    # C7: a present-but-invalid rate (zero/negative/non-finite) must never be OK.
+    invalid_fx_mask = ~missing_fx_mask & frame["fx_rate_to_usd"].apply(_missing_or_non_positive)
     missing_return_basis_mask = frame["return_basis_local"].apply(_missing_or_non_positive)
     stale_fx_mask = (
         frame["fx_staleness_days"].notna()
         & (pd.to_numeric(frame["fx_staleness_days"], errors="coerce") > float(max_fx_staleness_days))
         & (~missing_fx_mask)
+        & (~invalid_fx_mask)
     )
 
     statuses.loc[missing_fx_mask] = "MISSING_FX"
-    statuses.loc[~missing_fx_mask & missing_return_basis_mask] = "MISSING_RETURN_BASIS"
+    statuses.loc[invalid_fx_mask] = "INVALID_FX"
+    statuses.loc[
+        ~missing_fx_mask & ~invalid_fx_mask & missing_return_basis_mask
+    ] = "MISSING_RETURN_BASIS"
     statuses.loc[
         ~missing_fx_mask
+        & ~invalid_fx_mask
         & ~missing_return_basis_mask
         & stale_fx_mask
     ] = "STALE_FX"
@@ -199,6 +208,8 @@ def _missing_or_non_positive(value: object) -> bool:
     if value is None or pd.isna(value):
         return True
     try:
-        return float(value) <= 0
+        numeric = float(value)
     except (TypeError, ValueError):
         return True
+    # C7: infinity is as unusable as zero for a price/rate that must be positive
+    return not math.isfinite(numeric) or numeric <= 0

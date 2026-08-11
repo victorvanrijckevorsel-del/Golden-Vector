@@ -320,9 +320,12 @@ def build_structural_weekly_series(
         )
 
     merged["ticker"] = ticker
+    # C3: the row uses BOTH inputs, so it is only knowable once the LATER of the
+    # two observations exists — date it max(stock, gold), never min. The per-side
+    # source dates stay alongside as provenance (stock_week_date/gold_week_date).
     merged["as_of_date"] = (
         merged[["stock_week_date", "gold_week_date"]]
-        .min(axis=1)
+        .max(axis=1)
         .dt.date
     )
     merged["stock_weekly_log_return"] = np.log(

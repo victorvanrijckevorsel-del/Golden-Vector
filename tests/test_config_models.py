@@ -1,3 +1,5 @@
+import math
+
 import pytest
 from pydantic import ValidationError
 
@@ -77,7 +79,7 @@ def test_screening_params_reject_duplicate_gold_price_scenarios():
                 "layer1_thresholds": {
                     "aisc_max": 1850,
                     "margin_min": 0.5,
-                    "fcf_yield_min": 0.15,
+                    "aisc_margin_yield_min": 0.15,
                     "reserve_life_min": 6,
                     "leverage_max": 2.5,
                 },
@@ -457,9 +459,9 @@ def test_tool_c_config_accepts_defaults():
     assert config.regime_rolling_weeks == 156
     assert config.regime_min_weeks == 52
     assert config.downside_hit_rate_threshold_pct == -10.0
-    assert config.downside_hit_rate_threshold == -0.10
+    assert config.downside_hit_rate_log_threshold == math.log1p(-0.10)
     assert config.upside_hit_rate_threshold_pct == 10.0
-    assert config.upside_hit_rate_threshold == 0.10
+    assert config.upside_hit_rate_log_threshold == math.log1p(0.10)
 
 
 @pytest.mark.parametrize(
@@ -802,3 +804,19 @@ def test_real_tool_c_yaml_validates():
     config = ToolCConfig.model_validate(raw)
 
     assert config.tag_steep_beta_at_least > 0
+
+
+def test_tool_c_hit_thresholds_convert_simple_percent_to_log_exactly_once():
+    """C2: the configured -10% means an ordinary return; the log-space value
+
+    the features consume must be log1p(-0.10), not -0.10.
+    """
+    import math
+
+    from golden_vector.contracts.config_models import ToolCConfig
+
+    cfg = ToolCConfig()
+    assert cfg.downside_hit_rate_log_threshold == math.log1p(-0.10)
+    assert cfg.upside_hit_rate_log_threshold == math.log1p(0.10)
+    assert cfg.downside_hit_rate_log_threshold < -0.10  # stricter than the naive value
+    assert cfg.upside_hit_rate_log_threshold < 0.10

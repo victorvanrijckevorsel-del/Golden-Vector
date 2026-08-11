@@ -684,13 +684,18 @@ class ToolCConfig(StrictConfigModel):
             raise ValueError("Tool C upside hit-rate threshold must be positive")
         return float(value)
 
+    # C2: weekly returns are stored as LOG returns, but the configured
+    # threshold means an ORDINARY price return ("the stock fell at least 10%").
+    # Convert simple -> log exactly once here (log1p); comparing the raw simple
+    # fraction to a log return misclassifies events near the boundary
+    # (a -0.10 log return is only a -9.52% ordinary decline).
     @property
-    def downside_hit_rate_threshold(self) -> float:
-        return self.downside_hit_rate_threshold_pct / 100.0
+    def downside_hit_rate_log_threshold(self) -> float:
+        return math.log1p(self.downside_hit_rate_threshold_pct / 100.0)
 
     @property
-    def upside_hit_rate_threshold(self) -> float:
-        return self.upside_hit_rate_threshold_pct / 100.0
+    def upside_hit_rate_log_threshold(self) -> float:
+        return math.log1p(self.upside_hit_rate_threshold_pct / 100.0)
 
 
 class GoldProfileConfig(StrictConfigModel):
@@ -1323,7 +1328,7 @@ class ScoringConfig(StrictConfigModel):
 class Layer1Thresholds(StrictConfigModel):
     aisc_max: float = 1850.0
     margin_min: float = 0.5
-    fcf_yield_min: float = 0.15
+    aisc_margin_yield_min: float = 0.15
     reserve_life_min: float = 6.0
     leverage_max: float = 2.5
 

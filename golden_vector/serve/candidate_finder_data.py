@@ -70,7 +70,6 @@ TOOL_D_FINDER_FIELDS = frozenset(
         "tool_d_quality_rank",
         "interest_cover_gold_usd",
         "debt_stress_gold_usd",
-        "fcf_breakeven_gold_usd",
         "cost_curve_aisc_percentile",
     }
 )
@@ -78,7 +77,7 @@ TOOL_B_GOLD_SCENARIO_FIELDS = frozenset(
     {
         "ev_ebitda",
         "forward_pe",
-        "fcf_yield",
+        "aisc_margin_yield",
         "margin_pct",
     }
 )

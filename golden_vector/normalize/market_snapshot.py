@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import math
+
+import numpy as np
 import pandas as pd
 
 from golden_vector.normalize.calendar import merge_fx_asof
@@ -104,25 +107,36 @@ def _snapshot_statuses(
 ) -> pd.Series:
     statuses = pd.Series("OK", index=frame.index, dtype="object")
     missing_fx_mask = frame["fx_rate_to_usd"].isna()
+    # C7: a present-but-invalid rate (zero/negative/non-finite) must never be OK.
+    invalid_fx_mask = ~missing_fx_mask & frame["fx_rate_to_usd"].apply(_missing_or_non_positive)
     invalid_share_price_mask = frame["share_price_local"].apply(_missing_or_non_positive)
-    missing_shares_mask = frame["shares_outstanding"].isna() | (
-        pd.to_numeric(frame["shares_outstanding"], errors="coerce") <= 0
+    shares_numeric = pd.to_numeric(frame["shares_outstanding"], errors="coerce")
+    missing_shares_mask = (
+        shares_numeric.isna() | ~np.isfinite(shares_numeric.fillna(0.0)) | (shares_numeric <= 0)
     )
     stale_fx_mask = (
         frame["fx_staleness_days"].notna()
         & (pd.to_numeric(frame["fx_staleness_days"], errors="coerce") > float(max_fx_staleness_days))
         & (~missing_fx_mask)
+        & (~invalid_fx_mask)
     )
 
     statuses.loc[missing_fx_mask] = "MISSING_FX"
-    statuses.loc[~missing_fx_mask & invalid_share_price_mask] = "INVALID_SHARE_PRICE"
+    statuses.loc[invalid_fx_mask] = "INVALID_FX"
     statuses.loc[
         ~missing_fx_mask
+        & ~invalid_fx_mask
+        & invalid_share_price_mask
+    ] = "INVALID_SHARE_PRICE"
+    statuses.loc[
+        ~missing_fx_mask
+        & ~invalid_fx_mask
         & ~invalid_share_price_mask
         & missing_shares_mask
     ] = "MISSING_SHARES_OUTSTANDING"
     statuses.loc[
         ~missing_fx_mask
+        & ~invalid_fx_mask
         & ~invalid_share_price_mask
         & ~missing_shares_mask
         & stale_fx_mask
@@ -156,6 +170,7 @@ def _missing_or_non_positive(value: object) -> bool:
     if value is None or pd.isna(value):
         return True
     try:
-        return float(value) <= 0
+        numeric = float(value)
     except (TypeError, ValueError):
         return True
+    return not math.isfinite(numeric) or numeric <= 0

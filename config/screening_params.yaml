@@ -9,7 +9,7 @@ gold_price_scenarios:
 layer1_thresholds:
   aisc_max: 1850
   margin_min: 0.5
-  fcf_yield_min: 0.15
+  aisc_margin_yield_min: 0.15
   reserve_life_min: 6
   leverage_max: 2.5
 verdict_thresholds:

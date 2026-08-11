@@ -404,7 +404,7 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         ),
         calculation=(
             "INCOMPLETE if any required mining input is missing; otherwise PASS when no "
-            "threshold check fails (AISC, margin, FCF yield, reserve life, leverage), else "
+            "threshold check fails (AISC, margin, AISC margin yield, reserve life, leverage), else "
             "FAIL."
         ),
         direction="PASS is best; INCOMPLETE means missing inputs.",
@@ -415,7 +415,7 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "and each check's PASS/FAIL/N/A result."
         ),
         calculation=(
-            "passed/total followed by each check's status (Data complete, AISC, Margin, FCF "
+            "passed/total followed by each check's status (Data complete, AISC, Margin, AISC margin yield, "
             "yield, Reserve life, Net Debt/EBITDA, Forward P/E)."
         ),
     ),
@@ -1306,10 +1306,10 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         calculation="(Market cap + net debt) / forward EBITDA.",
         direction="Lower is cheaper.",
     ),
-    "tool_b_fcf_yield": ColumnHelp(
-        meaning="Estimated free cash flow as a percent of market value.",
-        calculation="Sustainable free cash flow / market cap.",
-        direction="Higher means more cash generation for the price.",
+    "tool_b_aisc_margin_yield": ColumnHelp(
+        meaning="AISC margin estimate as a percent of market value. It is a cost-margin proxy, not audited free cash flow.",
+        calculation="(Gold price − reported AISC) × production / market cap. Reported AISC already includes sustaining capital, so it is charged once.",
+        direction="Higher means more margin for the price.",
     ),
     "tool_b_leverage": ColumnHelp(
         meaning="Net debt divided by trailing (LTM) EBITDA — roughly how many years of earnings it would take to repay debt.",
@@ -1346,11 +1346,6 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         calculation="Equals AISC per ounce (cash margin = gold − AISC = 0 there).",
         direction="Lower is safer.",
     ),
-    "tool_d_fcf_breakeven": ColumnHelp(
-        meaning="The gold price needed to cover AISC plus sustaining capex per ounce.",
-        calculation="AISC + sustaining capex per ounce (floored at AISC).",
-        direction="Lower is safer.",
-    ),
     "tool_d_debt_stress": ColumnHelp(
         meaning="The gold price where Net Debt / EBITDA reaches the danger band.",
         calculation="The gold price where modeled EBITDA = net debt ÷ the danger leverage multiple.",
@@ -1379,14 +1374,14 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         thresholds=_ev_ebitda_cap_thresholds,
         direction="Lower is cheaper.",
     ),
-    "tool_d_fcf_yield_context": ColumnHelp(
-        meaning="FCF yield at the selected gold price — context only, not used in the resilience score.",
-        calculation="Free cash flow at the selected gold price ÷ market value. The spot-gold pair is kept alongside it (fcf_yield_at_spot).",
+    "tool_d_aisc_margin_yield_context": ColumnHelp(
+        meaning="AISC margin yield at the selected gold price — context only, not used in the resilience score.",
+        calculation="(Gold − reported AISC) × production ÷ market value at the selected gold price. The spot-gold pair is kept alongside it (aisc_margin_yield_at_spot).",
         direction="Higher means more cash generation for the price.",
     ),
     "tool_d_failure_ladder": ColumnHelp(
         meaning="The order in which this miner runs into trouble as gold falls — its survival lines from the highest gold price to the lowest.",
-        calculation="The breakeven, FCF-breakeven and interest-cover gold prices that exist for the name, sorted from highest to lowest.",
+        calculation="The breakeven (= reported AISC) and interest-cover gold prices that exist for the name, sorted from highest to lowest.",
         direction="A higher first rung means trouble starts sooner if gold drops.",
     ),
     "tool_d_resilience_flags": ColumnHelp(

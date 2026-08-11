@@ -63,7 +63,7 @@ __all__ = [
 _SPOT_DISPLAY_SOURCE_COLUMNS: dict[str, str] = {
     "spot_margin_usd_per_oz": "cash_margin_usd_per_oz",
     "spot_margin_pct": "margin_pct",
-    "spot_fcf_yield": "fcf_yield",
+    "spot_aisc_margin_yield": "aisc_margin_yield",
     "spot_ev_ebitda": "ev_ebitda",
     "spot_forward_pe": "forward_pe",
 }

@@ -129,11 +129,11 @@ score_builder:
       default_high_good: true
       unit: percent
       basis: fwd @ spot
-    - key: fcf_yield
-      label: Free cash flow yield
+    - key: aisc_margin_yield
+      label: AISC margin yield
       category: corporate
       source_tool: tool_b
-      source_column: fcf_yield
+      source_column: aisc_margin_yield
       default_high_good: true
       unit: percent
       basis: fwd @ spot

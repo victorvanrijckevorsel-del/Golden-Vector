@@ -10,7 +10,7 @@ LAYER1_CHECK_LABELS = {
     "data_complete": "Data complete",
     "aisc": "AISC",
     "margin": "Margin",
-    "fcf_yield": "FCF yield",
+    "aisc_margin_yield": "AISC margin yield",
     "reserve_life": "Reserve life",
     "leverage": "Net Debt/EBITDA",
 }
@@ -19,7 +19,7 @@ FUNDAMENTAL_CHECK_ORDER = (
     "data_complete",
     "aisc",
     "margin",
-    "fcf_yield",
+    "aisc_margin_yield",
     "reserve_life",
     "leverage",
     "forward_pe",

@@ -1135,11 +1135,11 @@ def _write_latest_tool_c_output(paths) -> None:
 
 def _write_latest_tool_d_output(paths, *, current_schema: bool = False) -> None:
     # current_schema=False reproduces the persisted pre-v2 artifact (legacy
-    # `fcf_yield` only); True reproduces the post-rename schema.
+    # `aisc_margin_yield` only); True reproduces the post-rename schema.
     fcf_fields = (
-        {"fcf_yield_at_g": 0.12, "fcf_yield_at_spot": 0.11, "tool_d_schema_version": 2}
+        {"aisc_margin_yield_at_g": 0.12, "aisc_margin_yield_at_spot": 0.11, "tool_d_schema_version": 2}
         if current_schema
-        else {"fcf_yield": 0.12}
+        else {"aisc_margin_yield": 0.12}
     )
     context = RunContext.start(
         paths=paths,
@@ -2763,7 +2763,7 @@ def test_workspace_tool_b_view_renders_screening_parameters_form(tmp_path):
     assert '<details class="panel screening-params advanced-assumptions" open>' not in body
     # All ten inputs must be present on the page (gold in the dial panel).
     for param in [
-        "gold_price", "pe_target", "fcf_yield_target", "aisc_target",
+        "gold_price", "pe_target", "aisc_margin_yield_target", "aisc_target",
         "margin_target", "reserve_life_target", "leverage_target",
         "tier1_discount", "tier2_discount", "tier3_discount",
     ]:

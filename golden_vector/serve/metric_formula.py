@@ -106,14 +106,14 @@ _METRIC_FORMULAS: dict[str, _MetricFormula] = {
         result_suffix="%",
         result_scale=100.0,
     ),
-    "fcf_yield": _MetricFormula(
-        help_key="tool_b_fcf_yield",
-        label="FCF yield",
+    "aisc_margin_yield": _MetricFormula(
+        help_key="tool_b_aisc_margin_yield",
+        label="AISC margin yield",
         components=(
-            _Component("Sustainable FCF", "sustainable_fcf_musd"),
+            _Component("AISC margin est.", "aisc_margin_est_musd"),
             _Component("Market cap", "market_cap_musd"),
         ),
-        result_field="fcf_yield",
+        result_field="aisc_margin_yield",
         result_decimals=1,
         result_suffix="%",
         result_scale=100.0,

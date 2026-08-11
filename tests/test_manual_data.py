@@ -326,3 +326,69 @@ def test_manual_store_csv_round_trip_preserves_normalized_values(tmp_path):
     calendar_row = loaded.reporting_calendar.iloc[0]
     assert str(calendar_row["next_financial_report_date"]) == "2026-05-15"
     assert calendar_row["notes"] == "watch quarter"
+
+
+def test_c11_bounds_reject_impossible_manual_inputs(tmp_path):
+    """C11: economically impossible signs/ranges fail loud at the boundary."""
+    import pytest
+
+    paths = build_test_paths(tmp_path)
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+
+    for field, bad_value, why in (
+        ("sustaining_capex_musd", -50.0, "negative capex would raise the margin estimate"),
+        ("da_musd", -10.0, "negative D&A would improve earnings"),
+        ("interest_expense_musd", -5.0, "negative interest would improve earnings"),
+        ("royalty_rate", -0.02, "negative royalty"),
+        ("production_oz", 0.0, "zero production"),
+        ("aisc_usd_per_oz", -1200.0, "negative AISC"),
+        ("cash_cost_usd_per_oz", 0.0, "zero cash cost"),
+        ("reserve_life_years", -3.0, "negative reserve life"),
+        ("tax_rate", 125.0, "125 percent-converts to 1.25 — a >100% tax rate"),
+    ):
+        with pytest.raises(ValueError):
+            upsert_company_input(paths, ticker="NEM", values={field: bad_value})
+
+
+def test_c11_bounds_keep_valid_negative_net_debt_and_negative_ebitda(tmp_path):
+    """Net cash (negative net debt) and loss-making EBITDA are REAL states.
+
+    The negative-EBITDA policy lives downstream: layer1 fails the leverage
+    gate explicitly (LEVERAGE_NON_POSITIVE_EBITDA) instead of blocking entry.
+    """
+    paths = build_test_paths(tmp_path)
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+
+    upsert_company_input(
+        paths,
+        ticker="NEM",
+        values={"net_debt_musd": -250.0, "ebitda_ltm_musd": -40.0},
+    )
+    loaded = load_manual_screening_data(paths, tickers=["NEM"])
+    row = loaded.company_inputs.set_index("ticker").loc["NEM"]
+
+    assert row["net_debt_musd"] == -250.0
+    assert row["ebitda_ltm_musd"] == -40.0
+
+
+def test_c11_csv_import_fails_loud_on_garbage_and_bound_violations(tmp_path):
+    """C11: bad CSV values must never silently coerce to null."""
+    import pytest
+
+    paths = build_test_paths(tmp_path)
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    csv_path = paths.manual_screening_dir / "company_inputs.csv"
+
+    csv_path.write_text(
+        "ticker,production_oz,aisc_usd_per_oz\nNEM,not_a_number,1200\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="non-numeric production_oz"):
+        import_support_csvs_into_store(paths, tickers=["NEM"])
+
+    csv_path.write_text(
+        "ticker,production_oz,sustaining_capex_musd\nNEM,500000,-75\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="sustaining_capex_musd"):
+        import_support_csvs_into_store(paths, tickers=["NEM"])

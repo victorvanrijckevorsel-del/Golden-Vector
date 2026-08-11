@@ -66,8 +66,8 @@ YAHOO_FINANCE_SOURCE_COLUMN_MAP: dict[str, str] = {
     "forward_net_income_musd": "forward_net_income_musd_official",
     "forward_eps": "forward_eps_official",
     "forward_pe": "forward_pe_official",
-    "sustainable_fcf_musd": "sustainable_fcf_musd_official",
-    "fcf_yield": "fcf_yield_official",
+    "aisc_margin_est_musd": "aisc_margin_est_musd_official",
+    "aisc_margin_yield": "aisc_margin_yield_official",
     "ev_ebitda": "ev_ebitda_official",
     "leverage": "leverage_official",
     "fundamental_check_score": "fundamental_check_score_official",
@@ -517,8 +517,8 @@ def _build_tool_b_rows(
                     enterprise_value_musd=layer2["enterprise_value_musd"],
                     ebitda_ltm_musd=our_row.get("ebitda_ltm_musd"),
                 ),
-                "sustainable_fcf_musd": layer1["sustainable_fcf_musd"],
-                "fcf_yield": layer1["fcf_yield"],
+                "aisc_margin_est_musd": layer1["aisc_margin_est_musd"],
+                "aisc_margin_yield": layer1["aisc_margin_yield"],
                 "leverage": layer1["leverage"],
                 "leverage_our_view": layer1["leverage"],
                 "leverage_official": official_layer1["leverage"],
@@ -611,12 +611,12 @@ def _build_tool_b_rows(
                 "forward_eps_official": official_layer2["forward_eps"],
                 "forward_pe_our_view": layer2["forward_pe"],
                 "forward_pe_official": official_layer2["forward_pe"],
-                "sustainable_fcf_musd_our_view": layer1["sustainable_fcf_musd"],
-                "sustainable_fcf_musd_official": official_layer1[
-                    "sustainable_fcf_musd"
+                "aisc_margin_est_musd_our_view": layer1["aisc_margin_est_musd"],
+                "aisc_margin_est_musd_official": official_layer1[
+                    "aisc_margin_est_musd"
                 ],
-                "fcf_yield_our_view": layer1["fcf_yield"],
-                "fcf_yield_official": official_layer1["fcf_yield"],
+                "aisc_margin_yield_our_view": layer1["aisc_margin_yield"],
+                "aisc_margin_yield_official": official_layer1["aisc_margin_yield"],
             }
         )
     return rows

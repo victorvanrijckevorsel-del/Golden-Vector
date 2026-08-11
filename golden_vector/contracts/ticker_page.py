@@ -45,7 +45,7 @@ GOLD_RESPONSE_LINE_METRICS: tuple[str, ...] = (
     "forward_ebitda_musd",
     "forward_net_income_musd",
     "forward_eps",
-    "sustainable_fcf_musd",
+    "aisc_margin_est_musd",
 )
 GOLD_RESPONSE_CONSTANT_COLUMNS: tuple[str, ...] = (
     "market_cap_musd",
@@ -61,7 +61,7 @@ GOLD_RESPONSE_CONSTANT_COLUMNS: tuple[str, ...] = (
 GOLD_RESPONSE_SPOT_DISPLAY_COLUMNS: tuple[str, ...] = (
     "spot_margin_usd_per_oz",
     "spot_margin_pct",
-    "spot_fcf_yield",
+    "spot_aisc_margin_yield",
     "spot_ev_ebitda",
     "spot_forward_pe",
     "spot_leverage_stressed",

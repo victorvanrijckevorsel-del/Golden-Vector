@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import pandas as pd
 
 RELATIVE_BEHAVIOR_COLUMNS = [
@@ -41,8 +42,8 @@ def compute_relative_behavior_metrics(
     weekly_returns: pd.DataFrame,
     gold_regimes: pd.DataFrame,
     min_events: int,
-    downside_hit_rate_threshold: float = -0.10,
-    upside_hit_rate_threshold: float = 0.10,
+    downside_hit_rate_log_threshold: float = math.log1p(-0.10),
+    upside_hit_rate_log_threshold: float = math.log1p(0.10),
 ) -> pd.DataFrame:
     """Compute Tool C's per-ticker relative/hit-rate/tail metrics."""
 
@@ -139,7 +140,7 @@ def compute_relative_behavior_metrics(
                     result_column="downside_hit_rate_10pct",
                     count_column="downside_hit_rate_n",
                     min_events=min_events,
-                    threshold=downside_hit_rate_threshold,
+                    threshold=downside_hit_rate_log_threshold,
                     high_side=False,
                 ),
                 **_threshold_rate(
@@ -148,7 +149,7 @@ def compute_relative_behavior_metrics(
                     result_column="upside_hit_rate_10pct",
                     count_column="upside_hit_rate_n",
                     min_events=min_events,
-                    threshold=upside_hit_rate_threshold,
+                    threshold=upside_hit_rate_log_threshold,
                     high_side=True,
                 ),
                 **_tail_average(

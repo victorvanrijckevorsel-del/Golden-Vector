@@ -277,7 +277,7 @@ def _percentile_row(ticker: str = "AEM", metric_key: str = "margin_pct") -> dict
 
 
 def test_validate_frame_schema_accepts_healthy_control() -> None:
-    frame = pd.DataFrame([_percentile_row(), _percentile_row(metric_key="fcf_yield")])
+    frame = pd.DataFrame([_percentile_row(), _percentile_row(metric_key="aisc_margin_yield")])
     assert (
         validate_frame_schema(
             frame, columns=PERCENTILES_COLUMNS, key_columns=PERCENTILES_KEY_COLUMNS
@@ -297,7 +297,7 @@ def test_validate_frame_schema_catches_missing_column() -> None:
 def test_validate_frame_schema_catches_null_key() -> None:
     bad = _percentile_row()
     bad["metric_key"] = None
-    frame = pd.DataFrame([_percentile_row(metric_key="fcf_yield"), bad])
+    frame = pd.DataFrame([_percentile_row(metric_key="aisc_margin_yield"), bad])
     violations = validate_frame_schema(
         frame, columns=PERCENTILES_COLUMNS, key_columns=PERCENTILES_KEY_COLUMNS
     )
@@ -500,7 +500,7 @@ def test_gold_response_columns_cover_every_line_metric() -> None:
         "forward_ebitda_musd",
         "forward_net_income_musd",
         "forward_eps",
-        "sustainable_fcf_musd",
+        "aisc_margin_est_musd",
     ):
         assert f"line_slope_{metric}" in GOLD_RESPONSE_COLUMNS
         assert f"line_intercept_{metric}" in GOLD_RESPONSE_COLUMNS

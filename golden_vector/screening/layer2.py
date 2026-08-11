@@ -24,7 +24,7 @@ def compute_layer2_metrics(
     share_price_usd = _positive_float(row.get("share_price_usd"))
     market_cap_musd = _positive_float(row.get("market_cap_musd"))
     net_debt_musd = _numeric(row.get("net_debt_musd"))
-    sustainable_fcf_musd = _numeric(row.get("sustainable_fcf_musd"))
+    aisc_margin_est_musd = _numeric(row.get("aisc_margin_est_musd"))
 
     required_missing = []
     for field_name, value in (
@@ -37,7 +37,7 @@ def compute_layer2_metrics(
         ("share_price_usd", share_price_usd),
         ("market_cap_musd", market_cap_musd),
         ("net_debt_musd", net_debt_musd),
-        ("sustainable_fcf_musd", sustainable_fcf_musd),
+        ("aisc_margin_est_musd", aisc_margin_est_musd),
     ):
         if value is None:
             required_missing.append(field_name)
@@ -66,7 +66,7 @@ def compute_layer2_metrics(
     assert share_price_usd is not None
     assert market_cap_musd is not None
     assert net_debt_musd is not None
-    assert sustainable_fcf_musd is not None
+    assert aisc_margin_est_musd is not None
 
     forward_revenue_musd = (gold_price_assumption * production_oz) / 1_000_000.0
     if cash_cost_usd_per_oz is not None and cash_cost_usd_per_oz > 0:
