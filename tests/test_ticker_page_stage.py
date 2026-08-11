@@ -247,7 +247,7 @@ def _write_foundation_manifest(paths, *, refresh_run_id: str = FOUNDATION_RUN_ID
 # ---------------------------------------------------------------------------
 
 
-def test_stage_builds_persists_and_stamps_all_four_artifacts(stage_env):
+def test_stage_builds_persists_and_stamps_all_five_artifacts(stage_env):
     paths = stage_env["paths"]
     run_context, summary = _run_stage(stage_env)
 
@@ -256,6 +256,7 @@ def test_stage_builds_persists_and_stamps_all_four_artifacts(stage_env):
         paths.latest_ticker_page_percentiles_path,
         paths.latest_ticker_page_performance_path,
         paths.latest_ticker_page_research_series_path,
+        paths.latest_ticker_page_fx_attribution_path,
     ):
         assert alias.exists(), alias
 
@@ -268,6 +269,7 @@ def test_stage_builds_persists_and_stamps_all_four_artifacts(stage_env):
         "percentiles",
         "performance",
         "research_series",
+        "fx_attribution",
         "persist",
     }
     for entry in summary["timings"].values():

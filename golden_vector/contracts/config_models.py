@@ -1671,6 +1671,27 @@ class TickerPageDialConfig(StrictConfigModel):
         return self
 
 
+class TickerPageFxAttributionConfig(StrictConfigModel):
+    """Currency attribution thresholds (Feature A).
+
+    ``near_zero_return_threshold`` is the |return| below which a leg is treated
+    as flat — the guard that stops "FX was -670% of the move" headlines when
+    local and FX effects nearly cancel.
+    """
+
+    near_zero_return_threshold: float = 0.001
+
+    @field_validator("near_zero_return_threshold")
+    @classmethod
+    def sane_threshold(cls, value: float) -> float:
+        if not math.isfinite(float(value)) or not 0 < float(value) < 0.05:
+            raise ValueError(
+                "ticker_page.fx_attribution.near_zero_return_threshold must be a "
+                "finite fraction in (0, 0.05)"
+            )
+        return float(value)
+
+
 class TickerPageChartConfig(StrictConfigModel):
     """Performance chart horizons + benchmark freshness policy (plan §4.4)."""
 
@@ -1751,6 +1772,14 @@ class ScoreMetricSpec(StrictConfigModel):
     requires_market_snapshot: bool = False
     requires_source_financials: bool = False
     manual_mining_basis: bool = False
+    # Percentile v2 metric evidence (nullable for unrelated metrics): source
+    # columns for the exact numerator/denominator and event period, plus the
+    # manual field whose verification status/date backs the value.
+    evidence_count_column: str | None = None
+    evidence_hit_count_column: str | None = None
+    evidence_period_start_column: str | None = None
+    evidence_period_end_column: str | None = None
+    verification_field: str | None = None
 
     @field_validator("key", "label", "source_column", "basis")
     @classmethod
@@ -1872,6 +1901,9 @@ class TickerPageConfig(StrictConfigModel):
     version: int = 1
     dial: TickerPageDialConfig = Field(default_factory=lambda: TickerPageDialConfig())
     chart: TickerPageChartConfig = Field(default_factory=lambda: TickerPageChartConfig())
+    fx_attribution: TickerPageFxAttributionConfig = Field(
+        default_factory=lambda: TickerPageFxAttributionConfig()
+    )
     lab: TickerPageLabConfig = Field(default_factory=lambda: TickerPageLabConfig())
     score_builder: TickerPageScoreBuilderConfig
     sizing: TickerPageSizingConfig = Field(default_factory=lambda: TickerPageSizingConfig())

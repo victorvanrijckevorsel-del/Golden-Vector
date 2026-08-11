@@ -659,6 +659,7 @@ def _ticker_page_latest_path(paths: ProjectPaths, name: str) -> Path:
         "ticker_page_percentiles": paths.latest_ticker_page_percentiles_path,
         "ticker_page_performance": paths.latest_ticker_page_performance_path,
         "ticker_page_research_series": paths.latest_ticker_page_research_series_path,
+        "ticker_page_fx_attribution": paths.latest_ticker_page_fx_attribution_path,
     }[name]
 
 

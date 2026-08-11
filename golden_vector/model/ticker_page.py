@@ -31,6 +31,8 @@ from golden_vector.contracts.ticker_page import (
     PERFORMANCE_COLUMNS,
     PERFORMANCE_KEY_COLUMNS,
     RESEARCH_SERIES_COLUMNS,
+    FX_ATTRIBUTION_COLUMNS,
+    FX_ATTRIBUTION_KEY_COLUMNS,
     RESEARCH_KINDS,
     RESEARCH_SERIES_KIND_KEY_COLUMNS,
     TICKER_PAGE_PROVENANCE_COLUMNS,
@@ -54,6 +56,7 @@ from golden_vector.model.tool_d import latest_gold_price_from_history
 from golden_vector.screening.pipeline import compute_tool_b_in_memory
 
 __all__ = [
+    "build_fx_attribution_series",
     "build_gold_response_pack",
     "build_performance_series",
     "build_research_series",
@@ -459,6 +462,46 @@ def _tool_b_metric_eligibility(
     return True, None
 
 
+def _optional_int(value: Any) -> int | None:
+    numeric = optional_float(value)
+    if numeric is None:
+        return None
+    return int(round(numeric))
+
+
+def _optional_timestamp(value: Any) -> pd.Timestamp | None:
+    if value is None:
+        return None
+    parsed = pd.to_datetime(value, errors="coerce")
+    return None if pd.isna(parsed) else pd.Timestamp(parsed)
+
+
+def _verification_lookup(
+    source_verification: pd.DataFrame | None,
+) -> dict[tuple[str, str], tuple[str, str | None]]:
+    """(ticker, field_name) -> (verification_status, source_date) from the
+    manual store's verification table. Feature B: the AISC card shows the
+    field-level source/verification status and date, read 1:1 from here."""
+
+    if source_verification is None or source_verification.empty:
+        return {}
+    required = {"ticker", "field_name", "verification_status"}
+    if not required.issubset(source_verification.columns):
+        return {}
+    lookup: dict[tuple[str, str], tuple[str, str | None]] = {}
+    for record in source_verification.to_dict(orient="records"):
+        key = (
+            str(record.get("ticker") or "").upper(),
+            str(record.get("field_name") or ""),
+        )
+        source_date = record.get("source_date")
+        lookup[key] = (
+            str(record.get("verification_status") or "").upper() or None,
+            None if source_date is None or pd.isna(source_date) else str(source_date),
+        )
+    return lookup
+
+
 def build_score_percentiles(
     *,
     app_config: Any,
@@ -468,6 +511,7 @@ def build_score_percentiles(
     tool_d_latest: pd.DataFrame,
     source_run_ids: dict[str, str] | None = None,
     configured_universe: list[str] | None = None,
+    source_verification: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Build the per-(ticker, finance_source, metric) percentile artifact (§7).
 
@@ -480,6 +524,7 @@ def build_score_percentiles(
     del source_run_ids  # provenance is stamped by the persistence layer (§5.6)
 
     catalog = app_config.ticker_page.score_builder.metrics
+    verification_lookup = _verification_lookup(source_verification)
     tool_a = _indexed(tool_a_latest)
     tool_c = _indexed(tool_c_latest)
     tool_d = _indexed(tool_d_latest)
@@ -610,6 +655,9 @@ def build_score_percentiles(
                     in_pool = False
                     forced_pct = None
 
+                verification = verification_lookup.get(
+                    (ticker, spec.verification_field or "")
+                )
                 metric_rows.append(
                     {
                         "ticker": ticker,
@@ -628,6 +676,34 @@ def build_score_percentiles(
                         "rank_eligible": bool(rank_eligible),
                         "rank_exclusion_reason": exclusion_reason,
                         "eligible_peer_count": 0,
+                        # v2 metric evidence — read 1:1 from the configured
+                        # source columns; null for metrics that declare none.
+                        "eligible_observation_count": _optional_int(
+                            record.get(spec.evidence_count_column)
+                            if spec.evidence_count_column
+                            else None
+                        ),
+                        "hit_count": _optional_int(
+                            record.get(spec.evidence_hit_count_column)
+                            if spec.evidence_hit_count_column
+                            else None
+                        ),
+                        "source_period_start": _optional_timestamp(
+                            record.get(spec.evidence_period_start_column)
+                            if spec.evidence_period_start_column
+                            else None
+                        ),
+                        "source_period_end": _optional_timestamp(
+                            record.get(spec.evidence_period_end_column)
+                            if spec.evidence_period_end_column
+                            else None
+                        ),
+                        "source_verification_status": (
+                            verification[0] if verification else None
+                        ),
+                        "source_verification_date": (
+                            verification[1] if verification else None
+                        ),
                         "_in_pool": in_pool,
                         "_forced_pct": forced_pct,
                         **_null_provenance(),
@@ -1015,6 +1091,272 @@ def build_performance_series(
         key_columns=PERFORMANCE_KEY_COLUMNS,
         name="ticker_page_performance",
         artifact="performance",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Builder 5 — FX attribution (Feature A)
+# ---------------------------------------------------------------------------
+
+#: Local-value column that pairs with each USD basis column — the attribution
+#: must read local/fx/usd off the SAME rows and the SAME basis the performance
+#: chart chose, or the reconciliation is meaningless.
+_FX_LOCAL_BASIS_FOR_USD: dict[str, str] = {
+    "return_basis_usd": "return_basis_local",
+    "adj_close_usd": "adj_close_local",
+}
+
+
+def _fx_relationship(
+    *,
+    local_return: float,
+    fx_contribution: float,
+    usd_return: float,
+    near_zero: float,
+) -> tuple[str, float | None, float | None]:
+    """Classify the FX/local relationship and its headline share values.
+
+    Returns ``(relationship, share_of_usd_move, offset_of_local_move)``. The
+    shares are fractions and only populated for the relationship whose
+    headline uses them — never a blind ``fx / usd`` ratio, which explodes
+    when local and FX effects offset (AAR would read about -670%).
+    """
+
+    if abs(local_return) < near_zero:
+        return "LOCAL_FLAT", None, None
+    if abs(usd_return) < near_zero:
+        # local moved, USD ended flat -> FX (fully) offset the local move
+        return "OFFSET", None, min(abs(fx_contribution / local_return), 1.0)
+    if (usd_return > 0) != (local_return > 0):
+        return "REVERSAL", None, None
+    if (fx_contribution > 0) == (usd_return > 0) and abs(fx_contribution) >= near_zero:
+        return "SAME_DIRECTION", min(abs(fx_contribution / usd_return), 1.0), None
+    if abs(fx_contribution) < near_zero:
+        # FX effect is negligible; the local story IS the USD story.
+        return "SAME_DIRECTION", abs(fx_contribution / usd_return), None
+    return "OFFSET", None, min(abs(fx_contribution / local_return), 1.0)
+
+
+def build_fx_attribution_series(
+    *,
+    app_config: Any,
+    equity_history: pd.DataFrame | None,
+    ticker: str,
+    common_end: pd.Timestamp | None,
+) -> pd.DataFrame:
+    """Build the per-(ticker, horizon) currency attribution artifact (Feature A).
+
+    Reads local value, FX rate, and USD value off the SAME normalized history
+    rows the performance chart uses (same basis-selection rule, same horizon
+    windowing, same ``common_end``), so ``(1+r_local)x(1+r_fx)-1`` reconciles
+    exactly with the chart's USD return by construction. USD listings get
+    explicit NOT_APPLICABLE_USD rows the UI hides. Attribution is about the
+    LISTING currency only — never inferred from headquarters or suffix.
+    """
+
+    chart = app_config.ticker_page.chart
+    near_zero = float(app_config.ticker_page.fx_attribution.near_zero_return_threshold)
+    ticker = str(ticker).upper()
+
+    def _base(horizon: str) -> dict[str, Any]:
+        return {
+            "ticker": ticker,
+            "horizon": horizon,
+            "quote_currency": None,
+            "start_date": pd.NaT,
+            "end_date": pd.NaT,
+            "local_start_value": None,
+            "local_end_value": None,
+            "local_return": None,
+            "fx_start_rate": None,
+            "fx_end_rate": None,
+            "fx_start_source_date": pd.NaT,
+            "fx_end_source_date": pd.NaT,
+            "fx_source_symbol": None,
+            "fx_return": None,
+            "usd_start_value": None,
+            "usd_end_value": None,
+            "usd_return": None,
+            "fx_contribution_pp": None,
+            "relationship": "UNAVAILABLE",
+            "share_of_usd_move": None,
+            "offset_of_local_move": None,
+            "attribution_status": "UNAVAILABLE",
+            "attribution_reason": None,
+            "price_basis": None,
+            **_null_provenance(),
+        }
+
+    rows: list[dict[str, Any]] = []
+
+    eligible = (
+        ok_normalized_rows(equity_history)
+        if equity_history is not None
+        else pd.DataFrame()
+    )
+    currency = None
+    if eligible is not None and not eligible.empty and "currency" in eligible.columns:
+        currencies = sorted(
+            {str(value).upper() for value in eligible["currency"].dropna().unique()}
+        )
+        currency = currencies[0] if len(currencies) == 1 else None
+
+    if currency == "USD":
+        for horizon in chart.horizons:
+            row = _base(horizon)
+            row["quote_currency"] = "USD"
+            row["relationship"] = "NOT_APPLICABLE_USD"
+            row["attribution_status"] = "NOT_APPLICABLE_USD"
+            row["attribution_reason"] = "listing currency is USD; there is no FX leg"
+            rows.append(row)
+        return _validated(
+            rows,
+            columns=FX_ATTRIBUTION_COLUMNS,
+            key_columns=FX_ATTRIBUTION_KEY_COLUMNS,
+            name="ticker_page_fx_attribution",
+            artifact="fx_attribution",
+        )
+
+    usd_series, price_basis = _usd_series(
+        equity_history, ("return_basis_usd", "adj_close_usd")
+    )
+    if usd_series.empty or price_basis is None or common_end is None or currency is None:
+        reason = (
+            "no usable normalized history"
+            if usd_series.empty or price_basis is None
+            else "no performance chart window exists for this ticker"
+            if common_end is None
+            else "listing currency is ambiguous in the normalized history"
+        )
+        for horizon in chart.horizons:
+            row = _base(horizon)
+            row["quote_currency"] = currency
+            row["attribution_reason"] = reason
+            rows.append(row)
+        return _validated(
+            rows,
+            columns=FX_ATTRIBUTION_COLUMNS,
+            key_columns=FX_ATTRIBUTION_KEY_COLUMNS,
+            name="ticker_page_fx_attribution",
+            artifact="fx_attribution",
+        )
+
+    local_column = _FX_LOCAL_BASIS_FOR_USD[price_basis]
+    detail = eligible.copy()
+    detail["date"] = pd.to_datetime(detail["date"], errors="coerce").dt.normalize()
+    detail = detail.dropna(subset=["date"]).drop_duplicates(subset=["date"], keep="last")
+    detail = detail.set_index("date").sort_index()
+
+    common_end = pd.Timestamp(common_end).normalize()
+
+    for horizon in chart.horizons:
+        row = _base(horizon)
+        row["quote_currency"] = currency
+        years = _PERFORMANCE_HORIZON_YEARS[horizon]
+        cutoff = common_end - pd.DateOffset(years=years)
+        windowed = usd_series[(usd_series.index >= cutoff) & (usd_series.index <= common_end)]
+        rule = _PERFORMANCE_RESAMPLE_RULE[horizon]
+        if rule is not None and not windowed.empty:
+            windowed = _weekly_last_actual(windowed)
+        if len(windowed.index) < 2:
+            row["attribution_reason"] = (
+                f"fewer than two chart observations in the {horizon} window"
+            )
+            rows.append(row)
+            continue
+
+        start_ts, end_ts = windowed.index[0], windowed.index[-1]
+        endpoint_values: dict[str, dict[str, Any]] = {}
+        endpoint_missing: str | None = None
+        for label, ts in (("start", start_ts), ("end", end_ts)):
+            record = detail.loc[ts] if ts in detail.index else None
+            local_value = (
+                optional_float(record.get(local_column)) if record is not None else None
+            )
+            fx_rate = (
+                optional_float(record.get("fx_rate_to_usd")) if record is not None else None
+            )
+            usd_value = float(windowed.loc[ts])
+            if (
+                local_value is None
+                or local_value <= 0
+                or fx_rate is None
+                or fx_rate <= 0
+                or not math.isfinite(local_value)
+                or not math.isfinite(fx_rate)
+            ):
+                endpoint_missing = (
+                    f"{label} endpoint {ts.date()} lacks a usable local value or FX rate"
+                )
+                break
+            endpoint_values[label] = {
+                "local": local_value,
+                "fx": fx_rate,
+                "usd": usd_value,
+                "fx_source_date": pd.to_datetime(
+                    record.get("fx_source_date"), errors="coerce"
+                ),
+                "fx_source_symbol": (
+                    None
+                    if record.get("fx_source_symbol") is None
+                    or pd.isna(record.get("fx_source_symbol"))
+                    else str(record.get("fx_source_symbol"))
+                ),
+                "date": ts,
+            }
+        if endpoint_missing is not None:
+            row["attribution_reason"] = endpoint_missing
+            rows.append(row)
+            continue
+
+        start = endpoint_values["start"]
+        end = endpoint_values["end"]
+        local_return = end["local"] / start["local"] - 1.0
+        fx_return = end["fx"] / start["fx"] - 1.0
+        usd_return = end["usd"] / start["usd"] - 1.0
+        fx_contribution = usd_return - local_return
+
+        relationship, share_of_usd, offset_of_local = _fx_relationship(
+            local_return=local_return,
+            fx_contribution=fx_contribution,
+            usd_return=usd_return,
+            near_zero=near_zero,
+        )
+
+        row.update(
+            {
+                "start_date": start["date"],
+                "end_date": end["date"],
+                "local_start_value": start["local"],
+                "local_end_value": end["local"],
+                "local_return": local_return,
+                "fx_start_rate": start["fx"],
+                "fx_end_rate": end["fx"],
+                "fx_start_source_date": start["fx_source_date"],
+                "fx_end_source_date": end["fx_source_date"],
+                "fx_source_symbol": end["fx_source_symbol"] or start["fx_source_symbol"],
+                "fx_return": fx_return,
+                "usd_start_value": start["usd"],
+                "usd_end_value": end["usd"],
+                "usd_return": usd_return,
+                # the ONE percentage-point-scaled column (see contract note)
+                "fx_contribution_pp": fx_contribution * 100.0,
+                "relationship": relationship,
+                "share_of_usd_move": share_of_usd,
+                "offset_of_local_move": offset_of_local,
+                "attribution_status": "OK",
+                "attribution_reason": None,
+                "price_basis": price_basis,
+            }
+        )
+        rows.append(row)
+
+    return _validated(
+        rows,
+        columns=FX_ATTRIBUTION_COLUMNS,
+        key_columns=FX_ATTRIBUTION_KEY_COLUMNS,
+        name="ticker_page_fx_attribution",
+        artifact="fx_attribution",
     )
 
 

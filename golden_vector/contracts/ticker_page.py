@@ -19,6 +19,9 @@ TICKER_PAGE_SCHEMA_VERSIONS: dict[str, int] = {
     # coverage flag/reason, exact period) 1:1, and every kind carries an
     # explicit per-kind status so an absent kind can never be silent.
     "research_series": 2,
+    # Feature A: professional currency attribution, one row per configured
+    # ticker and chart horizon (USD listings carry explicit N/A rows).
+    "fx_attribution": 1,
 }
 
 # Provenance columns carried by every ticker-page artifact (§5.6 "Common columns").
@@ -122,6 +125,13 @@ PERCENTILES_COLUMNS: tuple[str, ...] = (
     "rank_eligible",
     "rank_exclusion_reason",
     "eligible_peer_count",
+    # v2 metric evidence (null for metrics that declare none)
+    "eligible_observation_count",
+    "hit_count",
+    "source_period_start",
+    "source_period_end",
+    "source_verification_status",
+    "source_verification_date",
     *TICKER_PAGE_PROVENANCE_COLUMNS,
 )
 
@@ -152,6 +162,53 @@ PERFORMANCE_COLUMNS: tuple[str, ...] = (
     "currency_basis",
     *TICKER_PAGE_PROVENANCE_COLUMNS,
 )
+
+# --- fx attribution --------------------------------------------------------
+
+#: How the FX effect relates to the local move over the selected window.
+FX_ATTRIBUTION_RELATIONSHIPS: tuple[str, ...] = (
+    "SAME_DIRECTION",
+    "OFFSET",
+    "REVERSAL",
+    "LOCAL_FLAT",
+    "UNAVAILABLE",
+    "NOT_APPLICABLE_USD",
+)
+FX_ATTRIBUTION_STATUSES: tuple[str, ...] = ("OK", "UNAVAILABLE", "NOT_APPLICABLE_USD")
+
+FX_ATTRIBUTION_KEY_COLUMNS: tuple[str, ...] = ("ticker", "horizon")
+#: Returns (`local_return`, `fx_return`, `usd_return`) are FRACTIONS.
+#: ``fx_contribution_pp`` is the ONE percentage-point-scaled column
+#: (usd_return - local_return, x100) — named with its unit on purpose.
+#: ``share_of_usd_move`` / ``offset_of_local_move`` are nullable fractions and
+#: only populated for the relationship whose headline uses them.
+FX_ATTRIBUTION_COLUMNS: tuple[str, ...] = (
+    *FX_ATTRIBUTION_KEY_COLUMNS,
+    "quote_currency",
+    "start_date",
+    "end_date",
+    "local_start_value",
+    "local_end_value",
+    "local_return",
+    "fx_start_rate",
+    "fx_end_rate",
+    "fx_start_source_date",
+    "fx_end_source_date",
+    "fx_source_symbol",
+    "fx_return",
+    "usd_start_value",
+    "usd_end_value",
+    "usd_return",
+    "fx_contribution_pp",
+    "relationship",
+    "share_of_usd_move",
+    "offset_of_local_move",
+    "attribution_status",
+    "attribution_reason",
+    "price_basis",
+    *TICKER_PAGE_PROVENANCE_COLUMNS,
+)
+
 
 # --- research series -------------------------------------------------------
 
@@ -254,6 +311,12 @@ PERCENTILES_DTYPES: dict[str, str] = {
     "rank_eligible": "boolean",
     "rank_exclusion_reason": "string",
     "eligible_peer_count": "Int64",
+    "eligible_observation_count": "Int64",
+    "hit_count": "Int64",
+    "source_period_start": "datetime64[ns]",
+    "source_period_end": "datetime64[ns]",
+    "source_verification_status": "string",
+    "source_verification_date": "string",
     **_PROVENANCE_DTYPES,
 }
 
@@ -275,6 +338,34 @@ PERFORMANCE_DTYPES: dict[str, str] = {
     "price_basis": "string",
     "series_source_run_id": "string",
     "currency_basis": "string",
+    **_PROVENANCE_DTYPES,
+}
+
+FX_ATTRIBUTION_DTYPES: dict[str, str] = {
+    "ticker": "string",
+    "horizon": "string",
+    "quote_currency": "string",
+    "start_date": "datetime64[ns]",
+    "end_date": "datetime64[ns]",
+    "local_start_value": "float64",
+    "local_end_value": "float64",
+    "local_return": "float64",
+    "fx_start_rate": "float64",
+    "fx_end_rate": "float64",
+    "fx_start_source_date": "datetime64[ns]",
+    "fx_end_source_date": "datetime64[ns]",
+    "fx_source_symbol": "string",
+    "fx_return": "float64",
+    "usd_start_value": "float64",
+    "usd_end_value": "float64",
+    "usd_return": "float64",
+    "fx_contribution_pp": "float64",
+    "relationship": "string",
+    "share_of_usd_move": "float64",
+    "offset_of_local_move": "float64",
+    "attribution_status": "string",
+    "attribution_reason": "string",
+    "price_basis": "string",
     **_PROVENANCE_DTYPES,
 }
 
@@ -311,6 +402,7 @@ EXPECTED_DTYPES: dict[str, dict[str, str]] = {
     "gold_response": GOLD_RESPONSE_DTYPES,
     "percentiles": PERCENTILES_DTYPES,
     "performance": PERFORMANCE_DTYPES,
+    "fx_attribution": FX_ATTRIBUTION_DTYPES,
     "research_series": RESEARCH_SERIES_DTYPES,
 }
 
@@ -319,6 +411,7 @@ ARTIFACT_COLUMNS: dict[str, tuple[str, ...]] = {
     "gold_response": GOLD_RESPONSE_COLUMNS,
     "percentiles": PERCENTILES_COLUMNS,
     "performance": PERFORMANCE_COLUMNS,
+    "fx_attribution": FX_ATTRIBUTION_COLUMNS,
     "research_series": RESEARCH_SERIES_COLUMNS,
 }
 

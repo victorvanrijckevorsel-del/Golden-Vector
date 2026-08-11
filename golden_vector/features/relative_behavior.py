@@ -24,8 +24,14 @@ RELATIVE_BEHAVIOR_COLUMNS = [
     "n_weeks_gdxj",
     "downside_hit_rate_10pct",
     "downside_hit_rate_n",
+    "downside_hit_count",
+    "downside_period_start",
+    "downside_period_end",
     "upside_hit_rate_10pct",
     "upside_hit_rate_n",
+    "upside_hit_count",
+    "upside_period_start",
+    "upside_period_end",
     "tail_avg_return_worst10pct",
     "tail_avg_return_worst10pct_n",
     "tail_avg_return_worst20pct",
@@ -139,6 +145,9 @@ def compute_relative_behavior_metrics(
                     event_column="gold_worst20_event",
                     result_column="downside_hit_rate_10pct",
                     count_column="downside_hit_rate_n",
+                    hit_count_column="downside_hit_count",
+                    period_start_column="downside_period_start",
+                    period_end_column="downside_period_end",
                     min_events=min_events,
                     threshold=downside_hit_rate_log_threshold,
                     high_side=False,
@@ -148,6 +157,9 @@ def compute_relative_behavior_metrics(
                     event_column="gold_best20_event",
                     result_column="upside_hit_rate_10pct",
                     count_column="upside_hit_rate_n",
+                    hit_count_column="upside_hit_count",
+                    period_start_column="upside_period_start",
+                    period_end_column="upside_period_end",
                     min_events=min_events,
                     threshold=upside_hit_rate_log_threshold,
                     high_side=True,
@@ -218,17 +230,48 @@ def _threshold_rate(
     event_column: str,
     result_column: str,
     count_column: str,
+    hit_count_column: str,
+    period_start_column: str,
+    period_end_column: str,
     min_events: int,
     threshold: float,
     high_side: bool,
 ) -> dict[str, object]:
+    """Exact hit evidence: numerator, denominator, and the qualifying-event
+    period — persisted upstream so no consumer ever reconstructs a count from
+    a rounded rate."""
+
     event_rows = _event_rows(rows, event_column, required_columns=[])
     count = len(event_rows.index)
+    period_start, period_end = _event_period(event_rows)
     if count < min_events:
-        return {result_column: None, count_column: count}
+        return {
+            result_column: None,
+            count_column: count,
+            hit_count_column: None,
+            period_start_column: period_start,
+            period_end_column: period_end,
+        }
     stock = pd.to_numeric(event_rows["stock_log_ret"], errors="coerce")
     hits = stock.ge(threshold) if high_side else stock.le(threshold)
-    return {result_column: float(hits.mean()), count_column: count}
+    return {
+        result_column: float(hits.mean()),
+        count_column: count,
+        hit_count_column: int(hits.sum()),
+        period_start_column: period_start,
+        period_end_column: period_end,
+    }
+
+
+def _event_period(event_rows: pd.DataFrame) -> tuple[object, object]:
+    """First/last qualifying-event date, when the rows carry dates."""
+
+    if event_rows.empty or "as_of_date" not in event_rows.columns:
+        return None, None
+    dates = pd.to_datetime(event_rows["as_of_date"], errors="coerce").dropna()
+    if dates.empty:
+        return None, None
+    return dates.min(), dates.max()
 
 
 def _tail_average(

@@ -35,6 +35,7 @@ from golden_vector.app.run_context import RunContext
 from golden_vector.common.parquet import read_optional_parquet
 from golden_vector.common.stage_timing import record_step_timing
 from golden_vector.contracts.ticker_page import (
+    FX_ATTRIBUTION_COLUMNS,
     PERFORMANCE_COLUMNS,
     RESEARCH_SERIES_COLUMNS,
     empty_artifact_frame,
@@ -44,6 +45,7 @@ from golden_vector.features.returns import compute_horizon_returns_for_ticker
 from golden_vector.ingestion.persist_ticker_page import persist_ticker_page_artifacts
 from golden_vector.model.structural import build_structural_weekly_series
 from golden_vector.model.ticker_page import (
+    build_fx_attribution_series,
     build_gold_response_pack,
     build_performance_series,
     build_research_series,
@@ -375,6 +377,7 @@ def run_ticker_page_stage(
         tool_c_latest=tool_c_latest,
         tool_d_latest=tool_d_latest,
         configured_universe=universe,
+        source_verification=getattr(manual_data, "source_verification", None),
     )
     record_step_timing(
         timings, "percentiles", started_at, rows_built=len(percentiles.index)
@@ -530,7 +533,27 @@ def run_ticker_page_stage(
         },
     )
 
-    # --- substep 5: persist ----------------------------------------------
+    # --- substep 5: FX attribution (per ticker) ----------------------------
+    started_at = perf_counter()
+    fx_frames: list[pd.DataFrame] = []
+    for ticker in universe:
+        equity_history = normalized_equity_histories.get(ticker)
+        fx_frames.append(
+            build_fx_attribution_series(
+                app_config=app_config,
+                equity_history=equity_history,
+                ticker=ticker,
+                common_end=_stock_common_end(performance, ticker),
+            )
+        )
+    fx_attribution = _concat(
+        fx_frames, columns=FX_ATTRIBUTION_COLUMNS, artifact="fx_attribution"
+    )
+    record_step_timing(
+        timings, "fx_attribution", started_at, rows_built=len(fx_attribution.index)
+    )
+
+    # --- substep 6: persist ----------------------------------------------
     started_at = perf_counter()
     written_paths = persist_ticker_page_artifacts(
         paths,
@@ -538,6 +561,7 @@ def run_ticker_page_stage(
         gold_response=gold_response,
         percentiles=percentiles,
         performance=performance,
+        fx_attribution=fx_attribution,
         research_series=research_series,
         diagnostics=diagnostics,
         source_run_id=run_context.run_id,
@@ -663,3 +687,23 @@ def _assert_tool_d_is_spot(frame: pd.DataFrame) -> pd.DataFrame:
             "never enter the ticker page's at-spot percentiles."
         )
     return frame
+
+
+def _stock_common_end(performance: pd.DataFrame, ticker: str) -> pd.Timestamp | None:
+    """The performance chart's common trim boundary for one ticker, or None.
+
+    The FX attribution must reconcile against the SAME chart window, so it
+    reads the boundary off the just-built performance rows instead of
+    re-deriving it.
+    """
+    if performance.empty or "common_end_date" not in performance.columns:
+        return None
+    rows = performance[
+        performance["ticker"].eq(str(ticker).upper())
+        & performance["series"].eq("stock")
+        & performance["series_status"].eq("OK")
+    ]
+    values = pd.to_datetime(rows["common_end_date"], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return pd.Timestamp(values.iloc[0])

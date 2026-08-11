@@ -28,6 +28,7 @@ from golden_vector.contracts.ticker_page import (
 from golden_vector.ingestion.persist_ticker_page import persist_ticker_page_artifacts
 from golden_vector.model.gold_lines import GoldLine, evaluate
 from golden_vector.model.ticker_page import (
+    build_fx_attribution_series,
     build_gold_response_pack,
     build_performance_series,
     build_research_series,
@@ -762,12 +763,27 @@ def test_persist_writes_run_stamped_and_latest_artifacts_readable_by_the_real_re
         exploratory_horizons_frame=_horizons_frame(),
         structural_window_metrics_frame=_windows_frame(),
     )
+    equity_fx = equity.assign(
+        currency="AUD",
+        return_basis_local=equity["return_basis_usd"] / 0.65,
+        fx_rate_to_usd=0.65,
+        fx_source_date=equity["date"],
+        fx_source_symbol="AUDUSD=X",
+        normalization_status="OK",
+    )
+    fx_attribution = build_fx_attribution_series(
+        app_config=chart_config,
+        equity_history=equity_fx,
+        ticker="AEM",
+        common_end=pd.Timestamp(equity["date"].max()),
+    )
 
     written = persist_ticker_page_artifacts(
         paths,
         run_context,
         gold_response=gold_response,
         percentiles=percentiles,
+        fx_attribution=fx_attribution,
         performance=performance,
         research_series=research,
         diagnostics=diagnostics,

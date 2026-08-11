@@ -34,6 +34,8 @@ from golden_vector.contracts.ticker_page import (
     RESEARCH_KINDS,
     RESEARCH_SERIES_COLUMNS,
     RESEARCH_SERIES_KEY_COLUMNS,
+    FX_ATTRIBUTION_COLUMNS,
+    FX_ATTRIBUTION_KEY_COLUMNS,
     RESEARCH_SERIES_KIND_KEY_COLUMNS,
     TICKER_PAGE_SCHEMA_VERSIONS,
     empty_artifact_frame,
@@ -325,6 +327,17 @@ def load_performance_series(paths: ProjectPaths) -> TickerPageArtifactState:
         columns=PERFORMANCE_COLUMNS,
         key_columns=PERFORMANCE_KEY_COLUMNS,
         artifact="performance",
+    )
+
+
+def load_fx_attribution(paths: ProjectPaths) -> TickerPageArtifactState:
+    return _load_artifact(
+        paths,
+        paths.latest_ticker_page_fx_attribution_path,
+        name="ticker_page_fx_attribution",
+        columns=FX_ATTRIBUTION_COLUMNS,
+        key_columns=FX_ATTRIBUTION_KEY_COLUMNS,
+        artifact="fx_attribution",
     )
 
 

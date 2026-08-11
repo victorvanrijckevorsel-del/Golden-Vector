@@ -308,6 +308,10 @@ class ProjectPaths:
         return self.output_ticker_page_dir / "research_series_latest.parquet"
 
     @property
+    def latest_ticker_page_fx_attribution_path(self) -> Path:
+        return self.output_ticker_page_dir / "fx_attribution_latest.parquet"
+
+    @property
     def latest_tool_d_snapshot_parquet_path(self) -> Path:
         return self.output_tool_d_dir / "tool_d_latest.parquet"
 

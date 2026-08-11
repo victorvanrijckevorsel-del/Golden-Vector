@@ -17,6 +17,7 @@ from golden_vector.app.ticker_page_state import (
     STATUS_OK,
     STATUS_PENDING_FIRST_PUBLISH,
     load_gold_response,
+    load_fx_attribution,
     load_performance_series,
     load_research_series,
     load_score_percentiles,
@@ -34,6 +35,7 @@ from golden_vector.contracts.ticker_page import (
     PERFORMANCE_COLUMNS,
     PERFORMANCE_KEY_COLUMNS,
     RESEARCH_SERIES_COLUMNS,
+    FX_ATTRIBUTION_COLUMNS,
     TICKER_PAGE_SCHEMA_VERSIONS,
     validate_frame_schema,
 )
@@ -355,6 +357,13 @@ LOADERS = {
         RESEARCH_SERIES_COLUMNS,
         {"ticker": "AEM", "kind": "weekly", "date": "2026-08-10"},
         "kind",
+    ),
+    "fx_attribution": (
+        load_fx_attribution,
+        "latest_ticker_page_fx_attribution_path",
+        FX_ATTRIBUTION_COLUMNS,
+        {"ticker": "AEM", "horizon": "1Y"},
+        "horizon",
     ),
 }
 

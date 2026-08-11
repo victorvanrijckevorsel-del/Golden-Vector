@@ -90,6 +90,10 @@ score_builder:
       unit: percent
       basis: tool C window
     - key: downside_hit_rate
+      evidence_count_column: downside_hit_rate_n
+      evidence_hit_count_column: downside_hit_count
+      evidence_period_start_column: downside_period_start
+      evidence_period_end_column: downside_period_end
       label: Big down-week hit rate
       category: trading
       source_tool: tool_c
@@ -98,6 +102,10 @@ score_builder:
       unit: percent
       basis: tool C window
     - key: upside_hit_rate
+      evidence_count_column: upside_hit_rate_n
+      evidence_hit_count_column: upside_hit_count
+      evidence_period_start_column: upside_period_start
+      evidence_period_end_column: upside_period_end
       label: Big up-week hit rate
       category: trading
       source_tool: tool_c
@@ -168,6 +176,7 @@ score_builder:
       basis: LTM
       requires_source_financials: true
     - key: aisc
+      verification_field: aisc_usd_per_oz
       label: All-in sustaining cost
       category: corporate
       source_tool: tool_b
