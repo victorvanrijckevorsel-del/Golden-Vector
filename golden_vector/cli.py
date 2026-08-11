@@ -3669,6 +3669,10 @@ def _run_refresh_unlocked(
     # full path.
     total_steps = (8 if portfolio_enabled else 7) if not skip_tool_b else (4 if portfolio_enabled else 3)
     stage_timings: dict[str, dict[str, object]] = {}
+    # Ticker-page failures degrade instead of aborting (perishable options
+    # capture and daily artifact publication must never be lost to a
+    # page-layer failure); the exit code is deferred to the end of the run.
+    deferred_ticker_page_exit = 0
     parent_refresh_id = _new_parent_refresh_id()
 
     def record_step(name: str, started_at: float, exit_code: int) -> None:
@@ -3841,13 +3845,15 @@ def _run_refresh_unlocked(
         )
         record_step("ticker_page", started_at, ticker_page_exit)
         if ticker_page_exit != 0:
+            deferred_ticker_page_exit = ticker_page_exit
             print()
             print(
-                "ticker-page failed (exit code {}). Model-state manifest was not "
-                "published.".format(ticker_page_exit)
+                "WARNING: ticker-page failed (exit code {}). Continuing the "
+                "refresh — option publication and portfolio must not be lost "
+                "to a page-layer failure. The model-state manifest will name "
+                "the ticker-page artifacts as missing or stale, and the "
+                "refresh exits non-zero at the end.".format(ticker_page_exit)
             )
-            run_status(paths)
-            return ticker_page_exit
         fault_exit = injected_fault_after("ticker_page")
         if fault_exit is not None:
             return fault_exit
@@ -3947,7 +3953,14 @@ def _run_refresh_unlocked(
 
     print()
     print("== Refresh complete. Operational status: ==")
-    return run_status(paths)
+    status_exit = run_status(paths)
+    if deferred_ticker_page_exit:
+        print(
+            "Refresh completed DEGRADED: the ticker-page stage failed (see "
+            "warning above); exiting non-zero so schedulers surface it."
+        )
+        return deferred_ticker_page_exit
+    return status_exit
 
 
 def _new_parent_refresh_id() -> str:

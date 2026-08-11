@@ -522,6 +522,10 @@ def test_refresh_continues_past_blocked_options_and_runs_portfolio(
         lambda _paths, **_kwargs: call_order.append("tool-d") or 0,
     )
     monkeypatch.setattr(
+        "golden_vector.cli.run_ticker_page",
+        lambda _paths, **_kwargs: call_order.append("ticker-page") or 0,
+    )
+    monkeypatch.setattr(
         "golden_vector.cli.run_option_artifacts_outcome",
         lambda _paths, **_kwargs: (
             call_order.append("option-artifacts"),
@@ -542,6 +546,8 @@ def test_refresh_continues_past_blocked_options_and_runs_portfolio(
 
     assert exit_code == 0, out
     assert "portfolio" in call_order
+    assert call_order.index("ticker-page") > call_order.index("tool-d")
+    assert call_order.index("option-artifacts") > call_order.index("ticker-page")
     assert call_order.index("portfolio") > call_order.index("option-artifacts")
     manifest = json.loads(
         paths.latest_model_state_manifest_path.read_text(encoding="utf-8")

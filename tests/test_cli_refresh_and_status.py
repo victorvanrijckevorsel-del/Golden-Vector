@@ -1209,3 +1209,27 @@ def _write_tool_d(paths: ProjectPaths, *, refresh_run_id: str) -> None:
         ),
         publish_spot_latest_aliases=True,
     )
+
+
+def test_refresh_degrades_but_continues_when_ticker_page_fails(tmp_path, monkeypatch, capsys):
+    """A ticker-page failure must never cost the day's option publication or
+    portfolio: the refresh continues, later steps run, and the failure is
+    surfaced through a warning plus a deferred non-zero exit code."""
+    paths = build_test_paths(tmp_path)
+    order: list[str] = []
+    _stub_refresh_pipeline(monkeypatch, order=order)
+    monkeypatch.setattr("golden_vector.cli.run_fetch_fundamentals", lambda _p, **_k: 0)
+    monkeypatch.setattr(
+        "golden_vector.cli.run_ticker_page",
+        lambda _p, **_k: (order.append("ticker-page"), 1)[1],
+    )
+
+    exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
+    out = capsys.readouterr().out
+
+    assert exit_code == 1, out
+    assert "WARNING: ticker-page failed" in out
+    assert "Refresh completed DEGRADED" in out
+    # Everything after step 6 still ran.
+    assert order.index("portfolio") > order.index("ticker-page")
+    assert "portfolio" in order
