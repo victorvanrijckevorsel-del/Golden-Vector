@@ -641,10 +641,10 @@ edit, contracts.
 |---|---|---|
 | **M0** ✅ | Isolated correctness fixes (`ce2583a`…`3f86c3d`) **+ round-two blocker fixes (M0-1..M0-5: IV/RV history migration RUN, Tool D schema v2 + truthful legacy render, RV determinism, unknown-vs-zero, finite validators)** | focused suites green per lane |
 | **M0.5** ✅ | Requirements addendum · ARCHITECTURE exception text · payload spike measured (§12) · this v3 revision closing P1–P12 | remaining: code-level stubs land in M1a |
-| **M1a** | Shared plumbing: `gold_lines.py` extraction (Tool D consumes it), eligibility-engine generalization, schema/reader modules, model-state + pruning + paths wiring, atomic publish + fault tests | contract, alignment, migration, fault suites green |
-| **M1b** | Producers: gold response pack, percentiles, performance series (one stage, sequential substeps) | immutable coherent artifacts; stage timings; no request-path analytics |
-| **M1c** | Canonical option-history extension + chain history + greeks on candidates + v4 migration | no-shrink/no-lookahead/schema/carry-forward suites |
-| **M1 int.** | Integration branch if lanes touched shared spine files; touched-file + semantic comparison; focused suites → full suite → real workspace smoke | all green on one branch |
+| **M1a** ✅ | Shared plumbing: `gold_lines.py` extraction (Tool D consumes it), schema/reader modules, config surface (`bf0aed2`, `fd772c5`) | shipped |
+| **M1b** ✅ | Producers + persistence (`e234d27`) + stage/model-state/pruning wiring with a REAL standalone run: 395,338 rows, zero warnings (`1fea30b`) | shipped |
+| **M1c** ✅ | Dormant v4 machinery (`b3f43a5`) + producer follow-ups (`941db0a`) + the v4 switch with legacy-v3 reader window (`b2a1612`) | shipped |
+| **M1 int.** ✅ | Degrade-not-abort refresh policy (`27be22b`), step order option-artifacts→ticker-page (`f65ed3c`); green full-suite baseline → two adversarial reviews → all verified findings fixed (`cded31d`, `4bbd671`) → final full suite. Record: `claude_phase1_self_review_2026-08-11.md` | **awaiting Codex review** |
 | **M2** | Read-only serve spine: `ticker_page/` package, state objects + validated readers, route compatibility (incl. benchmark lens), state matrix wiring — page still looks unchanged | reader/cache/route suites; §8 matrix render tests |
 | **M3** | Visible sections, sequential: a chart · b corporate+dial (+gold-dial.js) · c behaviour+Lab (+`lab_dial.yaml` move) · d options · e score builder (+score-builder.js) · f explainers+composite-prose sweep | per-lane: render + real-JS + a11y behavioural tests |
 | **M4** | Budgets re-measured, provenance audit, docs, full integration gate (§11) | Victor review → Codex review → merge workflow |

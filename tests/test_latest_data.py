@@ -2,10 +2,13 @@ from datetime import date, datetime, timezone
 
 import pandas as pd
 
+import yaml
+
 from golden_vector.app.latest_data import (
     load_latest_foundation_snapshot,
     write_latest_foundation_manifest,
 )
+from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.contracts.config_models import (
     AppConfig,
@@ -15,6 +18,7 @@ from golden_vector.contracts.config_models import (
     QaConfig,
     ScoringConfig,
     ScreeningParamsConfig,
+    TickerPageConfig,
     UniverseConfig,
     UniverseTicker,
 )
@@ -35,8 +39,20 @@ from golden_vector.qa.raw_quality import RawQaReport
 from tests.helpers import build_test_paths
 
 
+def _ticker_page_config() -> TickerPageConfig:
+    # AppConfig now requires the ticker_page section; hand-writing the 19-metric
+    # catalog here would be a second copy, so load the real file (one copy).
+    raw = yaml.safe_load(
+        ProjectPaths.discover()
+        .config_path("ticker_page.yaml")
+        .read_text(encoding="utf-8")
+    )
+    return TickerPageConfig.model_validate(raw)
+
+
 def _app_config() -> AppConfig:
     return AppConfig(
+        ticker_page=_ticker_page_config(),
         universe=UniverseConfig(
             tickers=[
                 UniverseTicker(
