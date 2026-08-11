@@ -11,15 +11,18 @@ from golden_vector.common.files import safe_file_fragment
 # (iv_skew_signal, pnl_*_at_context, signal_horizon_days), candidate_finder
 # inputs gain benchmark-relative skew_residual_signal, and signal history
 # moved to long form. Pre-v3 artifacts fail loud / refuse carry-forward.
-OPTION_ARTIFACT_SCHEMA_VERSION = 3
+LEGACY_OPTION_SCHEMA_VERSION = 3
 
 # Versioned artifact-name sets (plan §6.4). A single global name set cannot
 # express "v3 still valid while v4 adds artifacts", so validation resolves the
-# name set by a generation's OWN stamped schema_version. ACTIVE_OPTION_SCHEMA_VERSION
-# is the version the publisher writes today; flipping it to 4 is a LATER lane's
-# job (together with per-generation validation in app/model_state.py). Until then
-# every v4 entry below is dormant: nothing resolves it at runtime.
-ACTIVE_OPTION_SCHEMA_VERSION = OPTION_ARTIFACT_SCHEMA_VERSION
+# name set by a generation's OWN stamped schema_version.
+# v4 adds option_chain_history_daily + option_availability; the publisher writes
+# v4 today, while a v3 generation already on disk stays fully valid and
+# carry-forwardable (legacy reader window).
+ACTIVE_OPTION_SCHEMA_VERSION = 4
+
+# Back-compat alias: "the version the publisher stamps right now".
+OPTION_ARTIFACT_SCHEMA_VERSION = ACTIVE_OPTION_SCHEMA_VERSION
 
 _V3_OPTION_ARTIFACT_NAMES: tuple[str, ...] = (
     "option_contract_metrics",
@@ -49,6 +52,24 @@ OPTION_ARTIFACT_SETS: dict[int, tuple[str, ...]] = {
 # only (dedicated readers), so they are deliberately EXCLUDED — closing the
 # loader-inventory gap in plan §6.4/P11.
 OPTION_TRADING_READ_SET: tuple[str, ...] = _V3_OPTION_ARTIFACT_NAMES
+
+# Generations a reader may still serve (rollback matrix): the active version
+# plus every legacy version whose name set is a subset of it.
+SUPPORTED_OPTION_SCHEMA_VERSIONS: tuple[int, ...] = (3, 4)
+
+
+def normalized_option_schema_version(value: object) -> int | None:
+    """Parse a stamped schema version (``4``, ``"4"``, ``"4.0"``) to an int."""
+
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        return None
+    if text.endswith(".0"):
+        text = text[:-2]
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
 
 
 def option_artifact_names_for_version(schema_version: int) -> tuple[str, ...]:

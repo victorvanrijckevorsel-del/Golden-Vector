@@ -32,14 +32,15 @@ from golden_vector.app.model_state import (
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.contracts.option_artifacts import (
-    OPTION_ARTIFACT_NAMES,
-    OPTION_ARTIFACT_SCHEMA_VERSION,
+    OPTION_TRADING_READ_SET,
+    SUPPORTED_OPTION_SCHEMA_VERSIONS,
+    normalized_option_schema_version,
 )
 
 # Artifacts the Option Trading screen actually renders. option_contract_metrics is
 # build/diagnostic only (largest option parquet), so the UI verifies its presence +
 # sha256 but never reads it into memory on a cache miss (audit M8).
-_SERVE_RENDERED_OPTION_ARTIFACTS = frozenset(OPTION_ARTIFACT_NAMES) - {"option_contract_metrics"}
+_SERVE_RENDERED_OPTION_ARTIFACTS = frozenset(OPTION_TRADING_READ_SET) - {"option_contract_metrics"}
 from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.hedge._helpers import as_float
 from golden_vector.hedge.option_artifact_builder import build_option_source_context
@@ -637,7 +638,11 @@ def _read_option_artifact_frames(paths: ProjectPaths) -> dict[str, pd.DataFrame]
         # stale-schema error path below.
         return None
     frames: dict[str, pd.DataFrame] = {}
-    for name in OPTION_ARTIFACT_NAMES:
+    # The Option Trading overview reads the v3 TEN in every supported generation:
+    # the two v4 additions are page-side artifacts with their own readers. The
+    # schema gate is set-aware, so a carried-forward v3 generation and a fresh v4
+    # generation both serve identically (legacy reader window, plan §6.4).
+    for name in OPTION_TRADING_READ_SET:
         path = resolve_current_model_artifact_path(paths, name)
         if path is None:
             if _model_state_has_option_artifacts(model_state):
@@ -654,12 +659,13 @@ def _read_option_artifact_frames(paths: ProjectPaths) -> dict[str, pd.DataFrame]
             # largest option parquet into memory on a UI cache miss. (audit M8)
             continue
         try:
-            frames[name] = read_required_parquet(
+            frame = read_required_parquet(
                 path,
                 label=f"Option artifact {name}",
                 required_columns=("schema_version", "source_run_id"),
-                schema_version=OPTION_ARTIFACT_SCHEMA_VERSION,
             )
+            _require_supported_option_schema(frame, name=name)
+            frames[name] = frame
         except ParquetSchemaError as exc:
             raise OptionArtifactStaleSchemaError(
                 "Option Trading data is from the previous version. "
@@ -667,6 +673,24 @@ def _read_option_artifact_frames(paths: ProjectPaths) -> dict[str, pd.DataFrame]
                 f"Details: {exc}"
             ) from exc
     return frames
+
+
+def _require_supported_option_schema(frame: pd.DataFrame, *, name: str) -> None:
+    """Fail loud unless the artifact carries ONE supported option schema version."""
+
+    versions = {
+        version
+        for value in frame["schema_version"].dropna().unique()
+        for version in (normalized_option_schema_version(value),)
+    }
+    if len(versions) == 1 and versions <= set(SUPPORTED_OPTION_SCHEMA_VERSIONS):
+        return
+    found = ", ".join(sorted(str(version) for version in versions)) or "missing"
+    raise ParquetSchemaError(
+        f"Option artifact {name}: schema_version expected one of "
+        f"{', '.join(str(version) for version in SUPPORTED_OPTION_SCHEMA_VERSIONS)}, "
+        f"got {found}"
+    )
 
 
 def _model_state_has_option_artifacts(model_state: dict[str, Any] | None) -> bool:

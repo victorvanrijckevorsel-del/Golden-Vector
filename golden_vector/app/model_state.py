@@ -36,11 +36,15 @@ from golden_vector.contracts.ticker_page import (
     TICKER_PAGE_SCHEMA_VERSIONS as _TICKER_PAGE_SCHEMA_VERSIONS,
 )
 from golden_vector.contracts.option_artifacts import (
+    ACTIVE_OPTION_SCHEMA_VERSION,
     OPTION_ARTIFACT_NAMES,
     OPTION_ARTIFACT_PREFIXES,
-    OPTION_ARTIFACT_SCHEMA_VERSION,
+    OPTION_TRADING_READ_SET,
     REQUIRED_OPTION_ARTIFACT_NAMES,
+    SUPPORTED_OPTION_SCHEMA_VERSIONS,
+    normalized_option_schema_version,
     option_artifact_latest_path,
+    option_artifact_names_for_version,
 )
 
 MODEL_STATE_MANIFEST_VERSION = 1
@@ -1147,10 +1151,22 @@ def _resolve_option_carry_forward(
     if not isinstance(previous_artifacts, dict):
         return None, "The previous model-state manifest has no artifacts map."
 
+    # Per-generation validation (plan §6.4): the expected NAME SET and schema
+    # version come from the generation's OWN stamp, never from whatever version
+    # this build publishes. A v3 generation therefore stays fully usable and
+    # carry-forwardable under v4 code (legacy reader window) — the health
+    # machinery must never demand v4-only artifacts from a v3 generation.
+    generation_version, version_failure = _generation_option_schema_version(
+        previous_artifacts
+    )
+    if generation_version is None:
+        return None, version_failure
+    generation_names = option_artifact_names_for_version(generation_version)
+
     entries: dict[str, dict[str, Any]] = {}
     source_run_ids: set[str] = set()
     snapshot_run_ids: set[str] = set()
-    for name in OPTION_ARTIFACT_NAMES:
+    for name in generation_names:
         entry = previous_artifacts.get(name)
         if not isinstance(entry, dict):
             return None, f"Previous manifest lacks option artifact {name}."
@@ -1171,11 +1187,11 @@ def _resolve_option_carry_forward(
             return None, f"Could not hash previous option artifact {name}: {exc}."
         if actual_sha != expected_sha:
             return None, f"Previous option artifact {name} failed sha256 verification."
-        if not _schema_version_matches(entry.get("schema_version")):
+        if normalized_option_schema_version(entry.get("schema_version")) != generation_version:
             return None, (
                 f"Previous option artifact {name} has schema version "
-                f"{entry.get('schema_version')!r}; current is "
-                f"{OPTION_ARTIFACT_SCHEMA_VERSION}."
+                f"{entry.get('schema_version')!r}; the generation is "
+                f"v{generation_version}."
             )
         if (
             name in REQUIRED_OPTION_ARTIFACT_NAMES
@@ -1233,14 +1249,52 @@ def _resolve_option_carry_forward(
 
 
 def _schema_version_matches(value: object) -> bool:
-    # Strict parity with the serve reader's gate (audit N2): "3" or "3.0"
-    # match version 3; "3.9" must not.
-    text = _clean_string(value)
-    if not text:
-        return False
-    if text.endswith(".0"):
-        text = text[:-2]
-    return text == str(OPTION_ARTIFACT_SCHEMA_VERSION)
+    """True when a stamped option schema version is one this build can serve.
+
+    Set-aware (plan §6.4): both the active version and every legacy version in
+    the reader window pass, because a generation is validated against ITS OWN
+    name set, not the publisher's. Parity with the serve reader's gate (audit
+    N2): "3" or "3.0" match version 3; "3.9" must not.
+    """
+
+    version = normalized_option_schema_version(_clean_string(value))
+    return version in SUPPORTED_OPTION_SCHEMA_VERSIONS
+
+
+def _generation_option_schema_version(
+    previous_artifacts: dict[str, Any],
+) -> tuple[int | None, str | None]:
+    """Resolve a published generation's own option schema version.
+
+    Read from the v3 BASE artifacts only — they exist in every supported
+    generation, so the version can be resolved before the name set is known.
+    """
+
+    versions: set[int] = set()
+    for name in OPTION_TRADING_READ_SET:
+        entry = previous_artifacts.get(name)
+        if not isinstance(entry, dict):
+            return None, f"Previous manifest lacks option artifact {name}."
+        version = normalized_option_schema_version(entry.get("schema_version"))
+        if version is None:
+            return None, (
+                f"Previous option artifact {name} has no readable schema version "
+                f"({entry.get('schema_version')!r})."
+            )
+        versions.add(version)
+    if len(versions) != 1:
+        return None, (
+            "Previous option artifacts mix schema versions: "
+            + ", ".join(str(version) for version in sorted(versions))
+            + "."
+        )
+    version = versions.pop()
+    if version not in SUPPORTED_OPTION_SCHEMA_VERSIONS:
+        return None, (
+            f"Previous option artifacts carry unsupported schema version {version}; "
+            f"supported: {', '.join(str(item) for item in SUPPORTED_OPTION_SCHEMA_VERSIONS)}."
+        )
+    return version, None
 
 
 def _carried_option_as_of_date(
@@ -1359,7 +1413,7 @@ def _freshness_domains(
                 "status": OPTION_FRESHNESS_UNAVAILABLE,
                 "reason": (
                     "Option artifacts on disk predate the current schema "
-                    f"(v{OPTION_ARTIFACT_SCHEMA_VERSION}); run python main.py "
+                    f"(v{ACTIVE_OPTION_SCHEMA_VERSION}); run python main.py "
                     "refresh to rebuild them."
                 ),
             }

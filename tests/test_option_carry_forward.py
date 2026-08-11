@@ -50,8 +50,9 @@ def _write_option_artifacts(
     source_run_id: str = DAY1_SOURCE_RUN_ID,
     as_of_date: str = DAY1_AS_OF,
     schema_version: int = OPTION_ARTIFACT_SCHEMA_VERSION,
+    artifact_names: tuple[str, ...] = OPTION_ARTIFACT_NAMES,
 ) -> None:
-    for artifact_name in OPTION_ARTIFACT_NAMES:
+    for artifact_name in artifact_names:
         frame = pd.DataFrame(
             [
                 {
@@ -84,6 +85,7 @@ def _publish_good_manifest(
     as_of_date: str = DAY1_AS_OF,
     schema_version: int = OPTION_ARTIFACT_SCHEMA_VERSION,
     include_tool_c: bool = True,
+    artifact_names: tuple[str, ...] = OPTION_ARTIFACT_NAMES,
 ):
     _write_foundation_and_options_manifests(paths, refresh_run_id=refresh_run_id)
     _write_tool_outputs(
@@ -98,6 +100,7 @@ def _publish_good_manifest(
         source_run_id=source_run_id,
         as_of_date=as_of_date,
         schema_version=schema_version,
+        artifact_names=artifact_names,
     )
     return write_current_model_state_manifest(
         paths=paths,
@@ -353,7 +356,7 @@ def test_option_overview_page_shows_carried_forward_message(tmp_path):
 
 def test_blocked_refresh_with_stale_schema_previous_artifacts_is_unavailable(tmp_path):
     paths = build_test_paths(tmp_path)
-    _publish_good_manifest(paths, schema_version=OPTION_ARTIFACT_SCHEMA_VERSION - 1)
+    _publish_good_manifest(paths, schema_version=2)
     _write_day2_core(paths, refresh_run_id="refresh-B")
 
     payload = _blocked_publish(paths, parent_refresh_id="parent-B")
@@ -537,7 +540,7 @@ def test_refresh_continues_past_blocked_options_and_runs_portfolio(
     exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
     out = capsys.readouterr().out
 
-    assert exit_code == 0
+    assert exit_code == 0, out
     assert "portfolio" in call_order
     assert call_order.index("portfolio") > call_order.index("option-artifacts")
     manifest = json.loads(
@@ -662,3 +665,53 @@ def test_unavailable_manifest_yields_calm_empty_frames_not_schema_error(tmp_path
     # says UNAVAILABLE: the reader must return None (calm empty page), not
     # raise the stale-schema error.
     assert _read_option_artifact_frames(paths) is None
+
+
+def test_v3_generation_carries_forward_and_serves_under_v4_code(tmp_path):
+    """Legacy reader window (plan §6.4): a v3 generation stays fully usable."""
+
+    from golden_vector.contracts.option_artifacts import OPTION_TRADING_READ_SET
+    from golden_vector.serve.option_trading_data import _read_option_artifact_frames
+
+    paths = build_test_paths(tmp_path)
+    _publish_good_manifest(
+        paths,
+        schema_version=3,
+        artifact_names=OPTION_TRADING_READ_SET,
+    )
+    _write_day2_core(paths, refresh_run_id="refresh-B")
+
+    payload = _blocked_publish(paths, parent_refresh_id="parent-B")
+
+    domain = payload["freshness_domains"]["option_artifacts"]
+    assert domain["status"] == "CARRIED_FORWARD"
+    assert domain["source_run_id"] == DAY1_SOURCE_RUN_ID
+    # The v4-only artifacts are NOT demanded from a v3 generation.
+    for name in ("option_chain_history_daily", "option_availability"):
+        assert payload["artifacts"][name].get("usable") is not True
+    for name in OPTION_TRADING_READ_SET:
+        assert payload["artifacts"][name]["usable"] is True
+
+    frames = _read_option_artifact_frames(paths)
+    assert frames is not None
+    assert set(frames) == set(OPTION_TRADING_READ_SET) - {"option_contract_metrics"}
+
+
+def test_v4_generation_requires_the_full_v4_set(tmp_path):
+    """A v4-stamped generation missing a v4 artifact refuses to carry forward."""
+
+    from golden_vector.contracts.option_artifacts import OPTION_TRADING_READ_SET
+
+    paths = build_test_paths(tmp_path)
+    _publish_good_manifest(
+        paths,
+        schema_version=4,
+        artifact_names=OPTION_TRADING_READ_SET,
+    )
+    _write_day2_core(paths, refresh_run_id="refresh-B")
+
+    payload = _blocked_publish(paths, parent_refresh_id="parent-B")
+
+    domain = payload["freshness_domains"]["option_artifacts"]
+    assert domain["status"] == "UNAVAILABLE"
+    assert "option_chain_history_daily" in domain["reason"]

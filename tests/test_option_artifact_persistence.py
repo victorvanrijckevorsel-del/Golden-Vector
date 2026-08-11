@@ -570,7 +570,7 @@ def test_greek_columns_are_dormant_additive_only():
 
 
 def test_versioned_artifact_name_sets_and_active_resolution():
-    """Plan §6.4: versioned name sets, ACTIVE stays 3, read-set == the v3 ten."""
+    """Plan §6.4: versioned name sets, ACTIVE is v4, read-set stays the v3 ten."""
 
     from golden_vector.contracts.option_artifacts import (
         ACTIVE_OPTION_SCHEMA_VERSION,
@@ -585,14 +585,185 @@ def test_versioned_artifact_name_sets_and_active_resolution():
     assert set(v4) - set(v3) == {"option_chain_history_daily", "option_availability"}
     assert len(v3) == 10
 
-    # Dormancy control: the active version and the runtime name tuple are v3.
-    assert ACTIVE_OPTION_SCHEMA_VERSION == 3 == OPTION_ARTIFACT_SCHEMA_VERSION
-    assert OPTION_ARTIFACT_NAMES == v3
-    assert option_artifact_names_for_version(ACTIVE_OPTION_SCHEMA_VERSION) == v3
-    assert option_artifact_names_for_version(4) == v4
+    # The publisher writes v4; the runtime name tuple is the v4 twelve.
+    assert ACTIVE_OPTION_SCHEMA_VERSION == 4 == OPTION_ARTIFACT_SCHEMA_VERSION
+    assert OPTION_ARTIFACT_NAMES == v4
+    assert len(v4) == 12
+    assert option_artifact_names_for_version(ACTIVE_OPTION_SCHEMA_VERSION) == v4
+    assert option_artifact_names_for_version(3) == v3
+
+    # Superset tolerance (rollback matrix): every legacy version's set is a
+    # subset of the active version's, so v3 code reading a v4 generation still
+    # finds every name it asks for.
+    assert set(option_artifact_names_for_version(3)) <= set(
+        option_artifact_names_for_version(4)
+    )
 
     # The overview loader's reads exclude the two page-only v4 artifacts.
     assert OPTION_TRADING_READ_SET == v3
 
     with pytest.raises(ValueError):
         option_artifact_names_for_version(99)
+
+
+def _v4_frame(run_id: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "ticker": "AEM",
+                "schema_version": OPTION_ARTIFACT_SCHEMA_VERSION,
+                "snapshot_refresh_run_id": "options-run",
+                "source_run_id": run_id,
+            }
+        ]
+    )
+
+
+def test_v4_publish_is_atomic_across_all_twelve(tmp_path):
+    """A v4 publish flips ALL twelve aliases together, or none of them."""
+
+    from golden_vector.ingestion.persist_option_artifacts import (
+        publish_option_artifacts_and_history_atomically,
+    )
+
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    run_context = RunContext.start(
+        paths=paths,
+        command="option-artifacts",
+        parameters={},
+        config_hash="config-hash",
+    )
+    frames = {name: _v4_frame(run_context.run_id) for name in OPTION_ARTIFACT_NAMES}
+    assert len(frames) == 12
+    assert {"option_chain_history_daily", "option_availability"} <= set(frames)
+
+    persist_option_artifact_frames(
+        paths=paths,
+        run_context=run_context,
+        frames=frames,
+        publish_latest_aliases=False,
+    )
+    for artifact_name in OPTION_ARTIFACT_NAMES:
+        assert not option_artifact_latest_path(paths, artifact_name).exists()
+
+    # A set missing either v4 addition refuses the publish outright: no alias flips.
+    incomplete = {
+        name: frame for name, frame in frames.items() if name != "option_availability"
+    }
+    with pytest.raises(ValueError, match="Missing option artifact frame"):
+        publish_option_artifacts_and_history_atomically(
+            paths=paths,
+            run_context=run_context,
+            frames=incomplete,
+            history=pd.DataFrame(),
+        )
+    for artifact_name in OPTION_ARTIFACT_NAMES:
+        assert not option_artifact_latest_path(paths, artifact_name).exists()
+
+    publish_option_artifacts_and_history_atomically(
+        paths=paths,
+        run_context=run_context,
+        frames=frames,
+        history=pd.DataFrame(),
+    )
+    for artifact_name in OPTION_ARTIFACT_NAMES:
+        assert option_artifact_latest_path(paths, artifact_name).exists()
+
+
+def _capture_features(*, as_of_date: str, run_id: str, tickers=("AEM",)) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "ticker": ticker,
+                "as_of_date": as_of_date,
+                "run_id": run_id,
+                "total_open_interest": 1000,
+                "put_oi_total": 600,
+                "call_oi_total": 400,
+                "n_contracts": 40,
+                "n_expirations": 4,
+            }
+            for ticker in tickers
+        ]
+    )
+
+
+def _v4_frames(
+    *,
+    options_features: pd.DataFrame,
+    previous_chain_history: pd.DataFrame | None = None,
+    universe_tickers: tuple[str, ...] = (),
+    snapshots: list[dict] | None = None,
+    source_run_id: str = "20260601T000000Z-option-artifacts",
+) -> dict[str, pd.DataFrame]:
+    return build_option_artifact_frames(
+        built=_greeks_build_result(),
+        contract_metrics=(),
+        options_features=options_features,
+        manifest={
+            "refresh_run_id": "options-run",
+            "as_of_date": "2026-06-01",
+            "snapshots": snapshots or [],
+        },
+        source_run_id=source_run_id,
+        parent_refresh_id="parent-refresh",
+        config_hash="config-hash",
+        risk_free_rate=0.04,
+        risk_free_rate_is_fallback=False,
+        universe_tickers=universe_tickers,
+        previous_chain_history=previous_chain_history,
+    )
+
+
+def test_chain_history_first_v4_run_then_merges_forward():
+    """First v4 run has no previous history; the second run must not shrink it."""
+
+    day_one = _v4_frames(
+        options_features=_capture_features(as_of_date="2026-06-01", run_id="run-1"),
+        previous_chain_history=None,
+    )["option_chain_history_daily"]
+    assert set(zip(day_one["ticker"], day_one["as_of_date"])) == {("AEM", "2026-06-01")}
+    assert set(day_one["row_status"]) == {"observed"}
+
+    day_two = _v4_frames(
+        options_features=_capture_features(as_of_date="2026-06-02", run_id="run-2"),
+        previous_chain_history=day_one,
+        source_run_id="20260602T000000Z-option-artifacts",
+    )["option_chain_history_daily"]
+    assert set(zip(day_two["ticker"], day_two["as_of_date"])) == {
+        ("AEM", "2026-06-01"),
+        ("AEM", "2026-06-02"),
+    }
+    # The artifact-set stamp owns schema_version; the builder's own version survives.
+    assert set(day_two["schema_version"]) == {OPTION_ARTIFACT_SCHEMA_VERSION}
+    assert set(day_two["chain_history_schema_version"]) == {1}
+
+
+def test_option_availability_is_universe_complete():
+    """Every universe ticker gets a row; an absent one is UNKNOWN, never NONE_LISTED."""
+
+    frames = _v4_frames(
+        options_features=_capture_features(as_of_date="2026-06-01", run_id="run-1"),
+        universe_tickers=("AEM", "NEM", "GHOST"),
+        snapshots=[
+            {"ticker": "AEM", "options_available": True, "row_count": 12},
+            {
+                "ticker": "NEM",
+                "options_available": False,
+                "row_count": 0,
+                "expiration_count_available": 0,
+                "message": "No listed options returned by Yahoo.",
+            },
+        ],
+    )
+    availability = frames["option_availability"]
+    assert list(availability["ticker"]) == ["AEM", "NEM", "GHOST"]
+    statuses = dict(zip(availability["ticker"], availability["availability_status"]))
+    assert statuses == {
+        "AEM": "LISTED",
+        "NEM": "NONE_LISTED",
+        "GHOST": "UNKNOWN",
+    }
+    assert set(availability["schema_version"]) == {OPTION_ARTIFACT_SCHEMA_VERSION}
+    assert set(availability["availability_schema_version"]) == {1}

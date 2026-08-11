@@ -76,6 +76,7 @@ from golden_vector.hedge.option_artifact_builder import (
     scan_option_chains_for_artifacts,
     scan_option_contract_metrics,
 )
+from golden_vector.contracts.option_artifacts import option_artifact_latest_path
 from golden_vector.hedge.option_artifact_frames import (
     build_option_artifact_frames,
     tool_refresh_run_id,
@@ -2280,6 +2281,16 @@ def _run_option_artifacts_unlocked(
             option_signals=option_signals,
             tool_a_refresh_id=tool_refresh_run_id(sources.tool_a),
             tool_b_refresh_id=tool_refresh_run_id(sources.tool_b),
+            # v4 artifacts: availability is universe-complete, and the chain
+            # history merges forward onto whatever is currently published
+            # (None on the first v4 run).
+            universe_tickers=tuple(
+                ticker.ticker
+                for ticker in loaded_config.app.universe.tickers
+                if ticker.active
+            ),
+            previous_chain_history=_previous_option_chain_history(paths),
+            history_quality=loaded_config.app.hedge_readiness.history_quality,
         )
         # All-or-nothing publish (audit H2 + Codex options-UI review HIGH): stage
         # every artifact to run-stamped paths WITHOUT flipping latest aliases, then
@@ -2339,6 +2350,23 @@ def _run_option_artifacts_unlocked(
             notes=["Option artifact build failed before completion."],
         )
         return OptionArtifactsOutcome(status="FAILED")
+
+
+def _previous_option_chain_history(paths: ProjectPaths) -> pd.DataFrame | None:
+    """The currently published chain-history artifact, or None on the first v4 run.
+
+    Resolved leniently: a v3 generation has no such artifact, and a manifest that
+    cannot resolve it is a first run, not a failure. The no-shrink guard inside
+    ``build_chain_history_daily`` still protects every subsequent run.
+    """
+
+    path = resolve_current_model_artifact_path(paths, "option_chain_history_daily")
+    if path is None:
+        path = option_artifact_latest_path(paths, "option_chain_history_daily")
+    if not path.exists():
+        return None
+    frame = read_optional_parquet(path)
+    return None if frame.empty else frame
 
 
 def _previous_option_contract_metrics(paths: ProjectPaths) -> pd.DataFrame:
