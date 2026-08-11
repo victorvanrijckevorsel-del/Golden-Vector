@@ -43,6 +43,7 @@ from golden_vector.serve.detail_panels import (
     _resolve_active_window,
 )
 from golden_vector.serve.detail_forms import COMPANY_FORM_FIELDS
+from golden_vector.serve.ticker_page import load_ticker_page_data
 from golden_vector.serve.detail_page import (
     DETAIL_DEFAULT_LENS_ID,
     DETAIL_OPTION_TRADING_LENS_ID,
@@ -590,6 +591,7 @@ def create_workspace_app(
                                 app_config=app_config,
                             ),
                         )
+                    ticker_page_data = load_ticker_page_data(paths)
                     return _html_response(
                         start_response,
                         render_detail_page(
@@ -600,6 +602,11 @@ def create_workspace_app(
                             active_window=active_window,
                             canonical_anchor=canonical_anchor,
                             lens=detail_lens,
+                            ticker_page_data=ticker_page_data,
+                            chart_horizon=_resolve_chart_horizon(
+                                query.get("chart_h", [""])[0], app_config
+                            ),
+                            chart_view=_resolve_chart_view(query.get("chart_view", [""])[0]),
                             app_config=app_config,
                             option_trading_detail=option_trading_detail,
                             show_workspace_panels=not option_vehicle_detail,
@@ -1005,3 +1012,15 @@ def _is_loopback_host(host: str) -> bool:
         return ipaddress.ip_address(normalized).is_loopback
     except ValueError:
         return False
+
+
+def _resolve_chart_horizon(raw: str | None, app_config) -> str:
+    """Resolve the chart horizon query param against the configured list."""
+    horizons = list(app_config.ticker_page.chart.horizons)
+    value = str(raw or "").strip().upper()
+    return value if value in horizons else horizons[0]
+
+
+def _resolve_chart_view(raw: str | None) -> str:
+    value = str(raw or "").strip().lower()
+    return value if value in {"rebased", "price"} else "rebased"

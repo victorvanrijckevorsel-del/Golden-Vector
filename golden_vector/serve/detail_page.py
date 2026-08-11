@@ -25,6 +25,12 @@ from golden_vector.serve.format_helpers import _frame_index_by_ticker, _ticker_r
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.ui.components import page_header, section_nav
 from golden_vector.serve.ui.status import notice
+from golden_vector.serve.ticker_page import (
+    TickerPageData,
+    render_cost_downside_card,
+    render_currency_attribution_block,
+    render_performance_section,
+)
 from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import ToolADetailState, WorkspaceState
 
@@ -60,6 +66,9 @@ def render_detail_page(
     query_params: Mapping[str, str] | None = None,
     fundamentals_provenance: dict[tuple[str, str], str] | None = None,
     form_overrides: Mapping[str, Mapping[str, str]] | None = None,
+    ticker_page_data: TickerPageData | None = None,
+    chart_horizon: str = "1Y",
+    chart_view: str = "rebased",
 ) -> str:
     company_row = _frame_index_by_ticker(state.company_inputs).get(ticker, {})
     reporting_row = _frame_index_by_ticker(state.reporting_calendar).get(ticker, {})
@@ -160,6 +169,25 @@ def render_detail_page(
     if error:
         body.append(notice("danger", escape(error)))
     alignment = _detail_alignment(tool_a_row, state.foundation_manifest)
+    if show_workspace_panels and ticker_page_data is not None:
+        # Redesign M3a: the persisted-performance chart + Currency attribution
+        # (Feature A) render ABOVE the legacy panels; the artifact rows are the
+        # only source — nothing recomputes here.
+        body.append(
+            render_performance_section(
+                ticker_page_data.performance_rows(ticker),
+                ticker=ticker,
+                horizon=chart_horizon,
+                view=chart_view,
+            )
+        )
+        body.append(
+            render_currency_attribution_block(
+                ticker_page_data.fx_attribution_rows(ticker),
+                ticker=ticker,
+                horizon=chart_horizon,
+            )
+        )
     if show_workspace_panels:
         body.append(
             _render_latest_panels(
@@ -173,6 +201,25 @@ def render_detail_page(
                 financials_source=financials_source,
                 query_params=query_params,
                 fundamentals_provenance=fundamentals_provenance,
+            )
+        )
+    if show_workspace_panels and ticker_page_data is not None:
+        # Feature B: Cost position and downside record (Market Behaviour).
+        body.append(
+            render_cost_downside_card(
+                ticker=ticker,
+                aisc_row=ticker_page_data.metric_row(
+                    ticker, metric_key="aisc", finance_source=financials_source
+                ),
+                downside_row=ticker_page_data.metric_row(
+                    ticker, metric_key="downside_hit_rate", finance_source=financials_source
+                ),
+                aisc_peers=ticker_page_data.metric_peers(
+                    metric_key="aisc", finance_source=financials_source
+                ),
+                downside_peers=ticker_page_data.metric_peers(
+                    metric_key="downside_hit_rate", finance_source=financials_source
+                ),
             )
         )
     body.append(

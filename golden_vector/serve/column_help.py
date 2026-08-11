@@ -1322,6 +1322,31 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         direction="Higher means a longer runway.",
     ),
     # ---- Tool D: Corporate Resilience (moved from hard-coded titles) ----
+    "ticker_fx_attribution": ColumnHelp(
+        meaning=(
+            "How the listing currency's move changed this stock's USD return over the "
+            "selected chart window. This is about the LISTING currency only — it does not "
+            "measure where the company earns revenue or pays its costs."
+        ),
+        calculation=(
+            "USD return = (1 + local return) × (1 + FX return) − 1, measured at the exact "
+            "chart endpoint dates. The FX contribution is the USD return minus the local "
+            "return, in percentage points."
+        ),
+    ),
+    "ticker_cost_downside": ColumnHelp(
+        meaning=(
+            "Two pieces of evidence side by side: today's reported all-in sustaining cost, "
+            "and how often the share actually fell 10%+ in past weak-gold weeks. They are "
+            "shown together for context — no combined score, and no claim that one causes "
+            "the other."
+        ),
+        calculation=(
+            "AISC: company-reported (Our View mining assumption). Large-fall rate: exact "
+            "hits ÷ qualifying weak-gold weeks (gold's rolling weakest 20%), where a hit is "
+            "an ordinary weekly price return of −10% or worse."
+        ),
+    ),
     "tool_d_quality_rank": ColumnHelp(
         meaning="A 0–100 resilience score — where this miner sits across the universe on the four resilience components (survival, cost, fragility, balance sheet).",
         calculation="Percentile rank of the average of the four resilience components, ×100. Only fully-scored, data-OK names are scored.",
