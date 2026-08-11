@@ -868,7 +868,10 @@ def _render_chart_b(curve: LabCurveData) -> str:
     counted number above."""
 
     points = curve.relstrength_points
-    if curve.relstrength_status in ("MISSING", "CORRUPT"):
+    # EMPTY belongs with MISSING/CORRUPT: a relstrength artifact that exists but
+    # holds no rows at all is a broken build, not a thin ticker, and silently
+    # drawing a blank line hides it.
+    if curve.relstrength_status in ("MISSING", "CORRUPT", "EMPTY"):
         line = (
             "<p class=\"hint\">Relative-strength artifact is "
             f"{escape(curve.relstrength_status.lower())} — rebuild the Lab artifacts "

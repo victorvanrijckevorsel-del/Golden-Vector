@@ -1200,3 +1200,62 @@ def test_drilldown_unavailable_state_to_tone_mapping(status, expected_tone):
     assert other not in html
     if status == "UNKNOWN_SCENARIO":
         assert "Rebuild:" not in html  # URL typo advice must not say rebuild
+
+
+def test_overview_all_nan_horizons_reports_empty_not_available() -> None:
+    """Cells rows exist but not one carries a horizon: nothing is selectable, so
+    every downstream filter yields zero rows. Reporting available=True there
+    renders an empty table as though the data were healthy."""
+
+    paths, _ = _write(
+        tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"]
+    )
+    cells_path = Path(paths.data_dir) / "lab" / DIAL_CELLS_FILENAME
+    cells = pd.read_parquet(cells_path)
+    assert not cells.empty  # the frame itself is NOT empty — only the horizons are
+    cells["horizon_weeks"] = np.nan
+    cells.to_parquet(cells_path, index=False)
+
+    data = load_dial_cells(paths, horizon=13, bucket="gold_down")
+
+    assert data.available is False
+    assert data.error_status == "EMPTY"
+    assert data.rows == [] or not data.rows
+
+
+def test_overview_healthy_horizons_still_available() -> None:
+    """Control for the all-NaN guard: untouched cells still report available."""
+
+    paths, _ = _write(
+        tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"]
+    )
+
+    data = load_dial_cells(paths, horizon=13, bucket="gold_down")
+
+    assert data.available is True
+    assert data.error_status is None
+    assert data.rows
+
+
+def test_chart_b_reports_empty_relstrength_artifact() -> None:
+    """An EMPTY relstrength artifact is a broken build, not a thin ticker, so it
+    must be as loud as MISSING/CORRUPT rather than drawing a blank line."""
+
+    from golden_vector.serve.lab_curve_page import _render_lab_curve_page
+
+    paths, _ = _write(
+        tmp_path_for(), parity_weekly_frame(), horizons=[13], benchmarks=["GDX", "GDXJ"]
+    )
+    rel_path = Path(paths.data_dir) / "lab" / DIAL_RELSTRENGTH_FILENAME
+    # Correct columns, zero rows: reads fine, carries nothing.
+    pd.read_parquet(rel_path).iloc[0:0].to_parquet(rel_path, index=False)
+
+    curve = load_ticker_curve(
+        paths, ticker="AAA", scenario_bucket="gold_down", horizon=13, benchmark="GDX"
+    )
+
+    assert curve.relstrength_status == "EMPTY"
+    html = _render_lab_curve_page(curve)
+    assert "Relative-strength artifact is empty" in html
+    # Chart A (the counted evidence) is unaffected.
+    assert "lab-dots-svg" in html

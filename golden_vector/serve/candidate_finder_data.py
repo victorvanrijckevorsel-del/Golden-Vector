@@ -42,7 +42,10 @@ from golden_vector.model.tool_d import (
     latest_gold_price_from_history,
 )
 from golden_vector.fundamentals.artifacts import load_official_fundamentals
-from golden_vector.contracts.fundamentals import fetched_fundamentals_latest_path
+from golden_vector.contracts.fundamentals import (
+    FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
+    fetched_fundamentals_latest_path,
+)
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.screening.manual_store import load_store_tables
@@ -306,7 +309,15 @@ def load_candidate_finder_data(
         tool_b_refresh_run_ids=_unique_strings(tool_b, "snapshot_refresh_run_id"),
         tool_c_refresh_run_ids=_unique_strings(tool_c, "snapshot_refresh_run_id"),
         tool_d_refresh_run_ids=_unique_strings(tool_d_load.frame, "snapshot_refresh_run_id"),
-        options_refresh_run_id=options_refresh_run_id or "unknown",
+        options_refresh_run_id=(
+            options_refresh_run_id
+            # An unreadable options layer yields no run id. Keying every such
+            # request on the constant "unknown" makes a REPAIRED options layer
+            # reuse the degraded cache entry (the repair need not touch the
+            # model-state manifest). Fold in the options manifest's own hash so
+            # fixing the layer always produces a different key.
+            or f"unknown:{_file_sha256(paths.latest_options_manifest_path)}"
+        ),
         manual_store_hash=manual_hash,
         tool_a_latest_hash=_file_sha256(tool_a_path),
         tool_b_latest_hash=_file_sha256(tool_b_path),
@@ -317,7 +328,7 @@ def load_candidate_finder_data(
         fundamentals_source=finance_source,
         scenario_foundation_manifest_hash=_file_sha256(scenario_foundation_manifest_path),
         scenario_fundamentals_hash=(
-            _file_sha256(fetched_fundamentals_latest_path(paths))
+            _file_sha256(_resolved_fundamentals_path(paths))
             if scenario is not None or finance_source == "yahoo"
             else None
         ),
@@ -329,6 +340,11 @@ def load_candidate_finder_data(
 
     scenario_error: str | None = None
     scenario_requested_gold_price = scenario.gold_price if scenario is not None else None
+    # Hold the PERSISTED spot loads before the try: the scenario path reassigns
+    # tool_b_load/tool_d_load, so an except that read them back would validate the
+    # half-built scenario frame it is supposed to be falling back FROM.
+    persisted_tool_b_load = tool_b_load
+    persisted_tool_d_load = tool_d_load
     if scenario is not None or finance_source == "yahoo":
         try:
             if scenario_foundation_error is not None:
@@ -358,8 +374,8 @@ def load_candidate_finder_data(
                     f"{exc}"
                 ) from exc
             scenario_error = f"Could not compute Candidate Finder scenario: {exc}"
-            tool_b_spot_load = _spot_tool_b_source(tool_b_load.frame)
-            tool_d_spot_load = _spot_tool_d_source(tool_d_load.frame)
+            tool_b_spot_load = _spot_tool_b_source(persisted_tool_b_load.frame)
+            tool_d_spot_load = _spot_tool_d_source(persisted_tool_d_load.frame)
             tool_b_load = tool_b_spot_load
             tool_b = tool_b_load.frame
             tool_d_load = tool_d_spot_load
@@ -542,6 +558,33 @@ def candidate_finder_result_frame(screen: CandidateFinderScreen) -> pd.DataFrame
     return pd.DataFrame(rows)
 
 
+GOLD_PRICE_MATCH_TOLERANCE_USD = 0.01
+"""How close two gold prices must be (USD/oz) to count as the SAME price.
+
+Used wherever a persisted frame's ``gold_price_used`` is compared against spot
+or against a requested scenario price, to decide whether rows were computed on
+the basis they claim. One constant, referenced everywhere: a second hardcoded
+copy would drift and silently change which rows are treated as spot-based."""
+
+
+
+def _resolved_fundamentals_path(paths: ProjectPaths) -> Path:
+    """The fundamentals file the READER actually opens.
+
+    load_official_fundamentals resolves through the model-state manifest and only
+    falls back to the mutable ``latest`` alias. Hashing the alias instead would
+    key the cache on a file the reader may never open (and which a refresh can
+    rewrite without the served data changing), so resolve the same way here."""
+
+    alias_path = fetched_fundamentals_latest_path(paths)
+    resolved = resolve_current_model_artifact_path(
+        paths,
+        FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
+        fallback_path=alias_path,
+    )
+    return resolved or alias_path
+
+
 def _joined_frame(
     *,
     app_config: AppConfig,
@@ -565,30 +608,42 @@ def _joined_frame(
         }
     )
     joined = base
-    joined = _merge_source(
-        joined,
-        _prepare_source(tool_a, rename=_TOOL_A_RENAMES),
-    )
-    joined = _merge_source(
-        joined,
-        _prepare_source(tool_b, rename=_TOOL_B_RENAMES),
-    )
-    joined = _merge_source(
-        joined,
-        _prepare_source(tool_c, rename=_TOOL_C_RENAMES),
-    )
-    joined = _merge_source(
-        joined,
-        _prepare_source(tool_d, rename=_TOOL_D_RENAMES),
-    )
-    joined = _merge_source(
-        joined,
-        _prepare_source(manual_company, rename=_MANUAL_RENAMES),
-    )
-    joined = _merge_source(
-        joined,
-        _prepare_source(options, rename=_OPTIONS_RENAMES),
-    )
+    join_warnings: list[str] = []
+    # Column ownership: a source that loads EMPTY still owns its ranking fields.
+    # Reserving them stops a later source with the same column names from
+    # quietly feeding a criterion that is supposed to read the absent source.
+    reserved_columns: dict[str, str] = {}
+    configured_columns = _configured_source_columns(app_config.candidate_finder)
+    for label, frame, renames in (
+        ("Gold Sensitivity", tool_a, _TOOL_A_RENAMES),
+        ("Corporate Finance", tool_b, _TOOL_B_RENAMES),
+        ("Gold Downside", tool_c, _TOOL_C_RENAMES),
+        ("Corporate Resilience", tool_d, _TOOL_D_RENAMES),
+        ("Manual inputs", manual_company, _MANUAL_RENAMES),
+        ("Options", options, _OPTIONS_RENAMES),
+    ):
+        prepared = _prepare_source(frame, rename=renames)
+        if _source_is_empty(prepared) and label in _FINDER_REQUIRED_SOURCE_COLUMNS:
+            owned = [
+                column
+                for column in _FINDER_REQUIRED_SOURCE_COLUMNS[label]
+                if column != "ticker"
+            ]
+            for column in owned:
+                reserved_columns.setdefault(column, label)
+            join_warnings.append(
+                f"Candidate Finder {label} source loaded with no rows; its fields "
+                "are missing and are left null rather than read from another "
+                "source: " + ", ".join(sorted(owned)) + "."
+            )
+        joined = _merge_source(
+            joined,
+            prepared,
+            label=label,
+            reserved_columns=reserved_columns,
+            configured_columns=configured_columns,
+            warnings=join_warnings,
+        )
     joined["has_usable_put_candidate"] = joined["ticker"].map(
         lambda ticker: _has_usable_slots(option_data.candidate_slots.get(str(ticker), []))
     )
@@ -597,7 +652,9 @@ def _joined_frame(
     )
     _ensure_configured_source_fields(joined, app_config.candidate_finder)
     result = joined.sort_values("ticker").reset_index(drop=True)
-    warnings = _joined_frame_health_warnings(result, app_config.candidate_finder)
+    warnings = join_warnings + _joined_frame_health_warnings(
+        result, app_config.candidate_finder
+    )
     if warnings:
         result.attrs["candidate_finder_join_warnings"] = tuple(warnings)
     return result
@@ -662,14 +719,102 @@ def _prepare_source(frame: pd.DataFrame, *, rename: dict[str, str]) -> pd.DataFr
     return result.rename(columns=rename)
 
 
-def _merge_source(joined: pd.DataFrame, source: pd.DataFrame) -> pd.DataFrame:
+
+# Configured columns that MORE THAN ONE source legitimately carries, where the
+# earlier source in the join order is the intended winner. The Corporate Finance
+# build already folds the manual company inputs in, so its computed values are
+# the ones the screen should rank on; the Manual inputs source re-presents the
+# same raw fields and is correctly dropped. Warning about these on every healthy
+# load would bury the collisions that DO signal a broken source.
+_EXPECTED_PRECEDENCE_COLUMNS: frozenset[str] = frozenset(
+    {"aisc_usd_per_oz", "reserve_life_years"}
+)
+
+
+def _configured_source_columns(config: CandidateFinderConfig) -> frozenset[str]:
+    """Every column the Candidate Finder actually screens or ranks on.
+
+    The union of the configured criteria's source fields and the required
+    per-source ranking columns. A join collision only deserves a warning when it
+    touches one of these — those are the columns that can change a ranking."""
+
+    columns = {criterion.source_field for criterion in config.criteria}
+    for required in _FINDER_REQUIRED_SOURCE_COLUMNS.values():
+        columns.update(column for column in required if column != "ticker")
+    return frozenset(columns)
+
+
+def _source_is_empty(prepared: pd.DataFrame) -> bool:
+    """True when _prepare_source collapsed the source to a ticker-only frame.
+
+    That is what an absent/unreadable optional source looks like by the time it
+    reaches the join: it carries none of its own fields."""
+
+    return prepared.empty or [c for c in prepared.columns if c != "ticker"] == []
+
+
+def _merge_source(
+    joined: pd.DataFrame,
+    source: pd.DataFrame,
+    *,
+    label: str = "",
+    reserved_columns: Mapping[str, str] | None = None,
+    configured_columns: frozenset[str] | None = None,
+    warnings: list[str] | None = None,
+) -> pd.DataFrame:
+    """Left-join one prepared source onto the accumulating frame.
+
+    Two kinds of column are refused, and BOTH are reported — a silent refusal is
+    how a Candidate Finder criterion ends up ranking on a different tool's
+    same-named column (Tool A and Tool C share many names, ``down_beta_core``
+    among them):
+
+    * already present in ``joined`` — an earlier source already supplied it, so
+      this source's values never reach the screen;
+    * reserved for a source that loaded empty — no other source is allowed to
+      fill a missing dimension's fields, or the ranking looks healthy and is
+      wrong.
+    """
+
+    reserved = dict(reserved_columns or {})
     duplicate_columns = [
         column
         for column in source.columns
         if column != "ticker" and column in joined.columns
     ]
-    if duplicate_columns:
-        source = source.drop(columns=duplicate_columns)
+    shadow_columns = [
+        column
+        for column in source.columns
+        if column != "ticker"
+        and column not in duplicate_columns
+        and reserved.get(column, label) != label
+    ]
+    drop_columns = duplicate_columns + shadow_columns
+    if drop_columns:
+        source = source.drop(columns=drop_columns)
+    # Only CONFIGURED fields are worth a banner. Sources legitimately share
+    # descriptive columns (company_name, currency, ...) on every healthy load;
+    # warning about those would be noise that trains the operator to ignore the
+    # banner that matters.
+    reportable_duplicates = sorted(
+        (set(duplicate_columns) & set(configured_columns or frozenset()))
+        - _EXPECTED_PRECEDENCE_COLUMNS
+    )
+    if warnings is not None and reportable_duplicates:
+        warnings.append(
+            f"Candidate Finder join dropped configured fields from the {label} "
+            "source that an earlier source already supplied, so those columns do "
+            f"NOT come from {label}: " + ", ".join(reportable_duplicates) + "."
+        )
+    if warnings is not None and shadow_columns:
+        owners = sorted({reserved[column] for column in shadow_columns})
+        warnings.append(
+            f"Candidate Finder join refused fields from the {label} source that "
+            f"belong to the unavailable {', '.join(owners)} source; they are left "
+            "null rather than silently read from the wrong source: "
+            + ", ".join(sorted(shadow_columns))
+            + "."
+        )
     return joined.merge(source, how="left", on="ticker")
 
 
@@ -681,20 +826,11 @@ def _joined_frame_health_warnings(
     frame: pd.DataFrame,
     config: CandidateFinderConfig,
 ) -> list[str]:
+    # No _x/_y collision check here: _merge_source drops colliding columns
+    # BEFORE merging, so pandas never mints a suffixed pair and such a check
+    # could only ever be dead code. The real collision reporting lives in
+    # _merge_source, which is the only place that can still see the drop.
     warnings: list[str] = []
-    collision_columns = sorted(
-        column
-        for column in frame.columns
-        if column.endswith("_x") or column.endswith("_y")
-    )
-    if collision_columns:
-        warnings.append(
-            "Candidate Finder source join produced duplicate-suffix columns; "
-            "configured fields may be reading the wrong source: "
-            + ", ".join(collision_columns)
-            + "."
-        )
-
     null_fields = []
     for criterion in config.criteria:
         column = criterion.source_field
@@ -1116,7 +1252,7 @@ def _compute_scenario_sources(
     gold_price = scenario.gold_price if scenario is not None else spot_gold_usd
     gold_price_basis = (
         "latest_daily_gold_close"
-        if abs(gold_price - spot_gold_usd) <= 0.01
+        if abs(gold_price - spot_gold_usd) <= GOLD_PRICE_MATCH_TOLERANCE_USD
         else "custom_scenario"
     )
     manual_data = load_manual_screening_data(
@@ -1214,7 +1350,9 @@ def _spot_tool_b_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:
     spot_gold = pd.to_numeric(frame["spot_gold_usd"], errors="coerce")
     basis = frame["gold_price_basis"].astype(str).str.strip()
     comparable = gold_price.notna() & spot_gold.notna()
-    is_spot = comparable & gold_price.sub(spot_gold).abs().le(0.01) & basis.eq(
+    is_spot = comparable & gold_price.sub(spot_gold).abs().le(
+        GOLD_PRICE_MATCH_TOLERANCE_USD
+    ) & basis.eq(
         "latest_daily_gold_close"
     )
     if bool(is_spot.all()):
@@ -1274,7 +1412,9 @@ def _spot_tool_d_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:
     gold_price = pd.to_numeric(frame["gold_price_used"], errors="coerce")
     spot_gold = pd.to_numeric(frame["spot_gold_usd"], errors="coerce")
     comparable = gold_price.notna() & spot_gold.notna()
-    is_spot = comparable & gold_price.sub(spot_gold).abs().le(0.01)
+    is_spot = comparable & gold_price.sub(spot_gold).abs().le(
+        GOLD_PRICE_MATCH_TOLERANCE_USD
+    )
     if bool(is_spot.all()):
         return CandidateFinderSourceLoad(frame=frame)
     return CandidateFinderSourceLoad(
@@ -1303,7 +1443,9 @@ def _scenario_tool_d_source(
             ),
         )
     gold_price = pd.to_numeric(frame["gold_price_used"], errors="coerce")
-    is_expected = gold_price.notna() & gold_price.sub(float(expected_gold_price)).abs().le(0.01)
+    is_expected = gold_price.notna() & gold_price.sub(float(expected_gold_price)).abs().le(
+        GOLD_PRICE_MATCH_TOLERANCE_USD
+    )
     if bool(is_expected.all()):
         return CandidateFinderSourceLoad(frame=frame)
     return CandidateFinderSourceLoad(

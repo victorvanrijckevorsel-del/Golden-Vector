@@ -121,11 +121,10 @@ def read_option_refresh_status(
         )
     if status.status == REFRESH_STATUS_RUNNING and status.process_id is not None:
         exists = process_exists or is_process_running
-        # Staleness ceiling: Windows recycles PIDs aggressively, so a dead
-        # runner whose PID was reused by an unrelated process would keep the
-        # lock RUNNING forever (refresh button disabled until a hand-delete).
-        # A real refresh takes minutes; anything past the ceiling is stale.
-        if not exists(status.process_id) or _running_past_ceiling(status):
+        # Probe the PID exactly once: the answer drives both the recovery
+        # decision and its wording, and a second probe could disagree.
+        alive = exists(status.process_id)
+        if not alive:
             recovered = OptionRefreshStatus(
                 status=REFRESH_STATUS_FAILED,
                 job_id=status.job_id,
@@ -136,11 +135,7 @@ def read_option_refresh_status(
                 latest_run_id=status.latest_run_id,
                 log_path=status.log_path,
                 stage_detail=status.stage_detail,
-                error_summary=(
-                    "Refresh process is no longer running."
-                    if not exists(status.process_id)
-                    else "Refresh marked stale after exceeding the runtime ceiling."
-                ),
+                error_summary="Refresh process is no longer running.",
             )
             try:
                 write_option_refresh_status(paths, recovered)
@@ -149,6 +144,16 @@ def read_option_refresh_status(
                 # write collision must not fail the page render.
                 pass
             return recovered
+        if _running_past_ceiling(status):
+            # The PID is genuinely alive, so the lock MUST stay RUNNING: marking
+            # it FAILED would re-enable the button and start a second concurrent
+            # refresh over the same artifacts. Surface a note instead and leave
+            # the button disabled until the live process finishes.
+            started = f" (started {status.started_at})" if status.started_at else ""
+            status = replace(
+                status,
+                error_summary=f"Refresh is running unusually long{started}.",
+            )
         return _with_log_stage(paths, status)
     return status
 
@@ -574,7 +579,8 @@ def _refresh_status_text(status: OptionRefreshStatus) -> str:
     if status.status == REFRESH_STATUS_RUNNING:
         started = f" since {status.started_at}" if status.started_at else ""
         stage = f" Current logged stage: {status.stage_detail}." if status.stage_detail else ""
-        return f"Full model refresh running{started}.{stage}"
+        note = f" {status.error_summary}" if status.error_summary else ""
+        return f"Full model refresh running{started}.{stage}{note}"
     if status.status == REFRESH_STATUS_SUCCEEDED:
         finished = f" at {status.finished_at}" if status.finished_at else ""
         run = f" Latest model refresh: {status.latest_run_id}." if status.latest_run_id else ""

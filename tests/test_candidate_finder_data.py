@@ -1667,3 +1667,101 @@ def test_candidate_finder_cache_key_isolates_beta_window(tmp_path):
     assert blend.cache_key.beta_window == "core"
     assert window.cache_key.beta_window == "6M"
     assert blend.cache_key != window.cache_key
+
+
+def _finder_join_frames(tmp_path, *, tool_a: pd.DataFrame, tool_c: pd.DataFrame):
+    """Join fixture for the source-shadowing guard.
+
+    Tool A and Tool C share many column names (down_beta_core among them), so an
+    absent Tool A used to let Tool C's identically-named column slide into the
+    Gold-Sensitivity criteria unnoticed.
+    """
+
+    from golden_vector.serve.candidate_finder_data import (
+        _joined_frame,
+        _joined_frame_warnings,
+    )
+    app_config = load_app_config(build_test_paths(tmp_path)).app
+    empty = pd.DataFrame()
+    frame = _joined_frame(
+        app_config=app_config,
+        tool_a=tool_a,
+        tool_b=empty,
+        tool_c=tool_c,
+        tool_d=empty,
+        options=empty,
+        manual_company=empty,
+        # _joined_frame only reads the two slot maps off option_data.
+        option_data=SimpleNamespace(candidate_slots={}, call_candidate_slots={}),
+    )
+    return frame, _joined_frame_warnings(frame)
+
+
+def _tool_c_frame(tickers):
+    # Carries down_beta_core: a column Tool C really does publish and which the
+    # Gold-Sensitivity criteria are configured to read from TOOL A.
+    return pd.DataFrame(
+        [
+            {
+                "ticker": ticker,
+                "down_beta_core": 9.99,
+                "up_beta_core": 9.99,
+                "structural_delta_core": 9.99,
+                "tool_c_downside_rank": 50.0,
+                "tool_c_upside_rank": 50.0,
+            }
+            for ticker in tickers
+        ]
+    )
+
+
+def test_joined_frame_absent_tool_a_does_not_rank_on_tool_c_columns(tmp_path):
+    tickers = ["AEM", "NEM"]
+    frame, warnings = _finder_join_frames(
+        tmp_path,
+        tool_a=pd.DataFrame(),
+        tool_c=_tool_c_frame(tickers),
+    )
+
+    # The absent source is named, and so are the fields it failed to provide.
+    assert any(
+        "Gold Sensitivity" in warning and "down_beta_core" in warning
+        for warning in warnings
+    ), warnings
+    # The refusal is named too: Tool C's same-named column was NOT used.
+    assert any(
+        "Gold Downside" in warning and "down_beta_core" in warning
+        for warning in warnings
+    ), warnings
+    # The decisive assertion: the criteria column is null, so those tickers rank
+    # NA rather than being silently ranked on Tool C's unrelated numbers.
+    subject = frame.set_index("ticker").loc[tickers]
+    assert subject["down_beta_core"].isna().all()
+    assert 9.99 not in set(frame["down_beta_core"].dropna())
+    # Tool C's OWN fields are unaffected — only the shadowing is refused.
+    assert subject["tool_c_downside_rank"].notna().all()
+
+
+def test_joined_frame_healthy_tool_a_supplies_its_own_columns(tmp_path):
+    """Control: with Tool A present nothing is refused and values come from it."""
+
+    tickers = ["AEM", "NEM"]
+    tool_a = pd.DataFrame(
+        [
+            {
+                "ticker": ticker,
+                "down_beta_core": 1.25,
+                "up_beta_core": 1.10,
+                "structural_delta_core": 0.15,
+            }
+            for ticker in tickers
+        ]
+    )
+    frame, warnings = _finder_join_frames(
+        tmp_path, tool_a=tool_a, tool_c=_tool_c_frame(tickers)
+    )
+
+    assert not any("Gold Sensitivity" in warning for warning in warnings), warnings
+    subject = frame.set_index("ticker").loc[tickers]
+    assert set(subject["down_beta_core"]) == {1.25}
+    assert subject["tool_c_downside_rank"].notna().all()

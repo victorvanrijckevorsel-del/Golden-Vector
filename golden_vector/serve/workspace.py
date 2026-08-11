@@ -50,6 +50,7 @@ from golden_vector.serve.detail_page import (
     resolve_detail_lens,
 )
 from golden_vector.serve.option_trading_data import (
+    OptionArtifactIntegrityError,
     OptionArtifactStaleSchemaError,
     build_option_trading_detail_data,
     load_option_trading_data,
@@ -834,6 +835,20 @@ def create_workspace_app(
                 start_response,
                 _render_error_page("Page not found."),
                 status="404 Not Found",
+            )
+        except OptionArtifactIntegrityError as exc:
+            return _html_response(
+                start_response,
+                _render_error_page(
+                    "Your local Option Trading data failed its integrity check.",
+                    detail=(
+                        "A persisted option artifact does not match the sha256 recorded "
+                        "in the model-state manifest, so the file has been corrupted or "
+                        "modified after publish. Run python main.py refresh to rebuild "
+                        f"the option artifacts. Details: {exc}"
+                    ),
+                ),
+                status="503 Service Unavailable",
             )
         except OptionArtifactStaleSchemaError as exc:
             return _html_response(

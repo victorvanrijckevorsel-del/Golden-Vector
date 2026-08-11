@@ -450,6 +450,8 @@ def test_running_lock_past_runtime_ceiling_recovers_to_failed(tmp_path):
     from golden_vector.serve.option_refresh import (
         OptionRefreshStatus,
         read_option_refresh_status,
+        render_option_refresh_control,
+        start_options_refresh,
         write_option_refresh_status,
     )
     from tests.helpers import build_test_paths
@@ -472,6 +474,57 @@ def test_running_lock_past_runtime_ceiling_recovers_to_failed(tmp_path):
             error_summary=None,
         ),
     )
+    # PID alive past the ceiling: the lock MUST hold. Failing it here would
+    # re-enable the button and launch a SECOND refresh alongside the live one.
     status = read_option_refresh_status(paths, process_exists=lambda _pid: True)
+    assert status.status == "running"
+    assert "running unusually long" in (status.error_summary or "")
+    assert status.started_at in (status.error_summary or "")
+    # The note must reach the rendered control, and the button stays disabled.
+    control = render_option_refresh_control(status, return_to="/options")
+    assert "running unusually long" in control
+    assert "disabled" in control
+    # ...and a start attempt is refused rather than doubling the refresh.
+    result = start_options_refresh(
+        paths,
+        process_exists=lambda _pid: True,
+        popen_factory=_fail_if_spawned,
+    )
+    assert result.started is False
+    assert result.already_running is True
+
+
+def _fail_if_spawned(*_args, **_kwargs):
+    raise AssertionError("a second refresh must never be spawned while one is alive")
+
+
+def test_running_lock_past_ceiling_with_dead_pid_recovers_to_failed(tmp_path):
+    """Control for the alive case: a DEAD pid past the ceiling still unlocks,
+    so a crashed runner never wedges the button permanently."""
+
+    from datetime import datetime, timedelta, timezone
+
+    from golden_vector.serve.option_refresh import (
+        OptionRefreshStatus,
+        read_option_refresh_status,
+        write_option_refresh_status,
+    )
+    from tests.helpers import build_test_paths
+
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    ancient = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    write_option_refresh_status(
+        paths,
+        OptionRefreshStatus(
+            status="running",
+            job_id="dead-job",
+            process_id=4242,
+            started_at=ancient,
+        ),
+    )
+
+    status = read_option_refresh_status(paths, process_exists=lambda _pid: False)
+
     assert status.status == "failed"
-    assert "ceiling" in (status.error_summary or "")
+    assert "no longer running" in (status.error_summary or "")

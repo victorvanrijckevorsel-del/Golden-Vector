@@ -100,6 +100,15 @@ class OptionArtifactStaleSchemaError(ValueError):
     """Raised when persisted option artifacts are from an older schema."""
 
 
+class OptionArtifactIntegrityError(ValueError):
+    """Raised when a persisted option artifact fails its manifest sha256 check.
+
+    Its own type (rather than a bare ValueError) so the loader can let it escape
+    the friendly "could not be read" empty state: a file whose bytes disagree
+    with the manifest is a corruption/tampering signal and must render loud,
+    exactly like OptionArtifactStaleSchemaError does."""
+
+
 # Bounded: keys change on every refresh, and each entry holds several MB of
 # frames - an unbounded dict leaks one generation per refresh in a
 # long-running server. 4 generations comfortably covers dial flips.
@@ -350,11 +359,14 @@ def _proxy_candidate_for_request(
     ]
     if not eligible:
         return None
-    bucket_order = {
-        str(requested_bucket or ""): 0,
-        "near_atm": 1,
-        "directional": 2,
-    }
+    # Bucket preference comes from the hedge layer's configured bucket order
+    # (near_atm, directional today) rather than a hardcoded twin that would
+    # drift the moment a bucket is added or reordered. The requested bucket
+    # always wins. Deferred: relocating this selection into the hedge layer
+    # itself, so serve stops choosing candidates at all.
+    bucket_order = {str(requested_bucket or ""): 0}
+    for index, bucket_id in enumerate(candidate_bucket_ids(), start=1):
+        bucket_order.setdefault(str(bucket_id), index)
     return sorted(
         eligible,
         key=lambda candidate: (
@@ -487,7 +499,7 @@ def load_option_trading_data(
     )
     try:
         artifact_frames = _read_option_artifact_frames(paths)
-    except OptionArtifactStaleSchemaError:
+    except (OptionArtifactStaleSchemaError, OptionArtifactIntegrityError):
         raise
     except (OSError, ValueError) as exc:
         return _empty_data(
@@ -682,7 +694,7 @@ def _verify_artifact_sha256(
     actual = sha256_file(path)
     if actual != expected:
         display_path = str(artifact.get("path") or path)
-        raise ValueError(
+        raise OptionArtifactIntegrityError(
             f"Option artifact {name} sha256 mismatch at {display_path}: "
             f"expected {expected}, got {actual}."
         )

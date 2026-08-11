@@ -28,6 +28,7 @@ from golden_vector.contracts.option_artifacts import option_artifact_latest_path
 from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.serve.option_trading_data import (
+    OptionArtifactIntegrityError,
     OptionArtifactStaleSchemaError,
     build_option_trading_detail_data,
     clear_option_trading_cache,
@@ -349,12 +350,28 @@ def test_load_option_trading_data_surfaces_corrupt_manifest_artifact(tmp_path):
         ]
     ).to_parquet(artifact_path, index=False)
 
+    # A file whose bytes disagree with the manifest sha is an integrity failure,
+    # not a "can't read it" inconvenience: it must escape the friendly empty
+    # state so the route can render the loud 503, exactly like a stale schema.
+    with pytest.raises(OptionArtifactIntegrityError) as excinfo:
+        load_option_trading_data(paths, app_config=app_config)
+    assert "sha256 mismatch" in str(excinfo.value)
+
+
+def test_load_option_trading_data_healthy_artifacts_are_not_flagged_corrupt(tmp_path):
+    """Control for the integrity test: untampered artifacts still load normally,
+    proving the loud path keys on the mismatch and not on merely being read."""
+
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+
     data = load_option_trading_data(paths, app_config=app_config)
 
-    assert data.overview.rows == ()
-    assert data.overview.reason is not None
-    assert "sha256 mismatch" in data.overview.reason
-    assert data.cache_key is None
+    assert data.overview.rows != ()
+    assert data.cache_key is not None
 
 
 def test_load_option_trading_data_flags_missing_risk_free_rate_fallback(tmp_path):

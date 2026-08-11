@@ -422,6 +422,12 @@ def load_dial_cells(
         return LabCellsData(available=False, error_status="STALE")
 
     horizons = sorted({int(h) for h in frame["horizon_weeks"].dropna().tolist()})
+    if not horizons:
+        # Rows exist but not one carries a horizon: nothing can ever be selected,
+        # so every downstream filter yields zero rows. Reporting available=True
+        # here renders an empty table as though the data were fine — the same
+        # "looks usable but is not" failure the EMPTY status exists to name.
+        return LabCellsData(available=False, error_status="EMPTY")
     selected_horizon = _select_horizon(horizons, int(horizon))
     horizon_frame = frame.loc[frame["horizon_weeks"] == selected_horizon]
 
@@ -700,10 +706,12 @@ def _relstrength_points(
 
     Returns (points, status). status distinguishes an artifact-level problem
     (MISSING/CORRUPT) from a healthy-but-empty result for a thin ticker, so the
-    page can fail loud on a bad artifact instead of silently showing blank."""
+    page can fail loud on a bad artifact instead of silently showing blank.
 
-    if not _artifact_is_current(meta):
-        return [], "STALE"
+    No STALE check here: the only caller (load_ticker_curve) already returned
+    STALE on a non-current artifact before reaching this point, so a staleness
+    branch could never run."""
+
     frame, status = _load_frame(
         paths,
         filename=_current_artifact_filename(meta, "relstrength", DIAL_RELSTRENGTH_FILENAME),
