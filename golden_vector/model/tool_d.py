@@ -10,6 +10,7 @@ from golden_vector.common.numeric import optional_float as _optional_float
 from golden_vector.common.numeric import require_finite_positive as _require_finite_positive
 from golden_vector.contracts.config_models import AppConfig, ToolDConfig
 from golden_vector.features.percentile_ranks import oriented_percentile
+from golden_vector.model.gold_lines import GoldLine, line_from_two_points, x_for_value
 from golden_vector.screening.manual_data import LoadedManualScreeningData
 from golden_vector.screening.pipeline import compute_tool_b_in_memory
 
@@ -627,27 +628,28 @@ def _ebitda_line_from_tool_b(
     ebitda_at_gold: float | None,
     anchor_gold_price: float,
     ebitda_at_anchor: float | None,
-) -> tuple[float, float] | None:
-    if ebitda_at_gold is None or ebitda_at_anchor is None:
+) -> GoldLine | None:
+    line = line_from_two_points(
+        gold_price,
+        ebitda_at_gold,
+        anchor_gold_price,
+        ebitda_at_anchor,
+    )
+    # Tool D only trusts a rising EBITDA-vs-gold line; a flat or falling fit
+    # means the two Tool B evaluations disagree with the model and is dropped.
+    if line is None or line.slope <= 0:
         return None
-    if abs(gold_price - anchor_gold_price) < 0.01:
-        return None
-    slope = (ebitda_at_gold - ebitda_at_anchor) / (gold_price - anchor_gold_price)
-    if slope <= 0:
-        return None
-    intercept = ebitda_at_gold - (slope * gold_price)
-    return slope, intercept
+    return line
 
 
 def _threshold_gold(
     *,
-    ebitda_model: tuple[float, float] | None,
+    ebitda_model: GoldLine | None,
     target_ebitda: float | None,
 ) -> float | None:
-    if ebitda_model is None or target_ebitda is None or target_ebitda <= 0:
+    if target_ebitda is None or target_ebitda <= 0:
         return None
-    slope, intercept = ebitda_model
-    return (target_ebitda - intercept) / slope
+    return x_for_value(ebitda_model, target_ebitda)
 
 
 def _fcf_breakeven_gold(
@@ -663,7 +665,7 @@ def _fcf_breakeven_gold(
 
 def _debt_stress_gold(
     *,
-    ebitda_model: tuple[float, float] | None,
+    ebitda_model: GoldLine | None,
     net_debt: float | None,
     danger_threshold: float,
 ) -> float | None:
@@ -689,12 +691,11 @@ def _fragility_slope(
     *,
     gold_price: float,
     forward_ebitda: float | None,
-    ebitda_model: tuple[float, float] | None,
+    ebitda_model: GoldLine | None,
 ) -> float | None:
     if ebitda_model is None or forward_ebitda is None or forward_ebitda <= 0 or gold_price <= 0:
         return None
-    slope, _ = ebitda_model
-    return (slope * gold_price * 0.10) / forward_ebitda
+    return (ebitda_model.slope * gold_price * 0.10) / forward_ebitda
 
 
 def _ev_ebitda(
@@ -753,7 +754,7 @@ def _resilience_data_status(
     production: float | None,
     aisc: float | None,
     interest_expense: float | None,
-    ebitda_model: tuple[float, float] | None,
+    ebitda_model: GoldLine | None,
 ) -> str:
     if production is None or aisc is None:
         return "INSUFFICIENT_DATA"
