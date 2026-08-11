@@ -42,6 +42,19 @@ Victor resolved each deviation explicitly on 2026-08-11; the requirements addend
 | H1–H9 | **Accepted** — folded into §§4–13 (H2 spot-labelling, H3 gate definitions §6.3, H5 navigation §9.4, H6 composite-prose sweep §9.2, H9 payload spike moved to M0.5) |
 | I1–I4 | **Accepted** — contract-first sequence §13, atomic publish + fault injection §5.3, stage identity §5.5, safe embed primitive §9.5 |
 
+### 2.1 Pre-fixes from Codex's round-two in-flight observations (2026-08-11)
+
+Applied before the round-two file landed: (a) §5.5 stage identity corrected — the in-refresh
+path takes identity from the live refresh context, never the previous manifest; (b)
+`confidence_score` removed from the score-builder catalog (§7) — the locked requirements ban
+confidence on this page; (c) **M0.3 migration lesson recorded:** renaming a column on a
+persisted artifact leaves the manifest-resolved generation stale until the next publish — the
+Tool D overview shows an honest blank in "FCF Yield @ G" until a refresh republishes.
+Standalone `tool-d` cannot heal it (the manifest is only rewritten at refresh end), so the fix
+is the next full refresh. Rule adopted for every schema change in this project (§6.4 already
+demands it for options): the same change must state the serving impact between commit and next
+publish, and regenerate in-commit when the interim state would be wrong rather than blank.
+
 ---
 
 ## 3. Architecture
@@ -178,12 +191,18 @@ boundary and assert the prior state still serves.
 `run_pruning.py` gains the directories; `_loader_inputs_signature` (workspace_state.py:121)
 gains every new artifact path; interruption/rollback tests per §5.3.
 
-### 5.5 Stage identity (I3)
+### 5.5 Stage identity (I3; corrected per Codex round-two in-flight note)
 `ticker-page` runs inside refresh after tool-d (record_step + total_steps bump, cli.py:3402+)
-and as a standalone subcommand. Both paths: read the **current model-state manifest** for parent
-identity; inherit `parent_refresh_id` from it; assert upstream tool run ids match the manifest's
-(mixed generations abort with a named error); self-report per-substep seconds + rows_built +
-rows_persisted (clone `_record_step_timing`, model/pipeline.py:721).
+and as a standalone subcommand. The two paths take identity differently — reading the manifest
+mid-refresh would read the **previous** generation (the manifest is only published at refresh
+end, cli.py:3638):
+- **In-refresh:** the stage receives `parent_refresh_id` and the upstream tool run ids from the
+  live refresh context (the same values the manifest publisher will later write) — it never
+  reads the previous manifest.
+- **Standalone:** reads the current manifest, asserts the tool generation it names is aligned
+  and fresh, inherits identity from it, and aborts with a named error on any mismatch.
+Both paths self-report per-substep seconds + rows_built + rows_persisted (clone
+`_record_step_timing`, model/pipeline.py:721).
 
 ---
 
@@ -261,14 +280,17 @@ company and excluded from its budget; weight shifts of ±10 renormalize across a
 stability warning when any shift moves rank ≥ `rank_stability_alert_positions` (config, 3).
 Everything the client combines is persisted; the combine rule is the §3.1 exception.
 
-**Catalog (exact, 21 metrics — the contract test asserts every source column exists):**
+**Catalog (exact, 20 metrics — the contract test asserts every source column exists).**
+`confidence_score` was removed from the catalog (Codex round-two in-flight note): the locked
+requirements remove confidence from this page entirely, and letting users rank on it would
+reintroduce it through the side door. Confidence still gates eligibility (a low-confidence
+subject is excluded by `score_eligible`), it just isn't a rankable metric.
 
 | Key | Category | Source · column | Default direction | Spot/scenario |
 |---|---|---|---|---|
 | down_beta_core | Trading | tool_a · down_beta_core | lower | n/a |
 | up_beta_core | Trading | tool_a · up_beta_core | higher | n/a |
 | asymmetry_ratio_core | Trading | tool_a · asymmetry_ratio_core | lower | n/a |
-| confidence_score | Trading | tool_a · confidence_score | higher | n/a |
 | downside_volatility_52w | Trading | tool_a · downside_volatility_52w | lower | n/a |
 | rel_strength_vs_gdx | Trading | tool_c · rel_strength_vs_gdx_pct | higher | n/a |
 | rel_weakness_vs_gdx | Trading | tool_c · rel_weakness_vs_gdx_pct | lower | n/a |
@@ -398,13 +420,21 @@ Everything from v1 §10 plus the review's gates, verbatim adopted:
 
 ---
 
-## 12. Payload + cache spike (M0.5, moved ahead of M2 per H9)
+## 12. Payload + cache spike (M0.5, moved ahead of M2 per H9) — **MEASURED 2026-08-11**
 
-Build a throwaway real-payload prototype (no UI polish): embed the actual pack + percentiles +
-option history + Lab + performance JSON for NEM **and** the most option-heavy ticker. Measure
-HTML bytes, embedded JSON bytes, gzip size, per-section row counts, cold and warm load, detail-
-cache memory, hit behaviour with the Lab side-cache. Budgets set from measurement (working
-target ≤ 300 KB HTML, warm ≤ 100 ms) — numbers recorded in the plan before M1 producers start.
+Full numbers in `ticker_page_payload_spike_2026-08-11.md` (real artifacts, NEM + the heaviest
+chain GDX at 2.43M OI). Worst-case embed-everything = 317 KB raw JSON; three binding rules bring
+the realistic total to ≈120–140 KB embedded on a ~150–250 KB page — inside the ≤300 KB budget:
+
+1. **Never embed raw Lab episodes** (one chart's rows were 131 KB / 41% of the total): Lab
+   charts are server-side SVG embedding only per-tick display attributes; scatter trimmed 2016+.
+2. **Round embedded floats** (4 significant figures; percentiles to 0.1).
+3. Producer note: benchmark parquets carry only `*_local` columns — the performance producer
+   resolves USD explicitly through the one normalize boundary, never by silently reading
+   `close_local`.
+
+Warm-load and cache-memory measurements repeat on the real page at M2 exit and M4 (target warm
+≤ 100 ms; Lab side-cache keyed ticker+h+b+s, size 32).
 
 ---
 
