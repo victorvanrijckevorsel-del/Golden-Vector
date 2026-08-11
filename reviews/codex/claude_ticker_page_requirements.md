@@ -164,3 +164,27 @@ All the numbers are present; none of them shout.
 - Currency handling for AUD/CAD/GBP names — native vs USD vs both (Q18 unanswered).
 - Marking earnings/production dates and owned lots on the price chart (Q10 unanswered).
 - Portfolio position block (NEM is not held; the shape was not settled).
+
+## 8. Addendum — decisions resolved 2026-08-11 (after Codex's plan review)
+
+Codex's review of the implementation plan (`codex_review_claude_ticker_page_plan.md`) correctly
+required that deviations from this file be decided by Victor, not by the plan. Victor resolved
+them on 2026-08-11; these amendments override the corresponding text above.
+
+1. **Gold dial mechanism — "precomputed grid" is amended to "precomputed exact lines +
+   in-browser evaluation."** §3's "precomputed grid" contradicted the approved mock v3, which
+   evaluates exact backend-built lines in the browser. Victor chose the mock's behaviour:
+   backend computes everything hard (line coefficients, constants, true-spot display values);
+   a narrow, documented client-side layer combines them. Same for the score builder's weighted
+   sum and the sizing tool's intrinsic-value ladder. The exception is limited to three
+   first-party JS modules consuming only backend-resolved values, locked by backend-parity
+   fixtures and real-browser behavioural tests, and recorded in `ARCHITECTURE_FOUNDATIONS.md`.
+2. **Contracts control is named "Target window", not "expiry selector."** Selection stays
+   horizon-bucketed (existing machinery); every contract row shows its actual expiry date and
+   days-to-expiry; put and call rows may legitimately show different expiries.
+3. **Failing-check sentences stay fixed and are labelled "at spot gold"** while the dial moves
+   other numbers. Scenario-aware sentences are explicitly deferred.
+4. **The 8-week Lab default applies to the ticker page only.** Standalone `/lab` pages keep
+   their current 13-week default; no shared-Lab behaviour changes inside this project.
+5. **Clarification (not a change):** the dial lives in the global control bar, as §3 already
+   said; plan v1's section-toolbar wording was drift and is corrected.

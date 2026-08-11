@@ -1,470 +1,443 @@
-# Ticker page redesign — full implementation plan
+# Ticker page redesign — implementation plan (v2, post-review)
 
-- **Date:** 2026-08-11 · **Author:** Claude · **Status:** for Codex review, then build on `dev-vic`.
-- **Requirements (authoritative, LOCKED):** `reviews/codex/claude_ticker_page_requirements.md`.
-  This plan implements that file; where the two disagree, the requirements file wins.
+- **Date:** 2026-08-11 · **Author:** Claude · **Status:** v2 — revised for
+  `codex_review_claude_ticker_page_plan.md` (verdict CHANGES REQUIRED); Victor resolved the four
+  gating product decisions on 2026-08-11 (see §1). v1 is preserved in git at `bd67f96`.
+- **Requirements (authoritative):** `reviews/codex/claude_ticker_page_requirements.md`
+  **including its 2026-08-11 addendum**, which records the resolved decisions. Where plan and
+  requirements disagree, the requirements file wins.
 - **Approved mock (v3):** https://claude.ai/code/artifact/1059868b-3d00-42ab-96ff-9a2cfbdd179a
-  (source `.playwright-mcp/mock3.html`, built on real NEM data).
-- **Grounding:** every file/line reference below was read from the tree at `a18839f` during
-  planning (three read-only mapping passes over model, serve, and options/Lab layers).
+- **M0 status:** SHIPPED (commits `ce2583a`, `a6e8bb1`, `8b9db26`, `3f86c3d`) — isolated
+  correctness fixes, separately testable, per the review's decision gate.
 
 ---
 
-## 1. Goal, scope, non-goals
+## 1. Resolved decisions (closes review B1)
 
-**Goal.** Rebuild `/ticker/<T>` into the company's full profile — performance chart, corporate
-finance moved by a gold dial, market behaviour (Tool A + Tool C + Lab), options with history and
-tools, an opt-in score builder, and the four maintenance forms — ordered and disclosed exactly as
-§2/§4 of the requirements file.
+The review correctly held that a plan cannot approve its own exceptions to locked requirements.
+Victor resolved each deviation explicitly on 2026-08-11; the requirements addendum records them.
 
-**Scope.** The ticker page only, plus:
-- the backend artifacts it needs (gold response pack, universe percentiles, published options
-  history, contract greeks);
-- the six known data bugs (requirements §6), because they corrupt numbers this page shows;
-- other pages touched **only** where shared data changes reach them (listed in §9 below).
-
-**Non-goals.** Everything in requirements §7 (S&P/Nasdaq lines, peer-percentile bars beside
-financials, ticker-to-ticker navigation, native-currency display, chart event markers, portfolio
-block). No composite-score changes on any other page.
-
----
-
-## 2. Current state (what we build on)
-
-### 2.1 The page today
-`render_detail_page` (`golden_vector/serve/detail_page.py:44`) composes ~20 panels from
-`detail_panels.py` (2,478 lines): window switcher → gold-sensitivity block (metric grids,
-explanations, structural-windows table, 6 SVG chart panels) → corporate-finance snapshot table →
-option-trading **link card** (full options panel only under `?lens=option-trading`,
-`detail_page.py:178-193`) → four manual forms. Sections the requirements demand that are absent
-today: performance chart with price view and horizons, gold dial, Tool C block, Tool D resilience
-block, Lab block, inline options with history, score builder.
-
-### 2.2 Assets we reuse (no new plumbing needed)
-| Need | Already exists |
-|---|---|
-| "?" explainer registry | `COLUMN_HELP`/`VALUE_HELP` (`serve/column_help.py:330`/`:180`) + `_METRIC_FORMULAS` (`serve/metric_formula.py:47`), rendered by `help_icon`/`help_term`/`help_th`/`help_value`, one shared popover (`static/help-popover.js`). Site-wide already. |
-| Disclosure / section scaffold | `disclosure()`, `section_nav()`, `section_heading()`, `empty_state()` (`serve/ui/components.py`), `notice()`/`status_strip()` (`serve/ui/status.py`), `table_region()` (`serve/ui/tables.py`) |
-| Chart primitives | Server-side SVG in `serve/charts.py` (scatter `:15`, dual bar `:62`, grouped beta bar `:253`, percentile rug `:153`, rebased multiline overlay `:363`) each with an accessible data-table twin (`_chart_data_disclosure`, `charts.py:133`); hover JS reads JSON from `data-*` attributes (`overlay-crosshair.js`, `rug-tooltip.js`) |
-| Exact "financials as a line in gold price" | Tool D already builds it from two Tool B evaluations: `_ebitda_line_from_tool_b` (`model/tool_d.py:618-633`), inverted for threshold golds (`:636`, `:647`, `:658`) |
-| Percentile ranking | `oriented_percentile` (`features/percentile_ranks.py:8-17`), already used by Tool C/D, Candidate Finder, options features |
-| Lab per-ticker history | `dial_cells` (ticker × bucket × horizon, beat rates + Wilson CIs + median/q10/q90 alpha; 1,188 rows live) and `dial_episodes` (ticker × horizon × benchmark × week, alpha/beat/bucket/anchor flags; 415,386 rows live), loaded by `serve/lab_curve_data.py::load_ticker_curve` (`:472-619`) for the existing `/lab/dial/<T>` page |
-| Most-liquid contract selection | Build-time: `hedge/option_horizon_selection.py` (expiry ranking `:106-158`) + `hedge/candidate_puts.py` (delta-targeted strike), stamped onto `option_trading_overview` / `option_candidate_slots`; serve reads stamped fields only (`serve/option_trading_data.py:141-175`) |
-| Artifact publish pattern | `persist_*` (run-stamped + latest alias + `record_artifact`) e.g. `ingestion/persist.py:272`; manifest registration `app/model_state.py:118` (`_artifact_map` `:519`, `REQUIRED_ARTIFACTS` `:48`); options set published atomically (`ingestion/persist_option_artifacts.py:101-149`) |
-| Request-path caching | Stat-keyed memo caches in `serve/workspace_state.py:79-189` (`_loader_inputs_signature` over artifact paths; degraded loads never cached) |
-
-### 2.3 Facts that shaped decisions below
-- Tool B computes financials **algebraically at one gold price** (`screening/layer1.py:13`,
-  `layer2.py:11`); there is no historical financials-vs-gold regression anywhere. Revenue/EBITDA/
-  NI/FCF are linear in the gold assumption, which is exactly why Tool D's 2-point line is exact.
-- Spot gold is derived, not stored: `latest_gold_price_from_history` (`model/tool_d.py:175-204`);
-  Tool B carries it as provenance columns `spot_gold_usd`/`spot_gold_date`.
-- `options_features` (`data/intermediate/options_features/{T}.parquet`, written by
-  `ingestion/options_phase.py::_append_feature_rows` `:476-499`) is **not** manifest-registered,
-  dedupes on run_id only, and **discards the put/call OI sums** (`features/options.py:269-285`
-  keeps only ratios). Verified live: 2026-08-10 has 3 same-day rows for NEM, one a partial capture
-  (354,079 total OI vs the true 534,406).
-- The IV/RV bug's root cause is deeper than the requirements file records: `_realized_vol`
-  (`features/options.py:221-244`) uses `return_basis_usd` **as-is** (line 224-225), but that
-  column is a **USD price level** (`normalize/prices_usd.py:115-118`), not a return series — the
-  stored "realised vol" is the stdev of raw dollar prices × √252. Fix and history recompute in §7.
-- Only **delta** exists per contract (`features/black_scholes.py`); gamma/vega/theta do not.
-- Lab bucket edges and horizons are hardcoded (`DEFAULT_BUCKETS` `lab/conditional_dial.py:41-47`,
-  `DIAL_HORIZONS_WEEKS = [4, 8, 13, 26]` `:82`).
-- Price histories: gold `data/raw/gold/GC-F.parquet` (daily, 2000→today), USD equities
-  `data/intermediate/usd_equities/{T}.parquet`, GDX/GDXJ `data/intermediate/benchmarks/`.
-- Confirmed bug sites: Tool D `fcf_yield` read from the spot row unconditionally
-  (`model/tool_d.py:387`, the only assignment); Tool C tag thresholds hardcoded
-  (`model/tool_c.py:292,294,300,302` down / `:324,326,332,334` up); put/call status dead branches
-  (`hedge/option_trading.py:539-547` — three branches all return `"none"`).
-
----
-
-## 3. Architecture decisions
-
-### D1 — Gold dial: exact response lines, not a grid, not live recompute
-A live Tool B run is 3.2–6.5 s — unusable. A dense value grid either snaps the slider (rejected in
-mock v1: landed on $4,400 instead of spot $4,422) or balloons the payload.
-
-> **Deliberate refinement of the requirements wording.** The requirements file says "precomputed
-> grid"; this plan precomputes exact **lines** instead. Same intent (nothing computes in the
-> request path), strictly better execution: exact at every dollar including spot, ~50× smaller
-> payload, and it is what the approved mock v3 actually did. Codex: treat "grid" as satisfied by
-> this.
-
-Mechanism:
-
-- **Backend** (new `golden_vector/model/ticker_page.py`): evaluate `compute_tool_b_in_memory`
-  (`screening/pipeline.py:200`) at **two gold prices** (spot and spot×0.90 — the same pair Tool D
-  uses) and derive slope+intercept per gold-dependent metric per ticker with the **extracted**
-  shared helper (Tool D's `_ebitda_line_from_tool_b` moves to `model/gold_lines.py`; Tool D
-  imports it from there — one implementation, both consumers).
-- **Linearity guard:** a third full evaluation at the far grid edge ($2,000). Assert
-  |line(2000) − actual| ≤ tolerance per metric per ticker; violation **fails the stage loud**
-  (it would mean Tool B gained a kink and the pack must move to dense sampling — designed as the
-  fallback but not built unless this guard ever fires). Max residual recorded in the artifact.
-- **Pack contents** per ticker (and per finance source where `_our_view`/`_official` pairs exist):
-  lines for `forward_revenue_musd`, `forward_ebitda_musd`, `forward_net_income_musd`,
-  `forward_eps`, `sustainable_fcf_musd`; constants `market_cap_musd`, `enterprise_value_musd`,
-  `net_debt_musd`, `interest_expense_musd`, `share_price_usd`, `aisc_usd_per_oz`,
-  `cash_cost_usd_per_oz`, `production_oz`; provenance `spot_gold_usd`, `spot_gold_date`,
-  `gold_price_basis`, `source_run_id`.
-- **Client** (`static/gold-dial.js`, the ONE place these formulas exist in JS): evaluates lines at
-  the dial's g; assembles ratios from parts exactly as the backend does — margin/oz = g − AISC,
-  margin % = (g − AISC)/g, FCF yield = fcf(g)/mcap, EV/EBITDA = EV/ebitda(g) **only when
-  ebitda(g) > 0** (else blank), P/E = price/eps(g) **only when eps(g) > 0**, leverage =
-  net_debt/ebitda(g) when positive. The worker implementing this must read `layer1.py`/`layer2.py`
-  first and mirror the guard semantics exactly.
-- **Both values shown:** the spot column is server-rendered from the real Tool B row (never JS);
-  the scenario column exists only in JS and only once the dial leaves spot (clean by default,
-  Q43). No-JS/print degrades to today's spot-only view.
-- **Drift lock:** parity is enforced twice — a pytest that runs the Python line evaluation against
-  a real `compute_tool_b_in_memory` at probe prices on fixtures, and the single end-of-project
-  Playwright gate asserting the rendered scenario numbers equal server-computed references
-  (§10.4). The client-side-what-if boundary gets a short section in
-  `ARCHITECTURE_FOUNDATIONS.md`: *interactive JS may only combine backend-resolved inputs; every
-  formula lives in exactly one JS module and is pinned by a parity gate.*
-
-### D2 — Score builder: backend percentiles, client weighted sum
-- **Backend** (same `model/ticker_page.py`): a metric catalog (config, §5) of ~20 metrics in the
-  two locked categories (Trading behaviour: Tool A betas/r², Tool C capture/hit rates, realised
-  vol…; Corporate finance: margin, FCF yield, EV/EBITDA, P/E, leverage, AISC, reserve life…).
-  For each metric compute **both orientations** with the existing `oriented_percentile`
-  (`features/percentile_ranks.py:8`) — `pct_high_good` and `pct_low_good` as separate columns,
-  because with ties `100 − p` is not exact and the user can flip direction (Q: each metric
-  user-directed). Store raw value + both percentiles per ticker per metric.
-- **Client** (`static/score-builder.js`): 100-point budget that rebalances as allocated (the
-  ×1/×2/×3 bars are gone), per-metric direction toggle, metrics missing for the company disabled
-  and not counted (Q24), weighted sum over the embedded universe rows → score, rank, contribution
-  bars, clickable ranked list of all miners (link to each `/ticker/<T>`), and the stability
-  warning: re-run the sum with each active weight shifted ±10 points (rebalanced); if any shift
-  moves the subject's rank by more than `rank_stability_alert_positions` (config), show it.
-- Nothing scored until the user allocates (opt-in, Q26 no presets); page-only, influences no other
-  surface (Q25). Parity pinned like D1.
-
-### D3 — Options history becomes a published, gated artifact
-- **Stop discarding the split:** `compute_options_features` gains persisted columns
-  `put_oi_total`, `call_oi_total`, `put_oi_otm`, `call_oi_otm`, `put_volume`, `call_volume`
-  (sums already computed inside `_put_call_oi_ratio`, `features/options.py:269-285`).
-- **New artifact `option_history_daily`** added to `OPTION_ARTIFACT_NAMES`
-  (`contracts/option_artifacts.py:16-27`) so it inherits run-stamping, the atomic all-or-nothing
-  options publish, and manifest registration. Built each refresh as a **cleaned projection** of
-  the per-ticker `options_features` intermediates (which stay as the raw audit trail):
-  1. per (ticker, day) keep one row — the complete capture with the highest total OI (latest run
-     as tie-break);
-  2. exclude partial captures: a same-day row whose total OI < `partial_capture_min_ratio`
-     (config, default 0.70) of that day's max is dropped; a single-row day is compared against the
-     trailing median contract/expiry count;
-  3. field-level validity gates (degrade per item, never drop the row): IV within
-     `[iv_min, iv_max]` (defaults 0.01–3.0 — kills the live 0.0 and 111.87 outliers), skew and
-     implied-move bounds; gated values become NA with a count recorded in artifact metadata;
-  4. `iv_rv_ratio` recomputed correctly for **all** history rows (the RV fix, §7.1 — realised vol
-     is recomputable exactly from stored daily price history for any as-of date).
-- **Backfill** of the put/call split: walk surviving `data/runs/*/snapshots/options/{T}.parquet`
-  raw chains and recompute sums where they exist; where runs were pruned, the split series simply
-  starts later than the ratio/total series and the chart labels the start honestly. No guessing.
-- **Serve:** trend charts read only this artifact. Put line + call line + total line (Q: "show the
-  two lines and the sum"), ratio trend with the meaning sentence ("0.66 → more calls than puts —
-  positioning leans bullish"), whole-chain vs OTM side by side (the disagreement is the insight),
-  ATM IV vs its own history, implied move, volume.
-
-### D4 — Options section: inline, reusing the build-time selection; absent when no options
-- The `?lens=option-trading` split dies on this page: the options section always renders inline
-  when the ticker has options (`options_available` from the options manifest), and the whole
-  section — including its nav anchor — is **absent** when it doesn't (Q38: no empty tables, no
-  proxy suggestion, no fallback message). `lens` URLs keep working (ignored → full page renders;
-  in-repo links re-pointed at `#options`, sweep in §9). The separate `/option-trading` overview
-  page is untouched.
-- **Contracts block:** driven entirely by existing stamped artifacts — `option_candidate_slots`
-  rows per (side, horizon, target delta) with `option_contract_metrics` for depth. Expiry
-  selector = the configured horizons; all horizons are **pre-rendered server-side and toggled by
-  JS** (3–4 horizons × 2 sides — cheap; no new routes, no client selection logic). ATM +
-  directional per side: `hedge_readiness.yaml` target-delta list gains 0.50 alongside the existing
-  0.25 if absent, so both rows come from the normal build. Everything else behind the existing
-  chain disclosure.
-- **Sizing tool** ("Work out a position", closed by default): budget → contracts (floor of
-  budget / contract ask×100, mirroring the existing server calculator's convention) → **value at
-  expiry** (intrinsic only — Q34 "simple and honest") across a **share-price slider** (Q40; never
-  gold-derived — the "very bogus" veto) plus a break-even/outcome ladder. One `option-sizing.js`,
-  parity-pinned; the server still renders the default scenario so no-JS shows a complete example.
-- **Greeks** (closed): extend `features/black_scholes.py` with gamma/vega/theta (standard closed
-  forms; inputs — r from the options manifest `risk_free_rate`, q=0 documented), new columns on
-  `option_contract_metrics`, unit tests against known reference values. Displayed in the
-  chain disclosure.
-- **Disposition of every existing options sub-panel** (nothing dropped silently):
-  | Today (`detail_panels.py`) | On the new page |
-  |---|---|
-  | freshness box (`:441`) + context warnings (`:467`) | kept, top of section (data-quality statuses stay) |
-  | option signal card (`:532`) | absorbed into the open market-context block (ratios/IV/implied move with the new history charts) |
-  | candidate matrix (`:809`) | becomes the contracts block with the expiry selector |
-  | sizing calculator (`:1077`) | rebuilt as the share-price-slider tool ("Work out a position", closed) |
-  | **ETF proxy fallback (`:647`)** | **removed from the ticker page** (not in the locked content list; Q38 bans proxy suggestions here) — stays on `/option-trading` |
-  | skew overlay (`:604`) + signal charts + OI-by-strike | "Where the crowd is positioned" (closed) |
-  | context table (`:732`) + liquidity summary (`:782`) | greeks-and-full-chain disclosure (closed) |
-  | method/glossary details | replaced by "?" explainer keys (D9) |
-
-### D5 — Performance chart: pre-rendered variants, zero client math
-- **Model:** `build_performance_series(...)` in `model/ticker_page.py` — stock/gold/GDX/GDXJ, three
-  horizons (1Y daily; 3Y/5Y weekly), two views: rebased-to-100 ("Compare") and raw dollars
-  ("Share price", stock only). Sources: `load_latest_foundation_snapshot`
-  (`app/latest_data.py:91`) + benchmark histories, resolved inside the memoized detail loader —
-  same pattern as today's `_build_rebased_overlay_by_window` (`serve/workspace_state.py:408`).
-- **Serve:** all 2×3 variants pre-rendered as SVG via the existing overlay builder
-  (`charts.py:363`, extended with a raw-dollar axis mode); JS only toggles visibility; the
-  existing crosshair attaches to whichever is visible. Legend toggles per series (JS
-  visibility only). Each variant keeps its accessible data table.
-
-### D6 — Market behaviour: reorganise Tool A, add Tool C, embed the Lab
-- **Open:** up/down beta bars (`detail_panels.py:1951`) + percentile rugs (`:2029`) with their
-  window switcher. **"Full research detail" (closed):** metric grids, explanation cards,
-  structural-windows table, scatter, volatility diagnostics, exploratory ladder — nothing deleted,
-  everything demoted (the v1 mistake, not repeated).
-- **Tool C block — "How often it beat gold and the ETFs" (closed):** rel strength/weakness vs
-  gold/GDX/GDXJ with observation counts, 10% hit rates, tail averages — from `latest_tool_c`
-  already in `WorkspaceState`. No Tool C scores/ranks (verdict rule).
-- **Lab — "How it behaved in past gold moves" (closed):** reuse `load_ticker_curve`
-  (`serve/lab_curve_data.py:472`) and the existing `/lab/dial/<T>` chart builders — extracted into
-  a shared `serve/lab_curve_charts.py` consumed by both pages (move, not copy). Three charts as
-  locked: beat-rate by scenario with Wilson bars (`dial_cells`), spread-of-outcomes ticks and
-  when-did-it-happen timeline (`dial_episodes`, `is_nonoverlap_anchor` marked, scatter trimmed to
-  2016+ per Q44). Controls: look-ahead 4/8/13/26 (default **8** from config — the measured
-  choice: 17.8 independent obs and CI 0.317 at 8w vs 12.5 and 0.373 at 13w), benchmark GDX/GDXJ,
-  bucket down>15% … up>15%. Control changes are **server round-trips via query params**
-  (`lab_h`/`lab_b`/`lab_s`) — 40 combinations are too many to pre-render, the memoized loader
-  makes reloads ~50 ms warm, and the window switcher already set this interaction precedent.
-  Survivor-only caveat rendered from `dial_meta.json`'s `retired_tickers_excluded`; thin buckets
-  render empty with a reason, never guessed.
-
-### D7 — Corporate finance: headline cards open, four groups closed, everything dial-aware
-- **Open:** as-of/basis line, share price, market cap, margin $/oz, margin %, FCF yield,
-  EV/EBITDA, forward P/E — plus the failing-checks notice (only when a check fails, Q22).
-- **Closed groups (§4):** "Earnings and cash at this gold price" (revenue, EBITDA, NI, EPS, FCF);
-  "Valuation" (EV, trailing multiples, both-source rows); "Balance sheet, cost and scale"
-  (net debt, interest, leverage, AISC, cash cost, ounces, reserve life); "Resilience — at what
-  gold price does this break?" (Tool D: `breaks_even_at_gold_usd`, `fcf_breakeven_gold_usd`,
-  `interest_cover_gold_usd`, `debt_stress_gold_usd`, survival ladder, fragility — no quality
-  rank); "Data quality and sources" (provenance, FX staleness, normalization status,
-  verification).
-- **Failing checks as sentences:** Tool B emits a display-ready `screening_fail_sentences` column
-  in the model layer (one sentence builder, built from `layer1_fail_reasons` + the verdict P/E
-  thresholds in `screening_params.yaml`, naming measured value and the user's threshold — "FCF
-  yield 12.6% vs your 15% floor"). Serve renders strings verbatim. No verdict labels, no
-  confidence scores anywhere on the page (they stay on other pages, Q20); untrusted numbers are
-  hidden with a short reason, not shown (Q21).
-- Every gold-dependent cell carries a `data-metric` key for `gold-dial.js`; static cells don't.
-  P/E and EV/EBITDA "?" text explains the inversion (they **rise** as gold falls).
-
-### D8 — Serve assembly: a section package, spine first
-- New package `golden_vector/serve/ticker_page/` — `assembly.py` (order + nav + state plumbing)
-  and one module per section (`chart.py`, `corporate.py`, `behaviour.py`, `options_section.py`,
-  `score.py`, `inputs.py`). Existing renderers are **moved** out of `detail_panels.py` as each
-  section adopts them; `detail_page.py` becomes a thin shim calling the package. The repo-wide
-  serve token sweep (`tests/test_workspace_app.py:2984`) covers the new package automatically
-  (rglob); its two sanctioned exceptions follow the moved code; per-module companion scans are
-  added for each new module (clone the Tool-D pattern, `:2354`).
-- `ToolADetailState` gains fields: `performance_chart_by_horizon`, `gold_response_pack_row`,
-  `score_percentiles` (+ universe frame), `option_history`, `lab_curve` (per selected controls),
-  `tool_c_row`, `tool_d_row`. All loaded in `_load_tool_a_detail_uncached` through model-layer
-  functions; **every new artifact path joins `_loader_inputs_signature`**
-  (`serve/workspace_state.py:121-136`) — including the gold/GDX/GDXJ history paths the overlay
-  currently only tracks indirectly — so the stat cache invalidates correctly. Lab control params
-  join the detail-cache key the same way the ticker does (`:306`).
-- Forms are untouched behaviourally (raw_overrides flow intact) and live under "Your inputs and
-  notes" (closed); `return_to` round-trips the new query params. The dial is client-state only
-  (resets to spot on reload — deliberate; documented in its "?").
-- **One formatting implementation:** every number renders through the existing
-  `format_helpers.py` helpers (`_fmt_number`, `_metric_card`, …); section modules never carry
-  their own number-to-string logic. The dial's JS formats scenario values with one shared
-  formatter in `gold-dial.js` whose output is pinned against the Python formatting in the
-  parity gate.
-
-### D9 — Explainers: extend the existing registry, generously
-New `COLUMN_HELP` keys (~30) written during each section's lane, covering at minimum: every
-headline card, margin vs AISC distinction, FCF yield basis, EV/EBITDA + P/E inversion under the
-dial, net debt/leverage, reserve life, all four break-even golds and the survival ladder, up vs
-down beta and why they differ, r² bands, percentile rugs, each Lab chart + Wilson interval +
-survivor-only caveat + independent-observations note, both put/call ratios and their
-disagreement, IV vs realised, implied move, OI vs volume, contract liquidity tiers, greeks,
-sizing assumptions (intrinsic-at-expiry), score-builder percentiles/budget/stability warning, and
-every dial-moved number's basis. Direction-of-good stated wherever it isn't obvious. Content
-lives only in the registry; `metric_formula` "This stock" values stay spot-labelled.
-
----
-
-## 4. New artifacts and pipeline wiring
-
-| Artifact | Producer | Where | Contents (compressed) |
-|---|---|---|---|
-| `ticker_page_gold_response` | new stage `ticker-page` → `model/ticker_page.py::build_gold_response_pack` | `data/output/ticker_page/` via a new `persist_ticker_page_artifacts` (clone of `persist_tool_c.py` pattern) | per ticker (× finance source): metric lines (slope, intercept), constants, spot provenance, linearity residual |
-| `ticker_page_percentiles` | same stage → `build_score_percentiles` | same | per ticker × metric: raw value, `pct_high_good`, `pct_low_good`, category, availability; source run ids of all four tools |
-| `option_history_daily` | option-artifacts stage → new builder in `hedge/option_artifact_frames.py` | `data/output/options/` via the existing atomic options publish | per ticker × day: put/call/total OI (+OTM), put/call/total volume, both ratios, ATM IV, skew, implied move, realised vol, corrected `iv_rv_ratio`, gate flags |
-| `option_contract_metrics` (extended) | existing | existing | + `gamma`, `vega`, `theta` columns |
-
-**Stage wiring:** one new stage `ticker-page` inserted in `_run_refresh_unlocked` after tool-d,
-before option-artifacts (`cli.py:3402+`): `record_step("ticker-page", ...)`, `total_steps` bump
-(`cli.py:3418`), standalone subcommand for reruns, per-step seconds+rows self-reported (clone the
-Tool A `_record_step_timing` pattern, `model/pipeline.py:721`). Cost: three in-memory Tool B
-evaluations ≈ 10–20 s — measured and recorded, per the measure-the-real-run rule.
-**Manifest:** both ticker_page artifacts join `_artifact_map()` (`model_state.py:519`),
-`REQUIRED_ARTIFACTS` (`:48`), and get `ProjectPaths` latest-alias properties;
-`option_history_daily` rides the existing options publish block. A refresh that fails the stage
-leaves the last good state intact (existing all-or-nothing behaviour).
-
----
-
-## 5. Config additions (every threshold once)
-
-| File | Keys (defaults) |
-|---|---|
-| **new `config/ticker_page.yaml`** → `TickerPageConfig` in `contracts/config_models.py`, added to `EXPECTED_CONFIG_FILES` (`app/config.py:17-30`) and `AppConfig` | `dial: {min_gold_usd: 2000, max_gold_usd: 6000, step_usd: 1, linearity_probe_gold_usd: 2000, linearity_tolerance_pct: 0.1}`; `chart: {horizons: [1Y, 3Y, 5Y], weekly_resolution_from: 3Y}`; `lab: {default_horizon_weeks: 8, scatter_from_year: 2016}`; `score_builder: {budget_points: 100, rank_stability_shift_points: 10, rank_stability_alert_positions: 3, metrics: [{key, label, category, source, column, default_high_good, format}, …]}` |
-| **new `config/lab_dial.yaml`** → `LabDialConfig`, loaded uncached by `lab/conditional_dial.py` (same deliberate pattern as `lab_gold_profile.yaml`) | `horizons_weeks: [4, 8, 13, 26]`; `buckets:` the five edges currently in `DEFAULT_BUCKETS` (`conditional_dial.py:41-47`). **Re-scoped during M0 (2026-08-11): moved from M0 to the M3c Lab lane.** Grounding showed this is not a literal move: `DOWN_BUCKETS`/`UP_BUCKETS` are derived at module import, `behavior_engine.py` does set math on them at import time, `contracts/config_models.py` pins `GOLD_BUCKET_NAMES` statically with a lock-step test, and serve/tests import the constants directly — a YAML home means making all of that load-time, a structural refactor belonging with the Lab lane. No interim risk: the values are single-copy today and already folded into `dial_config_hash`, so any edit invalidates stale artifacts loudly. |
-| `config/tool_c.yaml` → `ToolCConfig` (`config_models.py:579`) | `tags: {low_confidence_below: 0.5, steep_beta_at_least: 1.5, persistent_relative_at_least: 0.6, frequent_tail_at_least: 0.25}` — replaces the eight inline literals (bug §7.5) |
-| `config/hedge_readiness.yaml` | new `history_quality:` block — `partial_capture_min_ratio: 0.70`, `iv_valid_range: [0.01, 3.0]`, skew/implied-move bounds; target-delta list gains `0.50` if absent (ATM row) |
-
----
-
-## 6. Serve layer — final page composition
-
-Order per requirements §2; open/closed per §4. All new serve Python formats only (guardrail-scanned);
-all interactive math lives in the three parity-pinned JS modules (`gold-dial.js`,
-`score-builder.js`, `option-sizing.js`) plus visibility-only toggles.
-
-1. Header + section nav (options anchor conditional).
-2. **Performance chart** (open) — D5.
-3. **Corporate finance** (headline open; 4 groups + data-quality closed) — D7, dial in the
-   section toolbar.
-4. **Market behaviour** (bars + rugs open; research detail, Tool C, Lab closed) — D6.
-5. **Options** (context + contracts open; crowd/OI-by-strike, sizing, greeks+chain closed;
-   whole section absent without options) — D3/D4.
-6. **Compare on your own terms** (controls open, opt-in output) — D2.
-7. **Your inputs and notes** (closed) — the four existing forms.
-
----
-
-## 7. The six data-bug fixes (all in scope, each with its test)
-
-1. **IV/RV 100x** — fix `_realized_vol` (`features/options.py:224-227`) to `pct_change()` the
-   `return_basis_usd` **price level** before stdev (matching the fallback branch's semantics);
-   recompute `iv_rv_ratio` for all history rows in `option_history_daily` (realised vol is exactly
-   recomputable from stored daily prices). Test: fixture where price-level stdev and return stdev
-   differ wildly; assert ratio ≈ IV/true-RV (~0.45 for the NEM case, not 0.0045).
-2. **IV/skew outliers** — field-level gates in the history builder (§D3); test: 0.0 and 111.87 IV
-   rows gated NA, healthy 0.49 row untouched (control row proves the gate doesn't over-fire).
-3. **History publish** — `option_history_daily` with same-day dedupe + partial-capture exclusion
-   (§D3); test: three same-day rows (354,079 / 534,406 / 534,406 shaped) → one survivor with max
-   OI; a lone genuine row survives (control).
-4. **Tool D fcf_yield** — replace the single `fcf_yield` (spot-copied, `tool_d.py:387`) with
-   `fcf_yield_at_g` (stressed row) + `fcf_yield_at_spot`, following the section's existing
-   `_at_g`/`_at_spot` convention; consumer sweep before the schema change (§9). Test: stressed
-   run's `fcf_yield_at_g` ≠ spot value on a fixture where they must differ.
-5. **Tool C thresholds → config** (§5); behaviour-preserving; test pins tags at the boundary
-   values from config, and a changed config moves the tag.
-6. **Dead branches** — collapse `_candidate_side_status` (`hedge/option_trading.py:539-547`) to
-   the two live branches + one `"none"` return; render-level behaviour unchanged (test asserts
-   identical statuses on the existing fixtures).
-
----
-
-## 8. What leaves the page (and where it still lives)
-
-Removed here, kept elsewhere (display decision only, Q20): Gold Sensitivity Score, tool_a_rank,
-confidence score/label, fundamental check score/rank, screening verdict label, Tool C
-downside/upside scores+ranks, Tool D quality score/rank. Statuses stay (eligibility/data-quality:
-`resilience_data_status`, `score_eligible`, put/call status, optionability tier, FX staleness).
-Render tests assert the absence of each removed string on the new page **and** its continued
-presence on its home overview page.
-
----
-
-## 9. Cross-page effects (flagged, deliberate)
-
-- **`iv_rv_ratio` correction** changes `iv_rv_ratio_signal` on the Option Trading overview and
-  anywhere Candidate Finder consumes it — values become *correct*; expect visible diffs. Called
-  out to Victor at review.
-- **Tool D schema** (`fcf_yield` → `_at_g`/`_at_spot`): sweep consumers (`serve/overview_tool_d.py`,
-  portfolio, finder, tests) and update in the same commit.
-- **`lens=option-trading` links**: sweep in-repo links (finder, overview pages) → `#options`
-  anchor; param itself stays accepted (no broken bookmarks).
-- **Lab serve default horizon** becomes the config default (8) on both `/lab/dial/<T>` and the
-  ticker page — one threshold, one home; build-time classification defaults untouched. Flagged
-  for Victor/Codex veto.
-- **Target-delta 0.50 addition** enlarges candidate-slot artifacts (more rows, same schema).
-- The duplicate percentile implementation (`benchmark_comparison.py:106` vs
-  `features/percentile_ranks.py:8`) is **noted, not merged** — different tie semantics would
-  silently move the rug markers; deferred with a comment-free tracking entry in §13 deferred list.
-
----
-
-## 10. Test and verification strategy
-
-1. **Model unit tests** — linearity guard (synthetic kink must fail loud); pack values equal a
-   real in-memory Tool B at probe prices; percentile orientation incl. deliberate ties and NA;
-   history gates per §7 (each with a healthy control row); greeks vs published reference values;
-   sentence builder wording at render level.
-2. **Serve render tests** — section order and §4 open/closed defaults (assert `<details open>`
-   presence/absence); options section + nav anchor absent for an optionless fixture ticker while
-   the control ticker keeps both; verdict-string absence (§8); failing-check sentences verbatim;
-   dial spot column server-rendered with scenario cells carrying `data-metric`; Lab controls
-   round-trip in `return_to`; forms regression (raw_overrides).
-3. **Guardrails** — repo-wide serve token sweep auto-covers `serve/ticker_page/`; per-module
-   companion scans added; `serve/ui` purity untouched; new JS modules listed in the shell test.
-4. **One Playwright gate** (end of M4, batched script from `.playwright-mcp/`, server launched via
-   `serve_with_socket_timeout.py`): dial parity at canonical prices vs server-computed references,
-   score-builder parity on a fixed weight set, sizing parity, disclosure toggles, options absence,
-   640px/320px reflow screenshots. Evidence written to files; one script, one run.
-5. **Perf** — real-run measurements before/after: warm `/ticker/NEM` (budget: ≤ 100 ms warm,
-   currently ~45 ms), page payload (budget: ≤ 300 KB), `ticker-page` stage seconds in the
-   manifest. `run_focused_selection.py` gains the new test files; full suite only at the
-   ship gate.
-
----
-
-## 11. Build sequence (each milestone commits green on `dev-vic`)
-
-| Milestone | Contents | Depends on |
+| # | Locked text | Resolution (Victor, 2026-08-11) |
 |---|---|---|
-| **M0 — Bug fixes + config homes** | §7.1 RV fix, §7.4 Tool D pair (+consumer sweep), §7.5 Tool C config, §7.6 dead branches; persist put/call OI+volume splits forward. (`lab_dial.yaml` re-scoped to M3c — see §5; `ticker_page.yaml` lands with M1 once Codex signs off its schema.) **Status: SHIPPED 2026-08-11, commits ce2583a/a6e8bb1/8b9db26/3f86c3d.** | — |
-| **M1 — Backend artifacts** (parallel worker lanes) | a: `gold_lines.py` extraction + response pack + stage wiring; b: percentiles + metric catalog; c: `option_history_daily` + gates + backfill; d: greeks columns | M0 |
-| **M2 — Serve spine** | `serve/ticker_page/` package, state/loader/signature extensions, section scaffold with existing content re-homed (page reads the same, structure new), nav, guardrail extensions | M1a minimum |
-| **M3 — Sections** (sequential commits: a chart, b corporate+dial, c behaviour+Lab, d options, e score builder, f explainer sweep) | the visible rebuild | M2 + matching M1 lane |
-| **M4 — Hardening + ship** | focused selection green, a11y pass, the one Playwright gate, perf measurements, `ARCHITECTURE_FOUNDATIONS.md` client-what-if note, requirements walk-through (§12), memory update → Victor review → Codex review → merge workflow | M3 |
+| D-1 | "Precomputed grid" + "backend computes, serve renders" vs the approved mock's in-browser line math | **Instant in browser.** Backend computes all inputs (exact gold-response lines, percentiles); a narrow, documented client-side layer combines them. The requirements text and the approved mock contradicted each other; Victor chose the mock's behaviour. Exception scope in §3.1. |
+| D-2 | Same, for the score builder and sizing tool | **Instant in browser**, same exception, same tests. |
+| D-3 | "Expiry selector" wording | **"Target window" + real dates.** Keep horizon-bucket selection; every contract row shows its actual expiry date + DTE; put and call rows may show different expiries, plainly labelled. |
+| D-4 | Failing-check sentences under a moving dial | **Fixed, labelled "at spot gold".** Scenario-aware sentences are deferred, not implied. |
+| D-5 | Lab 8-week default scope | **Ticker page only.** `/lab` pages keep today's 13w default. No shared-Lab behaviour changes in this project (review H4). |
+| D-6 | Dial placement | Not a decision — v1 plan drift. Restored to the **global control bar** per requirements §3 and the approved mock. |
 
-**Delegation (token discipline):** Fable organises and reviews every diff; opus workers take the
-specified lanes (M1a–d, M3a–e) with written specs quoting this plan; sonnet handles mechanical
-sweeps (lens links, fcf_yield consumers, explainer key scaffolding). Worker briefs carry the
-standing bans: **no git state commands of any kind**, no dependency installs, no paid API calls.
-I commit each finished lane immediately as a checkpoint. Browser use only at the M4 gate.
+## 2. Review disposition
 
----
-
-## 12. Acceptance checklist (requirements → plan)
-
-| Requirement | Where satisfied |
+| Finding | Disposition |
 |---|---|
-| §2 order chart → corporate → behaviour → options → compare → inputs | §6 |
-| §3 no composite scores; statuses stay; failing checks as sentences; hide untrusted | §8, D7 |
-| §3 dial 2000–6000, spot default, both values, clean-by-default, precomputed, inversion explained | D1, §5, D9 |
-| §3 chart two views, three horizons, four series, legend toggles; beta bars + rugs kept | D5, D6 |
-| §3 Lab three charts, controls, 8w default (measured), 2016+ scatter, survivor caveat, empty-with-reason | D6, §5 |
-| §3 options always-visible context, self-explanatory ratios (two lines + total, both ratios), liquid contracts per expiry + selector, share-price-slider sizing (value at expiry), greeks behind disclosure, absent when none | D3, D4 |
-| §3 score builder: opt-in, no presets, two categories, 100-point budget, direction toggles, disabled missing metrics, contribution bars, ranked list, stability warning, percentile mechanism, page-only | D2 |
-| §4 open/closed inventory | §6, tested in §10.2 |
-| §5 centralisation, backend-computes, nothing-in-request-path, thresholds-once, basis labels, degraded-excluded, registry-driven "?" | D1–D9, §4–§5, §10.3 |
-| §6 six data bugs | §7 |
-| §7 deferred stays deferred | §1 non-goals; plus (new) percentile-implementation merge, dense-grid fallback mode, richer put/call statuses |
+| B1 locked-requirement deviations | **Accepted process-wise**; decisions resolved above; requirements amended; exception defined narrowly (§3.1) with real-JS gates |
+| B2 artifact contract incomplete | **Accepted** — exact contract table §5, implementation inventory §5.4 |
+| B3 second option-history authority, shrink/look-ahead | **Accepted, redesigned** — extend the canonical history; new artifact carries only chain-level fields with no existing authority (§6) |
+| B4 score eligibility undefined, duplicate engine | **Accepted** — reuse Finder eligibility/ranking primitive; exact catalog §7 |
+| B5 lens route breaks GDX/GDXJ | **Accepted** — benchmark ETFs keep the lens route; corporate links only; route tests §11 |
+| B6 availability + selector semantics | **Accepted** — state matrix §8; D-3 naming |
+| B7 spot vs configured scenario; leverage label; probes; sentences | **Accepted** — §4 pack contract; D-4 |
+| B8 request-time performance; rebase basis; benchmark freshness | **Accepted** — persisted performance artifact §5; calendar policy §4.4. **Modified** on retained Full-Research compute: existing (pre-project) loader computations stay as a bounded, documented exception (§9.3) rather than blocking the redesign on a Tool A internals retrofit |
+| B9 target_delta, greeks on chain, schema migration | **Accepted** — no config-delta change (near_atm bucket already exists); greeks stamped on candidate rows only; deliberate schema bump + migration §6.4 |
+| H1–H9 | **Accepted** — folded into §§4–13 (H2 spot-labelling, H3 gate definitions §6.3, H5 navigation §9.4, H6 composite-prose sweep §9.2, H9 payload spike moved to M0.5) |
+| I1–I4 | **Accepted** — contract-first sequence §13, atomic publish + fault injection §5.3, stage identity §5.5, safe embed primitive §9.5 |
 
 ---
 
-## 13. Risks
+## 3. Architecture
 
-- **Linearity assumption** — guarded at build time with a loud failure; dense-grid fallback is
-  designed (§D1) but unbuilt until needed.
-- **JS/backend drift** — the standing risk of the what-if boundary; contained by single-module
-  formulas + pytest parity + the Playwright gate.
-- **Backfill depth** — put/call split history limited by pruned runs; charts label series starts.
-- **Schema ripple** (Tool D pair, delta 0.50, corrected iv_rv) — consumer sweeps first, one
-  commit per change, cross-page diffs flagged to Victor.
-- **Payload growth** — measured against the 300 KB budget in M4; Lab pre-render avoided by
-  round-tripping.
-- **detail_panels.py unpicking** — mitigated by the spine-first M2 (the merge-spine lesson):
-  section lanes never edit the same file.
+### 3.1 The client-side interactivity exception (narrow, by Victor's D-1/D-2)
+
+Everything analytical is computed and persisted by the backend. The **only** client-side
+computation permitted on this page:
+
+- **Modules:** exactly three first-party files — `static/gold-dial.js`, `static/score-builder.js`,
+  `static/option-sizing.js` — plus visibility-only toggles elsewhere.
+- **Inputs:** only backend-resolved values embedded in the page (line coefficients, constants,
+  percentiles, contract fields). No fetches, no derived state reused across modules.
+- **Formulas:** each exists once, in its module, mirroring a named backend function
+  (`gold_lines.evaluate`, the score combine rule, intrinsic value). Guard semantics (EBITDA > 0,
+  EPS > 0) mirror `screening/layer1.py`/`layer2.py` exactly.
+- **Locks:** (a) pytest parity — backend reference values at probe inputs are embedded as fixtures
+  and asserted; (b) **real-JS behavioural tests** — Playwright drives the actual modules (drag,
+  allocate, reset, keyboard) in each M3 lane's exit gate, not only at M4; (c) the serve token
+  sweep still bans analytics in all serve *Python*.
+- **Docs:** `ARCHITECTURE_FOUNDATIONS.md` gains this exception verbatim in M0.5 (with the
+  requirements addendum already in place).
+
+Anything not in this list that wants client math is a new decision for Victor.
+
+### 3.2 Corrected load-bearing decisions (v1 → v2 deltas)
+
+- **True spot, never the Tool B default scenario** (B7): Tool B's configured
+  `default_gold_price_assumption` is $4,000 — not spot. The pack build derives spot via
+  `latest_gold_price_from_history` (`model/tool_d.py:175`) and persists **explicit spot display
+  values** as their own evaluated row. The page's spot column renders only those.
+- **One line implementation** (unchanged): Tool D's `_ebitda_line_from_tool_b`
+  (`model/tool_d.py:618`) moves to `model/gold_lines.py`; Tool D and the pack builder both import
+  it. The pack does not re-derive concepts Tool D already owns — threshold golds render from the
+  Tool D artifact.
+- **Leverage naming** (B7): the dial's moving leverage is **stressed forward leverage**
+  (net_debt / forward EBITDA at g) and is labelled exactly that, reusing Tool D's
+  `leverage_stressed_at_g` concept. Tool B's trailing `leverage` (net_debt / EBITDA LTM) keeps its
+  own row and label. Two concepts, two labels, no silent redefinition.
+- **Linearity probes** (B7): evaluate at both dial bounds ($2,000, $6,000) + one interior point
+  ($4,000) + spot. Tolerance is `max(abs_tol, rel_tol × |value|)` with `abs_tol` covering the
+  near-zero case; both in config. A **systemic** violation (≥ `systemic_min_tickers` failing)
+  fails the stage loud; a single ticker's violation degrades that ticker
+  (`gold_response_status != OK`, dial disabled for it, reason shown) — degrade per item.
+- **Finance source is a first-class key** (B7/H1): the pack persists per-source rows
+  (`finance_source ∈ {our, official}`); percentiles are computed per source for Tool B metrics;
+  the serve state carries both and the renderer picks one source consistently across corporate
+  cards, sentences, and score builder. Cache identity is unchanged (stat-keyed artifacts; source
+  chosen at render from cached both-source state).
+- **Performance is a persisted artifact** (B8): no chart series are computed in the request path.
+  See §5 (`ticker_page_performance`) and §4.4 for the calendar policy.
+- **Scenario-vs-spot labelling rule** (H2): the dial moves **only** the corporate-finance values
+  wired to it. The score builder, Lab section, performance chart and failing-check notice are
+  labelled "at spot" / "as of {date}" and visibly do not react to the dial.
+
+### 3.3 What stays from v1 (review-endorsed)
+
+Section decomposition and page order; reuse of `COLUMN_HELP` + help popover, `serve/ui`
+primitives, `charts.py` SVG builders + accessible table twins; Lab reuse of `dial_cells`/
+`dial_episodes`/`load_ticker_curve`; composite scores removed from this page but kept elsewhere;
+progressive disclosure per requirements §4; M0 bug fixes.
+
+---
+
+## 4. Gold response pack — exact semantics
+
+### 4.1 Build
+New stage `ticker-page` (§5.5). For each finance source: run `compute_tool_b_in_memory` at
+{$2,000, $4,000, $6,000, spot}; derive per-metric lines via `gold_lines`; verify linearity
+(§3.2); persist lines + constants + **spot display values** + per-ticker `gold_response_status`.
+
+### 4.2 Metrics carried
+Lines: `forward_revenue_musd`, `forward_ebitda_musd`, `forward_net_income_musd`, `forward_eps`,
+`sustainable_fcf_musd`. Constants: `market_cap_musd`, `enterprise_value_musd`, `net_debt_musd`,
+`interest_expense_musd`, `share_price_usd`, `aisc_usd_per_oz`, `cash_cost_usd_per_oz`,
+`production_oz`, `ebitda_ltm_musd`. Client-assembled ratios (guards mirrored from layer1/layer2):
+margin $/oz, margin %, FCF yield, EV/EBITDA(g), forward P/E(g), stressed forward leverage(g).
+Invalid ratio at some g renders a short reason ("EBITDA ≤ 0 here"), never a silent blank (B7).
+
+### 4.3 Display contract
+Spot column server-rendered from persisted spot values; scenario column exists only when the
+dial (global control bar, D-6) leaves spot; every moved number's "?" names its basis; failing
+sentences fixed + "at spot gold" (D-4).
+
+### 4.4 Performance series policy (B8)
+`ticker_page_performance` rows are precomputed per (ticker, series, view, horizon): common
+comparison calendar per horizon; **one shared rebase date** = the latest first-observation among
+the series in that window, disclosed on the chart ("indexed to 100 at {date}"); a series starting
+after the window start is labelled late-start; missing spans render as visible gaps (the SVG
+builder gains explicit gap segments — no bridging, B8). Benchmark rows carry their own source
+run identity; a benchmark older than the equity data renders "benchmark as of {date}" — never
+silently mixed. Horizons are calendar-anchored (1Y/3Y/5Y back from as-of, first trading
+observation on/after the cutoff; H7).
+
+---
+
+## 5. Artifact contracts (closes B2)
+
+Common to every new artifact: immutable run-stamped parquet + mutable latest alias, atomically
+published (§5.3); sha256 + row count recorded in the model-state manifest; resolved by readers
+**only** through the manifest pointer; schema name + version columns embedded; a dedicated
+validated reader per artifact that classifies MISSING / STALE / CORRUPT / MISALIGNED and returns
+an explicit state object — a bad artifact renders a degraded section with a reason, **never** a
+valid-looking empty section (B2).
+
+| | `ticker_page_gold_response` | `ticker_page_percentiles` | `ticker_page_performance` | `option_chain_history_daily` |
+|---|---|---|---|---|
+| Producer stage | `ticker-page` (after tool-d) | `ticker-page` | `ticker-page` | option-artifacts |
+| Directory | `data/output/ticker_page/` | same | same | `data/output/options/` |
+| Files | `gold_response_output_{run}.parquet`, `gold_response_latest_{run}.parquet`, `gold_response_latest.parquet` (same triple pattern for all) | 〃 | 〃 | 〃 |
+| Key / uniqueness | (ticker, finance_source) | (ticker, finance_source, metric_key) | (ticker, series, view, horizon, date) | (ticker, as_of_date) |
+| Required columns | key + line slope/intercept per metric + constants + spot values + `spot_gold_usd/date` + `gold_response_status` + `linearity_max_residual` | key + raw value + `pct_high_good` + `pct_low_good` + `rank_eligible` + `rank_exclusion_reason` + cohort size | key + value + `rebase_date` + `series_source_run_id` + `late_start` | §6.2 |
+| Provenance | `schema_version`, `source_run_id`, `snapshot_refresh_run_id`, `parent_refresh_id`, `config_hash`, upstream tool run ids | 〃 + all four tool run ids | 〃 + foundation + benchmark run ids | §6.2 |
+| Required? | required once the stage ships (manifest `state=complete` demands it) | required | required | required within the options publish block |
+| Reader | `load_gold_response(paths)` | `load_score_percentiles(paths)` | `load_performance_series(paths, ticker)` | dedicated `load_option_chain_history(paths, ticker)` — **not** added to the Option Trading overview loader's read set (B9) |
+| Failure state | per-ticker `gold_response_status` degrades the dial only | page shows "score builder unavailable: {reason}" | chart shows degraded notice | trend charts show degraded notice |
+| Pruning | `run_pruning.py` gains both output dirs; current-generation immutables always retained | 〃 | 〃 | canonical history is **never** reconstructible-from-runs-only (§6.1) and pruning must not touch it |
+
+Also versioned (existing artifacts, deliberate bumps — §6.4): `option_signal_history`
+(+`implied_move`), `option_selected_candidates` / `option_candidate_slots` (+greeks columns).
+
+### 5.3 Atomic publication + fault injection (I2)
+Use the shared atomic multi-file publish (as `publish_option_artifacts_and_history_atomically`
+does): write all immutables, then aliases, then the manifest pointer **last**. A kill between any
+two steps leaves the previous complete generation current. Fault-injection tests interrupt each
+boundary and assert the prior state still serves.
+
+### 5.4 Implementation inventory (B2)
+`_artifact_map()` + `REQUIRED_ARTIFACTS` + `_tool_latest_directory_and_prefix()`
+(model_state.py:519/48/1668) learn the two ticker-page artifacts; `_alignment()`
+(model_state.py:973) learns the `ticker-page` stage and asserts its
+`snapshot_refresh_run_id` matches the tool generation; immutable metadata assembly
+(model_state.py:741) covers them; `ProjectPaths` gains the latest-alias properties;
+`run_pruning.py` gains the directories; `_loader_inputs_signature` (workspace_state.py:121)
+gains every new artifact path; interruption/rollback tests per §5.3.
+
+### 5.5 Stage identity (I3)
+`ticker-page` runs inside refresh after tool-d (record_step + total_steps bump, cli.py:3402+)
+and as a standalone subcommand. Both paths: read the **current model-state manifest** for parent
+identity; inherit `parent_refresh_id` from it; assert upstream tool run ids match the manifest's
+(mixed generations abort with a named error); self-report per-substep seconds + rows_built +
+rows_persisted (clone `_record_step_timing`, model/pipeline.py:721).
+
+---
+
+## 6. Options history (closes B3, B9, H3)
+
+### 6.1 One authority per field
+- **Horizon-keyed signals** (`atm_iv`, `skew_residual`, `iv_rv_ratio`, iv_rank) stay solely in
+  the canonical `option_signal_history` (ticker, as_of_date, signal_horizon_days) with its
+  existing merge + no-shrink machinery. It is **extended** with `implied_move` (same key; schema
+  bump). The page's IV / IV-vs-realised / implied-move trends read this history at the signal
+  horizon, with the tenor named in chart title + tooltip (B6/H7).
+- **Chain-level daily quantities** — fields with **no existing authority** — go to the new
+  `option_chain_history_daily`: `put_oi_total`, `call_oi_total`, `total_open_interest`,
+  `put_oi_otm`, `call_oi_otm`, `put_call_oi_ratio_total`, `put_call_oi_ratio_otm`, `put_volume`,
+  `call_volume`, `total_volume`, capture diagnostics (`n_contracts`, `n_expirations`,
+  `capture_quality`, `row_status`).
+- The M0.1 fix already persists the split sums into `options_features` going forward; the
+  history artifact is built **merge-forward**: prior immutable history + today's capture. Run
+  directories are best-effort enrichment for the split backfill only — never the authority; a
+  pruned run can never shrink the history (no-shrink gate cloned from
+  `prepare_option_signal_history`).
+
+### 6.2 Row provenance + no-lookahead
+Every row: `row_status ∈ {observed, carried_forward, backfilled}`, `capture_run_id` (original)
+distinct from `published_run_id` (current publisher), `schema_version`. Any recomputed derived
+value (including the one-time iv_rv correction migration in the canonical history, §6.4) uses
+only prices with `price_date <= row.as_of_date` — pinned by a test that plants a future price
+and asserts it is never read.
+
+### 6.3 The daily gate, exactly (H3)
+Capture unit = one refresh run's chain snapshot. Duplicate contracts within a capture are
+identified by (expiration, option_type, strike) — last quote wins. Quote validity reuses
+`option_quote_is_tradable` bounds; IV validity `[0.01, 3.0]` (config). Same-day captures: keep
+the **complete** capture with the highest `total_open_interest` (ties → latest run); a capture
+is partial when `total_open_interest < partial_capture_min_ratio × same-day max`, or (lone rows)
+when `n_expirations` < `expiry_floor_ratio` × trailing 20-day median. Intraday re-runs
+**replace** the day's row only by winning that rule. No synthetic rows on holidays/weekends —
+absent days stay absent. Chain-level series roll expiries naturally; diagnostics columns let the
+UI explain poor coverage without recomputing (H3). Field-level outliers (IV 0.0 / 111.87, skew
+72.8) are gated to NA per item with `capture_quality` noting it. Every threshold in
+`hedge_readiness.yaml` under `history_quality:`.
+
+### 6.4 Schema migrations (B9, review checklist 15)
+Option artifact contract bumps v3 → v4: `option_signal_history` gains `implied_move`;
+candidate/slot artifacts gain greek columns; `option_chain_history_daily` joins the atomic
+publish set (but not the overview loader's reads). First refresh after upgrade: readers accept
+v3 rows (missing new columns → NA) and the publisher writes v4; carry-forward of a v3 generation
+stays valid; rollback = previous manifest still points at v3 immutables, which still validate.
+One-time value-correction migration for historical `iv_rv_ratio` (wrong by ~100x pre-M0.1):
+recompute per row date-bounded (§6.2), row count must not change, migration run id recorded in
+the artifact metadata. Greeks: computed on **selected candidate/slot rows only** (never the full
+chain in the page path); units fixed as gamma per $1 underlying, vega per 1.00 vol (displayed
+per point), theta per calendar day; inputs = quote IV, actual DTE, manifest `risk_free_rate`,
+q = 0 — all stamped, model version column included. Shared contract multiplier and
+intrinsic-value helpers reused (B9). No change to `hedge_readiness.target_delta` — the existing
+`near_atm` + directional buckets already provide the ATM and directional rows (B9).
+
+---
+
+## 7. Score builder — engine and exact catalog (closes B4, H1)
+
+**Engine:** generalize the Candidate Finder's eligibility + ranking primitive
+(`common/eligibility.py`, `model/candidate_finder.py` ranking path) — one engine, two consumers.
+Percentiles via `oriented_percentile`, computed both orientations (ties make 100−p inexact).
+Degraded subjects are excluded, not down-weighted: Tool A/C metrics require `score_eligible`;
+Tool D metrics require `resilience_data_status == "OK"`; Tool B metrics require the row's
+normalization/staleness gates. Excluded rows persist `rank_eligible=false` +
+`rank_exclusion_reason` and can never receive a percentile (B4).
+
+**Deterministic semantics:** pandas `rank(pct=True)` average-tie policy, documented; minimum
+cohort `min_eligible_peers` (config, default 10) below which the builder shows "not enough
+comparable miners" instead of ranks; zero active metrics → no score (opt-in, Q24); one active
+metric → that metric's percentile with a breadth notice; per-metric NA → metric disabled for the
+company and excluded from its budget; weight shifts of ±10 renormalize across active metrics;
+stability warning when any shift moves rank ≥ `rank_stability_alert_positions` (config, 3).
+Everything the client combines is persisted; the combine rule is the §3.1 exception.
+
+**Catalog (exact, 21 metrics — the contract test asserts every source column exists):**
+
+| Key | Category | Source · column | Default direction | Spot/scenario |
+|---|---|---|---|---|
+| down_beta_core | Trading | tool_a · down_beta_core | lower | n/a |
+| up_beta_core | Trading | tool_a · up_beta_core | higher | n/a |
+| asymmetry_ratio_core | Trading | tool_a · asymmetry_ratio_core | lower | n/a |
+| confidence_score | Trading | tool_a · confidence_score | higher | n/a |
+| downside_volatility_52w | Trading | tool_a · downside_volatility_52w | lower | n/a |
+| rel_strength_vs_gdx | Trading | tool_c · rel_strength_vs_gdx_pct | higher | n/a |
+| rel_weakness_vs_gdx | Trading | tool_c · rel_weakness_vs_gdx_pct | lower | n/a |
+| downside_hit_rate | Trading | tool_c · downside_hit_rate_10pct | lower | n/a |
+| upside_hit_rate | Trading | tool_c · upside_hit_rate_10pct | higher | n/a |
+| tail_worst10 | Trading | tool_c · tail_avg_return_worst10pct | higher | n/a |
+| tail_best10 | Trading | tool_c · tail_avg_return_best10pct | higher | n/a |
+| margin_pct | Corporate | tool_b · margin_pct (per source) | higher | spot |
+| fcf_yield | Corporate | tool_b · fcf_yield (per source) | higher | spot |
+| ev_ebitda | Corporate | tool_b · ev_ebitda (per source) | lower | spot |
+| forward_pe | Corporate | tool_b · forward_pe (per source) | lower | spot |
+| leverage_trailing | Corporate | tool_b · leverage (per source) | lower | spot |
+| aisc | Corporate | tool_b · aisc_usd_per_oz | lower | spot |
+| reserve_life | Corporate | tool_b · reserve_life_years | higher | spot |
+| survival_distance | Corporate | tool_d · survival_distance_to_interest_cover_pct | higher | spot |
+| fragility | Corporate | tool_d · fragility_ebitda_pct_per_10pct_gold | lower | spot |
+| cost_curve_pctile | Corporate | tool_d · cost_curve_aisc_percentile | per tool_d.yaml orientation | spot |
+
+Tool B metrics persist per finance source; the builder follows the page's source toggle
+coherently (H1). The whole section is labelled **"at spot, as of {date} — the gold dial does not
+move these ranks"** (H2). Scenario-aware ranking is deferred, not implied.
+
+---
+
+## 8. Options availability + routes (closes B5, B6)
+
+**State matrix** (resolved from model-state-selected artifacts, never the raw manifest):
+
+| State | Page behaviour |
+|---|---|
+| Genuinely no listed options (current artifact says so) | Section + nav anchor absent |
+| Current coherent data | Full section, as-of date shown |
+| Valid carried-forward generation | Section visible + explicit "carried forward from {date}" label |
+| Artifact missing / corrupt / stale / misaligned | Degraded section with reason — **never** "no options" |
+| Contracts exist, no eligible candidates | Market context visible + a plain candidate-selection reason |
+
+Render tests cover all five with control fixtures.
+
+**Routes** (B5): benchmark ETFs (GDX/GDXJ) keep the working `?lens=option-trading` route
+untouched — they are not Tool B tickers and have no corporate page. Only corporate-company links
+are re-pointed to `#options` on the canonical page; the lens parameter stays accepted for
+corporate tickers (renders the full page). Route tests: AEM from Candidate Finder, AEM from
+Option Trading, GDX and GDXJ from Option Trading, direct canonical URLs, back/forward
+restoration of query-param state.
+
+---
+
+## 9. Serve layer
+
+### 9.1 Composition (unchanged order)
+Header + **global control bar (dial)** + nav → performance chart → corporate finance → market
+behaviour → options (conditional per §8) → compare on your own terms → inputs/notes. Open/closed
+exactly per requirements §4. New package `serve/ticker_page/` with one module per section;
+renderers **moved** from `detail_panels.py`; repo-wide token sweep auto-covers the package;
+per-module companion scans added; one formatting implementation (`format_helpers` + one shared
+JS formatter pinned by parity).
+
+### 9.2 Verdict removal is a content edit, not a relocation (H6)
+The exact surviving raw panels are enumerated in the M2 spec; composite-score labels and prose
+(Gold Sensitivity Score, confidence labels, rank prose) are **rewritten or removed** — a sweep
+asserts the §8-removed strings appear nowhere on the page, including inside disclosures.
+
+### 9.3 Retained request-time computation — bounded, documented (B8 modification)
+Unchanged pre-existing behaviour retained in the memoized loader, listed exhaustively:
+`build_structural_weekly_series`, `compute_horizon_returns_for_ticker`, the sanctioned
+non-canonical-window recompute in the behaviour section. Nothing new joins this list; the
+performance chart does NOT (it is §5-persisted). Recorded in `ARCHITECTURE_FOUNDATIONS.md` as
+existing debt with a follow-up entry in §14. If Codex still rejects this at re-review, the
+fallback is persisting these too in the `ticker-page` stage — the section interfaces don't
+change either way.
+
+### 9.4 Navigation + state semantics (H5)
+Query-param state (source, window, `lab_h/lab_b/lab_s`) is canonical: a valid Lab query reopens
+the Lab disclosure, anchors and focuses it; back/forward restore it. Form POST outcomes reopen
+the owning panel, anchor, and move focus to the flash/error. Client-only state (dial position,
+score weights, chart series toggles) resets on navigation **by design**, and each control's "?"
+says so; reset buttons exist on dial and score builder. Lab results get their own bounded cache
+(keyed ticker+h+b+s, size ~32) so 40 combinations can't evict the small detail cache (H9).
+
+### 9.5 Safe embedding (I4)
+One `embed_json_payload(id, obj)` helper (escapes `</script`, U+2028/9, ampersands; tested with
+hostile strings); every page JS module no-ops when its markup is absent.
+
+### 9.6 Accessibility (H8)
+Interactive chart controls are real `<button>`s with `aria-pressed`; sliders have labels +
+`<output>`; scenario/rank changes announce via one polite live region; inactive SVG variants are
+`display:none` + `aria-hidden`; keyboard focus visible everywhere; reduced-motion honoured;
+degraded states carry text explanations. M3 lane gates include keyboard-only and
+assistive-state assertions, not only screenshots; responsive checks assert controls and tables
+remain operable at 640/320px.
+
+---
+
+## 10. Config additions
+
+| File | Keys |
+|---|---|
+| new `config/ticker_page.yaml` → `TickerPageConfig` (+ `EXPECTED_CONFIG_FILES`, `AppConfig`) | `dial: {min_gold_usd: 2000, max_gold_usd: 6000, step_usd: 1, probe_gold_usd: [2000, 4000, 6000], linearity_abs_tol_musd: 0.5, linearity_rel_tol: 0.001, systemic_min_tickers: 5}` · `chart: {horizons: [1Y, 3Y, 5Y]}` · `lab: {default_horizon_weeks: 8, scatter_from_year: 2016}` (ticker page only, D-5) · `score_builder: {budget_points: 100, min_eligible_peers: 10, rank_stability_shift_points: 10, rank_stability_alert_positions: 3, metrics: [...§7 catalog...]}` |
+| `config/hedge_readiness.yaml` | `history_quality: {partial_capture_min_ratio: 0.70, iv_valid_range: [0.01, 3.0], skew_valid_range: [-1.0, 1.0], implied_move_valid_range: [0.0, 1.0], expiry_floor_ratio: 0.5, trailing_median_days: 20}`. **No target_delta change** (B9). |
+| `config/tool_c.yaml` | shipped in M0 (`a6e8bb1`) |
+| `config/lab_dial.yaml` | still deferred to M3c (import-time constant web; unchanged from v1 amendment). Shared-Lab keys stay out of `ticker_page.yaml` (H4). |
+
+---
+
+## 11. Test strategy + acceptance gates
+
+Everything from v1 §10 plus the review's gates, verbatim adopted:
+
+- **Artifact/state:** immutable + schema-validated + checksummed; mismatched refresh identities
+  → degraded, never mixed; stale/corrupt/wrong-schema fail explicitly; interrupted build serves
+  the prior generation (fault injection per publish boundary); pruning never touches current
+  immutables or canonical history; the five §8 option states render distinctly.
+- **History/model:** no-shrink after rerun; deterministic dedupe; horizon + actual expiry/DTE
+  survive rebuilds; no RV/lookahead leak (future-price plant test); degraded subjects never
+  ranked; tie/NA/one-peer/all-missing/finance-source cases deterministic; lines pass at both
+  bounds + interior + spot; near-zero tolerance tested; spot ≠ configured scenario proven by a
+  fixture whose Tool B default differs from spot; D-4 label present while the dial moves.
+- **Routes/interaction:** the six §8 route tests; back/forward; Lab query reopen+focus; form
+  outcome visibility; "no options" never used for pipeline failure.
+- **Charts/payload:** shared rebase date or disclosed late start; visible gaps; twin tables
+  match SVG values; payload budgets measured on an option-heavy ticker AND NEM; real-JS tests
+  for dial/score/sizing/reset/accessibility per M3 lane.
+- **Integration (M4):** focused ticker/Tool B/D/Option Trading/Finder/Lab/model-state/schema/
+  carry-forward/pruning/route suites → full suite → real-workspace smoke loading a normal miner,
+  a weak-inputs ticker, a no-options company, an option-heavy company, GDX, GDXJ → the
+  unmerged-branch/worktree audit before merge.
+
+---
+
+## 12. Payload + cache spike (M0.5, moved ahead of M2 per H9)
+
+Build a throwaway real-payload prototype (no UI polish): embed the actual pack + percentiles +
+option history + Lab + performance JSON for NEM **and** the most option-heavy ticker. Measure
+HTML bytes, embedded JSON bytes, gzip size, per-section row counts, cold and warm load, detail-
+cache memory, hit behaviour with the Lab side-cache. Budgets set from measurement (working
+target ≤ 300 KB HTML, warm ≤ 100 ms) — numbers recorded in the plan before M1 producers start.
+
+---
+
+## 13. Build sequence (revised per I1 — contract-first, single owner)
+
+Contract owner: Claude (orchestrator) owns every schema/config contract; lanes consume, never
+edit, contracts.
+
+| Milestone | Contents | Exit gate |
+|---|---|---|
+| **M0** ✅ | Isolated correctness fixes (`ce2583a`…`3f86c3d`) | shipped; Codex may review commits separately |
+| **M0.5** | Requirements addendum ✅ (this revision) · `ARCHITECTURE_FOUNDATIONS.md` exception text · exact contracts (§§4–7 refined into code-level stubs: schema modules + config models + empty readers) · payload spike (§12) | Codex re-review of plan v2 closes B1–B9; budgets recorded |
+| **M1a** | Shared plumbing: `gold_lines.py` extraction (Tool D consumes it), eligibility-engine generalization, schema/reader modules, model-state + pruning + paths wiring, atomic publish + fault tests | contract, alignment, migration, fault suites green |
+| **M1b** | Producers: gold response pack, percentiles, performance series (one stage, sequential substeps) | immutable coherent artifacts; stage timings; no request-path analytics |
+| **M1c** | Canonical option-history extension + chain history + greeks on candidates + v4 migration | no-shrink/no-lookahead/schema/carry-forward suites |
+| **M1 int.** | Integration branch if lanes touched shared spine files; touched-file + semantic comparison; focused suites → full suite → real workspace smoke | all green on one branch |
+| **M2** | Read-only serve spine: `ticker_page/` package, state objects + validated readers, route compatibility (incl. benchmark lens), state matrix wiring — page still looks unchanged | reader/cache/route suites; §8 matrix render tests |
+| **M3** | Visible sections, sequential: a chart · b corporate+dial (+gold-dial.js) · c behaviour+Lab (+`lab_dial.yaml` move) · d options · e score builder (+score-builder.js) · f explainers+composite-prose sweep | per-lane: render + real-JS + a11y behavioural tests |
+| **M4** | Budgets re-measured, provenance audit, docs, full integration gate (§11) | Victor review → Codex review → merge workflow |
+
+Worker rules unchanged: written specs quoting this plan; no git state commands; I verify diffs
+and commit checkpoints.
+
+---
+
+## 14. Risks + deferred
+
+Risks: linearity guard trips (fallback: dense sampling mode, designed not built); JS/backend
+drift (contained per §3.1); payload beyond budget (spike catches it pre-M1); schema-bump ripple
+(migration §6.4 + carry-forward tests); `detail_panels.py` unpick merge risk (spine-first M2).
+
+Deferred (explicit): requirements §7 items; scenario-aware failing sentences (D-4) and
+scenario-aware rankings (H2); `/lab` default alignment (D-5); persisting the §9.3 retained
+computations; percentile-implementation merge (`benchmark_comparison._percentile` vs
+`oriented_percentile` — different tie semantics, would move rug markers); richer put/call
+status vocabulary.
