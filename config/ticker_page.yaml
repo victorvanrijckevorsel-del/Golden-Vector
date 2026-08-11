@@ -137,6 +137,7 @@ score_builder:
       default_high_good: true
       unit: percent
       basis: fwd @ spot
+      requires_market_snapshot: true
     - key: ev_ebitda
       label: EV/EBITDA
       category: corporate
@@ -145,6 +146,8 @@ score_builder:
       default_high_good: false
       unit: ratio
       basis: fwd @ spot
+      requires_market_snapshot: true
+      requires_source_financials: true
     - key: forward_pe
       label: Forward P/E
       category: corporate
@@ -153,6 +156,8 @@ score_builder:
       default_high_good: false
       unit: ratio
       basis: fwd @ spot
+      requires_market_snapshot: true
+      requires_source_financials: true
     - key: leverage_trailing
       label: Net debt / EBITDA
       category: corporate
@@ -161,6 +166,7 @@ score_builder:
       default_high_good: false
       unit: ratio
       basis: LTM
+      requires_source_financials: true
     - key: aisc
       label: All-in sustaining cost
       category: corporate
@@ -168,7 +174,8 @@ score_builder:
       source_column: aisc_usd_per_oz
       default_high_good: false
       unit: usd_per_oz
-      basis: LTM
+      basis: Our View mining assumption
+      manual_mining_basis: true
     - key: reserve_life
       label: Reserve life
       category: corporate
@@ -176,7 +183,8 @@ score_builder:
       source_column: reserve_life_years
       default_high_good: true
       unit: years
-      basis: reported reserves
+      basis: Our View mining assumption
+      manual_mining_basis: true
     - key: survival_distance
       label: Room before interest bites
       category: corporate

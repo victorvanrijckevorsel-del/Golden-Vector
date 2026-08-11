@@ -1601,6 +1601,39 @@ class TickerPageDialConfig(StrictConfigModel):
             raise ValueError("ticker_page.dial values must be finite")
         return float(value)
 
+    @model_validator(mode="after")
+    def probes_cover_bounds_with_interior(self) -> "TickerPageDialConfig":
+        """C9: the line is fitted at the OUTER probes, so both dial bounds must
+        be probed, plus at least one strictly interior probe (or the fit is
+        never tested where the dial actually reads it)."""
+
+        probes = sorted(float(p) for p in self.probe_gold_usd)
+        tol = 1e-9
+        # coherent_dial owns inverted-bounds / out-of-range-probe errors with
+        # more specific messages; this validator only refines valid geometries.
+        if self.min_gold_usd >= self.max_gold_usd:
+            return self
+        if any(
+            not math.isfinite(p) or not self.min_gold_usd <= p <= self.max_gold_usd
+            for p in probes
+        ):
+            return self
+        if abs(probes[0] - float(self.min_gold_usd)) > tol:
+            raise ValueError(
+                "ticker_page.dial.probe_gold_usd must include min_gold_usd as its lowest probe"
+            )
+        if abs(probes[-1] - float(self.max_gold_usd)) > tol:
+            raise ValueError(
+                "ticker_page.dial.probe_gold_usd must include max_gold_usd as its highest probe"
+            )
+        interior = [p for p in probes if probes[0] + tol < p < probes[-1] - tol]
+        if not interior:
+            raise ValueError(
+                "ticker_page.dial.probe_gold_usd needs at least one probe strictly "
+                "between the dial bounds"
+            )
+        return self
+
     @field_validator("systemic_min_tickers")
     @classmethod
     def at_least_one_ticker(cls, value: int) -> int:
@@ -1692,7 +1725,20 @@ class TickerPageLabConfig(StrictConfigModel):
 
 
 class ScoreMetricSpec(StrictConfigModel):
-    """One entry of the 19-metric score-builder catalog (plan §7)."""
+    """One entry of the 19-metric score-builder catalog (plan §7).
+
+    C6 eligibility flags (fail closed - a metric that declares a requirement
+    is ineligible whenever the fields the predicate needs are absent):
+    - requires_market_snapshot: value uses share price / market cap, so the
+      row needs a usable normalized snapshot (snapshot_normalization_status OK,
+      which already encodes the FX staleness policy).
+    - requires_source_financials: value derives from the selected finance
+      source's financial fields; in Yahoo mode the row's official statuses
+      must roll up OK (financial_data_status).
+    - manual_mining_basis: value is an Our-View mining assumption (AISC,
+      reserve life) in EITHER display mode - it must never inherit an
+      irrelevant Yahoo financial failure.
+    """
 
     key: str
     label: str
@@ -1702,6 +1748,9 @@ class ScoreMetricSpec(StrictConfigModel):
     default_high_good: bool
     unit: str
     basis: str
+    requires_market_snapshot: bool = False
+    requires_source_financials: bool = False
+    manual_mining_basis: bool = False
 
     @field_validator("key", "label", "source_column", "basis")
     @classmethod

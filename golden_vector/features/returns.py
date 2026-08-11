@@ -6,6 +6,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from golden_vector.common.eligibility import ok_normalized_rows
+
 from golden_vector.features.horizons import ParsedHorizon
 
 
@@ -72,7 +74,8 @@ def _build_overlap_frame(
     usd_equity_history: pd.DataFrame,
     gold_history: pd.DataFrame,
 ) -> pd.DataFrame:
-    equity = usd_equity_history.copy()
+    # C4: stale/invalid normalized rows must never become horizon returns.
+    equity = ok_normalized_rows(usd_equity_history).copy()
     equity["date"] = pd.to_datetime(equity["date"])
     equity = equity.rename(columns={"return_basis_usd": "equity_basis_usd"})
 

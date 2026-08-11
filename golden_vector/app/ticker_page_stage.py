@@ -197,7 +197,10 @@ def load_ticker_page_stage_inputs(
         ("tool_a", paths.latest_tool_a_snapshot_parquet_path),
         ("tool_b", paths.latest_tool_b_snapshot_parquet_path),
         ("tool_c", paths.latest_tool_c_snapshot_parquet_path),
-        ("tool_d", paths.latest_tool_d_snapshot_parquet_path),
+        # C6: the ticker page presents resilience "at spot", so it must consume
+        # the SPOT Tool D artifact explicitly - the generic tool_d alias can be
+        # a custom stress scenario from a later standalone run.
+        ("tool_d_spot", paths.latest_tool_d_spot_snapshot_parquet_path),
     ):
         path = (
             resolve_current_model_artifact_path(paths, name, fallback_path=fallback)
@@ -210,6 +213,7 @@ def load_ticker_page_stage_inputs(
                 "four tool artifacts. Run `python main.py refresh` first."
             )
         tool_frames[name] = pd.read_parquet(path)
+    tool_frames["tool_d"] = _assert_tool_d_is_spot(tool_frames.pop("tool_d_spot"))
 
     structural_path = (
         resolve_current_model_artifact_path(
@@ -346,6 +350,7 @@ def run_ticker_page_stage(
         snapshot_refresh_run_id=snapshot_refresh_run_id,
         snapshot_as_of_date=snapshot_as_of_date,
         source_run_id=run_context.run_id,
+        configured_universe=universe,
     )
     record_step_timing(
         timings,
@@ -369,6 +374,7 @@ def run_ticker_page_stage(
         tool_b_latest_by_source=tool_b_by_source,
         tool_c_latest=tool_c_latest,
         tool_d_latest=tool_d_latest,
+        configured_universe=universe,
     )
     record_step_timing(
         timings, "percentiles", started_at, rows_built=len(percentiles.index)
@@ -382,6 +388,19 @@ def run_ticker_page_stage(
         equity_history = normalized_equity_histories.get(ticker)
         if equity_history is None or equity_history.empty:
             performance_failures.append(f"{ticker}: no normalized equity history")
+            # C8: the failed ticker still gets explicit per-series status rows
+            # (missing stock), never a silent hole in the artifact.
+            performance_frames.append(
+                build_performance_series(
+                    app_config=app_config,
+                    equity_history=pd.DataFrame(),
+                    gold_history=gold_history,
+                    benchmark_histories=benchmark_histories or {},
+                    ticker=ticker,
+                    equity_as_of_date=_equity_as_of(None, snapshot_as_of_date),
+                    series_source_run_ids=benchmark_series_run_ids,
+                )
+            )
             continue
         try:
             performance_frames.append(
@@ -397,6 +416,17 @@ def run_ticker_page_stage(
             )
         except Exception as error:  # noqa: BLE001 - degrade per item (senior rule)
             performance_failures.append(f"{ticker}: {error}")
+            performance_frames.append(
+                build_performance_series(
+                    app_config=app_config,
+                    equity_history=pd.DataFrame(),
+                    gold_history=gold_history,
+                    benchmark_histories=benchmark_histories or {},
+                    ticker=ticker,
+                    equity_as_of_date=_equity_as_of(None, snapshot_as_of_date),
+                    series_source_run_ids=benchmark_series_run_ids,
+                )
+            )
     performance = _concat(
         performance_frames, columns=PERFORMANCE_COLUMNS, artifact="performance"
     )
@@ -430,6 +460,15 @@ def run_ticker_page_stage(
         equity_history = normalized_equity_histories.get(ticker)
         if equity_history is None or equity_history.empty:
             research_failures.append(f"{ticker}: no normalized equity history")
+            # C8: explicit per-kind MISSING rows instead of a silent hole.
+            research_frames.append(
+                build_research_series(
+                    ticker=ticker,
+                    weekly_series_frame=None,
+                    exploratory_horizons_frame=None,
+                    structural_window_metrics_frame=None,
+                )
+            )
             continue
         try:
             weekly_series, _ = build_structural_weekly_series(
@@ -464,6 +503,14 @@ def run_ticker_page_stage(
             )
         except Exception as error:  # noqa: BLE001 - degrade per item (senior rule)
             research_failures.append(f"{ticker}: {error}")
+            research_frames.append(
+                build_research_series(
+                    ticker=ticker,
+                    weekly_series_frame=None,
+                    exploratory_horizons_frame=None,
+                    structural_window_metrics_frame=None,
+                )
+            )
     research_series = _concat(
         research_frames, columns=RESEARCH_SERIES_COLUMNS, artifact="research_series"
     )
@@ -570,8 +617,8 @@ def _ticker_rows(frame: pd.DataFrame, ticker: str) -> pd.DataFrame:
     return frame.loc[frame["ticker"].astype(str).str.upper() == ticker].copy()
 
 
-def _equity_as_of(equity_history: pd.DataFrame, snapshot_as_of_date: Any) -> Any:
-    if "date" in equity_history.columns:
+def _equity_as_of(equity_history: pd.DataFrame | None, snapshot_as_of_date: Any) -> Any:
+    if equity_history is not None and "date" in equity_history.columns:
         dates = pd.to_datetime(equity_history["date"], errors="coerce").dropna()
         if not dates.empty:
             return dates.max()
@@ -586,3 +633,33 @@ def _read_json_object(path: Path) -> dict[str, Any] | None:
     except Exception:  # noqa: BLE001 - an unreadable manifest is simply absent here
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _assert_tool_d_is_spot(frame: pd.DataFrame) -> pd.DataFrame:
+    """C6: prove the resolved Tool D generation really is the at-spot run.
+
+    Every row must have gold_price_used == spot_gold_usd within tolerance; a
+    custom-scenario artifact reaching the ticker page would caption stress
+    economics as "at spot". Required data -> fail loud, not degrade.
+    """
+    if frame.empty:
+        return frame
+    for column in ("gold_price_used", "spot_gold_usd"):
+        if column not in frame.columns:
+            raise ValueError(
+                f"tool_d_spot artifact lacks required column {column!r}; cannot "
+                "prove the generation is at spot."
+            )
+    used = pd.to_numeric(frame["gold_price_used"], errors="coerce")
+    spot = pd.to_numeric(frame["spot_gold_usd"], errors="coerce")
+    bad = frame.loc[
+        used.isna() | spot.isna() | ((used - spot).abs() > 0.01)
+    ]
+    if not bad.empty:
+        tickers = ", ".join(str(t) for t in bad["ticker"].head(5))
+        raise ValueError(
+            "tool_d_spot artifact contains rows whose gold_price_used differs "
+            f"from spot_gold_usd (e.g. {tickers}); a custom Tool D scenario must "
+            "never enter the ticker page's at-spot percentiles."
+        )
+    return frame

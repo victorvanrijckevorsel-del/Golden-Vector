@@ -19,6 +19,7 @@ from golden_vector.app.ticker_page_state import (
     load_score_percentiles,
 )
 from golden_vector.contracts.ticker_page import (
+    TICKER_PAGE_SCHEMA_VERSIONS,
     GOLD_RESPONSE_COLUMNS,
     PERCENTILES_COLUMNS,
     PERFORMANCE_COLUMNS,
@@ -466,11 +467,17 @@ def test_percentiles_tool_d_requires_ok_status(score_config):
     assert bool(survival.loc["AAA", "metric_available"])
     assert not bool(survival.loc["BBB", "metric_available"])
     assert survival.loc["BBB", "rank_exclusion_reason"] == "resilience_data_not_ok"
-    # Emitted for both sources with identical values (source-independent tool).
+    # C6: the approved plan disables resilience in Yahoo mode entirely.
+    # Rows still exist (the source toggle finds a complete set) but are
+    # unavailable, carry null percentiles, and state the exact approved reason.
     yahoo = frame[
         (frame["metric_key"] == "survival_distance") & (frame["finance_source"] == "yahoo")
     ].set_index("ticker")
-    assert yahoo.loc["AAA", "raw_value"] == survival.loc["AAA", "raw_value"]
+    assert not yahoo.empty
+    assert not yahoo["metric_available"].any()
+    assert yahoo["pct_high_good"].isna().all()
+    assert yahoo["pct_low_good"].isna().all()
+    assert set(yahoo["metric_reason"]) == {"resilience is computed on Our View inputs"}
 
 
 # --------------------------------------------------------------------------
@@ -513,7 +520,9 @@ def test_performance_shared_rebase_gap_and_late_start(chart_config):
 
     assert list(frame.columns) == list(PERFORMANCE_COLUMNS)
     assert set(frame["ticker"]) == {"AEM"}
-    assert set(frame["currency_basis"]) == {"USD"}
+    # C4: an index-to-100 value is not a "USD price" - the views are labelled.
+    assert set(frame.loc[frame["view"] == "price", "currency_basis"]) == {"USD"}
+    assert set(frame.loc[frame["view"] == "rebased", "currency_basis"]) == {"INDEX_100"}
     assert set(frame["view"]) == {"price", "rebased"}
 
     one_year = frame[frame["horizon"] == "1Y"]
@@ -579,7 +588,11 @@ def test_performance_marks_stale_and_missing_benchmarks(chart_config):
     assert set(frame[frame["series"] == "stock"]["series_status"]) == {"OK"}
 
 
-def test_performance_without_equity_returns_empty_contract_frame(chart_config):
+def test_performance_without_equity_emits_explicit_missing_stock_states(chart_config):
+    """C4: a missing stock series is an explicit per-series state - an empty
+
+    frame would read as a healthy build with nothing to show.
+    """
     frame = build_performance_series(
         app_config=chart_config,
         equity_history=pd.DataFrame(),
@@ -588,8 +601,14 @@ def test_performance_without_equity_returns_empty_contract_frame(chart_config):
         ticker="AEM",
         equity_as_of_date=pd.Timestamp("2025-02-10"),
     )
-    assert frame.empty
+    assert not frame.empty
     assert list(frame.columns) == list(PERFORMANCE_COLUMNS)
+    stock = frame[frame["series"] == "stock"]
+    assert set(stock["series_status"]) == {"MISSING"}
+    assert stock["series_reason"].str.contains("unavailable").all()
+    gold_rows = frame[frame["series"] == "gold"]
+    assert set(gold_rows["series_status"]) == {"OMITTED_NO_STOCK"}
+    assert frame["value"].isna().all()
 
 
 # --------------------------------------------------------------------------
@@ -700,15 +719,19 @@ def test_research_series_reshape():
     assert windows.loc["52w", "weeks"] == pytest.approx(52)
 
 
-def test_research_series_empty_inputs_make_no_rows():
+def test_research_series_empty_inputs_make_explicit_missing_kind_rows():
+    """C9 (v2): an absent kind is an explicit state, never a silent hole."""
     frame = build_research_series(
         ticker="AEM",
         weekly_series_frame=None,
         exploratory_horizons_frame=pd.DataFrame(),
         structural_window_metrics_frame=None,
     )
-    assert frame.empty
     assert list(frame.columns) == list(RESEARCH_SERIES_COLUMNS)
+    assert len(frame) == 3  # one MISSING status row per kind
+    assert set(frame["kind"]) == {"weekly", "horizon", "window_fit"}
+    assert set(frame["kind_status"]) == {"MISSING"}
+    assert frame["kind_reason"].str.contains("no .* rows are available").all()
 
 
 # --------------------------------------------------------------------------
@@ -783,11 +806,11 @@ def test_persist_writes_run_stamped_and_latest_artifacts_readable_by_the_real_re
         stage_timings={},
     )
 
-    for loader in (
-        load_gold_response,
-        load_score_percentiles,
-        load_performance_series,
-        load_research_series,
+    for loader, artifact in (
+        (load_gold_response, "gold_response"),
+        (load_score_percentiles, "percentiles"),
+        (load_performance_series, "performance"),
+        (load_research_series, "research_series"),
     ):
         state = loader(paths)
         assert state.status == STATUS_OK, f"{loader.__name__}: {state.reason}"
@@ -795,7 +818,9 @@ def test_persist_writes_run_stamped_and_latest_artifacts_readable_by_the_real_re
         assert set(state.frame["parent_refresh_id"]) == {"parent-refresh"}
         assert set(state.frame["config_hash"]) == {"config-hash-1"}
         assert set(state.frame["snapshot_refresh_run_id"]) == {"refresh-run"}
-        assert state.frame["schema_version"].eq(1).all()
+        assert (
+            state.frame["schema_version"].eq(TICKER_PAGE_SCHEMA_VERSIONS[artifact]).all()
+        )
 
 
 # --------------------------------------------------------------------------
@@ -902,7 +927,10 @@ def test_usd_series_picks_one_basis_and_keeps_its_gaps():
         }
     )
 
-    series = ticker_page_module._usd_series(frame, ("return_basis_usd", "adj_close_usd"))
+    series, price_basis = ticker_page_module._usd_series(
+        frame, ("return_basis_usd", "adj_close_usd")
+    )
+    assert price_basis == "return_basis_usd"
 
     # The chosen basis keeps its gap: the three null dates simply are not there,
     # and NO adj_close level (>= 900) leaked into the series.
@@ -921,7 +949,10 @@ def test_usd_series_falls_back_only_when_the_first_basis_is_entirely_null():
             "adj_close_usd": [900.0 + index for index in range(5)],
         }
     )
-    series = ticker_page_module._usd_series(frame, ("return_basis_usd", "adj_close_usd"))
+    series, price_basis = ticker_page_module._usd_series(
+        frame, ("return_basis_usd", "adj_close_usd")
+    )
+    assert price_basis == "adj_close_usd"
     assert len(series.index) == 5
     assert series.iloc[0] == pytest.approx(900.0)
 
@@ -1069,14 +1100,16 @@ def test_research_weekly_frame_without_a_date_column_raises():
             exploratory_horizons_frame=None,
             structural_window_metrics_frame=None,
         )
-    # An EMPTY frame is still a legitimate zero-row contribution.
+    # An EMPTY frame is a legitimate zero-DATA contribution — it yields the
+    # three explicit per-kind MISSING rows (C9), never a silent empty artifact.
     empty = build_research_series(
         ticker="AEM",
         weekly_series_frame=pd.DataFrame(),
         exploratory_horizons_frame=None,
         structural_window_metrics_frame=None,
     )
-    assert empty.empty
+    assert len(empty) == 3
+    assert set(empty["kind_status"]) == {"MISSING"}
 
 
 def test_research_weeks_is_a_nullable_integer():
@@ -1087,3 +1120,267 @@ def test_research_weeks_is_a_nullable_integer():
         structural_window_metrics_frame=_windows_frame(),
     )
     assert str(frame["weeks"].dtype) == "Int64"
+
+
+# --------------------------------------------------------------------------
+# C6: per-metric eligibility, Yahoo isolation, spot Tool D authority
+# --------------------------------------------------------------------------
+
+
+def _ev_config():
+    app_config = load_app_config(ProjectPaths.discover()).app
+    return _score_config(app_config, ["ev_ebitda", "aisc", "reserve_life"])
+
+
+def _ev_tool_b_frame(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "ticker": row["ticker"],
+                "as_of_date": "2026-06-01",
+                "ev_ebitda": row.get("ev_ebitda"),
+                "aisc_usd_per_oz": row.get("aisc", 1400.0),
+                "reserve_life_years": row.get("reserve_life", 10.0),
+                "snapshot_normalization_status": row.get("snapshot_status", "OK"),
+                "financial_data_status": row.get("financial_status", "OK"),
+            }
+            for row in rows
+        ]
+    )
+
+
+def _ev_percentiles(config, *, yahoo_rows: list[dict]) -> pd.DataFrame:
+    healthy = [
+        {"ticker": "AAA", "ev_ebitda": 5.0},
+        {"ticker": "BBB", "ev_ebitda": 8.0},
+        {"ticker": "CCC", "ev_ebitda": 11.0},
+    ]
+    return build_score_percentiles(
+        app_config=config,
+        tool_a_latest=pd.DataFrame(),
+        tool_b_latest_by_source={
+            "our": _ev_tool_b_frame(healthy),
+            "yahoo": _ev_tool_b_frame(healthy + yahoo_rows),
+        },
+        tool_c_latest=pd.DataFrame(),
+        tool_d_latest=pd.DataFrame(),
+        source_run_ids={},
+    )
+
+
+def test_c6_contaminated_yahoo_rows_cannot_move_healthy_cohorts():
+    """C6: stale/contaminated/missing-status Yahoo financial rows are excluded
+
+    from the cohort BEFORE percentiles, so healthy percentiles are invariant,
+    and every ineligible row carries null percentiles with its reason.
+    """
+    config = _ev_config()
+    baseline = _ev_percentiles(config, yahoo_rows=[])
+    contested = _ev_percentiles(
+        config,
+        yahoo_rows=[
+            # extreme values that WOULD reshuffle the pool if admitted
+            {"ticker": "BAD1", "ev_ebitda": 0.1, "financial_status": "INCOMPLETE"},
+            {"ticker": "BAD2", "ev_ebitda": 99.0, "financial_status": "STALE"},
+            {"ticker": "BAD3", "ev_ebitda": 1.0, "financial_status": ""},  # unknown -> fail closed
+            {"ticker": "BAD4", "ev_ebitda": 2.0, "snapshot_status": "STALE_FX"},
+        ],
+    )
+
+    def ev_yahoo(frame):
+        rows = frame[(frame["metric_key"] == "ev_ebitda") & (frame["finance_source"] == "yahoo")]
+        return rows.set_index("ticker")
+
+    base = ev_yahoo(baseline)
+    cont = ev_yahoo(contested)
+    for ticker in ("AAA", "BBB", "CCC"):
+        assert cont.loc[ticker, "pct_low_good"] == base.loc[ticker, "pct_low_good"]
+        assert cont.loc[ticker, "pct_high_good"] == base.loc[ticker, "pct_high_good"]
+    assert set(base["eligible_peer_count"]) == {3}
+    assert set(cont.loc[["AAA", "BBB", "CCC"], "eligible_peer_count"]) == {3}
+
+    assert not cont.loc["BAD1", "metric_available"]
+    assert cont.loc["BAD1", "metric_reason"] == "yahoo_financials_not_ok:INCOMPLETE"
+    assert cont.loc["BAD3", "metric_reason"] == "financial_status_unknown"
+    assert cont.loc["BAD4", "metric_reason"] == "snapshot_not_ok:STALE_FX"
+    for ticker in ("BAD1", "BAD2", "BAD3", "BAD4"):
+        assert pd.isna(cont.loc[ticker, "pct_high_good"])
+        assert pd.isna(cont.loc[ticker, "pct_low_good"])
+
+
+def test_c6_manual_mining_metrics_never_inherit_yahoo_financial_failure():
+    """C6: AISC / reserve life are Our-View mining assumptions in either mode -
+
+    a broken Yahoo financial status must not take them away, and their basis
+    label says so explicitly.
+    """
+    config = _ev_config()
+    frame = _ev_percentiles(
+        config,
+        yahoo_rows=[{"ticker": "DDD", "ev_ebitda": 7.0, "financial_status": "INCOMPLETE"}],
+    )
+    aisc = frame[(frame["metric_key"] == "aisc") & (frame["finance_source"] == "yahoo")]
+    aisc = aisc.set_index("ticker")
+
+    assert bool(aisc.loc["DDD", "metric_available"])  # yahoo failure is irrelevant
+    assert aisc.loc["DDD", "basis"] == "Our View mining assumption"
+    ev = frame[(frame["metric_key"] == "ev_ebitda") & (frame["finance_source"] == "yahoo")]
+    assert not bool(ev.set_index("ticker").loc["DDD", "metric_available"])
+
+
+def test_c6_custom_tool_d_scenario_cannot_enter_spot_ticker_build():
+    """C6: the stage's spot assertion rejects a custom-gold Tool D artifact."""
+    import pytest as _pytest
+
+    from golden_vector.app.ticker_page_stage import _assert_tool_d_is_spot
+
+    spot_frame = pd.DataFrame(
+        [
+            {"ticker": "AAA", "gold_price_used": 4000.0, "spot_gold_usd": 4000.0},
+            {"ticker": "BBB", "gold_price_used": 4000.0, "spot_gold_usd": 4000.0},
+        ]
+    )
+    assert _assert_tool_d_is_spot(spot_frame) is spot_frame
+
+    scenario_frame = pd.DataFrame(
+        [
+            {"ticker": "AAA", "gold_price_used": 3000.0, "spot_gold_usd": 4000.0},
+        ]
+    )
+    with _pytest.raises(ValueError, match="at-spot"):
+        _assert_tool_d_is_spot(scenario_frame)
+
+    missing_column_frame = pd.DataFrame([{"ticker": "AAA", "gold_price_used": 4000.0}])
+    with _pytest.raises(ValueError, match="spot_gold_usd"):
+        _assert_tool_d_is_spot(missing_column_frame)
+
+
+def test_c4_weekly_points_keep_actual_trading_dates_never_invented_fridays(chart_config):
+    """C4: a source ending mid-week keeps its real last date - the artifact
+
+    must never claim a date after the source data ends (the AEM 2026-08-14
+    case: resample('W-FRI') relabelled an earlier observation as Friday).
+    """
+    # equity ends on a Tuesday
+    equity = _daily("2022-01-03", 1000, column="return_basis_usd", base=100.0)
+    last_real_date = pd.Timestamp(equity["date"].max())
+    gold = _daily("2022-01-03", 1000, column="adj_close_usd", base=2000.0)
+
+    frame = build_performance_series(
+        app_config=chart_config,
+        equity_history=equity,
+        gold_history=gold,
+        benchmark_histories={},
+        ticker="AEM",
+        equity_as_of_date=last_real_date,
+    )
+
+    ok_rows = frame[frame["series_status"] == "OK"]
+    assert not ok_rows.empty
+    # No artifact date may exceed the true source end.
+    assert pd.to_datetime(ok_rows["date"]).max() <= last_real_date
+    # And source_last_date discloses the real end.
+    stock_rows = ok_rows[ok_rows["series"] == "stock"]
+    assert set(stock_rows["source_last_date"]) == {last_real_date}
+
+
+def test_c4_stale_fx_rows_are_excluded_from_performance(chart_config):
+    """C4: a non-OK normalized endpoint can never become a chart point."""
+    equity = _daily("2025-01-01", 200, column="return_basis_usd", base=100.0)
+    equity["normalization_status"] = "OK"
+    # last five rows carry stale FX - they must vanish from the series
+    equity.loc[equity.index[-5:], "normalization_status"] = "STALE_FX"
+    clean_last = pd.Timestamp(equity.loc[equity.index[-6], "date"])
+    gold = _daily("2025-01-01", 200, column="adj_close_usd", base=2000.0)
+
+    frame = build_performance_series(
+        app_config=chart_config,
+        equity_history=equity,
+        gold_history=gold,
+        benchmark_histories={},
+        ticker="AEM",
+        equity_as_of_date=pd.Timestamp(equity["date"].max()),
+    )
+
+    stock_rows = frame[(frame["series"] == "stock") & (frame["series_status"] == "OK")]
+    assert not stock_rows.empty
+    assert pd.to_datetime(stock_rows["date"]).max() <= clean_last
+    assert set(stock_rows["source_last_date"]) == {clean_last}
+
+
+def test_c4_no_rebased_value_exists_before_the_shared_anchor(chart_config):
+    """C4: the rebased view starts AT the anchor; price view still shows the
+
+    full window. A pre-anchor point divided by a future base is fabricated.
+    """
+    equity = _daily("2024-01-01", 420, column="return_basis_usd", base=100.0)
+    gold = _daily("2024-01-01", 420, column="adj_close_usd", base=2000.0)
+    # GDX starts three months late -> the shared anchor is its first date.
+    gdx = _daily("2024-04-01", 355, column="adj_close_local", base=30.0)
+    as_of = pd.Timestamp(equity["date"].max())
+
+    frame = build_performance_series(
+        app_config=chart_config,
+        equity_history=equity,
+        gold_history=gold,
+        benchmark_histories={"gdx": gdx},
+        ticker="AEM",
+        equity_as_of_date=as_of,
+    )
+
+    three_year = frame[(frame["horizon"] == "3Y") & (frame["series_status"] == "OK")]
+    anchor = three_year["rebase_date"].dropna().iloc[0]
+    rebased = three_year[three_year["view"] == "rebased"]
+    assert not rebased.empty
+    assert pd.to_datetime(rebased["date"]).min() >= anchor
+    # exactly 100 for EVERY series at the anchor
+    at_anchor = rebased[rebased["date"] == anchor]
+    assert set(at_anchor["series"]) == {"stock", "gold", "gdx"}
+    assert (at_anchor["value"] == 100.0).all()
+    # price view still covers dates before the anchor
+    price = three_year[(three_year["view"] == "price") & (three_year["series"] == "stock")]
+    assert pd.to_datetime(price["date"]).min() < anchor
+
+
+def test_c9_horizon_rows_persist_the_full_retained_ladder():
+    """C9 (v2): the UI reads gold return/delta, coverage, and exact period
+
+    from persisted fields 1:1 — nothing is recomputed in a request handler.
+    """
+    horizons = pd.DataFrame(
+        [
+            {
+                "ticker": "AEM",
+                "horizon_id": "1Y",
+                "horizon_mode": "trading_days",
+                "equity_return": 0.31,
+                "gold_return": 0.22,
+                "gold_delta": 0.09,
+                "coverage_flag": "FULL",
+                "coverage_reason": None,
+                "start_date": "2025-08-11",
+                "end_date": "2026-08-10",
+            }
+        ]
+    )
+
+    frame = build_research_series(
+        ticker="AEM",
+        weekly_series_frame=None,
+        exploratory_horizons_frame=horizons,
+        structural_window_metrics_frame=None,
+    )
+    row = frame[frame["kind"] == "horizon"].iloc[0]
+
+    assert row["horizon_return"] == pytest.approx(0.31)
+    assert row["horizon_gold_return"] == pytest.approx(0.22)
+    assert row["horizon_gold_delta"] == pytest.approx(0.09)
+    assert row["horizon_coverage_flag"] == "FULL"
+    assert row["horizon_start_date"] == pd.Timestamp("2025-08-11")
+    assert row["horizon_end_date"] == pd.Timestamp("2026-08-10")
+    assert row["kind_status"] == "OK"
+    # absent kinds still carry explicit MISSING rows alongside
+    assert set(frame.loc[frame["kind_status"] == "MISSING", "kind"]) == {
+        "weekly",
+        "window_fit",
+    }

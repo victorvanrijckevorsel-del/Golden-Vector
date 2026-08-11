@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from golden_vector.common.eligibility import is_score_eligible
+from golden_vector.common.eligibility import is_score_eligible, ok_normalized_rows
 from golden_vector.common.numeric import optional_float
 from golden_vector.contracts.ticker_page import (
     FINANCE_SOURCES,
@@ -31,6 +31,7 @@ from golden_vector.contracts.ticker_page import (
     PERFORMANCE_COLUMNS,
     PERFORMANCE_KEY_COLUMNS,
     RESEARCH_SERIES_COLUMNS,
+    RESEARCH_KINDS,
     RESEARCH_SERIES_KIND_KEY_COLUMNS,
     TICKER_PAGE_PROVENANCE_COLUMNS,
     apply_expected_dtypes,
@@ -129,6 +130,7 @@ def build_gold_response_pack(
     snapshot_refresh_run_id: str | None,
     snapshot_as_of_date: object,
     source_run_id: str,
+    configured_universe: list[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build the gold-response pack + its linearity residual diagnostics.
 
@@ -195,8 +197,12 @@ def build_gold_response_pack(
     # that only the yahoo source can price (no manual inputs yet) still deserves
     # its yahoo row plus an explicit our-source DEGRADED_INPUTS row; keying off
     # `our` alone silently erased it from the artifact entirely.
+    # C8: start from the CONFIGURED universe, not just produced rows — a
+    # configured ticker no source can price still gets an explicit
+    # DEGRADED_INPUTS row per source instead of silently vanishing.
     tickers = sorted(
-        {
+        {str(t).upper() for t in (configured_universe or [])}
+        | {
             ticker
             for per_gold in evaluations.values()
             for ticker in per_gold.get(spot_key, {})
@@ -268,7 +274,10 @@ def build_gold_response_pack(
                 line: GoldLine | None = line_from_two_points(
                     outer_low, low_value, outer_high, high_value
                 )
-                if line is None:
+                if line is None or not (
+                    math.isfinite(float(line.slope)) and math.isfinite(float(line.intercept))
+                ):
+                    # C9: a non-finite fit is unusable evidence, same as missing.
                     missing_metrics.append(metric)
                     continue
                 base[f"line_slope_{metric}"] = float(line.slope)
@@ -300,6 +309,10 @@ def build_gold_response_pack(
                             "actual": float(actual),
                             "residual": float(residual),
                             "tolerance_applied": float(tolerance),
+                            # C9: severity is residual measured in tolerances —
+                            # the only unit that compares EPS rows with USD-million
+                            # rows honestly.
+                            "severity": float(residual / tolerance) if tolerance > 0 else None,
                             "passed": bool(passed),
                         }
                     )
@@ -311,6 +324,17 @@ def build_gold_response_pack(
                         )
 
             base["linearity_max_residual"] = max_residual
+            # C9: OK requires its mandatory evidence — at least one tested probe.
+            if (
+                base["gold_response_status"] == "OK"
+                and max_residual is None
+                and not missing_metrics
+                and not untested_probes
+            ):
+                base["gold_response_status"] = "DEGRADED_INPUTS"
+                base["gold_response_reason"] = (
+                    "no linearity evidence was recorded for any metric/probe"
+                )
             if missing_metrics:
                 base["gold_response_status"] = "DEGRADED_INPUTS"
                 base["gold_response_reason"] = (
@@ -332,7 +356,7 @@ def build_gold_response_pack(
     if len(nonlinear_tickers) >= int(dial.systemic_min_tickers):
         worst = sorted(
             (row for row in diagnostics if not row["passed"]),
-            key=lambda row: row["residual"],
+            key=lambda row: row.get("severity") or 0.0,
             reverse=True,
         )[:5]
         detail = "; ".join(
@@ -364,6 +388,7 @@ def build_gold_response_pack(
             "actual",
             "residual",
             "tolerance_applied",
+            "severity",
             "passed",
         ],
     )
@@ -398,6 +423,42 @@ def _as_of_text(record: dict[str, Any]) -> str | None:
     return None
 
 
+#: Exact approved plan wording - shown as the reason whenever Yahoo mode asks
+#: for a resilience (Tool D) metric.
+YAHOO_TOOL_D_UNAVAILABLE_REASON = "resilience is computed on Our View inputs"
+
+
+def _tool_b_metric_eligibility(
+    record: dict[str, Any],
+    *,
+    spec: Any,
+    finance_source: str,
+) -> tuple[bool, str | None]:
+    """C6: ONE central per-metric eligibility resolver for Tool B metrics.
+
+    Fails closed: when a declared requirement cannot be evaluated because the
+    row lacks the status field, the metric is ineligible in this artifact.
+    Manual mining assumptions (AISC, reserve life) never inherit a Yahoo
+    financial failure - they are Our-View inputs in either display mode.
+    """
+
+    if getattr(spec, "requires_market_snapshot", False):
+        status = str(record.get("snapshot_normalization_status") or "").strip().upper()
+        if not status:
+            return False, "snapshot_status_unknown"
+        if status != "OK":
+            return False, f"snapshot_not_ok:{status}"
+
+    if getattr(spec, "requires_source_financials", False) and finance_source == "yahoo":
+        status = str(record.get("financial_data_status") or "").strip().upper()
+        if not status:
+            return False, "financial_status_unknown"
+        if status != "OK":
+            return False, f"yahoo_financials_not_ok:{status}"
+
+    return True, None
+
+
 def build_score_percentiles(
     *,
     app_config: Any,
@@ -406,6 +467,7 @@ def build_score_percentiles(
     tool_c_latest: pd.DataFrame,
     tool_d_latest: pd.DataFrame,
     source_run_ids: dict[str, str] | None = None,
+    configured_universe: list[str] | None = None,
 ) -> pd.DataFrame:
     """Build the per-(ticker, finance_source, metric) percentile artifact (§7).
 
@@ -426,8 +488,12 @@ def build_score_percentiles(
         for source in FINANCE_SOURCES
     }
 
+    # C8: the universe starts from CONFIGURATION, not from whichever rows
+    # happened to arrive — a configured ticker missing everywhere still gets
+    # explicit no_source_row rows instead of silently vanishing.
     universe = sorted(
-        set(tool_a)
+        {str(t).upper() for t in (configured_universe or [])}
+        | set(tool_a)
         | set(tool_c)
         | set(tool_d)
         | {ticker for source_rows in tool_b.values() for ticker in source_rows}
@@ -441,7 +507,11 @@ def build_score_percentiles(
             elif spec.source_tool == "tool_c":
                 records = tool_c
             elif spec.source_tool == "tool_d":
-                records = tool_d
+                # C6: the approved plan disables resilience in Yahoo mode -
+                # "resilience is computed on Our View inputs". Yahoo rows exist
+                # (the source toggle always finds a complete set) but are
+                # unavailable with null percentiles and the exact reason.
+                records = {} if finance_source == "yahoo" else tool_d
             elif spec.source_tool == "tool_b":
                 records = tool_b[finance_source]
             else:  # pragma: no cover - config validator bans other tools
@@ -458,12 +528,28 @@ def build_score_percentiles(
                 in_pool = True
                 forced_pct: tuple[float, float] | None = None
 
-                if not record:
+                if spec.source_tool == "tool_d" and finance_source == "yahoo":
+                    available = False
+                    metric_reason = YAHOO_TOOL_D_UNAVAILABLE_REASON
+                    rank_eligible = False
+                    exclusion_reason = YAHOO_TOOL_D_UNAVAILABLE_REASON
+                elif not record:
                     available = False
                     metric_reason = "no_source_row"
                 elif spec.source_column not in record:
                     available = False
                     metric_reason = "source_column_missing"
+
+                # C6: central per-metric eligibility for Tool B metrics.
+                if available and spec.source_tool == "tool_b":
+                    eligible, eligibility_reason = _tool_b_metric_eligibility(
+                        record, spec=spec, finance_source=finance_source
+                    )
+                    if not eligible:
+                        available = False
+                        metric_reason = eligibility_reason
+                        rank_eligible = False
+                        exclusion_reason = eligibility_reason
 
                 # Trading metrics inherit the shared Finder eligibility semantics.
                 if available and spec.category == "trading":
@@ -592,8 +678,14 @@ def build_score_percentiles(
 # ---------------------------------------------------------------------------
 
 
-def _usd_series(frame: pd.DataFrame | None, columns: tuple[str, ...]) -> pd.Series:
+def _usd_series(
+    frame: pd.DataFrame | None, columns: tuple[str, ...]
+) -> tuple[pd.Series, str | None]:
     """Resolve one history frame to a USD value series indexed by date.
+
+    Returns ``(series, price_basis)`` where ``price_basis`` names the source
+    column actually chosen — the artifact labels every value with its basis
+    (adjusted return basis vs raw close) instead of a bare "USD price".
 
     ONE basis column is chosen for the WHOLE series — the first candidate that
     carries any non-null data — and its nulls are kept as visible gaps. Never a
@@ -601,23 +693,47 @@ def _usd_series(frame: pd.DataFrame | None, columns: tuple[str, ...]) -> pd.Seri
     bases* (dividend-adjusted vs unadjusted levels), so splicing them mid-series
     fabricates a step that reads as a real price move and poisons every rebased
     percentage after it. A gap is honest; a spliced level is not.
+
+    C4: rows whose ``normalization_status`` is not OK are excluded through the
+    ONE shared eligibility helper — a stale/invalid FX endpoint must never
+    become a chart point.
     """
     if frame is None or frame.empty or "date" not in frame.columns:
-        return pd.Series(dtype="float64")
-    working = frame.copy()
+        return pd.Series(dtype="float64"), None
+    working = ok_normalized_rows(frame)
+    if working.empty:
+        return pd.Series(dtype="float64"), None
+    working = working.copy()
     working["date"] = pd.to_datetime(working["date"], errors="coerce").dt.normalize()
     numeric = pd.Series(float("nan"), index=working.index, dtype="float64")
+    price_basis: str | None = None
     for column in columns:
         if column not in working.columns:
             continue
         candidate = pd.to_numeric(working[column], errors="coerce")
         if candidate.notna().any():
             numeric = candidate
+            price_basis = column
             break
     resolved = pd.Series(numeric.to_numpy(), index=working["date"])
     resolved = resolved[resolved.index.notna() & resolved.notna()]
     resolved = resolved[~resolved.index.duplicated(keep="last")]
-    return resolved.sort_index()
+    return resolved.sort_index(), price_basis
+
+
+def _weekly_last_actual(series: pd.Series) -> pd.Series:
+    """Last observation per W-FRI week, KEEPING its actual trading date.
+
+    C4: ``resample("W-FRI").last()`` relabels every week's value to Friday —
+    inventing dates the source never traded (an artifact can then claim a date
+    after the source data ends). The week is only a bucket; the point keeps
+    the date it really happened on.
+    """
+    if series.empty:
+        return series
+    periods = series.index.to_period("W-FRI")
+    keep = ~periods.duplicated(keep="last")
+    return series[keep]
 
 
 def _trading_day_lag(last_observation: pd.Timestamp, as_of: pd.Timestamp) -> int:
@@ -647,17 +763,33 @@ def build_performance_series(
     equity_as_of_date: object,
     series_source_run_ids: dict[str, str] | None = None,
 ) -> pd.DataFrame:
-    """Build the persisted performance chart series for ONE ticker (§4.4)."""
+    """Build the persisted performance chart series for ONE ticker (§4.4, v2).
+
+    C4 truth rules:
+    - every point keeps its ACTUAL trading date (weekly buckets never relabel
+      to Friday);
+    - each horizon rebases on ONE anchor date present in every included
+      series, where every rebased series equals exactly 100; no rebased value
+      exists before that anchor;
+    - the artifact discloses each source's true last date, the common trim
+      boundary, and the trim reason;
+    - a missing stock series produces explicit status rows, never an empty
+      artifact that reads as healthy.
+    """
 
     chart = app_config.ticker_page.chart
     run_ids = dict(series_source_run_ids or {})
     ticker = str(ticker).upper()
     as_of = pd.Timestamp(equity_as_of_date).normalize()
 
-    resolved: dict[str, pd.Series] = {
-        "stock": _usd_series(equity_history, ("return_basis_usd", "adj_close_usd")),
-        "gold": _usd_series(gold_history, ("adj_close_usd", "close_usd", "close")),
-    }
+    resolved: dict[str, pd.Series] = {}
+    price_bases: dict[str, str | None] = {}
+    resolved["stock"], price_bases["stock"] = _usd_series(
+        equity_history, ("return_basis_usd", "adj_close_usd")
+    )
+    resolved["gold"], price_bases["gold"] = _usd_series(
+        gold_history, ("adj_close_usd", "close_usd", "close")
+    )
     for name in _BENCHMARK_SERIES:
         history = None
         for key, frame in (benchmark_histories or {}).items():
@@ -667,7 +799,9 @@ def build_performance_series(
         # Benchmark parquets carry `*_local` columns only; GDX/GDXJ are US-listed
         # USD ETFs, so local IS USD — the one normalize boundary for this producer
         # (plan §12 payload-spike producer note).
-        resolved[name] = _usd_series(history, ("adj_close_local", "close_local"))
+        resolved[name], price_bases[name] = _usd_series(
+            history, ("adj_close_local", "close_local")
+        )
 
     statuses: dict[str, tuple[str, str | None]] = {}
     for name, series in resolved.items():
@@ -688,9 +822,60 @@ def build_performance_series(
                 continue
         statuses[name] = ("OK", None)
 
-    included = [name for name, (status, _) in statuses.items() if status == "OK"]
     rows: list[dict[str, Any]] = []
-    if "stock" not in included:
+
+    def _base_row(name: str, **overrides: Any) -> dict[str, Any]:
+        source_last = (
+            resolved[name].index[-1] if not resolved[name].empty else pd.NaT
+        )
+        row = {
+            "ticker": ticker,
+            "series": name,
+            "view": "price",
+            "horizon": None,
+            "date": as_of,
+            "value": None,
+            "rebase_date": pd.NaT,
+            "late_start": False,
+            "series_status": "OK",
+            "series_reason": None,
+            "series_as_of_date": source_last if not pd.isna(source_last) else as_of,
+            "source_last_date": source_last,
+            "common_end_date": pd.NaT,
+            "trim_reason": None,
+            "price_basis": price_bases.get(name),
+            "series_source_run_id": run_ids.get(name, "unknown"),
+            "currency_basis": "USD",
+            **_null_provenance(),
+        }
+        row.update(overrides)
+        return row
+
+    if statuses["stock"][0] != "OK":
+        # C4: an absent stock series is an explicit per-item state — every
+        # series/view/horizon gets a status row so the artifact can never be
+        # mistaken for a healthy empty build.
+        stock_status, stock_reason = statuses["stock"]
+        for horizon in chart.horizons:
+            for name in resolved:
+                if name == "stock":
+                    status, reason = stock_status, stock_reason
+                else:
+                    status = "OMITTED_NO_STOCK"
+                    reason = (
+                        f"chart unavailable: stock series is "
+                        f"{stock_status.lower()} ({stock_reason})"
+                    )
+                for view in ("price", "rebased"):
+                    rows.append(
+                        _base_row(
+                            name,
+                            view=view,
+                            horizon=horizon,
+                            series_status=status,
+                            series_reason=reason,
+                        )
+                    )
         return _validated(
             rows,
             columns=PERFORMANCE_COLUMNS,
@@ -699,8 +884,22 @@ def build_performance_series(
             artifact="performance",
         )
 
+    included = [name for name, (status, _) in statuses.items() if status == "OK"]
+
     # Common ending date = the earliest last-observation among included series.
     common_end = min(resolved[name].index[-1] for name in included)
+    limiters = sorted(
+        name for name in included if resolved[name].index[-1] == common_end
+    )
+
+    def _trim_reason(name: str) -> str | None:
+        source_last = resolved[name].index[-1]
+        if source_last <= common_end:
+            return None
+        return (
+            f"trimmed from {source_last.date()} to common end {common_end.date()} "
+            f"(limited by {', '.join(limiters)})"
+        )
 
     for horizon in chart.horizons:
         years = _PERFORMANCE_HORIZON_YEARS[horizon]
@@ -712,7 +911,8 @@ def build_performance_series(
             series = resolved[name]
             series = series[(series.index >= cutoff) & (series.index <= common_end)]
             if rule is not None and not series.empty:
-                series = series.resample(rule).last().dropna()
+                # C4: weekly buckets keep the ACTUAL last trading date.
+                series = _weekly_last_actual(series)
             windowed[name] = series
 
         live = [name for name in included if not windowed[name].empty]
@@ -721,40 +921,65 @@ def build_performance_series(
 
         grid = sorted({date for name in live for date in windowed[name].index})
         window_start = grid[0]
-        rebase_date = max(windowed[name].index[0] for name in live)
+
+        # C4: ONE anchor — the earliest date present in EVERY live series.
+        common_dates = set(windowed[live[0]].index)
+        for name in live[1:]:
+            common_dates &= set(windowed[name].index)
+        anchor = min(common_dates) if common_dates else None
 
         for name in live:
             series = windowed[name]
-            base_slice = series[series.index >= rebase_date]
-            base_value = float(base_slice.iloc[0]) if not base_slice.empty else None
             late_start = bool(series.index[0] > window_start)
             series_as_of = series.index[-1]
+            base_value = (
+                float(series.loc[anchor]) if anchor is not None else None
+            )
+            common = dict(
+                horizon=horizon,
+                late_start=late_start,
+                series_as_of_date=series_as_of,
+                common_end_date=common_end,
+                trim_reason=_trim_reason(name),
+                rebase_date=anchor if anchor is not None else pd.NaT,
+            )
             for date in grid:
                 raw = float(series.loc[date]) if date in series.index else None
+                rows.append(
+                    _base_row(name, view="price", date=date, value=raw, **common)
+                )
+                if anchor is None or date < anchor:
+                    # C4: no rebased value may exist before the shared anchor.
+                    continue
                 rebased = (
                     None
                     if raw is None or base_value in (None, 0)
                     else (raw / base_value) * 100.0
                 )
-                for view, value in (("price", raw), ("rebased", rebased)):
-                    rows.append(
-                        {
-                            "ticker": ticker,
-                            "series": name,
-                            "view": view,
-                            "horizon": horizon,
-                            "date": date,
-                            "value": value,
-                            "rebase_date": rebase_date,
-                            "late_start": late_start,
-                            "series_status": "OK",
-                            "series_reason": None,
-                            "series_as_of_date": series_as_of,
-                            "series_source_run_id": run_ids.get(name, "unknown"),
-                            "currency_basis": "USD",
-                            **_null_provenance(),
-                        }
+                rows.append(
+                    _base_row(
+                        name,
+                        view="rebased",
+                        date=date,
+                        value=rebased,
+                        currency_basis="INDEX_100",
+                        **common,
                     )
+                )
+            if anchor is None:
+                rows.append(
+                    _base_row(
+                        name,
+                        view="rebased",
+                        series_status="MISSING",
+                        series_reason=(
+                            f"no shared anchor date exists across included series "
+                            f"in the {horizon} window"
+                        ),
+                        currency_basis="INDEX_100",
+                        **{**common, "rebase_date": pd.NaT},
+                    )
+                )
 
         # One marker row per (series, view, horizon) for omitted/missing series —
         # never a drawn line, never a silent absence. An OK series with zero
@@ -771,26 +996,17 @@ def build_performance_series(
             if name not in live
         )
         for name, status, reason in markers:
-            series = resolved[name]
-            series_as_of = series.index[-1] if not series.empty else as_of
             for view in ("price", "rebased"):
                 rows.append(
-                    {
-                        "ticker": ticker,
-                        "series": name,
-                        "view": view,
-                        "horizon": horizon,
-                        "date": as_of,
-                        "value": None,
-                        "rebase_date": rebase_date,
-                        "late_start": False,
-                        "series_status": status,
-                        "series_reason": reason,
-                        "series_as_of_date": series_as_of,
-                        "series_source_run_id": run_ids.get(name, "unknown"),
-                        "currency_basis": "USD",
-                        **_null_provenance(),
-                    }
+                    _base_row(
+                        name,
+                        view=view,
+                        horizon=horizon,
+                        series_status=status,
+                        series_reason=reason,
+                        common_end_date=common_end,
+                        currency_basis="USD" if view == "price" else "INDEX_100",
+                    )
                 )
 
     return _validated(
@@ -867,6 +1083,7 @@ def build_research_series(
                     gdxj_return=optional_float(
                         _first_column(record, "gdxj_weekly_log_return", "gdxj_return")
                     ),
+                    kind_status="OK",
                 )
             )
 
@@ -878,6 +1095,10 @@ def build_research_series(
                 label = record.get("horizon_id")
                 if label is None or (isinstance(label, float) and math.isnan(label)):
                     continue
+                start_date = pd.to_datetime(record.get("start_date"), errors="coerce")
+                end_date = pd.to_datetime(record.get("end_date"), errors="coerce")
+                coverage_flag = record.get("coverage_flag")
+                coverage_reason = record.get("coverage_reason")
                 rows.append(
                     _row(
                         "horizon",
@@ -886,6 +1107,23 @@ def build_research_series(
                             _first_column(record, "equity_return", "horizon_return")
                         ),
                         basis=str(record.get("horizon_mode") or "equity_return"),
+                        # C9: the retained ladder persists 1:1 — gold leg,
+                        # delta, coverage, and the exact period.
+                        horizon_gold_return=optional_float(record.get("gold_return")),
+                        horizon_gold_delta=optional_float(record.get("gold_delta")),
+                        horizon_coverage_flag=(
+                            None if coverage_flag is None or pd.isna(coverage_flag)
+                            else str(coverage_flag)
+                        ),
+                        horizon_coverage_reason=(
+                            None
+                            if coverage_reason is None
+                            or (isinstance(coverage_reason, float) and math.isnan(coverage_reason))
+                            else str(coverage_reason)
+                        ),
+                        horizon_start_date=(None if pd.isna(start_date) else start_date),
+                        horizon_end_date=(None if pd.isna(end_date) else end_date),
+                        kind_status="OK",
                     )
                 )
 
@@ -912,11 +1150,24 @@ def build_research_series(
                     down_beta=optional_float(record.get("down_beta")),
                     r_squared=optional_float(record.get("r_squared")),
                     weeks=weeks,
+                    kind_status="OK",
                     window_status=(
                         None
                         if record.get("window_status") is None
                         else str(record.get("window_status"))
                     ),
+                )
+            )
+
+    # C9: an absent kind is an explicit state, never a silent hole.
+    present_kinds = {row["kind"] for row in rows}
+    for kind in RESEARCH_KINDS:
+        if kind not in present_kinds:
+            rows.append(
+                _row(
+                    kind,
+                    kind_status="MISSING",
+                    kind_reason=f"no {kind} rows are available for this ticker",
                 )
             )
 
@@ -932,7 +1183,9 @@ def build_research_series(
     # Uniqueness is per row-kind (§5.6), not on (ticker, kind).
     violations = [note for note in violations if not note.startswith("duplicate keys")]
     for kind, kind_keys in RESEARCH_SERIES_KIND_KEY_COLUMNS.items():
-        subset = frame[frame["kind"] == kind]
+        # Kind keys are required on DATA rows; a MISSING status row has no key
+        # by construction (there is nothing to key).
+        subset = frame[frame["kind"].eq(kind) & frame["kind_status"].eq("OK")]
         if subset.empty:
             continue
         violations.extend(

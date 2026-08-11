@@ -431,23 +431,27 @@ def _build_tool_d_row(
 
 
 def _add_quality_scores(output: pd.DataFrame, *, config: ToolDConfig) -> None:
+    # C5: percentile pools contain ELIGIBLE rows only. Degraded rows are
+    # excluded BEFORE any percentile is computed — a broken company must not be
+    # able to move a healthy company's component, score, or rank (masking after
+    # the pool still let it shift every healthy percentile).
+    eligible = output["resilience_data_status"].eq("OK")
     output["cost_curve_aisc_percentile"] = oriented_percentile(
-        pd.to_numeric(output["aisc_usd_per_oz"], errors="coerce"),
+        pd.to_numeric(output.loc[eligible, "aisc_usd_per_oz"], errors="coerce"),
         high_good=True,
-    )
+    ).reindex(output.index)
     component_percentiles = pd.DataFrame(index=output.index)
     for raw_column, component_column in TOOL_D_RANK_COMPONENTS.items():
         component_percentiles[component_column] = oriented_percentile(
-            pd.to_numeric(output[raw_column], errors="coerce"),
+            pd.to_numeric(output.loc[eligible, raw_column], errors="coerce"),
             high_good=config.quality_components[raw_column] == "high_good",
-        )
+        ).reindex(output.index)
         output[component_column] = component_percentiles[component_column]
 
     component_count = component_percentiles.notna().sum(axis=1)
     output["tool_d_quality_score"] = component_percentiles.mean(axis=1, skipna=True)
     output["tool_d_quality_score"] = output["tool_d_quality_score"].where(
-        component_count.eq(len(TOOL_D_RANK_COMPONENTS))
-        & output["resilience_data_status"].eq("OK")
+        component_count.eq(len(TOOL_D_RANK_COMPONENTS)) & eligible
     )
     output["tool_d_quality_rank"] = oriented_percentile(
         output["tool_d_quality_score"],

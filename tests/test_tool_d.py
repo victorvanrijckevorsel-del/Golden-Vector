@@ -838,3 +838,92 @@ def test_tool_d_flip_panel_excludes_degraded_rows(tmp_path, monkeypatch):
     assert "DEGRADEDCO" not in flip_panel
     # The degraded row still appears in the full table, just not the headline.
     assert "DEGRADEDCO" in response["body"]
+
+
+def test_tool_d_degraded_rows_cannot_move_healthy_components_scores_or_ranks():
+    """C5 invariance: appending ANY number/magnitude of degraded rows leaves
+
+    every healthy company's component percentiles, score, and rank identical.
+    Degraded rows are excluded from the peer pool BEFORE percentiles compute,
+    not masked after — masking after still shifted every healthy percentile.
+    """
+    healthy_manual = [
+        _manual_payload(ticker="AAA", aisc=1500, net_debt=1000),
+        _manual_payload(ticker="BBB", aisc=2000, net_debt=1000),
+        _manual_payload(ticker="CCC", aisc=1200, net_debt=200),
+    ]
+    healthy_stressed = [
+        _tool_b_row("AAA", forward_ebitda=2000, aisc_margin_yield=0.01),
+        _tool_b_row("BBB", forward_ebitda=1000, aisc_margin_yield=0.02),
+        _tool_b_row("CCC", forward_ebitda=2500, aisc_margin_yield=0.03),
+    ]
+    healthy_spot = [
+        _tool_b_row("AAA", forward_ebitda=3000, aisc_margin_yield=0.05),
+        _tool_b_row("BBB", forward_ebitda=1800, aisc_margin_yield=0.06),
+        _tool_b_row("CCC", forward_ebitda=3600, aisc_margin_yield=0.07),
+    ]
+    latest_rows = [
+        {"ticker": "AAA", "source_run_id": "tool-b-run"},
+        {"ticker": "BBB", "source_run_id": "tool-b-run"},
+        {"ticker": "CCC", "source_run_id": "tool-b-run"},
+    ]
+
+    def build(with_degraded: bool):
+        manual = list(healthy_manual)
+        stressed = list(healthy_stressed)
+        spot = list(healthy_spot)
+        latest = list(latest_rows)
+        if with_degraded:
+            # extreme AISC values that WOULD reshuffle every cost percentile if
+            # they ever entered the pool; missing interest makes them degraded
+            for ticker, extreme_aisc in (("BAD1", 1.0), ("BAD2", 99_999.0)):
+                manual.append(
+                    _manual_payload(ticker=ticker, aisc=extreme_aisc, net_debt=500)
+                    | {"interest_expense_musd": None}
+                )
+                stressed.append(
+                    _tool_b_row(ticker, forward_ebitda=1500, aisc_margin_yield=0.04)
+                )
+                spot.append(
+                    _tool_b_row(ticker, forward_ebitda=2000, aisc_margin_yield=0.05)
+                )
+                latest.append({"ticker": ticker, "source_run_id": "tool-b-run"})
+        return build_tool_d_output_frame(
+            stressed_tool_b=pd.DataFrame(stressed),
+            spot_tool_b=pd.DataFrame(spot),
+            manual_data=_manual_data(manual),
+            tool_b_latest=pd.DataFrame(latest),
+            config=ToolDConfig(),
+            gold_price=3000.0,
+            spot_gold_usd=4000.0,
+            spot_gold_date="2026-06-01",
+            source_run_id="tool-d-run",
+        )
+
+    baseline = build(with_degraded=False).set_index("ticker")
+    contested = build(with_degraded=True).set_index("ticker")
+
+    watched_columns = [
+        "cost_curve_aisc_percentile",
+        "survival_distance_component",
+        "cost_curve_resilience_component",
+        "fragility_resilience_component",
+        "balance_sheet_resilience_component",
+        "tool_d_quality_score",
+        "tool_d_quality_rank",
+    ]
+    for ticker in ("AAA", "BBB", "CCC"):
+        for column in watched_columns:
+            base_value = baseline.loc[ticker, column]
+            contested_value = contested.loc[ticker, column]
+            if pd.isna(base_value):
+                assert pd.isna(contested_value), (ticker, column)
+            else:
+                assert contested_value == base_value, (ticker, column)
+
+    # and the degraded rows themselves are explicitly out of every pool
+    for ticker in ("BAD1", "BAD2"):
+        assert contested.loc[ticker, "resilience_data_status"] != "OK"
+        assert pd.isna(contested.loc[ticker, "cost_curve_aisc_percentile"])
+        assert pd.isna(contested.loc[ticker, "tool_d_quality_score"])
+        assert pd.isna(contested.loc[ticker, "tool_d_quality_rank"])

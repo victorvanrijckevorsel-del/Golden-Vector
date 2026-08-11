@@ -344,7 +344,11 @@ def load_research_series(paths: ProjectPaths) -> TickerPageArtifactState:
 
     violations: list[str] = []
     for kind, kind_keys in RESEARCH_SERIES_KIND_KEY_COLUMNS.items():
+        # v2 (C9): kind keys are required on OK data rows only; MISSING
+        # status rows have no key by construction.
         subset = state.frame[state.frame["kind"] == kind]
+        if "kind_status" in state.frame.columns:
+            subset = subset[subset["kind_status"].eq("OK")]
         if subset.empty:
             continue
         violations.extend(

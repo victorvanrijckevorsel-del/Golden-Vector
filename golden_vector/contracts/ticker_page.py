@@ -11,8 +11,14 @@ import pandas as pd
 TICKER_PAGE_SCHEMA_VERSIONS: dict[str, int] = {
     "gold_response": 1,
     "percentiles": 1,
-    "performance": 1,
-    "research_series": 1,
+    # v2 (C4): actual observation dates (no invented W-FRI labels), one shared
+    # anchor rebased to exactly 100, pre-anchor rebased points removed, and the
+    # trim/source-date disclosure columns below.
+    "performance": 2,
+    # v2 (C9): horizon rows persist the full retained ladder (gold return/delta,
+    # coverage flag/reason, exact period) 1:1, and every kind carries an
+    # explicit per-kind status so an absent kind can never be silent.
+    "research_series": 2,
 }
 
 # Provenance columns carried by every ticker-page artifact (§5.6 "Common columns").
@@ -34,7 +40,14 @@ GOLD_RESPONSE_STATUSES: tuple[str, ...] = (
 PERFORMANCE_SERIES: tuple[str, ...] = ("stock", "gold", "gdx", "gdxj")
 PERFORMANCE_VIEWS: tuple[str, ...] = ("price", "rebased")
 PERFORMANCE_HORIZONS: tuple[str, ...] = ("1Y", "3Y", "5Y")
-PERFORMANCE_SERIES_STATUSES: tuple[str, ...] = ("OK", "STALE_OMITTED", "MISSING")
+PERFORMANCE_SERIES_STATUSES: tuple[str, ...] = (
+    "OK",
+    "STALE_OMITTED",
+    "MISSING",
+    # C4: the stock series is required for the chart; when it is absent every
+    # other series gets this explicit state instead of silently vanishing.
+    "OMITTED_NO_STOCK",
+)
 RESEARCH_KINDS: tuple[str, ...] = ("weekly", "horizon", "window_fit")
 FINANCE_SOURCES: tuple[str, ...] = ("our", "yahoo")
 
@@ -129,6 +142,12 @@ PERFORMANCE_COLUMNS: tuple[str, ...] = (
     "series_status",
     "series_reason",
     "series_as_of_date",
+    # C4 (v2): the source's TRUE last observation, the shared trim boundary,
+    # why the series was trimmed, and which price basis backs the values.
+    "source_last_date",
+    "common_end_date",
+    "trim_reason",
+    "price_basis",
     "series_source_run_id",
     "currency_basis",
     *TICKER_PAGE_PROVENANCE_COLUMNS,
@@ -152,10 +171,17 @@ RESEARCH_SERIES_COLUMNS: tuple[str, ...] = (
     "gold_return",
     "gdx_return",
     "gdxj_return",
-    # horizon
+    # horizon (v2/C9: the retained Full-Research ladder persists 1:1 — the UI
+    # must read these fields, never recompute them in a request handler)
     "horizon_label",
     "horizon_return",
     "basis",
+    "horizon_gold_return",
+    "horizon_gold_delta",
+    "horizon_coverage_flag",
+    "horizon_coverage_reason",
+    "horizon_start_date",
+    "horizon_end_date",
     # window_fit
     "window",
     "up_beta",
@@ -163,6 +189,10 @@ RESEARCH_SERIES_COLUMNS: tuple[str, ...] = (
     "r_squared",
     "weeks",
     "window_status",
+    # v2/C9: explicit per-kind status — a kind with no rows still has a row
+    # saying so (kind_status MISSING + reason); data rows carry OK.
+    "kind_status",
+    "kind_reason",
     *TICKER_PAGE_PROVENANCE_COLUMNS,
 )
 
@@ -239,6 +269,10 @@ PERFORMANCE_DTYPES: dict[str, str] = {
     "series_status": "string",
     "series_reason": "string",
     "series_as_of_date": "datetime64[ns]",
+    "source_last_date": "datetime64[ns]",
+    "common_end_date": "datetime64[ns]",
+    "trim_reason": "string",
+    "price_basis": "string",
     "series_source_run_id": "string",
     "currency_basis": "string",
     **_PROVENANCE_DTYPES,
@@ -255,6 +289,14 @@ RESEARCH_SERIES_DTYPES: dict[str, str] = {
     "horizon_label": "string",
     "horizon_return": "float64",
     "basis": "string",
+    "horizon_gold_return": "float64",
+    "horizon_gold_delta": "float64",
+    "horizon_coverage_flag": "string",
+    "horizon_coverage_reason": "string",
+    "horizon_start_date": "datetime64[ns]",
+    "horizon_end_date": "datetime64[ns]",
+    "kind_status": "string",
+    "kind_reason": "string",
     "window": "string",
     "up_beta": "float64",
     "down_beta": "float64",
