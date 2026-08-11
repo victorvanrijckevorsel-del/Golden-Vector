@@ -102,7 +102,11 @@ def _availability_row(*, ticker: str, record: dict[str, Any] | None) -> dict[str
     message = clean_string(record.get("message"))
     row_count = optional_int(record.get("row_count")) or 0
     options_available = bool(record.get("options_available"))
-    feature_status = clean_string(record.get("feature_status")) or "OK"
+    # Same normalization the options-features loader uses for this exact field
+    # (option_artifact_sources.py): a lowercase/padded 'error' is still an ERROR,
+    # and must route to FETCH_FAILED rather than silently falling through to the
+    # message mapping (which can claim NONE_LISTED and hide the options section).
+    feature_status = (clean_string(record.get("feature_status")) or "OK").strip().upper()
 
     if options_available and row_count > 0:
         status = AVAILABILITY_LISTED

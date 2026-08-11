@@ -678,11 +678,29 @@ def _read_option_artifact_frames(paths: ProjectPaths) -> dict[str, pd.DataFrame]
 def _require_supported_option_schema(frame: pd.DataFrame, *, name: str) -> None:
     """Fail loud unless the artifact carries ONE supported option schema version."""
 
-    versions = {
-        version
+    # Reconciliation first (restores what the old `schema_version=` checked-read
+    # path did): the parquet FILE metadata is written at publish time and cannot
+    # be edited by a column rewrite, so a column that disagrees with it means the
+    # file is not what it claims to be. Membership in the supported set is only
+    # meaningful once the two agree.
+    # frame.attrs carries the file-level parquet key/value metadata, populated by
+    # read_required_parquet via parquet_context_metadata.
+    metadata_versions = {
+        normalized_option_schema_version(value)
+        for value in ([frame.attrs.get("schema_version")] if frame.attrs.get("schema_version") is not None else [])
+    } - {None}
+    column_versions = {
+        normalized_option_schema_version(value)
         for value in frame["schema_version"].dropna().unique()
-        for version in (normalized_option_schema_version(value),)
     }
+    if metadata_versions and not (column_versions <= metadata_versions):
+        raise ParquetSchemaError(
+            f"Option artifact {name}: schema_version column "
+            f"({', '.join(sorted(str(version) for version in column_versions)) or 'missing'}) "
+            "disagrees with the parquet file metadata "
+            f"({', '.join(sorted(str(version) for version in metadata_versions))})"
+        )
+    versions = column_versions or metadata_versions
     if len(versions) == 1 and versions <= set(SUPPORTED_OPTION_SCHEMA_VERSIONS):
         return
     found = ", ".join(sorted(str(version) for version in versions)) or "missing"

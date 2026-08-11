@@ -1261,6 +1261,23 @@ def _schema_version_matches(value: object) -> bool:
     return version in SUPPORTED_OPTION_SCHEMA_VERSIONS
 
 
+def _single_option_schema_version(artifacts: dict[str, Any]) -> bool:
+    """True when the required option artifacts all carry ONE schema version.
+
+    Same rule as ``_generation_option_schema_version`` (a generation has exactly
+    one option schema version), applied to the artifacts being published so
+    freshness and carry-forward can never disagree about the same manifest.
+    """
+
+    versions = {
+        normalized_option_schema_version(
+            (artifacts.get(name) or {}).get("schema_version")
+        )
+        for name in REQUIRED_OPTION_ARTIFACT_NAMES
+    }
+    return len(versions) == 1 and None not in versions
+
+
 def _generation_option_schema_version(
     previous_artifacts: dict[str, Any],
 ) -> tuple[int | None, str | None]:
@@ -1387,10 +1404,14 @@ def _freshness_domains(
         # Audit M3: OK must also mean CURRENT schema — otherwise a publisher
         # running over pre-bump artifacts claims OK while the serve reader
         # fails loud on the same files (dishonest split-brain).
+        # And MIXED versions are never OK: carry-forward resolves a generation's
+        # ONE version via _generation_option_schema_version and rejects a mix, so
+        # freshness must reject it too or the two disagree about the same
+        # manifest (freshness says OK, carry-forward says unusable).
         required_current_schema = all(
             _schema_version_matches(artifacts[name].get("schema_version"))
             for name in REQUIRED_OPTION_ARTIFACT_NAMES
-        )
+        ) and _single_option_schema_version(artifacts)
         if required_usable and required_current_schema:
             option_domain = {
                 "status": OPTION_FRESHNESS_OK,

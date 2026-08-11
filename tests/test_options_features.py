@@ -425,3 +425,39 @@ def test_one_sided_chain_counts_zero_but_an_empty_chain_is_unknown():
     # Unresolved horizons still expose the provenance keys as explicit unknowns.
     assert empty["source_expiration_30d"] is None
     assert empty["source_dte_30d"] is None
+
+
+def test_realized_vol_price_basis_prefers_usd_then_falls_back_to_local():
+    """ONE basis order, shared by the live build and the history migration."""
+
+    from golden_vector.features.options import realized_vol_price_basis
+
+    both = pd.DataFrame({"return_basis_usd": [1.0], "adj_close_local": [9.0]})
+    assert realized_vol_price_basis(both).tolist() == [1.0]
+
+    usd_only = pd.DataFrame({"adj_close_usd": [2.0]})
+    assert realized_vol_price_basis(usd_only).tolist() == [2.0]
+
+    # Benchmark ETFs (GDX/GDXJ) are US-listed USD funds stored with *_local only.
+    local_only = pd.DataFrame({"adj_close_local": [3.0]})
+    assert realized_vol_price_basis(local_only).tolist() == [3.0]
+
+    close_only = pd.DataFrame({"close_local": [4.0]})
+    assert realized_vol_price_basis(close_only).tolist() == [4.0]
+
+    assert realized_vol_price_basis(pd.DataFrame({"volume": [5]})) is None
+
+
+def test_realized_vol_emits_a_value_for_a_local_only_benchmark_frame():
+    """Production (not just the migration) now produces iv_rv for GDX/GDXJ."""
+
+    from golden_vector.features.options import _realized_vol
+
+    dates = pd.date_range("2026-01-01", periods=30, freq="D").strftime("%Y-%m-%d")
+    prices = [100.0 * (1.01 ** index) for index in range(30)]
+    local = pd.DataFrame({"date": dates, "adj_close_local": prices})
+    usd = pd.DataFrame({"date": dates, "return_basis_usd": prices})
+
+    value = _realized_vol(local, window_days=30)
+    assert value is not None
+    assert value == pytest.approx(_realized_vol(usd, window_days=30))

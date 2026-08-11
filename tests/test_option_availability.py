@@ -155,3 +155,28 @@ def test_a_failed_fetch_stays_fetch_failed_even_with_a_zero_count():
         capture_date="2026-08-10",
     )
     assert frame.iloc[0]["availability_status"] == "FETCH_FAILED"
+
+
+def test_lowercase_feature_status_error_still_routes_to_fetch_failed():
+    """Case/whitespace must not decide whether an ERROR is honoured."""
+
+    frame = build_option_availability(
+        universe_tickers=["LOUD", "PADDED", "CTRL"],
+        snapshot_records=[
+            # A lowercase ERROR with a message that would otherwise be read as
+            # "no listed options" and HIDE the page's options section.
+            {"ticker": "LOUD", "options_available": False, "row_count": 0,
+             "message": NO_LISTED_OPTIONS_MESSAGE, "feature_status": "error"},
+            {"ticker": "PADDED", "options_available": False, "row_count": 0,
+             "message": NO_LISTED_OPTIONS_MESSAGE, "feature_status": "  Error  "},
+            # Control: a genuinely OK empty enumeration still says NONE_LISTED.
+            {"ticker": "CTRL", "options_available": False, "row_count": 0,
+             "message": NO_LISTED_OPTIONS_MESSAGE, "feature_status": "ok"},
+        ],
+        capture_date="2026-08-10",
+    ).set_index("ticker")
+
+    assert frame.loc["LOUD", "availability_status"] == "FETCH_FAILED"
+    assert frame.loc["LOUD", "fetch_status"] == "ERROR"
+    assert frame.loc["PADDED", "availability_status"] == "FETCH_FAILED"
+    assert frame.loc["CTRL", "availability_status"] == "NONE_LISTED"

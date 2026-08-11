@@ -246,13 +246,45 @@ def _atm_iv(frame: pd.DataFrame, underlying_price: float) -> float | None:
     return float(values.mean())
 
 
+REALIZED_VOL_PRICE_BASIS_COLUMNS: tuple[str, ...] = (
+    "return_basis_usd",
+    "adj_close_usd",
+    "adj_close_local",
+    "close_local",
+)
+
+
+def realized_vol_price_basis(frame: pd.DataFrame) -> pd.Series | None:
+    """Return the realized-vol PRICE-LEVEL basis column, coerced to numeric.
+
+    ONE copy of the basis-resolution order for realized vol; both the live
+    feature build and the durable-history migration resolve through here so the
+    two can never drift.
+
+    Preference order:
+    * ``return_basis_usd`` / ``adj_close_usd`` — the normalized USD price level
+      (``normalize/prices_usd.py``). These are PRICE LEVELS, not returns: they
+      must be ``pct_change()``d by the caller, or "realized vol" is the stdev of
+      raw dollar prices (the 100x ``iv_rv_ratio`` bug).
+    * ``adj_close_local`` / ``close_local`` — the benchmark ETF fallback. GDX and
+      GDXJ are US-listed USD funds captured into the benchmarks directory with
+      ``*_local`` columns only, so for them local IS USD and no FX conversion is
+      implied (the same USD==local decision the performance producer documents).
+      Without this branch the benchmarks have no basis at all and their iv_rv
+      stays permanently NULL.
+
+    Returns ``None`` when no basis column is present.
+    """
+
+    for column in REALIZED_VOL_PRICE_BASIS_COLUMNS:
+        if column in frame.columns:
+            return pd.to_numeric(frame[column], errors="coerce")
+    return None
+
+
 def _realized_vol(price_history: pd.DataFrame, *, window_days: int) -> float | None:
     if price_history.empty:
         return None
-    # return_basis_usd is a USD PRICE LEVEL (the adjusted-close return basis
-    # from normalize/prices_usd.py), not a return series — it must be
-    # pct_change()d like the fallback, or "realized vol" is the stdev of raw
-    # dollar prices (the 100x iv_rv_ratio bug).
     # Realized vol must not depend on incoming ROW ORDER or duplicate rows: a
     # vendor frame arriving newest-first, or with the same date twice, would
     # otherwise produce a different number for identical data. Sort ascending
@@ -264,22 +296,12 @@ def _realized_vol(price_history: pd.DataFrame, *, window_days: int) -> float | N
             history.sort_values("_rv_date", kind="mergesort")
             .drop_duplicates(subset="_rv_date", keep="last")
         )
+    basis = realized_vol_price_basis(history)
+    if basis is None:
+        return None
     # fill_method=None explicitly: pandas' default pads missing prices forward,
     # which invents a 0% return day and understates vol. A gap must drop out.
-    if "return_basis_usd" in history.columns:
-        returns = (
-            pd.to_numeric(history["return_basis_usd"], errors="coerce")
-            .pct_change(fill_method=None)
-            .dropna()
-        )
-    elif "adj_close_usd" in history.columns:
-        returns = (
-            pd.to_numeric(history["adj_close_usd"], errors="coerce")
-            .pct_change(fill_method=None)
-            .dropna()
-        )
-    else:
-        return None
+    returns = basis.pct_change(fill_method=None).dropna()
     # window_days is the option's CALENDAR horizon; returns rows are TRADING
     # days. Convert (252/365.25) so the realized leg covers the same span the
     # IV prices - a 90d option's realized vol uses ~62 trading rows, not 90

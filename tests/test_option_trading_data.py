@@ -1236,3 +1236,30 @@ def _chain(ticker: str) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def test_schema_column_disagreeing_with_parquet_file_metadata_is_rejected():
+    """A rewritten schema_version column cannot outvote the file metadata.
+
+    Both 3 and 4 are supported, so a plain membership check would pass a file
+    whose column was rewritten to 4 while the immutable parquet metadata still
+    says 3 — exactly the stale artifact the old ``schema_version=`` checked-read
+    path used to catch.
+    """
+
+    from golden_vector.common.parquet import ParquetSchemaError
+    from golden_vector.serve.option_trading_data import _require_supported_option_schema
+
+    frame = pd.DataFrame({"schema_version": [4], "source_run_id": ["r1"]})
+    frame.attrs["schema_version"] = "3"
+    with pytest.raises(ParquetSchemaError, match="metadata"):
+        _require_supported_option_schema(frame, name="option_trading_overview")
+
+    # Control: column and metadata agree on a supported version -> accepted.
+    agreeing = pd.DataFrame({"schema_version": [4], "source_run_id": ["r1"]})
+    agreeing.attrs["schema_version"] = "4"
+    _require_supported_option_schema(agreeing, name="option_trading_overview")
+
+    # Control: no file metadata at all -> the column alone still decides.
+    no_metadata = pd.DataFrame({"schema_version": [4], "source_run_id": ["r1"]})
+    _require_supported_option_schema(no_metadata, name="option_trading_overview")

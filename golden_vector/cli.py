@@ -2353,11 +2353,15 @@ def _run_option_artifacts_unlocked(
 
 
 def _previous_option_chain_history(paths: ProjectPaths) -> pd.DataFrame | None:
-    """The currently published chain-history artifact, or None on the first v4 run.
+    """The currently published chain-history artifact, or None on the first run.
 
-    Resolved leniently: a v3 generation has no such artifact, and a manifest that
-    cannot resolve it is a first run, not a failure. The no-shrink guard inside
-    ``build_chain_history_daily`` still protects every subsequent run.
+    This file is the ONLY copy of the accumulated daily chain history, so it is a
+    REQUIRED read whenever it exists — mirroring ``load_option_signal_history``.
+    ``read_optional_parquet`` would swallow a corrupt/unreadable file, return
+    empty, and the no-shrink guard (which compares against what we hand it) would
+    see "no previous rows" and happily publish a history with the entire past
+    missing. Genuinely absent (no manifest entry AND no alias file) is the only
+    None: a true first run.
     """
 
     path = resolve_current_model_artifact_path(paths, "option_chain_history_daily")
@@ -2365,7 +2369,14 @@ def _previous_option_chain_history(paths: ProjectPaths) -> pd.DataFrame | None:
         path = option_artifact_latest_path(paths, "option_chain_history_daily")
     if not path.exists():
         return None
-    frame = read_optional_parquet(path)
+    try:
+        frame = pd.read_parquet(path)
+    except Exception as exc:
+        raise ValueError(
+            "Published option chain history could not be read: "
+            f"{path} ({exc}). Refusing to rebuild the option artifacts from an "
+            "empty history — the last good published state stays current."
+        ) from exc
     return None if frame.empty else frame
 
 

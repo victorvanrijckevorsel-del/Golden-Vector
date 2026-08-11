@@ -907,3 +907,49 @@ def _write_portfolio_outputs(paths: ProjectPaths, *, refresh_run_id: str) -> Non
     csv_run_path.parent.mkdir(parents=True, exist_ok=True)
     csv.to_csv(csv_run_path, index=False)
     csv.to_csv(paths.latest_portfolio_reconciliation_export_csv_path, index=False)
+
+
+def _freshness_artifacts(versions: dict[str, int]) -> dict[str, dict]:
+    artifacts = {
+        "foundation": {"usable": True, "snapshot_as_of_date": "2026-08-10"},
+        "options": {"usable": True, "as_of_date": "2026-08-10"},
+    }
+    for name in REQUIRED_OPTION_ARTIFACT_NAMES:
+        artifacts[name] = {
+            "usable": True,
+            "schema_version": versions[name],
+            "source_run_ids": ["20260810T120000Z-refresh-aaaaaaaa"],
+        }
+    return artifacts
+
+
+def _option_domain(artifacts, tmp_path):
+    from golden_vector.app.model_state import _freshness_domains
+
+    return _freshness_domains(
+        paths=build_test_paths(tmp_path),
+        artifacts=artifacts,
+        option_publish_block=None,
+        carry=None,
+        carry_failure=None,
+    )["option_artifacts"]
+
+
+def test_mixed_option_schema_versions_are_never_reported_fresh(tmp_path):
+    """A manifest mixing v3 and v4 must not claim OK.
+
+    Both versions are individually SUPPORTED, so the per-artifact check passes;
+    only the single-version rule catches the mix. Carry-forward already rejects
+    a mixed generation, so freshness saying OK would be a split brain.
+    """
+
+    versions = dict.fromkeys(REQUIRED_OPTION_ARTIFACT_NAMES, 4)
+    versions[REQUIRED_OPTION_ARTIFACT_NAMES[0]] = 3
+    domain = _option_domain(_freshness_artifacts(versions), tmp_path)
+    assert domain["status"] != "OK"
+
+    # Control: one uniform supported version still reports OK.
+    uniform = _option_domain(
+        _freshness_artifacts(dict.fromkeys(REQUIRED_OPTION_ARTIFACT_NAMES, 4)), tmp_path
+    )
+    assert uniform["status"] == "OK"

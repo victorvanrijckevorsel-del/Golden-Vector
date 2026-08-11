@@ -20,15 +20,21 @@ Gate policy (plan §6.3):
   that field only; the row survives with the reason recorded in ``capture_quality``.
 * No-shrink — output (ticker, as_of_date) keys must be a superset of the previous
   history's keys; a violation raises rather than publishing a shrunken file.
+
+Row status: v1 emits ONLY ``row_status='observed'`` — every published row is a
+real capture. ``carried_forward`` and ``backfilled`` are RESERVED names for the
+deferred runs-backfill enrichment and are never written today; a reader seeing
+either value is looking at a future schema, not v1 output.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import pandas as pd
 
-from golden_vector.common.numeric import optional_float, optional_int
+from golden_vector.common.numeric import optional_finite_float, optional_float
 from golden_vector.common.strings import clean_string
 from golden_vector.contracts.config_models import OptionHistoryQualityConfig
 from golden_vector.contracts.option_artifacts import (
@@ -155,7 +161,13 @@ def _rows_for_ticker(
 
 
 def _select_same_day_capture(captures: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Highest total OI wins the day; ties go to the latest (lexicographic) run id."""
+    """Highest total OI wins the day; ties go to the latest (lexicographic) run id.
+
+    This is the INTRA-FRAME selector, for a ``features_frames`` entry that really
+    carries several captures for one ticker/day. Production feeds exactly one row
+    per ticker per build, so the LIVE same-day contest is the cross-run one in
+    ``_merge_forward`` (today's capture vs the already-published row).
+    """
 
     scored = [
         (
@@ -171,32 +183,53 @@ def _select_same_day_capture(captures: list[dict[str, Any]]) -> dict[str, Any] |
     return captures[scored[0][2]]
 
 
+def _gated_count(value: object, *, field: str, flags: list[str]) -> int | None:
+    """Count gate: non-finite degrades THIS field to None, never raises.
+
+    ``optional_int`` calls ``int()``, and ``int(inf)``/``int(nan)`` raise
+    (``OverflowError``/``ValueError``) — a single poisoned vendor number would
+    abort the whole publish. Screen for finiteness first so one bad field costs
+    only that field, with the reason recorded in ``capture_quality``.
+    """
+
+    numeric = optional_float(value)
+    if numeric is not None and not math.isfinite(numeric):
+        flags.append(f"non_finite:{field}")
+        return None
+    count = None if numeric is None else int(numeric)
+    if count is not None and count < 0:
+        flags.append(f"negative:{field}")
+        return None
+    return count
+
+
+def _gated_ratio(value: object, *, field: str, flags: list[str]) -> float | None:
+    """Ratio gate: non-finite (inf from a zero denominator) degrades the field."""
+
+    if optional_float(value) is not None and optional_finite_float(value) is None:
+        flags.append(f"non_finite:{field}")
+        return None
+    ratio = optional_finite_float(value)
+    if ratio is not None and ratio < 0:
+        flags.append(f"negative:{field}")
+        return None
+    return ratio
+
+
 def _gated_row(capture: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """Apply field-level gates; a bad field is NA'd, the row survives."""
 
     row: dict[str, Any] = {}
     flags: list[str] = []
     for field in _COUNT_FIELDS:
-        value = optional_int(capture.get(field))
-        if value is not None and value < 0:
-            flags.append(f"negative:{field}")
-            value = None
-        row[field] = value
+        row[field] = _gated_count(capture.get(field), field=field, flags=flags)
     for field in _RATIO_FIELDS:
-        value = optional_float(capture.get(field))
-        if value is not None and value < 0:
-            flags.append(f"negative:{field}")
-            value = None
-        row[field] = value
+        row[field] = _gated_ratio(capture.get(field), field=field, flags=flags)
     for field in _OPTIONAL_COVERAGE_FIELDS:
         # Presence gate: an old capture without the key contributes nothing.
         if field not in capture:
             continue
-        value = optional_int(capture.get(field))
-        if value is not None and value < 0:
-            flags.append(f"negative:{field}")
-            value = None
-        row[field] = value
+        row[field] = _gated_count(capture.get(field), field=field, flags=flags)
     return row, flags
 
 
@@ -256,16 +289,57 @@ def _quality_label(flags: list[str]) -> str:
     return f"{CAPTURE_QUALITY_PARTIAL}:" + ",".join(sorted(set(flags)))
 
 
+def _capture_rank(row: Any) -> tuple[int, float, str]:
+    """Best-complete ordering key: complete > partial, then OI, then later run id."""
+
+    quality = clean_string(row.get("capture_quality")) or ""
+    complete = 1 if quality.upper().startswith(CAPTURE_QUALITY_COMPLETE) else 0
+    total_oi = optional_finite_float(row.get("total_open_interest")) or 0.0
+    return (complete, total_oi, clean_string(row.get("capture_run_id")) or "")
+
+
 def _merge_forward(*, previous: pd.DataFrame, observed: pd.DataFrame) -> pd.DataFrame:
-    """Prior rows keep their own provenance; today's observations win their key."""
+    """Merge today's observations into the history, contesting shared keys.
+
+    The same-day contest is CROSS-RUN, not just intra-frame: when today's capture
+    and the already-published row share (ticker, as_of_date) — the normal case
+    for a second refresh on the same day — the best-complete rule decides which
+    survives (complete beats partial, then higher ``total_open_interest``, then
+    the later ``capture_run_id``). A blind keep-last would let a late PARTIAL
+    capture overwrite the morning's COMPLETE one and permanently shrink that
+    day's numbers. When the previous row wins it is preserved verbatim, keeping
+    its own ``capture_run_id``; only ``published_run_id`` is restamped by the
+    caller.
+    """
 
     if observed.empty:
         return previous.copy()
     if previous.empty:
         return observed.copy()
-    combined = pd.concat([previous, observed], ignore_index=True)
+
+    previous_by_key = {
+        (str(row["ticker"]), str(row["as_of_date"])): (index, row)
+        for index, row in previous.iterrows()
+    }
+    kept_observed: list[Any] = []
+    dropped_previous: set[Any] = set()
+    for index, row in observed.iterrows():
+        key = (str(row["ticker"]), str(row["as_of_date"]))
+        incumbent = previous_by_key.get(key)
+        if incumbent is None or _capture_rank(row) >= _capture_rank(incumbent[1]):
+            if incumbent is not None:
+                dropped_previous.add(incumbent[0])
+            kept_observed.append(index)
+
+    kept_previous = [
+        index for index in previous.index if index not in dropped_previous
+    ]
+    winners = pd.concat(
+        [previous.loc[kept_previous], observed.loc[kept_observed]],
+        ignore_index=True,
+    )
     return (
-        combined.drop_duplicates(subset=["ticker", "as_of_date"], keep="last")
+        winners.drop_duplicates(subset=["ticker", "as_of_date"], keep="last")
         .sort_values(["ticker", "as_of_date"])
         .reset_index(drop=True)
     )

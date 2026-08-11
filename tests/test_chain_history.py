@@ -363,3 +363,114 @@ def test_old_rows_without_side_counts_do_not_trip_the_new_floors():
         ]
         == CAPTURE_QUALITY_COMPLETE
     )
+
+
+def test_cross_run_partial_recapture_cannot_overwrite_the_published_complete_row():
+    """A same-day PARTIAL re-capture must lose to the already-published COMPLETE row."""
+
+    previous = _healthy_previous(["2026-08-03", "2026-08-04", "2026-08-05"])
+    published = previous[previous["as_of_date"] == "2026-08-05"].iloc[0].copy()
+    published["total_open_interest"] = 534_406
+    previous.loc[previous["as_of_date"] == "2026-08-05", "total_open_interest"] = 534_406
+
+    # Today's re-capture is the SAME day, smaller, and trips the trailing floor.
+    merged = build(
+        {
+            "AEM": [
+                capture(
+                    as_of_date="2026-08-05",
+                    run_id="20260805T200000Z-refresh-cccccccc",
+                    total_open_interest=354_079,
+                    n_contracts=40,
+                    n_expirations=2,
+                )
+            ]
+        },
+        previous=previous,
+        published_run_id="20260811T120000Z-refresh-bbbbbbbb",
+    )
+
+    row = merged[merged["as_of_date"] == "2026-08-05"].iloc[0]
+    assert row["total_open_interest"] == 534_406
+    assert row["capture_quality"] == CAPTURE_QUALITY_COMPLETE
+    assert row["capture_run_id"] == published["capture_run_id"]
+    # The publisher stamp still advances even though the values were preserved.
+    assert row["published_run_id"] == "20260811T120000Z-refresh-bbbbbbbb"
+
+
+def test_cross_run_control_complete_and_bigger_capture_wins_the_day():
+    previous = _healthy_previous(["2026-08-03", "2026-08-04", "2026-08-05"])
+    previous.loc[previous["as_of_date"] == "2026-08-05", "total_open_interest"] = 534_406
+
+    merged = build(
+        {
+            "AEM": [
+                capture(
+                    as_of_date="2026-08-05",
+                    run_id="20260805T200000Z-refresh-cccccccc",
+                    total_open_interest=612_000,
+                )
+            ]
+        },
+        previous=previous,
+        published_run_id="20260811T120000Z-refresh-bbbbbbbb",
+    )
+
+    row = merged[merged["as_of_date"] == "2026-08-05"].iloc[0]
+    assert row["total_open_interest"] == 612_000
+    assert row["capture_quality"] == CAPTURE_QUALITY_COMPLETE
+    assert row["capture_run_id"] == "20260805T200000Z-refresh-cccccccc"
+
+
+def test_non_finite_count_and_ratio_degrade_per_field_and_the_row_survives():
+    merged = build(
+        {
+            "AEM": [
+                capture(
+                    as_of_date="2026-08-05",
+                    run_id="r1",
+                    total_open_interest=500_000,
+                    put_oi_total=float("inf"),
+                    put_call_oi_ratio_total=float("inf"),
+                )
+            ]
+        }
+    )
+
+    row = merged.iloc[0]
+    assert len(merged.index) == 1
+    assert pd.isna(row["put_oi_total"])
+    assert pd.isna(row["put_call_oi_ratio_total"])
+    # Every other field survives untouched.
+    assert row["total_open_interest"] == 500_000
+    assert row["put_call_oi_ratio_otm"] == 1.0
+    assert "non_finite:put_oi_total" in row["capture_quality"]
+    assert "non_finite:put_call_oi_ratio_total" in row["capture_quality"]
+
+
+def test_corrupt_published_chain_history_aborts_instead_of_starting_empty(tmp_path):
+    """The published history is a REQUIRED read whenever the file exists.
+
+    Silently starting from empty would let the no-shrink guard see "no previous
+    rows" and publish a history with the entire past missing.
+    """
+
+    from golden_vector.cli import _previous_option_chain_history
+    from golden_vector.contracts.option_artifacts import option_artifact_latest_path
+    from tests.helpers import build_test_paths
+
+    paths = build_test_paths(tmp_path)
+    path = option_artifact_latest_path(paths, "option_chain_history_daily")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"not a parquet file")
+
+    with pytest.raises(ValueError, match="could not be read"):
+        _previous_option_chain_history(paths)
+
+
+def test_absent_published_chain_history_is_a_first_run(tmp_path):
+    from golden_vector.cli import _previous_option_chain_history
+    from tests.helpers import build_test_paths
+
+    paths = build_test_paths(tmp_path)
+    assert _previous_option_chain_history(paths) is None

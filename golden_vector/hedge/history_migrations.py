@@ -9,18 +9,16 @@ the corrected semantics rather than rebuilt from a refresh.
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Any, Protocol
 
 import pandas as pd
 
 from golden_vector.common.parquet import write_parquet_atomic
-from golden_vector.features.options_chain import CALENDAR_DAYS_PER_YEAR
+from golden_vector.features.options import _realized_vol
 from golden_vector.hedge.option_signals import option_signal_history_path
 from golden_vector.ingestion.persist_options import safe_options_file_name
 
-TRADING_DAYS_PER_YEAR = 252
 BACKUP_FILE_NAME = "option_signal_history.pre_iv_rv_migration.parquet"
 IV_RV_MIGRATION_VERSION = 1
 
@@ -31,56 +29,50 @@ class _MigrationPaths(Protocol):
     benchmarks_dir: Path
 
 
-def _price_returns(paths: _MigrationPaths, ticker: str) -> pd.Series | None:
-    """Return the daily pct-return series indexed by ISO date string."""
+def _price_frame(paths: _MigrationPaths, ticker: str) -> pd.DataFrame | None:
+    """Load the ticker's price frame: normalized USD equities, else benchmarks.
+
+    The BASIS column is not chosen here — ``features.options`` owns that single
+    resolution order (including the ``*_local`` benchmark fallback for the
+    US-listed USD ETFs stored in the benchmarks directory).
+    """
 
     name = safe_options_file_name(ticker)
     equity_path = paths.intermediate_usd_equities_dir / f"{name}.parquet"
     benchmark_path = paths.benchmarks_dir / f"{name}.parquet"
     if equity_path.exists():
         frame = pd.read_parquet(equity_path)
-        basis_columns = ("return_basis_usd", "adj_close_usd")
     elif benchmark_path.exists():
-        # GDX/GDXJ are US-listed USD ETFs stored with *_local columns only.
         frame = pd.read_parquet(benchmark_path)
-        basis_columns = ("adj_close_local", "close_local")
     else:
         return None
     if frame.empty or "date" not in frame.columns:
         return None
-    basis = next((col for col in basis_columns if col in frame.columns), None)
-    if basis is None:
-        return None
-    prices = pd.DataFrame(
-        {
-            "date": frame["date"].astype(str),
-            "price": pd.to_numeric(frame[basis], errors="coerce"),
-        }
-    )
-    prices = (
-        prices.sort_values("date", kind="mergesort")
-        .drop_duplicates(subset="date", keep="last")
-        .set_index("date")["price"]
-    )
-    returns = prices.pct_change(fill_method=None).dropna()
-    return returns
+    return frame
 
 
 def _realized_vol_as_of(
-    returns: pd.Series | None, *, as_of_date: str, window_days: int
+    frame: pd.DataFrame | None, *, as_of_date: str, window_days: int
 ) -> float | None:
-    """Mirror ``features.options._realized_vol`` using prices dated <= as_of."""
+    """Slice the price frame to rows dated <= as_of, then call PRODUCTION vol.
 
-    if returns is None or returns.empty:
+    There is exactly ONE realized-vol implementation
+    (``features.options._realized_vol``); this function only bounds the input by
+    date so no future price can leak into a historical row. Dates are compared
+    as TIMESTAMPS on both sides — string comparison silently mis-orders mixed
+    date formats (e.g. ``2026-1-5`` vs ``2026-01-05``).
+    """
+
+    if frame is None or frame.empty:
         return None
-    window = returns[returns.index <= as_of_date]
-    trading_rows = max(
-        2, int(round(window_days * TRADING_DAYS_PER_YEAR / CALENDAR_DAYS_PER_YEAR))
-    )
-    window = window.tail(trading_rows)
-    if len(window.index) < max(2, int(trading_rows * 0.8)):
+    as_of = pd.to_datetime(as_of_date, errors="coerce")
+    if pd.isna(as_of):
         return None
-    return float(window.std(ddof=1) * math.sqrt(TRADING_DAYS_PER_YEAR))
+    dates = pd.to_datetime(frame["date"], errors="coerce")
+    sliced = frame[dates.notna() & (dates <= as_of)]
+    if sliced.empty:
+        return None
+    return _realized_vol(sliced, window_days=window_days)
 
 
 def migrate_iv_rv_history(
@@ -93,13 +85,9 @@ def migrate_iv_rv_history(
         raise FileNotFoundError(f"Option signal history is missing: {path}")
     frame = pd.read_parquet(path)
 
-    backup_path = path.parent / BACKUP_FILE_NAME
-    if not backup_path.exists():
-        write_parquet_atomic(frame, backup_path, index=False)
-
     before = pd.to_numeric(frame.get("iv_rv_ratio"), errors="coerce")
 
-    returns_cache: dict[str, pd.Series | None] = {}
+    frame_cache: dict[str, pd.DataFrame | None] = {}
     vol_cache: dict[tuple[str, str, int], float | None] = {}
     new_values: list[float | None] = []
     for _, row in frame.iterrows():
@@ -116,10 +104,10 @@ def migrate_iv_rv_history(
             continue
         key = (ticker, as_of_date, horizon)
         if key not in vol_cache:
-            if ticker not in returns_cache:
-                returns_cache[ticker] = _price_returns(paths, ticker)
+            if ticker not in frame_cache:
+                frame_cache[ticker] = _price_frame(paths, ticker)
             vol_cache[key] = _realized_vol_as_of(
-                returns_cache[ticker], as_of_date=as_of_date, window_days=horizon
+                frame_cache[ticker], as_of_date=as_of_date, window_days=horizon
             )
         rv = vol_cache[key]
         if rv is None or rv == 0:
@@ -128,6 +116,26 @@ def migrate_iv_rv_history(
         new_values.append(float(atm_iv) / float(rv))
 
     after = pd.Series(new_values, index=frame.index, dtype="float64")
+
+    # LOSS GUARD: this file is the ONLY copy of the accumulated series. A
+    # recompute that ends with FEWER populated ratios than it started with is
+    # data destruction (a missing/renamed price file, a delisted ticker), not a
+    # correction — abort before anything is written so the live store and its
+    # backup both stay exactly as they were.
+    lost = before.notna() & after.isna()
+    if int(after.notna().sum()) < int(before.notna().sum()):
+        tickers = sorted({str(value) for value in frame.loc[lost, "ticker"]})
+        raise ValueError(
+            "Refusing to migrate iv_rv history: the recompute would wipe "
+            f"{int(lost.sum())} previously populated iv_rv_ratio value(s) "
+            f"({int(before.notna().sum())} -> {int(after.notna().sum())}). "
+            f"Affected tickers: {', '.join(tickers) or 'unknown'}."
+        )
+
+    backup_path = path.parent / BACKUP_FILE_NAME
+    if not backup_path.exists():
+        write_parquet_atomic(frame, backup_path, index=False)
+
     frame["iv_rv_ratio"] = after
     frame["iv_rv_migration_version"] = IV_RV_MIGRATION_VERSION
     frame["iv_rv_migrated_run_id"] = str(migration_run_id)
