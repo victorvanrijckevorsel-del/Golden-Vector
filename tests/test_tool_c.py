@@ -213,6 +213,46 @@ def test_tool_c_tail_counts_contribute_to_thin_history_tags():
     assert "thin_history" in output.iloc[0]["tool_c_downside_tags"]
 
 
+def test_tool_c_tag_thresholds_come_from_config():
+    tool_a = pd.DataFrame(
+        [_tool_a_row("AAA", down_beta=1.5, up_beta=1.0, score_eligible=True)]
+    )
+    metrics = pd.DataFrame(
+        [_metric_row("AAA", rel_weakness=0.6, rel_strength=0.1, downside_hit_rate=0.25)]
+    )
+
+    at_default = build_tool_c_output_frame(
+        tool_a_latest=tool_a,
+        relative_metrics=metrics,
+        config=ToolCConfig(min_events=2),
+        source_run_id="tool-c-run",
+    ).iloc[0]
+    # >= semantics: values exactly AT the config thresholds carry the tags...
+    assert "steep_down_beta" in at_default["tool_c_downside_tags"]
+    assert "persistent_relative_weakness" in at_default["tool_c_downside_tags"]
+    assert "frequent_deep_drops" in at_default["tool_c_downside_tags"]
+    # ...while confidence 0.9 sits above the strict low-confidence cut.
+    assert "low_confidence" not in at_default["tool_c_downside_tags"]
+
+    moved = build_tool_c_output_frame(
+        tool_a_latest=tool_a,
+        relative_metrics=metrics,
+        config=ToolCConfig(
+            min_events=2,
+            tag_low_confidence_below=0.95,
+            tag_steep_beta_at_least=1.6,
+            tag_persistent_relative_at_least=0.7,
+            tag_frequent_tail_at_least=0.3,
+        ),
+        source_run_id="tool-c-run",
+    ).iloc[0]
+    # The same row judged by moved thresholds: every tag flips.
+    assert "steep_down_beta" not in moved["tool_c_downside_tags"]
+    assert "persistent_relative_weakness" not in moved["tool_c_downside_tags"]
+    assert "frequent_deep_drops" not in moved["tool_c_downside_tags"]
+    assert "low_confidence" in moved["tool_c_downside_tags"]
+
+
 def _tool_a_row(
     ticker: str,
     *,

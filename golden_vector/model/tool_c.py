@@ -289,17 +289,19 @@ def _downside_tags(row: pd.Series, *, config: ToolCConfig) -> list[str]:
     tags: list[str] = []
     if not is_score_eligible(row.get("score_eligible")):
         tags.append("score_ineligible")
-    if _optional_float(row.get("confidence_score")) is not None and _optional_float(row.get("confidence_score")) < 0.5:
+    confidence = _optional_float(row.get("confidence_score"))
+    if confidence is not None and confidence < config.tag_low_confidence_below:
         tags.append("low_confidence")
-    if _optional_float(row.get("down_beta_core")) is not None and _optional_float(row.get("down_beta_core")) >= 1.5:
+    down_beta = _optional_float(row.get("down_beta_core"))
+    if down_beta is not None and down_beta >= config.tag_steep_beta_at_least:
         tags.append("steep_down_beta")
     if max(
         _optional_float(row.get("rel_weakness_vs_gold_pct")) or 0.0,
         _optional_float(row.get("rel_weakness_vs_gdx_pct")) or 0.0,
         _optional_float(row.get("rel_weakness_vs_gdxj_pct")) or 0.0,
-    ) >= 0.6:
+    ) >= config.tag_persistent_relative_at_least:
         tags.append("persistent_relative_weakness")
-    if (_optional_float(row.get("downside_hit_rate_10pct")) or 0.0) >= 0.25:
+    if (_optional_float(row.get("downside_hit_rate_10pct")) or 0.0) >= config.tag_frequent_tail_at_least:
         tags.append("frequent_deep_drops")
     if _has_thin_history(
         row,
@@ -321,17 +323,19 @@ def _upside_tags(row: pd.Series, *, config: ToolCConfig) -> list[str]:
     tags: list[str] = []
     if not is_score_eligible(row.get("score_eligible")):
         tags.append("score_ineligible")
-    if _optional_float(row.get("confidence_score")) is not None and _optional_float(row.get("confidence_score")) < 0.5:
+    confidence = _optional_float(row.get("confidence_score"))
+    if confidence is not None and confidence < config.tag_low_confidence_below:
         tags.append("low_confidence")
-    if _optional_float(row.get("up_beta_core")) is not None and _optional_float(row.get("up_beta_core")) >= 1.5:
+    up_beta = _optional_float(row.get("up_beta_core"))
+    if up_beta is not None and up_beta >= config.tag_steep_beta_at_least:
         tags.append("steep_up_beta")
     if max(
         _optional_float(row.get("rel_strength_vs_gold_pct")) or 0.0,
         _optional_float(row.get("rel_strength_vs_gdx_pct")) or 0.0,
         _optional_float(row.get("rel_strength_vs_gdxj_pct")) or 0.0,
-    ) >= 0.6:
+    ) >= config.tag_persistent_relative_at_least:
         tags.append("persistent_relative_strength")
-    if (_optional_float(row.get("upside_hit_rate_10pct")) or 0.0) >= 0.25:
+    if (_optional_float(row.get("upside_hit_rate_10pct")) or 0.0) >= config.tag_frequent_tail_at_least:
         tags.append("frequent_strong_rallies")
     if _has_thin_history(
         row,

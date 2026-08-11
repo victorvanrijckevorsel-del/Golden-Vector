@@ -583,6 +583,28 @@ class ToolCConfig(StrictConfigModel):
     regime_min_weeks: int = 52
     downside_hit_rate_threshold_pct: float = -10.0
     upside_hit_rate_threshold_pct: float = 10.0
+    tag_low_confidence_below: float = 0.5
+    tag_steep_beta_at_least: float = 1.5
+    tag_persistent_relative_at_least: float = 0.6
+    tag_frequent_tail_at_least: float = 0.25
+
+    @field_validator(
+        "tag_low_confidence_below",
+        "tag_persistent_relative_at_least",
+        "tag_frequent_tail_at_least",
+    )
+    @classmethod
+    def unit_interval_tag_thresholds(cls, value: float) -> float:
+        if not 0 < value <= 1:
+            raise ValueError("Tool C tag share thresholds must be in (0, 1]")
+        return float(value)
+
+    @field_validator("tag_steep_beta_at_least")
+    @classmethod
+    def positive_steep_beta_threshold(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("Tool C steep-beta tag threshold must be positive")
+        return float(value)
 
     @field_validator(
         "min_events",

@@ -4,3 +4,7 @@ regime_rolling_weeks: 156
 regime_min_weeks: 52
 downside_hit_rate_threshold_pct: -10.0
 upside_hit_rate_threshold_pct: 10.0
+tag_low_confidence_below: 0.5
+tag_steep_beta_at_least: 1.5
+tag_persistent_relative_at_least: 0.6
+tag_frequent_tail_at_least: 0.25
