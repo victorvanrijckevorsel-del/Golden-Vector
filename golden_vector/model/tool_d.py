@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from golden_vector.common.numeric import optional_float as _optional_float
+from golden_vector.common.numeric import ratio_over_positive as _ratio
 from golden_vector.common.numeric import require_finite_positive as _require_finite_positive
 from golden_vector.contracts.config_models import AppConfig, ToolDConfig
 from golden_vector.features.percentile_ranks import oriented_percentile
@@ -602,12 +603,6 @@ def _headroom(gold_price: float, aisc: float | None) -> float | None:
     if aisc is None or gold_price <= 0:
         return None
     return (gold_price - aisc) / gold_price
-
-
-def _ratio(numerator: float | None, denominator: float | None) -> float | None:
-    if numerator is None or denominator is None or denominator <= 0:
-        return None
-    return numerator / denominator
 
 
 def _safe_ratio(numerator: float | None, denominator: float | None) -> float | None:

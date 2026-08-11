@@ -109,6 +109,19 @@ def sum_optional_floats(values: object) -> float | None:
     return total if seen else None
 
 
+def ratio_over_positive(numerator: float | None, denominator: float | None) -> float | None:
+    """Ratio that only exists over a strictly positive denominator.
+
+    The guard is semantic, not just divide-by-zero safety: consumers use it for
+    quantities like net debt / EBITDA where a non-positive denominator makes
+    the ratio meaningless rather than merely infinite.
+    """
+
+    if numerator is None or denominator is None or denominator <= 0:
+        return None
+    return numerator / denominator
+
+
 def require_finite(numeric: float, *, field: str) -> float:
     """Reject NaN/inf at input boundaries.
 
