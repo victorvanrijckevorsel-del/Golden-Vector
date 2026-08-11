@@ -428,6 +428,15 @@ def create_workspace_app(
 
             if method == "GET" and path.startswith("/lab/dial/"):
                 ticker = path[len("/lab/dial/") :].strip().upper()
+                # Deep-review L3: mirror the /ticker/ gate — an unknown ticker
+                # is a clean 404, not a real-looking "no data" dial page for
+                # any arbitrary string.
+                if ticker not in allowed_tickers:
+                    return _html_response(
+                        start_response,
+                        _render_error_page("Page not found."),
+                        status="404 Not Found",
+                    )
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 scenario = query.get("scenario", ["gold_down"])[0] or "gold_down"
                 benchmark = (query.get("benchmark", ["GDX"])[0] or "GDX").upper()
@@ -932,8 +941,11 @@ def _safe_return_to(raw_value: object, *, fallback: str = "/option-trading") -> 
         or not value.startswith("/")
         or value.startswith("//")
         or "\\" in value
-        # D4: no control characters may reach the Location header.
-        or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
+        # D4: no control characters may reach the Location header. Deep-review
+        # M5: nothing above ASCII either — wsgiref latin-1-encodes headers
+        # AFTER the app returns, so a non-ASCII char (e.g. /ticker/Café) blows
+        # up past our error handler and yields a broken response.
+        or any(ord(ch) < 0x20 or ord(ch) > 0x7E for ch in value)
     ):
         return fallback
     return value

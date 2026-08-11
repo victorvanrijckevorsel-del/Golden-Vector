@@ -6,6 +6,7 @@ from collections import OrderedDict
 
 import logging
 import math
+import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from time import perf_counter
@@ -678,6 +679,15 @@ def _model_state_has_option_artifacts(model_state: dict[str, Any] | None) -> boo
     )
 
 
+# Stat-gated verification memo (deep-review perf): the biggest option parquet
+# was re-hashed on EVERY request. Published artifacts are immutable run-stamped
+# files, so once a given (path, mtime_ns, size) has hashed to the expected
+# value it cannot change without the stat changing; a mismatching or unstatable
+# file is never memoized, so corruption is re-checked every time.
+_VERIFIED_SHA_STATS: dict[tuple[str, int, int], str] = {}
+_VERIFIED_SHA_STATS_MAX = 64
+
+
 def _verify_artifact_sha256(
     *,
     model_state: dict[str, Any] | None,
@@ -691,6 +701,14 @@ def _verify_artifact_sha256(
     expected = str(artifact.get("sha256") or "").strip()
     if not expected:
         return
+    stat_key: tuple[str, int, int] | None = None
+    try:
+        stat_result = os.stat(path)
+        stat_key = (str(path), stat_result.st_mtime_ns, stat_result.st_size)
+    except OSError:
+        stat_key = None
+    if stat_key is not None and _VERIFIED_SHA_STATS.get(stat_key) == expected:
+        return
     actual = sha256_file(path)
     if actual != expected:
         display_path = str(artifact.get("path") or path)
@@ -698,6 +716,10 @@ def _verify_artifact_sha256(
             f"Option artifact {name} sha256 mismatch at {display_path}: "
             f"expected {expected}, got {actual}."
         )
+    if stat_key is not None:
+        if len(_VERIFIED_SHA_STATS) >= _VERIFIED_SHA_STATS_MAX:
+            _VERIFIED_SHA_STATS.clear()
+        _VERIFIED_SHA_STATS[stat_key] = expected
 
 
 def _frame_first_int(frame: pd.DataFrame, column: str) -> int | None:

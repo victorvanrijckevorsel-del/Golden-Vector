@@ -847,3 +847,48 @@ def test_percent_suffix_rate_saves_once_not_twice(tmp_path):
     page = call_wsgi_app(app, method="GET", path="/ticker/NEM")
     assert 'name="tax_rate" type="number" value="30"' in page["body"]
     assert 'name="tax_rate" type="number" value="0.3"' not in page["body"]
+
+
+def test_ticker_routes_reject_trailing_segments(tmp_path):
+    """Deep-review L2: /ticker/NEM/company/anything must 404, never behave
+    like the company save route."""
+    _, app = _full_app(tmp_path)
+
+    posted = call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/company/extra",
+        data={"aisc_usd_per_oz": "1200"},
+    )
+    fetched = call_wsgi_app(app, method="GET", path="/ticker/NEM/company/extra")
+
+    assert posted["status"].startswith("404")
+    assert fetched["status"].startswith("404")
+
+
+def test_return_to_rejects_non_ascii_before_the_location_header(tmp_path):
+    """Deep-review M5: wsgiref latin-1-encodes headers after the app returns,
+    so non-ASCII return_to must fall back instead of blowing up mid-response."""
+    _paths, app = _minimal_app(tmp_path)
+
+    response = call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/company",
+        data={"aisc_usd_per_oz": "1200", "return_to": "/ticker/Café"},
+    )
+
+    assert response["status"].startswith("303")
+    assert response["headers"]["Location"] == "/ticker/NEM?saved=company"
+
+
+def test_lab_dial_unknown_ticker_is_a_clean_404(tmp_path):
+    """Deep-review L3: the dial route gates on the allowed universe like
+    /ticker/ does — arbitrary strings must not get a real-looking page."""
+    _paths, app = _full_app(tmp_path)
+
+    unknown = call_wsgi_app(app, method="GET", path="/lab/dial/ZZUNKNOWN")
+    known = call_wsgi_app(app, method="GET", path="/lab/dial/NEM")
+
+    assert unknown["status"].startswith("404")
+    assert not known["status"].startswith("404")

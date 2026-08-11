@@ -551,6 +551,10 @@ def _parse_ticker_route(path: str) -> tuple[str, str | None]:
     parts = [part for part in path.split("/") if part]
     if len(parts) < 2 or parts[0] != "ticker":
         return "", None
+    # Deep-review L2: trailing segments are NOT ignored — /ticker/NEM/company/x
+    # must 404, not silently behave like the company save route.
+    if len(parts) > 3:
+        return "", None
     ticker = parts[1].strip().upper()
     action = parts[2] if len(parts) > 2 else None
     return ticker, action

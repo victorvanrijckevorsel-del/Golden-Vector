@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -193,6 +194,7 @@ _CACHE: OrderedDict[CandidateFinderCacheKey, CandidateFinderData] = OrderedDict(
 
 def clear_candidate_finder_cache() -> None:
     _CACHE.clear()
+    _STAT_FAST_PATH.clear()
 
 
 def parse_candidate_finder_scenario(
@@ -245,6 +247,43 @@ def _criteria_config_for_beta_window(
     return config.model_copy(update={"criteria": remapped})
 
 
+# Stat fast-path in front of the content-hash cache (deep-review perf): the
+# sha-keyed _CACHE below stays the ground truth, but BUILDING its key loads
+# every artifact and hashes every file — a cache hit used to cost nearly a
+# cache miss. This front memo keys on the (path, mtime_ns, size) signature of
+# the same input files plus the request's scenario tuple; published artifacts
+# are immutable behind an all-or-nothing manifest swap, so an unchanged
+# signature means the sha-keyed path would have hit anyway. Any file change
+# falls through to the full (hashing) path. Bounded like _CACHE.
+_STAT_FAST_PATH: OrderedDict[tuple, CandidateFinderData] = OrderedDict()
+_STAT_FAST_PATH_MAX = 8
+
+
+def _stat_fast_path_signature(paths: ProjectPaths) -> tuple:
+    def entry(path: object) -> tuple:
+        if path is None:
+            return ("<none>", None, None)
+        try:
+            stat_result = os.stat(path)
+        except OSError:
+            return (str(path), None, None)
+        return (str(path), stat_result.st_mtime_ns, stat_result.st_size)
+
+    return tuple(
+        entry(candidate)
+        for candidate in (
+            paths.latest_model_state_manifest_path,
+            paths.latest_tool_a_snapshot_parquet_path,
+            paths.latest_tool_b_snapshot_parquet_path,
+            paths.latest_tool_c_snapshot_parquet_path,
+            paths.latest_tool_d_spot_snapshot_parquet_path,
+            paths.latest_tool_d_snapshot_parquet_path,
+            paths.latest_foundation_manifest_path,
+            paths.manual_screening_store_path,
+        )
+    )
+
+
 def load_candidate_finder_data(
     paths: ProjectPaths,
     *,
@@ -259,6 +298,44 @@ def load_candidate_finder_data(
     structural window (id or display alias, e.g. ``"6m"`` / ``"1y"``); anything
     unrecognised falls back to the cross-window blend (the default).
     """
+
+    # The fast path covers ONLY the plain persisted view (no scenario, "our"
+    # source): every input of that view resolves through the files in the
+    # signature. Scenario/yahoo requests read additional resolved files (the
+    # scenario foundation manifest, fetched fundamentals) whose content can
+    # change outside this signature — they always take the full hashing path.
+    plain_view = scenario is None and normalize_finance_source(fundamentals_source) == "our"
+    fast_key = (
+        _stat_fast_path_signature(paths),
+        str(beta_window or ""),
+    )
+    if plain_view:
+        fast_hit = _STAT_FAST_PATH.get(fast_key)
+        if fast_hit is not None:
+            _STAT_FAST_PATH.move_to_end(fast_key)
+            return fast_hit
+    result = _load_candidate_finder_data_uncached(
+        paths,
+        app_config=app_config,
+        scenario=scenario,
+        fundamentals_source=fundamentals_source,
+        beta_window=beta_window,
+    )
+    if plain_view and result.scenario_error is None:
+        _STAT_FAST_PATH[fast_key] = result
+        while len(_STAT_FAST_PATH) > _STAT_FAST_PATH_MAX:
+            _STAT_FAST_PATH.popitem(last=False)
+    return result
+
+
+def _load_candidate_finder_data_uncached(
+    paths: ProjectPaths,
+    *,
+    app_config: AppConfig,
+    scenario: CandidateFinderScenario | None = None,
+    fundamentals_source: str = "our",
+    beta_window: str | None = None,
+) -> CandidateFinderData:
 
     finance_source = normalize_finance_source(fundamentals_source)
     requested_finance_source = finance_source
