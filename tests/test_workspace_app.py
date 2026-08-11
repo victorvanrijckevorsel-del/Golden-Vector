@@ -1133,7 +1133,14 @@ def _write_latest_tool_c_output(paths) -> None:
     )
 
 
-def _write_latest_tool_d_output(paths) -> None:
+def _write_latest_tool_d_output(paths, *, current_schema: bool = False) -> None:
+    # current_schema=False reproduces the persisted pre-v2 artifact (legacy
+    # `fcf_yield` only); True reproduces the post-rename schema.
+    fcf_fields = (
+        {"fcf_yield_at_g": 0.12, "fcf_yield_at_spot": 0.11, "tool_d_schema_version": 2}
+        if current_schema
+        else {"fcf_yield": 0.12}
+    )
     context = RunContext.start(
         paths=paths,
         command="tool-d",
@@ -1158,7 +1165,7 @@ def _write_latest_tool_d_output(paths) -> None:
                     "leverage_stressed_at_g": 0.7,
                     "ev_ebitda_at_g": 4.5,
                     "margin_per_oz_at_g": 2200.0,
-                    "fcf_yield": 0.12,
+                    **fcf_fields,
                     "screening_verdict": "STRONG_CANDIDATE",
                     "tool_d_tags": "strong_headroom",
                     "snapshot_refresh_run_id": "refresh-run",
@@ -2149,6 +2156,45 @@ def test_workspace_tool_d_view_renders_corporate_resilience_page(tmp_path):
     assert "Financials source" in response["body"]
     assert "/tool-d?gold_price=3400.00" in response["body"]
     assert 'aria-current="page" href="/tool-d"' in response["body"]
+
+
+_TOOL_D_LEGACY_FCF_WARNING = (
+    "This table was built before the FCF-yield fix (Tool D schema v1). "
+    "FCF Yield @ G shows 'pending rebuild' until the next data refresh."
+)
+
+
+def _render_tool_d_page(tmp_path, *, current_schema: bool) -> str:
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_latest_tool_d_output(paths, current_schema=current_schema)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/tool-d")
+    assert response["status"].startswith("200")
+    return str(response["body"])
+
+
+def test_workspace_tool_d_legacy_artifact_declares_pending_fcf_rebuild(tmp_path):
+    """A pre-v2 artifact must say so, never silently render the missing-value dash."""
+    body = _render_tool_d_page(tmp_path, current_schema=False)
+
+    assert _TOOL_D_LEGACY_FCF_WARNING in body
+    assert "notice-warning" in body or "warning" in body
+    assert "<td class=\"hint\">pending rebuild</td>" in body
+
+
+def test_workspace_tool_d_current_artifact_renders_fcf_without_warning(tmp_path):
+    """Control: a current-schema artifact renders the number and no warning."""
+    body = _render_tool_d_page(tmp_path, current_schema=True)
+
+    assert _TOOL_D_LEGACY_FCF_WARNING not in body
+    assert "pending rebuild" not in body
+    assert "12.0%" in body
 
 
 def test_workspace_tool_d_yahoo_source_recomputes_and_preserves_links(

@@ -13,8 +13,11 @@ from golden_vector.features.percentile_ranks import oriented_percentile
 from golden_vector.screening.manual_data import LoadedManualScreeningData
 from golden_vector.screening.pipeline import compute_tool_b_in_memory
 
+TOOL_D_SCHEMA_VERSION = 2
+
 TOOL_D_OUTPUT_COLUMNS = [
     "ticker",
+    "tool_d_schema_version",
     "as_of_date",
     "source_run_id",
     "finance_source",
@@ -368,6 +371,7 @@ def _build_tool_d_row(
 
     return {
         "ticker": ticker,
+        "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
         "as_of_date": stressed_row.get("as_of_date"),
         "source_run_id": source_run_id,
         "finance_source": finance_source,

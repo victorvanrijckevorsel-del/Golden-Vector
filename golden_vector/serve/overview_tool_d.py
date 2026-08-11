@@ -212,12 +212,23 @@ def _render_tool_d_overview_page(
             fundamentals_provenance=fundamentals_provenance,
         )
     )
+    # Truthful legacy state: a pre-v2 Tool D artifact has only the old `fcf_yield`
+    # column, so the FCF Yield @ G cells would silently render the missing-value
+    # placeholder. Say so instead. Presence check only — no arithmetic in serve.
+    legacy_fcf_schema = not frame.empty and "fcf_yield_at_g" not in frame.columns
+    if legacy_fcf_schema:
+        body.append(notice(
+            "warning",
+            "This table was built before the FCF-yield fix (Tool D schema v1). "
+            "FCF Yield @ G shows 'pending rebuild' until the next data refresh.",
+        ))
     body.append(
         _render_table(
             frame,
             app_config=app_config,
             finance_source=finance_source,
             fundamentals_provenance=fundamentals_provenance,
+            legacy_fcf_schema=legacy_fcf_schema,
         )
     )
     return _page_shell(
@@ -397,6 +408,7 @@ def _render_table(
     app_config=None,
     finance_source: str,
     fundamentals_provenance: dict[tuple[str, str], str],
+    legacy_fcf_schema: bool = False,
 ) -> str:
     rows_html: list[str] = []
     for row in frame.to_dict(orient="records"):
@@ -428,8 +440,12 @@ def _render_table(
             f"{_fmt_numeric_td(row.get('fragility_resilience_component'), decimals=1)}"
             f"{_fmt_numeric_td(row.get('balance_sheet_resilience_component'), decimals=1)}"
             f"{_fmt_numeric_td(row.get('ev_ebitda_at_g'), decimals=2)}"
-            f"{_fmt_numeric_td(row.get('fcf_yield_at_g'), decimals=1, as_percent=True)}"
-            "</tr>"
+            + (
+                "<td class=\"hint\">pending rebuild</td>"
+                if legacy_fcf_schema
+                else _fmt_numeric_td(row.get("fcf_yield_at_g"), decimals=1, as_percent=True)
+            )
+            + "</tr>"
         )
     # Empty state: the colspan row does not match the explicit column model that
     # workspace-tables.js hands DataTables, so drop js-datatable when there are no
