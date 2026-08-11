@@ -1,3 +1,4 @@
+import math
 from datetime import date
 
 import pandas as pd
@@ -26,7 +27,10 @@ def test_compute_options_features_uses_fixture_chain():
     assert features["n_expirations"] == 2
     assert features["n_contracts"] == 8
     assert features["total_open_interest"] == 955
+    assert features["put_oi_total"] == 370
+    assert features["call_oi_total"] == 585
     assert features["total_volume"] == 92
+    assert features["put_volume"] + features["call_volume"] == 92
     assert features["put_iv_25d_30d"] == pytest.approx(0.42)
     assert features["put_25d_delta_gap_30d"] is not None
     assert features["call_iv_25d_60d"] is not None
@@ -51,6 +55,10 @@ def test_compute_options_features_handles_empty_chain():
     assert features["options_available"] is False
     assert features["n_expirations"] == 0
     assert features["n_contracts"] == 0
+    assert features["put_oi_total"] == 0
+    assert features["call_oi_total"] == 0
+    assert features["put_call_oi_ratio_total"] is None
+    assert features["put_call_oi_ratio_otm"] is None
     assert features["put_iv_25d_30d"] is None
     assert features["implied_move_30d_gates_ok"] is False
     assert features["optionability_tier"] == "none"
@@ -182,7 +190,60 @@ def _contract(
 
 
 def _price_history() -> pd.DataFrame:
-    return pd.DataFrame({"return_basis_usd": [0.001, -0.002, 0.003, -0.001] * 30})
+    # return_basis_usd is a USD price LEVEL (see normalize/prices_usd.py) —
+    # a fixture of raw returns here is how the 100x iv_rv bug slipped through.
+    prices = [100.0]
+    for step in [0.001, -0.002, 0.003, -0.001] * 30:
+        prices.append(prices[-1] * (1 + step))
+    return pd.DataFrame({"return_basis_usd": prices})
+
+
+def test_realized_vol_treats_return_basis_as_price_level():
+    """Prices 100 -> 101 -> 104.03 are +1% then +3% returns; realized vol is
+    the annualized stdev of THOSE, never the stdev of the dollar levels."""
+
+    features = compute_options_features(
+        target_horizons_days=(3,),
+        chain=pd.DataFrame(),
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        price_history=pd.DataFrame({"return_basis_usd": [100.0, 101.0, 104.03]}),
+        as_of_date=date(2026, 5, 29),
+    )
+
+    expected = math.sqrt(0.0002) * math.sqrt(252)  # std(ddof=1) of [0.01, 0.03]
+    assert features["realized_vol_3d"] == pytest.approx(expected, rel=1e-6)
+
+
+def test_put_call_oi_and_volume_splits():
+    chain = pd.DataFrame(
+        [
+            _contract("P", 50.0, 1.0, 1.2, 0.40, 20, 5),
+            _contract("C", 50.0, 1.4, 1.6, 0.38, 22, 6),
+            _contract("P", 45.0, 0.45, 0.55, 0.42, 12, 4),
+            _contract("C", 55.0, 0.35, 0.45, 0.36, 10, 3),
+        ]
+    )
+
+    features = compute_options_features(
+        target_horizons_days=(30,),
+        chain=chain,
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        price_history=_price_history(),
+        as_of_date=date(2026, 5, 29),
+    )
+
+    assert features["put_oi_total"] == 32
+    assert features["call_oi_total"] == 32
+    assert features["put_call_oi_ratio_total"] == pytest.approx(1.0)
+    # OTM keeps only P45 (strike < spot) and C55 (strike > spot); the
+    # at-the-money 50s belong to neither side.
+    assert features["put_oi_otm"] == 12
+    assert features["call_oi_otm"] == 10
+    assert features["put_call_oi_ratio_otm"] == pytest.approx(12 / 10)
+    assert features["put_volume"] == 9
+    assert features["call_volume"] == 9
 
 
 def test_horizon_features_respect_dte_bands():

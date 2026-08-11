@@ -58,6 +58,12 @@ def compute_options_features(
     ticker = _first_value(chain, "ticker")
     run_id = _first_value(chain, "run_id")
 
+    put_oi_total, call_oi_total = _put_call_sums(frame, "open_interest")
+    put_oi_otm, call_oi_otm = _put_call_sums(
+        frame, "open_interest", otm_only=True, spot=underlying_price
+    )
+    put_volume, call_volume = _put_call_sums(frame, "volume")
+
     row: dict[str, Any] = {
         "ticker": ticker,
         "as_of_date": as_of_date.isoformat(),
@@ -66,10 +72,16 @@ def compute_options_features(
         "n_expirations": int(frame["expiration"].nunique()) if not frame.empty else 0,
         "n_contracts": int(len(frame.index)),
         "total_open_interest": _numeric_sum(frame, "open_interest"),
+        "put_oi_total": put_oi_total,
+        "call_oi_total": call_oi_total,
+        "put_oi_otm": put_oi_otm,
+        "call_oi_otm": call_oi_otm,
         "total_volume": _numeric_sum(frame, "volume"),
+        "put_volume": put_volume,
+        "call_volume": call_volume,
         "iv_percentile_cross_sectional": None,
-        "put_call_oi_ratio_total": _put_call_oi_ratio(frame),
-        "put_call_oi_ratio_otm": _put_call_oi_ratio(frame, otm_only=True, spot=underlying_price),
+        "put_call_oi_ratio_total": _ratio(float(put_oi_total), float(call_oi_total)),
+        "put_call_oi_ratio_otm": _ratio(float(put_oi_otm), float(call_oi_otm)),
     }
 
     for horizon in target_horizons_days:
@@ -221,8 +233,16 @@ def _atm_iv(frame: pd.DataFrame, underlying_price: float) -> float | None:
 def _realized_vol(price_history: pd.DataFrame, *, window_days: int) -> float | None:
     if price_history.empty:
         return None
+    # return_basis_usd is a USD PRICE LEVEL (the adjusted-close return basis
+    # from normalize/prices_usd.py), not a return series — it must be
+    # pct_change()d like the fallback, or "realized vol" is the stdev of raw
+    # dollar prices (the 100x iv_rv_ratio bug).
     if "return_basis_usd" in price_history.columns:
-        returns = pd.to_numeric(price_history["return_basis_usd"], errors="coerce").dropna()
+        returns = (
+            pd.to_numeric(price_history["return_basis_usd"], errors="coerce")
+            .pct_change()
+            .dropna()
+        )
     elif "adj_close_usd" in price_history.columns:
         returns = pd.to_numeric(price_history["adj_close_usd"], errors="coerce").pct_change().dropna()
     else:
@@ -266,23 +286,32 @@ def _optionability_tier(
     return "thin"
 
 
-def _put_call_oi_ratio(
+def _put_call_sums(
     frame: pd.DataFrame,
+    column: str,
     *,
     otm_only: bool = False,
     spot: float | None = None,
-) -> float | None:
-    if frame.empty or "open_interest" not in frame.columns:
-        return None
+) -> tuple[int, int]:
+    if frame.empty or column not in frame.columns:
+        return 0, 0
     scoped = frame
     if otm_only and spot is not None:
         scoped = frame[
             ((frame["option_type"] == "P") & (frame["strike"] < float(spot)))
             | ((frame["option_type"] == "C") & (frame["strike"] > float(spot)))
         ]
-    puts = scoped.loc[scoped["option_type"] == "P", "open_interest"].sum()
-    calls = scoped.loc[scoped["option_type"] == "C", "open_interest"].sum()
-    return _ratio(float(puts), float(calls))
+    puts = (
+        pd.to_numeric(scoped.loc[scoped["option_type"] == "P", column], errors="coerce")
+        .fillna(0)
+        .sum()
+    )
+    calls = (
+        pd.to_numeric(scoped.loc[scoped["option_type"] == "C", column], errors="coerce")
+        .fillna(0)
+        .sum()
+    )
+    return int(puts), int(calls)
 
 
 def _numeric_sum(frame: pd.DataFrame, column: str) -> int:

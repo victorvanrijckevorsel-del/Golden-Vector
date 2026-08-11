@@ -121,7 +121,7 @@ def test_options_phase_feature_row_contract_contains_hedge_provenance_columns(tm
         risk_free_rate=0.04,
         run_id="options-run",
         app_config=app_config,
-        price_history=pd.DataFrame({"return_basis_usd": [0.01, -0.02, 0.01] * 30}),
+        price_history=pd.DataFrame({"return_basis_usd": [100.0, 101.0, 99.0] * 30}),
     )
 
     assert {

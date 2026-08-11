@@ -311,10 +311,14 @@ class _OptionsPhaseClient:
 
 
 def _price_history() -> pd.DataFrame:
+    # return_basis_usd is a USD price LEVEL, not a return series.
+    prices = [100.0]
+    for step in ([0.001, -0.002, 0.003, -0.001] * 30)[:119]:
+        prices.append(prices[-1] * (1 + step))
     return pd.DataFrame(
         {
             "date": pd.date_range("2026-01-01", periods=120),
             "adj_close_usd": [45 + index * 0.02 for index in range(120)],
-            "return_basis_usd": [0.001, -0.002, 0.003, -0.001] * 30,
+            "return_basis_usd": prices,
         }
     )

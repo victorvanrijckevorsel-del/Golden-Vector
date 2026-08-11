@@ -531,7 +531,11 @@ holdings:
 
 
 def _price_history() -> pd.DataFrame:
-    return pd.DataFrame({"return_basis_usd": [0.001, -0.002, 0.003, -0.001] * 30})
+    # return_basis_usd is a USD price LEVEL, not a return series.
+    prices = [100.0]
+    for step in [0.001, -0.002, 0.003, -0.001] * 30:
+        prices.append(prices[-1] * (1 + step))
+    return pd.DataFrame({"return_basis_usd": prices})
 
 
 def _candidate_put() -> CandidatePut:
