@@ -27,6 +27,7 @@ EXPECTED_CONFIG_FILES: tuple[tuple[str, str], ...] = (
     ("qa", "qa.yaml"),
     ("scoring", "scoring.yaml"),
     ("screening_params", "screening_params.yaml"),
+    ("ticker_page", "ticker_page.yaml"),
 )
 
 OPTIONAL_CONFIG_FILES: tuple[tuple[str, str], ...] = (

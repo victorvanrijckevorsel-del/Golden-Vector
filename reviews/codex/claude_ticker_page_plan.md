@@ -430,7 +430,7 @@ participation in `config/ticker_page.yaml` — the table below is the source+dir
 |---|---|---|---|---|
 | down_beta_core | Trading | tool_a · down_beta_core | lower | n/a |
 | up_beta_core | Trading | tool_a · up_beta_core | higher | n/a |
-| asymmetry_ratio_core | Trading | tool_a · asymmetry_ratio_core | lower | n/a |
+| asymmetry_ratio_core | Trading | tool_a · asymmetry_ratio_core | higher (see sign rule) | n/a |
 | downside_volatility_52w | Trading | tool_a · downside_volatility_52w | lower | n/a |
 | rel_strength_vs_gdx | Trading | tool_c · rel_strength_vs_gdx_pct | higher | n/a |
 | rel_weakness_vs_gdx | Trading | tool_c · rel_weakness_vs_gdx_pct | lower | n/a |
@@ -565,8 +565,8 @@ remain operable at 640/320px.
 
 | File | Keys |
 |---|---|
-| new `config/ticker_page.yaml` → `TickerPageConfig` (+ `EXPECTED_CONFIG_FILES`, `AppConfig`) | `dial: {min_gold_usd: 2000, max_gold_usd: 6000, step_usd: 1, probe_gold_usd: [2000, 4000, 6000], linearity_abs_tol_musd: 0.5, linearity_rel_tol: 0.001, systemic_min_tickers: 5}` · `chart: {horizons: [1Y, 3Y, 5Y]}` · `lab: {default_horizon_weeks: 8, scatter_from_year: 2016}` (ticker page only, D-5) · `score_builder: {budget_points: 100, min_eligible_peers: 10, rank_stability_shift_points: 10, rank_stability_alert_positions: 3, metrics: [...§7 catalog...]}` |
-| `config/hedge_readiness.yaml` | `history_quality: {partial_capture_min_ratio: 0.70, iv_valid_range: [0.01, 3.0], skew_valid_range: [-1.0, 1.0], implied_move_valid_range: [0.0, 1.0], expiry_floor_ratio: 0.5, trailing_median_days: 20}`. **No target_delta change** (B9). |
+| new `config/ticker_page.yaml` → `TickerPageConfig` (+ `EXPECTED_CONFIG_FILES`, `AppConfig`) — **SHIPPED with the M1a stubs** | `dial: {min_gold_usd: 2000, max_gold_usd: 6000, step_usd: 1, probe_gold_usd: [2000, 4000, 6000], linearity_abs_tol_musd: 0.5, linearity_abs_tol_eps: 0.005, linearity_rel_tol: 0.001, systemic_min_tickers: 5}` · `chart: {horizons: [1Y, 3Y, 5Y], benchmark_max_staleness_days: 5}` · `lab: {default_horizon_weeks: 8, scatter_from_year: 2016}` (ticker page only, D-5) · `score_builder: {budget_points: 100, min_eligible_peers: 10, min_active_metric_coverage: 0.6, rank_stability_shift_points: 10, rank_stability_alert_positions: 3, metrics: [the exact 19-entry §7 catalog]}` · `sizing: {max_contracts: 10000}` |
+| `config/hedge_readiness.yaml` — **SHIPPED with the M1a stubs** | `history_quality: {partial_capture_min_ratio: 0.70, iv_valid_range: [0.01, 3.0], skew_valid_range: [-1.0, 1.0], implied_move_valid_range: [0.0, 1.0], expiry_floor_ratio: 0.5, trailing_median_days: 20, coverage_floor_ratio: 0.5}`. **No target_delta change** (B9). |
 | `config/tool_c.yaml` | shipped in M0 (`a6e8bb1`) |
 | `config/lab_dial.yaml` | **REMOVED from this project entirely (P11/H4)** — the shared-Lab constant relocation is broader-than-ticker scope; it happens only as a separately approved standalone refactor. Shared-Lab keys stay out of `ticker_page.yaml`. |
 

@@ -76,6 +76,7 @@ class ProjectPaths:
             self.output_tool_b_dir,
             self.output_tool_c_dir,
             self.output_tool_d_dir,
+            self.output_ticker_page_dir,
             self.output_fundamentals_dir,
             self.output_options_dir,
             self.output_hedge_readiness_dir,
@@ -285,6 +286,26 @@ class ProjectPaths:
     @property
     def output_options_dir(self) -> Path:
         return self.output_dir / "options"
+
+    @property
+    def output_ticker_page_dir(self) -> Path:
+        return self.output_dir / "ticker_page"
+
+    @property
+    def latest_ticker_page_gold_response_path(self) -> Path:
+        return self.output_ticker_page_dir / "gold_response_latest.parquet"
+
+    @property
+    def latest_ticker_page_percentiles_path(self) -> Path:
+        return self.output_ticker_page_dir / "percentiles_latest.parquet"
+
+    @property
+    def latest_ticker_page_performance_path(self) -> Path:
+        return self.output_ticker_page_dir / "performance_latest.parquet"
+
+    @property
+    def latest_ticker_page_research_series_path(self) -> Path:
+        return self.output_ticker_page_dir / "research_series_latest.parquet"
 
     @property
     def latest_tool_d_snapshot_parquet_path(self) -> Path:

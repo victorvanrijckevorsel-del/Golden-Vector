@@ -110,3 +110,18 @@ option_signal_horizon_days: 90
 optionability_core_horizons:
   - 90
   - 180
+# Daily option-chain history quality gates (ticker page plan §6.3).
+history_quality:
+  partial_capture_min_ratio: 0.70
+  iv_valid_range:
+    - 0.01
+    - 3.0
+  skew_valid_range:
+    - -1.0
+    - 1.0
+  implied_move_valid_range:
+    - 0.0
+    - 1.0
+  expiry_floor_ratio: 0.5
+  trailing_median_days: 20
+  coverage_floor_ratio: 0.5

@@ -1,0 +1,432 @@
+"""M1a contract tests: ticker-page config surface, schemas, and reader stubs."""
+
+from __future__ import annotations
+
+import pandas as pd
+import pytest
+from pydantic import ValidationError
+
+from golden_vector.app.config import EXPECTED_CONFIG_FILES, load_app_config
+from golden_vector.app.ticker_page_state import (
+    STATUS_CORRUPT,
+    STATUS_MISSING,
+    STATUS_OK,
+    load_gold_response,
+    load_performance_series,
+    load_research_series,
+    load_score_percentiles,
+)
+from golden_vector.contracts.config_models import (
+    TICKER_PAGE_SCORE_BUDGET_POINTS,
+    TickerPageConfig,
+)
+from golden_vector.contracts.ticker_page import (
+    GOLD_RESPONSE_COLUMNS,
+    GOLD_RESPONSE_KEY_COLUMNS,
+    PERCENTILES_COLUMNS,
+    PERCENTILES_KEY_COLUMNS,
+    PERFORMANCE_COLUMNS,
+    PERFORMANCE_KEY_COLUMNS,
+    RESEARCH_SERIES_COLUMNS,
+    TICKER_PAGE_SCHEMA_VERSIONS,
+    validate_frame_schema,
+)
+from tests.helpers import build_test_paths
+
+
+def _metric(**overrides) -> dict[str, object]:
+    metric = {
+        "key": "margin_pct",
+        "label": "Cash margin",
+        "category": "corporate",
+        "source_tool": "tool_b",
+        "source_column": "margin_pct",
+        "default_high_good": True,
+        "unit": "percent",
+        "basis": "fwd @ spot",
+    }
+    metric.update(overrides)
+    return metric
+
+
+def _score_builder(**overrides) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "budget_points": 100,
+        "min_eligible_peers": 10,
+        "min_active_metric_coverage": 0.6,
+        "rank_stability_shift_points": 10,
+        "rank_stability_alert_positions": 3,
+        "metrics": [
+            _metric(),
+            _metric(
+                key="up_beta_core",
+                label="Up beta",
+                category="trading",
+                source_tool="tool_a",
+                source_column="up_beta_core",
+                unit="ratio",
+                basis="structural cross-window",
+            ),
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _config_payload(**overrides) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "version": 1,
+        "dial": {
+            "min_gold_usd": 2000,
+            "max_gold_usd": 6000,
+            "step_usd": 1,
+            "probe_gold_usd": [2000, 4000, 6000],
+            "linearity_abs_tol_musd": 0.5,
+            "linearity_abs_tol_eps": 0.005,
+            "linearity_rel_tol": 0.001,
+            "systemic_min_tickers": 5,
+        },
+        "chart": {"horizons": ["1Y", "3Y", "5Y"], "benchmark_max_staleness_days": 5},
+        "lab": {"default_horizon_weeks": 8, "scatter_from_year": 2016},
+        "score_builder": _score_builder(),
+        "sizing": {"max_contracts": 10000},
+    }
+    payload.update(overrides)
+    return payload
+
+
+# --- (a) the real config file loads through the real loader ----------------
+
+
+def test_ticker_page_yaml_is_required_and_loads(tmp_path) -> None:
+    assert ("ticker_page", "ticker_page.yaml") in EXPECTED_CONFIG_FILES
+    paths = build_test_paths(tmp_path / "repo")
+    config = load_app_config(paths).app.ticker_page
+
+    assert len(config.score_builder.metrics) == 19
+    keys = [metric.key for metric in config.score_builder.metrics]
+    assert len(set(keys)) == 19
+    assert {metric.category for metric in config.score_builder.metrics} == {
+        "trading",
+        "corporate",
+    }
+    assert config.dial.min_gold_usd == 2000.0
+    assert config.dial.max_gold_usd == 6000.0
+    assert config.chart.horizons == ["1Y", "3Y", "5Y"]
+    assert config.lab.default_horizon_weeks == 8
+    assert config.score_builder.budget_points == TICKER_PAGE_SCORE_BUDGET_POINTS
+    assert config.sizing.max_contracts == 10000
+
+
+def test_real_hedge_readiness_history_quality_block(tmp_path) -> None:
+    paths = build_test_paths(tmp_path / "repo")
+    quality = load_app_config(paths).app.hedge_readiness.history_quality
+    assert quality.partial_capture_min_ratio == pytest.approx(0.70)
+    assert quality.iv_valid_range == [0.01, 3.0]
+    assert quality.skew_valid_range == [-1.0, 1.0]
+    assert quality.implied_move_valid_range == [0.0, 1.0]
+    assert quality.expiry_floor_ratio == pytest.approx(0.5)
+    assert quality.trailing_median_days == 20
+    assert quality.coverage_floor_ratio == pytest.approx(0.5)
+
+
+def test_healthy_control_payload_validates() -> None:
+    assert TickerPageConfig.model_validate(_config_payload()).sizing.max_contracts == 10000
+
+
+# --- (b) validators reject bad config --------------------------------------
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        pytest.param(
+            _config_payload(score_builder=_score_builder(budget_points=90)),
+            "product-locked",
+            id="budget_not_100",
+        ),
+        pytest.param(
+            _config_payload(
+                score_builder=_score_builder(
+                    metrics=[_metric(category="fundamentals"), _metric(key="x")]
+                )
+            ),
+            "category must be one of",
+            id="unknown_category",
+        ),
+        pytest.param(
+            _config_payload(
+                score_builder=_score_builder(
+                    metrics=[
+                        _metric(),
+                        _metric(),
+                        _metric(key="up_beta_core", category="trading", source_tool="tool_a"),
+                    ]
+                )
+            ),
+            "Duplicate ticker_page score metric key",
+            id="duplicate_metric_keys",
+        ),
+        pytest.param(
+            _config_payload(
+                dial={
+                    "min_gold_usd": 2000,
+                    "max_gold_usd": 6000,
+                    "step_usd": 1,
+                    "probe_gold_usd": [2000, 9000],
+                    "linearity_abs_tol_musd": 0.5,
+                    "linearity_abs_tol_eps": 0.005,
+                    "linearity_rel_tol": 0.001,
+                    "systemic_min_tickers": 5,
+                }
+            ),
+            "must lie within",
+            id="probe_outside_range",
+        ),
+        pytest.param(
+            _config_payload(
+                dial={
+                    "min_gold_usd": 6000,
+                    "max_gold_usd": 2000,
+                    "step_usd": 1,
+                    "probe_gold_usd": [3000],
+                    "linearity_abs_tol_musd": 0.5,
+                    "linearity_abs_tol_eps": 0.005,
+                    "linearity_rel_tol": 0.001,
+                    "systemic_min_tickers": 5,
+                }
+            ),
+            "must be below max_gold_usd",
+            id="min_above_max",
+        ),
+        pytest.param(
+            _config_payload(chart={"horizons": ["2Y"], "benchmark_max_staleness_days": 5}),
+            "must be a subset",
+            id="unknown_chart_horizon",
+        ),
+        pytest.param(
+            _config_payload(lab={"default_horizon_weeks": 7, "scatter_from_year": 2016}),
+            "default_horizon_weeks must be one of",
+            id="unknown_lab_horizon",
+        ),
+        pytest.param(
+            _config_payload(
+                score_builder=_score_builder(min_active_metric_coverage=1.5)
+            ),
+            "min_active_metric_coverage",
+            id="coverage_above_one",
+        ),
+        pytest.param(
+            _config_payload(sizing={"max_contracts": 0}),
+            "max_contracts must be at least 1",
+            id="zero_max_contracts",
+        ),
+        pytest.param(
+            _config_payload(
+                score_builder=_score_builder(
+                    metrics=[
+                        _metric(),
+                        _metric(key="odd", source_tool="tool_a", category="trading", unit="furlongs"),
+                    ]
+                )
+            ),
+            "unit must be one of",
+            id="unknown_unit",
+        ),
+    ],
+)
+def test_invalid_config_is_rejected(payload, expected) -> None:
+    with pytest.raises(ValidationError) as error:
+        TickerPageConfig.model_validate(payload)
+    assert expected in str(error.value)
+
+
+# --- (c) validate_frame_schema ---------------------------------------------
+
+
+def _percentile_row(ticker: str = "AEM", metric_key: str = "margin_pct") -> dict[str, object]:
+    row: dict[str, object] = dict.fromkeys(PERCENTILES_COLUMNS, None)
+    row.update(
+        {
+            "ticker": ticker,
+            "finance_source": "our",
+            "metric_key": metric_key,
+            "category": "corporate",
+            "raw_value": 0.4,
+            "unit": "percent",
+            "basis": "fwd @ spot",
+            "source_tool": "tool_b",
+            "source_as_of_date": "2026-08-10",
+            "metric_available": True,
+            "rank_eligible": True,
+            "eligible_peer_count": 30,
+            "schema_version": TICKER_PAGE_SCHEMA_VERSIONS["percentiles"],
+            "source_run_id": "run-1",
+            "snapshot_refresh_run_id": "refresh-1",
+            "parent_refresh_id": "refresh-1",
+            "config_hash": "abc",
+        }
+    )
+    return row
+
+
+def test_validate_frame_schema_accepts_healthy_control() -> None:
+    frame = pd.DataFrame([_percentile_row(), _percentile_row(metric_key="fcf_yield")])
+    assert (
+        validate_frame_schema(
+            frame, columns=PERCENTILES_COLUMNS, key_columns=PERCENTILES_KEY_COLUMNS
+        )
+        == []
+    )
+
+
+def test_validate_frame_schema_catches_missing_column() -> None:
+    frame = pd.DataFrame([_percentile_row()]).drop(columns=["raw_value"])
+    violations = validate_frame_schema(
+        frame, columns=PERCENTILES_COLUMNS, key_columns=PERCENTILES_KEY_COLUMNS
+    )
+    assert any("missing columns: raw_value" in message for message in violations)
+
+
+def test_validate_frame_schema_catches_null_key() -> None:
+    bad = _percentile_row()
+    bad["metric_key"] = None
+    frame = pd.DataFrame([_percentile_row(metric_key="fcf_yield"), bad])
+    violations = validate_frame_schema(
+        frame, columns=PERCENTILES_COLUMNS, key_columns=PERCENTILES_KEY_COLUMNS
+    )
+    assert any("null values in key column metric_key" in message for message in violations)
+
+
+def test_validate_frame_schema_catches_duplicate_key() -> None:
+    frame = pd.DataFrame([_percentile_row(), _percentile_row()])
+    violations = validate_frame_schema(
+        frame, columns=PERCENTILES_COLUMNS, key_columns=PERCENTILES_KEY_COLUMNS
+    )
+    assert any("duplicate keys" in message for message in violations)
+
+
+# --- (d) loader stubs -------------------------------------------------------
+
+
+def _row(columns, **values) -> dict[str, object]:
+    row: dict[str, object] = dict.fromkeys(columns, None)
+    row.update(values)
+    return row
+
+
+LOADERS = {
+    "gold_response": (
+        load_gold_response,
+        "latest_ticker_page_gold_response_path",
+        GOLD_RESPONSE_COLUMNS,
+        {"ticker": "AEM", "finance_source": "our"},
+        "ticker",
+    ),
+    "percentiles": (
+        load_score_percentiles,
+        "latest_ticker_page_percentiles_path",
+        PERCENTILES_COLUMNS,
+        {"ticker": "AEM", "finance_source": "our", "metric_key": "margin_pct"},
+        "metric_key",
+    ),
+    "performance": (
+        load_performance_series,
+        "latest_ticker_page_performance_path",
+        PERFORMANCE_COLUMNS,
+        {
+            "ticker": "AEM",
+            "series": "stock",
+            "view": "rebased",
+            "horizon": "1Y",
+            "date": "2026-08-10",
+        },
+        "horizon",
+    ),
+    "research_series": (
+        load_research_series,
+        "latest_ticker_page_research_series_path",
+        RESEARCH_SERIES_COLUMNS,
+        {"ticker": "AEM", "kind": "weekly", "date": "2026-08-10"},
+        "kind",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(LOADERS))
+def test_loader_reports_missing_on_empty_tree(tmp_path, name) -> None:
+    loader = LOADERS[name][0]
+    paths = build_test_paths(tmp_path / f"repo_{name}")
+    state = loader(paths)
+    assert state.status == STATUS_MISSING
+    assert state.reason and name in state.reason
+    assert state.frame.empty
+
+
+@pytest.mark.parametrize("name", sorted(LOADERS))
+def test_loader_reports_ok_on_healthy_frame(tmp_path, name) -> None:
+    loader, path_attr, columns, keys, _ = LOADERS[name]
+    paths = build_test_paths(tmp_path / f"repo_{name}")
+    path = getattr(paths, path_attr)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([_row(columns, **keys)]).to_parquet(path)
+
+    state = loader(paths)
+    assert state.status == STATUS_OK, state.reason
+    assert state.reason is None
+    assert len(state.frame) == 1
+
+
+@pytest.mark.parametrize("name", sorted(LOADERS))
+def test_loader_reports_corrupt_when_key_column_missing(tmp_path, name) -> None:
+    loader, path_attr, columns, keys, dropped_key = LOADERS[name]
+    paths = build_test_paths(tmp_path / f"repo_{name}")
+    path = getattr(paths, path_attr)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame = pd.DataFrame([_row(columns, **keys)]).drop(columns=[dropped_key])
+    frame.to_parquet(path)
+
+    state = loader(paths)
+    assert state.status == STATUS_CORRUPT
+    assert state.reason and dropped_key in state.reason
+    assert state.frame.empty
+
+
+def test_loader_reports_corrupt_on_unreadable_file(tmp_path) -> None:
+    paths = build_test_paths(tmp_path / "repo_corrupt")
+    path = paths.latest_ticker_page_gold_response_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"not a parquet file")
+    state = load_gold_response(paths)
+    assert state.status == STATUS_CORRUPT
+    assert state.frame.empty
+
+
+def test_gold_response_columns_cover_every_line_metric() -> None:
+    for metric in (
+        "forward_revenue_musd",
+        "forward_ebitda_musd",
+        "forward_net_income_musd",
+        "forward_eps",
+        "sustainable_fcf_musd",
+    ):
+        assert f"line_slope_{metric}" in GOLD_RESPONSE_COLUMNS
+        assert f"line_intercept_{metric}" in GOLD_RESPONSE_COLUMNS
+    assert GOLD_RESPONSE_KEY_COLUMNS == ("ticker", "finance_source")
+    assert PERFORMANCE_KEY_COLUMNS[0] == "ticker"
+
+
+# --- (e) P5 catalog regressions --------------------------------------------
+
+
+def test_asymmetry_is_higher_good_and_banned_metrics_absent(tmp_path) -> None:
+    paths = build_test_paths(tmp_path / "repo_catalog")
+    metrics = {
+        metric.key: metric
+        for metric in load_app_config(paths).app.ticker_page.score_builder.metrics
+    }
+    assert metrics["asymmetry_ratio_core"].default_high_good is True
+    assert "confidence_score" not in metrics
+    assert "cost_curve_aisc_percentile" not in metrics
+    assert not any("cost_curve" in key for key in metrics)
+    assert not any("confidence" in key for key in metrics)
