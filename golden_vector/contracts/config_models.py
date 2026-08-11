@@ -595,15 +595,16 @@ class ToolCConfig(StrictConfigModel):
     )
     @classmethod
     def unit_interval_tag_thresholds(cls, value: float) -> float:
-        if not 0 < value <= 1:
-            raise ValueError("Tool C tag share thresholds must be in (0, 1]")
+        if not math.isfinite(float(value)) or not 0 < value <= 1:
+            raise ValueError("Tool C tag share thresholds must be finite and in (0, 1]")
         return float(value)
 
     @field_validator("tag_steep_beta_at_least")
     @classmethod
     def positive_steep_beta_threshold(cls, value: float) -> float:
-        if value <= 0:
-            raise ValueError("Tool C steep-beta tag threshold must be positive")
+        # NaN/+inf silently pass a bare `<= 0` check and would poison the tag.
+        if not math.isfinite(float(value)) or value <= 0:
+            raise ValueError("Tool C steep-beta tag threshold must be finite and positive")
         return float(value)
 
     @field_validator(

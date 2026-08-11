@@ -80,8 +80,9 @@ def compute_options_features(
         "put_volume": put_volume,
         "call_volume": call_volume,
         "iv_percentile_cross_sectional": None,
-        "put_call_oi_ratio_total": _ratio(float(put_oi_total), float(call_oi_total)),
-        "put_call_oi_ratio_otm": _ratio(float(put_oi_otm), float(call_oi_otm)),
+        # No float() coercion: an unknown side is None and _ratio propagates it.
+        "put_call_oi_ratio_total": _ratio(put_oi_total, call_oi_total),
+        "put_call_oi_ratio_otm": _ratio(put_oi_otm, call_oi_otm),
     }
 
     for horizon in target_horizons_days:
@@ -237,14 +238,31 @@ def _realized_vol(price_history: pd.DataFrame, *, window_days: int) -> float | N
     # from normalize/prices_usd.py), not a return series — it must be
     # pct_change()d like the fallback, or "realized vol" is the stdev of raw
     # dollar prices (the 100x iv_rv_ratio bug).
-    if "return_basis_usd" in price_history.columns:
+    # Realized vol must not depend on incoming ROW ORDER or duplicate rows: a
+    # vendor frame arriving newest-first, or with the same date twice, would
+    # otherwise produce a different number for identical data. Sort ascending
+    # by date and keep the LAST row per date (the corrected print).
+    history = price_history
+    if "date" in history.columns:
+        history = history.assign(_rv_date=pd.to_datetime(history["date"], errors="coerce"))
+        history = (
+            history.sort_values("_rv_date", kind="mergesort")
+            .drop_duplicates(subset="_rv_date", keep="last")
+        )
+    # fill_method=None explicitly: pandas' default pads missing prices forward,
+    # which invents a 0% return day and understates vol. A gap must drop out.
+    if "return_basis_usd" in history.columns:
         returns = (
-            pd.to_numeric(price_history["return_basis_usd"], errors="coerce")
-            .pct_change()
+            pd.to_numeric(history["return_basis_usd"], errors="coerce")
+            .pct_change(fill_method=None)
             .dropna()
         )
-    elif "adj_close_usd" in price_history.columns:
-        returns = pd.to_numeric(price_history["adj_close_usd"], errors="coerce").pct_change().dropna()
+    elif "adj_close_usd" in history.columns:
+        returns = (
+            pd.to_numeric(history["adj_close_usd"], errors="coerce")
+            .pct_change(fill_method=None)
+            .dropna()
+        )
     else:
         return None
     # window_days is the option's CALENDAR horizon; returns rows are TRADING
@@ -292,26 +310,31 @@ def _put_call_sums(
     *,
     otm_only: bool = False,
     spot: float | None = None,
-) -> tuple[int, int]:
+) -> tuple[int | None, int | None]:
+    """Return (put_sum, call_sum), or None for a side with NO observed values.
+
+    Unknown is not zero: a vendor chain missing the column entirely, or one
+    whose column is all-null, previously reported 0 — indistinguishable from
+    genuine zero activity, and it silently fed real-looking put/call ratios.
+    """
+
     if frame.empty or column not in frame.columns:
-        return 0, 0
+        return None, None
     scoped = frame
     if otm_only and spot is not None:
         scoped = frame[
             ((frame["option_type"] == "P") & (frame["strike"] < float(spot)))
             | ((frame["option_type"] == "C") & (frame["strike"] > float(spot)))
         ]
-    puts = (
-        pd.to_numeric(scoped.loc[scoped["option_type"] == "P", column], errors="coerce")
-        .fillna(0)
-        .sum()
-    )
-    calls = (
-        pd.to_numeric(scoped.loc[scoped["option_type"] == "C", column], errors="coerce")
-        .fillna(0)
-        .sum()
-    )
-    return int(puts), int(calls)
+    def _side_sum(side: str) -> int | None:
+        values = pd.to_numeric(
+            scoped.loc[scoped["option_type"] == side, column], errors="coerce"
+        ).dropna()
+        if values.empty:
+            return None
+        return int(values.sum())
+
+    return _side_sum("P"), _side_sum("C")
 
 
 def _numeric_sum(frame: pd.DataFrame, column: str) -> int:

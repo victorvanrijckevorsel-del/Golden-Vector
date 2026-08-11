@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from golden_vector.features.options import (
+    _realized_vol,
     compute_options_features,
     rank_options_iv_cross_section,
 )
@@ -55,8 +56,9 @@ def test_compute_options_features_handles_empty_chain():
     assert features["options_available"] is False
     assert features["n_expirations"] == 0
     assert features["n_contracts"] == 0
-    assert features["put_oi_total"] == 0
-    assert features["call_oi_total"] == 0
+    # Unknown, not zero: an empty chain has no observed OI to report.
+    assert features["put_oi_total"] is None
+    assert features["call_oi_total"] is None
     assert features["put_call_oi_ratio_total"] is None
     assert features["put_call_oi_ratio_otm"] is None
     assert features["put_iv_25d_30d"] is None
@@ -280,3 +282,85 @@ def test_horizon_features_respect_dte_bands():
         optionability_open_interest_threshold=100,
     )
     assert legacy["atm_iv_550d"] is not None
+
+
+def _dated_history(dates: list[str], prices: list[float]) -> pd.DataFrame:
+    return pd.DataFrame({"date": dates, "return_basis_usd": prices})
+
+
+def test_realized_vol_is_order_independent():
+    """Identical data arriving newest-first must give the identical number."""
+
+    dates = ["2026-05-25", "2026-05-26", "2026-05-27", "2026-05-28", "2026-05-29"]
+    prices = [100.0, 101.0, 100.5, 102.0, 103.0]
+    ascending = _realized_vol(_dated_history(dates, prices), window_days=3)
+    reversed_frame = _dated_history(dates[::-1], prices[::-1])
+
+    assert ascending is not None
+    assert _realized_vol(reversed_frame, window_days=3) == ascending
+
+
+def test_realized_vol_keeps_last_row_per_duplicate_date():
+    """A corrected re-print of the same date wins; keep-first would use the
+    stale 150.0 and produce a wildly different vol."""
+
+    dates = ["2026-05-26", "2026-05-27", "2026-05-28", "2026-05-28"]
+    duplicated = _realized_vol(
+        _dated_history(dates, [100.0, 101.0, 150.0, 102.0]), window_days=3
+    )
+    deduped = _realized_vol(
+        _dated_history(dates[:3], [100.0, 101.0, 102.0]), window_days=3
+    )
+    keep_first = _realized_vol(
+        _dated_history(dates[:3], [100.0, 101.0, 150.0]), window_days=3
+    )
+
+    assert duplicated == deduped
+    assert duplicated != keep_first
+
+
+def test_realized_vol_drops_missing_prices_instead_of_forward_filling():
+    """pandas' default pct_change pads the gap forward, inventing a 0% day and
+    shifting the window. With fill_method=None the gap simply drops out."""
+
+    history = pd.DataFrame(
+        {"return_basis_usd": [100.0, 101.0, float("nan"), 103.0, 106.0]}
+    )
+
+    returns = [0.01, 106.0 / 103.0 - 1.0]
+    mean = sum(returns) / 2
+    stdev = math.sqrt(sum((r - mean) ** 2 for r in returns))  # ddof=1, n=2
+
+    assert _realized_vol(history, window_days=3) == pytest.approx(
+        stdev * math.sqrt(252)
+    )
+
+
+def test_unknown_open_interest_stays_unknown_while_volume_is_counted():
+    """An all-null OI column is not zero activity: the OI splits and both OI
+    ratios must be None while the observed volume still reports ints."""
+
+    chain = pd.DataFrame(
+        [
+            _contract("P", 45.0, 0.45, 0.55, 0.42, None, 4),
+            _contract("C", 55.0, 0.35, 0.45, 0.36, None, 3),
+        ]
+    )
+
+    features = compute_options_features(
+        target_horizons_days=(30,),
+        chain=chain,
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        price_history=_price_history(),
+        as_of_date=date(2026, 5, 29),
+    )
+
+    assert features["put_oi_total"] is None
+    assert features["call_oi_total"] is None
+    assert features["put_oi_otm"] is None
+    assert features["call_oi_otm"] is None
+    assert features["put_call_oi_ratio_total"] is None
+    assert features["put_call_oi_ratio_otm"] is None
+    assert features["put_volume"] == 4
+    assert features["call_volume"] == 3

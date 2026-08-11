@@ -777,3 +777,28 @@ def test_candidate_finder_preset_accepts_no_option_filter():
     )
 
     assert config.presets[0].options_side == "none"
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize(
+    "field", ["tag_steep_beta_at_least", "tag_low_confidence_below"]
+)
+def test_tool_c_config_rejects_non_finite_tag_thresholds(field, bad):
+    """NaN/+inf slip past bare `<= 0` comparisons; a non-finite tag threshold
+    would tag every miner (or none) with no error."""
+
+    with pytest.raises(ValidationError):
+        ToolCConfig.model_validate({"version": 1, field: bad})
+
+
+def test_real_tool_c_yaml_validates():
+    import yaml
+
+    from golden_vector.app.paths import ProjectPaths
+
+    raw = yaml.safe_load(
+        ProjectPaths.discover().config_path("tool_c.yaml").read_text(encoding="utf-8")
+    )
+    config = ToolCConfig.model_validate(raw)
+
+    assert config.tag_steep_beta_at_least > 0
