@@ -457,20 +457,8 @@ def _build_row(
         put_candidates if put_candidates else call_candidates,
     )
 
-    put_status = _candidate_side_status(
-        feature=feature,
-        candidates=put_candidates,
-        side="put",
-        optionability=tier,
-        target_horizons_days=target_horizons_days,
-    )
-    call_status = _candidate_side_status(
-        feature=feature,
-        candidates=call_candidates,
-        side="call",
-        optionability=tier,
-        target_horizons_days=target_horizons_days,
-    )
+    put_status = _candidate_side_status(put_candidates)
+    call_status = _candidate_side_status(call_candidates)
 
     pnl_put = _context_pnl(
         candidates=put_candidates,
@@ -528,35 +516,12 @@ def _build_row(
     )
 
 
-def _candidate_side_status(
-    *,
-    feature: pd.Series,
-    candidates: tuple[OptionCandidate, ...],
-    side: Literal["put", "call"],
-    optionability: str,
-    target_horizons_days: tuple[int, ...],
-) -> SideStatus:
+def _candidate_side_status(candidates: tuple[OptionCandidate, ...]) -> SideStatus:
     if any(candidate.liquidity_tier == "tradable" for candidate in candidates):
         return "tradable"
     if any(candidate.liquidity_tier == "watch" for candidate in candidates):
         return "watch"
-    if _side_feature_present(feature, side, target_horizons_days):
-        return "none"
-    if is_optionable_tier(optionability):
-        return "none"
     return "none"
-
-
-def _side_feature_present(
-    feature: pd.Series,
-    side: Literal["put", "call"],
-    target_horizons_days: tuple[int, ...],
-) -> bool:
-    prefix = "put" if side == "put" else "call"
-    for horizon in target_horizons_days:
-        if row_float(feature, f"{prefix}_iv_25d_{horizon}d") is not None:
-            return True
-    return False
 
 
 def _context_pnl(
