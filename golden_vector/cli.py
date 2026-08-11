@@ -74,6 +74,7 @@ from golden_vector.hedge.option_artifact_frames import (
     build_option_artifact_frames,
     tool_refresh_run_id,
 )
+from golden_vector.hedge.history_migrations import migrate_iv_rv_history
 from golden_vector.hedge.option_artifact_sources import load_option_artifact_source_inputs
 from golden_vector.hedge.option_signals import (
     build_option_signal_artifacts,
@@ -612,6 +613,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run id under data/runs, or a direct path to a run directory.",
     )
 
+    subparsers.add_parser(
+        "migrate-option-history",
+        help=(
+            "Recompute iv_rv_ratio in the canonical option signal history with "
+            "corrected realized-volatility semantics (one-time value migration)."
+        ),
+    )
+
     prune_parser = subparsers.add_parser(
         "prune-runs",
         help="Dry-run or apply safe retention pruning for old run-stamped artifacts.",
@@ -737,6 +746,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "verify-replay":
         return run_verify_replay(paths, run_id_or_path=args.run_id_or_path)
 
+    if args.command == "migrate-option-history":
+        return run_migrate_option_history(paths)
+
     if args.command == "prune-runs":
         return run_prune_runs(
             paths,
@@ -746,6 +758,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser.error(f"Unsupported command: {args.command}")
     return 2
+
+
+def run_migrate_option_history(paths: ProjectPaths) -> int:
+    migration_run_id = (
+        f"iv-rv-migration-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    )
+    try:
+        stats = migrate_iv_rv_history(paths, migration_run_id=migration_run_id)
+    except Exception as exc:
+        print(f"Option signal history migration failed: {exc}")
+        return 1
+    print(f"migration_run_id: {migration_run_id}")
+    print(json.dumps(stats, indent=2, sort_keys=True, default=str))
+    return 0
 
 
 def run_perf_profile(paths: ProjectPaths, *, json_output: bool = False) -> int:
