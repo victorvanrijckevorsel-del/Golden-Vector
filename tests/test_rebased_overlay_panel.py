@@ -8,6 +8,11 @@ assertion that pinned the *chart's* contract lives on here, addressed directly a
 the builder: every supplied line is drawn, the percent gridlines bracket the span,
 the crosshair embed carries the exact coordinate mapping, and corrupt dates
 degrade instead of crashing.
+
+The builder is now shared by three display modes — ``indexed`` (this file's
+original subject), ``price`` (currency levels) and ``count`` (open interest) — so
+the last block pins what each mode says about its own units, and that the default
+mode still renders the rebased contract byte-for-byte.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from html import unescape
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from golden_vector.serve.charts import _build_multiline_overlay_svg
 
@@ -48,6 +54,24 @@ def _full_overlay() -> dict[str, dict[str, tuple[list, list]]]:
 
 def _full_series() -> dict[str, tuple[list, list]]:
     return _full_overlay()["12M"]
+
+
+def _axis_labels(html: str) -> list[str]:
+    """The y-axis gridline labels (the trailing two entries are the date labels)."""
+    return re.findall(r'class="chart-label">([^<]+)</text>', html)
+
+
+def _aria_label(html: str) -> str:
+    return re.search(r'<svg [^>]*aria-label="([^"]+)"', html).group(1)
+
+
+def _caption(html: str) -> str:
+    return re.search(r"<caption>([^<]+)</caption>", html).group(1)
+
+
+def _price_series() -> dict[str, tuple[list, list]]:
+    """A share-price series in currency levels — nowhere near 100."""
+    return {"Stock": (_window_dates(), [6.10, 6.40, 6.25, 6.80, 6.55, 7.05])}
 
 
 def test_overlay_chart_draws_every_supplied_series_with_a_baseline():
@@ -81,6 +105,8 @@ def test_overlay_embed_pins_the_coordinate_mapping():
     # ships a misaligned crosshair). Fixture spans values 100..130 with base 100.
     payload = _overlay_payload(_build_multiline_overlay_svg(series_by_label=_full_series()))
     assert payload["base"] == 100.0
+    # indexed keeps the two-number tooltip: raw level + the percent label
+    assert payload["labelOnly"] is False
     # First date sits at the left padding (x=48); the last at width-padding_right (720-24=696).
     assert payload["ticks"][0] == ["2024-01-05", 48.0]
     assert payload["ticks"][-1] == ["2024-02-09", 696.0]
@@ -221,11 +247,26 @@ svg.setAttribute("data-overlay", JSON.stringify({
   }]
 }));
 
+// A labelOnly chart (price/count modes): the server pre-formats the WHOLE value,
+// so the tooltip must print the label alone — never "51.0 (USD 51.00)".
+const svg2 = new Element("svg");
+svg2.setAttribute("data-overlay", JSON.stringify({
+  top: 20,
+  bottom: 212,
+  labelOnly: true,
+  ticks: [["2024-01-02", 696]],
+  series: [{
+    label: "NEM",
+    series: "stock",
+    byDate: { "2024-01-02": [88, 51.0, "USD 51.00"] }
+  }]
+}));
+
 const document = {
   readyState: "complete",
   body: new Element("body"),
   listeners: {},
-  querySelectorAll(selector) { return selector === "svg.overlay-chart" ? [svg] : []; },
+  querySelectorAll(selector) { return selector === "svg.overlay-chart" ? [svg, svg2] : []; },
   createElement(tag) {
     const el = new Element(tag);
     if (tag === "div") el.rect = { left: 0, top: 0, width: 80, height: 30 };
@@ -267,6 +308,14 @@ assert.notEqual(tip.style.left, firstLeft);
 
 window.listeners.blur();
 assert.equal(tip.hidden, true);
+
+// The labelOnly chart re-opens the tooltip and prints the pre-formatted value
+// alone; the indexed chart above already proved the "level (percent)" form.
+svg2.listeners.pointermove({ clientX: 196, clientY: 95 });
+assert.equal(tip.hidden, false);
+assert.ok(tip.innerHTML.includes("NEM: USD 51.00"));
+assert.ok(!tip.innerHTML.includes("51.0 ("));
+assert.ok(!tip.innerHTML.includes("("));
 """
     result = subprocess.run(
         ["node", "-e", script],
@@ -276,6 +325,139 @@ assert.equal(tip.hidden, true);
         capture_output=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+# ---------------------------------------------------------------------------
+# display modes: the same builder, told explicitly what its values MEAN
+# ---------------------------------------------------------------------------
+
+
+def test_price_mode_labels_axis_crosshair_and_table_in_the_callers_currency():
+    """Share-price levels are currency, not an index: the axis, the embedded
+    crosshair label and the accessible cell must all carry the currency the
+    CALLER supplied, produced by one formatter so they cannot diverge."""
+    html = _build_multiline_overlay_svg(
+        series_by_label=_price_series(),
+        series_keys={"Stock": "stock"},
+        data_table_id="chart-data-price",
+        mode="price",
+        unit="USD",
+    )
+
+    axis = _axis_labels(html)
+    assert "USD 6.20" in axis and "USD 7.00" in axis
+    payload = _overlay_payload(html)
+    # the tooltip prints the pre-formatted label ALONE in this mode (one flag
+    # shared with the table logic, proven at runtime by the node test above)
+    assert payload["labelOnly"] is True
+    stock = payload["series"][0]["byDate"]
+    assert stock["2024-01-05"] == [pytest.approx(196.0, abs=40.0), 6.1, "USD 6.10"]
+    assert stock["2024-02-09"][2] == "USD 7.05"
+    # the table twin prints the SAME formatted value — units included, nothing truncated
+    assert "<td>USD 6.10</td>" in html
+    assert "<td>USD 7.05</td>" in html
+    assert _aria_label(html) == "Share price over time (USD)"
+    assert _caption(html) == "Share price over time — USD per share"
+    assert 'aria-label="Share price over time — chart data table"' in html
+
+
+def test_price_mode_never_speaks_of_indexing_or_percent_change():
+    html = _build_multiline_overlay_svg(
+        series_by_label=_price_series(),
+        data_table_id="chart-data-price",
+        mode="price",
+        unit="USD",
+    )
+
+    # "tabindex" on the scroll region is the only legitimate "index" substring.
+    for wrong in ("Rebased", "rebase", "indexed", "Index", "%"):
+        assert wrong not in html, wrong
+    assert html.count("index") == html.count("tabindex")
+
+
+def test_price_mode_draws_no_base_100_baseline_and_frames_the_real_prices():
+    """A dashed line at 100 under a $7 stock would claim a rebase that never
+    happened AND flatten the line; price mode must scale to the data alone."""
+    html = _build_multiline_overlay_svg(
+        series_by_label=_price_series(), mode="price", unit="USD"
+    )
+
+    assert "stroke-dasharray=\"3 3\"" not in html
+    assert _overlay_payload(html)["base"] is None
+    axis = [label for label in _axis_labels(html) if label.startswith("USD ")]
+    assert axis, "price mode must still label its gridlines"
+    assert all(6.0 <= float(label.removeprefix("USD ")) <= 7.2 for label in axis), axis
+    # the drawn line uses the full plot height, not a sliver near a 100 baseline
+    ys = [float(pair.split(",")[1]) for pair in re.search(r'points="([^"]+)"', html).group(1).split()]
+    assert max(ys) - min(ys) > 100
+
+
+def test_price_mode_honours_a_non_usd_currency_from_the_caller():
+    """The currency is the caller's artifact fact; the builder never assumes USD."""
+    html = _build_multiline_overlay_svg(
+        series_by_label=_price_series(),
+        data_table_id="chart-data-price",
+        mode="price",
+        unit="CAD",
+    )
+
+    assert "USD" not in html
+    assert "CAD 6.20" in _axis_labels(html)
+    assert _caption(html) == "Share price over time — CAD per share"
+
+
+def test_count_mode_labels_plain_counts_and_keeps_its_zero_baseline():
+    dates = _window_dates()
+    html = _build_multiline_overlay_svg(
+        series_by_label={
+            "Put open interest": (dates, [1200.0, 1400.0, 1500.0, 1450.0, 1600.0, 1800.0]),
+        },
+        base=0.0,
+        data_table_id="chart-data-oi",
+        mode="count",
+        unit="contracts",
+        title="Open interest over time",
+    )
+
+    axis = _axis_labels(html)
+    assert "1,500" in axis and "0" in axis  # thousands separated, zero anchored
+    assert "stroke-dasharray=\"3 3\"" in html  # the zero line stays meaningful for counts
+    assert _overlay_payload(html)["base"] == 0.0
+    # the unit reaches the screen-reader label too — the axis is invisible there
+    assert _aria_label(html) == "Open interest over time (contracts)"
+    assert _caption(html) == "Open interest over time — contracts"
+    assert "<td>1,800</td>" in html
+    for wrong in ("Rebased price comparison", "indexed value", "%"):
+        assert wrong not in html, wrong
+
+
+def test_unit_bearing_modes_fail_loud_without_a_unit_and_reject_unknown_modes():
+    """An unlabelled currency/count chart is a degraded state for the CALLER to
+    disclose — the builder must never invent or omit the unit silently."""
+    for mode in ("price", "count"):
+        with pytest.raises(ValueError, match="requires an explicit unit"):
+            _build_multiline_overlay_svg(series_by_label=_price_series(), mode=mode)
+        with pytest.raises(ValueError, match="requires an explicit unit"):
+            _build_multiline_overlay_svg(
+                series_by_label=_price_series(), mode=mode, unit="   "
+            )
+    with pytest.raises(ValueError, match="unknown overlay display mode"):
+        _build_multiline_overlay_svg(series_by_label=_price_series(), mode="bogus")
+
+
+def test_default_mode_is_still_the_indexed_comparison():
+    """Back-compat guard: callers that pass no mode keep the rebased contract."""
+    html = _build_multiline_overlay_svg(
+        series_by_label=_full_series(), data_table_id="chart-data-indexed"
+    )
+
+    assert _aria_label(html) == "Rebased price comparison"
+    assert _caption(html) == (
+        "Rebased price comparison — indexed value (change vs the rebase start)"
+    )
+    assert "<td>100.0 (0%)</td>" in html
+    assert "stroke-dasharray=\"3 3\"" in html
+    assert _overlay_payload(html)["base"] == 100.0
 
 
 def test_multiline_overlay_svg_does_not_crash_on_all_nat_dates():
