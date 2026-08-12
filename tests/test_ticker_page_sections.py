@@ -259,7 +259,7 @@ def test_performance_price_view_is_currency_true_end_to_end():
     stock = overlay["series"][0]
     assert stock["label"] == "Stock"
     assert stock["byDate"]["2026-01-05"] == [pytest.approx(212.0, abs=40.0), 50.0, "USD 50.00"]
-    assert overlay["base"] is None  # no base-100 anchor on a currency chart
+    assert "base" not in overlay  # no base-100 anchor travels to a currency chart
     # accessible twin: caption states the unit, cells carry it, every date listed
     assert "<caption>Share price over time — USD per share</caption>" in chart
     assert 'aria-label="Share price over time — chart data table"' in chart
@@ -290,6 +290,52 @@ def test_performance_price_view_degrades_when_the_artifact_states_no_currency():
     )
     assert "<svg" in compare
     assert "does not state a currency basis" not in compare
+
+
+def test_performance_price_view_withholds_the_chart_when_the_rows_disagree():
+    """Two currencies in one drawn window is not a currency basis at all.
+
+    Picking either would mislabel half the line, and picking "the first one" is
+    a guess — the chart is withheld and the gap stated, exactly as for a missing
+    basis. Neither code may reach the screen."""
+    rows = _performance_rows()
+    price_stock = rows["view"].eq("price") & rows["series"].eq("stock")
+    rows.loc[price_stock, "currency_basis"] = "USD"
+    rows.loc[rows.index[price_stock][0], "currency_basis"] = "CAD"
+
+    html = render_performance_section(rows, ticker="AAR.AX", horizon="1Y", view="price")
+
+    assert "does not state a currency basis" in html
+    assert "Share price (currency basis unavailable)" in html
+    assert "<svg" not in html  # no chart drawn under a guessed unit
+    assert "Share price (USD)" not in html
+    assert "Share price (CAD)" not in html
+    assert "CAD" not in html  # the disagreeing codes are not printed anywhere
+    # ...and the control: Compare is indexed, so it is unaffected by the clash
+    compare = render_performance_section(rows, ticker="AAR.AX", horizon="1Y", view="rebased")
+    assert "<svg" in compare
+    assert "does not state a currency basis" not in compare
+
+
+def test_performance_price_view_with_nothing_drawable_claims_no_currency():
+    """Nothing drawn is not the same failure as nothing labelled: with every
+    price row non-OK there is no line to mislabel, so the section says the
+    window is empty and the hint stays a plain "Share price" — it must not
+    accuse the artifact of withholding a currency basis it was never asked for."""
+    rows = _performance_rows()
+    price = rows["view"].eq("price")
+    rows.loc[price, "series_status"] = "MISSING_HISTORY"
+    rows.loc[price, "series_reason"] = "no price history published for this window"
+
+    html = render_performance_section(rows, ticker="AAR.AX", horizon="1Y", view="price")
+
+    assert "No drawable series in this window." in html
+    assert "Share price · horizon 1Y" in html
+    assert "currency basis unavailable" not in html
+    assert "does not state a currency basis" not in html
+    assert "<svg" not in html
+    # the reason each series is absent is still stated, never a silent gap
+    assert "no price history published for this window" in html
 
 
 def test_performance_price_view_rejects_a_non_currency_basis_value():

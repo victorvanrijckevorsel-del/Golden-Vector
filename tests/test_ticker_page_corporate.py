@@ -662,6 +662,9 @@ def test_degraded_gold_response_row_disables_the_dial_with_its_persisted_reason(
     payload = _payload(html)
     assert payload["enabled"] is False
     assert payload["disabled_reason"] == reason
+    # no artifact means no scenario either, and the reason is the same one
+    assert payload["scenario_enabled"] is False
+    assert payload["scenario_reason"] == reason
     assert payload["gold_response_status"] == "DEGRADED_NONLINEAR"
     assert payload["gold_response_reason"] == reason
 
@@ -745,9 +748,15 @@ def test_a_spot_outside_the_configured_range_disables_the_dial_with_a_reason():
     """§4.3 State A: never silently clamp an out-of-range spot into a slider —
 
     a control pinned at a bound the price does not occupy would present every
-    position as a scenario the model never anchored. The dial disables with one
-    visible reason; the position still emits the bound the browser would hold,
-    and the payload plus every human-readable basis keep the TRUE spot."""
+    position as a scenario the model never anchored. The SCENARIO is withheld
+    with one visible reason; the position still emits the bound the browser
+    would hold, and the payload plus every human-readable basis keep the TRUE
+    spot.
+
+    The ARTIFACT is untouched by this: ``enabled`` stays True, because the
+    published lines were verified at true spot and the client must still
+    evaluate the five line-metric cells there. Blanking them would throw away
+    five values the artifact stands behind — hence two separate flags."""
     dial = _app_config().ticker_page.dial
     for spot, bound in ((7000.0, dial.max_gold_usd), (1000.0, dial.min_gold_usd)):
         data = _data(_gold_row(spot_gold_usd=spot))
@@ -764,8 +773,16 @@ def test_a_spot_outside_the_configured_range_disables_the_dial_with_a_reason():
         assert f"spot {exact} as of" in control, spot
         payload = _payload(_render(data=data))
         assert payload["spot_gold_usd"] == spot
-        assert payload["enabled"] is False
-        assert "outside the configured dial range" in payload["disabled_reason"]
+        # artifact availability is NOT what failed here
+        assert payload["enabled"] is True
+        assert payload["disabled_reason"] is None
+        assert payload["scenario_enabled"] is False
+        assert "outside the configured dial range" in payload["scenario_reason"]
+        # ...and the section says only the scenario is withheld
+        section = _render(data=data)
+        assert "The gold dial cannot run a scenario for NEM" in section
+        assert "The values below are unaffected and stay at spot." in section
+        assert "Spot values below are the published ones" not in section
 
     # a spot exactly ON a bound is inside the range and keeps the dial live
     data = _data(_gold_row(spot_gold_usd=float(dial.max_gold_usd)))
@@ -773,7 +790,10 @@ def test_a_spot_outside_the_configured_range_disables_the_dial_with_a_reason():
         data, ticker="NEM", finance_source="our", app_config=_app_config()
     )
     assert "outside the configured dial range" not in control
-    assert _payload(_render(data=data))["enabled"] is True
+    live = _payload(_render(data=data))
+    assert live["enabled"] is True
+    assert live["scenario_enabled"] is True
+    assert live["scenario_reason"] == ""
 
 
 def test_slider_value_attr_lands_on_the_grid_for_every_step_shape():
@@ -829,6 +849,8 @@ def test_dial_payload_carries_the_artifact_row_and_nothing_computed():
     assert payload["spot_gold_date"] == "2026-08-11"
     assert payload["margin_basis"] == "aisc"
     assert payload["enabled"] is True
+    assert payload["scenario_enabled"] is True
+    assert payload["scenario_reason"] == ""
 
     assert set(payload["lines"]) == set(GOLD_RESPONSE_LINE_METRICS)
     assert set(payload["constants"]) == set(GOLD_RESPONSE_CONSTANT_COLUMNS)
@@ -841,6 +863,8 @@ def test_dial_payload_carries_the_artifact_row_and_nothing_computed():
         "gold_response_reason",
         "enabled",
         "disabled_reason",
+        "scenario_enabled",
+        "scenario_reason",
         "spot_gold_usd",
         "spot_gold_date",
         "margin_basis",

@@ -389,6 +389,11 @@ class _OverlayDisplayMode:
     #: Left gutter — currency labels need more room than "+30%".
     padding_left: int
     decimals: int | None
+    #: Smallest grid step this mode's own precision can DISTINGUISH. A nice step
+    #: finer than the label format prints the same text twice ("1", "1", "2",
+    #: "2") on a narrow span; clamping to this keeps every axis label unique.
+    #: ``None`` for the percent formatter, whose precision adapts to the value.
+    min_step: float | None
     unit_prefix: bool
     requires_unit: bool
 
@@ -402,6 +407,7 @@ _OVERLAY_DISPLAY_MODES: dict[str, _OverlayDisplayMode] = {
         table_shows_value=True,
         padding_left=48,
         decimals=None,
+        min_step=None,
         unit_prefix=False,
         requires_unit=False,
     ),
@@ -413,6 +419,7 @@ _OVERLAY_DISPLAY_MODES: dict[str, _OverlayDisplayMode] = {
         table_shows_value=False,
         padding_left=76,
         decimals=2,
+        min_step=0.01,
         unit_prefix=True,
         requires_unit=True,
     ),
@@ -425,6 +432,7 @@ _OVERLAY_DISPLAY_MODES: dict[str, _OverlayDisplayMode] = {
         table_shows_value=False,
         padding_left=48,
         decimals=0,
+        min_step=1.0,
         unit_prefix=False,
         requires_unit=True,
     ),
@@ -574,6 +582,11 @@ def _build_multiline_overlay_svg(
     # the rebase start for indexed, currency levels for price, plain counts for count — so the
     # lines are actually readable ("AEM +120%, gold +60%"). Display-only axis math.
     step = _nice_overlay_grid_step(value_hi - value_lo)
+    if display.min_step is not None:
+        # A step finer than the mode can print labels the reader cannot tell
+        # apart: a 3-contract count span picks 0.5 and prints "1", "1", "2",
+        # "2". The mode's own precision is the floor.
+        step = max(step, display.min_step)
     grid_lines = ""
     grid_labels = ""
     grid_origin = 0.0 if anchor is None else anchor
@@ -615,7 +628,9 @@ def _build_multiline_overlay_svg(
     overlay_data = {
         "top": round(padding_top, 1),
         "bottom": round(height - padding_bottom, 1),
-        "base": anchor,
+        # No "base": the anchor drives the y-range and the dashed baseline HERE,
+        # and overlay-crosshair.js never reads it — shipping it invited a second
+        # consumer to re-derive percentages in the browser.
         # Mirrors table_shows_value: a pre-formatted label ("USD 51.00") IS the
         # whole value, so the crosshair prints it alone; indexed keeps
         # "level (percent)". One flag so tooltip and table can never disagree.

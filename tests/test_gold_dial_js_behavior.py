@@ -58,8 +58,19 @@ CARD_SPOT_TEXT = "6.72×"
 
 
 def _payload(
-    *, spot: float = FRACTIONAL_SPOT, enabled: bool = True, reason: str = "", **overrides
+    *,
+    spot: float = FRACTIONAL_SPOT,
+    enabled: bool = True,
+    reason: str = "",
+    scenario_enabled: bool = True,
+    scenario_reason: str = "",
+    **overrides,
 ) -> dict:
+    """The real server payload. ``enabled`` is ARTIFACT availability;
+    ``scenario_enabled`` is whether the slider may move (see
+    ``_dial_and_scenario_state``) — the two states behave differently and both
+    are exercised below."""
+
     row = pd.Series(_gold_row(spot_gold_usd=spot, **overrides))
     return build_gold_dial_payload(
         row,
@@ -67,6 +78,8 @@ def _payload(
         finance_source="our",
         enabled=enabled,
         disabled_reason=reason,
+        scenario_enabled=scenario_enabled,
+        scenario_reason=scenario_reason,
     )
 
 
@@ -92,6 +105,30 @@ def _basis_at_rest(spot: float) -> str:
     """The server-rendered ``#gold-dial-basis`` text (corporate.py mirror)."""
 
     return f"spot {format_metric(spot, 'usd2')} as of 2026-08-11"
+
+
+def _card_basis_at_rest(spot: float) -> str:
+    """The server-rendered ``.metric-card-basis`` text (``_headline_cards``'s
+    ``spot_label``) — the line that would otherwise still say "spot" under a
+    scenario-only number."""
+
+    return f"fwd @ spot {format_metric(spot, 'usd')}/oz as of 2026-08-11"
+
+
+def _card_basis_scenario(gold: float, spot: float = FRACTIONAL_SPOT) -> str:
+    """What that same line must say while a scenario is active: the scenario
+    price the number was evaluated at, plus the baseline it moved from."""
+
+    return (
+        f"fwd @ scenario {format_metric(gold, 'usd')}/oz · baseline "
+        + _card_basis_at_rest(spot).removeprefix("fwd @ ")
+    )
+
+
+def _valuetext_at_rest(spot: float) -> str:
+    """The server-rendered ``aria-valuetext`` for a live dial (corporate.py)."""
+
+    return f"{format_metric(spot, 'usd2')} per ounce, spot"
 
 
 _SHIM = r"""
@@ -142,7 +179,9 @@ payloadNode.textContent = __PAYLOAD__;
 
 // The browser has ALREADY snapped the position onto the step grid by the time
 // the module runs — that is the whole point of the fractional-spot cases.
-const input = new El("input");
+// The server rendered an aria-valuetext with it, so "the module left the
+// server's text alone" is provable rather than merely "wrote no attribute".
+const input = new El("input", {"aria-valuetext": __VALUETEXT__});
 input.value = __VALUE__;
 const output = new El("output");
 const reset = new El("button");
@@ -163,15 +202,35 @@ const cardSpot = new El("p", {"data-headline-spot": "1"});
 cardSpot.textContent = __CARD_SPOT__;
 const scenarioHead = new El("th", {"data-scenario-head": "1", hidden: "hidden"});
 
+// All SIX headline cards, each with the basis line the server writes under its
+// number ("fwd @ spot $4,477/oz as of 2026-08-11"). Every one of them must move
+// to the scenario price while a scenario is active, and back afterwards.
+const cardBases = [];
+const cards = [];
+for (let cardIndex = 0; cardIndex < 6; cardIndex += 1) {
+  const cardBasis = new El("p", {"class": "hint metric-card-basis"});
+  cardBasis.textContent = __CARD_BASIS__;
+  const card = new El("div", {"data-metric-card": "metric" + cardIndex});
+  card.querySelector = function (selector) {
+    if (selector === ".metric-card-basis") { return cardBasis; }
+    throw new Error("unexpected selector: " + selector);
+  };
+  cardBases.push(cardBasis);
+  cards.push(card);
+}
+
 const section = new El("section");
 section.querySelectorAll = function (selector) {
   if (selector === '[data-metric][data-basis="spot"]') { return [spotCell]; }
   if (selector === '[data-metric][data-basis="scenario"]') { return [scenarioCell, cardScenario]; }
   if (selector === "[data-scenario-head]") { return [scenarioHead]; }
   if (selector === "[data-headline-spot]") { return [cardSpot]; }
+  if (selector === "[data-metric-card]") { return cards; }
   // An unmodelled selector must fail loudly rather than silently return nothing.
   throw new Error("unexpected selector: " + selector);
 };
+
+function cardBasisTexts() { return cardBases.map(function (node) { return node.textContent; }); }
 
 const NODES = {
   "gold-dial-payload": __PAYLOAD_NODE__,
@@ -222,8 +281,14 @@ def _run(
     spot: float = FRACTIONAL_SPOT,
     with_payload: bool = True,
     reduced_motion: bool = False,
+    valuetext: str | None = None,
 ) -> None:
-    """Run the shipped module against the shim and assert node exits clean."""
+    """Run the shipped module against the shim and assert node exits clean.
+
+    ``valuetext`` seeds the server-rendered ``aria-valuetext``; the default is
+    the live-dial one, and the scenario-unavailable case passes the server's
+    own "— scenario unavailable" text so it can be proven untouched.
+    """
 
     assert DIAL_JS.exists(), f"{DIAL_JS} is missing"
     resolved = _payload(spot=spot) if payload is None else payload
@@ -231,7 +296,12 @@ def _run(
         _SHIM.replace("__PAYLOAD__", json.dumps(json.dumps(resolved)))
         .replace("__PAYLOAD_NODE__", "payloadNode" if with_payload else "null")
         .replace("__VALUE__", json.dumps(value))
+        .replace(
+            "__VALUETEXT__",
+            json.dumps(_valuetext_at_rest(spot) if valuetext is None else valuetext),
+        )
         .replace("__BASIS__", json.dumps(_basis_at_rest(spot)))
+        .replace("__CARD_BASIS__", json.dumps(_card_basis_at_rest(spot)))
         .replace("__PENDING__", json.dumps(PENDING_TEXT))
         .replace("__CARD_SPOT__", json.dumps(CARD_SPOT_TEXT))
         .replace("__LINE_METRIC__", LINE_METRIC)
@@ -281,6 +351,11 @@ assert.equal(
   {json.dumps(format_metric(FRACTIONAL_SPOT, "usd2") + " per ounce, spot")}
 );
 assert.equal(basis.textContent, {json.dumps(_basis_at_rest(FRACTIONAL_SPOT))});
+
+// Every card's basis line is the server's own text, untouched at rest.
+cardBasisTexts().forEach(function (text) {{
+  assert.equal(text, {json.dumps(_card_basis_at_rest(FRACTIONAL_SPOT))});
+}});
 
 // The line-metric spot cell is evaluated at exact spot, not at the snapped position.
 assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, FRACTIONAL_SPOT))});
@@ -352,6 +427,14 @@ assert.equal(
   {json.dumps("scenario $4,200 · baseline " + _basis_at_rest(FRACTIONAL_SPOT))}
 );
 
+// ALL SIX card basis lines now say scenario — a card must never print a
+// scenario-only number under "fwd @ spot ...".
+assert.equal(cardBases.length, 6);
+cardBasisTexts().forEach(function (text) {{
+  assert.equal(text, {json.dumps(_card_basis_scenario(4200.0))});
+}});
+assert.ok(!cardBasisTexts().some(function (text) {{ return text.indexOf("fwd @ spot") === 0; }}));
+
 // A keyboard step fires input then change: same handler, still one announcement.
 input.value = "4201";
 input.listeners.input();
@@ -401,7 +484,13 @@ def test_manual_return_to_the_baseline_clears_the_scenario_completely():
     body = f"""
 slide("4200");
 flush();
+assert.equal(cardBasisTexts()[0], {json.dumps(_card_basis_scenario(4200.0))});
 slide({json.dumps(FRACTIONAL_BASELINE)});
+
+// Byte-exact restoration: the server's wording is captured, never rebuilt.
+cardBasisTexts().forEach(function (text) {{
+  assert.equal(text, {json.dumps(_card_basis_at_rest(FRACTIONAL_SPOT))});
+}});
 
 assert.equal(section.attrs["data-scenario-active"], "0");
 assert.equal(reset.disabled, true);
@@ -433,10 +522,15 @@ def test_reset_restores_the_saved_baseline_and_never_the_fractional_spot():
     body = f"""
 slide("4200");
 flush();
+assert.equal(cardBasisTexts()[0], {json.dumps(_card_basis_scenario(4200.0))});
 reset.listeners.click();
 
 // The SAVED baseline: writing 4477.4 back would snap straight to a moved position.
 assert.equal(input.value, {json.dumps(FRACTIONAL_BASELINE)});
+// Reset restores the server's card basis text byte-exact, exactly like a manual return.
+cardBasisTexts().forEach(function (text) {{
+  assert.equal(text, {json.dumps(_card_basis_at_rest(FRACTIONAL_SPOT))});
+}});
 assert.equal(section.attrs["data-scenario-active"], "0");
 assert.equal(reset.disabled, true);
 assert.equal(scenarioCell.hidden, true);
@@ -516,7 +610,10 @@ assert.equal(cardSpot.hidden, false);
 assert.equal(cardSpot.textContent, {json.dumps(CARD_SPOT_TEXT)});
 assert.equal(scenarioCell.hidden, true);
 assert.equal(status.textContent, "");
-assert.equal(input.attrs["aria-valuetext"], undefined);
+assert.equal(
+  input.attrs["aria-valuetext"],
+  {json.dumps(_valuetext_at_rest(FRACTIONAL_SPOT))}
+);
 assert.equal(section.attrs["data-scenario-active"], undefined);
 assert.equal(input.listeners.input, undefined);
 """
@@ -524,6 +621,10 @@ assert.equal(input.listeners.input, undefined);
 
 
 def test_a_disabled_dial_replaces_the_no_javascript_fallback_with_the_reason():
+    """ARTIFACT unavailable (``enabled`` False): no price can be evaluated at
+    all, so the no-JavaScript fallback becomes the real reason rather than a
+    blank or a lie about needing JavaScript."""
+
     reason = "linearity residual 41.2 exceeded tolerance at $6,000"
     body = f"""
 assert.equal(input.disabled, true);
@@ -533,30 +634,80 @@ assert.equal(spotCell.attrs["data-unavailable"], "1");
 assert.equal(cardSpot.hidden, false);
 assert.equal(status.textContent, "");
 assert.equal(input.listeners.input, undefined);
-"""
-    _run(body, payload=_payload(enabled=False, reason=reason))
-
-
-def test_a_spot_above_the_configured_range_still_boots_clean():
-    """The browser clamps the position to max; the payload keeps the true spot.
-    The clamped position is the baseline, so no scenario is manufactured."""
-
-    payload = _payload(spot=7000.0)
-    body = f"""
-assert.equal(status.textContent, "");
-assert.equal(section.attrs["data-scenario-active"], "0");
-assert.equal(reset.disabled, true);
-assert.equal(cardSpot.hidden, false);
-// Cells still report the TRUE spot, never the clamped control position.
-assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, 7000.0))});
+assert.equal(input.listeners.change, undefined);
+assert.equal(reset.listeners.click, undefined);
+// the server's own value text and card basis lines stand untouched
 assert.equal(
   input.attrs["aria-valuetext"],
-  {json.dumps(format_metric(7000.0, "usd2") + " per ounce, spot")}
+  {json.dumps(_valuetext_at_rest(FRACTIONAL_SPOT))}
 );
-
-slide("5900");
-flush();
-assert.equal(section.attrs["data-scenario-active"], "1");
-assert.equal(cardSpot.hidden, true);
+cardBasisTexts().forEach(function (text) {{
+  assert.equal(text, {json.dumps(_card_basis_at_rest(FRACTIONAL_SPOT))});
+}});
 """
-    _run(body, payload=payload, value="6000", spot=7000.0)
+    _run(
+        body,
+        payload=_payload(
+            enabled=False, reason=reason, scenario_enabled=False, scenario_reason=reason
+        ),
+    )
+
+
+def test_a_spot_outside_the_range_keeps_its_true_spot_values_and_an_inert_control():
+    """SCENARIO unavailable, artifact FINE (``enabled`` True,
+    ``scenario_enabled`` False — spot outside the configured dial range).
+
+    The published lines were verified at true spot, so the five line cells must
+    show their evaluated values; overwriting them with the reason would destroy
+    five numbers the artifact stands behind. The control is inert instead: no
+    listeners, no scenario, no announcement, and the server's own strings stay."""
+
+    reason = (
+        "spot gold $7,000.00 is outside the configured dial range $2,000–$6,000"
+    )
+    payload = _payload(spot=7000.0, scenario_enabled=False, scenario_reason=reason)
+    server_valuetext = format_metric(7000.0, "usd2") + " per ounce, spot — scenario unavailable"
+    body = f"""
+// The five line cells carry EVALUATED values at true spot — never the reason,
+// never the no-JavaScript fallback, never a blank.
+assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, 7000.0))});
+assert.notEqual(spotCell.textContent, {json.dumps(reason)});
+assert.notEqual(spotCell.textContent, {json.dumps(PENDING_TEXT)});
+assert.notEqual(spotCell.textContent, "");
+assert.equal(spotCell.attrs["data-unavailable"], undefined);
+assert.equal(cardSpot.hidden, false);
+assert.equal(cardSpot.textContent, {json.dumps(CARD_SPOT_TEXT)});
+
+// The control is dead: disabled, unbound, nothing to reset from.
+assert.equal(input.disabled, true);
+assert.equal(reset.disabled, true);
+assert.equal(input.listeners.input, undefined);
+assert.equal(input.listeners.change, undefined);
+assert.equal(reset.listeners.click, undefined);
+
+// Dispatching an input event changes NOTHING (there is nothing bound to it).
+input.value = "5900";
+if (input.listeners.input) {{ input.listeners.input(); }}
+if (input.listeners.change) {{ input.listeners.change(); }}
+flush();
+assert.equal(section.attrs["data-scenario-active"], undefined);
+assert.equal(scenarioCell.hidden, true);
+assert.equal(scenarioCell.textContent, "");
+assert.equal(cardScenario.hidden, true);
+assert.equal(scenarioHead.hidden, true);
+assert.equal(cardSpot.hidden, false);
+
+// Nothing announced, and the server's aria-valuetext + card basis lines stand.
+assert.equal(status.textContent, "");
+assert.equal(input.attrs["aria-valuetext"], {json.dumps(server_valuetext)});
+cardBasisTexts().forEach(function (text) {{
+  assert.equal(text, {json.dumps(_card_basis_at_rest(7000.0))});
+}});
+"""
+    _run(
+        body,
+        payload=payload,
+        value="6000",
+        spot=7000.0,
+        valuetext=server_valuetext,
+    )

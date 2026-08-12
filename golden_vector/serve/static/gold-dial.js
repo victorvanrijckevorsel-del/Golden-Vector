@@ -17,6 +17,12 @@
  *     forking a second one. It mirrors format_metric() in
  *     serve/ticker_page/corporate.py character for character.
  *   - The module no-ops when its markup is absent (plan §9.5).
+ *   - The payload carries TWO availability flags and they are not the same
+ *     thing: `enabled` false means no artifact exists, so no price can be
+ *     evaluated and the line cells show the reason; `scenario_enabled` false
+ *     with `enabled` true means the published values are good AT SPOT but the
+ *     slider must not move, so the spot cells are painted and the control is
+ *     left inert (redesign plan §4.3 State A).
  *   - The clean state is the browser-normalized slider position captured at
  *     boot — never the exact fractional spot, which a stepped control cannot
  *     hold. No scenario, and no live-region announcement, without a genuine
@@ -292,6 +298,21 @@
     var basis = document.getElementById(BASIS_ID);
     var announceTimer = null;
 
+    /* Every headline card states the price its number is measured at ("fwd @
+     * spot $4,477/oz as of 2026-08-11"). While a scenario is active that line
+     * would otherwise sit under a scenario-only number and still say "spot", so
+     * each card's basis is captured at boot and rewritten with the scenario
+     * price + the baseline it moved from. The captured text is restored
+     * byte-exact on return, so the server's wording is never re-invented here. */
+    var cardBases = [];
+    var cardNodes = section.querySelectorAll("[data-metric-card]");
+    for (var cardIndex = 0; cardIndex < cardNodes.length; cardIndex += 1) {
+      var cardBasis = cardNodes[cardIndex].querySelector(".metric-card-basis");
+      if (cardBasis) {
+        cardBases.push({ node: cardBasis, original: cardBasis.textContent });
+      }
+    }
+
     /* State B (plan §4.3). A range control snaps its value onto its own step
      * grid before this line runs, so the CLEAN STATE is that browser-normalized
      * position — never payload.spot_gold_usd, which is the exact fractional
@@ -383,6 +404,14 @@
       for (index = 0; index < scenarioHeads.length; index += 1) {
         setHidden(scenarioHeads[index], !moved);
       }
+      for (index = 0; index < cardBases.length; index += 1) {
+        cardBases[index].node.textContent = moved
+          ? "fwd @ scenario " +
+            formatMetric(gold, "usd") +
+            "/oz · baseline " +
+            cardBases[index].original.replace(/^fwd @ /, "")
+          : cardBases[index].original;
+      }
 
       section.setAttribute("data-scenario-active", moved ? "1" : "0");
       if (output) {
@@ -427,6 +456,22 @@
               " per ounce. Corporate finance values updated."
           : "Back at spot " + spotText + " per ounce."
       );
+    }
+
+    /* Artifact fine, scenario withheld (plan §4.3 State A — spot outside the
+     * configured dial range). The published lines were verified AT TRUE SPOT,
+     * so the five line cells are evaluated and shown: blanking five trustworthy
+     * values because the slider cannot reach their price would destroy data the
+     * artifact stands behind. The control itself is inert — no listeners, no
+     * announcement, and the server's own aria-valuetext (which already says
+     * "scenario unavailable") is left exactly as rendered. */
+    if (payload.scenario_enabled !== true) {
+      paintSpotCells();
+      input.disabled = true;
+      if (reset) {
+        reset.disabled = true;
+      }
+      return;
     }
 
     input.addEventListener("input", onUserInput);

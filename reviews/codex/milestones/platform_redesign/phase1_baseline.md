@@ -57,8 +57,18 @@ persisted dual-source artifact (Phase 2 scope). Script:
 
 Deferred — see §1. No PNGs captured or copied. The visual baseline (1440/1024/390px, Our View
 and Yahoo mode) will be captured at the Phase 4 batched browser gate per
-`feedback_token_efficiency.md` (browser checks reserved for major gates) and because Playwright
-is not installed in this environment and installing was out of scope for this task.
+`feedback_token_efficiency.md` (browser checks reserved for major gates).
+
+Decision record (2026-08-12, after Codex's Phase 1 review flagged the missing pixels): Victor
+approved installing Playwright (python package, script-driven — PNGs to disk, no MCP context
+cost) but directed it be used only when genuinely necessary. Since commit `c7e90db` is
+immutable, the "before" pixels are reproducible at any time; capture is therefore deferred to
+the one batched Phase 4 pass, where before and after ship together. Recipe for the "before"
+side: `git worktree add <dir> --detach c7e90db`; the worktree checks out tracked
+`data/manual`, and the untracked read-only inputs (`data/intermediate`, `lab`, `output`,
+`raw`, `runs`) are junctioned from the main tree (`New-Item -ItemType Junction`); serve from
+the worktree; capture; unlink junctions with plain `rmdir` (never a recursive delete through
+a junction); remove the worktree.
 
 ## 5. Anomalies
 

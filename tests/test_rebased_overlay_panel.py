@@ -104,9 +104,11 @@ def test_overlay_embed_pins_the_coordinate_mapping():
     # so a swapped/inverted x_at/y_at or a byDate field-order change fails the test (not silently
     # ships a misaligned crosshair). Fixture spans values 100..130 with base 100.
     payload = _overlay_payload(_build_multiline_overlay_svg(series_by_label=_full_series()))
-    assert payload["base"] == 100.0
     # indexed keeps the two-number tooltip: raw level + the percent label
     assert payload["labelOnly"] is False
+    # Nothing in the embed the crosshair does not read: "base" was dead weight
+    # that invited percent arithmetic back into the browser.
+    assert "base" not in payload
     # First date sits at the left padding (x=48); the last at width-padding_right (720-24=696).
     assert payload["ticks"][0] == ["2024-01-05", 48.0]
     assert payload["ticks"][-1] == ["2024-02-09", 696.0]
@@ -350,6 +352,10 @@ def test_price_mode_labels_axis_crosshair_and_table_in_the_callers_currency():
     # the tooltip prints the pre-formatted label ALONE in this mode (one flag
     # shared with the table logic, proven at runtime by the node test above)
     assert payload["labelOnly"] is True
+    # Currency labels need a wider gutter than "+30%": the first tick starts at
+    # padding_left=76 here, against 48 for indexed (pinned in the default-mode
+    # test) — the two modes must not silently share one gutter again.
+    assert payload["ticks"][0][1] == 76.0
     stock = payload["series"][0]["byDate"]
     assert stock["2024-01-05"] == [pytest.approx(196.0, abs=40.0), 6.1, "USD 6.10"]
     assert stock["2024-02-09"][2] == "USD 7.05"
@@ -383,7 +389,6 @@ def test_price_mode_draws_no_base_100_baseline_and_frames_the_real_prices():
     )
 
     assert "stroke-dasharray=\"3 3\"" not in html
-    assert _overlay_payload(html)["base"] is None
     axis = [label for label in _axis_labels(html) if label.startswith("USD ")]
     assert axis, "price mode must still label its gridlines"
     assert all(6.0 <= float(label.removeprefix("USD ")) <= 7.2 for label in axis), axis
@@ -422,13 +427,45 @@ def test_count_mode_labels_plain_counts_and_keeps_its_zero_baseline():
     axis = _axis_labels(html)
     assert "1,500" in axis and "0" in axis  # thousands separated, zero anchored
     assert "stroke-dasharray=\"3 3\"" in html  # the zero line stays meaningful for counts
-    assert _overlay_payload(html)["base"] == 0.0
     # the unit reaches the screen-reader label too — the axis is invisible there
     assert _aria_label(html) == "Open interest over time (contracts)"
     assert _caption(html) == "Open interest over time — contracts"
     assert "<td>1,800</td>" in html
     for wrong in ("Rebased price comparison", "indexed value", "%"):
         assert wrong not in html, wrong
+
+
+def test_count_mode_never_labels_two_gridlines_the_same():
+    """A thin open-interest window (0–2 contracts) spans ~3 units, for which the
+    1/2/5 step chooser picks 0.5 — finer than a whole contract. Rounded to the
+    mode's own zero decimals that prints "0", "0", "1", "2", "2": two identical
+    labels at different heights, which is an unreadable axis. The mode's
+    precision is the floor for its own grid step."""
+    dates = _window_dates()
+    html = _build_multiline_overlay_svg(
+        series_by_label={
+            "Put open interest": (dates, [1.0, 2.0, 2.0, 1.0, 2.0, 2.0]),
+        },
+        base=0.0,
+        mode="count",
+        unit="contracts",
+        title="Open interest over time",
+    )
+
+    # the trailing two chart-labels are the date labels, not gridlines
+    labels = _axis_labels(html)[:-2]
+    assert labels == ["0", "1", "2"], labels
+    assert len(labels) == len(set(labels))
+    # the control: a wide span was never at risk and keeps its unique labels
+    wide = _axis_labels(
+        _build_multiline_overlay_svg(
+            series_by_label={"Put open interest": (dates, [1200.0, 1400.0, 1500.0, 1450.0, 1600.0, 1800.0])},
+            base=0.0,
+            mode="count",
+            unit="contracts",
+        )
+    )[:-2]
+    assert len(wide) == len(set(wide)), wide
 
 
 def test_unit_bearing_modes_fail_loud_without_a_unit_and_reject_unknown_modes():
@@ -457,7 +494,8 @@ def test_default_mode_is_still_the_indexed_comparison():
     )
     assert "<td>100.0 (0%)</td>" in html
     assert "stroke-dasharray=\"3 3\"" in html
-    assert _overlay_payload(html)["base"] == 100.0
+    # ...including its narrower 48px gutter (price mode widens to 76 for "USD 6.20")
+    assert _overlay_payload(html)["ticks"][0][1] == 48.0
 
 
 def test_multiline_overlay_svg_does_not_crash_on_all_nat_dates():
