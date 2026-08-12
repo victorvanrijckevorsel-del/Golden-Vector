@@ -91,6 +91,37 @@ def test_compute_relative_behavior_metrics_counts_each_benchmark_intersection():
     assert pd.isna(row["rel_weakness_vs_gdx_pct"])
 
 
+def test_hit_evidence_period_uses_published_week_period_end_dates():
+    weekly_returns = pd.DataFrame(
+        {
+            "ticker": ["AAA"] * 3,
+            "week_period": [
+                "2026-01-03/2026-01-09",
+                "2026-01-10/2026-01-16",
+                "2026-01-17/2026-01-23",
+            ],
+            "stock_log_ret": [-0.12, -0.05, -0.11],
+            "gold_log_ret": [-0.08, -0.04, -0.06],
+        }
+    )
+    gold_regimes = pd.DataFrame(
+        {
+            "week_period": weekly_returns["week_period"],
+            "gold_log_ret": weekly_returns["gold_log_ret"],
+            "gold_worst20_event": [True, False, True],
+        }
+    )
+
+    metrics = compute_relative_behavior_metrics(
+        weekly_returns=weekly_returns,
+        gold_regimes=gold_regimes,
+        min_events=2,
+    )
+
+    assert metrics.loc[0, "downside_period_start"] == pd.Timestamp("2026-01-09")
+    assert metrics.loc[0, "downside_period_end"] == pd.Timestamp("2026-01-23")
+
+
 def test_compute_relative_behavior_threshold_config_changes_hit_rates():
     weekly_returns = pd.DataFrame(
         {

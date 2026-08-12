@@ -266,9 +266,24 @@ def _threshold_rate(
 def _event_period(event_rows: pd.DataFrame) -> tuple[object, object]:
     """First/last qualifying-event date, when the rows carry dates."""
 
-    if event_rows.empty or "as_of_date" not in event_rows.columns:
+    if event_rows.empty:
         return None, None
-    dates = pd.to_datetime(event_rows["as_of_date"], errors="coerce").dropna()
+    if "as_of_date" in event_rows.columns:
+        dates = pd.to_datetime(event_rows["as_of_date"], errors="coerce").dropna()
+    elif "week_period" in event_rows.columns:
+        # ``build_weekly_return_frame`` publishes W-FRI period strings rather
+        # than an ``as_of_date`` column. Persist the actual week-ending dates;
+        # looking only for ``as_of_date`` left every live downside/upside
+        # evidence period null even though the qualifying rows were present.
+        parsed: list[pd.Timestamp] = []
+        for value in event_rows["week_period"].dropna():
+            try:
+                parsed.append(pd.Period(str(value), freq="W-FRI").end_time.normalize())
+            except ValueError:
+                continue
+        dates = pd.DatetimeIndex(parsed)
+    else:
+        return None, None
     if dates.empty:
         return None, None
     return dates.min(), dates.max()

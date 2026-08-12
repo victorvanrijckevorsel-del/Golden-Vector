@@ -28,6 +28,7 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from golden_vector.common.strings import clean_string
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.contracts.ticker_page import (
     GOLD_RESPONSE_CONSTANT_COLUMNS,
@@ -494,8 +495,8 @@ def _persisted_codes(row: Mapping[str, Any], column: str) -> list[str]:
     error, and none of them is a reason to guess.
     """
 
-    raw = str(row.get(column) or "").strip()
-    if not raw or raw.lower() == "nan":
+    raw = clean_string(row.get(column))
+    if not raw:
         return []
     return [part.strip() for part in raw.split(";") if part.strip()]
 

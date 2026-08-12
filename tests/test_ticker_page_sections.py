@@ -8,6 +8,7 @@ import pandas as pd
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.app.ticker_page_state import TickerPageArtifactState
 from golden_vector.serve.ticker_page import (
     render_cost_downside_card,
     render_currency_attribution_block,
@@ -161,6 +162,45 @@ def test_performance_section_renders_series_basis_and_markers():
     assert "gdx last observation is 9 trading day(s) behind" in html.lower() or "GDX:" in html
 
 
+def test_performance_section_preserves_degraded_artifact_reason():
+    state = TickerPageArtifactState(
+        status="CORRUPT", reason="checksum mismatch", frame=pd.DataFrame()
+    )
+
+    html = render_performance_section(
+        pd.DataFrame(),
+        ticker="AAR.AX",
+        horizon="1Y",
+        artifact_state=state,
+    )
+
+    assert "CORRUPT" in html
+    assert "checksum mismatch" in html
+    assert "No performance data has been published for this ticker" not in html
+
+
+def test_performance_chart_uses_distinct_semantic_series_colours():
+    html = render_performance_section(
+        _performance_rows(), ticker="AAR.AX", horizon="1Y", view="rebased"
+    )
+
+    assert 'class="series-stock"' in html
+    assert 'class="series-gold"' in html
+    assert 'legend-swatch-stock' in html
+    assert 'legend-swatch-gold' in html
+
+
+def test_performance_markers_accept_nullable_reason_text():
+    rows = _performance_rows()
+    rows.loc[rows["series_status"].ne("OK"), "series_reason"] = pd.NA
+
+    html = render_performance_section(
+        rows, ticker="AAR.AX", horizon="1Y", view="rebased"
+    )
+
+    assert "STALE_OMITTED" in html
+
+
 def test_performance_chart_has_an_accessible_data_table_twin():
     """Every chart on this page carries a text equivalent; the performance
     chart was the last one without. The twin must print the PUBLISHED values
@@ -222,6 +262,19 @@ def test_currency_attribution_hides_usd_listings_entirely():
         attribution_status="NOT_APPLICABLE_USD",
     )
     assert render_currency_attribution_block(frame, ticker="NEM", horizon="1Y") == ""
+
+
+def test_currency_attribution_preserves_degraded_artifact_reason():
+    state = TickerPageArtifactState(
+        status="STALE", reason="refresh ids disagree", frame=pd.DataFrame()
+    )
+
+    html = render_currency_attribution_block(
+        pd.DataFrame(), ticker="AAR.AX", horizon="1Y", artifact_state=state
+    )
+
+    assert "STALE" in html
+    assert "refresh ids disagree" in html
 
 
 def test_currency_attribution_unavailable_states_its_reason():
@@ -297,6 +350,38 @@ def test_cost_downside_card_shows_exact_evidence_and_caveat():
     assert "does not establish" in html  # the required caveat
     # no composite score and no causal wording
     assert "score" not in html.lower() or "no combined score" in html.lower()
+
+
+def test_cost_downside_card_accepts_nullable_parquet_metadata():
+    html = render_cost_downside_card(
+        ticker="AAR.AX",
+        aisc_row=_metric_row(
+            basis=pd.NA,
+            source_verification_status=pd.NA,
+            source_verification_date=pd.NA,
+        ),
+        downside_row=None,
+        aisc_peers=pd.DataFrame(),
+        downside_peers=pd.DataFrame(),
+        app_config=_app_config(),
+    )
+
+    assert "$1,419/oz" in html
+    assert "verification:" not in html
+
+
+def test_cost_downside_card_accepts_nullable_availability_flags():
+    html = render_cost_downside_card(
+        ticker="AAR.AX",
+        aisc_row=_metric_row(metric_available=pd.NA, metric_reason=pd.NA),
+        downside_row=_metric_row(metric_available=pd.NA, metric_reason=pd.NA),
+        aisc_peers=pd.DataFrame(),
+        downside_peers=pd.DataFrame(),
+        app_config=_app_config(),
+    )
+
+    assert "AISC is unavailable: not available" in html
+    assert "downside record is unavailable: not available" in html
 
 
 def test_cost_downside_card_missing_sides_render_reasons_not_conclusions():

@@ -283,6 +283,21 @@ def test_relative_record_reports_a_missing_metric_instead_of_inventing_one():
     assert "no published row for this metric" in html  # the untouched metrics
 
 
+def test_relative_record_accepts_nullable_metric_flag_and_reason():
+    frame = _percentile_frame(
+        _pct_row(
+            "downside_hit_rate",
+            metric_available=pd.NA,
+            metric_reason=pd.NA,
+            raw_value=pd.NA,
+        )
+    )
+
+    html = _render(data=_data(percentiles=frame, research=_full_research()))
+
+    assert "not available" in html
+
+
 @pytest.mark.parametrize(
     "banned",
     [
@@ -882,6 +897,41 @@ def test_a_degraded_research_kind_renders_its_persisted_reason():
     assert "The published weekly return series is MISSING" in html
     # the marker row is never drawn as an observation
     assert "weekly observations ·" not in html
+
+
+def test_research_kind_state_accepts_nullable_parquet_strings():
+    data = _data(
+        research=_research_frame(
+            _window_fit_row("12M", kind_reason=pd.NA),
+        )
+    )
+
+    assert data.research_kind_state("NEM", kind="window_fit") == ("OK", "")
+
+    missing_status = _data(
+        research=_research_frame(
+            _window_fit_row("12M", kind_status=pd.NA, kind_reason=pd.NA),
+        )
+    )
+    assert missing_status.research_kind_state("NEM", kind="window_fit") == (
+        "MISSING",
+        "window_fit series unavailable",
+    )
+
+
+def test_horizon_ladder_accepts_nullable_persisted_text():
+    html = B.render_horizon_ladder(
+        _research_frame(
+            _horizon_row(
+                pd.NA,
+                horizon_coverage_flag=pd.NA,
+                horizon_coverage_reason=pd.NA,
+            )
+        )
+    )
+
+    assert "Exploratory horizon ladder" in html
+    assert "&lt;NA&gt;" not in html
 
 
 def test_structural_window_table_shows_betas_and_drops_the_score_inputs():

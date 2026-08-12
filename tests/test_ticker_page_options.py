@@ -7,6 +7,7 @@ section is that exactly ONE of them may hide it.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from html import escape
 
 import json
@@ -344,6 +345,20 @@ def test_none_listed_for_one_ticker_does_not_hide_the_control(app_config):
     )
     assert control != ""
     assert 'id="options"' in control
+
+
+def test_nullable_availability_status_degrades_instead_of_crashing_or_hiding(app_config):
+    artifacts = page_artifacts()
+    availability = artifacts.availability.copy()
+    availability.loc[:, "availability_status"] = pd.NA
+    html = render(
+        app_config,
+        page_artifacts=replace(artifacts, availability=availability),
+    )
+
+    assert html != ""
+    assert 'id="options"' in html
+    assert "availability is unknown" in html
 
 
 def test_current_coherent_data_renders_full_section_with_as_of_date(app_config):

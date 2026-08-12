@@ -29,6 +29,8 @@ from urllib.parse import quote
 import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.numeric import bool_or_false
+from golden_vector.common.strings import clean_string
 from golden_vector.common.strings import ordinal_percentile as _ordinal_percentile
 from golden_vector.common.windows import window_label
 from golden_vector.contracts.config_models import (
@@ -603,8 +605,8 @@ def _record_row(
             f"<tr>{header}<td>n/a</td>"
             "<td class=\"hint\">no published row for this metric</td></tr>"
         )
-    if not bool(row.get("metric_available")):
-        reason = str(row.get("metric_reason") or "not available")
+    if not bool_or_false(row.get("metric_available")):
+        reason = clean_string(row.get("metric_reason")) or "not available"
         return f"<tr>{header}<td>n/a</td><td class=\"hint\">{escape(reason)}</td></tr>"
     value = _fmt_pct(row.get("raw_value"))
     evidence_bits: list[str] = []
@@ -614,7 +616,7 @@ def _record_row(
                 row, hit_noun=evidence_nouns[0], window_noun=evidence_nouns[1]
             )
         )
-    basis = str(row.get("basis") or "").strip()
+    basis = clean_string(row.get("basis")) or ""
     if basis:
         evidence_bits.append(basis)
     period_start = row.get("source_period_start")
@@ -1416,14 +1418,14 @@ def render_horizon_ladder(
         )
     rows: list[str] = []
     for _, row in horizon_rows.iterrows():
-        coverage = str(row.get("horizon_coverage_flag") or "")
-        reason = str(row.get("horizon_coverage_reason") or "")
+        coverage = clean_string(row.get("horizon_coverage_flag")) or ""
+        reason = clean_string(row.get("horizon_coverage_reason")) or ""
         status_cell = escape(coverage) if coverage else "-"
         if reason:
             status_cell += f" <span class=\"hint\">{escape(reason)}</span>"
         rows.append(
             "<tr>"
-            f"<td>{escape(window_label(str(row.get('horizon_label') or '')))}</td>"
+            f"<td>{escape(window_label(clean_string(row.get('horizon_label')) or ''))}</td>"
             f"<td>{_fmt_percent(row.get('horizon_return'), decimals=1)}</td>"
             f"<td>{_fmt_percent(row.get('horizon_gold_return'), decimals=1)}</td>"
             f"<td>{_fmt_number(row.get('horizon_gold_delta'), decimals=2)}</td>"
@@ -1494,7 +1496,7 @@ def _build_measured_beta_explanations(
     # Eligibility is a DATA status (it gates whether the measured read is
     # trustworthy), so the builders still receive it; none of the four surviving
     # cards renders a score or a confidence label.
-    reason = str(tool_a_row.get("score_eligibility_reason") or "").strip()
+    reason = clean_string(tool_a_row.get("score_eligibility_reason")) or ""
     eligible = reason == ""
 
     return [
@@ -1534,7 +1536,9 @@ def _build_measured_beta_explanations(
         (
             "Volatility",
             build_volatility_explanation(
-                volatility_context=str(tool_a_row.get("volatility_context") or "").strip().upper(),
+                volatility_context=(
+                    clean_string(tool_a_row.get("volatility_context")) or ""
+                ).upper(),
                 residual_volatility_52w=tool_a_row.get("residual_volatility_52w"),
                 downside_volatility_52w=tool_a_row.get("downside_volatility_52w"),
             ),

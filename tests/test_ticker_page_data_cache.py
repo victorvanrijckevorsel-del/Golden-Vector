@@ -10,6 +10,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from golden_vector.app.ticker_page_state import TickerPageArtifactState
 from golden_vector.serve.ticker_page import data as data_module
 from golden_vector.serve.ticker_page.data import load_ticker_page_data
 from tests.helpers import build_test_paths
@@ -90,3 +91,38 @@ def test_missing_pointer_is_cached_until_the_first_publish(tmp_path, loader_call
     published = load_ticker_page_data(paths)
     assert published is not first
     assert loader_calls["n"] == 2 * len(_LOADER_NAMES)
+
+
+def test_transient_corrupt_read_is_not_pinned_under_unchanged_pointer(
+    tmp_path, monkeypatch
+):
+    paths, _ = _paths_with_pointer(tmp_path)
+    calls = {name: 0 for name in _LOADER_NAMES}
+
+    def _loader(name):
+        def _read(_paths):
+            calls[name] += 1
+            status = (
+                "CORRUPT"
+                if name == "load_performance_series" and calls[name] == 1
+                else "OK"
+            )
+            return TickerPageArtifactState(
+                status=status,
+                reason="temporary read error" if status == "CORRUPT" else None,
+                frame=pd.DataFrame(),
+            )
+
+        return _read
+
+    for name in _LOADER_NAMES:
+        monkeypatch.setattr(data_module, name, _loader(name))
+
+    first = load_ticker_page_data(paths)
+    recovered = load_ticker_page_data(paths)
+    cached = load_ticker_page_data(paths)
+
+    assert first.performance.status == "CORRUPT"
+    assert recovered.performance.status == "OK"
+    assert cached is recovered
+    assert set(calls.values()) == {2}

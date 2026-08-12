@@ -574,6 +574,7 @@ def run_ticker_page_stage(
         + len(percentiles.index)
         + len(performance.index)
         + len(research_series.index)
+        + len(fx_attribution.index)
     )
     record_step_timing(
         timings,

@@ -148,6 +148,16 @@ def is_missing(value: object) -> bool:
     return bool(missing) if isinstance(missing, bool) else False
 
 
+def bool_or_false(value: object) -> bool:
+    """Return scalar truthiness while treating every missing form as ``False``.
+
+    Persisted nullable-boolean columns can yield ``pd.NA``. Calling ``bool`` on
+    that scalar raises, so UI readers use this shared boundary helper instead.
+    """
+
+    return False if is_missing(value) else bool(value)
+
+
 def rebase_to_base(values: Iterable[object], *, base: float = 100.0) -> list[float | None]:
     """Index a numeric series to ``base`` at its first finite, non-zero value.
 

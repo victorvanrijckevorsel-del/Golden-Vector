@@ -264,6 +264,7 @@ def render_detail_page(
                 horizon=chart_horizon,
                 view=chart_view,
                 app_config=app_config,
+                artifact_state=ticker_page_data.performance,
             )
         )
         body.append(
@@ -271,6 +272,7 @@ def render_detail_page(
                 ticker_page_data.fx_attribution_rows(ticker),
                 ticker=ticker,
                 horizon=chart_horizon,
+                artifact_state=ticker_page_data.fx_attribution,
             )
         )
         # --- 2. Corporate finance ------------------------------------------

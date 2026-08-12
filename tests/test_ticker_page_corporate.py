@@ -337,6 +337,17 @@ def test_healthy_control_row_renders_no_failing_check_notice():
     )
 
 
+def test_nullable_failure_code_cells_render_as_no_codes():
+    html = _render(
+        tool_b_row=_tool_b_row(
+            layer1_fail_reasons=pd.NA,
+            fundamental_check_fail_codes=pd.NA,
+        )
+    )
+
+    assert "These screening checks fail" not in html
+
+
 def test_forward_pe_is_not_judged_without_a_persisted_code():
     """Serve must never compare forward P/E to a threshold on its own.
 

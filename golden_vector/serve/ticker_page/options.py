@@ -38,6 +38,7 @@ import pandas as pd
 #: sizing payload must not carry a second hardcoded 100.
 from golden_vector.common.numeric import optional_finite_float
 from golden_vector.common.options import OPTION_CONTRACT_MULTIPLIER
+from golden_vector.common.strings import clean_string
 from golden_vector.contracts.config_models import AppConfig, TickerPageSizingConfig
 from golden_vector.hedge.candidate_puts import OptionCandidate, OptionCandidateSlot
 from golden_vector.hedge.option_availability import (
@@ -221,7 +222,7 @@ def _availability_status_for(frame: pd.DataFrame, ticker: str) -> str:
     rows = _rows_for(frame, ticker)
     if not rows or "availability_status" not in rows[0]:
         return AVAILABILITY_UNKNOWN
-    status = str(rows[0].get("availability_status") or "").strip().upper()
+    status = (clean_string(rows[0].get("availability_status")) or "").upper()
     return status or AVAILABILITY_UNKNOWN
 
 
@@ -543,7 +544,7 @@ def _render_oi_trend(history_rows: list[dict[str, Any]]) -> str:
     incomplete: list[tuple[str, str]] = []
     for row, date in zip(history_rows, dates):
         if not _capture_is_complete(row) and pd.notna(date):
-            incomplete.append((str(row.get("as_of_date") or ""), _capture_reason(row)))
+            incomplete.append((clean_string(row.get("as_of_date")) or "", _capture_reason(row)))
     for label, column in _TREND_SERIES:
         values: list[float | None] = []
         for row in history_rows:
@@ -1286,9 +1287,9 @@ def _render_greeks_table(frame: pd.DataFrame | None, *, ticker: str) -> str:
         )
     model_versions = sorted(
         {
-            str(row.get("candidate_greeks_model_version") or "").strip()
+            clean_string(row.get("candidate_greeks_model_version")) or ""
             for row in rows
-            if str(row.get("candidate_greeks_model_version") or "").strip()
+            if clean_string(row.get("candidate_greeks_model_version"))
         }
     )
     model_note = (
@@ -1333,7 +1334,7 @@ def _render_greeks_table(frame: pd.DataFrame | None, *, ticker: str) -> str:
 
 
 def _greek_row_label(row: Mapping[str, Any]) -> str:
-    side = "Put" if str(row.get("option_type") or "").strip().upper() == "P" else "Call"
+    side = "Put" if (clean_string(row.get("option_type")) or "").upper() == "P" else "Call"
     horizon = row.get("horizon_days")
     horizon_text = f"{int(horizon)}d" if horizon is not None and pd.notna(horizon) else "?"
     return f"{side} {bucket_label(row.get('bucket'))} · {horizon_text} target"
@@ -1355,9 +1356,9 @@ def _greek_rows(frame: pd.DataFrame | None, *, ticker: str) -> list[dict[str, An
     return sorted(
         rows,
         key=lambda row: (
-            0 if str(row.get("option_type") or "").upper() == "P" else 1,
+            0 if (clean_string(row.get("option_type")) or "").upper() == "P" else 1,
             _optional_float(row.get("horizon_days")) or 0.0,
-            bucket_order.get(str(row.get("bucket") or ""), 9),
+            bucket_order.get(clean_string(row.get("bucket")) or "", 9),
         ),
     )
 
@@ -1580,7 +1581,7 @@ def _chain_history_for(
     rows = _rows_for(page_artifacts.chain_history, ticker)
     if not rows:
         return None, [], None
-    rows = sorted(rows, key=lambda row: str(row.get("as_of_date") or ""))
+    rows = sorted(rows, key=lambda row: clean_string(row.get("as_of_date")) or "")
     # The headline cards and the put/call sentences may only quote a COMPLETE
     # capture. A truncated capture undercounts the chain, so publishing its
     # ratio as "positioning leans bullish" would be a confident headline built
@@ -1588,9 +1589,13 @@ def _chain_history_for(
     # incomplete days as gaps; this keeps the numbers beside it honest too.
     complete = [row for row in rows if _capture_is_complete(row)]
     if complete:
-        skipped = str(rows[-1].get("as_of_date") or "") if rows[-1] is not complete[-1] else None
+        skipped = (
+            clean_string(rows[-1].get("as_of_date")) or ""
+            if rows[-1] is not complete[-1]
+            else None
+        )
         return complete[-1], rows, skipped
-    return None, rows, str(rows[-1].get("as_of_date") or "")
+    return None, rows, clean_string(rows[-1].get("as_of_date")) or ""
 
 
 #: The producer's coverage-flag tokens, in plain English. Anything unmapped
@@ -1613,7 +1618,7 @@ def _capture_reason(row: Mapping[str, Any]) -> str:
     token would leak an internal enum into user-facing copy.
     """
 
-    label = str(row.get("capture_quality") or "").strip()
+    label = clean_string(row.get("capture_quality")) or ""
     if _capture_is_complete(row):
         return "complete capture"
     _, _, flags = label.partition(":")
@@ -1628,5 +1633,5 @@ def _capture_reason(row: Mapping[str, Any]) -> str:
 
 
 def _capture_is_complete(row: Mapping[str, Any]) -> bool:
-    quality = str(row.get("capture_quality") or "").strip().upper()
+    quality = (clean_string(row.get("capture_quality")) or "").upper()
     return not quality or quality == _CAPTURE_COMPLETE

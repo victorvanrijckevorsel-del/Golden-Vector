@@ -15,7 +15,9 @@ from dataclasses import dataclass
 import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.strings import clean_string
 from golden_vector.app.ticker_page_state import (
+    STATUS_CORRUPT,
     TickerPageArtifactState,
     load_fx_attribution,
     load_gold_response,
@@ -109,8 +111,10 @@ class TickerPageData:
         if kind_rows.empty:
             return ("MISSING", f"no {kind} rows published for this ticker")
         first = kind_rows.iloc[0]
-        status = str(first.get("kind_status") or "MISSING")
-        reason = str(first.get("kind_reason") or "")
+        # Parquet nullable-string columns return ``pd.NA`` for missing cells.
+        # Never use Python truthiness on those scalars: ``bool(pd.NA)`` raises.
+        status = clean_string(first.get("kind_status")) or "MISSING"
+        reason = clean_string(first.get("kind_reason")) or ""
         if status == "OK":
             return ("OK", reason)
         return (status, reason or f"{kind} series unavailable")
@@ -167,10 +171,21 @@ def load_ticker_page_data(paths: ProjectPaths) -> TickerPageData:
         research_series=load_research_series(paths),
         fx_attribution=load_fx_attribution(paths),
     )
-    with _DATA_CACHE_LOCK:
-        _DATA_CACHE[key] = loaded
-        while len(_DATA_CACHE) > _DATA_CACHE_MAX:
-            _DATA_CACHE.popitem(last=False)
+    states = (
+        loaded.gold_response,
+        loaded.percentiles,
+        loaded.performance,
+        loaded.research_series,
+        loaded.fx_attribution,
+    )
+    # An OSError can be transient while the manifest pointer stat remains the
+    # same. Do not turn that one failed read into a permanent process-level
+    # CORRUPT state; the next request must be able to recover.
+    if all(state.status != STATUS_CORRUPT for state in states):
+        with _DATA_CACHE_LOCK:
+            _DATA_CACHE[key] = loaded
+            while len(_DATA_CACHE) > _DATA_CACHE_MAX:
+                _DATA_CACHE.popitem(last=False)
     return loaded
 
 

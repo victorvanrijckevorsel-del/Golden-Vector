@@ -24,7 +24,6 @@ def has_usable_option_slots(slots: object) -> bool:
 
 
 # --- option_availability artifact (plan §8) --------------------------------
-# DORMANT: not yet published or read. The active option schema version stays 3.
 
 AVAILABILITY_LISTED = "LISTED"
 AVAILABILITY_NONE_LISTED = "NONE_LISTED"

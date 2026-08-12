@@ -4,14 +4,11 @@ One authority per field: chain-level daily quantities (whole-chain OI / volume
 sums and their put/call splits) have no existing home, so they accumulate here,
 merge-forward, one row per (ticker, as_of_date).
 
-DORMANT: this module is not wired into any stage yet. The active option schema
-version stays 3; nothing publishes or reads this artifact until the v4 lane
-flips it on.
+This is published as one of the two page-only v4 option artifacts.
 
 Gate policy (plan §6.3):
-* Same-day selection — keep the capture with the highest ``total_open_interest``;
-  ties break on the latest ``run_id`` (run ids are ``%Y%m%dT%H%M%SZ-<command>-<hex>``
-  so lexicographic order is time order).
+* Same-day selection — complete beats partial, then higher
+  ``total_open_interest``; ties break on the latest capture run id.
 * Completeness — a capture must clear trailing-median floors
   (``coverage_floor_ratio`` × trailing median over ``trailing_median_days``) on
   ``n_expirations``, ``n_contracts`` and ``total_open_interest``. A day whose best

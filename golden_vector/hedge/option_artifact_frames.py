@@ -10,7 +10,11 @@ import pandas as pd
 
 from golden_vector.common.strings import normalize_ticker_series
 from golden_vector.contracts.config_models import OptionHistoryQualityConfig
-from golden_vector.contracts.option_artifacts import ACTIVE_OPTION_SCHEMA_VERSION
+from golden_vector.contracts.option_artifacts import (
+    ACTIVE_OPTION_SCHEMA_VERSION,
+    CHAIN_HISTORY_SCHEMA_COLUMN,
+    OPTION_AVAILABILITY_SCHEMA_COLUMN,
+)
 from golden_vector.hedge.chain_history import build_chain_history_daily
 from golden_vector.hedge.option_availability import build_option_availability
 from golden_vector.features.black_scholes import black_scholes_greeks
@@ -701,12 +705,12 @@ def _chain_history_frame(
     history = build_chain_history_daily(
         features_frames=features_frames,
         previous_history=_restore_own_schema_version(
-            previous_history, column="chain_history_schema_version"
+            previous_history, column=CHAIN_HISTORY_SCHEMA_COLUMN
         ),
         quality=quality,
         published_run_id=published_run_id,
     )
-    return _preserve_own_schema_version(history, column="chain_history_schema_version")
+    return _preserve_own_schema_version(history, column=CHAIN_HISTORY_SCHEMA_COLUMN)
 
 
 def _availability_frame(
@@ -727,7 +731,7 @@ def _availability_frame(
         capture_date=str(manifest.get("as_of_date") or ""),
     )
     return _preserve_own_schema_version(
-        availability, column="availability_schema_version"
+        availability, column=OPTION_AVAILABILITY_SCHEMA_COLUMN
     )
 
 

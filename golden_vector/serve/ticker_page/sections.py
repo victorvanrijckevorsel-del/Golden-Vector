@@ -12,10 +12,14 @@ from typing import Any
 
 import pandas as pd
 
+from golden_vector.app.ticker_page_state import TickerPageArtifactState
+from golden_vector.common.numeric import bool_or_false
+from golden_vector.common.strings import clean_string
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.serve.charts import _build_multiline_overlay_svg, _build_scatter_svg
 from golden_vector.serve.column_help import help_icon
 from golden_vector.serve.format_helpers import id_token
+from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
 
 
@@ -54,6 +58,7 @@ def _fmt_share(value: Any) -> str:
 # ---------------------------------------------------------------------------
 
 _SERIES_LABELS = {"stock": "Stock", "gold": "Gold", "gdx": "GDX", "gdxj": "GDXJ"}
+_SERIES_KEYS = {label: key for key, label in _SERIES_LABELS.items()}
 
 
 def render_performance_section(
@@ -63,6 +68,7 @@ def render_performance_section(
     horizon: str,
     view: str = "rebased",
     app_config: AppConfig | None = None,
+    artifact_state: TickerPageArtifactState | None = None,
 ) -> str:
     """The performance chart from the v2 artifact — actual dates, one shared
 
@@ -74,6 +80,22 @@ def render_performance_section(
     builder from the values it plots — no second pass over the artifact.
     """
 
+    if artifact_state is not None and artifact_state.status != "OK":
+        reason = artifact_state.reason or "no reason recorded"
+        return (
+            '<section class="panel" id="performance"><h2>Performance'
+            + help_icon(
+                "Performance", key="ticker_performance_chart", app_config=app_config
+            )
+            + "</h2>"
+            + notice(
+                "degraded",
+                f"<p>Performance artifact state "
+                f"<strong>{escape(artifact_state.status)}</strong>: "
+                f"{escape(reason)}. Nothing is estimated to fill the gap.</p>",
+            )
+            + "</section>"
+        )
     if performance_rows is None or performance_rows.empty:
         return (
             '<section class="panel" id="performance"><h2>Performance'
@@ -107,7 +129,7 @@ def render_performance_section(
     notices = [
         (
             f'<p class="hint">{escape(_SERIES_LABELS.get(str(row["series"]), str(row["series"]).upper()))}: '
-            f'{escape(str(row["series_reason"] or row["series_status"]))}</p>'
+            f'{escape(clean_string(row.get("series_reason")) or clean_string(row.get("series_status")) or "unavailable")}</p>'
         )
         for _, row in marker_rows.drop_duplicates(subset=["series"]).iterrows()
     ]
@@ -133,6 +155,7 @@ def render_performance_section(
     chart_html = (
         _build_multiline_overlay_svg(
             series_by_label=series_by_label,
+            series_keys=_SERIES_KEYS,
             data_table_id=(
                 f"chart-data-performance-{id_token(ticker)}-"
                 f"{id_token(horizon)}-{id_token(view)}"
@@ -165,8 +188,8 @@ def render_performance_section(
 
 
 def _attribution_headline(row: pd.Series, *, ticker: str) -> str:
-    relationship = str(row.get("relationship") or "")
-    currency = str(row.get("quote_currency") or "")
+    relationship = clean_string(row.get("relationship")) or ""
+    currency = clean_string(row.get("quote_currency")) or ""
     local_return = row.get("local_return")
     usd_return = row.get("usd_return")
     if relationship == "SAME_DIRECTION":
@@ -196,6 +219,7 @@ def render_currency_attribution_block(
     *,
     ticker: str,
     horizon: str,
+    artifact_state: TickerPageArtifactState | None = None,
 ) -> str:
     """The Currency attribution block below the Performance chart (Feature A).
 
@@ -203,13 +227,30 @@ def render_currency_attribution_block(
     UNAVAILABLE windows explain themselves instead of fabricating attribution.
     """
 
+    if artifact_state is not None and artifact_state.status != "OK":
+        reason = artifact_state.reason or "no reason recorded"
+        return (
+            '<div class="fx-attribution" id="currency-attribution">'
+            "<h3>Currency attribution"
+            + help_icon(
+                "Currency attribution", key="ticker_fx_attribution", app_config=None
+            )
+            + "</h3>"
+            + notice(
+                "degraded",
+                f"<p>Currency-attribution artifact state "
+                f"<strong>{escape(artifact_state.status)}</strong>: "
+                f"{escape(reason)}. Nothing is estimated to fill the gap.</p>",
+            )
+            + "</div>"
+        )
     if fx_rows is None or fx_rows.empty:
         return ""
     match = fx_rows.loc[fx_rows["horizon"].eq(horizon)]
     if match.empty:
         return ""
     row = match.iloc[0]
-    status = str(row.get("attribution_status") or "")
+    status = clean_string(row.get("attribution_status")) or ""
     if status == "NOT_APPLICABLE_USD":
         return ""  # the UI hides USD listings — there is no FX leg
 
@@ -218,7 +259,7 @@ def render_currency_attribution_block(
     )
 
     if status != "OK":
-        reason = str(row.get("attribution_reason") or "attribution unavailable")
+        reason = clean_string(row.get("attribution_reason")) or "attribution unavailable"
         return (
             '<div class="fx-attribution" id="currency-attribution">'
             "<h3>Currency attribution"
@@ -229,7 +270,7 @@ def render_currency_attribution_block(
 
     headline = _attribution_headline(row, ticker=ticker)
     universal = f"FX changed the USD return by {_fmt_pp(row.get('fx_contribution_pp'))}."
-    currency = escape(str(row.get("quote_currency") or ""))
+    currency = escape(clean_string(row.get("quote_currency")) or "")
     table_html = (
         '<table class="compact-table"><tbody>'
         f"<tr><th scope=\"row\">Local share return ({currency})</th>"
@@ -244,8 +285,8 @@ def render_currency_attribution_block(
     )
     period = (
         f"Exact period: {_fmt_date(row.get('start_date'))} to {_fmt_date(row.get('end_date'))} "
-        f"(chart endpoints) · FX source {escape(str(row.get('fx_source_symbol') or 'n/a'))} "
-        f"· price basis {escape(str(row.get('price_basis') or 'n/a'))}"
+        f"(chart endpoints) · FX source {escape(clean_string(row.get('fx_source_symbol')) or 'n/a')} "
+        f"· price basis {escape(clean_string(row.get('price_basis')) or 'n/a')}"
     )
     return (
         '<div class="fx-attribution" id="currency-attribution">'
@@ -329,14 +370,14 @@ def render_cost_downside_card(
     ]
 
     # -- current reported AISC ------------------------------------------------
-    if aisc_row is not None and bool(aisc_row.get("metric_available")):
+    if aisc_row is not None and bool_or_false(aisc_row.get("metric_available")):
         aisc_value = aisc_row.get("raw_value")
         aisc_text = (
             "n/a" if aisc_value is None or pd.isna(aisc_value) else f"${float(aisc_value):,.0f}/oz"
         )
-        verification = str(aisc_row.get("source_verification_status") or "").strip()
-        verification_date = str(aisc_row.get("source_verification_date") or "").strip()
-        source_bits = [str(aisc_row.get("basis") or "")]
+        verification = clean_string(aisc_row.get("source_verification_status")) or ""
+        verification_date = clean_string(aisc_row.get("source_verification_date")) or ""
+        source_bits = [clean_string(aisc_row.get("basis")) or ""]
         if verification:
             source_bits.append(
                 f"verification: {verification}"
@@ -358,7 +399,9 @@ def render_cost_downside_card(
         )
     else:
         reason = (
-            str(aisc_row.get("metric_reason")) if aisc_row is not None else "no AISC row"
+            clean_string(aisc_row.get("metric_reason")) or "not available"
+            if aisc_row is not None
+            else "no AISC row"
         )
         pieces.append(
             "<div class=\"cost-downside-aisc\"><h3>Current reported AISC"
@@ -368,7 +411,7 @@ def render_cost_downside_card(
         )
 
     # -- historical large-fall record -----------------------------------------
-    if downside_row is not None and bool(downside_row.get("metric_available")):
+    if downside_row is not None and bool_or_false(downside_row.get("metric_available")):
         rate = downside_row.get("raw_value")
         period_start = downside_row.get("source_period_start")
         period_end = downside_row.get("source_period_end")
@@ -399,7 +442,7 @@ def render_cost_downside_card(
         )
     else:
         reason = (
-            str(downside_row.get("metric_reason"))
+            clean_string(downside_row.get("metric_reason")) or "not available"
             if downside_row is not None
             else "no downside row"
         )
@@ -455,13 +498,16 @@ def _render_peer_disclosure(
         aisc_by_ticker = {
             str(row["ticker"]): row
             for _, row in aisc_peers.iterrows()
-            if bool(row.get("metric_available")) and not pd.isna(row.get("raw_value"))
+            if bool_or_false(row.get("metric_available"))
+            and not pd.isna(row.get("raw_value"))
         }
         for _, row in downside_peers.iterrows():
             peer = str(row["ticker"])
             if peer not in aisc_by_ticker:
                 continue
-            if not bool(row.get("metric_available")) or pd.isna(row.get("raw_value")):
+            if not bool_or_false(row.get("metric_available")) or pd.isna(
+                row.get("raw_value")
+            ):
                 continue
             pairs.append(
                 (

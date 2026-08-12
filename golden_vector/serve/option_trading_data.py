@@ -19,7 +19,7 @@ LOGGER = logging.getLogger(__name__)
 from golden_vector.common.files import optional_sha256_file as _file_sha256
 from golden_vector.common.files import sha256_file
 from golden_vector.common.parquet import ParquetSchemaError, read_required_parquet
-from golden_vector.common.strings import normalize_ticker
+from golden_vector.common.strings import clean_string, normalize_ticker
 from golden_vector.common.strings import unique_strings as _common_unique_strings
 from golden_vector.app.model_state import (
     load_current_model_state_manifest,
@@ -32,6 +32,13 @@ from golden_vector.app.model_state import (
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.contracts.option_artifacts import (
+    ACTIVE_OPTION_SCHEMA_VERSION,
+    CHAIN_HISTORY_COLUMNS,
+    CHAIN_HISTORY_SCHEMA_COLUMN,
+    CHAIN_HISTORY_SCHEMA_VERSION,
+    OPTION_AVAILABILITY_COLUMNS,
+    OPTION_AVAILABILITY_SCHEMA_COLUMN,
+    OPTION_AVAILABILITY_SCHEMA_VERSION,
     OPTION_TRADING_READ_SET,
     SUPPORTED_OPTION_SCHEMA_VERSIONS,
     normalized_option_schema_version,
@@ -50,9 +57,25 @@ from golden_vector.hedge.option_artifact_frames import (
     overview_rows_from_frame,
     selected_candidate_grids_from_frame,
 )
+from golden_vector.hedge.chain_history import (
+    CAPTURE_QUALITY_COMPLETE,
+    CAPTURE_QUALITY_PARTIAL,
+    ROW_STATUS_OBSERVED,
+)
 from golden_vector.hedge.candidate_puts import (
     OptionCandidate,
     OptionCandidateSlot,
+)
+from golden_vector.hedge.option_availability import (
+    AVAILABILITY_FETCH_FAILED,
+    AVAILABILITY_FILTERED_WINDOW_EMPTY,
+    AVAILABILITY_LISTED,
+    AVAILABILITY_NONE_LISTED,
+    AVAILABILITY_UNKNOWN,
+    FETCH_STATUS_ABSENT,
+    FETCH_STATUS_EMPTY,
+    FETCH_STATUS_ERROR,
+    FETCH_STATUS_SUCCESS,
 )
 from golden_vector.hedge.option_trading import (
     OptionSide,
@@ -631,6 +654,35 @@ _PAGE_ARTIFACT_NAMES: tuple[str, ...] = (
     "option_chain_history_daily",
 )
 
+_PAGE_REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "option_availability": (
+        *OPTION_AVAILABILITY_COLUMNS,
+        OPTION_AVAILABILITY_SCHEMA_COLUMN,
+    ),
+    "option_chain_history_daily": (
+        *CHAIN_HISTORY_COLUMNS,
+        CHAIN_HISTORY_SCHEMA_COLUMN,
+    ),
+}
+_AVAILABILITY_STATUSES = frozenset(
+    {
+        AVAILABILITY_LISTED,
+        AVAILABILITY_NONE_LISTED,
+        AVAILABILITY_FETCH_FAILED,
+        AVAILABILITY_FILTERED_WINDOW_EMPTY,
+        AVAILABILITY_UNKNOWN,
+    }
+)
+_FETCH_STATUSES = frozenset(
+    {
+        FETCH_STATUS_SUCCESS,
+        FETCH_STATUS_EMPTY,
+        FETCH_STATUS_ERROR,
+        FETCH_STATUS_ABSENT,
+    }
+)
+_CHAIN_ROW_STATUSES = frozenset({ROW_STATUS_OBSERVED})
+
 
 @dataclass(frozen=True)
 class OptionPageArtifacts:
@@ -671,9 +723,13 @@ def load_option_page_artifacts(paths: ProjectPaths) -> OptionPageArtifacts:
     if cached is not None:
         return cached
     result = _read_option_page_artifacts(paths)
-    _PAGE_CACHE[cache_key] = result
-    while len(_PAGE_CACHE) > _PAGE_CACHE_MAX_ENTRIES:
-        _PAGE_CACHE.popitem(last=False)
+    # A read/IO failure can be transient while the immutable pointer is
+    # unchanged. Never pin that failure in the process cache forever; the next
+    # request gets one chance to recover. Stable states remain generation-keyed.
+    if result.state != OPTION_PAGE_UNREADABLE:
+        _PAGE_CACHE[cache_key] = result
+        while len(_PAGE_CACHE) > _PAGE_CACHE_MAX_ENTRIES:
+            _PAGE_CACHE.popitem(last=False)
     return result
 
 
@@ -732,8 +788,9 @@ def _read_option_page_artifacts(paths: ProjectPaths) -> OptionPageArtifacts:
             frame = read_required_parquet(
                 path,
                 label=f"Option artifact {name}",
-                required_columns=("ticker", "schema_version"),
+                required_columns=_PAGE_REQUIRED_COLUMNS[name],
             )
+            _validate_option_page_artifact(frame, name=name)
         except (OptionArtifactIntegrityError, ParquetSchemaError, OSError, ValueError) as exc:
             return _degraded(
                 OPTION_PAGE_UNREADABLE,
@@ -751,6 +808,138 @@ def _read_option_page_artifacts(paths: ProjectPaths) -> OptionPageArtifacts:
         freshness_as_of_date=freshness_as_of,
         freshness_message=freshness_message,
     )
+
+
+def _validate_option_page_artifact(frame: pd.DataFrame, *, name: str) -> None:
+    """Validate the page-only v4 contract before any row can affect the UI.
+
+    In particular, ``NONE_LISTED`` is allowed to hide the Options section, so a
+    checksum-valid file is not enough: its full columns, set/own versions, keys,
+    and enums must all be valid first.
+    """
+
+    _require_supported_option_schema(frame, name=name)
+    _require_exact_version(
+        frame,
+        column="schema_version",
+        expected=ACTIVE_OPTION_SCHEMA_VERSION,
+        name=name,
+    )
+
+    tickers = frame["ticker"].map(normalize_ticker)
+    if tickers.isna().any():
+        raise ParquetSchemaError(f"Option artifact {name}: ticker contains missing values")
+
+    if name == "option_availability":
+        _require_exact_version(
+            frame,
+            column=OPTION_AVAILABILITY_SCHEMA_COLUMN,
+            expected=OPTION_AVAILABILITY_SCHEMA_VERSION,
+            name=name,
+        )
+        if tickers.duplicated(keep=False).any():
+            raise ParquetSchemaError(
+                f"Option artifact {name}: duplicate ticker rows are not allowed"
+            )
+        _require_enum(
+            frame,
+            column="availability_status",
+            allowed=_AVAILABILITY_STATUSES,
+            name=name,
+            upper=False,
+        )
+        _require_enum(
+            frame,
+            column="fetch_status",
+            allowed=_FETCH_STATUSES,
+            name=name,
+            upper=False,
+        )
+        return
+
+    if name != "option_chain_history_daily":
+        raise ParquetSchemaError(f"Unsupported option page artifact: {name}")
+    _require_exact_version(
+        frame,
+        column=CHAIN_HISTORY_SCHEMA_COLUMN,
+        expected=CHAIN_HISTORY_SCHEMA_VERSION,
+        name=name,
+    )
+    dates = frame["as_of_date"].map(clean_string)
+    if dates.isna().any():
+        raise ParquetSchemaError(
+            f"Option artifact {name}: as_of_date contains missing values"
+        )
+    keys = pd.DataFrame({"ticker": tickers, "as_of_date": dates})
+    if keys.duplicated(keep=False).any():
+        raise ParquetSchemaError(
+            f"Option artifact {name}: duplicate ticker/as_of_date rows are not allowed"
+        )
+    _require_enum(
+        frame,
+        column="row_status",
+        allowed=_CHAIN_ROW_STATUSES,
+        name=name,
+        upper=False,
+    )
+    qualities = frame["capture_quality"].map(clean_string)
+    invalid_quality = qualities.map(
+        lambda value: not (
+            value == CAPTURE_QUALITY_COMPLETE
+            or (value or "").startswith(f"{CAPTURE_QUALITY_PARTIAL}:")
+        )
+    )
+    if invalid_quality.any():
+        found = sorted({value or "missing" for value in qualities[invalid_quality]})
+        raise ParquetSchemaError(
+            f"Option artifact {name}: capture_quality contains invalid value(s): "
+            + ", ".join(found)
+        )
+
+
+def _require_exact_version(
+    frame: pd.DataFrame,
+    *,
+    column: str,
+    expected: int,
+    name: str,
+) -> None:
+    """Require one exact row-level version; an empty typed artifact is valid."""
+
+    if frame.empty:
+        return
+    missing_version = frame[column].isna().any()
+    versions = {
+        normalized_option_schema_version(value)
+        for value in frame[column].dropna().unique()
+    }
+    if missing_version or versions != {expected}:
+        found = ", ".join(sorted(str(value) for value in versions if value is not None))
+        raise ParquetSchemaError(
+            f"Option artifact {name}: {column} expected {expected}, got "
+            f"{found or 'missing'}"
+        )
+
+
+def _require_enum(
+    frame: pd.DataFrame,
+    *,
+    column: str,
+    allowed: frozenset[str],
+    name: str,
+    upper: bool = True,
+) -> None:
+    values = frame[column].map(clean_string)
+    normalized = values.map(
+        lambda value: value.upper() if upper and value is not None else value
+    )
+    invalid = normalized.isna() | ~normalized.isin(allowed)
+    if invalid.any():
+        found = sorted({value or "missing" for value in normalized[invalid]})
+        raise ParquetSchemaError(
+            f"Option artifact {name}: {column} contains invalid value(s): "
+            + ", ".join(found)
+        )
 
 
 def _generation_option_schema_version(

@@ -33,7 +33,7 @@ from html import escape
 from typing import Any, Sequence
 from urllib.parse import quote
 
-from golden_vector.common.numeric import is_missing, optional_finite_float
+from golden_vector.common.numeric import bool_or_false, is_missing, optional_finite_float
 from golden_vector.contracts.config_models import AppConfig, ScoreMetricSpec
 from golden_vector.serve.column_help import help_icon, help_term
 from golden_vector.serve.embed import embed_json_payload
@@ -124,9 +124,7 @@ def _text(value: object) -> str:
 def _flag(value: object) -> bool:
     """One persisted boolean column. A missing verdict is never a ``True``."""
 
-    if is_missing(value):
-        return False
-    return bool(value)
+    return bool_or_false(value)
 
 
 def _normalized(value: object) -> str:

@@ -277,6 +277,16 @@ def test_stage_builds_persists_and_stamps_all_five_artifacts(stage_env):
     assert summary["rows"]["gold_response"] > 0
     assert summary["rows"]["percentiles"] > 0
     assert summary["rows"]["performance"] > 0
+    assert summary["timings"]["persist"]["rows_persisted"] == sum(
+        summary["rows"][name]
+        for name in (
+            "gold_response",
+            "percentiles",
+            "performance",
+            "research_series",
+            "fx_attribution",
+        )
+    )
 
     # Provenance is stamped by the persistence layer on every artifact.
     for alias in (

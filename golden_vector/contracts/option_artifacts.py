@@ -81,8 +81,7 @@ def option_artifact_names_for_version(schema_version: int) -> tuple[str, ...]:
         raise ValueError(f"Unsupported option schema version: {schema_version!r}") from exc
 
 
-# Bound to the ACTIVE version: at runtime this is exactly the v3 ten-name tuple
-# it has always been.
+# Bound to the ACTIVE publisher version (currently the full v4 twelve-name set).
 OPTION_ARTIFACT_NAMES: tuple[str, ...] = option_artifact_names_for_version(
     ACTIVE_OPTION_SCHEMA_VERSION
 )
@@ -98,10 +97,11 @@ OPTION_ARTIFACT_PREFIXES: dict[str, str] = {
     name: name for name in OPTION_ARTIFACT_NAMES
 }
 
-# --- v4 (dormant) artifact schemas -----------------------------------------
+# --- v4 page-only artifact schemas -----------------------------------------
 # Own version column for the chain-history artifact, independent of the option
 # artifact-set version above (plan §6.1/§6.2).
 CHAIN_HISTORY_SCHEMA_VERSION = 1
+CHAIN_HISTORY_SCHEMA_COLUMN = "chain_history_schema_version"
 
 CHAIN_HISTORY_COLUMNS: tuple[str, ...] = (
     "ticker",
@@ -132,6 +132,7 @@ CHAIN_HISTORY_COLUMNS: tuple[str, ...] = (
 )
 
 OPTION_AVAILABILITY_SCHEMA_VERSION = 1
+OPTION_AVAILABILITY_SCHEMA_COLUMN = "availability_schema_version"
 
 OPTION_AVAILABILITY_COLUMNS: tuple[str, ...] = (
     "ticker",

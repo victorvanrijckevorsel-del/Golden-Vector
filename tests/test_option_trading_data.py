@@ -24,12 +24,24 @@ from golden_vector.hedge.option_artifact_builder import (
 )
 from golden_vector.hedge.option_artifact_sources import load_option_artifact_source_inputs
 from golden_vector.hedge.option_availability import has_usable_option_slots
-from golden_vector.contracts.option_artifacts import option_artifact_latest_path
+from golden_vector.contracts.option_artifacts import (
+    CHAIN_HISTORY_COLUMNS,
+    CHAIN_HISTORY_SCHEMA_COLUMN,
+    CHAIN_HISTORY_SCHEMA_VERSION,
+    OPTION_AVAILABILITY_COLUMNS,
+    OPTION_AVAILABILITY_SCHEMA_COLUMN,
+    OPTION_AVAILABILITY_SCHEMA_VERSION,
+    option_artifact_latest_path,
+)
 from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.serve.option_trading_data import (
+    OPTION_PAGE_OK,
+    OPTION_PAGE_UNREADABLE,
     OptionArtifactIntegrityError,
+    OptionPageArtifacts,
     OptionArtifactStaleSchemaError,
+    _read_option_page_artifacts,
     build_option_trading_detail_data,
     clear_option_trading_cache,
     load_option_trading_data,
@@ -1279,3 +1291,153 @@ def test_schema_column_disagreeing_with_parquet_file_metadata_is_rejected():
     # Control: no file metadata at all -> the column alone still decides.
     no_metadata = pd.DataFrame({"schema_version": [4], "source_run_id": ["r1"]})
     _require_supported_option_schema(no_metadata, name="option_trading_overview")
+
+
+def _valid_page_availability() -> pd.DataFrame:
+    row = dict.fromkeys(OPTION_AVAILABILITY_COLUMNS)
+    row.update(
+        {
+            "ticker": "AEM",
+            "availability_status": "LISTED",
+            "expirations_enumerated": True,
+            "fetch_status": "SUCCESS",
+            "fetch_message": "",
+            "provider": "yahoo",
+            "capture_date": "2026-08-12",
+            "schema_version": 4,
+            OPTION_AVAILABILITY_SCHEMA_COLUMN: OPTION_AVAILABILITY_SCHEMA_VERSION,
+        }
+    )
+    return pd.DataFrame([row])
+
+
+def _valid_page_chain_history() -> pd.DataFrame:
+    row = dict.fromkeys(CHAIN_HISTORY_COLUMNS)
+    row.update(
+        {
+            "ticker": "AEM",
+            "as_of_date": "2026-08-12",
+            "capture_quality": "COMPLETE",
+            "row_status": "observed",
+            "schema_version": 4,
+            CHAIN_HISTORY_SCHEMA_COLUMN: CHAIN_HISTORY_SCHEMA_VERSION,
+        }
+    )
+    return pd.DataFrame([row])
+
+
+def _patch_page_artifact_reader(monkeypatch, frames: dict[str, pd.DataFrame]) -> None:
+    from pathlib import Path
+
+    from golden_vector.common.parquet import ParquetSchemaError
+    from golden_vector.serve import option_trading_data as module
+
+    monkeypatch.setattr(
+        module,
+        "load_current_model_state_manifest",
+        lambda _paths: {"artifacts": {"option_candidate_slots": {}}},
+    )
+    monkeypatch.setattr(module, "summarize_option_freshness", lambda _state: None)
+    monkeypatch.setattr(module, "_generation_option_schema_version", lambda *_args: 4)
+    monkeypatch.setattr(
+        module, "resolve_current_model_artifact_path", lambda _paths, name: Path(name)
+    )
+    monkeypatch.setattr(module, "_verify_artifact_sha256", lambda **_kwargs: None)
+
+    def _read(path, *, label, required_columns):
+        frame = frames[path.name].copy()
+        missing = [column for column in required_columns if column not in frame.columns]
+        if missing:
+            raise ParquetSchemaError(f"{label}: missing columns: {', '.join(missing)}")
+        return frame
+
+    monkeypatch.setattr(module, "read_required_parquet", _read)
+
+
+@pytest.mark.parametrize(
+    "problem",
+    (
+        "missing_required_column",
+        "wrong_own_version",
+        "missing_own_version",
+        "duplicate_availability_key",
+        "invalid_availability_status",
+        "invalid_chain_row_status",
+    ),
+)
+def test_option_page_reader_degrades_malformed_checksum_valid_contracts(
+    tmp_path, monkeypatch, problem
+):
+    availability = _valid_page_availability()
+    chain = _valid_page_chain_history()
+    if problem == "missing_required_column":
+        availability = availability.drop(columns=["fetch_message"])
+    elif problem == "wrong_own_version":
+        availability[OPTION_AVAILABILITY_SCHEMA_COLUMN] = 99
+    elif problem == "missing_own_version":
+        availability[OPTION_AVAILABILITY_SCHEMA_COLUMN] = pd.NA
+    elif problem == "duplicate_availability_key":
+        availability = pd.concat([availability, availability], ignore_index=True)
+    elif problem == "invalid_availability_status":
+        availability["availability_status"] = "NOPE"
+    elif problem == "invalid_chain_row_status":
+        chain["row_status"] = "invented"
+
+    _patch_page_artifact_reader(
+        monkeypatch,
+        {
+            "option_availability": availability,
+            "option_chain_history_daily": chain,
+        },
+    )
+
+    result = _read_option_page_artifacts(build_test_paths(tmp_path))
+
+    assert result.state == OPTION_PAGE_UNREADABLE
+    assert "could not be read" in (result.reason or "")
+
+
+def test_option_page_reader_accepts_the_complete_v4_contract(tmp_path, monkeypatch):
+    _patch_page_artifact_reader(
+        monkeypatch,
+        {
+            "option_availability": _valid_page_availability(),
+            "option_chain_history_daily": _valid_page_chain_history(),
+        },
+    )
+
+    result = _read_option_page_artifacts(build_test_paths(tmp_path))
+
+    assert result.state == OPTION_PAGE_OK
+    assert len(result.availability.index) == 1
+    assert len(result.chain_history.index) == 1
+
+
+def test_option_page_cache_does_not_pin_a_transient_unreadable_result(
+    tmp_path, monkeypatch
+):
+    from golden_vector.serve import option_trading_data as module
+
+    module._PAGE_CACHE.clear()
+    calls = {"count": 0}
+    recovered = OptionPageArtifacts(state=OPTION_PAGE_OK)
+
+    def _read(_paths):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return OptionPageArtifacts(
+                state=OPTION_PAGE_UNREADABLE, reason="temporary disk error"
+            )
+        return recovered
+
+    monkeypatch.setattr(module, "_file_sha256", lambda _path: "same-manifest")
+    monkeypatch.setattr(module, "_read_option_page_artifacts", _read)
+
+    first = module.load_option_page_artifacts(build_test_paths(tmp_path))
+    second = module.load_option_page_artifacts(build_test_paths(tmp_path))
+    third = module.load_option_page_artifacts(build_test_paths(tmp_path))
+
+    assert first.state == OPTION_PAGE_UNREADABLE
+    assert second is recovered
+    assert third is recovered
+    assert calls["count"] == 2
