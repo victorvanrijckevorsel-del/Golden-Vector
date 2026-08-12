@@ -691,11 +691,19 @@ approvals recorded that evening:
 7. M2 loaders (`serve/ticker_page/data.py`) consume only manifest-resolved artifacts and
    assemble view selections; no analytics in request handlers (guardrail test in
    `tests/test_ticker_page_sections.py`).
-8. M3 keeps the approved order. **Shipped this run:** M2 spine, Performance section (v2
-   artifact), Currency attribution block, Cost/downside card + explainers.
-   **Remaining M3/M4 (next session):** full mock-v3 page reorder + section removals/rewrites,
-   gold-dial JS rework (precomputed exact lines), options section rebuild, score builder,
-   composite-prose sweep, M4 budgets/browser gate/real refresh.
+8. M3 keeps the approved order. **Shipped 2026-08-11/12 overnight:** M2 spine, Performance
+   section (v2 artifact), Currency attribution block, Cost/downside card + explainers.
+   **Shipped 2026-08-12 (all M3 lanes COMPLETE, commits `082385c..a793bf0`):** M3b corporate
+   finance + gold dial + gold-dial.js + page reorder + POST fix; score-builder.js +
+   option-sizing.js (3-layer parity lock); M3c market behaviour + Lab disclosure (np.polyfit
+   exception deleted); M3d options rebuild (five-state availability, Q40 sizing tool);
+   M3e compare section; M3f polish (forward-P/E sentence via persisted codes, scatter fit
+   line from published coefficients, §12 percentile rounding, explainer + removed-string
+   sweep); bounded generation cache (§5.4); 26-finding verified review round applied.
+   Handoff: `reviews/codex/milestones/ticker_page_m3/claude_m3_complete_handoff_2026-08-12.md`.
+   **Remaining for acceptance:** real refresh at this pin (Victor's scheduled task), Victor
+   review on real data, Codex re-review, merge workflow. §7 catalog note: `fcf_yield` in the
+   table below is the pre-C1 name — the shipped catalog key is `aisc_margin_yield`.
 
 ## 16. Deferrals from the consolidated review (Victor approved 2026-08-11)
 
