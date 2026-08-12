@@ -32,6 +32,7 @@ import pandas as pd
 from golden_vector.common.numeric import align_to_step, optional_finite_float
 from golden_vector.common.strings import clean_string
 from golden_vector.contracts.config_models import AppConfig, TickerPageDialConfig
+from golden_vector.contracts.tool_d import YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
 from golden_vector.contracts.ticker_page import (
     GOLD_RESPONSE_CONSTANT_COLUMNS,
     GOLD_RESPONSE_LINE_METRICS,
@@ -51,9 +52,9 @@ NON_FINITE_SPOT_REASON = (
     "no finite spot gold price is published for this ticker and source"
 )
 
-#: Exact reason the resilience group carries in Yahoo mode (plan §3.2/P6). The
-#: persisted Tool D artifact is Our-View; mixing sources would be a lie.
-YAHOO_RESILIENCE_REASON = "resilience is computed on Our View inputs"
+#: Backward-compatible export for callers that need the contract-owned legacy
+#: migration reason. Current v4 artifacts persist both sources explicitly.
+YAHOO_RESILIENCE_REASON = YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
 
 #: Client-assembled ratio keys. The guards mirror ``screening/layer1.py`` and
 #: ``screening/layer2.py`` exactly and are implemented once, in gold-dial.js.
@@ -1063,20 +1064,26 @@ def _resilience_group(
     tool_d_row: Mapping[str, Any],
     *,
     finance_source: str,
+    unavailable_reason: str | None,
     app_config: AppConfig | None,
 ) -> str:
     title = "Resilience — at what gold price does this break?"
-    if str(finance_source).strip().lower() == "yahoo":
-        return disclosure(
-            escape(title),
-            f'<p class="hint">Resilience is disabled in Yahoo Fundamentals mode: '
-            f"{escape(YAHOO_RESILIENCE_REASON)}.</p>",
-        )
     if not tool_d_row:
         return disclosure(
             escape(title),
-            '<p class="hint">No resilience row has been published for this ticker.</p>',
+            '<p class="hint">'
+            + escape(
+                unavailable_reason
+                or "No resilience row has been published for this ticker and source."
+            )
+            + "</p>",
         )
+    yahoo_source = str(finance_source).strip().lower() == "yahoo"
+    basis = (
+        "Yahoo financials · Our View mining assumptions"
+        if yahoo_source
+        else "Our View financials · Our View mining assumptions"
+    )
     status = _text(tool_d_row, "resilience_data_status")
     rows = (
         _fixed_row(
@@ -1132,7 +1139,8 @@ def _resilience_group(
     explain = help_icon("Resilience", key="ticker_cf_resilience", app_config=app_config)
     return disclosure(
         escape(title) + explain,
-        _fixed_table(rows, region_id="corporate-resilience", label="Resilience thresholds"),
+        f'<p class="hint resilience-basis">{escape(basis)}</p>'
+        + _fixed_table(rows, region_id="corporate-resilience", label="Resilience thresholds"),
     )
 
 
@@ -1229,6 +1237,7 @@ def render_corporate_finance_section(
     finance_source: str,
     tool_b_row: Mapping[str, Any],
     tool_d_row: Mapping[str, Any],
+    tool_d_reason: str | None = None,
     app_config: AppConfig | None = None,
 ) -> str:
     """The ``#corporate-finance`` section (requirements §2 position 2).
@@ -1317,7 +1326,12 @@ def render_corporate_finance_section(
     pieces.append(_valuation_group(gold_row, app_config=app_config, spot_header=spot_header))
     pieces.append(_balance_sheet_group(gold_row, tool_b_row, app_config=app_config))
     pieces.append(
-        _resilience_group(tool_d_row, finance_source=finance_source, app_config=app_config)
+        _resilience_group(
+            tool_d_row,
+            finance_source=finance_source,
+            unavailable_reason=tool_d_reason,
+            app_config=app_config,
+        )
     )
     pieces.append(
         _data_quality_group(

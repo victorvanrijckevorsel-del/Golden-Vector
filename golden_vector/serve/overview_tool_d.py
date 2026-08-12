@@ -46,32 +46,22 @@ from golden_vector.serve.ui.components import page_header
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.url_helpers import build_page_url
-from golden_vector.serve.workspace_state import WorkspaceState
+from golden_vector.serve.workspace_state import WorkspaceState, select_tool_d_source_rows
 
 
-def _yahoo_fallback_error(
+def _yahoo_scenario_error(
     exc: Exception,
     *,
     requested_gold: float | None = None,
     spot_gold: float | None = None,
 ) -> str:
-    """Message for the Yahoo-scenario failure that falls back to Our View data.
+    """Truthful Yahoo custom-scenario failure with no alternate-source fallback."""
 
-    Names BOTH the requested source and the source actually shown, so the page
-    never silently displays Our View numbers under a Yahoo request. When a custom
-    gold price was also requested it says plainly that the price was NOT applied
-    and the table is the persisted spot run — the form still shows the requested
-    value, so silence there would read as "applied".
-    """
-
-    message = (
-        f"Could not compute Yahoo Fundamentals view: {exc} "
-        "Showing Our View data instead (requested Yahoo Fundamentals)."
-    )
+    message = f"Could not compute Yahoo Fundamentals stress scenario: {exc}"
     if requested_gold is not None:
         message += (
             f" Your requested gold price of ${requested_gold:,.0f} was NOT applied; "
-            "the table below is the persisted spot run"
+            "the table below remains the persisted selected-source spot run"
         )
         message += (
             f" (spot ${spot_gold:,.0f})." if spot_gold is not None else "."
@@ -92,16 +82,23 @@ def _render_tool_d_overview_page(
 
     query = query or {}
     requested_gold, gold_price_error = _requested_gold_price(query)
-    # Accumulate notices: a gold-price validation error and a later Yahoo-fallback
+    # Accumulate notices: a gold-price validation error and a later Yahoo-scenario
     # error are independent facts and must both reach the user.
     scenario_errors: list[str] = [gold_price_error] if gold_price_error else []
     finance_source = normalize_finance_source(
         (query.get("fundamentals_source", ["our"])[0] or "our")
     )
-    frame = state.latest_tool_d.copy()
+    persisted_selection = select_tool_d_source_rows(
+        state.latest_tool_d,
+        finance_source=finance_source,
+        label="the Corporate Resilience overview",
+    )
+    frame = persisted_selection.frame
     scenario_seconds: float | None = None
     scenario_message: str | None = None
-    if requested_gold is not None or finance_source == "yahoo":
+    # Both at-spot sources are persisted. Only a non-spot gold request keeps
+    # the sanctioned scenario recompute path (plan D15).
+    if requested_gold is not None:
         try:
             start = perf_counter()
             frame = _compute_scenario_frame(
@@ -111,31 +108,26 @@ def _render_tool_d_overview_page(
                 finance_source=finance_source,
             )
             scenario_seconds = perf_counter() - start
-            if requested_gold is not None:
-                scenario_message = (
-                    f"Scenario recomputed in {scenario_seconds:.2f}s. "
-                    "Persisted spot output was not changed."
-                )
-            else:
-                scenario_message = (
-                    f"Yahoo Fundamentals view recomputed in {scenario_seconds:.2f}s. "
-                    "Persisted Our View output was not changed."
-                )
+            scenario_message = (
+                f"Scenario recomputed in {scenario_seconds:.2f}s. "
+                "Persisted spot output was not changed."
+            )
         except ToolBStaleSchemaError:
             raise
         except Exception as exc:
             if finance_source == "yahoo":
                 scenario_errors.append(
-                    _yahoo_fallback_error(
+                    _yahoo_scenario_error(
                         exc,
                         requested_gold=requested_gold,
-                        spot_gold=_first_number(state.latest_tool_d, "spot_gold_usd"),
+                        spot_gold=_first_number(frame, "spot_gold_usd"),
                     )
                 )
-                finance_source = "our"
-                frame = state.latest_tool_d.copy()
             else:
                 scenario_errors.append(f"Could not compute stress scenario: {exc}")
+
+    if frame.empty and persisted_selection.reason and requested_gold is None:
+        scenario_errors.append(persisted_selection.reason)
 
     search_term = str(search or "").strip().upper()
     if not frame.empty and search_term and "ticker" in frame.columns:
@@ -147,7 +139,7 @@ def _render_tool_d_overview_page(
     # scenario recompute goes through the same writer. Serve never re-sorts.
 
     spot_gold = _first_number(frame, "spot_gold_usd") or _first_number(
-        state.latest_tool_d,
+        persisted_selection.frame,
         "spot_gold_usd",
     )
     active_gold = _first_number(frame, "gold_price_used") or requested_gold or spot_gold

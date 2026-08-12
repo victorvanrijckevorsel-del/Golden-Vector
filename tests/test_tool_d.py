@@ -691,23 +691,17 @@ def _tool_b_row(
     }
 
 
-def test_yahoo_fallback_error_names_both_sources():
-    from golden_vector.serve.overview_tool_d import _yahoo_fallback_error
+def test_yahoo_scenario_error_names_requested_source_without_fallback():
+    from golden_vector.serve.overview_tool_d import _yahoo_scenario_error
 
-    message = _yahoo_fallback_error(RuntimeError("boom"))
+    message = _yahoo_scenario_error(RuntimeError("boom"))
 
     assert "Yahoo Fundamentals" in message
-    assert "Our View" in message
+    assert "Our View" not in message
     assert "boom" in message
 
 
-def test_tool_d_route_warns_naming_requested_and_effective_source(tmp_path, monkeypatch):
-    """D7 RESOLVED at the RENDER level (GV-RD-FINAL-006).
-
-    A failing Yahoo-source computation must still render the page (200) with a
-    warning that names BOTH the requested source (Yahoo Fundamentals) and the
-    source actually shown (Our View) -- so the displayed basis and the stated
-    basis can never disagree silently."""
+def test_tool_d_plain_yahoo_route_does_not_call_scenario_compute(tmp_path, monkeypatch):
     import golden_vector.serve.overview_tool_d as overview_tool_d
     from tests.helpers import call_wsgi_app
     from tests.test_redesign_routes import _full_app
@@ -715,7 +709,7 @@ def test_tool_d_route_warns_naming_requested_and_effective_source(tmp_path, monk
     _paths, app = _full_app(tmp_path)
 
     def exploding_scenario(**kwargs):
-        raise RuntimeError("yahoo-source-boom")
+        raise AssertionError("plain at-spot Yahoo must use persisted data")
 
     monkeypatch.setattr(overview_tool_d, "_compute_scenario_frame", exploding_scenario)
 
@@ -723,28 +717,30 @@ def test_tool_d_route_warns_naming_requested_and_effective_source(tmp_path, monk
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert "Could not compute Yahoo Fundamentals view" in body
-    assert "yahoo-source-boom" in body
-    assert "Showing Our View data instead (requested Yahoo Fundamentals)." in body
+    assert "yahoo-source-boom" not in body
+    assert "Showing Our View data instead" not in body
+    assert 'value="yahoo" selected>Yahoo Fundamentals</option>' in body
 
 
-def test_yahoo_fallback_error_states_requested_gold_price_was_not_applied():
-    """The form keeps showing the requested gold price, so the fallback notice
+def test_yahoo_scenario_error_states_requested_gold_price_was_not_applied():
+    """The form keeps showing the requested gold price, so the scenario notice
     must say plainly that the price was NOT applied and the table is the spot run."""
-    from golden_vector.serve.overview_tool_d import _yahoo_fallback_error
+    from golden_vector.serve.overview_tool_d import _yahoo_scenario_error
 
-    message = _yahoo_fallback_error(
+    message = _yahoo_scenario_error(
         RuntimeError("boom"), requested_gold=1800.0, spot_gold=2400.0
     )
 
     assert "Yahoo Fundamentals" in message
     assert "$1,800" in message
     assert "NOT applied" in message
-    assert "persisted spot run" in message
+    assert "persisted selected-source spot run" in message
     assert "$2,400" in message
 
 
-def test_tool_d_route_yahoo_fallback_names_requested_gold_price(tmp_path, monkeypatch):
+def test_tool_d_route_yahoo_scenario_failure_names_requested_gold_price(
+    tmp_path, monkeypatch
+):
     import golden_vector.serve.overview_tool_d as overview_tool_d
     from tests.helpers import call_wsgi_app
     from tests.test_redesign_routes import _full_app
@@ -765,14 +761,14 @@ def test_tool_d_route_yahoo_fallback_names_requested_gold_price(tmp_path, monkey
     assert response["status"].startswith("200")
     body = response["body"]
     assert "NOT applied" in body
-    assert "persisted spot run" in body
+    assert "persisted selected-source spot run" in body
+    assert "Showing Our View data instead" not in body
+    assert 'value="yahoo" selected>Yahoo Fundamentals</option>' in body
 
 
-def test_tool_d_route_renders_both_gold_price_and_yahoo_fallback_errors(
+def test_tool_d_invalid_gold_does_not_trigger_yahoo_scenario_compute(
     tmp_path, monkeypatch
 ):
-    """A gold-price validation error must not be swallowed by a later
-    yahoo-fallback error -- both are independent facts the user needs."""
     import golden_vector.serve.overview_tool_d as overview_tool_d
     from tests.helpers import call_wsgi_app
     from tests.test_redesign_routes import _full_app
@@ -780,7 +776,7 @@ def test_tool_d_route_renders_both_gold_price_and_yahoo_fallback_errors(
     _paths, app = _full_app(tmp_path)
 
     def exploding_scenario(**kwargs):
-        raise RuntimeError("yahoo-source-boom")
+        raise AssertionError("invalid gold must not trigger scenario compute")
 
     monkeypatch.setattr(overview_tool_d, "_compute_scenario_frame", exploding_scenario)
 
@@ -793,7 +789,7 @@ def test_tool_d_route_renders_both_gold_price_and_yahoo_fallback_errors(
     assert response["status"].startswith("200")
     body = response["body"]
     assert "Gold price must be numeric" in body
-    assert "Could not compute Yahoo Fundamentals view" in body
+    assert "Could not compute Yahoo Fundamentals stress scenario" not in body
 
 
 def test_tool_d_flip_panel_excludes_degraded_rows(tmp_path, monkeypatch):

@@ -52,6 +52,7 @@ from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.screening.manual_store import load_store_tables
 from golden_vector.screening.pipeline import (
     compute_tool_b_in_memory,
+    materialize_tool_b_finance_source,
     normalize_finance_source,
 )
 from golden_vector.hedge.option_availability import has_usable_option_slots
@@ -63,6 +64,7 @@ from golden_vector.serve.option_trading_data import (
     OptionTradingData,
     load_option_trading_data,
 )
+from golden_vector.serve.workspace_state import select_tool_d_source_rows
 
 OptionsSide = Literal["puts", "calls", "either", "none"]
 TOOL_D_FINDER_FIELDS = frozenset(
@@ -298,14 +300,14 @@ def load_candidate_finder_data(
     unrecognised falls back to the cross-window blend (the default).
     """
 
-    # The fast path covers ONLY the plain persisted view (no scenario, "our"
-    # source): every input of that view resolves through the files in the
-    # signature. Scenario/yahoo requests read additional resolved files (the
-    # scenario foundation manifest, fetched fundamentals) whose content can
-    # change outside this signature — they always take the full hashing path.
-    plain_view = scenario is None and normalize_finance_source(fundamentals_source) == "our"
+    # Both plain source views are persisted and share this input signature.
+    # Only non-spot scenarios read extra foundation/fundamentals files and use
+    # the full hashing path below.
+    normalized_source = normalize_finance_source(fundamentals_source)
+    plain_view = scenario is None
     fast_key = (
         _stat_fast_path_signature(paths),
+        normalized_source,
         str(beta_window or ""),
     )
     if plain_view:
@@ -370,9 +372,19 @@ def _load_candidate_finder_data_uncached(
     manual_hash = _file_sha256(paths.manual_screening_store_path)
     manual_as_of = _manual_as_of(manual_company)
     options_refresh_run_id = _options_refresh_run_id(option_data)
+    persisted_spot_reference = _first_provenance_number(
+        "spot_gold_usd",
+        tool_d_load.frame,
+        tool_b_load.frame,
+    )
+    scenario_requires_recompute = scenario is not None and (
+        persisted_spot_reference is None
+        or abs(float(scenario.gold_price) - persisted_spot_reference)
+        > GOLD_PRICE_MATCH_TOLERANCE_USD
+    )
     scenario_foundation_manifest_path: Path | None = None
     scenario_foundation_error: Exception | None = None
-    if scenario is not None or finance_source == "yahoo":
+    if scenario_requires_recompute:
         try:
             scenario_foundation_manifest_path = resolve_current_foundation_manifest_path(
                 paths,
@@ -405,7 +417,7 @@ def _load_candidate_finder_data_uncached(
         scenario_foundation_manifest_hash=_file_sha256(scenario_foundation_manifest_path),
         scenario_fundamentals_hash=(
             _file_sha256(_resolved_fundamentals_path(paths))
-            if scenario is not None or finance_source == "yahoo"
+            if scenario_requires_recompute
             else None
         ),
         beta_window=resolved_beta_window or "core",
@@ -421,7 +433,7 @@ def _load_candidate_finder_data_uncached(
     # half-built scenario frame it is supposed to be falling back FROM.
     persisted_tool_b_load = tool_b_load
     persisted_tool_d_load = tool_d_load
-    if scenario is not None or finance_source == "yahoo":
+    if scenario_requires_recompute:
         try:
             if scenario_foundation_error is not None:
                 raise scenario_foundation_error
@@ -450,8 +462,14 @@ def _load_candidate_finder_data_uncached(
                     f"{exc}"
                 ) from exc
             scenario_error = f"Could not compute Candidate Finder scenario: {exc}"
-            tool_b_spot_load = _spot_tool_b_source(persisted_tool_b_load.frame)
-            tool_d_spot_load = _spot_tool_d_source(persisted_tool_d_load.frame)
+            tool_b_spot_load = _persisted_tool_b_source(
+                persisted_tool_b_load,
+                finance_source=finance_source,
+            )
+            tool_d_spot_load = _persisted_tool_d_source(
+                persisted_tool_d_load,
+                finance_source=finance_source,
+            )
             tool_b_load = tool_b_spot_load
             tool_b = tool_b_load.frame
             tool_d_load = tool_d_spot_load
@@ -461,11 +479,16 @@ def _load_candidate_finder_data_uncached(
             spot_gold_usd = _first_provenance_number("spot_gold_usd", tool_b, tool_d)
             spot_gold_date = _first_provenance_text("spot_gold_date", tool_b, tool_d)
             source_basis = "persisted_spot"
-            rank_basis = "persisted_current"
-            finance_source = "our"
+            rank_basis = _persisted_rank_basis(finance_source)
     else:
-        tool_b_spot_load = _spot_tool_b_source(tool_b_load.frame)
-        tool_d_spot_load = _spot_tool_d_source(tool_d_load.frame)
+        tool_b_spot_load = _persisted_tool_b_source(
+            persisted_tool_b_load,
+            finance_source=finance_source,
+        )
+        tool_d_spot_load = _persisted_tool_d_source(
+            persisted_tool_d_load,
+            finance_source=finance_source,
+        )
         tool_b_load = tool_b_spot_load
         tool_b = tool_b_load.frame
         tool_d_load = tool_d_spot_load
@@ -475,8 +498,7 @@ def _load_candidate_finder_data_uncached(
         spot_gold_usd = _first_provenance_number("spot_gold_usd", tool_b, tool_d)
         spot_gold_date = _first_provenance_text("spot_gold_date", tool_b, tool_d)
         source_basis = "persisted_spot"
-        rank_basis = "persisted_current"
-        finance_source = "our"
+        rank_basis = _persisted_rank_basis(finance_source)
 
     frame = _joined_frame(
         app_config=app_config,
@@ -694,7 +716,11 @@ def _joined_frame(
         ("Gold Sensitivity", tool_a, _TOOL_A_RENAMES),
         ("Corporate Finance", tool_b, _TOOL_B_RENAMES),
         ("Gold Downside", tool_c, _TOOL_C_RENAMES),
-        ("Corporate Resilience", tool_d, _TOOL_D_RENAMES),
+        (
+            "Corporate Resilience",
+            _candidate_finder_tool_d_projection(tool_d),
+            _TOOL_D_RENAMES,
+        ),
         ("Manual inputs", manual_company, _MANUAL_RENAMES),
         ("Options", options, _OPTIONS_RENAMES),
     ):
@@ -757,6 +783,22 @@ _TOOL_D_RENAMES = {
     "source_run_id": "tool_d_source_run_id",
     "snapshot_refresh_run_id": "tool_d_snapshot_refresh_run_id",
 }
+
+
+def _candidate_finder_tool_d_projection(frame: pd.DataFrame) -> pd.DataFrame:
+    """Keep only fields Corporate Resilience owns in the Finder join.
+
+    Tool D v4 is a full model artifact and intentionally repeats several
+    finance inputs. Letting those repeated fields enter a ticker join would
+    create false ownership warnings—or worse, make join order choose a value.
+    """
+
+    keep = {
+        "ticker",
+        *TOOL_D_FINDER_FIELDS,
+        *_TOOL_D_RENAMES.keys(),
+    }
+    return frame.loc[:, [column for column in frame.columns if column in keep]].copy()
 _OPTIONS_RENAMES = {
     "as_of_date": "options_as_of_date",
     "run_id": "options_run_id",
@@ -1443,6 +1485,24 @@ def _spot_tool_b_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:
     )
 
 
+def _persisted_tool_b_source(
+    load: CandidateFinderSourceLoad,
+    *,
+    finance_source: str,
+) -> CandidateFinderSourceLoad:
+    """Materialize persisted Tool B sidecars for the selected source."""
+
+    materialized = materialize_tool_b_finance_source(
+        load.frame,
+        finance_source=finance_source,
+    )
+    spot = _spot_tool_b_source(materialized)
+    return CandidateFinderSourceLoad(
+        frame=spot.frame,
+        warning=_combine_source_warnings(load.warning, spot.warning),
+    )
+
+
 def _resolve_finder_source(
     paths: ProjectPaths, name: str, *, fallback_path: Path | None
 ) -> tuple[Path | None, bool]:
@@ -1501,6 +1561,42 @@ def _spot_tool_d_source(frame: pd.DataFrame) -> CandidateFinderSourceLoad:
             f"Resilience is rerun. Off-spot tickers: {_ticker_sample(frame.loc[~is_spot])}."
         ),
     )
+
+
+def _persisted_tool_d_source(
+    load: CandidateFinderSourceLoad,
+    *,
+    finance_source: str,
+) -> CandidateFinderSourceLoad:
+    """Select the exact persisted Tool D source before ticker-keyed joins."""
+
+    selected = select_tool_d_source_rows(
+        load.frame,
+        finance_source=finance_source,
+        label="Candidate Finder Corporate Resilience",
+    )
+    spot = _spot_tool_d_source(selected.frame)
+    return CandidateFinderSourceLoad(
+        frame=spot.frame,
+        warning=_combine_source_warnings(
+            load.warning,
+            selected.reason,
+            spot.warning,
+        ),
+    )
+
+
+def _persisted_rank_basis(finance_source: str) -> str:
+    if normalize_finance_source(finance_source) == "yahoo":
+        return "persisted_current_yahoo_fundamentals"
+    return "persisted_current"
+
+
+def _combine_source_warnings(*warnings: str | None) -> str | None:
+    messages = _dedupe_alignment_messages(
+        [warning for warning in warnings if warning is not None]
+    )
+    return "; ".join(messages) or None
 
 
 def _scenario_tool_d_source(

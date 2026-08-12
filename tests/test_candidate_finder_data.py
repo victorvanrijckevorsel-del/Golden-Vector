@@ -20,6 +20,7 @@ from golden_vector.contracts.option_artifacts import (
     option_artifact_latest_path,
     option_artifact_run_stamped_path,
 )
+from golden_vector.contracts.tool_d import TOOL_D_OUTPUT_COLUMNS, TOOL_D_SCHEMA_VERSION
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
@@ -30,7 +31,6 @@ from golden_vector.model.candidate_finder import (
     CriterionSelection,
     rank_candidates,
 )
-from golden_vector.model.tool_d import TOOL_D_OUTPUT_COLUMNS
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.screening.manual_store import upsert_company_input
 from golden_vector.screening.schema import TOOL_B_OUTPUT_COLUMNS
@@ -64,7 +64,7 @@ def test_candidate_finder_data_joins_sources_and_persisted_fundamentals(tmp_path
     data = load_candidate_finder_data(paths, app_config=app_config)
     frame = data.frame.set_index("ticker")
 
-    assert data.alignment.status == "OK"
+    assert data.alignment.status == "OK", data.alignment.messages
     assert data.cache_key.options_refresh_run_id == "refresh-run"
     assert data.cache_key.manual_store_hash is not None
     assert bool(frame.loc["AEM", "has_usable_put_candidate"]) is True
@@ -616,7 +616,7 @@ def test_candidate_finder_scenario_injects_in_memory_tool_b_and_tool_d_without_w
     )
 
 
-def test_candidate_finder_yahoo_source_recomputes_tool_b_and_tool_d_at_spot(
+def test_candidate_finder_yahoo_source_reads_persisted_tool_b_and_tool_d_at_spot(
     tmp_path,
     monkeypatch,
 ):
@@ -624,76 +624,17 @@ def test_candidate_finder_yahoo_source_recomputes_tool_b_and_tool_d_at_spot(
     paths = build_test_paths(tmp_path)
     app_config = load_app_config(paths).app
     _write_candidate_finder_inputs(paths, refresh_run_id="refresh-run")
-    captured: dict[str, object] = {}
-
-    monkeypatch.setattr(
-        "golden_vector.serve.candidate_finder_data.load_latest_foundation_snapshot",
-        lambda **_kwargs: SimpleNamespace(
-            gold_history=pd.DataFrame([{"date": "2026-06-01", "close_usd": 4000.0}]),
-            normalized_market_snapshots=pd.DataFrame(),
-            refresh_run_id="fresh-foundation",
-            snapshot_as_of_date="2026-06-01",
-        ),
-    )
-    monkeypatch.setattr(
-        "golden_vector.serve.candidate_finder_data.resolve_current_foundation_manifest_path",
-        lambda _paths, *, require_current_manifest: None,
-    )
-    monkeypatch.setattr(
-        "golden_vector.serve.candidate_finder_data.load_manual_screening_data",
-        lambda _paths, *, tickers: SimpleNamespace(
-            company_inputs=pd.DataFrame({"ticker": list(tickers)})
-        ),
-    )
-    monkeypatch.setattr(
-        "golden_vector.serve.candidate_finder_data.load_official_fundamentals",
-        lambda _paths: pd.DataFrame({"ticker": ["AEM"]}),
-    )
-
-    def fake_tool_b(**kwargs):
-        captured["tool_b_finance_source"] = kwargs["finance_source"]
-        gold_price = float(kwargs["gold_price_assumption"])
-        row = tool_b_output_row(
-            "AEM",
-            gold_price_assumption=gold_price,
-            gold_price_used=gold_price,
-            spot_gold_usd=4000.0,
-            spot_gold_date="2026-06-01",
-            gold_price_basis=str(kwargs["gold_price_basis"]),
-            snapshot_refresh_run_id="fresh-foundation",
-            source_run_id="candidate-finder-scenario",
-        )
-        row["finance_source"] = kwargs["finance_source"]
-        return pd.DataFrame([row])
-
-    def fake_tool_d(**kwargs):
-        captured["tool_d_finance_source"] = kwargs["inputs"].finance_source
-        return pd.DataFrame(
-            [
-                {
-                    "ticker": "AEM",
-                    "tool_d_quality_rank": 12.0,
-                    "interest_cover_gold_usd": 2100.0,
-                    "debt_stress_gold_usd": 2050.0,
-                    "fcf_breakeven_gold_usd": 2200.0,
-                    "cost_curve_aisc_percentile": 55.0,
-                    "gold_price_used": float(kwargs["gold_price"]),
-                    "spot_gold_usd": 4000.0,
-                    "spot_gold_date": "2026-06-01",
-                    "snapshot_refresh_run_id": "fresh-foundation",
-                    "source_run_id": "candidate-finder-scenario",
-                    "finance_source": kwargs["inputs"].finance_source,
-                }
-            ]
-        )
-
     monkeypatch.setattr(
         "golden_vector.serve.candidate_finder_data.compute_tool_b_in_memory",
-        fake_tool_b,
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("plain Yahoo must not recompute Tool B")
+        ),
     )
     monkeypatch.setattr(
         "golden_vector.serve.candidate_finder_data.compute_tool_d_outputs",
-        fake_tool_d,
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("plain Yahoo must not recompute Tool D")
+        ),
     )
 
     data = load_candidate_finder_data(
@@ -702,17 +643,14 @@ def test_candidate_finder_yahoo_source_recomputes_tool_b_and_tool_d_at_spot(
         fundamentals_source="yahoo",
     )
 
-    assert data.scenario_active is True
+    assert data.scenario_active is False
     assert data.scenario_requested_gold_price is None
     assert data.fundamentals_source == "yahoo"
     assert data.gold_price_used == pytest.approx(4000.0)
-    assert data.rank_basis == "latest_daily_gold_close_yahoo_fundamentals"
-    assert captured == {
-        "tool_b_finance_source": "yahoo",
-        "tool_d_finance_source": "yahoo",
-    }
+    assert data.rank_basis == "persisted_current_yahoo_fundamentals"
     row = data.frame.set_index("ticker").loc["AEM"]
     assert row["gold_price_used"] == pytest.approx(4000.0)
+    assert row["ev_ebitda"] == pytest.approx(9.4)
     assert row["tool_d_quality_rank"] == pytest.approx(12.0)
     assert row["interest_cover_gold_usd"] == pytest.approx(2100.0)
 
@@ -757,6 +695,7 @@ def test_candidate_finder_yahoo_source_failure_does_not_fallback_to_our_view(
         load_candidate_finder_data(
             paths,
             app_config=app_config,
+            scenario=CandidateFinderScenario.from_value(3500.0),
             fundamentals_source="yahoo",
         )
 
@@ -1114,6 +1053,39 @@ def test_candidate_finder_cli_allows_output_outside_repo(tmp_path, capsys):
     assert str(output_path) in captured
 
 
+def _tool_d_contract_row(
+    *,
+    ticker: str,
+    source: str,
+    rank: float,
+    interest_cover: float,
+    debt_stress: float,
+    cost_curve: float,
+    refresh_run_id: str,
+    source_run_id: str,
+) -> dict[str, object]:
+    row: dict[str, object] = {column: None for column in TOOL_D_OUTPUT_COLUMNS}
+    row.update(
+        {
+            "ticker": ticker,
+            "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+            "as_of_date": date(2026, 4, 22),
+            "source_run_id": source_run_id,
+            "finance_source": source,
+            "snapshot_refresh_run_id": refresh_run_id,
+            "gold_price_used": 4000.0,
+            "spot_gold_usd": 4000.0,
+            "spot_gold_date": "2026-06-01",
+            "tool_d_quality_rank": rank,
+            "interest_cover_gold_usd": interest_cover,
+            "debt_stress_gold_usd": debt_stress,
+            "cost_curve_aisc_percentile": cost_curve,
+            "resilience_data_status": "OK",
+        }
+    )
+    return row
+
+
 def _write_candidate_finder_inputs(
     paths,
     *,
@@ -1188,6 +1160,10 @@ def _write_candidate_finder_inputs(
                     forward_net_income_musd=300.0,
                     forward_pe=8.0,
                     ev_ebitda=2.4,
+                    ev_ebitda_official=9.4,
+                    leverage_official=1.4,
+                    ev_ebitda_differs=True,
+                    leverage_differs=True,
                     aisc_margin_yield=0.18,
                     leverage=0.4,
                     fundamental_check_score=85.7143,
@@ -1207,6 +1183,10 @@ def _write_candidate_finder_inputs(
                     forward_net_income_musd=260.0,
                     forward_pe=10.0,
                     ev_ebitda=3.5,
+                    ev_ebitda_official=8.5,
+                    leverage_official=1.2,
+                    ev_ebitda_differs=True,
+                    leverage_differs=True,
                     aisc_margin_yield=0.12,
                     leverage=0.2,
                     fundamental_check_score=71.4286,
@@ -1255,37 +1235,51 @@ def _write_candidate_finder_inputs(
         persist_tool_d_outputs(
             paths=paths,
             run_context=tool_d_context,
+            expected_tickers=["AEM", "NEM"],
             tool_d_outputs=pd.DataFrame(
                 [
-                    {
-                        "ticker": "AEM",
-                        "finance_source": "our",
-                        "tool_d_quality_rank": 45.0,
-                        "interest_cover_gold_usd": 1500.0,
-                        "debt_stress_gold_usd": 1300.0,
-                        "fcf_breakeven_gold_usd": 1700.0,
-                        "cost_curve_aisc_percentile": 40.0,
-                        "gold_price_used": 4000.0,
-                        "spot_gold_usd": 4000.0,
-                        "spot_gold_date": "2026-06-01",
-                        "snapshot_refresh_run_id": refresh_run_id,
-                        "source_run_id": tool_d_context.run_id,
-                    },
-                    {
-                        "ticker": "NEM",
-                        "finance_source": "our",
-                        "tool_d_quality_rank": 80.0,
-                        "interest_cover_gold_usd": 1200.0,
-                        "debt_stress_gold_usd": 1100.0,
-                        "fcf_breakeven_gold_usd": 1400.0,
-                        "cost_curve_aisc_percentile": 20.0,
-                        "gold_price_used": 4000.0,
-                        "spot_gold_usd": 4000.0,
-                        "spot_gold_date": "2026-06-01",
-                        "snapshot_refresh_run_id": refresh_run_id,
-                        "source_run_id": tool_d_context.run_id,
-                    },
-                ]
+                    _tool_d_contract_row(
+                        ticker="AEM",
+                        source="our",
+                        rank=45.0,
+                        interest_cover=1500.0,
+                        debt_stress=1300.0,
+                        cost_curve=40.0,
+                        refresh_run_id=refresh_run_id,
+                        source_run_id=tool_d_context.run_id,
+                    ),
+                    _tool_d_contract_row(
+                        ticker="AEM",
+                        source="yahoo",
+                        rank=12.0,
+                        interest_cover=2100.0,
+                        debt_stress=2050.0,
+                        cost_curve=55.0,
+                        refresh_run_id=refresh_run_id,
+                        source_run_id=tool_d_context.run_id,
+                    ),
+                    _tool_d_contract_row(
+                        ticker="NEM",
+                        source="our",
+                        rank=80.0,
+                        interest_cover=1200.0,
+                        debt_stress=1100.0,
+                        cost_curve=20.0,
+                        refresh_run_id=refresh_run_id,
+                        source_run_id=tool_d_context.run_id,
+                    ),
+                    _tool_d_contract_row(
+                        ticker="NEM",
+                        source="yahoo",
+                        rank=16.0,
+                        interest_cover=2000.0,
+                        debt_stress=1950.0,
+                        cost_curve=60.0,
+                        refresh_run_id=refresh_run_id,
+                        source_run_id=tool_d_context.run_id,
+                    ),
+                ],
+                columns=TOOL_D_OUTPUT_COLUMNS,
             ),
             publish_spot_latest_aliases=True,
         )

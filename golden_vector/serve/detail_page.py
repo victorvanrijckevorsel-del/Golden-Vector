@@ -7,6 +7,7 @@ from typing import Mapping
 from urllib.parse import quote
 
 from golden_vector.contracts.config_models import AppConfig
+from golden_vector.common.frames import latest_records_by_key
 from golden_vector.hedge.option_trading import OptionTradingDetailData
 from golden_vector.serve.detail_forms import (
     _render_company_form,
@@ -37,7 +38,11 @@ from golden_vector.serve.ticker_page import (
     render_performance_section,
 )
 from golden_vector.serve.url_helpers import build_page_url
-from golden_vector.serve.workspace_state import ToolADetailState, WorkspaceState
+from golden_vector.serve.workspace_state import (
+    ToolADetailState,
+    WorkspaceState,
+    select_tool_d_source_rows,
+)
 
 
 DETAIL_DEFAULT_LENS_ID = "tool-a"
@@ -114,10 +119,19 @@ def render_detail_page(
     reporting_row = _frame_index_by_ticker(state.reporting_calendar).get(ticker, {})
     tool_a_row = _frame_index_by_ticker(state.latest_tool_a).get(ticker, {})
     tool_b_row = _frame_index_by_ticker(state.latest_tool_b).get(ticker, {})
-    # Tool D is already in the LRU-cached workspace state; the corporate
-    # section's resilience group reads it here rather than opening a file in
-    # the request path.
-    tool_d_row = _frame_index_by_ticker(state.latest_tool_d).get(ticker, {})
+    # Tool D is dual-source in one persisted frame. Resolve the exact
+    # (ticker, selected source) key before any ticker-only lookup; otherwise
+    # row order would choose the source. Never borrow the alternate source.
+    tool_d_selection = select_tool_d_source_rows(
+        state.latest_tool_d,
+        finance_source=financials_source,
+        ticker=ticker,
+        label=f"ticker {str(ticker).upper()}",
+    )
+    tool_d_row = latest_records_by_key(tool_d_selection.frame, "ticker").get(
+        str(ticker).upper(),
+        {},
+    )
     verification_rows = _ticker_rows(state.source_verification, ticker)
     note_rows = _ticker_rows(state.stock_notes, ticker)
     # Rejected-POST echo: hand the raw submitted strings to the form renderers
@@ -283,6 +297,7 @@ def render_detail_page(
                 finance_source=financials_source,
                 tool_b_row=tool_b_row,
                 tool_d_row=tool_d_row,
+                tool_d_reason=tool_d_selection.reason,
                 app_config=app_config,
             )
         )
