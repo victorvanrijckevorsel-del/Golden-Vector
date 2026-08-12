@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 from dataclasses import replace
 from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
@@ -51,12 +52,16 @@ from golden_vector.serve.detail_page import (
     resolve_detail_lens,
 )
 from golden_vector.serve.option_trading_data import (
+    OPTION_PAGE_UNREADABLE,
     OptionArtifactIntegrityError,
     OptionArtifactStaleSchemaError,
+    OptionPageArtifacts,
     build_option_trading_detail_data,
+    load_option_page_artifacts,
     load_option_trading_data,
     parse_option_sizing_request,
 )
+from golden_vector.serve.ticker_page import TARGET_WINDOW_PARAM, resolve_target_window
 from golden_vector.app.model_state import (
     load_current_model_state_manifest,
     resolve_current_model_artifact_path,
@@ -109,6 +114,9 @@ from golden_vector.screening.manual_store import (
     upsert_reporting_calendar,
     upsert_source_verification,
 )
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _first_query_values(query: dict[str, list[str]]) -> dict[str, str]:
@@ -573,24 +581,21 @@ def create_workspace_app(
                     active_window = _resolve_active_window(
                         query.get("window", [""])[0], canonical_anchor,
                     )
-                    option_trading_detail = None
-                    if detail_lens == DETAIL_OPTION_TRADING_LENS_ID:
-                        option_trading_data = (
-                            prefetched_option_trading_data
-                            or load_option_trading_data(
-                                paths,
-                                app_config=app_config,
-                            )
-                        )
-                        option_trading_detail = build_option_trading_detail_data(
-                            option_trading_data,
-                            ticker=ticker,
-                            app_config=app_config,
-                            sizing_request=parse_option_sizing_request(
-                                query,
-                                app_config=app_config,
-                            ),
-                        )
+                    # The Options section is part of the canonical page now, so
+                    # option data loads for EVERY detail GET, not only under
+                    # ?lens=option-trading. Both loaders are cached on the
+                    # publish pointer, so this is one read per refresh.
+                    (
+                        option_trading_data,
+                        option_trading_detail,
+                        option_page_artifacts,
+                    ) = _detail_option_state(
+                        paths,
+                        app_config=app_config,
+                        ticker=ticker,
+                        query=query,
+                        prefetched=prefetched_option_trading_data,
+                    )
                     ticker_page_data = load_ticker_page_data(paths)
                     return _html_response(
                         start_response,
@@ -611,16 +616,21 @@ def create_workspace_app(
                             chart_view=_resolve_chart_view(query.get("chart_view", [""])[0]),
                             app_config=app_config,
                             option_trading_detail=option_trading_detail,
+                            option_page_artifacts=option_page_artifacts,
+                            option_candidate_slots_frame=(
+                                option_trading_data.candidate_slots_frame
+                                if option_trading_data is not None
+                                else None
+                            ),
+                            target_window=_resolve_target_window(
+                                query.get(TARGET_WINDOW_PARAM, [""])[0],
+                                app_config,
+                            ),
                             show_workspace_panels=not option_vehicle_detail,
                             show_manual_sections=not option_vehicle_detail,
                             financials_source=financials_source,
                             query_params=_first_query_values(query),
                             fundamentals_provenance=fundamentals_provenance,
-                            model_state_manifest=(
-                                load_current_model_state_manifest(paths)
-                                if detail_lens == DETAIL_OPTION_TRADING_LENS_ID
-                                else None
-                            ),
                         ),
                     )
 
@@ -674,6 +684,16 @@ def create_workspace_app(
                             else {}
                         )
                         error_lens = resolve_detail_lens(merged_query.get("lens", [""])[0])
+                        (
+                            error_option_data,
+                            error_option_detail,
+                            error_option_artifacts,
+                        ) = _detail_option_state(
+                            paths,
+                            app_config=app_config,
+                            ticker=ticker,
+                            query=merged_query,
+                        )
                         error_tool_a_row = _frame_index_by_ticker(
                             error_state.latest_tool_a
                         ).get(ticker, {})
@@ -717,10 +737,19 @@ def create_workspace_app(
                                 financials_source=error_source,
                                 query_params=_first_query_values(merged_query),
                                 fundamentals_provenance=error_provenance,
-                                model_state_manifest=(
-                                    load_current_model_state_manifest(paths)
-                                    if error_lens == DETAIL_OPTION_TRADING_LENS_ID
+                                # A rejected POST re-renders the SAME page, so
+                                # the Options section must come back too — its
+                                # absence would read as data loss.
+                                option_trading_detail=error_option_detail,
+                                option_page_artifacts=error_option_artifacts,
+                                option_candidate_slots_frame=(
+                                    error_option_data.candidate_slots_frame
+                                    if error_option_data is not None
                                     else None
+                                ),
+                                target_window=_resolve_target_window(
+                                    (merged_query.get(TARGET_WINDOW_PARAM) or [""])[0],
+                                    app_config,
                                 ),
                                 form_overrides={
                                     section: {
@@ -1032,6 +1061,35 @@ def _is_loopback_host(host: str) -> bool:
         return False
 
 
+def _detail_option_state(paths, *, app_config, ticker, query, prefetched=None):
+    """Option inputs for a ticker DETAIL render, degrading instead of aborting.
+
+    The Options section is one section of a five-section page now, so a stale or
+    corrupt option artifact must not take Performance, Corporate finance, Market
+    behaviour and the user's own inputs down with it. The two loud errors are
+    caught HERE (the /option-trading overview page still raises them, because
+    there the option data IS the page) and turned into the same degraded state
+    the missing-artifact path already renders, with the real reason attached.
+    """
+
+    try:
+        data = prefetched or load_option_trading_data(paths, app_config=app_config)
+        detail = build_option_trading_detail_data(
+            data,
+            ticker=ticker,
+            app_config=app_config,
+            sizing_request=parse_option_sizing_request(query, app_config=app_config),
+        )
+        return data, detail, load_option_page_artifacts(paths)
+    except (OptionArtifactStaleSchemaError, OptionArtifactIntegrityError) as exc:
+        LOGGER.warning("option artifacts unusable for %s detail page: %s", ticker, exc)
+        return (
+            None,
+            None,
+            OptionPageArtifacts(state=OPTION_PAGE_UNREADABLE, reason=str(exc)),
+        )
+
+
 def _resolve_chart_horizon(raw: str | None, app_config) -> str:
     """Resolve the chart horizon query param against the configured list."""
     horizons = list(app_config.ticker_page.chart.horizons)
@@ -1042,3 +1100,18 @@ def _resolve_chart_horizon(raw: str | None, app_config) -> str:
 def _resolve_chart_view(raw: str | None) -> str:
     value = str(raw or "").strip().lower()
     return value if value in {"rebased", "price"} else "rebased"
+
+
+def _resolve_target_window(raw: str | None, app_config) -> int | None:
+    """Parse the Options "Target window" (`tw`) param.
+
+    Parsing only — the FALLBACK RULE itself lives once, in the section that
+    renders the control (`ticker_page.options.resolve_target_window`), so the
+    route and the chips can never disagree about which window is selected.
+    """
+
+    try:
+        requested: int | None = int(str(raw or "").strip())
+    except (TypeError, ValueError):
+        requested = None
+    return resolve_target_window(requested, app_config)

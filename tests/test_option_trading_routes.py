@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 
+
 from golden_vector.app.config import load_app_config
 from golden_vector.contracts.config_models import PortfolioConfig
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
@@ -83,7 +84,59 @@ def test_workspace_option_trading_route_handles_stale_artifact_schema(tmp_path, 
     assert "The workspace hit an unexpected error" not in response["body"]
 
 
-def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
+def test_stale_option_artifact_degrades_the_section_not_the_whole_ticker_page(
+    tmp_path,
+    monkeypatch,
+):
+    """A bad option artifact must cost the user ONE section, not the page.
+
+    Self-review P1: option data now loads on every detail GET, so letting the
+    loud loader errors escape would have replaced Performance, Corporate
+    finance, Market behaviour AND the manual inputs with a 503 whenever a
+    single option parquet's sha drifted. The /option-trading overview keeps
+    raising (there, the option data IS the page) — see the test above.
+    """
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = load_app_config(paths).app
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+
+    def fail_stale_schema(*args, **kwargs):
+        raise OptionArtifactStaleSchemaError("schema_version expected 4, got 3")
+
+    monkeypatch.setattr(
+        "golden_vector.serve.workspace.load_option_trading_data",
+        fail_stale_schema,
+    )
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+    response = _call_wsgi_app(app, method="GET", path="/ticker/AEM")
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    # The rest of the page survives ...
+    assert "Add Note" in body
+    assert 'id="market-behaviour"' in body
+    # ... and the Options section explains itself instead of vanishing.
+    assert '<section id="options"' in body
+    assert "schema_version expected 4, got 3" in body
+    assert "no options" not in body.lower()
+    assert "The workspace hit an unexpected error" not in body
+
+
+def test_workspace_option_trading_lens_renders_canonical_options_section(tmp_path):
+    """``?lens=option-trading`` is still accepted and renders the canonical page.
+
+    The old standalone Option Trading detail PANEL is gone: options are now the
+    ``id="options"`` SECTION of the redesigned ticker page (M3d), and the lens simply
+    routes to that page. This test pins the section's current contract: the per-side
+    ``<h4>Puts</h4>``/``<h4>Calls</h4>`` tables in that order, the ``bucket_label`` row
+    labels, the Yahoo chain icon, the three disclosures that replaced "Show chain
+    detail", and the re-cased provenance labels.
+    """
+
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -101,47 +154,62 @@ def test_workspace_option_trading_detail_lens_renders_put_panel(tmp_path):
     assert response["status"].startswith("200")
     body = response["body"]
     assert 'aria-current="page" href="/option-trading"' in body
-    assert 'id="option-trading"' in body
+    # The section id and its in-page nav entry (was id="option-trading").
+    assert '<section id="options"' in body
+    assert '<a class="section-nav-link" href="#options">Options</a>' in body
     assert body.index("<h4>Puts</h4>") < body.index("<h4>Calls</h4>")
-    assert "Option Candidates" in body
     assert "Put Near-ATM" in body
     assert "Call Near-ATM" in body
-    assert "Downside Put Scenarios" not in body
-    assert "Upside Call Scenarios" not in body
-    assert "Plain Beta" not in body
-    assert "IV Skew 60d" not in body
-    assert "IV/RV Ratio 60d" not in body
-    assert "approximate - linear beta can understate real downside" in body
-    assert "Leveraged bullish speculation" not in body
-    assert "Stock Price" in body
-    assert "Snapshot Date" in body
-    assert "Source" in body
-    assert "Cached Yahoo Finance data via yfinance" in body
-    assert "Last" in body
-    assert "Bid" in body
-    assert "Ask" in body
-    assert "Mid" in body
-    assert "Half-spread Cost" not in body
-    assert "Candidate" in body
-    assert "Tradable" in body
-    # Yahoo chain is now a compact arrow icon carrying the label in its title.
+    assert '<span class="badge badge-verified">Tradable</span>' in body
+    # Contract-table columns.
+    for column in (
+        "Strike",
+        "Expiry (DTE)",
+        "Delta",
+        "Bid / Ask",
+        "Mid",
+        "Spread",
+        "Open interest",
+        "Volume",
+        "Liquidity",
+        "Chain",
+    ):
+        assert f'<th scope="col">{column}' in body
+    # Yahoo chain is a compact arrow icon carrying the label in its title.
     assert 'class="yahoo-chain-icon"' in body
     assert "Open Yahoo option chain for this expiry" in body
-    # Chain detail (open interest, skew curve, liquidity, method) is collapsed.
-    assert "Show chain detail" in body
-    assert "230d" in body
-    assert "30d tactical" not in body
+    # "Show chain detail" was replaced by three named disclosures.
+    assert "Show chain detail" not in body
+    assert "Where the crowd is positioned" in body
+    assert "Work out a position" in body
+    assert "Greeks and full chain" in body
+    # Provenance labels were re-cased and moved into "Greeks and full chain".
+    assert "Share price used" in body
+    assert "Snapshot date" in body
+    assert "Data source" in body
+    assert "Refresh run" in body
+    assert "Stock Price" not in body
+    assert "Snapshot Date" not in body
+    assert "Refresh Run" not in body
+    # The 230d target-window chip exists even while the default 90d window is shown.
+    assert ">230d</a>" in body
+    # Q40: the gold-scenario sizing calculator was DELETED, not moved.
+    assert "Sizing Calculator" not in body
+    assert "Downside Put Scenarios" not in body
+    assert "Upside Call Scenarios" not in body
     assert "Put P&amp;L/share @ Gold -10% (60d)" not in body
     assert "Call P&amp;L/share @ Gold +10% (60d)" not in body
-    assert "60d put, strike" not in body
-    assert "60d call, strike" not in body
-    assert "Sizing Calculator" in body
 
 
-def test_workspace_default_detail_uses_lightweight_option_trading_link(
-    tmp_path,
-    monkeypatch,
-):
+def test_workspace_default_detail_renders_options_section_inline(tmp_path):
+    """The default ticker detail renders Options inline instead of linking to a lens.
+
+    Options are a section of the canonical page now, so the default GET loads option
+    data and renders the full section itself. The old "Open Option Trading for AEM"
+    teaser (which pointed at ``?lens=option-trading#option-trading``) is deleted — the
+    page links to its own ``#options`` anchor.
+    """
+
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -153,46 +221,62 @@ def test_workspace_default_detail_uses_lightweight_option_trading_link(
         tool_refresh_run_id="tool-run",
     )
 
-    def fail_option_load(*args, **kwargs):
-        raise AssertionError("default ticker detail should not load option data")
-
-    monkeypatch.setattr(
-        "golden_vector.serve.workspace.load_option_trading_data",
-        fail_option_load,
-    )
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/AEM")
 
     assert response["status"].startswith("200")
     body = response["body"]
     assert 'aria-current="page" href="/"' in body
-    assert "Open Option Trading for AEM" in body
-    assert "/ticker/AEM?lens=option-trading#option-trading" in body
-    assert "Option Candidates" not in body
+    # Rendered inline, with real contract rows — not a teaser.
+    assert '<section id="options"' in body
+    assert '<a class="section-nav-link" href="#options">Options</a>' in body
+    assert body.index("<h4>Puts</h4>") < body.index("<h4>Calls</h4>")
+    assert "Put Near-ATM" in body
+    # The teaser link and the lens it pointed at are gone from the default page.
+    assert "Open Option Trading for AEM" not in body
+    assert "lens=option-trading" not in body
+    assert 'id="option-trading"' not in body
+    # Q40: no server-side sizing calculator anywhere.
     assert "Sizing Calculator" not in body
 
 
-def test_workspace_default_detail_option_link_preserves_selected_window(tmp_path):
-    # Regression (Fix D): on the default lens the "Open Option Trading" link must carry the
-    # selected window when it differs from the canonical anchor (AEM's anchor is 12M), and OMIT
-    # it on the canonical default — mirroring the window switcher's own rule.
+def test_workspace_default_detail_keeps_window_without_option_lens_link(tmp_path):
+    """The selected window survives on the default page, and no lens link is emitted.
+
+    Superseded Fix D: the "Open Option Trading" teaser used to carry ``window=`` into
+    ``?lens=option-trading``. That link no longer exists, so what still has to hold is
+    (a) the requested window stays selected in the page's own controls, and (b) nothing
+    on the page links away to ``lens=option-trading``.
+    """
+
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
     app_config = load_app_config(paths).app
     bootstrap_manual_screening_data(paths, tickers=["AEM"])
-    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+    _write_option_inputs(
+        paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run"
+    )
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
 
     body_2y = _call_wsgi_app(app, method="GET", path="/ticker/AEM?window=2y")["body"]
-    assert "/ticker/AEM?lens=option-trading&amp;window=2y#option-trading" in body_2y
+    assert "window=2y" in body_2y
+    assert "lens=option-trading" not in body_2y
 
     body_default = _call_wsgi_app(app, method="GET", path="/ticker/AEM")["body"]
-    assert "/ticker/AEM?lens=option-trading#option-trading" in body_default
-    assert "lens=option-trading&amp;window=" not in body_default
+    assert "lens=option-trading" not in body_default
+    assert '<section id="options"' in body_default
 
 
-def test_workspace_option_trading_calculator_contracts_mode(tmp_path):
+def test_workspace_option_sizing_legacy_params_preselect_contract(tmp_path):
+    """Legacy ``side``/``horizon``/``bucket`` survive as INITIAL STATE only.
+
+    The server-side sizing calculator is deleted (Q40). Old deep links must still land
+    on the contract they named, which now means preselecting the matching
+    ``{side}-{horizon}-{bucket}`` ``<option>`` in the client-side tool's select — and
+    computing nothing.
+    """
+
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -209,21 +293,27 @@ def test_workspace_option_trading_calculator_contracts_mode(tmp_path):
         app,
         method="GET",
         path=(
-            "/ticker/AEM?lens=option-trading&side=call&horizon=90"
+            "/ticker/AEM?lens=option-trading&side=call&horizon=90&bucket=near_atm"
             "&size_mode=contracts&quantity=3"
         ),
     )
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert "Sizing Calculator" in body
-    assert 'class="radio-label"' in body
-    assert "Selected: 90d Near-ATM call" in body
-    assert "Contracts: 3." in body
-    assert "Premium spend: 360.00." in body
+    assert "Work out a position" in body
+    assert '<option value="call-90-near_atm" selected>' in body
+    # Exactly one contract is preselected, and it is not the put default.
+    assert '<option value="put-90-near_atm">' in body
+    # Q40: no server-computed sizing or gold-scenario P&L.
+    assert "Sizing Calculator" not in body
+    assert 'class="radio-label"' not in body
+    assert "Contracts: 3." not in body
+    assert "Premium spend:" not in body
 
 
-def test_workspace_option_trading_calculator_budget_mode(tmp_path):
+def test_workspace_option_sizing_legacy_budget_prefills_input(tmp_path):
+    """``budget=500`` prefills the budget input; it no longer buys contracts server-side."""
+
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -247,13 +337,23 @@ def test_workspace_option_trading_calculator_budget_mode(tmp_path):
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert "Selected: 90d Near-ATM put" in body
-    assert "Contracts: 4." in body
-    assert "Premium spend: 480.00." in body
-    assert "Leftover cash: 20.00." in body
+    assert 'data-role="budget"' in body
+    assert 'value="500.00"' in body
+    assert '<option value="put-90-near_atm" selected>' in body
+    # Q40: the server no longer resolves the budget into a position.
+    assert "Contracts: 4." not in body
+    assert "Premium spend: 480.00." not in body
+    assert "Leftover cash: 20.00." not in body
 
 
-def test_workspace_option_trading_calculator_invalid_inputs_fall_back(tmp_path):
+def test_workspace_option_sizing_invalid_legacy_params_fall_back_to_put(tmp_path):
+    """Invalid legacy params silently fall back to the put default — no "Invalid ..." notes.
+
+    The old calculator narrated each coercion ("Invalid side; defaulted to put."). The
+    client-side tool has no server-side inputs to validate, so a garbage deep link just
+    lands on the default preselection instead of rendering error prose.
+    """
+
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -277,14 +377,23 @@ def test_workspace_option_trading_calculator_invalid_inputs_fall_back(tmp_path):
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert "Invalid side; defaulted to put." in body
-    assert "Invalid horizon; defaulted to 90d." in body
-    assert "Invalid budget; defaulted to contract quantity mode." in body
-    assert "Invalid quantity; defaulted to 5." in body
-    assert "Contracts: 5." in body
+    assert '<option value="put-90-near_atm" selected>' in body
+    # A negative budget prefills nothing rather than being "corrected" in prose.
+    assert 'data-role="budget"' in body
+    assert 'inputmode="decimal" value=""' in body
+    assert "Invalid side; defaulted to put." not in body
+    assert "Invalid horizon; defaulted to 90d." not in body
+    assert "Invalid budget; defaulted to contract quantity mode." not in body
+    assert "Invalid quantity; defaulted to 5." not in body
 
 
-def test_workspace_option_trading_calculator_explains_skipped_scenarios(tmp_path):
+def test_workspace_option_sizing_embeds_payload_and_script_once(tmp_path):
+    """The client-side tool ships its payload and its script exactly once.
+
+    ``option-sizing.js`` reads the embedded JSON by id; a duplicated payload block or a
+    duplicated script tag would double-bind the controls, so the counts are the test.
+    """
+
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -294,25 +403,36 @@ def test_workspace_option_trading_calculator_explains_skipped_scenarios(tmp_path
         paths,
         refresh_run_id="options-run",
         tool_refresh_run_id="tool-run",
-        up_beta_core=0.0,
     )
 
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
     response = _call_wsgi_app(
         app,
         method="GET",
-        path=(
-            "/ticker/AEM?lens=option-trading&side=call&horizon=90"
-            "&size_mode=contracts&quantity=3"
-        ),
+        path="/ticker/AEM?lens=option-trading",
     )
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert "Selected: 90d Near-ATM call" in body
-    assert "Contracts: 3." in body
-    assert "Up-beta is too small to model meaningful gold-up scenarios." in body
-    assert "Net P&amp;L Now" not in body
+    assert body.count('<script type="application/json" id="option-sizing-payload">') == 1
+    assert body.count('<script src="/static/option-sizing.js" defer></script>') == 1
+    assert body.count('<div id="option-sizing"') == 1
+    for role in (
+        "contract",
+        "budget",
+        "price",
+        "price-out",
+        "result",
+        "contracts-line",
+        "ladder",
+        "footnote",
+        "reset",
+        "live",
+    ):
+        assert f'data-role="{role}"' in body
+    # The payload carries the persisted quote columns the JS sizes from.
+    assert '"multiplier":100' in body
+    assert '"quote_ok":true' in body
 
 
 def test_workspace_option_trading_calculator_get_writes_no_files(tmp_path):
@@ -367,7 +487,12 @@ def test_workspace_option_trading_detail_discloses_risk_free_rate_fallback(tmp_p
     assert overview_response["status"].startswith("200")
     assert detail_response["status"].startswith("200")
     assert "Risk-free rate was missing" in overview_response["body"]
-    assert "Risk-free rate was missing" in detail_response["body"]
+    # On the ticker page the fallback is now a full sentence next to the greeks it
+    # affects, inside the "Greeks and full chain" disclosure.
+    assert (
+        "The risk-free rate was missing from the options manifest, so the greeks "
+        "above were computed with a 0% rate fallback."
+    ) in detail_response["body"]
 
 
 def test_workspace_option_vehicle_detail_page_renders_option_lens_only(tmp_path):
@@ -389,10 +514,16 @@ def test_workspace_option_vehicle_detail_page_renders_option_lens_only(tmp_path)
     assert response["status"].startswith("200")
     body = response["body"]
     assert "Option vehicle page" in body
-    assert "Option Candidates" in body
-    assert "Benchmark ETF option vehicle" in body
+    # A benchmark ETF gets an options-ONLY page: the Options section and nothing else.
+    assert '<section id="options"' in body
+    assert (
+        '<nav class="section-nav" aria-label="On this page">'
+        '<a class="section-nav-link" href="#options">Options</a></nav>'
+    ) in body
     assert "Company Inputs" not in body
     assert "Source Verification" not in body
+    assert 'id="performance"' not in body
+    assert 'id="corporate-finance"' not in body
 
 
 def test_workspace_option_vehicle_without_option_lens_stays_404(tmp_path):
@@ -414,7 +545,7 @@ def test_workspace_option_vehicle_without_option_lens_stays_404(tmp_path):
     assert response["status"].startswith("404")
 
 
-def test_workspace_option_trading_detail_shows_proxy_fallback_not_overview(tmp_path):
+def test_workspace_option_trading_detail_shows_no_proxy_fallback(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -440,10 +571,14 @@ def test_workspace_option_trading_detail_shows_proxy_fallback_not_overview(tmp_p
 
     assert overview_response["status"].startswith("200")
     assert detail_response["status"].startswith("200")
+    # Requirements Q38: "no proxy/fallback suggestion". When AEM's own chain is
+    # untradable the page says so in its own Options section; it never redirects the
+    # reader to GDX/GDXJ as a stand-in, on either surface.
     assert "ETF Proxy Alternatives" not in overview_response["body"]
-    assert "ETF Proxy Alternatives" in detail_response["body"]
-    assert "/ticker/GDX?lens=option-trading" in detail_response["body"]
-    assert "not AEM one-for-one" in detail_response["body"]
+    assert "Proxy" not in detail_response["body"]
+    assert "not AEM one-for-one" not in detail_response["body"]
+    assert "/ticker/GDX?lens=option-trading" not in detail_response["body"]
+    assert '<section id="options"' in detail_response["body"]
 
 
 def test_workspace_detail_invalid_lens_falls_back_to_candidate_finder_nav(tmp_path):
@@ -465,7 +600,10 @@ def test_workspace_detail_invalid_lens_falls_back_to_candidate_finder_nav(tmp_pa
     body = response["body"]
     assert 'aria-current="page" href="/"' in body
     assert 'aria-current="page" href="/option-trading"' not in body
-    assert 'id="option-trading"' in body
+    # An unknown lens still renders the canonical page, Options section and all
+    # (the section id is "options" now; "option-trading" survives only as the top-nav
+    # href asserted above).
+    assert '<section id="options"' in body
 
 
 def test_workspace_option_trading_lens_preserves_lens_in_window_switcher(tmp_path):

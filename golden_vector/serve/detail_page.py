@@ -18,9 +18,8 @@ from golden_vector.app.paths import ProjectPaths
 from golden_vector.serve.detail_panels import (
     _detail_alignment,
     _render_financials_source_switcher,
-    _render_option_trading_link_panel,
-    _render_option_trading_panel,
 )
+from golden_vector.serve.option_trading_data import OptionPageArtifacts
 from golden_vector.serve.format_helpers import _frame_index_by_ticker, _ticker_rows
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.ui.components import page_header, section_nav
@@ -32,6 +31,7 @@ from golden_vector.serve.ticker_page import (
     render_currency_attribution_block,
     render_gold_dial_control,
     render_market_behaviour_section,
+    render_options_section,
     render_performance_section,
 )
 from golden_vector.serve.url_helpers import build_page_url
@@ -90,7 +90,6 @@ def render_detail_page(
     option_trading_detail: OptionTradingDetailData | None = None,
     show_workspace_panels: bool = True,
     show_manual_sections: bool = True,
-    model_state_manifest: dict[str, object] | None = None,
     financials_source: str = "our",
     query_params: Mapping[str, str] | None = None,
     fundamentals_provenance: dict[tuple[str, str], str] | None = None,
@@ -100,6 +99,9 @@ def render_detail_page(
     chart_view: str = "rebased",
     paths: ProjectPaths | None = None,
     lab_request: LabRequest | None = None,
+    option_page_artifacts: OptionPageArtifacts | None = None,
+    option_candidate_slots_frame: object | None = None,
+    target_window: int | None = None,
 ) -> str:
     company_row = _frame_index_by_ticker(state.company_inputs).get(ticker, {})
     reporting_row = _frame_index_by_ticker(state.reporting_calendar).get(ticker, {})
@@ -195,22 +197,25 @@ def render_detail_page(
             "aria-label=\"Page controls\">" + "".join(controls) + "</div>"
         )
 
-    options_html = (
-        _render_option_trading_panel(
-            option_trading_detail,
-            model_state_manifest=model_state_manifest,
-            app_config=app_config,
-            financials_source=financials_source,
-            active_window=active_window,
-            canonical_anchor=canonical_anchor,
-        )
-        if option_lens_active
-        else _render_option_trading_link_panel(
-            ticker,
-            financials_source=financials_source,
-            active_window=active_window,
-            canonical_anchor=canonical_anchor,
-        )
+    # --- 4. Options (rendered here, appended in page order below) ----------
+    # The section resolves its own availability first, and returns "" for
+    # exactly one reason: a current artifact saying the company has no listed
+    # options. That empty string is what removes the nav anchor too — a missing
+    # or old artifact still renders, with its reason (plan §8).
+    options_html = render_options_section(
+        ticker=ticker,
+        detail=option_trading_detail,
+        page_artifacts=option_page_artifacts,
+        candidate_slots_frame=option_candidate_slots_frame,
+        app_config=app_config,
+        target_window=target_window,
+        sizing_request=(
+            option_trading_detail.sizing.request
+            if option_trading_detail is not None and option_trading_detail.sizing is not None
+            else None
+        ),
+        financials_source=financials_source,
+        query_params=current_query,
     )
     has_page_sections = show_workspace_panels and ticker_page_data is not None
     body.append(
@@ -286,7 +291,7 @@ def render_detail_page(
 
     # --- 4. Options --------------------------------------------------------
     if options_html:
-        body.append("<div id=\"options\">" + options_html + "</div>")
+        body.append(options_html)
 
     # --- 5. Inputs and notes ----------------------------------------------
     if show_manual_sections:

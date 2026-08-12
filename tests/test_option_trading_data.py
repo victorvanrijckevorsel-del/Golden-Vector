@@ -35,7 +35,7 @@ from golden_vector.serve.option_trading_data import (
     load_option_trading_data,
     parse_option_sizing_request,
 )
-from golden_vector.serve.detail_panels import _render_option_trading_panel
+from golden_vector.serve.option_signal_charts import render_option_signal_charts
 from golden_vector.cli import run_option_artifacts
 from tests.helpers import build_test_paths, tool_b_output_row
 
@@ -224,7 +224,11 @@ def test_option_trading_detail_renders_persisted_charts_and_scenarios(tmp_path):
         app_config=app_config,
         sizing_request=OptionSizingRequest(side="put", horizon_days=90),
     )
-    html = _render_option_trading_panel(detail)
+    html = render_option_signal_charts(
+        detail.skew_curve_points,
+        detail.oi_strike_points,
+        detail.signal_history_points,
+    )
 
     assert data.raw_options_by_ticker == {}
     assert detail.skew_curve_points
@@ -238,10 +242,13 @@ def test_option_trading_detail_renders_persisted_charts_and_scenarios(tmp_path):
     assert "Signal History" in html
     assert "option-chart-svg" in html
     assert "IV rank is not available yet" in html
-    assert "Scenario Table and Sizing" in html
-    assert "Gold Move" in html
-    assert "P&amp;L/share Now" in html
-    assert "Net P&amp;L Expiry" in html
+    # The gold-scenario sizing table ("Scenario Table and Sizing", "Gold Move",
+    # the P&L columns) was REMOVED from the ticker page in M3d — it derived the
+    # share price from a gold beta, which Victor rejected (Q40). The backend
+    # bundle survives for the Hedge Readiness report and the speculation
+    # section, which is why `detail.sizing.bundle` is still asserted above.
+    for removed in ("Scenario Table and Sizing", "Gold Move", "P&amp;L/share Now"):
+        assert removed not in html, removed
 
 
 def test_build_option_trading_detail_does_not_model_watch_candidates():
@@ -864,12 +871,21 @@ def _write_option_inputs(
     snapshot_items = []
     for ticker in tickers:
         snapshot_path = snapshot_dir / f"{safe_options_file_name(ticker)}.parquet"
-        _chain(ticker).to_parquet(snapshot_path, index=False)
+        chain = _chain(ticker)
+        chain.to_parquet(snapshot_path, index=False)
         snapshot_items.append(
             {
                 "ticker": ticker,
                 "options_available": True,
                 "snapshot_path": snapshot_path.relative_to(paths.repo_root).as_posix(),
+                # A real capture writes these two (OptionsSnapshotRecord.
+                # manifest_entry, ingestion/persist_options.py). They are what
+                # build_option_availability reads to decide LISTED vs
+                # FETCH_FAILED, so omitting them made every fixture ticker look
+                # like a failed capture and rendered the ticker page's Options
+                # section permanently degraded.
+                "row_count": int(len(chain.index)),
+                "feature_status": "OK",
             }
         )
     paths.latest_options_manifest_path.parent.mkdir(parents=True, exist_ok=True)

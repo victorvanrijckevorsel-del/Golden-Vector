@@ -96,6 +96,11 @@ class OptionTradingData:
     option_skew_curve_points: pd.DataFrame = field(default_factory=pd.DataFrame)
     option_oi_strike_points: pd.DataFrame = field(default_factory=pd.DataFrame)
     option_signal_history_points: pd.DataFrame = field(default_factory=pd.DataFrame)
+    #: The RAW option_candidate_slots frame. The rebuilt ``OptionCandidateSlot``
+    #: dataclasses drop the persisted greek columns (candidate_gamma / vega /
+    #: theta / greeks_model_version), so the ticker page's greeks disclosure and
+    #: sizing payload read them from here rather than recomputing anything.
+    candidate_slots_frame: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 class OptionArtifactStaleSchemaError(ValueError):
@@ -120,6 +125,10 @@ _CACHE_MAX_ENTRIES = 4
 
 def clear_option_trading_cache() -> None:
     _CACHE.clear()
+    # The ticker page's v4 readers cache off the same publish pointer; a test or
+    # a refresh that resets one must reset both or the page serves the old
+    # generation's availability against the new generation's candidates.
+    _PAGE_CACHE.clear()
 
 
 def build_option_trading_detail_data(
@@ -589,6 +598,7 @@ def load_option_trading_data(
         option_skew_curve_points=artifact_frames["option_skew_curve_points"],
         option_oi_strike_points=artifact_frames["option_oi_strike_points"],
         option_signal_history_points=artifact_frames["option_signal_history_points"],
+        candidate_slots_frame=artifact_frames["option_candidate_slots"],
         options_features=artifact_frames["candidate_finder_inputs"],
         tool_a=tool_a,
         tool_b=tool_b,
@@ -601,6 +611,176 @@ def load_option_trading_data(
     while len(_CACHE) > _CACHE_MAX_ENTRIES:
         _CACHE.popitem(last=False)
     return data
+
+
+# --- page-side v4 artifact readers (plan §6.4 / §8) -------------------------
+# option_chain_history_daily and option_availability are deliberately OUTSIDE
+# OPTION_TRADING_READ_SET: the Option Trading overview never reads them, so they
+# get their own readers here (P11's loader-inventory gap). Everything below
+# resolves through the model-state manifest exactly like its siblings — never a
+# raw path — and a v3 generation resolves to UNAVAILABLE_PRE_V4 rather than an
+# error or a claim that the ticker has no options.
+
+OPTION_PAGE_OK = "OK"
+OPTION_PAGE_UNAVAILABLE_PRE_V4 = "UNAVAILABLE_PRE_V4"
+OPTION_PAGE_MISSING = "MISSING"
+OPTION_PAGE_UNREADABLE = "UNREADABLE"
+
+_PAGE_ARTIFACT_NAMES: tuple[str, ...] = (
+    "option_availability",
+    "option_chain_history_daily",
+)
+
+
+@dataclass(frozen=True)
+class OptionPageArtifacts:
+    """The two page-only v4 artifacts plus the state that produced them."""
+
+    state: str
+    reason: str | None = None
+    generation_schema_version: int | None = None
+    availability: pd.DataFrame = field(default_factory=pd.DataFrame)
+    chain_history: pd.DataFrame = field(default_factory=pd.DataFrame)
+    #: Generation-level freshness, shared with every other option surface.
+    freshness_status: str | None = None
+    freshness_as_of_date: str | None = None
+    freshness_message: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.state == OPTION_PAGE_OK
+
+
+# Bounded like the main option cache: the key is the model-state manifest hash,
+# which changes on every publish, so an unbounded dict would leak a generation
+# per refresh in a long-running server.
+_PAGE_CACHE: OrderedDict[str, OptionPageArtifacts] = OrderedDict()
+_PAGE_CACHE_MAX_ENTRIES = 4
+
+
+def load_option_page_artifacts(paths: ProjectPaths) -> OptionPageArtifacts:
+    """Read the ticker page's two v4-only option artifacts.
+
+    Never raises for a missing/old/corrupt artifact: the page must degrade with a
+    reason, and "the file is not there" must never be rendered as "this company
+    has no listed options" (plan §8).
+    """
+
+    cache_key = _file_sha256(paths.latest_model_state_manifest_path) or ""
+    cached = _PAGE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    result = _read_option_page_artifacts(paths)
+    _PAGE_CACHE[cache_key] = result
+    while len(_PAGE_CACHE) > _PAGE_CACHE_MAX_ENTRIES:
+        _PAGE_CACHE.popitem(last=False)
+    return result
+
+
+def _read_option_page_artifacts(paths: ProjectPaths) -> OptionPageArtifacts:
+    model_state = load_current_model_state_manifest(paths)
+    freshness = summarize_option_freshness(model_state)
+    freshness_status = (
+        str(freshness.get("status") or "").strip().upper() if freshness else None
+    )
+    freshness_as_of = str(freshness.get("as_of_date") or "") or None if freshness else None
+    freshness_message = str(freshness.get("message") or "") or None if freshness else None
+
+    def _degraded(state: str, reason: str, version: int | None = None) -> OptionPageArtifacts:
+        return OptionPageArtifacts(
+            state=state,
+            reason=reason,
+            generation_schema_version=version,
+            freshness_status=freshness_status,
+            freshness_as_of_date=freshness_as_of,
+            freshness_message=freshness_message,
+        )
+
+    if not _model_state_has_option_artifacts(model_state):
+        return _degraded(
+            OPTION_PAGE_MISSING,
+            "No option artifacts have been published yet. Run "
+            "`python main.py refresh` to build them.",
+        )
+    generation_version = _generation_option_schema_version(paths, model_state)
+    if generation_version is not None and generation_version < 4:
+        return _degraded(
+            OPTION_PAGE_UNAVAILABLE_PRE_V4,
+            "awaiting first v4 refresh",
+            generation_version,
+        )
+
+    frames: dict[str, pd.DataFrame] = {}
+    for name in _PAGE_ARTIFACT_NAMES:
+        path = resolve_current_model_artifact_path(paths, name)
+        if path is None:
+            # The generation stamps v4 (or its version is unknown) yet a v4-only
+            # artifact is absent from the manifest: a real gap, not "no options".
+            if generation_version is None:
+                return _degraded(
+                    OPTION_PAGE_UNAVAILABLE_PRE_V4,
+                    "awaiting first v4 refresh",
+                    generation_version,
+                )
+            return _degraded(
+                OPTION_PAGE_MISSING,
+                f"the {name} artifact is missing from the current model state",
+                generation_version,
+            )
+        try:
+            _verify_artifact_sha256(model_state=model_state, name=name, path=path)
+            frame = read_required_parquet(
+                path,
+                label=f"Option artifact {name}",
+                required_columns=("ticker", "schema_version"),
+            )
+        except (OptionArtifactIntegrityError, ParquetSchemaError, OSError, ValueError) as exc:
+            return _degraded(
+                OPTION_PAGE_UNREADABLE,
+                f"the {name} artifact could not be read ({exc})",
+                generation_version,
+            )
+        frames[name] = frame
+    return OptionPageArtifacts(
+        state=OPTION_PAGE_OK,
+        reason=None,
+        generation_schema_version=generation_version,
+        availability=frames["option_availability"],
+        chain_history=frames["option_chain_history_daily"],
+        freshness_status=freshness_status,
+        freshness_as_of_date=freshness_as_of,
+        freshness_message=freshness_message,
+    )
+
+
+def _generation_option_schema_version(
+    paths: ProjectPaths,
+    model_state: dict[str, Any] | None,
+) -> int | None:
+    """The schema version the CURRENT generation stamped on its option set.
+
+    Read from an artifact present in every supported set, so a v3 generation is
+    identified without depending on the v4-only files it does not have.
+    """
+
+    path = resolve_current_model_artifact_path(paths, "option_candidate_slots")
+    if path is None:
+        return None
+    try:
+        frame = read_required_parquet(
+            path,
+            label="Option artifact option_candidate_slots",
+            required_columns=("schema_version",),
+        )
+    except (ParquetSchemaError, OSError, ValueError):
+        return None
+    versions = {
+        normalized_option_schema_version(value)
+        for value in frame["schema_version"].dropna().unique()
+    } - {None}
+    if len(versions) != 1:
+        return None
+    return int(next(iter(versions)))
 
 
 def _empty_data(

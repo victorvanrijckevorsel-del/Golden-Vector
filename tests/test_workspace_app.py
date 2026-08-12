@@ -161,7 +161,14 @@ def test_workspace_detail_page_honors_yahoo_fundamentals_source(tmp_path):
     assert "SCREEN_OUT" not in response["body"]
     assert 'href="/?fundamentals_source=yahoo"' in response["body"]
     assert "/ticker/NEM?window=6m&amp;fundamentals_source=yahoo" in response["body"]
-    assert "/ticker/NEM?lens=option-trading&amp;fundamentals_source=yahoo#option-trading" in response["body"]
+    # M3d: the "open the Option Trading lens" teaser is gone. Options are a
+    # section OF this page now (#options), so the page links to its own anchor
+    # instead of routing away, and the section renders even with no option
+    # artifacts published — degraded with a reason, never as "no options".
+    assert "lens=option-trading" not in response["body"]
+    assert '<a class="section-nav-link" href="#options">Options</a>' in response["body"]
+    assert 'id="options"' in response["body"]
+    assert "no options" not in response["body"].lower()
     assert "/ticker/NEM?fundamentals_source=yahoo" in response["body"]
     assert 'name="return_to" value="/ticker/NEM?fundamentals_source=yahoo"' in response["body"]
 
@@ -2332,6 +2339,30 @@ def test_workspace_tool_b_serve_layer_has_no_financial_arithmetic():
         "ev_ebitda_official",
         "leverage_our_view",
         "leverage_official",
+    ):
+        assert forbidden not in source, forbidden
+
+
+def test_ticker_page_options_serve_layer_has_no_option_arithmetic():
+    """The M3d Options section renders backend-resolved columns only.
+
+    Canon: every new serve surface gets a static-scan guardrail (clone of the
+    Tool-D/Tool-B serve-arithmetic tests). The exhaustive token list lives with
+    the section's own tests; this is the repo-wide sweep's entry for it, so a
+    new serve surface can never be added without one.
+    """
+    source = Path("golden_vector/serve/ticker_page/options.py").read_text(encoding="utf-8")
+
+    # It reads the persisted ratio columns by name (display only).
+    assert "put_call_oi_ratio_total" in source
+    for forbidden in (
+        "put_oi_total /",
+        "/ call_oi_total",
+        "* OPTION_CONTRACT_MULTIPLIER",
+        "black_scholes",
+        "compute_scenario_bundle",
+        ".fillna(",
+        ".combine_first(",
     ):
         assert forbidden not in source, forbidden
 

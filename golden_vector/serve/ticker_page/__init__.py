@@ -21,6 +21,14 @@ from golden_vector.serve.ticker_page.corporate import (
     render_gold_dial_control,
 )
 from golden_vector.serve.ticker_page.data import TickerPageData, load_ticker_page_data
+from golden_vector.serve.ticker_page.options import (
+    SIZING_PAYLOAD_ID,
+    TARGET_WINDOW_PARAM,
+    build_sizing_payload,
+    render_options_section,
+    resolve_options_availability,
+    resolve_target_window,
+)
 from golden_vector.serve.ticker_page.sections import (
     render_cost_downside_card,
     render_currency_attribution_block,
@@ -30,12 +38,18 @@ from golden_vector.serve.ticker_page.sections import (
 __all__ = [
     "GOLD_DIAL_PAYLOAD_ID",
     "LabRequest",
+    "SIZING_PAYLOAD_ID",
+    "TARGET_WINDOW_PARAM",
     "TickerPageData",
     "YAHOO_RESILIENCE_REASON",
     "build_gold_dial_payload",
+    "build_sizing_payload",
     "clear_lab_render_cache",
     "load_ticker_page_data",
     "parse_lab_request",
+    "render_options_section",
+    "resolve_options_availability",
+    "resolve_target_window",
     "render_corporate_finance_section",
     "render_cost_downside_card",
     "render_currency_attribution_block",

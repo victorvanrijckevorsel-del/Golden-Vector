@@ -30,7 +30,6 @@ from golden_vector.contracts.option_artifacts import (
     option_artifact_run_stamped_path,
 )
 from golden_vector.hedge.option_signals import option_signal_history_path
-from golden_vector.serve.detail_panels import _render_option_trading_panel
 from golden_vector.serve.model_state_banner import render_option_freshness_box
 from golden_vector.serve.option_trading_data import _read_option_artifact_frames
 from tests.helpers import build_test_paths
@@ -579,13 +578,13 @@ def test_freshness_box_renders_for_each_status(tmp_path):
     assert render_option_freshness_box({"state": "complete"}) == ""
 
 
-def test_detail_panel_shows_freshness_box_even_without_detail_data(tmp_path):
+def test_freshness_box_renders_the_carried_forward_snapshot(tmp_path):
     paths = build_test_paths(tmp_path)
     _publish_good_manifest(paths)
     _write_day2_core(paths, refresh_run_id="refresh-B")
     carried = _blocked_publish(paths, parent_refresh_id="parent-B")
 
-    html = _render_option_trading_panel(None, model_state_manifest=carried)
+    html = render_option_freshness_box(carried)
 
     assert "Stored option snapshot" in html
     assert "2026-06-10" in html

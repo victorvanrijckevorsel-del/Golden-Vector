@@ -448,6 +448,195 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "negative."
         ),
     ),
+    # --- ticker-page Options section (M3d) ---------------------------------
+    "option_section": ColumnHelp(
+        meaning=(
+            "What the listed option market is doing on this company: how the crowd is "
+            "positioned, what volatility is priced, which contracts are actually "
+            "tradable, and what a position would cost."
+        ),
+        calculation=(
+            "Read from the option artifacts published by the last refresh — the daily "
+            "chain history, the option signal history, and the selected candidate "
+            "contracts. Nothing is computed while the page loads."
+        ),
+        direction=(
+            "Context, not a recommendation. This section is only hidden when the "
+            "company genuinely has no listed options."
+        ),
+    ),
+    "option_put_call_ratio_total": ColumnHelp(
+        meaning=(
+            "The whole-chain put/call open-interest ratio: every open put contract "
+            "divided by every open call contract."
+        ),
+        calculation=(
+            "put_oi_total / call_oi_total, computed during the refresh over the whole "
+            "captured chain and stored as put_call_oi_ratio_total."
+        ),
+        direction=(
+            "Below 1 means calls outnumber puts, which usually reads as bullish "
+            "positioning. Above 1 means puts outnumber calls — bearish or hedged. "
+            "Read it together with the out-of-the-money ratio; they often disagree."
+        ),
+    ),
+    "option_put_call_ratio_otm": ColumnHelp(
+        meaning=(
+            "The put/call open-interest ratio counting ONLY out-of-the-money strikes — "
+            "where speculation and hedging actually live."
+        ),
+        calculation=(
+            "put_oi_otm / call_oi_otm, computed during the refresh and stored as "
+            "put_call_oi_ratio_otm."
+        ),
+        direction=(
+            "Above 1 means out-of-the-money puts outnumber calls. This ratio "
+            "disagreeing with the whole-chain one is the interesting case: the chain "
+            "can lean bullish overall while the speculative strikes lean bearish."
+        ),
+    ),
+    "option_oi_trend": ColumnHelp(
+        meaning=(
+            "Open interest over time, split into puts, calls and the total, so a change "
+            "in the ratio can be traced to which side actually moved."
+        ),
+        calculation=(
+            "One point per captured trading day from option_chain_history_daily. Days "
+            "whose capture was incomplete are left as gaps rather than drawn."
+        ),
+        direction=(
+            "Rising put open interest with flat calls means new downside positioning; "
+            "a falling total usually means contracts expired."
+        ),
+    ),
+    "option_daily_volume": ColumnHelp(
+        meaning=(
+            "Contracts traded on the snapshot day, split into puts, calls and the "
+            "total. Volume is today's activity; open interest is the standing position."
+        ),
+        calculation="put_volume / call_volume / total_volume from the daily chain capture.",
+        direction=(
+            "High volume against low open interest means fresh activity rather than an "
+            "established position."
+        ),
+    ),
+    "option_signal_history": ColumnHelp(
+        meaning=(
+            "Implied volatility measured against its own history, the implied move it "
+            "translates into, and how it compares with the stock's realised volatility."
+        ),
+        calculation=(
+            "Persisted option_signal_history_points at the configured signal horizon; "
+            "the tenor is named in the chart title because these are horizon-specific."
+        ),
+        direction=(
+            "Implied above realised means options are pricing more movement than the "
+            "stock has recently delivered, so protection and speculation both cost more."
+        ),
+    ),
+    "option_most_liquid": ColumnHelp(
+        meaning=(
+            "The most tradable contract on each side for the chosen target window — "
+            "near-the-money and directional."
+        ),
+        calculation=(
+            "Selected during the refresh from the captured chain using the configured "
+            "spread, open-interest and minimum-premium gates."
+        ),
+        direction=(
+            "Puts and calls are selected independently, so the two tables can show "
+            "different expiry dates. Each row states its own expiry and days to expiry."
+        ),
+    ),
+    "option_target_window": ColumnHelp(
+        meaning=(
+            "Roughly how far out you want to be positioned. It selects a band of "
+            "expiries, not one exact date."
+        ),
+        calculation=(
+            "The configured display horizons; each maps to a days-to-expiry band, and "
+            "the contract chosen inside that band is whichever listed expiry fits best."
+        ),
+        direction=(
+            "Longer windows cost more premium but decay more slowly. Because it is a "
+            "band, the put and call rows can land on different expiry dates."
+        ),
+    ),
+    "option_bid_ask": ColumnHelp(
+        meaning=(
+            "The bid is what buyers currently show; the ask is what sellers show. You "
+            "buy at the ask and sell at the bid."
+        ),
+        calculation="Bid and ask from the cached option-chain snapshot, not a live quote.",
+        direction=(
+            "The gap between them is your immediate cost of entering and exiting. A bid "
+            "above the ask is a broken quote and disables sizing for that contract."
+        ),
+    ),
+    "option_contract_volume": ColumnHelp(
+        meaning="How many of this exact contract traded on the snapshot day.",
+        calculation="Contract volume from the cached option chain.",
+        direction=(
+            "Low volume means you may struggle to get filled near the quoted price, "
+            "even when open interest looks healthy."
+        ),
+    ),
+    "option_crowd_positioning": ColumnHelp(
+        meaning=(
+            "Where open interest actually sits across strikes, and how implied "
+            "volatility varies by strike (the skew)."
+        ),
+        calculation=(
+            "Persisted open-interest-by-strike and skew-curve points from the last "
+            "refresh."
+        ),
+        direction=(
+            "Clusters of open interest mark the strikes traders care about. A steeper "
+            "downside skew means puts are priced richer than calls."
+        ),
+    ),
+    "option_sizing_tool": ColumnHelp(
+        meaning=(
+            "Turns a budget into a whole number of contracts and shows what they would "
+            "be worth at expiry across a range of share prices."
+        ),
+        calculation=(
+            "Contracts = budget divided by (ask x 100), rounded down. Value at expiry is "
+            "intrinsic value only — no time value — so it is a floor, not a forecast. "
+            "The share price is your input; it is never derived from a gold move."
+        ),
+        direction=(
+            "Break-even is the strike plus the premium for calls, minus it for puts. "
+            "Contracts with a missing, crossed or stale quote are disabled rather than "
+            "priced off a substitute."
+        ),
+    ),
+    "option_greeks": ColumnHelp(
+        meaning=(
+            "The sensitivity measures for the selected contracts, plus the provenance "
+            "and liquidity detail behind the tables above."
+        ),
+        calculation=(
+            "Computed during the refresh on the selected candidate rows only, using the "
+            "quoted implied volatility, the actual days to expiry and the manifest "
+            "risk-free rate."
+        ),
+    ),
+    "option_greeks_units": ColumnHelp(
+        meaning=(
+            "Gamma is how fast delta changes; vega is sensitivity to implied volatility; "
+            "theta is how much value time decay removes."
+        ),
+        calculation=(
+            "Black-Scholes with a zero dividend yield. Units are fixed: gamma per $1 of "
+            "share price, vega per volatility point, theta per calendar day. The model "
+            "version is shown beneath the table."
+        ),
+        direction=(
+            "Theta is normally negative for a bought option — that is the daily cost of "
+            "holding it."
+        ),
+    ),
     "option_signal_horizon": ColumnHelp(
         meaning=(
             "The option signal horizon in days (e.g. 60d) — the days-to-expiry window the skew "
