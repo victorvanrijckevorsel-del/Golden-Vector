@@ -19,6 +19,7 @@ from golden_vector.contracts.fundamentals import (
 from golden_vector.fundamentals.artifacts import (
     empty_fetched_fundamentals_frame,
     load_official_fundamentals,
+    load_official_fundamentals_with_source_path,
     write_fetched_fundamentals_artifact_pair,
 )
 from golden_vector.fundamentals.resolution import resolve_fundamental_layers
@@ -228,6 +229,57 @@ def test_official_fundamentals_loader_prefer_latest_alias_falls_back_when_alias_
     assert loaded[["ticker", "field_name", "value"]].to_dict("records") == [
         {"ticker": "AEM", "field_name": "ebitda_ltm_musd", "value": 900.0}
     ]
+
+
+def test_official_fundamentals_loader_reports_the_artifact_actually_read(tmp_path):
+    paths = build_test_paths(tmp_path)
+    old_run = "20260610T120000Z-fetch-fundamentals"
+    old_write = write_fetched_fundamentals_artifact_pair(
+        paths=paths,
+        frame=pd.DataFrame(
+            [
+                _official_row(
+                    ticker="AEM",
+                    field_name="ebitda_ltm_musd",
+                    value=900.0,
+                    source_run_id=old_run,
+                )
+            ]
+        ),
+        source_run_id=old_run,
+    )
+    write_current_model_state_manifest(paths=paths, config_hash="config-hash")
+
+    new_run = "20260620T120000Z-fetch-fundamentals"
+    write_fetched_fundamentals_artifact_pair(
+        paths=paths,
+        frame=pd.DataFrame(
+            [
+                _official_row(
+                    ticker="AEM",
+                    field_name="ebitda_ltm_musd",
+                    value=950.0,
+                    source_run_id=new_run,
+                )
+            ]
+        ),
+        source_run_id=new_run,
+    )
+
+    fresh, fresh_path = load_official_fundamentals_with_source_path(
+        paths,
+        prefer_latest_alias=True,
+    )
+    assert fresh_path == fetched_fundamentals_latest_path(paths)
+    assert fresh["value"].tolist() == [950.0]
+
+    fetched_fundamentals_latest_path(paths).write_text("not parquet", encoding="utf-8")
+    fallback, fallback_path = load_official_fundamentals_with_source_path(
+        paths,
+        prefer_latest_alias=True,
+    )
+    assert fallback_path == paths.resolve_repo_relative(old_write.run_path)
+    assert fallback["value"].tolist() == [900.0]
 
 
 def test_writer_enforces_one_source_run_id_for_manifest_resolution(tmp_path):

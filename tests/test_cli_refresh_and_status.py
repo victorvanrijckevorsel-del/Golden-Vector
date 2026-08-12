@@ -22,6 +22,7 @@ from golden_vector.app.model_state import (
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.cli import OptionArtifactsOutcome, run_refresh, run_status, run_tool_b
+from golden_vector.contracts.tool_d import TOOL_D_OUTPUT_COLUMNS, TOOL_D_SCHEMA_VERSION
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
@@ -321,18 +322,13 @@ def test_status_command_summarizes_tool_c_and_tool_d_outputs(tmp_path, monkeypat
     persist_tool_d_outputs(
         paths=paths,
         run_context=tool_d_context,
-        tool_d_outputs=pd.DataFrame(
-            [
-                {
-                    "ticker": "NEM",
-                    "as_of_date": date(2026, 4, 22),
-                    "snapshot_refresh_run_id": "refresh-A",
-                    "gold_price_used": 4000.0,
-                    "spot_gold_date": "2026-04-22",
-                    "tool_d_quality_rank": 100.0,
-                }
-            ]
+        tool_d_outputs=_tool_d_v4_frame(
+            run_context=tool_d_context,
+            refresh_run_id="refresh-A",
+            as_of_date=date(2026, 4, 22),
+            rank=100.0,
         ),
+        expected_tickers=["NEM"],
     )
     bootstrap_manual_screening_data(paths, tickers=["NEM"])
 
@@ -341,7 +337,7 @@ def test_status_command_summarizes_tool_c_and_tool_d_outputs(tmp_path, monkeypat
 
     assert exit_code == 0
     assert "Tool C latest output: 1 rows, 1 downside ranked, 1 upside ranked." in captured
-    assert "Tool D latest output: 1 rows, 1 ranked, gold price used $4000/oz" in captured
+    assert "Tool D latest output: 2 rows, 2 ranked, gold price used $4000/oz" in captured
 
 
 def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeypatch, capsys):
@@ -381,7 +377,9 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
         return 0
 
     def fake_tool_d(_paths, *, gold_price, **_kwargs):
+        assert _kwargs["lock_held"] is True
         call_order.append(f"tool-d@{gold_price}")
+        _write_tool_d(_paths, refresh_run_id="refresh-chain")
         return 0
 
     def fake_ticker_page(_paths, **_kwargs):
@@ -428,6 +426,12 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     assert "option_candidate_slots" in model_state["artifacts"]
     assert model_state["stage_timings"]["update_data"]["exit_code"] == 0
     assert model_state["stage_timings"]["tool_d"]["exit_code"] == 0
+    assert model_state["stage_timings"]["tool_d"]["steps"]["compute_our"][
+        "rows_built"
+    ] == 1
+    assert model_state["stage_timings"]["tool_d"]["steps"]["compute_yahoo"][
+        "rows_persisted"
+    ] == 1
     assert model_state["stage_timings"]["option_artifacts"]["exit_code"] == 0
     assert model_state["stage_timings"]["portfolio"]["exit_code"] == 0
     assert read_option_refresh_status(paths).status == "succeeded"
@@ -651,6 +655,7 @@ def test_refresh_option_artifact_failure_keeps_previous_manifest(
         return 0
 
     def fake_tool_d(_paths, *, gold_price, **_kwargs):
+        assert _kwargs["lock_held"] is True
         call_order.append("tool-d")
         _write_tool_d(_paths, refresh_run_id="refresh-new")
         return 0
@@ -1187,6 +1192,36 @@ def _write_tool_c(paths: ProjectPaths, *, refresh_run_id: str) -> None:
     )
 
 
+def _tool_d_v4_frame(
+    *,
+    run_context: RunContext,
+    refresh_run_id: str,
+    as_of_date: date,
+    rank: float,
+) -> pd.DataFrame:
+    rows = []
+    for finance_source in ("our", "yahoo"):
+        row = {column: None for column in TOOL_D_OUTPUT_COLUMNS}
+        row.update(
+            {
+                "ticker": "NEM",
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                "as_of_date": as_of_date,
+                "snapshot_refresh_run_id": refresh_run_id,
+                "source_run_id": run_context.run_id,
+                "finance_source": finance_source,
+                "gold_price_used": 4000.0,
+                "spot_gold_usd": 4000.0,
+                "spot_gold_date": str(as_of_date),
+                "resilience_data_status": "OK",
+                "tool_d_quality_score": rank,
+                "tool_d_quality_rank": rank,
+            }
+        )
+        rows.append(row)
+    return pd.DataFrame(rows, columns=TOOL_D_OUTPUT_COLUMNS)
+
+
 def _write_tool_d(paths: ProjectPaths, *, refresh_run_id: str) -> None:
     run_context = RunContext.start(
         paths=paths,
@@ -1197,21 +1232,45 @@ def _write_tool_d(paths: ProjectPaths, *, refresh_run_id: str) -> None:
     persist_tool_d_outputs(
         paths=paths,
         run_context=run_context,
-        tool_d_outputs=pd.DataFrame(
-            [
-                {
-                    "ticker": "NEM",
-                    "as_of_date": date(2026, 6, 1),
-                    "snapshot_refresh_run_id": refresh_run_id,
-                    "source_run_id": run_context.run_id,
-                    "gold_price_used": 4000.0,
-                    "spot_gold_usd": 4000.0,
-                    "spot_gold_date": "2026-06-01",
-                    "tool_d_quality_rank": 1,
-                }
-            ]
+        tool_d_outputs=_tool_d_v4_frame(
+            run_context=run_context,
+            refresh_run_id=refresh_run_id,
+            as_of_date=date(2026, 6, 1),
+            rank=1.0,
         ),
         publish_spot_latest_aliases=True,
+        expected_tickers=["NEM"],
+    )
+    run_context.write_json(
+        "tool_d_output_summary.json",
+        {
+            "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+            "tool_d_output_row_count": 2,
+            "tool_d_ranked_row_count": 2,
+            "tool_d_output_overall_status": "PASS",
+            "tool_d_source_summaries": {
+                "our": {"rows": 1, "ranked_rows": 1, "status": "PASS"},
+                "yahoo": {"rows": 1, "ranked_rows": 1, "status": "PASS"},
+            },
+            "tool_d_written_file_count": 9,
+            "tool_d_stage_timings": {
+                "compute_our": {
+                    "duration_seconds": 0.01,
+                    "rows_built": 1,
+                    "rows_persisted": 1,
+                },
+                "compute_yahoo": {
+                    "duration_seconds": 0.01,
+                    "rows_built": 1,
+                    "rows_persisted": 1,
+                },
+                "persist_generation": {
+                    "duration_seconds": 0.01,
+                    "rows_built": 2,
+                    "rows_persisted": 2,
+                },
+            },
+        },
     )
 
 

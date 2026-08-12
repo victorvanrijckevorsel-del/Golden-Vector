@@ -72,10 +72,30 @@ def load_official_fundamentals(
     fetched alias the refresh's fundamentals step just wrote — the same bypass-the-stale-
     manifest pattern Tool B already uses for the foundation."""
 
+    frame, _source_path = load_official_fundamentals_with_source_path(
+        paths,
+        prefer_latest_alias=prefer_latest_alias,
+    )
+    return frame
+
+
+def load_official_fundamentals_with_source_path(
+    paths: ProjectPaths,
+    *,
+    prefer_latest_alias: bool = False,
+) -> tuple[pd.DataFrame, Path | None]:
+    """Load official fundamentals and report the exact artifact that was read.
+
+    Tool D snapshots every upstream used by a generation for replay. Returning
+    the resolved path with the normalized frame avoids recording the mutable
+    latest alias when the loader actually fell back to a prior manifest-backed
+    immutable artifact.
+    """
+
     alias_path = fetched_fundamentals_latest_path(paths)
     if prefer_latest_alias and alias_path.exists():
         try:
-            return _read_official_fundamentals_path(alias_path)
+            return _read_official_fundamentals_path(alias_path), alias_path
         except Exception:
             # The refresh bypass should use this run's fresh alias only when it is actually
             # readable. If the stale/missing guard was triggered by a corrupt alias and the
@@ -87,8 +107,8 @@ def load_official_fundamentals(
                 fallback_path=None,
             )
             if path is None:
-                return empty_fetched_fundamentals_frame()
-            return _read_official_fundamentals_path(path)
+                return empty_fetched_fundamentals_frame(), None
+            return _read_official_fundamentals_path(path), path
 
     path = resolve_current_model_artifact_path(
         paths,
@@ -96,8 +116,8 @@ def load_official_fundamentals(
         fallback_path=alias_path,
     )
     if path is None:
-        return empty_fetched_fundamentals_frame()
-    return _read_official_fundamentals_path(path)
+        return empty_fetched_fundamentals_frame(), None
+    return _read_official_fundamentals_path(path), path
 
 
 def _read_official_fundamentals_path(path: Path) -> pd.DataFrame:

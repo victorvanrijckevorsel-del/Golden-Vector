@@ -68,6 +68,7 @@ def test_persist_tool_d_outputs_writes_latest_and_source_snapshots(tmp_path):
             "spot_gold_date": "2026-06-01",
         },
         publish_spot_latest_aliases=True,
+        expected_tickers=["AAA", "BBB"],
     )
 
     assert len(written_paths) == 10
@@ -159,3 +160,213 @@ def test_persist_tool_d_rejects_a_half_keyed_generation_before_writing(tmp_path)
         )
 
     assert not list(paths.output_tool_d_dir.glob("tool_d_*"))
+
+
+def test_persist_tool_d_refuses_immutable_collision_before_alias_changes(tmp_path):
+    paths = build_test_paths(tmp_path)
+    run_context = RunContext.start(
+        paths=paths,
+        command="tool-d",
+        parameters={},
+        config_hash="hash",
+    )
+    outputs = pd.DataFrame(
+        [
+            _tool_d_row("AAA", "our", date(2026, 6, 1), 90.0),
+            _tool_d_row("AAA", "yahoo", date(2026, 6, 1), 80.0),
+        ],
+        columns=TOOL_D_OUTPUT_COLUMNS,
+    )
+    persist_tool_d_outputs(
+        paths=paths,
+        run_context=run_context,
+        tool_d_outputs=outputs,
+        expected_tickers=["AAA"],
+        publish_spot_latest_aliases=True,
+    )
+    aliases_before = _tool_d_alias_bytes(paths)
+
+    with pytest.raises(FileExistsError, match="refusing to overwrite immutable"):
+        persist_tool_d_outputs(
+            paths=paths,
+            run_context=run_context,
+            tool_d_outputs=outputs,
+            expected_tickers=["AAA"],
+            publish_spot_latest_aliases=True,
+        )
+
+    assert _tool_d_alias_bytes(paths) == aliases_before
+
+
+def test_persist_tool_d_staging_failure_leaves_previous_aliases_intact(
+    tmp_path,
+    monkeypatch,
+):
+    import golden_vector.ingestion.persist_tool_d as persist_module
+
+    paths = build_test_paths(tmp_path)
+    first_context = RunContext.start(
+        paths=paths,
+        command="tool-d",
+        parameters={},
+        config_hash="hash",
+    )
+    first = pd.DataFrame(
+        [
+            _tool_d_row("AAA", "our", date(2026, 6, 1), 90.0),
+            _tool_d_row("AAA", "yahoo", date(2026, 6, 1), 80.0),
+        ],
+        columns=TOOL_D_OUTPUT_COLUMNS,
+    )
+    persist_tool_d_outputs(
+        paths=paths,
+        run_context=first_context,
+        tool_d_outputs=first,
+        expected_tickers=["AAA"],
+        publish_spot_latest_aliases=True,
+    )
+    aliases_before = _tool_d_alias_bytes(paths)
+
+    second_context = RunContext.start(
+        paths=paths,
+        command="tool-d",
+        parameters={},
+        config_hash="hash",
+    )
+    second = first.copy()
+    second["source_run_id"] = second_context.run_id
+    second["tool_d_quality_rank"] = [10.0, 20.0]
+    real_write = persist_module.write_parquet_into
+    call_count = 0
+
+    def fail_second_parquet(frame, path, *, index=False):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("injected Tool D staging failure")
+        return real_write(frame, path, index=index)
+
+    monkeypatch.setattr(persist_module, "write_parquet_into", fail_second_parquet)
+
+    with pytest.raises(RuntimeError, match="injected Tool D staging failure"):
+        persist_tool_d_outputs(
+            paths=paths,
+            run_context=second_context,
+            tool_d_outputs=second,
+            expected_tickers=["AAA"],
+            publish_spot_latest_aliases=True,
+        )
+
+    assert _tool_d_alias_bytes(paths) == aliases_before
+    assert not (
+        paths.output_tool_d_dir / f"tool_d_output_{second_context.run_id}.parquet"
+    ).exists()
+
+
+def test_persist_tool_d_swap_failure_rolls_back_every_alias(tmp_path, monkeypatch):
+    import golden_vector.common.files as files_module
+
+    paths = build_test_paths(tmp_path)
+    first_context = RunContext.start(
+        paths=paths,
+        command="tool-d",
+        parameters={},
+        config_hash="hash",
+    )
+    first = pd.DataFrame(
+        [
+            _tool_d_row("AAA", "our", date(2026, 6, 1), 90.0),
+            _tool_d_row("AAA", "yahoo", date(2026, 6, 1), 80.0),
+        ],
+        columns=TOOL_D_OUTPUT_COLUMNS,
+    )
+    persist_tool_d_outputs(
+        paths=paths,
+        run_context=first_context,
+        tool_d_outputs=first,
+        expected_tickers=["AAA"],
+        publish_spot_latest_aliases=True,
+    )
+    aliases_before = _tool_d_alias_bytes(paths)
+
+    second_context = RunContext.start(
+        paths=paths,
+        command="tool-d",
+        parameters={},
+        config_hash="hash",
+    )
+    second = first.copy()
+    second["source_run_id"] = second_context.run_id
+    second["tool_d_quality_rank"] = [10.0, 20.0]
+    real_replace = files_module._replace_with_retry
+    call_count = 0
+
+    def fail_during_alias_swap(source, target):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 7:
+            raise OSError("injected Tool D swap failure")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(files_module, "_replace_with_retry", fail_during_alias_swap)
+
+    with pytest.raises(OSError, match="injected Tool D swap failure"):
+        persist_tool_d_outputs(
+            paths=paths,
+            run_context=second_context,
+            tool_d_outputs=second,
+            expected_tickers=["AAA"],
+            publish_spot_latest_aliases=True,
+        )
+
+    assert _tool_d_alias_bytes(paths) == aliases_before
+    assert not (
+        paths.output_tool_d_dir / f"tool_d_output_{second_context.run_id}.parquet"
+    ).exists()
+
+
+def test_persist_tool_d_swaps_spot_parquet_last(tmp_path, monkeypatch):
+    import golden_vector.ingestion.persist_tool_d as persist_module
+
+    paths = build_test_paths(tmp_path)
+    run_context = RunContext.start(
+        paths=paths,
+        command="tool-d",
+        parameters={},
+        config_hash="hash",
+    )
+    outputs = pd.DataFrame(
+        [
+            _tool_d_row("AAA", "our", date(2026, 6, 1), 90.0),
+            _tool_d_row("AAA", "yahoo", date(2026, 6, 1), 80.0),
+        ],
+        columns=TOOL_D_OUTPUT_COLUMNS,
+    )
+    real_atomic_write_many = persist_module.atomic_write_many
+    targets = []
+
+    def capture_order(writes):
+        targets.extend(path for path, _writer in writes)
+        return real_atomic_write_many(writes)
+
+    monkeypatch.setattr(persist_module, "atomic_write_many", capture_order)
+
+    persist_tool_d_outputs(
+        paths=paths,
+        run_context=run_context,
+        tool_d_outputs=outputs,
+        expected_tickers=["AAA"],
+        publish_spot_latest_aliases=True,
+    )
+
+    assert targets[-1] == paths.latest_tool_d_spot_snapshot_parquet_path
+
+
+def _tool_d_alias_bytes(paths) -> dict[object, bytes]:
+    alias_paths = (
+        paths.latest_tool_d_snapshot_csv_path,
+        paths.latest_tool_d_snapshot_parquet_path,
+        paths.latest_tool_d_spot_snapshot_csv_path,
+        paths.latest_tool_d_spot_snapshot_parquet_path,
+    )
+    return {path: path.read_bytes() for path in alias_paths}

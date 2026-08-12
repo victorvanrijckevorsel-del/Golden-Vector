@@ -33,6 +33,10 @@ from golden_vector.contracts.ticker_page import (
     RESEARCH_SERIES_COLUMNS,
     TICKER_PAGE_SCHEMA_VERSIONS,
 )
+from golden_vector.contracts.tool_d import (
+    TOOL_D_OUTPUT_COLUMNS,
+    TOOL_D_SCHEMA_VERSION,
+)
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
@@ -71,6 +75,10 @@ def test_model_state_manifest_records_complete_aligned_build(tmp_path):
     assert payload["artifacts"]["tool_a"]["path"].startswith("data/output/tool_a/tool_a_latest_")
     assert payload["artifacts"]["tool_a"]["path"] != "data/output/tool_a/tool_a_latest.parquet"
     assert payload["artifacts"]["tool_a"]["snapshot_refresh_run_ids"] == ["refresh-A"]
+    assert payload["artifacts"]["tool_d"]["row_count"] == 2
+    assert payload["artifacts"]["tool_d"]["schema_version"] == str(
+        TOOL_D_SCHEMA_VERSION
+    )
     assert payload["artifacts"]["option_candidate_slots"]["required_for_complete"] is True
     assert payload["artifacts"]["option_candidate_slots"]["immutable"] is True
     assert payload["artifacts"]["option_candidate_slots"]["row_count"] == 1
@@ -768,22 +776,33 @@ def _write_tool_outputs(
             parameters={},
             config_hash="hash",
         )
+        tool_d_rows: list[dict[str, object]] = []
+        for finance_source in ("our", "yahoo"):
+            row = {column: None for column in TOOL_D_OUTPUT_COLUMNS}
+            row.update(
+                {
+                    "ticker": "NEM",
+                    "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                    "as_of_date": date(2026, 6, 1),
+                    "snapshot_refresh_run_id": refresh_run_id,
+                    "source_run_id": tool_d_context.run_id,
+                    "finance_source": finance_source,
+                    "gold_price_used": 4000.0,
+                    "spot_gold_usd": 4000.0,
+                    "spot_gold_date": "2026-06-01",
+                    "resilience_data_status": "OK",
+                    "tool_d_quality_rank": 1,
+                }
+            )
+            tool_d_rows.append(row)
         persist_tool_d_outputs(
             paths=paths,
             run_context=tool_d_context,
             tool_d_outputs=pd.DataFrame(
-                [
-                    {
-                        "ticker": "NEM",
-                        "as_of_date": date(2026, 6, 1),
-                        "snapshot_refresh_run_id": refresh_run_id,
-                        "source_run_id": tool_d_context.run_id,
-                        "gold_price_used": 4000.0,
-                        "spot_gold_date": "2026-06-01",
-                        "tool_d_quality_rank": 1,
-                    }
-                ]
+                tool_d_rows,
+                columns=TOOL_D_OUTPUT_COLUMNS,
             ),
+            expected_tickers=["NEM"],
         )
     if include_option_artifacts:
         _write_i3_option_artifacts(paths, refresh_run_id=refresh_run_id)

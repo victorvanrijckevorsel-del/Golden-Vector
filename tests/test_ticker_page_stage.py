@@ -26,6 +26,7 @@ from golden_vector.app.run_pruning import prune_runs
 from golden_vector.app.ticker_page_stage import (
     TickerPageGenerationMismatchError,
     assert_tool_generation_aligned,
+    load_ticker_page_stage_inputs,
     run_ticker_page_stage,
 )
 from golden_vector.app import ticker_page_state
@@ -43,6 +44,10 @@ from golden_vector.app.ticker_page_state import (
 from golden_vector.contracts.ticker_page import (
     TICKER_PAGE_PROVENANCE_COLUMNS,
     empty_artifact_frame,
+)
+from golden_vector.contracts.tool_d import (
+    TOOL_D_OUTPUT_COLUMNS,
+    TOOL_D_SCHEMA_VERSION,
 )
 from golden_vector.ingestion import persist_ticker_page as persist_module
 from golden_vector.ingestion.persist_ticker_page import (
@@ -213,6 +218,62 @@ def stage_env(tmp_path):
             "snapshot_as_of_date": "2026-06-01",
         },
     }
+
+
+def test_tool_d_source_completeness_uses_configured_tool_b_universe(stage_env):
+    """A ticker absent from both artifacts must not escape the v4 gate."""
+
+    row = {column: None for column in TOOL_D_OUTPUT_COLUMNS}
+    rows = []
+    for source in ("our", "yahoo"):
+        source_row = dict(row)
+        source_row.update(
+            {
+                "ticker": TICKERS[0],
+                "finance_source": source,
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                "as_of_date": "2026-06-01",
+                "gold_price_used": SPOT_GOLD,
+                "spot_gold_usd": SPOT_GOLD,
+                "resilience_data_status": "OK",
+            }
+        )
+        rows.append(source_row)
+    frame = pd.DataFrame(rows, columns=TOOL_D_OUTPUT_COLUMNS)
+    configured = [
+        ticker.ticker
+        for ticker in stage_env["kwargs"]["app_config"].universe.tickers
+        if ticker.active and ticker.tool_b_enabled
+    ]
+
+    assert set(configured) == set(TICKERS)
+    paths = stage_env["paths"]
+    tool_frames = {
+        paths.latest_tool_a_snapshot_parquet_path: pd.DataFrame(
+            [{"ticker": TICKERS[0]}]
+        ),
+        paths.latest_tool_b_snapshot_parquet_path: pd.DataFrame(
+            [{"ticker": TICKERS[0]}]
+        ),
+        paths.latest_tool_c_snapshot_parquet_path: pd.DataFrame(
+            [{"ticker": TICKERS[0]}]
+        ),
+        paths.latest_tool_d_spot_snapshot_parquet_path: frame,
+    }
+    for path, tool_frame in tool_frames.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tool_frame.to_parquet(path, index=False)
+
+    with pytest.raises(ValueError, match=rf"missing expected .*\({TICKERS[1]}, our\)"):
+        load_ticker_page_stage_inputs(
+            paths=paths,
+            app_config=stage_env["kwargs"]["app_config"],
+            config_hash=stage_env["config_hash"],
+            foundation_snapshot=None,
+            use_model_state=False,
+            manual_data=stage_env["kwargs"]["manual_data"],
+            official_fundamentals=None,
+        )
 
 
 def _run_stage(stage_env, *, command: str = "ticker-page"):
