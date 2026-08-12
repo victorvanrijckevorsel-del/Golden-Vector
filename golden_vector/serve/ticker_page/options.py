@@ -276,14 +276,17 @@ def render_options_section(
 
     horizons = _display_horizons(app_config)
     window = resolve_target_window(target_window, app_config)
-    history_row, history_rows, skipped_day = _chain_history_for(page_artifacts, ticker)
+    # The third element (the skipped incomplete capture date) is deliberately
+    # unused: nothing on this page states it, and threading a value no renderer
+    # reads is how dead parameters are born. ``_chain_history_for`` still
+    # returns it because that is where the exclusion decision is made.
+    history_row, history_rows, _ = _chain_history_for(page_artifacts, ticker)
 
     pieces.append(
         _render_market_context(
             detail=detail,
             history_row=history_row,
             history_rows=history_rows,
-            skipped_day=skipped_day,
             app_config=app_config,
         )
     )
@@ -368,7 +371,6 @@ def _render_market_context(
     detail: OptionTradingDetailData | None,
     history_row: Mapping[str, Any] | None,
     history_rows: list[dict[str, Any]],
-    skipped_day: str | None,
     app_config: AppConfig | None,
 ) -> str:
     signal_horizon = _signal_horizon(detail, app_config)
@@ -381,7 +383,7 @@ def _render_market_context(
                 "Market context", key="option_market_context", app_config=app_config
             ),
         ),
-        _render_ratio_pair(history_row, skipped_day=skipped_day),
+        _render_ratio_pair(history_row),
         _render_oi_trend(history_rows),
         _render_volume_cards(history_row),
         _render_signal_history(detail, signal_horizon=signal_horizon),
@@ -390,11 +392,7 @@ def _render_market_context(
     return "".join(body)
 
 
-def _render_ratio_pair(
-    history_row: Mapping[str, Any] | None,
-    *,
-    skipped_day: str | None = None,
-) -> str:
+def _render_ratio_pair(history_row: Mapping[str, Any] | None) -> str:
     """BOTH put/call open-interest ratios, each read in words.
 
     Victor's requirement is that the two ratios DISAGREEING is the insight, so
@@ -435,8 +433,7 @@ def _render_ratio_pair(
             _fmt_number(total, decimals=0),
             help_key="option_open_interest",
         )
-        + 
-        "</div>"
+        + "</div>"
     )
 
     sentences: list[str] = []
@@ -1179,9 +1176,14 @@ def _render_sizing_tool(
         "<p class=\"field\"><button type=\"button\" data-role=\"reset\">Reset</button></p>"
         "</div>"
         "<div data-role=\"result\" class=\"option-sizing-result\">"
-        f"<p data-role=\"contracts-line\"></p>"
-        f"<p class=\"hint sizing-ladder-head\">Profit and loss at expiry{ladder_help}</p>"
-        "<table data-role=\"ladder\"></table>"
+        "<p data-role=\"contracts-line\"></p>"
+        # The heading lives INSIDE the ladder table (option-sizing.js toggles the
+        # table's own [hidden]), so a label can never hang over a hidden ladder.
+        # The JS only createTHead()s and swaps <tbody>, so the caption survives.
+        "<table data-role=\"ladder\">"
+        f"<caption class=\"hint sizing-ladder-head\">Profit and loss at expiry"
+        f"{ladder_help}</caption>"
+        "</table>"
         f"<p class=\"hint\" data-role=\"footnote\">{escape(_INTRINSIC_ONLY_NOTE)}</p>"
         "</div>"
         "<p class=\"visually-hidden\" data-role=\"live\" role=\"status\" "
@@ -1382,25 +1384,32 @@ def _render_liquidity_summary(
         + _metric_card(
             "Put tradable", _fmt_number(put_counts["tradable"], decimals=0),
             help_key="tradable_count",
+            app_config=app_config,
         )
         + _metric_card(
-            "Put watch", _fmt_number(put_counts["watch"], decimals=0), help_key="watch_count"
+            "Put watch", _fmt_number(put_counts["watch"], decimals=0),
+            help_key="watch_count",
+            app_config=app_config,
         )
         + _metric_card(
             "Put no-trade", _fmt_number(put_counts["no_trade"], decimals=0),
             help_key="no_trade_count",
+            app_config=app_config,
         )
         + _metric_card(
             "Call tradable", _fmt_number(call_counts["tradable"], decimals=0),
             help_key="tradable_count",
+            app_config=app_config,
         )
         + _metric_card(
             "Call watch", _fmt_number(call_counts["watch"], decimals=0),
             help_key="watch_count",
+            app_config=app_config,
         )
         + _metric_card(
             "Call no-trade", _fmt_number(call_counts["no_trade"], decimals=0),
             help_key="no_trade_count",
+            app_config=app_config,
         )
         + "</div></div>"
     )

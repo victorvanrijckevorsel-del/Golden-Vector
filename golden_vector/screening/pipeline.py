@@ -75,10 +75,16 @@ YAHOO_FINANCE_SOURCE_COLUMN_MAP: dict[str, str] = {
     "fundamental_checks_passed": "fundamental_checks_passed_official",
     "fundamental_checks_total": "fundamental_checks_total_official",
     "fundamental_check_summary": "fundamental_check_summary_official",
-    # fundamental_check_fail_codes is deliberately NOT in this map: map values
-    # must be REQUIRED columns (see test_tool_b_schema_contract), and the fail
-    # codes stay optional so pre-existing artifacts keep validating. Serve
-    # selects the _official variant explicitly when rendering the yahoo source.
+}
+
+#: Columns that resolve exactly like the map above but whose SOURCE column may
+#: legitimately be absent (they postdate some artifacts), so they cannot be
+#: required columns — the schema contract polices only the map above. Applied
+#: tolerantly: present → resolved, absent → the active column is cleared, never
+#: left holding Our-View values under a Yahoo heading. Keeping them here rather
+#: than in serve means every reader gets ONE already-resolved column.
+OPTIONAL_YAHOO_FINANCE_SOURCE_COLUMN_MAP: dict[str, str] = {
+    "fundamental_check_fail_codes": "fundamental_check_fail_codes_official",
 }
 
 
@@ -299,6 +305,17 @@ def materialize_tool_b_finance_source(
             )
         for active_column, source_column in YAHOO_FINANCE_SOURCE_COLUMN_MAP.items():
             materialized[active_column] = materialized[source_column]
+        for (
+            active_column,
+            source_column,
+        ) in OPTIONAL_YAHOO_FINANCE_SOURCE_COLUMN_MAP.items():
+            if source_column in materialized.columns:
+                materialized[active_column] = materialized[source_column]
+            elif active_column in materialized.columns:
+                # The Yahoo variant predates this artifact. The active column
+                # still holds OUR-VIEW values, which must never be shown as
+                # Yahoo's — an absent source means nothing to say, not a guess.
+                materialized[active_column] = None
     return _with_dual_source_display_fields(materialized, finance_source=selected)
 
 

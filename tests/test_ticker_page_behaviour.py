@@ -537,6 +537,8 @@ def test_lab_defaults_are_config_driven_and_eight_weeks_is_marked_default(
     assert '>8w <span class="hint">default</span></a>' in html
     for param in ("lab_b=GDX", "lab_s=gold_down"):
         assert param in html
+    # the controls group carries its registered explainer (no orphan entry)
+    assert html.count('data-help-title="Lab history controls"') == 1
 
 
 def test_an_invalid_lab_param_defaults_with_a_visible_note(monkeypatch, lab_paths):
@@ -660,13 +662,19 @@ def test_weekly_scatter_and_ladder_render_from_the_research_series():
 
 
 def _five_weeks_research() -> pd.DataFrame:
+    """Five published weeks, deliberately OUT of date order.
+
+    A real artifact is not guaranteed to arrive sorted, and the trailing sample
+    must be the latest WEEKS, never the last ROWS: emitting the newest week
+    first means a dropped ``sort_values("date")`` changes which dots are drawn.
+    """
     return _research_frame(
         *(_window_fit_row(window) for window in _WINDOWS),
+        _weekly_row("2026-08-14", 0.004, 0.002),
         _weekly_row("2026-07-17", 0.011, 0.006),
         _weekly_row("2026-07-24", -0.007, -0.004),
         _weekly_row("2026-07-31", 0.021, 0.014),
         _weekly_row("2026-08-07", -0.018, -0.009),
-        _weekly_row("2026-08-14", 0.004, 0.002),
         _horizon_row("12M"),
     )
 
@@ -706,18 +714,25 @@ def test_scatter_draws_the_published_fit_line_and_the_window_sample():
     assert "No published fit line" not in html
 
 
-def test_scatter_draws_no_line_when_the_intercept_is_not_published():
-    """A slope alone cannot place a line. Serve must not back-solve one — the
-    control is the identical fixture WITH an intercept, which does draw."""
+@pytest.mark.parametrize(
+    "missing", [{"intercept_alpha": None}, {"structural_delta": None}]
+)
+def test_scatter_draws_no_line_when_either_coefficient_is_not_published(missing):
+    """A slope alone cannot place a line, and neither can an intercept alone.
+    Serve must not back-solve the other half — the control is the identical
+    fixture with BOTH coefficients, which does draw."""
     html = _render(
         tool_a_row=_tool_a_row(weeks_12m=2),
         tool_a_detail=_detail_state(
-            structural_window_metrics=_structural_metrics(intercept_alpha=None)
+            structural_window_metrics=_structural_metrics(**missing)
         ),
         data=_data(percentiles=_full_percentiles(), research=_five_weeks_research()),
     )
     assert 'class="chart-fit-line"' not in html
     assert "No published fit line for this window." in html
+    # ...and no half-formatted claim leaks into the caption
+    assert "slope n/a" not in html
+    assert "intercept n/a" not in html
     # the dots and the window sample are unaffected by the missing coefficient
     assert "2 weekly observations · 2026-08-07 to 2026-08-14" in html
 
@@ -765,6 +780,93 @@ def test_scatter_reads_the_fit_for_the_ACTIVE_window_not_the_first_one():
     assert "The line is the published 6M fit (slope 2.50, intercept 0.0090)" in on_6m
 
 
+def test_scatter_uses_the_NEWEST_published_row_for_the_window():
+    """``_published_window_fit`` promises the newest published row wins. Real
+    artifacts carry one row per week, so a stale row must never draw the line —
+    the rows are fed newest-first so dropping the sort picks the stale one."""
+    two_dated = pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "window_id": "12M",
+                "as_of_date": pd.Timestamp("2026-08-14"),
+                "structural_delta": 1.4,
+                "intercept_alpha": 0.0021,
+            },
+            {
+                "ticker": "NEM",
+                "window_id": "12M",
+                "as_of_date": pd.Timestamp("2025-08-14"),
+                "structural_delta": 9.99,
+                "intercept_alpha": 0.5,
+            },
+        ]
+    )
+    html = _render(
+        tool_a_row=_tool_a_row(weeks_12m=2),
+        tool_a_detail=_detail_state(structural_window_metrics=two_dated),
+        data=_data(percentiles=_full_percentiles(), research=_five_weeks_research()),
+    )
+    assert "The line is the published 1Y fit (slope 1.40, intercept 0.0021)" in html
+    assert "slope 9.99" not in html
+    assert "intercept 0.5000" not in html
+
+
+def test_scatter_suppresses_the_line_when_the_window_is_not_eligible():
+    """The producer publishes real coefficients for degraded windows too (a 1Y
+    fit on too few weeks is still a regression). Degraded evidence is EXCLUDED,
+    not decorated: no line, and a caption naming the persisted status. The
+    control is the identical fixture on an ELIGIBLE window, which does draw."""
+    html = _render(
+        tool_a_row=_tool_a_row(weeks_12m=2, window_status_12m="LOW_OBSERVATION"),
+        tool_a_detail=_detail_state(structural_window_metrics=_structural_metrics()),
+        data=_data(percentiles=_full_percentiles(), research=_five_weeks_research()),
+    )
+    assert 'class="chart-fit-line"' not in html
+    assert (
+        "No fit line: the 1Y window is not eligible for this ticker "
+        "(status: LOW_OBSERVATION), so its published fit is not drawn." in html
+    )
+    assert "slope 1.40" not in html
+    # the dots themselves are published observations and still draw
+    assert "2 weekly observations · 2026-08-07 to 2026-08-14" in html
+
+    eligible = _render(
+        tool_a_row=_tool_a_row(weeks_12m=2),
+        tool_a_detail=_detail_state(structural_window_metrics=_structural_metrics()),
+        data=_data(percentiles=_full_percentiles(), research=_five_weeks_research()),
+    )
+    assert 'class="chart-fit-line"' in eligible
+    assert "The line is the published 1Y fit (slope 1.40, intercept 0.0021)" in eligible
+
+
+def test_scatter_draws_the_full_series_when_the_published_weeks_count_is_zero():
+    """``weeks_12m = 0`` is not a sample size. It takes the same honest path as
+    a missing count rather than trimming the series to nothing."""
+    html = _render(
+        tool_a_row=_tool_a_row(weeks_12m=0),
+        tool_a_detail=_detail_state(structural_window_metrics=_structural_metrics()),
+        data=_data(percentiles=_full_percentiles(), research=_five_weeks_research()),
+    )
+    assert "5 weekly observations · 2026-07-17 to 2026-08-14" in html
+    assert "no weeks count is published for this window" in html
+    assert "Trailing" not in html
+
+
+def test_scatter_renders_without_a_period_when_the_series_has_no_date_column():
+    """A weekly series with no ``date`` is neither trimmed nor given a period
+    suffix — but it still draws, and it must not raise."""
+    undated = _five_weeks_research().drop(columns=["date"])
+    html = _render(
+        tool_a_row=_tool_a_row(weeks_12m=2),
+        tool_a_detail=_detail_state(structural_window_metrics=_structural_metrics()),
+        data=_data(percentiles=_full_percentiles(), research=undated),
+    )
+    assert "5 weekly observations." in html
+    assert "weekly observations ·" not in html
+    assert "no weeks count is published for this window" in html
+
+
 def test_a_degraded_research_kind_renders_its_persisted_reason():
     frame = _research_frame(
         {
@@ -807,6 +909,22 @@ def test_volatility_renders_the_published_fields_on_the_canonical_window():
     assert "41.2%" in html and "28.7%" in html and "33.1%" in html
     assert "HIGH_NOISE" in html
     assert "Published 52-week values for the canonical window." in html
+
+
+def test_volatility_cards_each_carry_their_explainer_icon():
+    """``_metric_card(help_key=...)`` must actually render the icon: proving the
+    key exists in the registry proves nothing about the button reaching the
+    page."""
+    html = B.render_volatility_panel(
+        _tool_a_row(), active_window="12M", app_config=_app_config()
+    )
+    for title in (
+        "Total volatility (annualized log vol)",
+        "Residual volatility (annualized log vol)",
+        "Downside volatility (annualized log vol)",
+        "Volatility context",
+    ):
+        assert html.count(f'data-help-title="{title}"') == 1, title
 
 
 def test_volatility_is_never_estimated_for_a_non_canonical_window():

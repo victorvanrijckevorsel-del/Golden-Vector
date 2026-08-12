@@ -33,6 +33,7 @@ from golden_vector.contracts.ticker_page import (
     GOLD_RESPONSE_CONSTANT_COLUMNS,
     GOLD_RESPONSE_LINE_METRICS,
 )
+from golden_vector.screening.verdicts import FORWARD_PE_NON_POSITIVE_CODE
 from golden_vector.serve.column_help import help_icon
 from golden_vector.serve.embed import embed_json_payload
 from golden_vector.serve.ticker_page.data import TickerPageData
@@ -178,6 +179,19 @@ _FAIL_SENTENCES: dict[str, tuple[str, str, str, str, str]] = {
     ),
 }
 
+#: The plain check name behind each threshold sentence, used when the persisted
+#: code fired but the measured column it names is absent. Serve then says WHICH
+#: check failed and that the number is missing — it never guesses why, and it
+#: never prints a comparison against a value it does not have.
+_CHECK_NAMES: dict[str, str] = {
+    "AISC_FAIL": "AISC",
+    "MARGIN_FAIL": "Cash margin",
+    "AISC_MARGIN_YIELD_FAIL": "AISC margin yield",
+    "RESERVE_LIFE_FAIL": "Reserve life",
+    "LEVERAGE_FAIL": "Net debt / EBITDA (LTM)",
+    "FORWARD_PE_FAIL": "Forward P/E",
+}
+
 #: Fundamental-check codes the layer-1 vocabulary does NOT already cover.
 #:
 #: The fundamental checks re-state most of layer 1 under identical code names
@@ -188,31 +202,20 @@ _FAIL_SENTENCES: dict[str, tuple[str, str, str, str, str]] = {
 #: here. ``tests/test_ticker_page_corporate.py`` locks this against the
 #: upstream vocabulary, so a new fundamental check cannot be added and then
 #: silently never render.
-_FUNDAMENTAL_ONLY_CODES: frozenset[str] = frozenset({"FORWARD_PE_FAIL"})
-
-#: Fundamental-code column for the active finance source. The screening
-#: pipeline deliberately leaves the plain column out of the Yahoo column map,
-#: so in Yahoo mode it still holds Our-View codes and the ``_official`` column
-#: is the only Yahoo-correct source. Either column may be absent entirely on an
-#: artifact built before the codes existed — then there is simply no sentence.
-_FUNDAMENTAL_CODE_COLUMN_BY_SOURCE: dict[str, str] = {
-    "yahoo": "fundamental_check_fail_codes_official",
-}
-_DEFAULT_FUNDAMENTAL_CODE_COLUMN = "fundamental_check_fail_codes"
-
-#: A ratio whose denominator is not positive is not a number that may be
-#: compared to a cut-off. The code still fired, so the check still failed —
-#: the line states the condition instead of inventing a multiple.
-_NON_POSITIVE_VALUE_SENTENCES: dict[str, str] = {
-    "FORWARD_PE_FAIL": (
-        "Forward P/E is not meaningful here (forward earnings are not positive)"
-    ),
-}
+_FUNDAMENTAL_ONLY_CODES: frozenset[str] = frozenset(
+    {"FORWARD_PE_FAIL", FORWARD_PE_NON_POSITIVE_CODE}
+)
 
 #: Codes that state a condition rather than a threshold breach.
 _FAIL_STATEMENTS: dict[str, str] = {
     "LEVERAGE_NON_POSITIVE_EBITDA": (
         "Trailing EBITDA is not positive, so net debt / EBITDA (LTM) cannot be measured"
+    ),
+    # The producer emits this instead of FORWARD_PE_FAIL when forward earnings
+    # are not positive: there is no multiple to compare, so the line states the
+    # condition. Serve routes on the code and compares nothing.
+    FORWARD_PE_NON_POSITIVE_CODE: (
+        "Forward P/E is not meaningful here (forward earnings are not positive)"
     ),
     "MISSING_MARKET_CAP": "Market cap is missing, so the market-based checks could not run",
     "MISSING_PRODUCTION": "Production is missing, so the margin checks could not run",
@@ -497,36 +500,30 @@ def _persisted_codes(row: Mapping[str, Any], column: str) -> list[str]:
     return [part.strip() for part in raw.split(";") if part.strip()]
 
 
-def _fundamental_code_column(finance_source: str) -> str:
-    return _FUNDAMENTAL_CODE_COLUMN_BY_SOURCE.get(
-        str(finance_source).strip().lower(), _DEFAULT_FUNDAMENTAL_CODE_COLUMN
-    )
-
-
 def _failing_check_sentences(
     tool_b_row: Mapping[str, Any],
     *,
-    finance_source: str,
     app_config: AppConfig | None,
 ) -> list[str]:
     """One sentence per PERSISTED failing check.
 
     Two persisted code columns feed the SAME registry: ``layer1_fail_reasons``
-    (already materialized for the active finance source upstream) and the
-    fundamental-check codes, which are NOT materialized and so are read from
-    the per-source column. The fundamental column contributes only the checks
-    layer 1 has no code for, so one failure is never printed as two.
+    and ``fundamental_check_fail_codes``. Both are already materialized for the
+    active finance source upstream, so there is exactly one column to read for
+    each and no source picking happens here. The fundamental column contributes
+    only the checks layer 1 has no code for, so one failure is never printed as
+    two.
 
-    Serve NEVER compares a value to a threshold — it prints the measured column
-    the persisted code names, beside the configured threshold that code was
-    judged against.
+    Serve NEVER compares a value to a threshold and never infers WHY a check
+    failed: the persisted code alone chooses the sentence. A code with a
+    threshold sentence prints the measured column beside the configured
+    threshold, or — when that column is absent — says the measurement is
+    unavailable rather than inventing a reason.
     """
 
     codes = _persisted_codes(tool_b_row, "layer1_fail_reasons") + [
         code
-        for code in _persisted_codes(
-            tool_b_row, _fundamental_code_column(finance_source)
-        )
+        for code in _persisted_codes(tool_b_row, "fundamental_check_fail_codes")
         if code in _FUNDAMENTAL_ONLY_CODES
     ]
 
@@ -539,9 +536,11 @@ def _failing_check_sentences(
         if code in _FAIL_SENTENCES:
             template, column, value_unit, path, threshold_unit = _FAIL_SENTENCES[code]
             measured = _value(tool_b_row, column)
-            statement = _NON_POSITIVE_VALUE_SENTENCES.get(code)
-            if statement is not None and (measured is None or measured <= 0):
-                sentences.append(statement)
+            if measured is None:
+                sentences.append(
+                    f"{_CHECK_NAMES[code]} failed this check, but the measured "
+                    "value is unavailable"
+                )
                 continue
             sentences.append(
                 template.format(
@@ -557,14 +556,11 @@ def _failing_check_sentences(
 def _render_failing_checks(
     tool_b_row: Mapping[str, Any],
     *,
-    finance_source: str,
     app_config: AppConfig | None,
     spot_gold_usd: float | None,
     spot_gold_date: str,
 ) -> str:
-    sentences = _failing_check_sentences(
-        tool_b_row, finance_source=finance_source, app_config=app_config
-    )
+    sentences = _failing_check_sentences(tool_b_row, app_config=app_config)
     if not sentences:
         return ""
     screening_gold = _value(tool_b_row, "gold_price_assumption")
@@ -1114,7 +1110,6 @@ def render_corporate_finance_section(
     pieces.append(
         _render_failing_checks(
             tool_b_row,
-            finance_source=finance_source,
             app_config=app_config,
             spot_gold_usd=spot,
             spot_gold_date=spot_date,

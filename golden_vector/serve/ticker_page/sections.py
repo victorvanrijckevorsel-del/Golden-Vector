@@ -12,8 +12,10 @@ from typing import Any
 
 import pandas as pd
 
+from golden_vector.contracts.config_models import AppConfig
 from golden_vector.serve.charts import _build_multiline_overlay_svg, _build_scatter_svg
 from golden_vector.serve.column_help import help_icon
+from golden_vector.serve.format_helpers import id_token
 from golden_vector.serve.ui.tables import table_region
 
 
@@ -60,18 +62,23 @@ def render_performance_section(
     ticker: str,
     horizon: str,
     view: str = "rebased",
+    app_config: AppConfig | None = None,
 ) -> str:
     """The performance chart from the v2 artifact — actual dates, one shared
 
     anchor, series markers for omitted/missing lines. ``view`` is
     ``rebased`` (Compare, indexed to 100) or ``price`` (the stock alone, USD).
+
+    The chart carries the same accessible ``<details>`` data-table twin as every
+    other chart on the page: one row per drawn date, built by the shared overlay
+    builder from the values it plots — no second pass over the artifact.
     """
 
     if performance_rows is None or performance_rows.empty:
         return (
             '<section class="panel" id="performance"><h2>Performance'
             + help_icon(
-                "Performance", key="ticker_performance_chart", app_config=None
+                "Performance", key="ticker_performance_chart", app_config=app_config
             )
             + "</h2>"
             '<p class="hint">No performance data has been published for this ticker.</p>'
@@ -124,7 +131,13 @@ def render_performance_section(
     }
 
     chart_html = (
-        _build_multiline_overlay_svg(series_by_label=series_by_label)
+        _build_multiline_overlay_svg(
+            series_by_label=series_by_label,
+            data_table_id=(
+                f"chart-data-performance-{id_token(ticker)}-"
+                f"{id_token(horizon)}-{id_token(view)}"
+            ),
+        )
         if series_by_label
         else '<p class="hint">No drawable series in this window.</p>'
     )
@@ -132,7 +145,9 @@ def render_performance_section(
     view_label = "Compare (indexed to 100)" if view == "rebased" else "Share price (USD)"
     return (
         f'<section class="panel" id="performance"><h2>Performance — {escape(ticker)}'
-        + help_icon("Performance", key="ticker_performance_chart", app_config=None)
+        + help_icon(
+            "Performance", key="ticker_performance_chart", app_config=app_config
+        )
         + "</h2>"
         f'<p class="hint">{escape(view_label)} · horizon {escape(horizon)}'
         + (" · " + escape("; ".join(basis_bits)) if basis_bits else "")
@@ -291,15 +306,22 @@ def render_cost_downside_card(
     downside_row: pd.Series | None,
     aisc_peers: pd.DataFrame,
     downside_peers: pd.DataFrame,
+    app_config: AppConfig | None = None,
 ) -> str:
     """The open 'Cost position and downside record' card (Market Behaviour).
 
     Two pieces of evidence side by side — no composite score, no causation.
     Peer scatter behind a closed disclosure with its accessible table twin.
+
+    ``app_config`` reaches every explainer here so the configured large-fall
+    cut-off is stated ONCE, by the registry, in the same words this key uses on
+    every other surface. This card holds no copy of that number.
     """
 
     explainer = help_icon(
-        "Cost position and downside record", key="ticker_cost_downside", app_config=None
+        "Cost position and downside record",
+        key="ticker_cost_downside",
+        app_config=app_config,
     )
     pieces: list[str] = [
         '<section class="panel" id="cost-downside">',
@@ -329,7 +351,7 @@ def render_cost_downside_card(
         )
         pieces.append(
             "<div class=\"cost-downside-aisc\"><h3>Current reported AISC"
-            + help_icon("Current reported AISC", key="tool_b_aisc", app_config=None)
+            + help_icon("Current reported AISC", key="tool_b_aisc", app_config=app_config)
             + "</h3>"
             f"<p><strong>{escape(aisc_text)}</strong> · {escape(' · '.join(bit for bit in source_bits if bit))}</p>"
             f"<p class=\"hint\">{escape(standing)}</p></div>"
@@ -340,7 +362,7 @@ def render_cost_downside_card(
         )
         pieces.append(
             "<div class=\"cost-downside-aisc\"><h3>Current reported AISC"
-            + help_icon("Current reported AISC", key="tool_b_aisc", app_config=None)
+            + help_icon("Current reported AISC", key="tool_b_aisc", app_config=app_config)
             + "</h3>"
             f"<p class=\"hint\">AISC is unavailable: {escape(reason)}</p></div>"
         )
@@ -366,13 +388,13 @@ def render_cost_downside_card(
             + help_icon(
                 "Historical large-fall record",
                 key="ticker_downside_hit_rate",
-                app_config=None,
+                app_config=app_config,
             )
             + "</h3>"
             f"<p><strong>{_fmt_pct(rate)}</strong> — {escape(evidence)}</p>"
             f"<p class=\"hint\">Period {_fmt_date(period_start)} to {_fmt_date(period_end)}. "
-            "A large fall is an ordinary weekly price return of −10% or worse during a week "
-            "in gold's rolling weakest 20%.</p>"
+            "Qualifying weeks are gold's rolling weakest 20%; the explainer above "
+            "states the configured large-fall cut-off.</p>"
             f"<p class=\"hint\">{escape(standing)}</p></div>"
         )
     else:
@@ -386,21 +408,32 @@ def render_cost_downside_card(
             + help_icon(
                 "Historical large-fall record",
                 key="ticker_downside_hit_rate",
-                app_config=None,
+                app_config=app_config,
             )
             + "</h3>"
             f"<p class=\"hint\">The downside record is unavailable: {escape(reason)}</p></div>"
         )
 
     # -- peer relationship disclosure -----------------------------------------
-    pieces.append(_render_peer_disclosure(ticker=ticker, aisc_peers=aisc_peers, downside_peers=downside_peers))
+    pieces.append(
+        _render_peer_disclosure(
+            ticker=ticker,
+            aisc_peers=aisc_peers,
+            downside_peers=downside_peers,
+            app_config=app_config,
+        )
+    )
     pieces.append(f'<p class="hint">{escape(_DOWNSIDE_CAVEAT)}</p>')
     pieces.append("</section>")
     return "".join(pieces)
 
 
 def _render_peer_disclosure(
-    *, ticker: str, aisc_peers: pd.DataFrame, downside_peers: pd.DataFrame
+    *,
+    ticker: str,
+    aisc_peers: pd.DataFrame,
+    downside_peers: pd.DataFrame,
+    app_config: AppConfig | None = None,
 ) -> str:
     """Closed disclosure: AISC (x) vs large-fall rate (y) scatter for eligible
 
@@ -410,7 +443,7 @@ def _render_peer_disclosure(
     """
 
     peer_help = help_icon(
-        "Peer relationship", key="ticker_peer_relationship", app_config=None
+        "Peer relationship", key="ticker_peer_relationship", app_config=app_config
     )
     pairs: list[tuple[str, float, float]] = []
     if (

@@ -481,18 +481,15 @@ def _rounded_percentile(value: Any) -> float | None:
     Applied at the PERSIST boundary only — ``oriented_percentile`` itself is
     untouched, so the ranking that produced the value is unchanged and ties are
     still resolved by the documented average-tie policy before rounding sees
-    them. ``None``/NaN survive as ``None``: a missing percentile must never
-    become a number.
+    them. Coercion is the shared ``optional_float`` (one copy of "missing means
+    ``None``", including for values that are not numbers at all): a missing
+    percentile must never become a number.
     """
 
-    if value is None:
+    numeric = optional_float(value)
+    if numeric is None:
         return None
-    try:
-        if pd.isna(value):
-            return None
-    except (TypeError, ValueError):
-        return None
-    return round(float(value), PERCENTILE_PERSIST_DECIMALS)
+    return round(numeric, PERCENTILE_PERSIST_DECIMALS)
 
 
 def _optional_timestamp(value: Any) -> pd.Timestamp | None:

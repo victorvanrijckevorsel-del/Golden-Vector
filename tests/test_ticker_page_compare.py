@@ -512,8 +512,20 @@ def test_help_icons_cover_every_metric_and_the_section_explainers(catalog, app_c
 
     for spec in catalog:
         row = _metric_row_html(html, spec.key)
-        assert 'class="help-icon"' in row, f"{spec.key} has no explainer"
+        # TWO icons per row: the metric explainer and the direction toggle's.
+        # A bare "at least one" check was satisfied by the pre-existing metric
+        # icon alone, so the newer per-row direction explainer could vanish.
+        assert row.count('class="help-icon"') == 2, f"{spec.key} explainers"
     assert 'data-help-title="Compare on your own terms"' in html
+    # The result-region explainers: assert the icon, because the bare LABEL is
+    # also a pre-existing aria-label and would pass with no explainer at all.
+    for title in (
+        "What carries the score",
+        "The ranked list",
+        "When a ranking is fragile",
+        "Which way is good",
+    ):
+        assert f'data-help-title="{title}"' in html, title
     assert "How the percentiles work" in html
     assert "How the weight budget works" in html
     assert "Metrics this company lacks" in html

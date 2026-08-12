@@ -263,6 +263,7 @@ def render_detail_page(
                 ticker=ticker,
                 horizon=chart_horizon,
                 view=chart_view,
+                app_config=app_config,
             )
         )
         body.append(

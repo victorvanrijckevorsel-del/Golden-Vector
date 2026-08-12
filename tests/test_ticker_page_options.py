@@ -7,6 +7,8 @@ section is that exactly ONE of them may hide it.
 
 from __future__ import annotations
 
+from html import escape
+
 import json
 import re
 from pathlib import Path
@@ -676,6 +678,52 @@ def test_three_open_interest_series_are_drawn_separately(app_config):
     assert "Open interest over time" in html
 
 
+def _help_button(html: str, title: str) -> str:
+    """The ONE explainer button carrying ``title``, isolated from its siblings."""
+    marker = f'data-help-title="{title}"'
+    assert html.count(marker) == 1, title
+    start = html.rindex("<button", 0, html.index(marker))
+    return html[start : html.index("</button>", start)]
+
+
+def test_metric_cards_render_their_explainer_icons_and_config_thresholds(app_config):
+    """``_metric_card(help_key=...)`` must reach the page, and each card must
+    carry the config so the registry can state its thresholds. Proving the key
+    exists in COLUMN_HELP proves neither: a dropped branch deletes the icon, and
+    a dropped ``app_config`` silently deletes the numbers inside it.
+
+    The threshold assertion is scoped to EACH button, because two cards share a
+    help key — a page-wide search would be satisfied by the sibling card and one
+    dropped ``app_config`` would pass unnoticed.
+    """
+    from golden_vector.serve.column_help import column_help_parts
+
+    html = render(app_config)
+
+    # the icon itself reaches the page, exactly once per card
+    for title in (
+        "Put open interest",
+        "Call open interest",
+        "Total open interest",
+        "Put tradable",
+        "Call no-trade",
+    ):
+        assert 'class="help-icon"' in _help_button(html, title), title
+
+    for title, key in (
+        ("Put tradable", "tradable_count"),
+        ("Put watch", "watch_count"),
+        ("Call tradable", "tradable_count"),
+        ("Call watch", "watch_count"),
+    ):
+        parts = column_help_parts(key, app_config=app_config)
+        assert parts is not None and parts["more"].strip(), key
+        button = _help_button(html, title)
+        for line in parts["more"].splitlines():
+            if line.strip():
+                assert escape(line.strip()) in button, (title, line)
+
+
 def test_daily_volume_is_labelled_with_its_as_of_date(app_config):
     html = render(app_config)
 
@@ -852,6 +900,13 @@ def test_sizing_script_tag_appears_exactly_once(app_config):
     assert 'data-role="ladder"' in html
     assert 'data-role="reset"' in html
     assert 'data-role="live"' in html
+    # The ladder's heading lives INSIDE the table it labels, so the JS hiding
+    # the table hides the label with it — never a heading over nothing.
+    ladder = html[html.index('<table data-role="ladder">') :]
+    ladder = ladder[: ladder.index("</table>")]
+    assert 'class="hint sizing-ladder-head">Profit and loss at expiry' in ladder
+    assert "<caption" in ladder
+    assert 'class="hint sizing-ladder-head"' not in html.replace(ladder, "")
 
 
 def test_legacy_params_preselect_the_contract_and_prefill_the_budget(app_config):

@@ -721,6 +721,49 @@ def test_materialize_finance_source_adds_dual_source_display_fields():
     assert bool(yahoo["leverage_show_alternate"]) is True
 
 
+def test_materialize_resolves_the_optional_fundamental_codes_column():
+    """The fail-code columns cannot be REQUIRED (older artifacts lack them), so
+    they resolve through the optional map — in the model layer, once, exactly
+    like every sibling column. Serve must never pick a source itself."""
+    row = {column: None for column in TOOL_B_OUTPUT_COLUMNS}
+    row.update(
+        {
+            "ticker": "NEM",
+            "fundamental_check_fail_codes": "LEVERAGE_FAIL",
+            "fundamental_check_fail_codes_official": "FORWARD_PE_FAIL",
+        }
+    )
+    frame = pd.DataFrame([row])
+
+    our = materialize_tool_b_finance_source(frame, finance_source="our").iloc[0]
+    assert our["fundamental_check_fail_codes"] == "LEVERAGE_FAIL"
+
+    yahoo = materialize_tool_b_finance_source(frame, finance_source="yahoo").iloc[0]
+    assert yahoo["fundamental_check_fail_codes"] == "FORWARD_PE_FAIL"
+
+
+def test_materialize_clears_the_optional_codes_when_the_yahoo_variant_is_absent():
+    """An artifact built before the ``_official`` variant existed: the plain
+    column still holds OUR-VIEW codes, which must never be shown as Yahoo's.
+    The control is the same frame WITH the variant, which does resolve."""
+    row = {column: None for column in TOOL_B_OUTPUT_COLUMNS}
+    row.update(
+        {
+            "ticker": "NEM",
+            "fundamental_check_fail_codes": "LEVERAGE_FAIL",
+            "fundamental_check_fail_codes_official": "FORWARD_PE_FAIL",
+        }
+    )
+    legacy = pd.DataFrame([row]).drop(columns=["fundamental_check_fail_codes_official"])
+
+    # absent source column: not an error, and not a wrong-source value either
+    yahoo = materialize_tool_b_finance_source(legacy, finance_source="yahoo").iloc[0]
+    assert yahoo["fundamental_check_fail_codes"] is None
+    # ...while Our View mode still reads its own codes from the same frame
+    our = materialize_tool_b_finance_source(legacy, finance_source="our").iloc[0]
+    assert our["fundamental_check_fail_codes"] == "LEVERAGE_FAIL"
+
+
 def test_compute_tool_b_official_rank_excludes_degraded_official_data(tmp_path):
     from golden_vector.screening.manual_data import load_manual_screening_data
 

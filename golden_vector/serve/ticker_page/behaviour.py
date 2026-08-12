@@ -75,7 +75,11 @@ from golden_vector.serve.ticker_page.sections import (
 from golden_vector.serve.ui.components import disclosure, section_heading
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
-from golden_vector.serve.windows import SCORING_WINDOWS, WINDOW_LABELS
+from golden_vector.serve.windows import (
+    SCORING_WINDOWS,
+    WINDOW_LABELS,
+    _USABLE_WINDOW_STATUSES,
+)
 from golden_vector.serve.workspace_state import (
     DETAIL_ALIGNMENT_ALIGNED,
     DETAIL_ALIGNMENT_FOUNDATION_AHEAD,
@@ -802,6 +806,7 @@ def _lab_controls(
     availability: Mapping[str, int],
     query_params: Mapping[str, str] | None,
     default_horizon: int,
+    app_config: AppConfig | None = None,
 ) -> str:
     """GET links for look-ahead / benchmark / scenario.
 
@@ -868,8 +873,12 @@ def _lab_controls(
         )
         for bucket, label in BUCKET_LABELS.items()
     )
+    controls_help = help_icon(
+        "Lab history controls", key="ticker_lab_controls", app_config=app_config
+    )
     return (
         "<div class=\"lab-controls\" role=\"group\" aria-label=\"Lab history controls\">"
+        f"<p class=\"lab-controls-head\"><strong>Controls</strong>{controls_help}</p>"
         f"<p><strong>Look-ahead:</strong> {horizon_links}</p>"
         f"<p><strong>Benchmark:</strong> {benchmark_links}</p>"
         f"<p><strong>Gold scenario:</strong> {scenario_links}</p>"
@@ -1033,6 +1042,7 @@ def render_lab_history(
             if app_config is not None
             else 8
         ),
+        app_config=app_config,
     )
     note = (
         f"<p class=\"hint lab-note\">{escape(request.note)}</p>" if request.note else ""
@@ -1214,11 +1224,17 @@ def render_weekly_scatter(
 ) -> str:
     """Weekly-return scatter for the ACTIVE window, with its published fit line.
 
-    Two published facts shape it and nothing else: the window's ``weeks_*``
-    count selects the trailing sample, and the window's published slope +
-    intercept draw the line. Serve fits nothing in the request path — when
-    either coefficient is absent the dots are drawn alone and the caption says
-    there is no published fit line for the window.
+    Three published facts shape it and nothing else: the window's ``weeks_*``
+    count selects the trailing sample, the window's persisted ``window_status``
+    decides whether a line may be drawn at all, and the window's published
+    slope + intercept draw it. Serve fits nothing in the request path.
+
+    The status gate is the exclusion canon, not decoration: the producer
+    publishes real coefficients for degraded windows too (a LOW_OBSERVATION 1Y
+    fit is a real regression on too few weeks), so an ineligible window gets NO
+    line and a caption naming its status — never a confident line with a
+    caveat. When either coefficient is absent the dots are drawn alone and the
+    caption says there is no published fit line for the window.
     """
 
     explain = help_icon(
@@ -1247,7 +1263,9 @@ def render_weekly_scatter(
             "</section>"
         )
     slope, intercept = _published_window_fit(structural_window_metrics, active_window)
-    has_line = slope is not None and intercept is not None
+    window_status = _window_status(tool_a_row or {}, active_window)
+    published = slope is not None and intercept is not None
+    has_line = published and window_status in _USABLE_WINDOW_STATUSES
     svg = _build_scatter_svg(
         x_values=[x for x, _ in pairs],
         y_values=[y for _, y in pairs],
@@ -1270,13 +1288,19 @@ def render_weekly_scatter(
         if weeks is not None
         else " The full published series: no weeks count is published for this window."
     )
-    line_clause = (
-        f" The line is the published {win_label} fit (slope "
-        f"{_fmt_number(slope, decimals=2)}, intercept {_fmt_number(intercept, decimals=4)}); "
-        "nothing is fitted in the page."
-        if has_line
-        else " No published fit line for this window."
-    )
+    if has_line:
+        line_clause = (
+            f" The line is the published {win_label} fit (slope "
+            f"{_fmt_number(slope, decimals=2)}, intercept "
+            f"{_fmt_number(intercept, decimals=4)}); nothing is fitted in the page."
+        )
+    elif published:
+        line_clause = (
+            f" No fit line: the {win_label} window is not eligible for this ticker "
+            f"(status: {window_status}), so its published fit is not drawn."
+        )
+    else:
+        line_clause = " No published fit line for this window."
     return (
         "<section class=\"panel nested-panel\">"
         f"<h4>Weekly return scatter{explain}</h4>"
@@ -1813,6 +1837,7 @@ def render_market_behaviour_section(
                 downside_peers=data.metric_peers(
                     metric_key="downside_hit_rate", finance_source=finance_source
                 ),
+                app_config=app_config,
             )
         )
 
@@ -1833,9 +1858,7 @@ def render_market_behaviour_section(
             data=data,
             active_window=active_window,
             canonical_anchor=canonical_anchor,
-            structural_window_metrics=getattr(
-                tool_a_detail, "structural_window_metrics", None
-            ),
+            structural_window_metrics=tool_a_detail.structural_window_metrics,
             app_config=app_config,
         )
     )

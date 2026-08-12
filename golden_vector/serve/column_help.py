@@ -1728,7 +1728,13 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         calculation=(
             "AISC: company-reported (Our View mining assumption). Large-fall rate: exact "
             "hits ÷ qualifying weak-gold weeks (gold's rolling weakest 20%), where a hit is "
-            "an ordinary weekly price return of −10% or worse."
+            "an ordinary weekly price return at or below the configured cut-off."
+        ),
+        # The cut-off is stated ONCE, from config, in the same words
+        # ``ticker_downside_hit_rate`` uses — this card keeps no copy of it.
+        thresholds=lambda config: (
+            f"A large fall is a weekly price return of "
+            f"{config.tool_c.downside_hit_rate_threshold_pct:.0f}% or worse."
         ),
     ),
     # --- ticker page: market behaviour (M3c) --------------------------------

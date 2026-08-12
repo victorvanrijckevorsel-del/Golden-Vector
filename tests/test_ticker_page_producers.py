@@ -523,19 +523,38 @@ def test_percentiles_are_persisted_rounded_to_one_decimal(score_config):
 def test_percentile_rounding_keeps_ties_tied(score_config):
     """§7 average-tie policy survives the persist rounding.
 
-    AAA/BBB are a deliberate tie on ``down_beta_core``; rounding must land them
-    on the SAME stored tenth rather than splitting them into an accidental
-    order.
+    The pool is chosen so the tied percentile REPEATS: two of three peers share
+    a margin, so the average-rank percentile is 83.333… and the stored value can
+    only be 83.3 if the rounding actually ran. On a pool whose exact percentiles
+    are already whole numbers the assertion would be a tautology — rounding is
+    deterministic, so identical inputs can never be split by it.
     """
 
-    frame = _percentiles(score_config)
-    down = frame[
-        (frame["metric_key"] == "down_beta_core") & (frame["finance_source"] == "our")
+    frame = build_score_percentiles(
+        app_config=score_config,
+        tool_a_latest=_tool_a_frame(),
+        tool_b_latest_by_source={
+            # BBB/CCC are a deliberate tie; AAA is the healthy control.
+            "our": _tool_b_frame({"AAA": 0.10, "BBB": 0.30, "CCC": 0.30}),
+            "yahoo": _tool_b_frame({"AAA": 0.05, "BBB": 0.40, "CCC": 0.20}),
+        },
+        tool_c_latest=pd.DataFrame(),
+        tool_d_latest=_tool_d_frame(),
+        source_run_ids={},
+    )
+    margin = frame[
+        (frame["metric_key"] == "margin_pct") & (frame["finance_source"] == "our")
     ].set_index("ticker")
-    assert down.loc["AAA", "pct_high_good"] == down.loc["BBB", "pct_high_good"]
-    assert down.loc["AAA", "pct_low_good"] == down.loc["BBB", "pct_low_good"]
+    assert int(margin.loc["BBB", "eligible_peer_count"]) == 3
+
+    # Exact stored tenth on BOTH tied tickers — not merely equal to each other.
+    assert margin.loc["BBB", "pct_high_good"] == 83.3
+    assert margin.loc["CCC", "pct_high_good"] == 83.3
+    assert margin.loc["BBB", "pct_low_good"] == 50.0
+    assert margin.loc["CCC", "pct_low_good"] == 50.0
     # A healthy control that is NOT part of the tie still sorts apart from it.
-    assert down.loc["CCC", "pct_high_good"] != down.loc["AAA", "pct_high_good"]
+    assert margin.loc["AAA", "pct_high_good"] == 33.3
+    assert margin.loc["AAA", "pct_low_good"] == 100.0
 
 
 # --------------------------------------------------------------------------

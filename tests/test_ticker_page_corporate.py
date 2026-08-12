@@ -389,12 +389,27 @@ def test_forward_pe_fail_code_names_the_value_and_the_configured_cutoff():
     assert "These screening checks fail at spot gold" in html
 
 
-def test_forward_pe_sentence_reads_the_official_column_in_yahoo_mode():
-    """The Yahoo materialization does not map the plain codes column, so in
-    Yahoo mode ONLY ``_official`` may speak — the Our-View column must be
-    ignored, not merged."""
+def test_serve_reads_one_materialized_codes_column_and_never_the_official_one():
+    """Source resolution happens ONCE, upstream (``materialize_tool_b_finance_source``
+    via ``OPTIONAL_YAHOO_FINANCE_SOURCE_COLUMN_MAP``). Serve reads the single
+    resolved column in either mode and never inspects an ``_official`` twin."""
     yahoo_data = _data(_gold_row(finance_source="yahoo"))
+    # the materialized row: the resolved column carries the Yahoo codes
     html = _render(
+        data=yahoo_data,
+        finance_source="yahoo",
+        tool_b_row=_tool_b_row(
+            forward_pe=12.6,
+            fundamental_check_fail_codes="FORWARD_PE_FAIL",
+            fundamental_check_fail_codes_official="FORWARD_PE_FAIL",
+            layer1_fail_reasons=None,
+        ),
+    )
+    assert f"Forward P/E 12.60× is above your {_forward_pe_cutoff()} cut-off." in html
+
+    # The control: only the RAW ``_official`` column says it failed. Serve must
+    # stay silent — reading that column would be the per-source picker again.
+    quiet = _render(
         data=yahoo_data,
         finance_source="yahoo",
         tool_b_row=_tool_b_row(
@@ -404,21 +419,14 @@ def test_forward_pe_sentence_reads_the_official_column_in_yahoo_mode():
             layer1_fail_reasons=None,
         ),
     )
-    assert f"Forward P/E 12.60× is above your {_forward_pe_cutoff()} cut-off." in html
-
-    # The control: Our-View says it fails, Yahoo says nothing -> no sentence.
-    quiet = _render(
-        data=yahoo_data,
-        finance_source="yahoo",
-        tool_b_row=_tool_b_row(
-            forward_pe=12.6,
-            fundamental_check_fail_codes="FORWARD_PE_FAIL",
-            fundamental_check_fail_codes_official=None,
-            layer1_fail_reasons=None,
-        ),
-    )
     assert 'id="corporate-failing-checks"' not in quiet
     assert "is above your" not in quiet
+
+    # ...and serve does not name the raw variant at all.
+    source = Path("golden_vector/serve/ticker_page/corporate.py").read_text(
+        encoding="utf-8"
+    )
+    assert "fundamental_check_fail_codes_official" not in source
 
 
 def test_healthy_control_with_null_fundamental_codes_gets_no_sentence():
@@ -448,29 +456,64 @@ def test_absent_fundamental_codes_column_renders_without_a_sentence():
     assert "is above your" not in html
 
 
-def test_forward_pe_sentence_states_the_condition_when_earnings_are_not_positive():
-    """A P/E built on non-positive earnings is not a multiple. The check still
-    failed, so the line stays — with no invented number."""
+def test_non_positive_earnings_sentence_is_chosen_by_the_persisted_code():
+    """A P/E built on non-positive earnings is not a multiple. WHICH failure it
+    was is decided upstream and persisted as its own code — serve routes on the
+    code and compares nothing, so the value in the row cannot change the words.
+    """
+    from golden_vector.screening.verdicts import FORWARD_PE_NON_POSITIVE_CODE
+
     expected = "Forward P/E is not meaningful here (forward earnings are not positive)."
     for value in (-4.2, 0.0):
         html = _render(
             tool_b_row=_tool_b_row(
                 forward_pe=value,
-                fundamental_check_fail_codes="FORWARD_PE_FAIL",
+                fundamental_check_fail_codes=FORWARD_PE_NON_POSITIVE_CODE,
                 layer1_fail_reasons=None,
             )
         )
         assert expected in html, value
         assert "is above your" not in html, value
 
-    # ...and the same when the value is missing entirely.
+    # The control: the SAME non-positive value under the THRESHOLD code prints
+    # the threshold sentence. Serve does not second-guess the producer.
+    threshold_html = _render(
+        tool_b_row=_tool_b_row(
+            forward_pe=-4.2,
+            fundamental_check_fail_codes="FORWARD_PE_FAIL",
+            layer1_fail_reasons=None,
+        )
+    )
+    assert expected not in threshold_html
+    assert f"is above your {_forward_pe_cutoff()} cut-off." in threshold_html
+
+
+def test_a_fired_code_with_no_measured_value_says_so_instead_of_guessing():
+    """The code fired but the column it names is absent. Serve states WHICH
+    check failed and that the measurement is missing — it never invents a
+    reason (the fabricated "earnings are not positive" claim) and never prints
+    a comparison against a value it does not have."""
     missing = _tool_b_row(
         fundamental_check_fail_codes="FORWARD_PE_FAIL", layer1_fail_reasons=None
     )
     missing.pop("forward_pe", None)
     html = _render(tool_b_row=missing)
-    assert expected in html
+    assert (
+        "Forward P/E failed this check, but the measured value is unavailable." in html
+    )
+    assert "forward earnings are not positive" not in html
+    assert "is above your" not in html
     assert "n/a is above" not in html
+
+    # the healthy control: the same code WITH the value prints the comparison
+    present = _render(
+        tool_b_row=_tool_b_row(
+            forward_pe=12.6,
+            fundamental_check_fail_codes="FORWARD_PE_FAIL",
+            layer1_fail_reasons=None,
+        )
+    )
+    assert "the measured value is unavailable" not in present
 
 
 def test_fundamental_codes_never_double_report_a_layer1_check():
@@ -495,12 +538,21 @@ def test_every_upstream_fundamental_check_is_accounted_for():
     """Guardrail: a NEW check added to ``screening/verdicts.py`` must either
     gain a sentence here or be explicitly recorded as a layer-1 duplicate —
     it can never be added upstream and then silently never render."""
-    from golden_vector.screening.verdicts import FUNDAMENTAL_CHECK_ORDER
+    from golden_vector.screening.verdicts import (
+        FORWARD_PE_NON_POSITIVE_CODE,
+        FUNDAMENTAL_CHECK_ORDER,
+        LAYER1_CHECK_LABELS,
+    )
     from golden_vector.serve.ticker_page import corporate as C
 
-    #: Codes whose CONCEPT layer 1 already reports (identically named codes,
-    #: plus data-completeness, which layer 1 states per missing input).
-    layer1_duplicates = {"DATA_COMPLETE_FAIL"} | set(C._FAIL_SENTENCES)
+    #: Codes whose CONCEPT layer 1 already reports, built from LAYER 1's OWN
+    #: vocabulary (plus data-completeness, which layer 1 states per missing
+    #: input). Building this from the render registry instead makes the check
+    #: vacuous: that registry now holds fundamental-only codes too, so every
+    #: code would satisfy it and a forgotten wiring would still pass.
+    layer1_duplicates = {"DATA_COMPLETE_FAIL"} | {
+        f"{key.upper()}_FAIL" for key in LAYER1_CHECK_LABELS
+    }
 
     for key in FUNDAMENTAL_CHECK_ORDER:
         code = f"{key.upper()}_FAIL"
@@ -508,8 +560,16 @@ def test_every_upstream_fundamental_check_is_accounted_for():
             code in C._FUNDAMENTAL_ONLY_CODES or code in layer1_duplicates
         ), f"unhandled fundamental check code: {code}"
 
-    # ...and the one code we DO consume really is new to this page.
-    assert C._FUNDAMENTAL_ONLY_CODES == {"FORWARD_PE_FAIL"}
+    # ...and the codes we DO consume really are new to this page.
+    assert C._FUNDAMENTAL_ONLY_CODES == {
+        "FORWARD_PE_FAIL",
+        FORWARD_PE_NON_POSITIVE_CODE,
+    }
+    # every consumed code can actually produce a sentence
+    for code in C._FUNDAMENTAL_ONLY_CODES:
+        assert code in C._FAIL_SENTENCES or code in C._FAIL_STATEMENTS, code
+    # ...and every threshold sentence can degrade honestly when its column is gone
+    assert set(C._CHECK_NAMES) == set(C._FAIL_SENTENCES)
 
 
 # ---------------------------------------------------------------------------

@@ -6,11 +6,17 @@ from pathlib import Path
 
 import pandas as pd
 
+from golden_vector.app.config import load_app_config
+from golden_vector.app.paths import ProjectPaths
 from golden_vector.serve.ticker_page import (
     render_cost_downside_card,
     render_currency_attribution_block,
     render_performance_section,
 )
+
+
+def _app_config():
+    return load_app_config(ProjectPaths.discover()).app
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +161,31 @@ def test_performance_section_renders_series_basis_and_markers():
     assert "gdx last observation is 9 trading day(s) behind" in html.lower() or "GDX:" in html
 
 
+def test_performance_chart_has_an_accessible_data_table_twin():
+    """Every chart on this page carries a text equivalent; the performance
+    chart was the last one without. The twin must print the PUBLISHED values
+    verbatim — one row per drawn date, no recomputation, nothing truncated."""
+    html = render_performance_section(
+        _performance_rows(), ticker="AAR.AX", horizon="1Y", view="rebased"
+    )
+    assert "chart-data-details" in html
+    assert 'id="chart-data-performance-aar-ax-1y-rebased"' in html
+    assert "<summary>Chart data (table)</summary>" in html
+    # the fixture's five business days are all listed, none dropped
+    dates = [str(value.date()) for value in pd.bdate_range("2026-01-05", periods=5)]
+    for date in dates:
+        assert f"<th scope=\"row\">{date}</th>" in html
+    # ...and each cell is the fixture's own value, formatted once
+    for index, date in enumerate(dates):
+        value = 100.0 + index
+        label = "0%" if index == 0 else f"+{index}%"
+        assert f"<td>{value:.1f} ({label})</td>" in html, date
+    # both drawn series get a column; the omitted one is not invented
+    assert "<th scope=\"col\">Stock</th>" in html
+    assert "<th scope=\"col\">Gold</th>" in html
+    assert "<th scope=\"col\">GDX</th>" not in html
+
+
 def test_performance_section_price_view_shows_stock_alone():
     html = render_performance_section(
         _performance_rows(), ticker="AAR.AX", horizon="1Y", view="price"
@@ -231,6 +262,7 @@ def test_cost_downside_card_shows_exact_evidence_and_caveat():
         source_verification_status=None,
         source_verification_date=None,
     )
+    config = _app_config()
     html = render_cost_downside_card(
         ticker="AAR.AX",
         aisc_row=_metric_row(),
@@ -239,6 +271,7 @@ def test_cost_downside_card_shows_exact_evidence_and_caveat():
         downside_peers=_peers(
             "downside_hit_rate", {"AAR.AX": 0.0526, "BBB": 0.20, "CCC": 0.10}
         ),
+        app_config=config,
     )
     assert "Cost position and downside record" in html
     assert "$1,419/oz" in html
@@ -248,7 +281,16 @@ def test_cost_downside_card_shows_exact_evidence_and_caveat():
     assert "3 large falls in 57 qualifying weak-gold weeks" in html
     assert "5.3%" in html
     assert "Period 2016-02-05 to 2026-07-31" in html
-    assert "ordinary weekly price return of −10% or worse" in html
+    # The large-fall cut-off is stated ONCE, resolved from config by the help
+    # registry — the card carries no hardcoded twin of that number.
+    cutoff = (
+        f"A large fall is a weekly price return of "
+        f"{config.tool_c.downside_hit_rate_threshold_pct:.0f}% or worse."
+    )
+    assert cutoff in html
+    # ...and the deleted hardcoded twin (its own wording, with a typographic
+    # minus) is really gone rather than merely duplicated somewhere else.
+    assert "ordinary weekly price return of −10% or worse" not in html
     # peer disclosure closed by default with its accessible table twin
     assert "<details" in html and "Peer relationship" in html
     assert "no fitted line" in html
