@@ -25,6 +25,10 @@ from golden_vector.contracts.ticker_page import (
     PERFORMANCE_COLUMNS,
     RESEARCH_SERIES_COLUMNS,
 )
+from golden_vector.contracts.tool_d import (
+    TOOL_D_OUTPUT_COLUMNS,
+    TOOL_D_SCHEMA_VERSION,
+)
 from golden_vector.ingestion.persist_ticker_page import persist_ticker_page_artifacts
 from golden_vector.model.gold_lines import GoldLine, evaluate
 from golden_vector.model.ticker_page import (
@@ -374,15 +378,31 @@ def _tool_d_frame() -> pd.DataFrame:
         [
             {
                 "ticker": "AAA",
+                "finance_source": "our",
                 "as_of_date": "2026-06-01",
                 "resilience_data_status": "OK",
                 "survival_distance_to_interest_cover_pct": 0.4,
             },
             {
+                "ticker": "AAA",
+                "finance_source": "yahoo",
+                "as_of_date": "2026-06-01",
+                "resilience_data_status": "OK",
+                "survival_distance_to_interest_cover_pct": 0.1,
+            },
+            {
                 "ticker": "BBB",
+                "finance_source": "our",
                 "as_of_date": "2026-06-01",
                 "resilience_data_status": "DEGRADED",
                 "survival_distance_to_interest_cover_pct": 0.9,
+            },
+            {
+                "ticker": "BBB",
+                "finance_source": "yahoo",
+                "as_of_date": "2026-06-01",
+                "resilience_data_status": "OK",
+                "survival_distance_to_interest_cover_pct": 0.8,
             },
         ]
     )
@@ -468,17 +488,67 @@ def test_percentiles_tool_d_requires_ok_status(score_config):
     assert bool(survival.loc["AAA", "metric_available"])
     assert not bool(survival.loc["BBB", "metric_available"])
     assert survival.loc["BBB", "rank_exclusion_reason"] == "resilience_data_not_ok"
-    # C6: the approved plan disables resilience in Yahoo mode entirely.
-    # Rows still exist (the source toggle finds a complete set) but are
-    # unavailable, carry null percentiles, and state the exact approved reason.
+    # Phase 2: Yahoo uses its own persisted Tool D cohort, never Our View's row.
     yahoo = frame[
         (frame["metric_key"] == "survival_distance") & (frame["finance_source"] == "yahoo")
     ].set_index("ticker")
     assert not yahoo.empty
-    assert not yahoo["metric_available"].any()
-    assert yahoo["pct_high_good"].isna().all()
-    assert yahoo["pct_low_good"].isna().all()
-    assert set(yahoo["metric_reason"]) == {"resilience is computed on Our View inputs"}
+    assert yahoo.loc[["AAA", "BBB"], "metric_available"].all()
+    assert yahoo.loc["AAA", "raw_value"] == pytest.approx(0.1)
+    assert yahoo.loc["BBB", "raw_value"] == pytest.approx(0.8)
+    assert set(yahoo["eligible_peer_count"]) == {2}
+    # Our View's BBB row is degraded, but that never contaminates Yahoo.
+    assert bool(yahoo.loc["BBB", "rank_eligible"])
+    assert set(survival["eligible_peer_count"]) == {1}
+
+
+def test_percentiles_tool_d_missing_source_never_borrows_the_other_source(score_config):
+    tool_d = _tool_d_frame()
+    tool_d = tool_d[
+        ~(
+            tool_d["ticker"].eq("AAA")
+            & tool_d["finance_source"].eq("yahoo")
+        )
+    ]
+    frame = build_score_percentiles(
+        app_config=score_config,
+        tool_a_latest=_tool_a_frame(),
+        tool_b_latest_by_source={
+            "our": _tool_b_frame({"AAA": 0.30, "BBB": 0.10}),
+            "yahoo": _tool_b_frame({"AAA": 0.05, "BBB": 0.40}),
+        },
+        tool_c_latest=pd.DataFrame(),
+        tool_d_latest=tool_d,
+        configured_universe=["AAA", "BBB"],
+    )
+    survival = frame[frame["metric_key"].eq("survival_distance")].set_index(
+        ["ticker", "finance_source"]
+    )
+
+    missing = survival.loc[("AAA", "yahoo")]
+    assert not bool(missing["metric_available"])
+    assert missing["metric_reason"] == "no_source_row"
+    assert pd.isna(missing["raw_value"])
+    assert pd.isna(missing["pct_high_good"])
+    # The Our sentinel remains visible only on the Our key.
+    assert survival.loc[("AAA", "our"), "raw_value"] == pytest.approx(0.4)
+
+
+def test_percentiles_tool_d_rejects_duplicate_composite_keys(score_config):
+    tool_d = _tool_d_frame()
+    tool_d = pd.concat([tool_d, tool_d.iloc[[0]]], ignore_index=True)
+
+    with pytest.raises(ValueError, match=r"duplicate composite key \(AAA, our\)"):
+        build_score_percentiles(
+            app_config=score_config,
+            tool_a_latest=_tool_a_frame(),
+            tool_b_latest_by_source={
+                "our": _tool_b_frame({"AAA": 0.30, "BBB": 0.10}),
+                "yahoo": _tool_b_frame({"AAA": 0.05, "BBB": 0.40}),
+            },
+            tool_c_latest=pd.DataFrame(),
+            tool_d_latest=tool_d,
+        )
 
 
 def test_percentiles_are_persisted_rounded_to_one_decimal(score_config):
@@ -1326,25 +1396,110 @@ def test_c6_custom_tool_d_scenario_cannot_enter_spot_ticker_build():
 
     from golden_vector.app.ticker_page_stage import _assert_tool_d_is_spot
 
-    spot_frame = pd.DataFrame(
-        [
-            {"ticker": "AAA", "gold_price_used": 4000.0, "spot_gold_usd": 4000.0},
-            {"ticker": "BBB", "gold_price_used": 4000.0, "spot_gold_usd": 4000.0},
-        ]
-    )
-    assert _assert_tool_d_is_spot(spot_frame) is spot_frame
+    def v4_frame() -> pd.DataFrame:
+        rows = []
+        for ticker in ("AAA", "BBB"):
+            for source in ("our", "yahoo"):
+                row = {column: None for column in TOOL_D_OUTPUT_COLUMNS}
+                row.update(
+                    {
+                        "ticker": ticker,
+                        "finance_source": source,
+                            "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                            "as_of_date": "2026-06-01",
+                            "source_run_id": "tool-d-run",
+                            "snapshot_refresh_run_id": "refresh-run",
+                            "gold_price_used": 4000.0,
+                        "spot_gold_usd": 4000.0,
+                        "resilience_data_status": "OK",
+                    }
+                )
+                rows.append(row)
+        return pd.DataFrame(rows, columns=TOOL_D_OUTPUT_COLUMNS)
 
-    scenario_frame = pd.DataFrame(
-        [
-            {"ticker": "AAA", "gold_price_used": 3000.0, "spot_gold_usd": 4000.0},
-        ]
-    )
+    spot_frame = v4_frame()
+    assert _assert_tool_d_is_spot(
+        spot_frame, active_tickers=["AAA", "BBB"]
+    ) is spot_frame
+
+    scenario_frame = v4_frame()
+    scenario_frame.loc[:, "gold_price_used"] = 3000.0
     with _pytest.raises(ValueError, match="at-spot"):
-        _assert_tool_d_is_spot(scenario_frame)
+        _assert_tool_d_is_spot(scenario_frame, active_tickers=["AAA", "BBB"])
 
-    missing_column_frame = pd.DataFrame([{"ticker": "AAA", "gold_price_used": 4000.0}])
+    missing_column_frame = v4_frame().drop(columns=["spot_gold_usd"])
     with _pytest.raises(ValueError, match="spot_gold_usd"):
-        _assert_tool_d_is_spot(missing_column_frame)
+        _assert_tool_d_is_spot(missing_column_frame, active_tickers=["AAA", "BBB"])
+
+
+def test_tool_d_spot_v4_requires_both_sources_for_active_tool_b_universe():
+    from golden_vector.app.ticker_page_stage import _assert_tool_d_is_spot
+
+    rows = []
+    for source in ("our", "yahoo"):
+        row = {column: None for column in TOOL_D_OUTPUT_COLUMNS}
+        row.update(
+            {
+                "ticker": "AAA",
+                "finance_source": source,
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                "as_of_date": "2026-06-01",
+                "gold_price_used": 4000.0,
+                "spot_gold_usd": 4000.0,
+                "resilience_data_status": "OK",
+            }
+        )
+        rows.append(row)
+    frame = pd.DataFrame(rows, columns=TOOL_D_OUTPUT_COLUMNS)
+
+    with pytest.raises(ValueError, match=r"missing expected .*\(BBB, our\)"):
+        _assert_tool_d_is_spot(frame, active_tickers=["AAA", "BBB"])
+
+
+def test_tool_d_spot_v3_migration_is_explicit_our_only_and_rejects_mixed_versions():
+    from golden_vector.app.ticker_page_stage import _assert_tool_d_is_spot
+
+    legacy = pd.DataFrame(
+        [
+            {
+                "ticker": "AAA",
+                "finance_source": "our",
+                "tool_d_schema_version": 3,
+                "gold_price_used": 4000.0,
+                "spot_gold_usd": 4000.0,
+            },
+            {
+                "ticker": "BBB",
+                "finance_source": "our",
+                "tool_d_schema_version": 3,
+                "gold_price_used": 4000.0,
+                "spot_gold_usd": 4000.0,
+            },
+        ]
+    )
+    assert _assert_tool_d_is_spot(
+        legacy, active_tickers=["AAA", "BBB"]
+    ) is legacy
+
+    yahoo = legacy.copy()
+    yahoo.loc[0, "finance_source"] = "yahoo"
+    with pytest.raises(ValueError, match="Our View rows only"):
+        _assert_tool_d_is_spot(yahoo, active_tickers=["AAA", "BBB"])
+
+    mixed = legacy.copy()
+    mixed.loc[0, "tool_d_schema_version"] = TOOL_D_SCHEMA_VERSION
+    with pytest.raises(ValueError, match="mixes unsupported schema versions"):
+        _assert_tool_d_is_spot(mixed, active_tickers=["AAA", "BBB"])
+
+    malformed = legacy.copy()
+    malformed.loc[0, "tool_d_schema_version"] = None
+    with pytest.raises(ValueError, match="missing or malformed"):
+        _assert_tool_d_is_spot(malformed, active_tickers=["AAA", "BBB"])
+
+    fractional = legacy.copy()
+    fractional["tool_d_schema_version"] = 3.9
+    with pytest.raises(ValueError, match="unsupported or fractional"):
+        _assert_tool_d_is_spot(fractional, active_tickers=["AAA", "BBB"])
 
 
 def test_c4_weekly_points_keep_actual_trading_dates_never_invented_fridays(chart_config):

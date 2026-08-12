@@ -412,6 +412,34 @@ def _indexed(frame: pd.DataFrame | None) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _indexed_by_source(
+    frame: pd.DataFrame | None,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Index Tool D by its v4 composite key without cross-source fallback."""
+
+    if (
+        frame is None
+        or frame.empty
+        or "ticker" not in frame.columns
+        or "finance_source" not in frame.columns
+    ):
+        return {}
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for record in frame.to_dict(orient="records"):
+        key = (
+            str(record.get("ticker") or "").strip().upper(),
+            str(record.get("finance_source") or "").strip().lower(),
+        )
+        if key[0] and key[1] in FINANCE_SOURCES:
+            if key in out:
+                raise ValueError(
+                    "Tool D percentile input has duplicate composite key "
+                    f"({key[0]}, {key[1]})"
+                )
+            out[key] = record
+    return out
+
+
 def _as_of_text(record: dict[str, Any]) -> str | None:
     for column in ("as_of_date", "source_as_of_date", "snapshot_as_of_date"):
         value = record.get(column)
@@ -424,11 +452,6 @@ def _as_of_text(record: dict[str, Any]) -> str | None:
             pass
         return str(value)
     return None
-
-
-#: Exact approved plan wording - shown as the reason whenever Yahoo mode asks
-#: for a resilience (Tool D) metric.
-YAHOO_TOOL_D_UNAVAILABLE_REASON = "resilience is computed on Our View inputs"
 
 
 def _tool_b_metric_eligibility(
@@ -538,10 +561,10 @@ def build_score_percentiles(
 ) -> pd.DataFrame:
     """Build the per-(ticker, finance_source, metric) percentile artifact (§7).
 
-    Driven entirely by ``app_config.ticker_page.score_builder.metrics``. Tool A /
-    Tool C / Tool D metrics are source-independent, but both source variants are
-    emitted with identical values so the page's source toggle always finds a
-    complete set.
+    Driven entirely by ``app_config.ticker_page.score_builder.metrics``. Tool A
+    and Tool C metrics remain source-independent. Tool B and Tool D select an
+    exact finance-source row and build percentiles from that source's cohort;
+    a missing source is explicit and never borrows the other source's value.
     """
 
     del source_run_ids  # provenance is stamped by the persistence layer (§5.6)
@@ -550,7 +573,7 @@ def build_score_percentiles(
     verification_lookup = _verification_lookup(source_verification)
     tool_a = _indexed(tool_a_latest)
     tool_c = _indexed(tool_c_latest)
-    tool_d = _indexed(tool_d_latest)
+    tool_d = _indexed_by_source(tool_d_latest)
     tool_b = {
         source: _indexed(tool_b_latest_by_source.get(source))
         for source in FINANCE_SOURCES
@@ -563,7 +586,7 @@ def build_score_percentiles(
         {str(t).upper() for t in (configured_universe or [])}
         | set(tool_a)
         | set(tool_c)
-        | set(tool_d)
+        | {ticker for ticker, _source in tool_d}
         | {ticker for source_rows in tool_b.values() for ticker in source_rows}
     )
 
@@ -575,11 +598,11 @@ def build_score_percentiles(
             elif spec.source_tool == "tool_c":
                 records = tool_c
             elif spec.source_tool == "tool_d":
-                # C6: the approved plan disables resilience in Yahoo mode -
-                # "resilience is computed on Our View inputs". Yahoo rows exist
-                # (the source toggle always finds a complete set) but are
-                # unavailable with null percentiles and the exact reason.
-                records = {} if finance_source == "yahoo" else tool_d
+                records = {
+                    ticker: record
+                    for (ticker, source), record in tool_d.items()
+                    if source == finance_source
+                }
             elif spec.source_tool == "tool_b":
                 records = tool_b[finance_source]
             else:  # pragma: no cover - config validator bans other tools
@@ -596,12 +619,7 @@ def build_score_percentiles(
                 in_pool = True
                 forced_pct: tuple[float, float] | None = None
 
-                if spec.source_tool == "tool_d" and finance_source == "yahoo":
-                    available = False
-                    metric_reason = YAHOO_TOOL_D_UNAVAILABLE_REASON
-                    rank_eligible = False
-                    exclusion_reason = YAHOO_TOOL_D_UNAVAILABLE_REASON
-                elif not record:
+                if not record:
                     available = False
                     metric_reason = "no_source_row"
                 elif spec.source_column not in record:

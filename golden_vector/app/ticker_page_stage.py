@@ -40,6 +40,10 @@ from golden_vector.contracts.ticker_page import (
     RESEARCH_SERIES_COLUMNS,
     empty_artifact_frame,
 )
+from golden_vector.contracts.tool_d import (
+    TOOL_D_SCHEMA_VERSION,
+    validate_tool_d_output_frame,
+)
 from golden_vector.features.horizons import build_core_horizons
 from golden_vector.features.returns import compute_horizon_returns_for_ticker
 from golden_vector.ingestion.persist_ticker_page import persist_ticker_page_artifacts
@@ -215,7 +219,10 @@ def load_ticker_page_stage_inputs(
                 "four tool artifacts. Run `python main.py refresh` first."
             )
         tool_frames[name] = pd.read_parquet(path)
-    tool_frames["tool_d"] = _assert_tool_d_is_spot(tool_frames.pop("tool_d_spot"))
+    tool_frames["tool_d"] = _assert_tool_d_is_spot(
+        tool_frames.pop("tool_d_spot"),
+        active_tickers=_tool_b_universe(app_config),
+    )
 
     structural_path = (
         resolve_current_model_artifact_path(
@@ -661,7 +668,11 @@ def _read_json_object(path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _assert_tool_d_is_spot(frame: pd.DataFrame) -> pd.DataFrame:
+def _assert_tool_d_is_spot(
+    frame: pd.DataFrame,
+    *,
+    active_tickers: list[str] | tuple[str, ...] | None = None,
+) -> pd.DataFrame:
     """C6: prove the resolved Tool D generation really is the at-spot run.
 
     Every row must have gold_price_used == spot_gold_usd within tolerance; a
@@ -669,7 +680,55 @@ def _assert_tool_d_is_spot(frame: pd.DataFrame) -> pd.DataFrame:
     economics as "at spot". Required data -> fail loud, not degrade.
     """
     if frame.empty:
+        if active_tickers:
+            raise ValueError(
+                "tool_d_spot artifact is empty for a non-empty active Tool B universe"
+            )
         return frame
+
+    if "tool_d_schema_version" not in frame.columns:
+        raise ValueError(
+            "tool_d_spot artifact lacks required column 'tool_d_schema_version'; "
+            "cannot determine migration semantics."
+        )
+    versions = pd.to_numeric(frame["tool_d_schema_version"], errors="coerce")
+    if versions.isna().any():
+        raise ValueError(
+            "tool_d_spot artifact has missing or malformed tool_d_schema_version values"
+        )
+    unique_numeric_versions = set(versions.unique().tolist())
+    if any(value not in {3.0, float(TOOL_D_SCHEMA_VERSION)} for value in unique_numeric_versions):
+        raise ValueError(
+            "tool_d_spot artifact has unsupported or fractional "
+            "tool_d_schema_version values: "
+            + ", ".join(str(value) for value in sorted(unique_numeric_versions))
+        )
+    unique_versions = {int(value) for value in unique_numeric_versions}
+    if len(unique_versions) != 1:
+        raise ValueError(
+            "tool_d_spot artifact mixes unsupported schema versions: "
+            + ", ".join(str(value) for value in sorted(unique_versions))
+        )
+    version = next(iter(unique_versions))
+    if version not in {3, TOOL_D_SCHEMA_VERSION}:
+        raise ValueError(
+            f"tool_d_spot artifact schema version {version} is unsupported; "
+            f"expected legacy 3 or current {TOOL_D_SCHEMA_VERSION}."
+        )
+
+    if version == TOOL_D_SCHEMA_VERSION:
+        violations = validate_tool_d_output_frame(
+            frame,
+            expected_tickers=active_tickers,
+            require_complete_sources=True,
+        )
+        if violations:
+            raise ValueError(
+                "tool_d_spot schema v4 contract failed: " + "; ".join(violations)
+            )
+    else:
+        _validate_legacy_tool_d_v3(frame, active_tickers=active_tickers)
+
     for column in ("gold_price_used", "spot_gold_usd"):
         if column not in frame.columns:
             raise ValueError(
@@ -689,6 +748,45 @@ def _assert_tool_d_is_spot(frame: pd.DataFrame) -> pd.DataFrame:
             "never enter the ticker page's at-spot percentiles."
         )
     return frame
+
+
+def _validate_legacy_tool_d_v3(
+    frame: pd.DataFrame,
+    *,
+    active_tickers: list[str] | tuple[str, ...] | None,
+) -> None:
+    """Accept only the explicit v3 Our-only migration shape.
+
+    A v3 generation predates composite identity. It may keep serving Our View,
+    while Yahoo remains rebuild-required; it must never be reinterpreted as a
+    partial v4 generation or contain a Yahoo row.
+    """
+
+    for column in ("ticker", "finance_source"):
+        if column not in frame.columns:
+            raise ValueError(
+                f"legacy tool_d_spot v3 artifact lacks required column {column!r}"
+            )
+    sources = {
+        str(value).strip().lower()
+        for value in frame["finance_source"].dropna().tolist()
+    }
+    if sources != {"our"} or frame["finance_source"].isna().any():
+        raise ValueError(
+            "legacy tool_d_spot schema v3 must contain canonical Our View rows only"
+        )
+    tickers = frame["ticker"].astype(str).str.strip().str.upper()
+    if tickers.eq("").any() or tickers.duplicated().any():
+        raise ValueError("legacy tool_d_spot schema v3 has blank or duplicate ticker rows")
+    if active_tickers is not None:
+        expected = {str(value).strip().upper() for value in active_tickers if str(value).strip()}
+        missing = sorted(expected.difference(tickers.tolist()))
+        unexpected = sorted(set(tickers.tolist()).difference(expected))
+        if missing or unexpected:
+            raise ValueError(
+                "legacy tool_d_spot schema v3 ticker coverage differs from active Tool B: "
+                f"missing={missing}, unexpected={unexpected}"
+            )
 
 
 def _stock_common_end(performance: pd.DataFrame, ticker: str) -> pd.Timestamp | None:

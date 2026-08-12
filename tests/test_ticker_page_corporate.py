@@ -29,11 +29,11 @@ from golden_vector.contracts.ticker_page import (
     GOLD_RESPONSE_CONSTANT_COLUMNS,
     GOLD_RESPONSE_LINE_METRICS,
 )
+from golden_vector.contracts.tool_d import YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
 from golden_vector.serve.embed import embed_json_payload
 from golden_vector.serve.ticker_page import (
     GOLD_DIAL_PAYLOAD_ID,
     TickerPageData,
-    YAHOO_RESILIENCE_REASON,
     render_corporate_finance_section,
     render_gold_dial_control,
 )
@@ -163,6 +163,7 @@ def _render(
     finance_source: str = "our",
     tool_b_row: dict[str, object] | None = None,
     tool_d_row: dict[str, object] | None = None,
+    tool_d_reason: str | None = None,
     app_config=None,
 ) -> str:
     return render_corporate_finance_section(
@@ -171,6 +172,7 @@ def _render(
         finance_source=finance_source,
         tool_b_row=_tool_b_row() if tool_b_row is None else tool_b_row,
         tool_d_row=_tool_d_row() if tool_d_row is None else tool_d_row,
+        tool_d_reason=tool_d_reason,
         app_config=app_config if app_config is not None else _app_config(),
     )
 
@@ -611,19 +613,31 @@ def test_ev_ebitda_and_forward_pe_help_text_explain_the_inversion():
     assert 'data-help-title="Forward P/E"' in html
 
 
-def test_resilience_is_disabled_in_yahoo_mode_with_the_exact_reason():
+def test_resilience_renders_selected_yahoo_row_with_hybrid_basis():
     html = _render(
         data=_data(_gold_row(finance_source="yahoo")),
         finance_source="yahoo",
+        tool_d_row=_tool_d_row(
+            finance_source="yahoo",
+            interest_cover_gold_usd=987.0,
+        ),
     )
-    assert YAHOO_RESILIENCE_REASON == "resilience is computed on Our View inputs"
-    assert (
-        "Resilience is disabled in Yahoo Fundamentals mode: "
-        "resilience is computed on Our View inputs." in html
+    assert "Yahoo financials · Our View mining assumptions" in html
+    assert "Interest-cover gold" in html
+    assert "$987/oz" in html
+    assert "$1,251/oz" not in html
+
+
+def test_resilience_missing_legacy_yahoo_row_shows_contract_rebuild_reason():
+    html = _render(
+        data=_data(_gold_row(finance_source="yahoo")),
+        finance_source="yahoo",
+        tool_d_row={},
+        tool_d_reason=YAHOO_TOOL_D_REBUILD_REQUIRED_REASON,
     )
-    # the Our-View numbers must not leak into Yahoo mode
+
+    assert YAHOO_TOOL_D_REBUILD_REQUIRED_REASON in html
     assert "Interest-cover gold" not in html
-    assert "Survival distance" not in html
 
 
 def test_resilience_renders_persisted_tool_d_values_in_our_view_mode():

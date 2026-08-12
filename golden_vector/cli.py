@@ -8,7 +8,7 @@ import logging
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timezone
 from pathlib import Path
 from time import perf_counter
@@ -18,6 +18,7 @@ from uuid import uuid4
 import pandas as pd
 
 from golden_vector.common.numeric import require_finite_positive
+from golden_vector.common.stage_timing import record_step_timing
 from golden_vector.common.status import combine_statuses as _combine_statuses
 from golden_vector.common.parquet import read_optional_parquet
 from golden_vector.app.config import load_app_config
@@ -68,7 +69,15 @@ from golden_vector.app.ticker_page_stage import (
 )
 from golden_vector.features.horizons import parse_requested_horizons
 from golden_vector.features.returns import RETURN_COLUMNS, compute_horizon_returns_for_ticker
-from golden_vector.fundamentals.artifacts import load_official_fundamentals
+from golden_vector.contracts.ticker_page import FINANCE_SOURCES
+from golden_vector.contracts.tool_d import (
+    TOOL_D_SCHEMA_VERSION,
+    validate_tool_d_output_frame,
+)
+from golden_vector.fundamentals.artifacts import (
+    load_official_fundamentals,
+    load_official_fundamentals_with_source_path,
+)
 from golden_vector.fundamentals.fetch import fetch_and_publish_fundamentals
 from golden_vector.hedge.comparison import COMPARISON_SORT_COLUMNS
 from golden_vector.hedge.option_artifact_builder import (
@@ -1647,6 +1656,69 @@ def run_tool_d(
     *,
     gold_price: float | None,
     _use_model_state_inputs: bool = True,
+    lock_held: bool = False,
+) -> int:
+    """Build and publish Tool D under the shared refresh writer lock."""
+
+    if lock_held:
+        return _run_tool_d_unlocked(
+            paths,
+            gold_price=gold_price,
+            _use_model_state_inputs=_use_model_state_inputs,
+        )
+
+    command = ["python", "main.py", "tool-d"]
+    if gold_price is not None:
+        command.extend(("--gold-price", str(gold_price)))
+    lock = acquire_refresh_lock(
+        paths,
+        command=command,
+        adopted_job_id=os.environ.get(REFRESH_JOB_ID_ENV),
+    )
+    if lock.already_running:
+        status = lock.status
+        pid = f", PID {status.process_id}" if status.process_id is not None else ""
+        LOGGER.error(
+            "Tool D publish skipped: a refresh/publish is already running%s.",
+            pid,
+        )
+        return 2
+    if not lock.started or lock.status.job_id is None:
+        LOGGER.error("Could not acquire the Tool D publish lock; aborting.")
+        return 2
+
+    exit_code = 1
+    error_summary: str | None = None
+    try:
+        exit_code = _run_tool_d_unlocked(
+            paths,
+            gold_price=gold_price,
+            _use_model_state_inputs=_use_model_state_inputs,
+        )
+        if exit_code != 0:
+            error_summary = (
+                f"tool-d failed with exit code {exit_code}; "
+                "inspect the latest Tool D run metadata and log for details"
+            )
+        return exit_code
+    except Exception as exc:
+        error_summary = str(exc)
+        raise
+    finally:
+        if not lock.adopted:
+            complete_options_refresh(
+                paths,
+                job_id=lock.status.job_id,
+                return_code=exit_code,
+                error_summary=error_summary,
+            )
+
+
+def _run_tool_d_unlocked(
+    paths: ProjectPaths,
+    *,
+    gold_price: float | None,
+    _use_model_state_inputs: bool,
 ) -> int:
     run_context: RunContext | None = None
 
@@ -1665,6 +1737,7 @@ def run_tool_d(
         tool_b_enabled = [
             ticker for ticker in active_tickers if ticker.tool_b_enabled
         ]
+        expected_tickers = tuple(sorted(ticker.ticker for ticker in tool_b_enabled))
         config_summary = {
             "configured_ticker_count": len(configured_tickers),
             "active_ticker_count": len(active_tickers),
@@ -1720,33 +1793,83 @@ def run_tool_d(
         )
         manual_data = load_manual_screening_data(
             paths,
-            tickers=sorted(
-                ticker.ticker
-                for ticker in loaded_config.app.universe.tickers
-                if ticker.active and ticker.tool_b_enabled
-            ),
+            tickers=list(expected_tickers),
         )
-        official_fundamentals = load_official_fundamentals(
-            paths,
-            prefer_latest_alias=not _use_model_state_inputs,
+        official_fundamentals, official_fundamentals_path = (
+            load_official_fundamentals_with_source_path(
+                paths,
+                prefer_latest_alias=not _use_model_state_inputs,
+                require_immutable_source=True,
+            )
         )
-        tool_d_outputs = compute_tool_d_outputs(
-            inputs=ToolDExecutionInputs(
-                app_config=loaded_config.app,
-                manual_data=manual_data,
-                normalized_market_snapshots=foundation_snapshot.normalized_market_snapshots,
-                tool_b_latest=tool_b_latest,
-                spot_gold_usd=spot_gold_usd,
-                spot_gold_date=spot_gold_date,
-                snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
-                snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
-                official_fundamentals=official_fundamentals,
-            ),
-            config=loaded_config.app.tool_d,
-            gold_price=resolved_gold_price,
-            source_run_id=run_context.run_id,
+        base_inputs = ToolDExecutionInputs(
+            app_config=loaded_config.app,
+            manual_data=manual_data,
+            normalized_market_snapshots=foundation_snapshot.normalized_market_snapshots,
+            tool_b_latest=tool_b_latest,
+            spot_gold_usd=spot_gold_usd,
+            spot_gold_date=spot_gold_date,
+            snapshot_refresh_run_id=foundation_snapshot.refresh_run_id,
+            snapshot_as_of_date=foundation_snapshot.snapshot_as_of_date,
+            official_fundamentals=official_fundamentals,
         )
-        persist_tool_d_outputs(
+
+        tool_d_stage_timings: dict[str, dict[str, object]] = {}
+        source_frames: dict[str, pd.DataFrame] = {}
+        source_summaries: dict[str, dict[str, object]] = {}
+        for finance_source in FINANCE_SOURCES:
+            started_at = perf_counter()
+            source_frame = compute_tool_d_outputs(
+                inputs=replace(base_inputs, finance_source=finance_source),
+                config=loaded_config.app.tool_d,
+                gold_price=resolved_gold_price,
+                source_run_id=run_context.run_id,
+            )
+            source_frames[finance_source] = source_frame
+            source_summary = _tool_d_source_summary(source_frame)
+            source_summaries[finance_source] = source_summary
+            record_step_timing(
+                tool_d_stage_timings,
+                f"compute_{finance_source}",
+                started_at,
+                rows_built=len(source_frame.index),
+                extra={
+                    "finance_source": finance_source,
+                    "ranked_rows": source_summary["ranked_rows"],
+                    "status_counts": source_summary["status_counts"],
+                },
+            )
+
+        tool_d_outputs = pd.concat(
+            [source_frames[source] for source in FINANCE_SOURCES],
+            ignore_index=True,
+        )
+        tool_d_outputs.attrs["schema_version"] = TOOL_D_SCHEMA_VERSION
+        tool_d_outputs.attrs["source_run_id"] = run_context.run_id
+        tool_d_outputs.attrs["snapshot_refresh_run_id"] = (
+            foundation_snapshot.refresh_run_id
+        )
+
+        started_at = perf_counter()
+        violations = validate_tool_d_output_frame(
+            tool_d_outputs,
+            expected_tickers=expected_tickers,
+            require_complete_sources=True,
+        )
+        record_step_timing(
+            tool_d_stage_timings,
+            "validate_generation",
+            started_at,
+            rows_built=len(tool_d_outputs.index),
+            extra={"violation_count": len(violations)},
+        )
+        if violations:
+            raise ValueError(
+                "Tool D output does not satisfy schema v4: " + "; ".join(violations)
+            )
+
+        started_at = perf_counter()
+        written_paths = persist_tool_d_outputs(
             paths=paths,
             run_context=run_context,
             tool_d_outputs=tool_d_outputs,
@@ -1754,33 +1877,49 @@ def run_tool_d(
                 paths=paths,
                 foundation_snapshot=foundation_snapshot,
                 tool_b_latest_path=tool_b_latest_path,
+                official_fundamentals_path=official_fundamentals_path,
             ),
             provenance_metadata={
                 "gold_price_used": resolved_gold_price,
                 "spot_gold_usd": spot_gold_usd,
                 "spot_gold_date": spot_gold_date,
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
             },
             publish_latest_aliases=not tool_d_outputs.empty,
             publish_spot_latest_aliases=(
                 not tool_d_outputs.empty
                 and _is_same_gold_price(resolved_gold_price, spot_gold_usd)
             ),
+            expected_tickers=expected_tickers,
         )
+        record_step_timing(
+            tool_d_stage_timings,
+            "persist_generation",
+            started_at,
+            rows_built=len(tool_d_outputs.index),
+            rows_persisted=len(tool_d_outputs.index),
+            extra={"written_file_count": len(written_paths)},
+        )
+        for finance_source in FINANCE_SOURCES:
+            tool_d_stage_timings[f"compute_{finance_source}"]["rows_persisted"] = int(
+                len(source_frames[finance_source].index)
+            )
 
-        ranked = (
-            int(tool_d_outputs["tool_d_quality_rank"].notna().sum())
-            if "tool_d_quality_rank" in tool_d_outputs.columns
-            else 0
+        ranked = sum(
+            int(source_summaries[source]["ranked_rows"])
+            for source in FINANCE_SOURCES
         )
-        tool_d_status = "PASS"
-        if tool_d_outputs.empty:
-            tool_d_status = "FAIL"
-        elif ranked == 0:
-            tool_d_status = "WARN"
+        tool_d_status = _combine_statuses(
+            *(str(source_summaries[source]["status"]) for source in FINANCE_SOURCES)
+        )
         summary = {
+            "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
             "tool_d_output_row_count": len(tool_d_outputs.index),
             "tool_d_ranked_row_count": ranked,
             "tool_d_output_overall_status": tool_d_status,
+            "tool_d_source_summaries": source_summaries,
+            "tool_d_stage_timings": tool_d_stage_timings,
+            "tool_d_written_file_count": len(written_paths),
             "gold_price_used": resolved_gold_price,
             "spot_gold_usd": spot_gold_usd,
             "spot_gold_date": spot_gold_date,
@@ -1845,6 +1984,38 @@ def run_tool_d(
 
 def _is_same_gold_price(left: float, right: float) -> bool:
     return abs(float(left) - float(right)) <= 0.01
+
+
+def _tool_d_source_summary(frame: pd.DataFrame) -> dict[str, object]:
+    ranked_rows = (
+        int(frame["tool_d_quality_rank"].notna().sum())
+        if "tool_d_quality_rank" in frame.columns
+        else 0
+    )
+    status_counts = (
+        {
+            str(status): int(count)
+            for status, count in frame["resilience_data_status"]
+            .fillna("MISSING")
+            .astype(str)
+            .value_counts()
+            .sort_index()
+            .items()
+        }
+        if "resilience_data_status" in frame.columns
+        else {}
+    )
+    status = "PASS"
+    if frame.empty:
+        status = "FAIL"
+    elif ranked_rows == 0:
+        status = "WARN"
+    return {
+        "rows": int(len(frame.index)),
+        "ranked_rows": ranked_rows,
+        "status_counts": status_counts,
+        "status": status,
+    }
 
 
 def run_ticker_page(
@@ -3373,11 +3544,14 @@ def _tool_d_source_paths(
     paths: ProjectPaths,
     foundation_snapshot: LatestFoundationSnapshot,
     tool_b_latest_path: Path,
+    official_fundamentals_path: Path | None,
 ) -> dict[str, Path]:
     source_paths: dict[str, Path] = {
         "tool_b_latest": tool_b_latest_path,
         "manual_screening_store": paths.manual_screening_store_path,
     }
+    if official_fundamentals_path is not None:
+        source_paths["official_fundamentals"] = official_fundamentals_path
     try:
         manifest = json.loads(foundation_snapshot.manifest_path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001 - source capture degrades to available files.
@@ -3831,6 +4005,7 @@ def _run_refresh_unlocked(
             paths,
             gold_price=None,
             _use_model_state_inputs=False,
+            lock_held=True,
         )
         record_step("tool_d", started_at, tool_d_exit)
         if tool_d_exit != 0:
@@ -3838,6 +4013,7 @@ def _run_refresh_unlocked(
             print("tool-d failed (exit code {}).".format(tool_d_exit))
             run_status(paths)
             return tool_d_exit
+        _attach_tool_d_stage_details(paths, stage_timings["tool_d"])
         fault_exit = injected_fault_after("tool_d")
         if fault_exit is not None:
             return fault_exit
@@ -4049,8 +4225,49 @@ def _attach_tool_a_stage_details(
             stage_timing[key] = summary[key]
 
 
+def _attach_tool_d_stage_details(
+    paths: ProjectPaths,
+    stage_timing: dict[str, object],
+) -> None:
+    summary = _load_latest_tool_d_run_summary(paths)
+    if not summary:
+        return
+    stage_timing["steps"] = summary.get("tool_d_stage_timings") or {}
+    for key in (
+        "tool_d_schema_version",
+        "tool_d_output_row_count",
+        "tool_d_ranked_row_count",
+        "tool_d_output_overall_status",
+        "tool_d_source_summaries",
+        "tool_d_written_file_count",
+    ):
+        if key in summary:
+            stage_timing[key] = summary[key]
+
+
 def _load_latest_tool_a_run_summary(paths: ProjectPaths) -> dict[str, object] | None:
-    latest = read_optional_parquet(paths.latest_tool_a_snapshot_parquet_path)
+    return _load_latest_tool_run_summary(
+        paths=paths,
+        latest_path=paths.latest_tool_a_snapshot_parquet_path,
+        summary_file_name="tool_a_output_summary.json",
+    )
+
+
+def _load_latest_tool_d_run_summary(paths: ProjectPaths) -> dict[str, object] | None:
+    return _load_latest_tool_run_summary(
+        paths=paths,
+        latest_path=paths.latest_tool_d_snapshot_parquet_path,
+        summary_file_name="tool_d_output_summary.json",
+    )
+
+
+def _load_latest_tool_run_summary(
+    *,
+    paths: ProjectPaths,
+    latest_path: Path,
+    summary_file_name: str,
+) -> dict[str, object] | None:
+    latest = read_optional_parquet(latest_path)
     if latest.empty or "source_run_id" not in latest.columns:
         return None
     values = [
@@ -4060,7 +4277,7 @@ def _load_latest_tool_a_run_summary(paths: ProjectPaths) -> dict[str, object] | 
     ]
     if len(values) != 1:
         return None
-    summary_path = paths.runs_dir / values[0] / "tool_a_output_summary.json"
+    summary_path = paths.runs_dir / values[0] / summary_file_name
     if not summary_path.exists():
         return None
     try:

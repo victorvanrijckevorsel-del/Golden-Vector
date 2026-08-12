@@ -135,6 +135,22 @@ def test_append_vintage_first_write_wins(tmp_path) -> None:
     assert third.rows_appended == len(next_day)  # new vintage date appends
 
 
+def test_append_vintage_rejects_duplicate_keys_within_new_batch(tmp_path) -> None:
+    store = tmp_path / "tool_d.parquet"
+    rows = _melt_snapshot(
+        _snapshot_frame().iloc[[0]],
+        source="tool_d",
+        vintage_date="2026-06-12",
+        recorded_at_utc="2026-06-12T10:00:00+00:00",
+    )
+    duplicate_batch = pd.concat([rows, rows], ignore_index=True)
+
+    with pytest.raises(ValueError, match="duplicate keys within one new batch"):
+        _append_vintage(store, duplicate_batch, source="tool_d")
+
+    assert not store.exists()
+
+
 def _patched_vintage_env(tmp_path, monkeypatch, *, sources, freshness_status):
     """Wire record_vintages to fixture sources with a stubbed manifest."""
 
@@ -210,7 +226,9 @@ def test_record_vintages_isolates_a_corrupt_source(tmp_path, monkeypatch) -> Non
     corrupt = tmp_path / "tool_b_latest.parquet"
     corrupt.write_text("not parquet", encoding="utf-8")
     healthy = tmp_path / "tool_d_latest.parquet"
-    _snapshot_frame().to_parquet(healthy, index=False)
+    healthy_frame = _snapshot_frame()
+    healthy_frame["finance_source"] = "our"
+    healthy_frame.to_parquet(healthy, index=False)
     vintages_module, paths = _patched_vintage_env(
         tmp_path,
         monkeypatch,
@@ -223,6 +241,49 @@ def test_record_vintages_isolates_a_corrupt_source(tmp_path, monkeypatch) -> Non
     )
     assert [item.source for item in results] == ["tool_d"]
     assert (tmp_path / "data" / "lab" / "vintages" / "tool_d.parquet").exists()
+
+
+@pytest.mark.parametrize("source", ["tool_d", "tool_d_spot"])
+def test_record_vintages_filters_tool_d_to_our_view_before_melt(
+    tmp_path,
+    monkeypatch,
+    source,
+) -> None:
+    artifact = tmp_path / f"{source}_latest.parquet"
+    pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "finance_source": "our",
+                "tool_d_quality_score": 80.0,
+            },
+            {
+                "ticker": "NEM",
+                "finance_source": "yahoo",
+                "tool_d_quality_score": 5.0,
+            },
+        ]
+    ).to_parquet(artifact, index=False)
+    vintages_module, paths = _patched_vintage_env(
+        tmp_path,
+        monkeypatch,
+        sources={source: artifact},
+        freshness_status="OK",
+    )
+
+    results = vintages_module.record_vintages(
+        paths,  # type: ignore[arg-type]
+        now=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert [result.source for result in results] == [source]
+    stored = pd.read_parquet(
+        tmp_path / "data" / "lab" / "vintages" / f"{source}.parquet"
+    )
+    score = stored.loc[stored["field"].eq("tool_d_quality_score"), "value_num"]
+    assert score.tolist() == [80.0]
+    stored_source = stored.loc[stored["field"].eq("finance_source"), "value_text"]
+    assert stored_source.tolist() == ["our"]
 
 
 def test_load_ledger_quarantines_torn_final_line_only(tmp_path) -> None:

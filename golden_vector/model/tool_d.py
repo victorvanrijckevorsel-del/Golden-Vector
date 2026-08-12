@@ -10,69 +10,11 @@ from golden_vector.common.numeric import optional_float as _optional_float
 from golden_vector.common.numeric import ratio_over_positive as _ratio
 from golden_vector.common.numeric import require_finite_positive as _require_finite_positive
 from golden_vector.contracts.config_models import AppConfig, ToolDConfig
+from golden_vector.contracts.tool_d import TOOL_D_OUTPUT_COLUMNS, TOOL_D_SCHEMA_VERSION
 from golden_vector.features.percentile_ranks import oriented_percentile
 from golden_vector.model.gold_lines import GoldLine, line_from_two_points, x_for_value
 from golden_vector.screening.manual_data import LoadedManualScreeningData
 from golden_vector.screening.pipeline import compute_tool_b_in_memory
-
-TOOL_D_SCHEMA_VERSION = 3
-
-TOOL_D_OUTPUT_COLUMNS = [
-    "ticker",
-    "tool_d_schema_version",
-    "as_of_date",
-    "source_run_id",
-    "finance_source",
-    "source_tool_b_run_id",
-    "snapshot_refresh_run_id",
-    "gold_price_used",
-    "spot_gold_usd",
-    "spot_gold_date",
-    "gold_price_delta_vs_spot_pct",
-    "market_cap_musd",
-    "screening_verdict",
-    "confidence",
-    "aisc_margin_yield_at_g",
-    "aisc_margin_yield_at_spot",
-    "reserve_life_years",
-    "cash_cost_usd_per_oz",
-    "production_oz",
-    "aisc_usd_per_oz",
-    "sustaining_capex_musd",
-    "interest_expense_musd",
-    "net_debt_musd",
-    "forward_ebitda_musd_at_g",
-    "forward_ebitda_musd_at_spot",
-    "margin_per_oz_at_g",
-    "margin_per_oz_at_spot",
-    "margin_per_oz_delta_vs_spot",
-    "headroom_to_breakeven_pct_at_g",
-    "headroom_to_breakeven_pct_at_spot",
-    "headroom_delta_vs_spot",
-    "breaks_even_at_gold_usd",
-    "interest_cover_gold_usd",
-    "debt_stress_gold_usd",
-    "survival_distance_to_interest_cover_pct",
-    "cost_curve_aisc_percentile",
-    "fragility_ebitda_pct_per_10pct_gold",
-    "leverage_stressed_at_g",
-    "leverage_stressed_at_spot",
-    "leverage_delta_vs_spot",
-    "ev_ebitda_at_g",
-    "ebitda_pct_change_vs_spot",
-    "survival_order_ladder",
-    "resilience_flip_flags",
-    "resilience_data_status",
-    "survival_distance_component",
-    "cost_curve_resilience_component",
-    "fragility_resilience_component",
-    "balance_sheet_resilience_component",
-    "tool_d_quality_score",
-    "tool_d_quality_rank",
-    "tool_d_tags",
-    "tool_d_explanation",
-    "missing_inputs",
-]
 
 TOOL_D_RANK_COMPONENTS = {
     "survival_distance_to_interest_cover_pct": "survival_distance_component",

@@ -266,6 +266,8 @@ def build_portfolio_artifacts(
             fallback_path=paths.latest_tool_a_snapshot_parquet_path,
             use_model_state=use_model_state_artifacts,
         ),
+        # Portfolio resilience is intentionally Our View only. The analytics
+        # boundary enforces that source before its ticker-keyed lookup.
         tool_d=_read_current_or_latest_artifact(
             paths,
             artifact_name="tool_d_spot",

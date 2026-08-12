@@ -1700,12 +1700,13 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "would have to fall to reach them."
         ),
         calculation=(
-            "Published by the resilience model on Our View inputs at spot gold — these "
-            "rows do not move with the dial."
+            "Published at spot gold for the selected financial source. Yahoo rows use "
+            "Yahoo debt, interest, and finance fields with Our View mining assumptions."
         ),
         details=(
-            "Disabled in Yahoo Fundamentals mode: resilience is computed on Our View "
-            "inputs, and mixing the two sources would misstate the thresholds."
+            "The basis label states that hybrid explicitly. Rows do not move with the dial, "
+            "and an absent selected-source row stays unavailable rather than borrowing the "
+            "other source."
         ),
     ),
     "ticker_cf_data_quality": ColumnHelp(

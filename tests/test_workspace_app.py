@@ -11,6 +11,12 @@ import pytest
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
+from golden_vector.common.parquet import write_parquet_atomic
+from golden_vector.contracts.tool_d import (
+    TOOL_D_OUTPUT_COLUMNS,
+    TOOL_D_SCHEMA_VERSION,
+    YAHOO_TOOL_D_REBUILD_REQUIRED_REASON,
+)
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
@@ -21,7 +27,10 @@ from golden_vector.screening.manual_data import (
 from golden_vector.screening.manual_store import add_stock_note
 from golden_vector.serve.option_trading_data import clear_option_trading_cache
 from golden_vector.serve.workspace import create_workspace_app
-from golden_vector.serve.workspace_state import _load_tool_a_detail
+from golden_vector.serve.workspace_state import (
+    _load_tool_a_detail,
+    select_tool_d_source_rows,
+)
 from tests.helpers import build_test_paths, tool_b_output_row
 
 
@@ -134,6 +143,7 @@ def test_workspace_detail_page_honors_yahoo_fundamentals_source(tmp_path):
     bootstrap_manual_screening_data(paths, tickers=["NEM"])
     _write_latest_foundation_snapshot(paths)
     _write_latest_outputs(paths)
+    _write_latest_tool_d_output(paths)
     tool_b = pd.read_parquet(paths.latest_tool_b_snapshot_parquet_path)
     tool_b["screening_verdict_official"] = "SCREEN_OUT"
     tool_b["fundamental_check_rank_official"] = 9
@@ -159,6 +169,9 @@ def test_workspace_detail_page_honors_yahoo_fundamentals_source(tmp_path):
     # Yahoo materialization still drives the numbers (leverage_official 8.88 is
     # the active trailing leverage) ...
     assert "8.88" in response["body"]
+    assert "Yahoo financials · Our View mining assumptions" in response["body"]
+    assert "$1,234/oz" in response["body"]
+    assert "$2,345/oz" not in response["body"]
     # ... but the compiled verdict is BANNED from this page (requirements §3).
     assert "SCREEN_OUT" not in response["body"]
     assert 'href="/?fundamentals_source=yahoo"' in response["body"]
@@ -173,6 +186,38 @@ def test_workspace_detail_page_honors_yahoo_fundamentals_source(tmp_path):
     assert "no options" not in response["body"].lower()
     assert "/ticker/NEM?fundamentals_source=yahoo" in response["body"]
     assert 'name="return_to" value="/ticker/NEM?fundamentals_source=yahoo"' in response["body"]
+
+
+def test_workspace_detail_legacy_v3_yahoo_resilience_requires_rebuild(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    legacy_v3 = pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "finance_source": "our",
+                "tool_d_schema_version": 3,
+                "interest_cover_gold_usd": 2345.0,
+            }
+        ]
+    )
+    write_parquet_atomic(legacy_v3, paths.latest_tool_d_snapshot_parquet_path)
+    write_parquet_atomic(legacy_v3, paths.latest_tool_d_spot_snapshot_parquet_path)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path="/ticker/NEM?fundamentals_source=yahoo",
+    )
+
+    assert response["status"].startswith("200")
+    assert YAHOO_TOOL_D_REBUILD_REQUIRED_REASON in response["body"]
+    assert "$2,345/oz" not in response["body"]
 
 
 def test_workspace_tool_a_detail_refuses_latest_foundation_when_model_state_corrupt(tmp_path):
@@ -1188,45 +1233,79 @@ def _write_latest_tool_c_output(paths) -> None:
     )
 
 
-def _write_latest_tool_d_output(paths, *, current_schema: bool = False) -> None:
-    # current_schema=False reproduces the persisted pre-v2 artifact (legacy
-    # `aisc_margin_yield` only); True reproduces the post-rename schema.
-    fcf_fields = (
-        {"aisc_margin_yield_at_g": 0.12, "aisc_margin_yield_at_spot": 0.11, "tool_d_schema_version": 2}
-        if current_schema
-        else {"aisc_margin_yield": 0.12}
-    )
+def _write_latest_tool_d_output(paths, *, current_schema: bool = True) -> None:
+    if not current_schema:
+        # Preserve a real pre-v2 transition fixture without routing it through
+        # the strict v4 writer: migration readers must be able to degrade an
+        # old alias honestly, while new publication must reject this shape.
+        legacy = pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": date(2026, 4, 22),
+                    "finance_source": "our",
+                    "tool_d_schema_version": 1,
+                    "aisc_margin_yield": 0.12,
+                    "tool_d_quality_rank": 88.0,
+                    "tool_d_quality_score": 76.0,
+                    "gold_price_used": 4000.0,
+                    "spot_gold_usd": 4000.0,
+                    "spot_gold_date": "2026-06-01",
+                    "snapshot_refresh_run_id": "refresh-run",
+                    "source_run_id": "tool-d-run",
+                }
+            ]
+        )
+        write_parquet_atomic(legacy, paths.latest_tool_d_snapshot_parquet_path)
+        write_parquet_atomic(legacy, paths.latest_tool_d_spot_snapshot_parquet_path)
+        return
+
     context = RunContext.start(
         paths=paths,
         command="tool-d",
         parameters={},
         config_hash="hash",
     )
+
+    def row(*, source: str, rank: float, score: float, interest_cover: float) -> dict:
+        result = {column: None for column in TOOL_D_OUTPUT_COLUMNS}
+        result.update(
+            {
+                "ticker": "NEM",
+                "as_of_date": date(2026, 4, 22),
+                "finance_source": source,
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                "tool_d_quality_rank": rank,
+                "tool_d_quality_score": score,
+                "gold_price_used": 4000.0,
+                "spot_gold_usd": 4000.0,
+                "spot_gold_date": "2026-06-01",
+                "headroom_to_breakeven_pct_at_g": 0.62,
+                "leverage_stressed_at_g": 0.7,
+                "ev_ebitda_at_g": 4.5,
+                "margin_per_oz_at_g": 2200.0,
+                "aisc_margin_yield_at_g": 0.12,
+                "aisc_margin_yield_at_spot": 0.11,
+                "interest_cover_gold_usd": interest_cover,
+                "screening_verdict": "STRONG_CANDIDATE",
+                "resilience_data_status": "OK",
+                "tool_d_tags": "strong_headroom",
+                "snapshot_refresh_run_id": "refresh-run",
+                "source_run_id": context.run_id,
+            }
+        )
+        return result
+
     persist_tool_d_outputs(
         paths=paths,
         run_context=context,
+        expected_tickers=["NEM"],
         tool_d_outputs=pd.DataFrame(
             [
-                {
-                    "ticker": "NEM",
-                    "as_of_date": date(2026, 4, 22),
-                    "finance_source": "our",
-                    "tool_d_quality_rank": 88.0,
-                    "tool_d_quality_score": 76.0,
-                    "gold_price_used": 4000.0,
-                    "spot_gold_usd": 4000.0,
-                    "spot_gold_date": "2026-06-01",
-                    "headroom_to_breakeven_pct_at_g": 0.62,
-                    "leverage_stressed_at_g": 0.7,
-                    "ev_ebitda_at_g": 4.5,
-                    "margin_per_oz_at_g": 2200.0,
-                    **fcf_fields,
-                    "screening_verdict": "STRONG_CANDIDATE",
-                    "tool_d_tags": "strong_headroom",
-                    "snapshot_refresh_run_id": "refresh-run",
-                    "source_run_id": "tool-d-run",
-                }
-            ]
+                row(source="our", rank=88.0, score=76.0, interest_cover=2345.0),
+                row(source="yahoo", rank=17.0, score=19.0, interest_cover=1234.0),
+            ],
+            columns=TOOL_D_OUTPUT_COLUMNS,
         ),
         publish_spot_latest_aliases=True,
     )
@@ -2082,7 +2161,137 @@ def test_workspace_tool_d_current_artifact_renders_fcf_without_warning(tmp_path)
     assert "12.0%" in body
 
 
-def test_workspace_tool_d_yahoo_source_recomputes_and_preserves_links(
+def test_tool_d_source_selector_reports_legacy_v3_yahoo_rebuild() -> None:
+    selection = select_tool_d_source_rows(
+        pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "finance_source": "our",
+                    "tool_d_schema_version": 3,
+                }
+            ]
+        ),
+        finance_source="yahoo",
+        ticker="NEM",
+        label="ticker NEM",
+    )
+
+    assert selection.frame.empty
+    assert selection.reason == YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
+
+
+@pytest.mark.parametrize("version", [3.9, 4.9])
+def test_tool_d_source_selector_rejects_fractional_schema_versions(version: float) -> None:
+    selection = select_tool_d_source_rows(
+        pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "finance_source": "our",
+                    "tool_d_schema_version": version,
+                }
+            ]
+        ),
+        finance_source="yahoo",
+        label="Corporate Resilience overview",
+    )
+
+    assert selection.frame.empty
+    assert "malformed Tool D schema-version metadata" in str(selection.reason)
+    assert selection.reason != YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
+
+
+def test_tool_d_source_selector_never_serves_selected_rows_with_malformed_version() -> None:
+    selection = select_tool_d_source_rows(
+        pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "finance_source": "our",
+                    "tool_d_schema_version": 4.9,
+                }
+            ]
+        ),
+        finance_source="our",
+        ticker="NEM",
+        label="ticker NEM",
+    )
+
+    assert selection.frame.empty
+    assert "malformed Tool D schema-version metadata" in str(selection.reason)
+
+
+def test_tool_d_source_selector_rejects_yahoo_row_labelled_as_legacy_v3() -> None:
+    selection = select_tool_d_source_rows(
+        pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "finance_source": "yahoo",
+                    "tool_d_schema_version": 3,
+                }
+            ]
+        ),
+        finance_source="yahoo",
+        ticker="NEM",
+        label="ticker NEM",
+    )
+
+    assert selection.frame.empty
+    assert "legacy Tool D artifact contains a non-Our-View source" in str(selection.reason)
+    assert selection.reason != YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
+
+
+def test_tool_d_source_selector_rejects_mixed_legacy_schema_generations() -> None:
+    selection = select_tool_d_source_rows(
+        pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "finance_source": "our",
+                    "tool_d_schema_version": 1,
+                },
+                {
+                    "ticker": "AEM",
+                    "finance_source": "our",
+                    "tool_d_schema_version": 3,
+                },
+            ]
+        ),
+        finance_source="our",
+        label="Corporate Resilience overview",
+    )
+
+    assert selection.frame.empty
+    assert "malformed Tool D schema-version metadata" in str(selection.reason)
+
+
+def test_tool_d_source_selector_rejects_duplicate_source_ticker_rows() -> None:
+    duplicate = pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "finance_source": "yahoo",
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+            },
+            {
+                "ticker": "nem",
+                "finance_source": "yahoo",
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+            },
+        ]
+    )
+
+    with pytest.raises(ValueError, match=r"duplicate persisted \(ticker, finance_source\)"):
+        select_tool_d_source_rows(
+            duplicate,
+            finance_source="yahoo",
+            label="Corporate Resilience overview",
+        )
+
+
+def test_workspace_tool_d_yahoo_source_reads_persisted_rows_and_preserves_links(
     tmp_path,
     monkeypatch,
 ):
@@ -2093,17 +2302,12 @@ def test_workspace_tool_d_yahoo_source_recomputes_and_preserves_links(
     _write_latest_foundation_snapshot(paths)
     _write_latest_outputs(paths)
     _write_latest_tool_d_output(paths)
-    scenario_frame = pd.read_parquet(paths.latest_tool_d_spot_snapshot_parquet_path).copy()
-    scenario_frame["finance_source"] = "yahoo"
-    captured: dict[str, object] = {}
-
-    def fake_compute_scenario_frame(**kwargs):
-        captured["finance_source"] = kwargs["finance_source"]
-        return scenario_frame
+    def unexpected_recompute(**_kwargs):
+        raise AssertionError("plain at-spot Yahoo must read the persisted v4 row")
 
     monkeypatch.setattr(
         "golden_vector.serve.overview_tool_d._compute_scenario_frame",
-        fake_compute_scenario_frame,
+        unexpected_recompute,
     )
 
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
@@ -2114,16 +2318,19 @@ def test_workspace_tool_d_yahoo_source_recomputes_and_preserves_links(
     )
 
     assert response["status"].startswith("200")
-    assert captured["finance_source"] == "yahoo"
-    assert "Yahoo Fundamentals view recomputed" in response["body"]
     assert "Scenario recomputed" not in response["body"]
+    assert '<td data-order="1234.0">1,234</td>' in response["body"]  # Yahoo sentinel
+    assert '<td data-order="2345.0">2,345</td>' not in response["body"]
     assert 'value="yahoo" selected>Yahoo Fundamentals</option>' in response["body"]
     assert 'name="gold_price" type="number" min="1" step="1" value=""' in response["body"]
     assert "/tool-d?gold_price=3400.00&amp;fundamentals_source=yahoo" in response["body"]
     assert "/ticker/NEM?fundamentals_source=yahoo" in response["body"]
 
 
-def test_workspace_tool_d_yahoo_failure_resets_rendered_source(tmp_path, monkeypatch):
+def test_workspace_tool_d_yahoo_scenario_failure_keeps_source_and_spot_row(
+    tmp_path,
+    monkeypatch,
+):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
     app_config = _repo_app_config()
@@ -2144,13 +2351,15 @@ def test_workspace_tool_d_yahoo_failure_resets_rendered_source(tmp_path, monkeyp
     response = _call_wsgi_app(
         app,
         method="GET",
-        path="/tool-d?fundamentals_source=yahoo",
+        path="/tool-d?fundamentals_source=yahoo&gold_price=3000",
     )
 
     assert response["status"].startswith("200")
-    assert "Could not compute Yahoo Fundamentals view" in response["body"]
-    assert 'value="our" selected>Our View</option>' in response["body"]
-    assert 'value="yahoo" selected>Yahoo Fundamentals</option>' not in response["body"]
+    assert "Could not compute Yahoo Fundamentals stress scenario" in response["body"]
+    assert "was NOT applied" in response["body"]
+    assert 'value="yahoo" selected>Yahoo Fundamentals</option>' in response["body"]
+    assert '<td data-order="1234.0">1,234</td>' in response["body"]
+    assert '<td data-order="2345.0">2,345</td>' not in response["body"]
 
 
 def test_workspace_tool_d_override_does_not_touch_spot_parquet(tmp_path, monkeypatch):

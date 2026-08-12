@@ -19,6 +19,7 @@ from golden_vector.contracts.fundamentals import (
 from golden_vector.fundamentals.artifacts import (
     empty_fetched_fundamentals_frame,
     load_official_fundamentals,
+    load_official_fundamentals_with_source_path,
     write_fetched_fundamentals_artifact_pair,
 )
 from golden_vector.fundamentals.resolution import resolve_fundamental_layers
@@ -228,6 +229,134 @@ def test_official_fundamentals_loader_prefer_latest_alias_falls_back_when_alias_
     assert loaded[["ticker", "field_name", "value"]].to_dict("records") == [
         {"ticker": "AEM", "field_name": "ebitda_ltm_musd", "value": 900.0}
     ]
+
+
+def test_official_fundamentals_loader_reports_the_artifact_actually_read(tmp_path):
+    paths = build_test_paths(tmp_path)
+    old_run = "20260610T120000Z-fetch-fundamentals"
+    old_write = write_fetched_fundamentals_artifact_pair(
+        paths=paths,
+        frame=pd.DataFrame(
+            [
+                _official_row(
+                    ticker="AEM",
+                    field_name="ebitda_ltm_musd",
+                    value=900.0,
+                    source_run_id=old_run,
+                )
+            ]
+        ),
+        source_run_id=old_run,
+    )
+    write_current_model_state_manifest(paths=paths, config_hash="config-hash")
+
+    new_run = "20260620T120000Z-fetch-fundamentals"
+    new_write = write_fetched_fundamentals_artifact_pair(
+        paths=paths,
+        frame=pd.DataFrame(
+            [
+                _official_row(
+                    ticker="AEM",
+                    field_name="ebitda_ltm_musd",
+                    value=950.0,
+                    source_run_id=new_run,
+                )
+            ]
+        ),
+        source_run_id=new_run,
+    )
+
+    fresh, fresh_path = load_official_fundamentals_with_source_path(
+        paths,
+        prefer_latest_alias=True,
+    )
+    assert fresh_path == paths.resolve_repo_relative(new_write.run_path)
+    assert fresh["value"].tolist() == [950.0]
+
+    fetched_fundamentals_latest_path(paths).write_text("not parquet", encoding="utf-8")
+    fallback, fallback_path = load_official_fundamentals_with_source_path(
+        paths,
+        prefer_latest_alias=True,
+    )
+    assert fallback_path == paths.resolve_repo_relative(old_write.run_path)
+    assert fallback["value"].tolist() == [900.0]
+
+
+def test_official_fundamentals_provenance_is_pinned_before_alias_mutates(tmp_path):
+    paths = build_test_paths(tmp_path)
+    first_run = "20260610T120000Z-fetch-fundamentals"
+    first_write = write_fetched_fundamentals_artifact_pair(
+        paths=paths,
+        frame=pd.DataFrame(
+            [
+                _official_row(
+                    ticker="AEM",
+                    field_name="ebitda_ltm_musd",
+                    value=900.0,
+                    source_run_id=first_run,
+                )
+            ]
+        ),
+        source_run_id=first_run,
+    )
+
+    loaded, provenance_path = load_official_fundamentals_with_source_path(
+        paths,
+        prefer_latest_alias=True,
+        require_immutable_source=True,
+    )
+    pinned_bytes = provenance_path.read_bytes()
+
+    second_run = "20260620T120000Z-fetch-fundamentals"
+    write_fetched_fundamentals_artifact_pair(
+        paths=paths,
+        frame=pd.DataFrame(
+            [
+                _official_row(
+                    ticker="AEM",
+                    field_name="ebitda_ltm_musd",
+                    value=950.0,
+                    source_run_id=second_run,
+                )
+            ]
+        ),
+        source_run_id=second_run,
+    )
+
+    assert provenance_path == paths.resolve_repo_relative(first_write.run_path)
+    assert provenance_path != fetched_fundamentals_latest_path(paths)
+    assert provenance_path.read_bytes() == pinned_bytes
+    assert loaded["value"].tolist() == [900.0]
+    assert pd.read_parquet(fetched_fundamentals_latest_path(paths))["value"].tolist() == [
+        950.0
+    ]
+
+
+def test_strict_official_fundamentals_provenance_rejects_missing_immutable(tmp_path):
+    paths = build_test_paths(tmp_path)
+    source_run_id = "20260610T120000Z-fetch-fundamentals"
+    written = write_fetched_fundamentals_artifact_pair(
+        paths=paths,
+        frame=pd.DataFrame(
+            [
+                _official_row(
+                    ticker="AEM",
+                    field_name="ebitda_ltm_musd",
+                    value=900.0,
+                    source_run_id=source_run_id,
+                )
+            ]
+        ),
+        source_run_id=source_run_id,
+    )
+    paths.resolve_repo_relative(written.run_path).unlink()
+
+    with pytest.raises(FileNotFoundError, match="immutable artifact .* is missing"):
+        load_official_fundamentals_with_source_path(
+            paths,
+            prefer_latest_alias=True,
+            require_immutable_source=True,
+        )
 
 
 def test_writer_enforces_one_source_run_id_for_manifest_resolution(tmp_path):

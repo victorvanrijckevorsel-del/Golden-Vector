@@ -27,6 +27,7 @@ from golden_vector.app.model_state import (
     summarize_option_freshness,
 )
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.frames import select_finance_source_rows
 from golden_vector.common.parquet import write_parquet_atomic
 
 LOGGER = logging.getLogger(__name__)
@@ -37,6 +38,10 @@ LOGGER = logging.getLogger(__name__)
 # make a bad capture permanent. A skipped week is honest; a contaminated
 # week is forever.
 _OPTION_SOURCES = frozenset({"option_signal_summary", "option_trading_overview"})
+# Lab's survivor-only methodology is intentionally Our View. Tool D now carries
+# both finance sources in one artifact, so these destructive append-only inputs
+# must be narrowed before they are melted into ticker-keyed vintage rows.
+_TOOL_D_SOURCES = frozenset({"tool_d", "tool_d_spot"})
 
 VINTAGE_COLUMNS = [
     "vintage_date",
@@ -102,6 +107,19 @@ def _melt_snapshot(frame: pd.DataFrame, *, source: str, vintage_date: str, recor
 
 
 def _append_vintage(store_path: Path, new_rows: pd.DataFrame, *, source: str) -> VintageSourceResult:
+    missing_key_columns = [column for column in _DEDUPE_KEY if column not in new_rows.columns]
+    if missing_key_columns:
+        raise ValueError(
+            f"Vintage source '{source}' lacks dedupe columns: {missing_key_columns}."
+        )
+    new_keys = new_rows[_DEDUPE_KEY].astype(str).apply(tuple, axis=1)
+    duplicate_mask = new_keys.duplicated(keep=False)
+    if duplicate_mask.any():
+        duplicate_key = new_keys.loc[duplicate_mask].iloc[0]
+        raise ValueError(
+            f"Vintage source '{source}' contains duplicate keys within one new batch "
+            f"(e.g. {duplicate_key}); refusing an ambiguous first write."
+        )
     if store_path.exists():
         existing = pd.read_parquet(store_path)
     else:
@@ -109,7 +127,6 @@ def _append_vintage(store_path: Path, new_rows: pd.DataFrame, *, source: str) ->
     existing_keys = set(
         map(tuple, existing[_DEDUPE_KEY].astype(str).itertuples(index=False, name=None))
     )
-    new_keys = new_rows[_DEDUPE_KEY].astype(str).apply(tuple, axis=1)
     fresh_mask = ~new_keys.isin(existing_keys)
     fresh = new_rows.loc[fresh_mask]
     skipped = int((~fresh_mask).sum())
@@ -199,6 +216,12 @@ def record_vintages(paths: ProjectPaths, *, now: datetime | None = None) -> list
                 )
                 continue
             frame = pd.read_parquet(artifact_path)
+            if source in _TOOL_D_SOURCES:
+                frame = select_finance_source_rows(
+                    frame,
+                    finance_source="our",
+                    label=f"Lab vintage source {source}",
+                )
             melted = _melt_snapshot(
                 frame,
                 source=source,

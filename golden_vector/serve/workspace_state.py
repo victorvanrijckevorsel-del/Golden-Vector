@@ -19,8 +19,13 @@ from golden_vector.app.model_state import (
     resolve_current_model_artifact_path,
 )
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.frames import select_finance_source_rows
 from golden_vector.common.parquet import read_optional_parquet
 from golden_vector.contracts.config_models import AppConfig
+from golden_vector.contracts.tool_d import (
+    TOOL_D_SCHEMA_VERSION,
+    YAHOO_TOOL_D_REBUILD_REQUIRED_REASON,
+)
 from golden_vector.features.horizons import build_core_horizons
 from golden_vector.features.returns import compute_horizon_returns_for_ticker
 from golden_vector.model.benchmark_comparison import (
@@ -55,6 +60,132 @@ class WorkspaceState:
     model_state_manifest: dict[str, Any] | None
     # GDX/GDXJ per-window betas (the tiny 2-row benchmark file) for overview reference rows.
     latest_benchmark_betas: pd.DataFrame = field(default_factory=pd.DataFrame)
+
+
+@dataclass(frozen=True)
+class ToolDSourceSelection:
+    """Exact-source Tool D rows plus an honest reason when none are usable."""
+
+    frame: pd.DataFrame
+    reason: str | None = None
+
+
+def select_tool_d_source_rows(
+    frame: pd.DataFrame,
+    *,
+    finance_source: str,
+    label: str,
+    ticker: str | None = None,
+) -> ToolDSourceSelection:
+    """Select one Tool D finance source, optionally narrowed to one ticker.
+
+    A pre-v4 artifact already labels its rows ``our`` but cannot contain Yahoo
+    rows. That migration state gets the contract-owned rebuild reason; every
+    other missing key gets a source-specific absence reason. No caller may
+    borrow the alternate source to make an empty selection look complete.
+    """
+
+    normalized_source = str(finance_source).strip().lower()
+    # Keep the same fail-loud request contract as the shared selector even
+    # when schema metadata is malformed; invalid caller input is not a
+    # data-degradation state. The empty probe validates without inspecting
+    # stored rows before their schema generation is known.
+    select_finance_source_rows(
+        frame.iloc[0:0].copy(),
+        finance_source=finance_source,
+        label=label,
+    )
+    schema_state = _tool_d_schema_state(frame)
+    if schema_state == "malformed":
+        return ToolDSourceSelection(
+            frame=frame.iloc[0:0].copy(),
+            reason=(
+                "Corporate Resilience artifact has malformed Tool D schema-version "
+                "metadata; selected-source data is unavailable."
+            ),
+        )
+
+    # Legacy v3 is an explicitly Our-View-only compatibility state. Validate
+    # every stored source before deciding whether Yahoo needs a rebuild so a
+    # malformed v3 Yahoo row can never be served as if it were legitimate.
+    selection_source = normalized_source
+    if schema_state == "legacy_our":
+        legacy_our = select_finance_source_rows(
+            frame,
+            finance_source="our",
+            label=label,
+        )
+        if len(legacy_our.index) != len(frame.index):
+            return ToolDSourceSelection(
+                frame=frame.iloc[0:0].copy(),
+                reason=(
+                    "Corporate Resilience legacy Tool D artifact contains a non-Our-View "
+                    "source; selected-source data is unavailable."
+                ),
+            )
+        if normalized_source == "yahoo":
+            return ToolDSourceSelection(
+                frame=frame.iloc[0:0].copy(),
+                reason=YAHOO_TOOL_D_REBUILD_REQUIRED_REASON,
+            )
+        selection_source = "our"
+
+    selected = select_finance_source_rows(
+        frame,
+        finance_source=selection_source,
+        label=label,
+    )
+    if "ticker" in selected.columns:
+        selected_tickers = selected["ticker"].astype(str).str.strip().str.upper()
+        duplicate_tickers = selected_tickers.loc[
+            selected_tickers.ne("") & selected_tickers.duplicated(keep=False)
+        ]
+        if not duplicate_tickers.empty:
+            sample = ", ".join(sorted(set(duplicate_tickers.tolist()))[:5])
+            raise ValueError(
+                f"{label} has duplicate persisted (ticker, finance_source) rows "
+                f"for {finance_source!r} (e.g. {sample}); refusing row-order selection."
+            )
+    normalized_ticker = str(ticker or "").strip().upper()
+    if normalized_ticker:
+        if "ticker" not in selected.columns and not selected.empty:
+            raise ValueError(f"{label} has rows but no 'ticker' column.")
+        if "ticker" in selected.columns:
+            selected = selected.loc[
+                selected["ticker"].astype(str).str.strip().str.upper().eq(normalized_ticker)
+            ].copy()
+    if not selected.empty:
+        return ToolDSourceSelection(frame=selected)
+
+    source_label = "Yahoo Fundamentals" if normalized_source == "yahoo" else "Our View"
+    return ToolDSourceSelection(
+        frame=selected,
+        reason=(
+            f"No persisted {source_label} Corporate Resilience data is available "
+            f"for {label}."
+        ),
+    )
+
+
+def _tool_d_schema_state(frame: pd.DataFrame) -> str:
+    if frame.empty:
+        return "empty"
+    if "tool_d_schema_version" not in frame.columns:
+        return "malformed"
+    versions = pd.to_numeric(frame["tool_d_schema_version"], errors="coerce")
+    if versions.isna().any():
+        return "malformed"
+    if bool(versions.eq(float(TOOL_D_SCHEMA_VERSION)).all()):
+        return "v4"
+    # Pre-v4 artifacts were Our-View-only. Integer schema generations remain
+    # readable for that source so their existing field-level migration notices
+    # (for example the v1 FCF rebuild notice) can render honestly. Yahoo stays
+    # unavailable until a dual-source v4 refresh is published.
+    legacy_versions = versions.ge(1.0) & versions.lt(float(TOOL_D_SCHEMA_VERSION))
+    integral_versions = versions.eq(versions.round())
+    if bool((legacy_versions & integral_versions).all()) and versions.nunique() == 1:
+        return "legacy_our"
+    return "malformed"
 
 
 @dataclass(frozen=True)
