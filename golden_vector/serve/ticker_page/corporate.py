@@ -29,6 +29,7 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from golden_vector.common.numeric import align_to_step
 from golden_vector.common.strings import clean_string
 from golden_vector.contracts.config_models import AppConfig, TickerPageDialConfig
 from golden_vector.contracts.ticker_page import (
@@ -340,9 +341,20 @@ def _cell(row: Any, column: str, unit: str) -> str:
 
 
 def _dial_state(
-    gold_row: pd.Series | None, artifact_status: str, artifact_reason: str | None
+    gold_row: pd.Series | None,
+    artifact_status: str,
+    artifact_reason: str | None,
+    *,
+    spot: float | None = None,
+    dial_cfg: TickerPageDialConfig | None = None,
 ) -> tuple[bool, str]:
-    """(enabled, reason) — the ONE place the dial's availability is decided."""
+    """(enabled, reason) — the ONE place the dial's availability is decided.
+
+    A spot outside the configured ``[min, max]`` range disables the dial with a
+    visible reason instead of silently clamping the scenario's starting point
+    (plan §4.3 State A): a slider pinned at a bound the price does not occupy
+    would present every position as a scenario the model never anchored.
+    """
 
     if artifact_status != "OK":
         return False, str(artifact_reason or f"gold-response artifact state {artifact_status}")
@@ -351,6 +363,18 @@ def _dial_state(
     status = _text(gold_row, "gold_response_status")
     if status != "OK":
         return False, _text(gold_row, "gold_response_reason") or f"gold response {status}"
+    if spot is not None and dial_cfg is not None:
+        minimum = float(dial_cfg.min_gold_usd)
+        maximum = float(dial_cfg.max_gold_usd)
+        if spot < minimum or spot > maximum:
+            return False, (
+                "spot gold "
+                + format_metric(spot, "usd2")
+                + " is outside the configured dial range "
+                + format_metric(minimum, "usd")
+                + "–"
+                + format_metric(maximum, "usd")
+            )
     return True, ""
 
 
@@ -415,19 +439,16 @@ def _slider_value_attr(spot: float | None, dial_cfg: TickerPageDialConfig) -> st
     a gold price it is not showing, and the client baseline starts life
     disagreeing with the control it reads (plan §4.3, decision D9).
 
-    Serve renders, it does not compute, so the alignment is done the only way a
-    formatter can: when the configured step is a plain decimal step (10, 1,
-    0.1 …) and the minimum sits on that same decimal grid, the step grid IS the
-    decimal grid, and formatting spot to the step's own precision lands exactly
-    on it. Any other step (25, 0.25 …) needs real arithmetic and therefore a
-    model-layer helper; until one exists, the exact spot is emitted unchanged
-    and the browser's own snap stays the authority — never a silent half-fix.
+    Serve renders, it does not compute: the grid math lives once in
+    ``common.numeric.align_to_step`` and this function only formats its result
+    to the step's own decimal precision, so the emitted text sits exactly on
+    the grid for every configured step (1, 10, 0.1, 25, 0.25 …).
 
     A spot outside the configured range is emitted at the bound the browser
     would clamp it to, so the rendered position and the control agree; the
-    visible basis text still reports the true spot beside the range, and gating
-    an out-of-range spot as unavailable is a State-A availability decision, not
-    a formatting one.
+    visible basis text still reports the true spot beside the range, and
+    ``_dial_state`` separately disables the dial for that spot (State A) —
+    alignment here is formatting, not an availability decision.
 
     The exact spot is never touched anywhere else: payload, evaluation, cells
     and basis text all keep ``spot_gold_usd`` verbatim.
@@ -441,17 +462,10 @@ def _slider_value_attr(spot: float | None, dial_cfg: TickerPageDialConfig) -> st
         return f"{minimum:g}"
     if spot >= maximum:
         return f"{maximum:g}"
-    step = Decimal(str(float(dial_cfg.step_usd))).normalize()
-    step_parts = step.as_tuple()
-    on_decimal_grid = (
-        step_parts.sign == 0
-        and step_parts.digits == (1,)
-        and Decimal(str(minimum)).normalize().as_tuple().exponent >= step_parts.exponent
-    )
-    if not on_decimal_grid:
-        return f"{spot:g}"
-    places = max(0, -int(step_parts.exponent))
-    return f"{spot:.{places}f}"
+    step_value = float(dial_cfg.step_usd)
+    aligned = align_to_step(spot, minimum=minimum, step=step_value)
+    places = max(0, -int(Decimal(str(step_value)).normalize().as_tuple().exponent))
+    return f"{aligned:.{places}f}"
 
 
 def render_gold_dial_control(
@@ -469,9 +483,6 @@ def render_gold_dial_control(
     """
 
     gold_row = data.gold_response_row(ticker, finance_source=finance_source)
-    enabled, reason = _dial_state(
-        gold_row, data.gold_response.status, data.gold_response.reason
-    )
     spot = _value(gold_row, "spot_gold_usd")
     spot_date = _text(gold_row, "spot_gold_date")
 
@@ -482,6 +493,13 @@ def render_gold_dial_control(
             "</div>"
         )
     dial_cfg = app_config.ticker_page.dial
+    enabled, reason = _dial_state(
+        gold_row,
+        data.gold_response.status,
+        data.gold_response.reason,
+        spot=spot,
+        dial_cfg=dial_cfg,
+    )
     minimum = format_metric(float(dial_cfg.min_gold_usd), "usd")
     maximum = format_metric(float(dial_cfg.max_gold_usd), "usd")
     value_attr = _slider_value_attr(spot, dial_cfg)
@@ -498,16 +516,28 @@ def render_gold_dial_control(
         if spot is not None
         else "spot gold unavailable"
     )
+    dial_unavailable = not enabled or spot is None
     # Truthful at rest without JavaScript, and maintained by gold-dial.js
-    # through every state (plan §4.3).
-    value_text = (
-        f"{spot_exact} per ounce, spot" if spot is not None else "spot gold unavailable"
-    )
+    # through every state (plan §4.3). A disabled dial says so in the value
+    # text itself — a screen-reader user landing on the control should not
+    # need the description to learn it does nothing (§4.3 State A).
+    if spot is None:
+        value_text = "spot gold unavailable"
+    elif dial_unavailable:
+        value_text = f"{spot_exact} per ounce, spot — scenario unavailable"
+    else:
+        value_text = f"{spot_exact} per ounce, spot"
     reason_html = (
-        f'<p class="hint gold-dial-disabled">Dial unavailable for {escape(str(ticker))}: '
+        '<p class="hint gold-dial-disabled" id="gold-dial-reason">'
+        f"Dial unavailable for {escape(str(ticker))}: "
         f"{escape(reason)}</p>"
-        if not enabled or spot is None
+        if dial_unavailable
         else ""
+    )
+    # The visible reason joins the accessible description while it exists
+    # (plan §4.3 State A: the disabled range points at its own explanation).
+    describedby = (
+        "gold-dial-spot gold-dial-reason" if dial_unavailable else "gold-dial-spot"
     )
     return (
         '<div class="gold-dial" id="gold-dial">'
@@ -516,7 +546,7 @@ def render_gold_dial_control(
         f' min="{float(dial_cfg.min_gold_usd):g}" max="{float(dial_cfg.max_gold_usd):g}"'
         f' step="{float(dial_cfg.step_usd):g}" value="{escape(value_attr, quote=True)}"'
         f' aria-valuetext="{escape(value_text, quote=True)}"'
-        f' aria-describedby="gold-dial-spot"{disabled_attr}>'
+        f' aria-describedby="{describedby}"{disabled_attr}>'
         '<output class="gold-dial-output" id="gold-dial-output" for="gold-dial-input">'
         f"{escape(spot_exact)}</output>"
         # Rendered but disabled until a scenario exists to reset FROM (§4.3
@@ -1131,11 +1161,17 @@ def render_corporate_finance_section(
     """
 
     gold_row = data.gold_response_row(ticker, finance_source=finance_source)
-    enabled, reason = _dial_state(
-        gold_row, data.gold_response.status, data.gold_response.reason
-    )
     spot = _value(gold_row, "spot_gold_usd")
     spot_date = _text(gold_row, "spot_gold_date")
+    # Same inputs as the control-bar call so the embedded payload and the
+    # rendered control can never disagree about availability (§4.3 State A).
+    enabled, reason = _dial_state(
+        gold_row,
+        data.gold_response.status,
+        data.gold_response.reason,
+        spot=spot,
+        dial_cfg=app_config.ticker_page.dial if app_config is not None else None,
+    )
     spot_label = (
         "fwd @ spot " + format_metric(spot, "usd") + "/oz"
         if spot is not None

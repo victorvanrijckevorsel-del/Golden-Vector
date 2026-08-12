@@ -27,6 +27,20 @@ def optional_float(value: object) -> float | None:
     return None if is_missing(numeric) else numeric
 
 
+def align_to_step(value: float, *, minimum: float, step: float) -> float:
+    """Nearest value an HTML ``min``/``step`` grid can hold (range-input snap).
+
+    The ONE copy of the slider-grid math. Serve-layer formatters are barred from
+    arithmetic, so they call this to emit a range ``value`` the browser will not
+    silently rewrite (ticker gold dial, redesign plan D9). Not a clamp: callers
+    bound-check against ``min``/``max`` themselves.
+    """
+
+    if step <= 0 or not math.isfinite(value):
+        return value
+    return minimum + round((value - minimum) / step) * step
+
+
 def optional_finite_float(value: object) -> float | None:
     """Return a finite float for scalar numeric input, otherwise ``None``."""
 

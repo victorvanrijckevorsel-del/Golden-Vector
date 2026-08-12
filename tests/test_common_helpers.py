@@ -11,6 +11,7 @@ from golden_vector.common.files import (
 from golden_vector.common.eligibility import is_score_eligible, score_eligible_mask
 from golden_vector.common.frames import latest_records_by_key
 from golden_vector.common.numeric import (
+    align_to_step,
     optional_finite_float,
     rebase_to_base,
     sum_optional_floats,
@@ -269,6 +270,24 @@ def test_collapsible_text_td_drops_null_members():
 
     # An all-null list collapses to the empty dash, same as []/None.
     assert collapsible_text_td([None, pd.NA]) == "<td>-</td>"
+
+
+def test_align_to_step_matches_html_range_snap_semantics():
+    """The ONE copy of the slider-grid math (redesign plan D9): nearest
+
+    ``min + k*step`` position, mirroring how a browser normalizes a range
+    input's value before any script runs."""
+    assert align_to_step(4477.4, minimum=2000.0, step=1.0) == 4477.0
+    assert align_to_step(4477.6, minimum=2000.0, step=1.0) == 4478.0
+    assert align_to_step(4477.4, minimum=2000.0, step=25.0) == 4475.0
+    assert align_to_step(4477.4, minimum=2000.0, step=0.25) == pytest.approx(4477.5)
+    # off-grid minimum: the grid is anchored at min, not at zero
+    assert align_to_step(4477.4, minimum=2000.5, step=1.0) == pytest.approx(4477.5)
+    # degenerate inputs pass through untouched — bound-checking is the caller's job
+    assert align_to_step(4477.4, minimum=2000.0, step=0.0) == 4477.4
+    import math
+
+    assert math.isnan(align_to_step(float("nan"), minimum=2000.0, step=1.0))
 
 
 def test_option_note_tuple_loader_drops_null_members():
