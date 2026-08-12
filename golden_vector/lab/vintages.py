@@ -27,7 +27,7 @@ from golden_vector.app.model_state import (
     summarize_option_freshness,
 )
 from golden_vector.app.paths import ProjectPaths
-from golden_vector.common.frames import select_finance_source_rows
+from golden_vector.contracts.tool_d import select_tool_d_source_rows
 from golden_vector.common.parquet import write_parquet_atomic
 
 LOGGER = logging.getLogger(__name__)
@@ -217,11 +217,22 @@ def record_vintages(paths: ProjectPaths, *, now: datetime | None = None) -> list
                 continue
             frame = pd.read_parquet(artifact_path)
             if source in _TOOL_D_SOURCES:
-                frame = select_finance_source_rows(
+                # Same Tool D read boundary as the serve surfaces and the
+                # Portfolio analytics (W3): the schema-generation guard and the
+                # duplicate-key refusal apply here too, so a malformed artifact
+                # can never be frozen into the point-in-time store (where
+                # first-write-wins makes the contamination permanent).
+                selection = select_tool_d_source_rows(
                     frame,
                     finance_source="our",
                     label=f"Lab vintage source {source}",
                 )
+                if selection.frame.empty and selection.reason:
+                    LOGGER.warning(
+                        "Vintage source %s skipped: %s", source, selection.reason
+                    )
+                    continue
+                frame = selection.frame
             melted = _melt_snapshot(
                 frame,
                 source=source,

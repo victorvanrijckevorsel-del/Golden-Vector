@@ -13,6 +13,10 @@ from golden_vector.app.run_context import RunContext
 from golden_vector.common.numeric import optional_finite_float
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.contracts.fundamentals import FUNDAMENTAL_STATUS_PRECEDENCE
+# The alias table + both normalization policies live with the FINANCE_SOURCES
+# contract (W4). Re-exported here so this module's historical importers keep
+# working against ONE implementation.
+from golden_vector.contracts.ticker_page import normalize_finance_source
 from golden_vector.fundamentals.artifacts import (
     empty_fetched_fundamentals_frame,
     load_official_fundamentals,
@@ -258,15 +262,6 @@ def compute_tool_b_in_memory(
         _frame_from_rows(rows),
         finance_source=finance_source,
     )
-
-
-def normalize_finance_source(value: object) -> FinanceSource:
-    """Return the canonical source mode used by Tool B scenario views."""
-
-    text = str(value or "").strip().lower()
-    if text in {"yahoo", "official", "market", "yahoo_fundamentals"}:
-        return "yahoo"
-    return "our"
 
 
 def materialize_tool_b_finance_source(

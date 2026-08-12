@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import pytest
 
+from golden_vector.contracts.tool_d import TOOL_D_SCHEMA_VERSION
 from golden_vector.features.weekly_returns import _price_basis
 from golden_vector.lab.ledger import (
     load_ledger,
@@ -228,6 +229,7 @@ def test_record_vintages_isolates_a_corrupt_source(tmp_path, monkeypatch) -> Non
     healthy = tmp_path / "tool_d_latest.parquet"
     healthy_frame = _snapshot_frame()
     healthy_frame["finance_source"] = "our"
+    healthy_frame["tool_d_schema_version"] = TOOL_D_SCHEMA_VERSION
     healthy_frame.to_parquet(healthy, index=False)
     vintages_module, paths = _patched_vintage_env(
         tmp_path,
@@ -255,11 +257,13 @@ def test_record_vintages_filters_tool_d_to_our_view_before_melt(
             {
                 "ticker": "NEM",
                 "finance_source": "our",
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
                 "tool_d_quality_score": 80.0,
             },
             {
                 "ticker": "NEM",
                 "finance_source": "yahoo",
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
                 "tool_d_quality_score": 5.0,
             },
         ]
@@ -284,6 +288,40 @@ def test_record_vintages_filters_tool_d_to_our_view_before_melt(
     assert score.tolist() == [80.0]
     stored_source = stored.loc[stored["field"].eq("finance_source"), "value_text"]
     assert stored_source.tolist() == ["our"]
+
+
+@pytest.mark.parametrize("source", ["tool_d", "tool_d_spot"])
+def test_record_vintages_refuses_tool_d_without_a_schema_generation(
+    tmp_path,
+    monkeypatch,
+    caplog,
+    source,
+) -> None:
+    """W3: the Lab reads Tool D through the SAME guarded boundary as the serve
+    surfaces. A frame with no ``tool_d_schema_version`` cannot be trusted to be
+    source-keyed, and first-write-wins would freeze that contamination into the
+    point-in-time store forever — so the source is skipped WITH its reason."""
+
+    artifact = tmp_path / f"{source}_latest.parquet"
+    pd.DataFrame(
+        [{"ticker": "NEM", "finance_source": "our", "tool_d_quality_score": 80.0}]
+    ).to_parquet(artifact, index=False)
+    vintages_module, paths = _patched_vintage_env(
+        tmp_path,
+        monkeypatch,
+        sources={source: artifact},
+        freshness_status="OK",
+    )
+
+    with caplog.at_level("WARNING"):
+        results = vintages_module.record_vintages(
+            paths,  # type: ignore[arg-type]
+            now=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+        )
+
+    assert results == []
+    assert not (tmp_path / "data" / "lab" / "vintages" / f"{source}.parquet").exists()
+    assert "malformed Tool D schema-version metadata" in caplog.text
 
 
 def test_load_ledger_quarantines_torn_final_line_only(tmp_path) -> None:

@@ -77,6 +77,7 @@ from golden_vector.serve.ticker_page.sections import (
 from golden_vector.serve.ui.components import disclosure, section_heading
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
+from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.windows import (
     SCORING_WINDOWS,
     WINDOW_LABELS,
@@ -113,34 +114,48 @@ VOLATILITY_CANONICAL_NOTE = (
 # ---------------------------------------------------------------------------
 
 
-def _sizing_query_parts(sizing_request: object | None) -> list[str]:
-    """Serialize the option sizing request into URL query parts so window-tab
+# The option sizing calculator owns these query keys: when a sizing request is
+# resolved, the switcher rewrites them from that request (an omitted key means
+# "not pinned"), instead of carrying whatever the URL happened to hold.
+_SIZING_QUERY_KEYS: tuple[str, ...] = (
+    "side",
+    "horizon",
+    "bucket",
+    "size_mode",
+    "budget",
+    "quantity",
+)
+
+
+def _sizing_query_params(sizing_request: object | None) -> dict[str, str]:
+    """Serialize the option sizing request into raw URL params so window-tab
     navigation preserves the user's calculator state (audit L3). Only meaningful,
-    non-default values are emitted to keep URLs clean."""
+    non-default values are emitted to keep URLs clean. Values are raw — the
+    shared URL builder encodes them."""
 
     if sizing_request is None:
-        return []
-    parts: list[str] = []
+        return {}
+    params: dict[str, str] = {}
     side = str(getattr(sizing_request, "side", "") or "").strip()
     if side and side != "put":  # "put" is the default landing side; omit it
-        parts.append(f"side={quote(side, safe='')}")
+        params["side"] = side
     if getattr(sizing_request, "horizon_explicit", False):
-        parts.append(f"horizon={int(getattr(sizing_request, 'horizon_days', 0))}")
+        params["horizon"] = str(int(getattr(sizing_request, "horizon_days", 0)))
     bucket = getattr(sizing_request, "bucket", None)
     if bucket:
-        parts.append(f"bucket={quote(str(bucket), safe='')}")
+        params["bucket"] = str(bucket)
     if getattr(sizing_request, "size_explicit", False):
         size_mode = str(getattr(sizing_request, "size_mode", "") or "").strip()
         if size_mode == "budget":
-            parts.append("size_mode=budget")
+            params["size_mode"] = "budget"
             budget = getattr(sizing_request, "budget", None)
             if budget is not None:
-                parts.append(f"budget={quote(f'{float(budget):g}', safe='')}")
+                params["budget"] = f"{float(budget):g}"
         elif size_mode == "contracts":
             quantity = getattr(sizing_request, "quantity", None)
             if quantity is not None:
-                parts.append(f"quantity={int(quantity)}")
-    return parts
+                params["quantity"] = str(int(quantity))
+    return params
 
 
 def render_window_switcher(
@@ -153,6 +168,7 @@ def render_window_switcher(
     sizing_request: object | None = None,
     financials_source: str = "our",
     app_config: AppConfig | None = None,
+    query_params: Mapping[str, str] | None = None,
 ) -> str:
     """Beta-window tabs (6M / 1Y / 2Y / 3Y / 5Y; 12M renders as "1Y").
 
@@ -161,6 +177,11 @@ def render_window_switcher(
     horizon (requirements §3). The ``window=`` query param semantics, the lens /
     anchor / sizing-state preservation and the fundamentals-source carry are
     unchanged from the control-bar version.
+
+    Every tab href is built from the page's CURRENT query params through the one
+    shared builder (``build_page_url``), so unrelated view state — the chart view
+    and horizon, the Options target window, the Lab controls — survives a beta
+    window click instead of being dropped by a hand-rolled allow-list (W1).
     """
 
     tabs: list[str] = []
@@ -168,22 +189,39 @@ def render_window_switcher(
     lens_value = str(lens or "").strip()
     anchor_value = str(anchor or "").strip()
     source_value = str(financials_source or "our").strip().lower()
-    sizing_parts = _sizing_query_parts(sizing_request)
+    carried = {
+        str(key): str(value)
+        for key, value in dict(query_params or {}).items()
+        # "saved" is a one-shot flash marker; re-carrying it would re-announce a
+        # save the user already saw.
+        if str(key) != "saved" and value is not None and str(value) != ""
+    }
+    # Keys this control owns. ``None`` deletes, so the canonical-default tab
+    # drops ``window=`` exactly as the hand-rolled version did.
+    owned_params: dict[str, str | None] = {
+        "lens": lens_value or None,
+        "fundamentals_source": "yahoo" if source_value == "yahoo" else None,
+    }
+    if sizing_request is not None:
+        sizing_params = _sizing_query_params(sizing_request)
+        for key in _SIZING_QUERY_KEYS:
+            owned_params[key] = sizing_params.get(key)
+    fragment = f"#{quote(anchor_value, safe='')}" if anchor_value else LAB_ANCHOR
     for window in _STRUCTURAL_WINDOWS:
         is_active = window == active
         is_canonical = window == canonical
         cls = "window-tab active" if is_active else "window-tab"
-        query_parts = []
-        if window != canonical:
-            query_parts.append(f"window={window.lower()}")
-        if lens_value:
-            query_parts.append(f"lens={quote(lens_value, safe='')}")
-        if source_value == "yahoo":
-            query_parts.append("fundamentals_source=yahoo")
-        query_parts.extend(sizing_parts)
-        query = f"?{'&'.join(query_parts)}" if query_parts else ""
-        fragment = f"#{quote(anchor_value, safe='')}" if anchor_value else LAB_ANCHOR
-        href = f"{base}{query}{fragment}"
+        href = (
+            build_page_url(
+                base,
+                carried,
+                set_params={
+                    **owned_params,
+                    "window": None if window == canonical else window.lower(),
+                },
+            )
+            + fragment
+        )
         canonical_marker = (
             " <span class=\"window-canonical\">anchor</span>" if is_canonical else ""
         )
@@ -1771,6 +1809,7 @@ def render_market_behaviour_section(
         sizing_request=sizing_request,
         financials_source=finance_source,
         app_config=app_config,
+        query_params=query_params,
     )
     pieces: list[str] = [
         f'<section class="panel" id="{SECTION_ID}">',

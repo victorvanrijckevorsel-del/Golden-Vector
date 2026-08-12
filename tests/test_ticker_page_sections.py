@@ -319,11 +319,16 @@ def test_performance_section_renders_series_basis_and_markers():
     )
     assert "<h2>Performance" in html
     assert "Performance — AAR.AX" not in html
-    assert "Compare (indexed to 100)" in html
-    assert "indexed to 100 on 2026-01-05" in html
+    # The always-open strip is ONE orienting line: view · horizon · window.
+    strip = html.split('<p class="hint">')[1].split("</p>")[0]
+    assert strip == "Compare (indexed to 100) · 1Y · 2026-01-05 → 2026-01-09"
+    assert "series bases" not in strip
     assert "return_basis_usd" not in html
-    assert "series bases: Stock/Gold" in html
-    assert "USD-normalized price (adjusted close where available)" in html
+    # ...and the per-series basis sentence is still reachable, verbatim, inside
+    # the chart's own data-table disclosure — moved, not deleted.
+    disclosure = html.split('class="disclosure chart-data-details"')[1]
+    assert "series bases: Stock/Gold" in disclosure
+    assert "USD-normalized price (adjusted close where available)" in disclosure
     # a non-OK series renders a marker, never a silent absence
     assert "gdx last observation is 9 trading day(s) behind" in html.lower() or "GDX:" in html
 
@@ -477,7 +482,12 @@ def test_performance_price_view_is_currency_true_end_to_end():
     overlay = json.loads(unescape(re.search(r'data-overlay="([^"]+)"', chart).group(1)))
     stock = overlay["series"][0]
     assert stock["label"] == "Stock"
-    assert stock["byDate"]["2026-01-05"] == [pytest.approx(212.0, abs=40.0), 50.0, "USD 50.00"]
+    assert stock["byDate"]["2026-01-05"] == [
+        pytest.approx(212.0, abs=40.0),
+        50.0,
+        "USD 50.00",
+        None,  # labelOnly mode: the label IS the whole value, no bare level
+    ]
     assert "base" not in overlay  # no base-100 anchor travels to a currency chart
     # accessible twin: caption states the unit, cells carry it, every date listed
     assert "<caption>Share price over time — USD per share</caption>" in chart
@@ -549,7 +559,7 @@ def test_performance_price_view_with_nothing_drawable_claims_no_currency():
     html = render_performance_section(rows, ticker="AAR.AX", horizon="1Y", view="price")
 
     assert "No drawable series in this window." in html
-    assert "Share price · horizon 1Y" in html
+    assert "Share price · 1Y" in html
     assert "currency basis unavailable" not in html
     assert "does not state a currency basis" not in html
     assert "<svg" not in html

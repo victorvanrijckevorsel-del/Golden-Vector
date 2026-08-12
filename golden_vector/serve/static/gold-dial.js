@@ -202,29 +202,90 @@
     return "$" + magnitude + tail;
   }
 
+  /* Add one to a plain digit string, growing it when it is all nines. */
+  function incrementDigits(text) {
+    var out = text.split("");
+    var index = out.length - 1;
+    while (index >= 0 && out[index] === "9") {
+      out[index] = "0";
+      index -= 1;
+    }
+    if (index < 0) {
+      out.unshift("1");
+    } else {
+      out[index] = String(Number(out[index]) + 1);
+    }
+    return out.join("");
+  }
+
+  /* Python's format() rounds a decimal TIE to the even digit ("banker's
+   * rounding"); JavaScript's toFixed() rounds ties away from zero. Ties are
+   * reachable on real metric values ($2.5m, an 11.25% margin), so a mirror of
+   * format_metric() has to mirror its ROUNDING too — otherwise the same
+   * published number reads "$2m" in the server-rendered spot cell and "$3m" in
+   * the dial's scenario cell.
+   *
+   * toFixed() is correctly rounded, so asking it for `digits + 20` places
+   * reproduces the double's exact decimal expansion wherever a tie is even
+   * possible: a tie at N places needs an expansion that terminates at N+1
+   * places, which is a handful of digits, never twenty. Python keeps the sign
+   * on a negative zero ("-0"), so this does too.
+   */
+  function toFixedHalfEven(value, digits) {
+    if (!isFinite(value) || Math.abs(value) >= 1e15) {
+      return value.toFixed(digits);
+    }
+    var negative = value < 0 || (value === 0 && 1 / value < 0);
+    var parts = Math.abs(value).toFixed(Math.min(100, digits + 20)).split(".");
+    var fraction = parts[1] || "";
+    while (fraction.length < digits + 1) {
+      fraction += "0";
+    }
+    var combined = parts[0] + fraction.slice(0, digits);
+    var rest = fraction.slice(digits);
+    var lead = rest.charAt(0);
+    var roundUp = lead > "5";
+    if (lead === "5") {
+      roundUp =
+        /[1-9]/.test(rest.slice(1)) ||
+        Number(combined.charAt(combined.length - 1)) % 2 === 1;
+    }
+    if (roundUp) {
+      combined = incrementDigits(combined);
+    }
+    var cut = combined.length - digits;
+    var magnitude = combined.slice(0, cut) || "0";
+    if (digits > 0) {
+      magnitude += "." + combined.slice(cut);
+    }
+    return (negative ? "-" : "") + magnitude;
+  }
+
+  /* unit -> formatter. The KEY SET is the shared unit vocabulary: format_metric()
+   * in serve/ticker_page/corporate.py holds exactly the same keys with exactly
+   * the same bodies, and tests/test_gold_dial_js_behavior.py asserts both the
+   * identical key sets and identical output per unit (tie values included). */
+  var METRIC_FORMATTERS = {
+    musd: function (value) { return currency(groupDigits(toFixedHalfEven(value, 0)), "m"); },
+    usd2: function (value) { return currency(groupDigits(toFixedHalfEven(value, 2))); },
+    usd_per_oz: function (value) { return currency(groupDigits(toFixedHalfEven(value, 0)), "/oz"); },
+    usd: function (value) { return currency(groupDigits(toFixedHalfEven(value, 0))); },
+    pct: function (value) { return toFixedHalfEven(value * 100, 1) + "%"; },
+    ratio: function (value) { return toFixedHalfEven(value, 2) + "×"; },
+    years: function (value) { return toFixedHalfEven(value, 1) + " years"; },
+    oz: function (value) { return groupDigits(toFixedHalfEven(value, 0)) + " oz"; },
+    days: function (value) { return toFixedHalfEven(value, 0) + " days"; },
+    percentile: function (value) { return groupDigits(toFixedHalfEven(value, 0)); }
+  };
+
   function formatMetric(value, unit) {
     if (value === null || value === undefined || !isFinite(value)) {
       return "n/a";
     }
-    if (unit === "musd") {
-      return currency(groupDigits(value.toFixed(0)), "m");
+    if (!Object.prototype.hasOwnProperty.call(METRIC_FORMATTERS, unit)) {
+      return groupDigits(toFixedHalfEven(value, 2));
     }
-    if (unit === "usd2") {
-      return currency(groupDigits(value.toFixed(2)));
-    }
-    if (unit === "usd_per_oz") {
-      return currency(groupDigits(value.toFixed(0)), "/oz");
-    }
-    if (unit === "usd") {
-      return currency(groupDigits(value.toFixed(0)));
-    }
-    if (unit === "pct") {
-      return (value * 100).toFixed(1) + "%";
-    }
-    if (unit === "ratio") {
-      return value.toFixed(2) + "×";
-    }
-    return groupDigits(value.toFixed(2));
+    return METRIC_FORMATTERS[unit](value);
   }
 
   /* -------------------------------------------------------------- painting */

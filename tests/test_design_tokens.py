@@ -233,8 +233,12 @@ ALLOWED_DYNAMIC_SELECTORS = {
     "notice-success", "notice-info", "notice-danger", "notice-degraded",
     "notice-neutral",
     # Phase 3 opt-in utilities and control variants are public CSS contracts;
-    # consumers migrate in Phases 4-5 after the primitives land.
-    "data-label", "data-number", "data-value", "numeric-align-end", "control",
+    # consumers migrate in Phases 4-5 after the primitives land. ".data-number"
+    # and ".numeric-align-end" used to sit here: they had no emitter at all, and
+    # allow-listing them is exactly what stopped the guard below from saying so.
+    # Phase 4 standardized on class="numeric", so both were deleted; Phase 5
+    # introduces whatever it needs when it needs it.
+    "data-label", "data-value", "control",
     "control--primary", "control--danger", "control--quiet", "form-control",
     # data_card validates these state names and composes the modifier class.
     "data-card--positive", "data-card--negative", "data-card--warning",
@@ -265,7 +269,7 @@ PHASE3_DENSITY_TOKENS = {
 
 
 PHASE3_SELECTOR_OWNERS = {
-    "base.css": {"data-label", "data-number", "data-value", "numeric-align-end"},
+    "base.css": {"data-label", "data-value"},
     "components.css": {
         "command-bar", "command-bar__identity", "command-bar__navigation",
         "command-bar__group", "command-bar__label", "command-bar__content",
@@ -330,7 +334,11 @@ def test_phase3_density_never_targets_raw_buttons_or_fields():
 def test_phase3_numeric_type_does_not_restyle_legacy_numeric_cells_globally():
     body = _strip_css_comments((CSS_DIR / "base.css").read_text(encoding="utf-8"))
     assert not re.search(r"(?:^|,)\s*\.numeric\s*(?:,|\{)", body)
-    assert ".data-number" in body
+    # The opt-in data-typography utility is still here; the never-emitted
+    # ".data-number" twin was deleted with its allow-list entry.
+    assert ".data-value" in body
+    assert ".data-number" not in body
+    assert ".numeric-align-end" not in body
 
 
 def test_coarse_pointer_help_target_expands_without_resizing_the_icon():
@@ -362,8 +370,11 @@ def test_ticker_corporate_table_values_use_scoped_data_alignment():
 
 def test_terminal_density_numeric_cells_and_headers_share_data_alignment():
     body = _strip_css_comments((CSS_DIR / "tables.css").read_text(encoding="utf-8"))
+    # Cell-scoped: ".numeric" is a table-cell class, so the rule names td/th
+    # rather than matching any descendant that happens to carry it.
     match = re.search(
-        r"\.terminal-density \.table-region \.numeric,\s*"
+        r"\.terminal-density \.table-region td\.numeric,\s*"
+        r"\.terminal-density \.table-region th\.numeric,\s*"
         r"\.terminal-density \.table-region td\[data-order\]\s*\{([^}]*)\}",
         body,
         re.S,
@@ -373,6 +384,8 @@ def test_terminal_density_numeric_cells_and_headers_share_data_alignment():
     assert "font-family: var(--font-data)" in declarations
     assert "font-variant-numeric: tabular-nums lining-nums" in declarations
     assert "text-align: end" in declarations
+    # No bare-descendant form left behind that a future page could inherit.
+    assert not re.search(r"\.terminal-density \.table-region \.numeric\b", body)
 
 
 def test_ticker_heading_density_does_not_override_data_card_label_token():
@@ -388,6 +401,28 @@ def test_ticker_heading_density_does_not_override_data_card_label_token():
     )
     assert scoped_label is not None
     assert "font-size: var(--data-label-size)" in scoped_label.group(1)
+
+
+def test_the_coarse_pointer_help_target_never_covers_a_sortable_header_label():
+    """help_th() renders the "i" next to a label inside a dense sortable header.
+    The 44px overlay reaches past the icon and over the label, so a tap near the
+    label's edge opened help instead of sorting — on Candidate Finder, Tool B,
+    Tool D and Portfolio alike. Headers keep the icon's own bounds; the expanded
+    target still applies to every help icon outside a th."""
+
+    body = _strip_css_comments((CSS_DIR / "responsive.css").read_text(encoding="utf-8"))
+    coarse = re.search(r"@media\s*\(pointer:\s*coarse\)\s*\{(.*)\}\s*$", body, re.S)
+    assert coarse is not None
+    rules = coarse.group(1)
+    # The general expansion survives...
+    general = re.search(r"(?<!th )\.help-icon::after\s*\{([^}]*)\}", rules, re.S)
+    assert general is not None
+    assert "var(--touch-target-min)" in general.group(1)
+    # ...and the header override cancels it, with no size change to the icon.
+    header = re.search(r"th \.help-icon::after\s*\{([^}]*)\}", rules, re.S)
+    assert header is not None
+    assert "inset: 0" in header.group(1)
+    assert not re.search(r"\bth \.help-icon\s*\{", rules)
 
 
 def test_ticker_coarse_pointer_targets_are_page_scoped_and_touch_sized():

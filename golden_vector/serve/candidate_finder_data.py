@@ -47,6 +47,7 @@ from golden_vector.contracts.fundamentals import (
     FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
     fetched_fundamentals_latest_path,
 )
+from golden_vector.contracts.tool_d import select_tool_d_source_rows
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.screening.manual_store import load_store_tables
@@ -64,7 +65,6 @@ from golden_vector.serve.option_trading_data import (
     OptionTradingData,
     load_option_trading_data,
 )
-from golden_vector.serve.workspace_state import select_tool_d_source_rows
 
 OptionsSide = Literal["puts", "calls", "either", "none"]
 TOOL_D_FINDER_FIELDS = frozenset(
@@ -1568,13 +1568,32 @@ def _persisted_tool_d_source(
     *,
     finance_source: str,
 ) -> CandidateFinderSourceLoad:
-    """Select the exact persisted Tool D source before ticker-keyed joins."""
+    """Select the exact persisted Tool D source before ticker-keyed joins.
 
-    selected = select_tool_d_source_rows(
-        load.frame,
-        finance_source=finance_source,
-        label="Candidate Finder Corporate Resilience",
-    )
+    Corporate Resilience is ONE criterion group on this page. A duplicated or
+    malformed Tool D artifact raises out of the selector, and letting that
+    escape into the route replaces the whole Candidate Finder with a generic
+    error page — hiding every other criterion AND the reason. It degrades to
+    "no Corporate Resilience rows" instead, with the validation message routed
+    through the same warning channel the absent-row path already uses (the
+    ticker detail page handles the identical exposure the same way, W2).
+    """
+
+    try:
+        selected = select_tool_d_source_rows(
+            load.frame,
+            finance_source=finance_source,
+            label="Candidate Finder Corporate Resilience",
+        )
+    except ValueError as exc:
+        return CandidateFinderSourceLoad(
+            frame=_blank_tool_d_finder_fields(load.frame.iloc[0:0].copy()),
+            warning=_combine_source_warnings(
+                load.warning,
+                f"Corporate Resilience data could not be read: {exc}. "
+                "Candidate Finder treats Corporate Resilience criteria as missing.",
+            ),
+        )
     spot = _spot_tool_d_source(selected.frame)
     return CandidateFinderSourceLoad(
         frame=spot.frame,

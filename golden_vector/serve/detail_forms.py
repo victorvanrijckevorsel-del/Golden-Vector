@@ -169,22 +169,46 @@ def _render_reporting_form(
             return str(echo[field_name])
         return _format_form_value(field_name, reporting_row.get(field_name))
 
-    fields_html = [
-        "<label>"
-        f"<span>{escape(label)}</span>"
-        f"<input name=\"{escape(field_name)}\" type=\"date\" value=\"{escape(field_value(field_name))}\">"
-        "</label>"
-        for field_name, label in REPORTING_FORM_FIELDS[:2]
-    ]
+    def clear_toggle(field_name: str, current: str) -> str:
+        # Same affordance as the company + verification forms: offered only when
+        # there is a stored value to clear (W11).
+        if not current.strip():
+            return ""
+        return (
+            "<label class=\"clear-toggle\">"
+            f"<input type=\"checkbox\" name=\"clear_{escape(field_name)}\" value=\"1\"> Clear on save"
+            "</label>"
+        )
+
+    fields_html = []
+    for field_name, label in REPORTING_FORM_FIELDS[:2]:
+        current = field_value(field_name)
+        fields_html.append(
+            "<label>"
+            f"<span>{escape(label)}</span>"
+            f"<input name=\"{escape(field_name)}\" type=\"date\" value=\"{escape(current)}\">"
+            f"{clear_toggle(field_name, current)}"
+            "</label>"
+        )
+    notes_value = field_value("notes")
     fields_html.append(
         "<label class=\"full-width\">"
         "<span>Reporting Notes</span>"
-        f"<textarea name=\"notes\" rows=\"3\">{escape(field_value('notes'))}</textarea>"
+        f"<textarea name=\"notes\" rows=\"3\">{escape(notes_value)}</textarea>"
+        f"{clear_toggle('notes', notes_value)}"
         "</label>"
     )
     updated_at = _fmt_text(reporting_row.get("updated_at_utc"))
+    # The same on-screen promise the sibling forms make — and now the same
+    # behaviour behind it (W11: a partial POST used to null the fields the user
+    # left alone).
+    clear_hint = (
+        "<p class=\"hint\">Blank fields are left unchanged on save. "
+        "To clear a value, tick the <em>Clear on save</em> checkbox under that field.</p>"
+    )
     body = (
         f"<p><strong>Last Updated:</strong> {updated_at}</p>"
+        f"{clear_hint}"
         f"<form method=\"post\" action=\"/ticker/{escape(ticker)}/reporting\" class=\"form-grid\">"
         f"{_return_to_input(return_to)}"
         f"{''.join(fields_html)}"

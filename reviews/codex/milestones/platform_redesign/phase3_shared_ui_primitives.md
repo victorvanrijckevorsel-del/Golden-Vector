@@ -12,6 +12,14 @@ one-per-family basis strips, compact section navigation, terminal-density wrappe
 density tokens, and accessible coarse-pointer behavior. Existing pages retain their prior markup
 unless a later phase explicitly opts them into these primitives.
 
+Correction (2026-08-12 complementary review): one deliberate exception to the sentence above —
+the `.button-like` compatibility mapping in `components.css`/`responsive.css` styles the seven
+pre-existing emitters, which includes the gold-scenario chips on `/tool-b` and `/tool-d`. Those
+two pages therefore DID change appearance in Phase 3 (previously the class had no stylesheet
+rule at all, so the chips rendered as unstyled UA buttons — the mapping is a strict improvement
+and matches the plan's §5.4 compatibility intent). The markup is unchanged; only styling reached
+them. Phase 5 migrates them properly; their appearance until then is this compat styling.
+
 The global content width remains unchanged at 1,240px. `workspace.css` remains the existing
 nine-module manifest, so this phase extends the centralized design system instead of creating a
 second page-local theme.

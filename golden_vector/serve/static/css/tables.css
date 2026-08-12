@@ -81,7 +81,11 @@ table select {
 .terminal-density .table-region td {
   padding: var(--density-table-padding-block) var(--density-table-padding-inline);
 }
-.terminal-density .table-region .numeric,
+/* Cells only. ``.numeric`` is a table-cell class, so the selector names cells:
+   a bare descendant match would let a second terminal-density page restyle any
+   element that happens to carry the class inside a table region. */
+.terminal-density .table-region td.numeric,
+.terminal-density .table-region th.numeric,
 .terminal-density .table-region td[data-order] {
   font-family: var(--font-data);
   font-variant-numeric: tabular-nums lining-nums;

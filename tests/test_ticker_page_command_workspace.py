@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 
+import pandas as pd
+
+from golden_vector.app.ticker_page_state import TickerPageArtifactState
+from golden_vector.contracts.ticker_page import GOLD_RESPONSE_LINE_METRICS
 from golden_vector.serve.detail_page import _ticker_quote_html
+from golden_vector.serve.ticker_page import GOLD_DIAL_PAYLOAD_ID, TickerPageData
 from tests.helpers import call_wsgi_app
+from tests.test_ticker_page_corporate import _gold_row
+from tests.test_ticker_page_sections import _performance_rows
 from tests.test_workspace_app import _m3b_app
 
 
@@ -27,7 +35,10 @@ def test_ticker_command_bar_uses_configured_identity_quote_and_neutral_shell(tmp
     assert "Newmont Corporation" in body
     assert "USD listing" in body
     assert "Jurisdiction tier 2" in body
-    assert 'class="ticker-quote__value">US$100.00</span>' in body
+    # The house money convention (format_metric "usd2"), not the page's one
+    # "US$": the identity line right above already says "USD listing".
+    assert 'class="ticker-quote__value">$100.00</span>' in body
+    assert "US$" not in body
     assert "Market date 22 Apr 2026" in body
     assert 'aria-current="page"' not in body
     assert '<span class="app-header-title">NEM · Newmont Corporation</span>' in body
@@ -38,7 +49,10 @@ def test_usd_normalized_quote_is_never_mislabeled_as_listing_currency():
         {"share_price_usd": 42.5, "as_of_date": "2026-08-12"}
     )
 
-    assert "US$42.50" in html
+    # One money convention on this page: the shared format_metric "$" style.
+    assert '<span class="ticker-quote__value">$42.50</span>' in html
+    assert "US$" not in html
+    # ...and the USD-normalized number still never borrows a listing currency.
     assert "AUD" not in html
     assert "CAD" not in html
 
@@ -46,7 +60,7 @@ def test_usd_normalized_quote_is_never_mislabeled_as_listing_currency():
 def test_command_bar_omits_missing_quote_fields_instead_of_guessing():
     assert _ticker_quote_html({}) == ""
     html = _ticker_quote_html({"share_price_usd": 42.5})
-    assert "US$42.50" in html
+    assert "$42.50" in html
     assert "Market date" not in html
 
 
@@ -66,6 +80,9 @@ def test_ticker_jump_lists_only_route_allowed_tickers_and_preserves_source(tmp_p
     assert '<option value="NEM">' in form
     assert '<option value="AEM">' not in form
     assert 'name="fundamentals_source" value="yahoo"' in form
+    # W7: the form carries the page it was submitted FROM, so a mistyped jump
+    # can offer a way back instead of a workspace-only dead end.
+    assert 'name="from" value="NEM"' in form
 
     jumped = call_wsgi_app(
         app,
@@ -77,7 +94,35 @@ def test_ticker_jump_lists_only_route_allowed_tickers_and_preserves_source(tmp_p
 
     unknown = call_wsgi_app(app, method="GET", path="/ticker?ticker=BOGUS")
     assert unknown["status"].startswith("404")
-    assert "BOGUS is not an active Corporate Finance ticker" in unknown["body"]
+    assert "BOGUS is not one of your tracked tickers." in unknown["body"]
+    assert "Corporate Finance ticker" not in unknown["body"]
+
+
+def test_unknown_jump_offers_the_originating_ticker_page_with_its_source(tmp_path):
+    """W7: a mistyped jump is an honest 404, but not a dead end — it links back
+    to the ticker page the jump came from, keeping the active financials
+    source."""
+    _paths, app = _m3b_app(tmp_path)
+
+    unknown = call_wsgi_app(
+        app,
+        method="GET",
+        path="/ticker?ticker=BOGUS&from=nem&fundamentals_source=yahoo",
+    )
+
+    assert unknown["status"].startswith("404")
+    assert 'href="/ticker/NEM?fundamentals_source=yahoo"' in unknown["body"]
+    assert ">Back to NEM</a>" in unknown["body"]
+    assert '<a href="/">Back to workspace</a>' in unknown["body"]
+
+    # an unknown origin is ignored rather than rendering a link to a 404
+    bogus_origin = call_wsgi_app(
+        app,
+        method="GET",
+        path="/ticker?ticker=BOGUS&from=ZZZZ",
+    )
+    assert bogus_origin["status"].startswith("404")
+    assert "Back to ZZZZ" not in bogus_origin["body"]
 
 
 def test_source_control_is_segmented_and_preserves_unrelated_query_state(tmp_path):
@@ -171,3 +216,75 @@ def test_empty_rejected_verification_post_still_opens_verification_region(tmp_pa
     body = response["body"]
     assert " open" in _details_tag(body, "inputs")
     assert " open" in _details_tag(body, "verification")
+
+
+# ---------------------------------------------------------------------------
+# whole-page composition
+# ---------------------------------------------------------------------------
+
+
+def _drawable_ticker_page_data():
+    """One generation with a FINITE spot and drawable performance rows.
+
+    Every other full-page fixture leaves the ticker-page artifacts unpublished,
+    so those pages render "Spot gold unavailable" and the scenario markup and
+    chart controls count ZERO at page level. Section tests cover each renderer
+    in isolation; nothing was checking that the assembled page carries exactly
+    one of each shared thing, which is where duplicate payload scripts and
+    orphaned cells hide.
+    """
+
+    blank = TickerPageArtifactState(status="OK", reason=None, frame=pd.DataFrame())
+    performance = _performance_rows()
+    performance["ticker"] = "NEM"
+    return TickerPageData(
+        gold_response=TickerPageArtifactState(
+            status="OK", reason=None, frame=pd.DataFrame([_gold_row()])
+        ),
+        percentiles=blank,
+        performance=TickerPageArtifactState(
+            status="OK", reason=None, frame=performance
+        ),
+        research_series=blank,
+        fx_attribution=blank,
+    )
+
+
+def test_whole_page_carries_exactly_one_of_each_shared_element(tmp_path, monkeypatch):
+    _paths, app = _m3b_app(tmp_path)
+    monkeypatch.setattr(
+        "golden_vector.serve.workspace.load_ticker_page_data",
+        lambda paths: _drawable_ticker_page_data(),
+    )
+
+    body = call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
+
+    # The premise: this page really did resolve a spot, so the counts below are
+    # counting present markup rather than a uniformly absent section.
+    assert "Spot gold unavailable" not in body
+    assert "$4,452.00/oz" in body
+
+    # ONE dial payload for the whole page. The control bar and the section both
+    # build a dial from the same helper; a second <script> would mean the two
+    # states could diverge, and gold-dial.js reads exactly one by id.
+    assert body.count(f'id="{GOLD_DIAL_PAYLOAD_ID}"') == 1
+
+    # Six headline cards, each with exactly one visible value.
+    assert body.count('data-headline-spot="1"') == 6
+    # Five line metrics evaluated client-side at spot (the ratio metrics are
+    # persisted spot columns and are NOT in this set).
+    assert body.count('data-basis="spot"') == len(GOLD_RESPONSE_LINE_METRICS) == 5
+
+    # The performance chart and its series controls both rendered.
+    assert body.count("data-performance-chart") == 1
+    assert body.count("data-performance-series-input") >= 1
+
+    # The dial input opens on a value the stepped control can actually hold, so
+    # the page does not boot into a scenario nobody asked for.
+    value = re.search(r'id="gold-dial-input"[^>]*\bvalue="([^"]+)"', body)
+    assert value is not None
+    step = re.search(r'id="gold-dial-input"[^>]*\bstep="([^"]+)"', body)
+    minimum = re.search(r'id="gold-dial-input"[^>]*\bmin="([^"]+)"', body)
+    assert step is not None and minimum is not None
+    offset = Decimal(value.group(1)) - Decimal(minimum.group(1))
+    assert offset % Decimal(step.group(1)) == 0

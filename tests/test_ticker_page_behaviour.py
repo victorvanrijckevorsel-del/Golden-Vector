@@ -8,7 +8,10 @@ drawn charts) are exercised without a built Lab on disk.
 
 from __future__ import annotations
 
+import re
+from html import unescape
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
 import pytest
@@ -240,6 +243,56 @@ def test_section_mounts_at_market_behaviour_with_the_beta_window_switcher():
     assert 'class="window-switcher"' in html
     assert 'aria-label="Beta window"' in html
     assert "window=6m" in html  # the window param round-trips exactly as before
+
+
+def _window_tab_hrefs(html: str) -> dict[str, str]:
+    """Map each beta-window tab label -> its (unescaped) href."""
+    hrefs: dict[str, str] = {}
+    for match in re.finditer(
+        r'<a class="window-tab[^"]*" href="([^"]+)"[^>]*>([^<]+)', html
+    ):
+        hrefs[match.group(2).strip()] = unescape(match.group(1))
+    return hrefs
+
+
+def test_window_tabs_round_trip_every_unrelated_view_param():
+    """W1: a beta-window click must not drop chart / options / lab state.
+
+    The switcher used to hand-roll an allow-list of four params, so every other
+    query key on the page (chart_view, chart_h, tw, lab_*) was silently reset on
+    each tab click. Tabs now build their href from the page's real query params.
+    """
+
+    query = {
+        "chart_view": "price",
+        "chart_h": "5Y",
+        "tw": "45",
+        "fundamentals_source": "yahoo",
+        "lab_h": "12",
+        "lab_b": "GDXJ",
+        "window": "6m",
+        "saved": "reporting",
+    }
+    html = _render(active_window="6M", finance_source="yahoo", query_params=query)
+
+    hrefs = _window_tab_hrefs(html)
+    assert set(hrefs) == {"6M", "1Y", "2Y", "3Y", "5Y"}
+    for label, href in hrefs.items():
+        params = parse_qs(urlsplit(href).query)
+        for key in ("chart_view", "chart_h", "tw", "lab_h", "lab_b"):
+            assert params.get(key) == [query[key]], f"{label} dropped {key}"
+        assert params.get("fundamentals_source") == ["yahoo"], label
+        # the one-shot flash marker is never re-carried
+        assert "saved" not in params, label
+        assert urlsplit(href).fragment == "market-behaviour"
+
+    # every non-canonical tab sets its own window; the canonical-default tab
+    # drops ONLY `window` (12M renders as "1Y").
+    assert parse_qs(urlsplit(hrefs["6M"]).query)["window"] == ["6m"]
+    assert parse_qs(urlsplit(hrefs["3Y"]).query)["window"] == ["3y"]
+    canonical_params = parse_qs(urlsplit(hrefs["1Y"]).query)
+    assert "window" not in canonical_params
+    assert set(canonical_params) == set(parse_qs(urlsplit(hrefs["6M"]).query)) - {"window"}
 
 
 def test_open_by_default_bars_and_rugs_render_from_the_published_window_fit():

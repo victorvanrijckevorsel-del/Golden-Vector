@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 
 
 from golden_vector.app.config import load_app_config
@@ -174,7 +175,15 @@ def test_workspace_option_trading_lens_renders_canonical_options_section(tmp_pat
         "Liquidity",
         "Chain",
     ):
-        assert f'<th scope="col">{column}' in body
+        # Phase 4 (d3b1a8a) added data-sort-numeric to the value columns, so
+        # scope="col" is no longer the header's last attribute. The scope
+        # relationship itself is what this asserts, and it survived — so match
+        # THIS column's own <th>, not merely "a scoped th exists somewhere".
+        header = re.search(
+            r"<th([^>]*)>" + re.escape(column) + r"(?:<|\s*</th>)", body
+        )
+        assert header is not None, f"no header cell for {column}"
+        assert 'scope="col"' in header.group(1), column
     # Yahoo chain is a compact arrow icon carrying the label in its title.
     assert 'class="yahoo-chain-icon"' in body
     assert "Open Yahoo option chain for this expiry" in body
@@ -226,7 +235,13 @@ def test_workspace_default_detail_renders_options_section_inline(tmp_path):
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert 'aria-current="page" href="/"' in body
+    # Phase 4 (d3b1a8a) stopped marking Candidate Finder as the current page
+    # here: on /ticker/AEM no primary-nav entry IS the current page, and
+    # aria-current="page" claimed one was. The page now identifies itself
+    # through page_id + a ticker header label instead, and the option-lens page
+    # still marks its own nav entry (asserted in the lens tests).
+    assert 'aria-current="page"' not in body
+    assert 'data-page="ticker_detail"' in body
     # Rendered inline, with real contract rows — not a teaser.
     assert '<section id="options"' in body
     assert '<a class="section-nav-link" href="#options">Options</a>' in body
@@ -516,8 +531,10 @@ def test_workspace_option_vehicle_detail_page_renders_option_lens_only(tmp_path)
     assert "Option vehicle page" in body
     # A benchmark ETF gets an options-ONLY page: the Options section and nothing else.
     assert '<section id="options"' in body
+    # Phase 4 (d3b1a8a): section_nav() -> section_tabs() — same renderer, compact
+    # class and a page-specific label. Still one anchor, and still only one.
     assert (
-        '<nav class="section-nav" aria-label="On this page">'
+        '<nav class="section-nav section-nav--compact" aria-label="Ticker sections">'
         '<a class="section-nav-link" href="#options">Options</a></nav>'
     ) in body
     assert "Company Inputs" not in body
@@ -598,8 +615,12 @@ def test_workspace_detail_invalid_lens_falls_back_to_candidate_finder_nav(tmp_pa
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert 'aria-current="page" href="/"' in body
+    # Phase 4 (d3b1a8a): the non-option detail page marks NO primary-nav entry
+    # as current (see the default-detail test above). What this case is really
+    # about is unchanged — an unknown lens must not land on the option lens.
     assert 'aria-current="page" href="/option-trading"' not in body
+    assert 'aria-current="page"' not in body
+    assert 'data-page="ticker_detail"' in body
     # An unknown lens still renders the canonical page, Options section and all
     # (the section id is "options" now; "option-trading" survives only as the top-nav
     # href asserted above).
@@ -623,9 +644,11 @@ def test_workspace_option_trading_lens_preserves_lens_in_window_switcher(tmp_pat
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert "/ticker/AEM?window=6m&amp;lens=option-trading#option-trading" in body
+    # W1: the tabs now build on the page's real query params, so the carried
+    # `lens` keeps its request-URL position and `window` is appended.
+    assert "/ticker/AEM?lens=option-trading&amp;window=6m#option-trading" in body
     assert "/ticker/AEM?lens=option-trading#option-trading" in body
-    assert "/ticker/AEM?window=3y&amp;lens=option-trading#option-trading" in body
+    assert "/ticker/AEM?lens=option-trading&amp;window=3y#option-trading" in body
 
 
 def test_workspace_hedge_readiness_route_redirects_to_option_trading(tmp_path):

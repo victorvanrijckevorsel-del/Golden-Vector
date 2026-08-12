@@ -138,16 +138,23 @@ def _chart_data_disclosure(
     table_html: str,
     region_id: str,
     label: str,
+    basis_note: str = "",
 ) -> str:
     """Collapsed, keyboard-operable text equivalent for a pointer-only chart interaction.
 
     Accessibility remedy for GV-RD-FINAL-002: the crosshair / rug tooltips are pointer-driven, so
     every value they reveal is ALSO rendered as a plain table right after the chart. The table is
-    built from the exact payload the SVG was built from — no recomputation, no truncation."""
+    built from the exact payload the SVG was built from — no recomputation, no truncation.
 
+    ``basis_note`` is the caller's already-resolved sentence describing what the plotted values
+    ARE (per-series price bases, for instance). It belongs with the numbers rather than in the
+    always-open strip above the chart, where it turned an orienting line into a metadata wall."""
+
+    note_html = f'<p class="hint">{escape(basis_note)}</p>' if basis_note else ""
     return (
         "<details class=\"disclosure chart-data-details\">"
         f"<summary>Chart data (table)</summary>"
+        f"{note_html}"
         f"{table_region(table_html, region_id=region_id, label=label)}"
         "</details>"
     )
@@ -485,6 +492,7 @@ def _build_multiline_overlay_svg(
     mode: str = "indexed",
     unit: str | None = None,
     title: str | None = None,
+    basis_note: str = "",
 ) -> str:
     """SVG line chart of several persisted series sharing one y-axis.
 
@@ -508,6 +516,10 @@ def _build_multiline_overlay_svg(
     caption and the disclosure label together, so those three can never drift apart. A mode
     that requires a unit fails loudly when the caller has none — an unlabelled currency or
     count chart is a degraded state for the caller to disclose, not something to guess here.
+
+    ``basis_note`` rides into the data-table disclosure verbatim (see ``_chart_data_disclosure``)
+    so a caller can keep a long "what these values are" sentence with the numbers instead of in
+    the strip above the chart. It requires ``data_table_id`` — there is nowhere else to put it.
     """
 
     try:
@@ -679,11 +691,14 @@ def _build_multiline_overlay_svg(
 
     # Embed the data so the hover crosshair (overlay-crosshair.js) can show each line's value +
     # date at the cursor: ticks = union dates with x-px (for snapping); each series carries
-    # byDate -> [y-px, value, display-label]. The label is produced HERE by the mode's formatter
-    # (the same one as the y-axis gridlines), so the JS only renders pre-formatted strings — no
-    # percent or currency arithmetic in the browser. Serve mirrors persisted values; no business
-    # math. Ticks are keyed by the SAME date string as byDate (one entry per calendar day) so a
-    # tick and its point can never desync, even if two timestamps happen to share a day.
+    # byDate -> [y-px, value, display-label, level-label]. BOTH labels are produced HERE by the
+    # mode's formatter (the same one as the y-axis gridlines), so the JS only renders
+    # pre-formatted strings — no percent, currency or rounding arithmetic in the browser. The
+    # level label exists because the table cell and the crosshair used to round the raw value
+    # independently (Python's ".1f" is half-even, JS's toFixed() is half-up), so an indexed
+    # level of 100.25 read 100.2 in the table and 100.3 in the tooltip. Serve mirrors persisted
+    # values; no business math. Ticks are keyed by the SAME date string as byDate (one entry per
+    # calendar day) so a tick and its point can never desync, even if two timestamps share a day.
     tick_x_by_date = {d.strftime("%Y-%m-%d"): round(x_at(d), 1) for d in all_dates}
     raw_decimals = 2 if display.decimals is None else display.decimals
     overlay_data = {
@@ -706,6 +721,12 @@ def _build_multiline_overlay_svg(
                         round(y_at(v), 1),
                         round(v, raw_decimals),
                         _overlay_value_label(display, v, base=base, unit=unit),
+                        # Only the two-number modes show a bare level next to
+                        # their label; a labelOnly mode has no such number, so
+                        # the slot is null rather than a meaningless string.
+                        f"{round(v, raw_decimals):.1f}"
+                        if display.table_shows_value
+                        else None,
                     ]
                     for d, v in points
                 },
@@ -725,9 +746,12 @@ def _build_multiline_overlay_svg(
         "</svg>"
     )
     if not data_table_id:
+        if basis_note:
+            raise ValueError("basis_note requires data_table_id: there is nowhere to render it")
         return legend_html + svg
     # Text equivalent of the crosshair: one row per snapped date, one column per series, each cell
-    # rendered from the SAME overlay_data payload the JS reads. Indexed cells keep the index level
+    # rendered from the SAME overlay_data payload the JS reads — including the SAME pre-formatted
+    # level string, never a second rounding of the raw value. Indexed cells keep the index level
     # plus its percent label ("100.0 (+0.0%)"); the unit-carrying modes print the mode's formatted
     # value alone ("USD 51.00", "12,345"). No new arithmetic; every date is listed.
     series_entries = overlay_data["series"]
@@ -745,7 +769,7 @@ def _build_multiline_overlay_svg(
             elif display.table_shows_value:
                 cells += (
                     '<td class="numeric">'
-                    f"{escape(f'{point[1]:.1f}')} ({escape(str(point[2]))})</td>"
+                    f"{escape(str(point[3]))} ({escape(str(point[2]))})</td>"
                 )
             else:
                 cells += f'<td class="numeric">{escape(str(point[2]))}</td>'
@@ -764,5 +788,6 @@ def _build_multiline_overlay_svg(
             table_html=table_html,
             region_id=data_table_id,
             label=f"{chart_title} — chart data table",
+            basis_note=basis_note,
         )
     )

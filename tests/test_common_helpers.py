@@ -98,6 +98,30 @@ def test_select_finance_source_rows_rejects_noncanonical_requested_source():
         )
 
 
+@pytest.mark.parametrize("requested", ["official", "market", "yahoo_fundamentals", " Official "])
+def test_select_finance_source_rows_resolves_request_aliases_to_yahoo(requested):
+    """W4: older surfaces still emit `official` in links and stored params.
+
+    The REQUESTED source resolves through the one shared alias table, so those
+    tokens select the Yahoo rows instead of raising on the read boundary. The
+    stored column stays strictly canonical (asserted below).
+    """
+    frame = pd.DataFrame(
+        [
+            {"ticker": "NEM", "finance_source": "our", "value": 80},
+            {"ticker": "NEM", "finance_source": "yahoo", "value": 5},
+        ]
+    )
+
+    selected = select_finance_source_rows(
+        frame,
+        finance_source=requested,
+        label="test Tool D artifact",
+    )
+
+    assert selected["value"].tolist() == [5]
+
+
 @pytest.mark.parametrize(
     "stored_source",
     [None, pd.NA, "", "   ", "ours", "official"],

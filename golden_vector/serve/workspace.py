@@ -44,7 +44,7 @@ from golden_vector.serve.detail_panels import (
     _canonical_anchor_window,
     _resolve_active_window,
 )
-from golden_vector.serve.detail_forms import COMPANY_FORM_FIELDS
+from golden_vector.serve.detail_forms import COMPANY_FORM_FIELDS, REPORTING_FORM_FIELDS
 from golden_vector.serve.ticker_page import load_ticker_page_data, parse_lab_request
 from golden_vector.serve.detail_page import (
     DETAIL_DEFAULT_LENS_ID,
@@ -79,6 +79,7 @@ from golden_vector.serve.candidate_finder_data import (
     parse_candidate_finder_scenario,
 )
 from golden_vector.serve.candidate_finder_page import render_candidate_finder_page
+from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.lab_curve_data import (
     default_lab_horizon,
     load_dial_cells,
@@ -103,7 +104,8 @@ from golden_vector.serve.format_helpers import (
     _frame_index_by_ticker,
 )
 from golden_vector.serve.fundamentals_provenance import (
-    load_fundamentals_provenance_lookup,
+    FundamentalsProvenance,
+    load_fundamentals_provenance,
 )
 from golden_vector.portfolio.manual_store import add_lot, delete_lot, edit_lot
 from golden_vector.portfolio.models import PortfolioError, PortfolioStaleSchemaError
@@ -516,18 +518,39 @@ def create_workspace_app(
             if method == "GET" and path == "/ticker":
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 requested = normalize_ticker((query.get("ticker") or [""])[0])
-                if requested is None or requested not in allowed_tickers:
-                    shown = requested or "That ticker"
-                    return _html_response(
-                        start_response,
-                        _render_error_page(
-                            f"{shown} is not an active Corporate Finance ticker."
-                        ),
-                        status="404 Not Found",
-                    )
                 source = normalize_finance_source(
                     (query.get("fundamentals_source") or ["our"])[0]
                 )
+                if requested is None or requested not in allowed_tickers:
+                    shown = requested or "That ticker"
+                    # W7: honest 404, user language, and a way back to the page
+                    # the jump form was submitted from (its hidden `from` field)
+                    # with the active financials source preserved.
+                    origin = normalize_ticker((query.get("from") or [""])[0])
+                    origin_links: list[tuple[str, str]] = []
+                    if origin is not None and origin in allowed_tickers:
+                        origin_links.append(
+                            (
+                                build_page_url(
+                                    f"/ticker/{quote(origin, safe='')}",
+                                    {},
+                                    set_params=(
+                                        {"fundamentals_source": "yahoo"}
+                                        if source == "yahoo"
+                                        else {}
+                                    ),
+                                ),
+                                f"Back to {origin}",
+                            )
+                        )
+                    return _html_response(
+                        start_response,
+                        _render_error_page(
+                            f"{shown} is not one of your tracked tickers.",
+                            links=origin_links,
+                        ),
+                        status="404 Not Found",
+                    )
                 destination = f"/ticker/{quote(requested, safe='')}"
                 if source == "yahoo":
                     destination += "?fundamentals_source=yahoo"
@@ -571,7 +594,9 @@ def create_workspace_app(
                     if not option_vehicle_detail:
                         return _html_response(
                             start_response,
-                            _render_error_page(f"{ticker} is not an active Corporate Finance ticker."),
+                            # Same user language as the jump 404 (W7); a direct
+                            # URL has no originating ticker page to return to.
+                            _render_error_page(f"{ticker} is not one of your tracked tickers."),
                             status="404 Not Found",
                         )
 
@@ -588,11 +613,15 @@ def create_workspace_app(
                                 finance_source=financials_source,
                             ),
                         )
-                    fundamentals_provenance = (
-                        load_fundamentals_provenance_lookup(paths)
+                    # ONE artifact read serving both consumers: the source
+                    # tooltip's explanations and the data-quality table's
+                    # statement period.
+                    provenance = (
+                        load_fundamentals_provenance(paths)
                         if financials_source == "yahoo"
-                        else {}
+                        else FundamentalsProvenance()
                     )
+                    fundamentals_provenance = provenance.lookup
                     tool_a_detail = _load_tool_a_detail(paths, app_config=app_config, ticker=ticker, universe_tool_a=state.latest_tool_a)
                     flash = _flash_message(query.get("saved", [""])[0])
                     # Resolve the active structural window for this page
@@ -652,6 +681,7 @@ def create_workspace_app(
                             financials_source=financials_source,
                             query_params=_first_query_values(query),
                             fundamentals_provenance=fundamentals_provenance,
+                            fundamentals_statement_periods=provenance.statement_periods,
                         ),
                     )
 
@@ -700,9 +730,9 @@ def create_workspace_app(
                                 ),
                             )
                         error_provenance = (
-                            load_fundamentals_provenance_lookup(paths)
+                            load_fundamentals_provenance(paths)
                             if error_source == "yahoo"
-                            else {}
+                            else FundamentalsProvenance()
                         )
                         error_lens = resolve_detail_lens(merged_query.get("lens", [""])[0])
                         (
@@ -757,7 +787,10 @@ def create_workspace_app(
                                 ),
                                 financials_source=error_source,
                                 query_params=_first_query_values(merged_query),
-                                fundamentals_provenance=error_provenance,
+                                fundamentals_provenance=error_provenance.lookup,
+                                fundamentals_statement_periods=(
+                                    error_provenance.statement_periods
+                                ),
                                 # A rejected POST re-renders the SAME page, so
                                 # the Options section must come back too — its
                                 # absence would read as data loss.
@@ -821,17 +854,37 @@ def create_workspace_app(
 
                     if action == "reporting":
                         try:
-                            reporting_values = {
-                                "next_financial_report_date": _coerce_form_text(
-                                    form_data.get("next_financial_report_date", [""])[0]
-                                ),
-                                "next_production_report_date": _coerce_form_text(
-                                    form_data.get("next_production_report_date", [""])[0]
-                                ),
-                                "notes": _coerce_form_text(
-                                    form_data.get("notes", [""])[0]
-                                ),
-                            }
+                            # W11: identical blank-means-unchanged contract to the
+                            # company and verification forms. This branch used to
+                            # build all three keys unconditionally, so a partial
+                            # POST (one date typed, the rest absent) NULLED the
+                            # fields the user never touched — silent data loss.
+                            # `upsert_reporting_calendar` writes only the keys it
+                            # is given, so omitting a field leaves it alone.
+                            reporting_values: dict[str, object] = {}
+                            for field_name, _label in REPORTING_FORM_FIELDS:
+                                if str(
+                                    form_data.get(f"clear_{field_name}", [""])[0]
+                                ).strip():
+                                    reporting_values[field_name] = None
+                                    continue
+                                typed = _coerce_form_text(
+                                    form_data.get(field_name, [""])[0]
+                                )
+                                if typed is None:
+                                    continue
+                                reporting_values[field_name] = typed
+                            if not reporting_values:
+                                # Nothing was written — return WITHOUT the saved
+                                # marker so the page never claims a save (D2).
+                                no_op_fallback = f"/ticker/{ticker}"
+                                return _redirect_response(
+                                    start_response,
+                                    _safe_return_to(
+                                        form_data.get("return_to", [no_op_fallback])[0],
+                                        fallback=no_op_fallback,
+                                    ),
+                                )
                             upsert_reporting_calendar(
                                 paths,
                                 ticker=ticker,
@@ -857,8 +910,10 @@ def create_workspace_app(
                                 form_data.get("verification_status", [""])[0]
                             ).strip().upper()
                             # Only include optional fields when the user actually typed
-                            # something; matches the null-on-blank guard used for the
-                            # company and reporting forms.
+                            # something; the same blank-means-unchanged guard the
+                            # company and reporting forms use (W11: the reporting
+                            # branch really did null omitted fields until then, so
+                            # this comment described a guard that did not exist).
                             verification_values: dict[str, object] = {}
                             for optional_field in ("source_date", "source_url", "notes"):
                                 # Same blank-as-no-op + explicit-clear pattern as the

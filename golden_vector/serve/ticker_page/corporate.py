@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from html import escape
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import pandas as pd
 
@@ -36,10 +36,13 @@ from golden_vector.contracts.tool_d import YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
 from golden_vector.contracts.ticker_page import (
     GOLD_RESPONSE_CONSTANT_COLUMNS,
     GOLD_RESPONSE_LINE_METRICS,
+    canonical_finance_source,
+    normalize_finance_source,
 )
 from golden_vector.screening.verdicts import FORWARD_PE_NON_POSITIVE_CODE
 from golden_vector.serve.column_help import help_icon
 from golden_vector.serve.embed import embed_json_payload
+from golden_vector.serve.fundamentals_provenance import FundamentalsStatementPeriod
 from golden_vector.serve.ticker_page.data import TickerPageData
 from golden_vector.serve.ui.components import (
     basis_strip,
@@ -334,6 +337,28 @@ def _currency(magnitude: str, suffix: str = "") -> str:
     return "$" + magnitude + suffix
 
 
+#: unit -> formatter. The KEY SET is the unit vocabulary this page speaks, and
+#: ``METRIC_FORMATTERS`` in gold-dial.js holds exactly the same keys with exactly
+#: the same bodies. Keeping it a table rather than an if-chain is what lets
+#: ``METRIC_UNITS`` below be derived instead of hand-maintained — a unit added
+#: here cannot go missing from the vocabulary the JS parity test compares against.
+_METRIC_FORMATTERS: dict[str, Callable[[float], str]] = {
+    "musd": lambda value: _currency(_grouped(f"{value:.0f}"), "m"),
+    "usd2": lambda value: _currency(_grouped(f"{value:.2f}")),
+    "usd_per_oz": lambda value: _currency(_grouped(f"{value:.0f}"), "/oz"),
+    "usd": lambda value: _currency(_grouped(f"{value:.0f}")),
+    "pct": lambda value: f"{value:.1%}",
+    "ratio": lambda value: f"{value:.2f}×",
+    "years": lambda value: f"{value:.1f} years",
+    "oz": lambda value: _grouped(f"{value:.0f}") + " oz",
+    "days": lambda value: f"{value:.0f} days",
+    "percentile": lambda value: _grouped(f"{value:.0f}"),
+}
+
+#: The shared unit vocabulary, derived from the one formatter table.
+METRIC_UNITS: tuple[str, ...] = tuple(_METRIC_FORMATTERS)
+
+
 def format_metric(value: float | None, unit: str) -> str:
     """The ONE server-side metric formatter — mirrored by ``formatMetric`` in
     gold-dial.js so a spot cell and a scenario cell can never read differently.
@@ -341,27 +366,10 @@ def format_metric(value: float | None, unit: str) -> str:
 
     if value is None:
         return "n/a"
-    if unit == "musd":
-        return _currency(_grouped(f"{value:.0f}"), "m")
-    if unit == "usd2":
-        return _currency(_grouped(f"{value:.2f}"))
-    if unit == "usd_per_oz":
-        return _currency(_grouped(f"{value:.0f}"), "/oz")
-    if unit == "usd":
-        return _currency(_grouped(f"{value:.0f}"))
-    if unit == "pct":
-        return f"{value:.1%}"
-    if unit == "ratio":
-        return f"{value:.2f}×"
-    if unit == "years":
-        return f"{value:.1f} years"
-    if unit == "oz":
-        return _grouped(f"{value:.0f}") + " oz"
-    if unit == "days":
-        return f"{value:.0f} days"
-    if unit == "percentile":
-        return _grouped(f"{value:.0f}")
-    return _grouped(f"{value:.2f}")
+    formatter = _METRIC_FORMATTERS.get(unit)
+    if formatter is None:
+        return _grouped(f"{value:.2f}")
+    return formatter(value)
 
 
 def _cell(row: Any, column: str, unit: str) -> str:
@@ -369,7 +377,13 @@ def _cell(row: Any, column: str, unit: str) -> str:
 
 
 def _finance_source_label(finance_source: str) -> str:
-    """Display name for the already-normalized source selected by the route."""
+    """Display name for an ALREADY-canonical source token.
+
+    Every entry point into this module normalizes once, up front, so this (and
+    every other helper below) compares the canonical value directly. Repeating
+    an ad-hoc ``.strip().lower()`` at each call site is how one comparison ends
+    up recognizing ``"official"`` while its neighbour does not.
+    """
 
     return "Yahoo Fundamentals" if finance_source == "yahoo" else "Our View"
 
@@ -402,10 +416,11 @@ def _corporate_status_strip(
     roll-up, even on the base Our View Tool-B row.  The label therefore stays
     Yahoo-specific in both modes; calling it an Our View failure would be a
     source-attribution bug.
+
+    ``finance_source`` is already canonical (normalized at the section entry).
     """
 
-    yahoo_selected = str(finance_source).strip().lower() == "yahoo"
-    financial_label = "Yahoo data" if yahoo_selected else "Yahoo reference"
+    financial_label = "Yahoo data" if finance_source == "yahoo" else "Yahoo reference"
     financial = _status_text(
         _text(tool_b_row, "financial_data_status"),
         reasons=_FINANCIAL_STATUS_REASONS,
@@ -635,8 +650,12 @@ def render_gold_dial_control(
     Range and step come from ``config/ticker_page.yaml`` through the config
     object — never hardcoded. The default position is the artifact's own spot
     gold, never a configured scenario.
+
+    Normalizes ``finance_source`` on the same terms as the section renderer, so
+    the control bar and the section can never resolve different rows.
     """
 
+    finance_source = normalize_finance_source(finance_source)
     gold_row = data.gold_response_row(ticker, finance_source=finance_source)
     spot = _spot_value(gold_row)
 
@@ -830,15 +849,26 @@ def _render_failing_checks(
     if not sentences:
         return ""
     screening_gold = _value(tool_b_row, "gold_price_assumption")
-    basis_bits = ["at spot gold"]
-    if spot_gold_usd is not None:
-        # The exact gold date lives once in the section-level basis strip. The
-        # notice only needs the at-spot price context that explains the check.
-        basis_bits.append(format_metric(spot_gold_usd, "usd") + "/oz")
-    if screening_gold is not None:
-        basis_bits.append(
-            "screening basis " + format_metric(screening_gold, "usd") + "/oz"
-        )
+    # The exact gold date lives once in the section-level basis strip. The notice
+    # only needs the price context that explains the check — and it needs it ONCE:
+    # when the screening run was judged at today's spot the two prices are the
+    # same number, and "$4,468/oz · screening basis $4,468/oz" reads like a
+    # discrepancy that isn't there. The second price appears only when it
+    # genuinely differs from spot, which is the case it exists to disclose.
+    spot_text = (
+        format_metric(spot_gold_usd, "usd") + "/oz" if spot_gold_usd is not None else ""
+    )
+    screening_text = (
+        format_metric(screening_gold, "usd") + "/oz" if screening_gold is not None else ""
+    )
+    if spot_text and screening_text == spot_text:
+        basis_bits = [f"at spot gold {spot_text}"]
+    else:
+        basis_bits = ["at spot gold"]
+        if spot_text:
+            basis_bits.append(spot_text)
+        if screening_text:
+            basis_bits.append("screening basis " + screening_text)
     explain = help_icon(
         "Failing screening checks", key="ticker_cf_failing_checks", app_config=app_config
     )
@@ -1239,6 +1269,44 @@ def _balance_sheet_group(
     )
 
 
+#: Internal Tool D column tokens -> the words a user reads (W8). The persisted
+#: ``missing_inputs`` list is a semicolon-joined set of these column names; the
+#: producer's vocabulary is exactly the five in ``model/tool_d.py::_missing_inputs``.
+#: An unknown token falls back to itself rather than being dropped — an
+#: unexplained gap is worse than an ugly one.
+_MISSING_INPUT_LABELS: dict[str, str] = {
+    "production_oz": "production",
+    "aisc_usd_per_oz": "AISC",
+    "interest_expense_musd": "interest expense",
+    "net_debt_musd": "net debt",
+    "forward_ebitda_musd_at_g": "forward EBITDA (at gold)",
+}
+
+
+def _humanize_missing_inputs(raw: str) -> str:
+    """"interest_expense_musd;net_debt_musd" -> "interest expense, net debt"."""
+
+    labels: list[str] = []
+    for token in str(raw or "").split(";"):
+        cleaned = token.strip()
+        if not cleaned:
+            continue
+        label = _MISSING_INPUT_LABELS.get(cleaned, cleaned)
+        if label not in labels:
+            labels.append(label)
+    return ", ".join(labels)
+
+
+def _one_sentence(text: str) -> str:
+    """End a sentence with exactly one period (W9: persisted reasons often
+    already end in one, so blindly appending produced "…incomplete..")."""
+
+    stripped = str(text or "").strip()
+    if not stripped:
+        return ""
+    return stripped if stripped.endswith((".", "!", "?")) else f"{stripped}."
+
+
 def _resilience_group(
     tool_d_row: Mapping[str, Any],
     *,
@@ -1247,20 +1315,49 @@ def _resilience_group(
     app_config: AppConfig | None,
 ) -> str:
     title = "Resilience — at what gold price does this break?"
-    yahoo_source = str(finance_source).strip().lower() == "yahoo"
+    # Already canonical: the section normalizes once at its entry.
+    requested_source = finance_source
     basis = (
         "Yahoo financials · Our View mining assumptions"
-        if yahoo_source
+        if requested_source == "yahoo"
         else "Our View financials · Our View mining assumptions"
     )
     explain = help_icon("Resilience", key="ticker_cf_resilience", app_config=app_config)
-    if not tool_d_row:
+    # Tripwire (W5): the basis label above is derived from the REQUESTED source,
+    # so a row selected for the other source would be published under the wrong
+    # basis. Current wiring resolves the exact (ticker, finance_source) key
+    # before this call, so this must be unreachable — which is exactly why it is
+    # asserted here instead of trusted: a future caller that hands over a
+    # ticker-only lookup gets the unavailable path, never the wrong numbers.
+    # A row with no finance_source column at all is a legacy (pre-dual-source)
+    # shape and is left to the existing legacy handling; only a row that CLAIMS
+    # a source can contradict the requested one.
+    row_source = _text(tool_d_row, "finance_source") if tool_d_row else ""
+    resolved_row_source = canonical_finance_source(row_source) if row_source else None
+    source_mismatch = bool(row_source) and resolved_row_source != requested_source
+    if not tool_d_row or source_mismatch:
+        if source_mismatch:
+            row_label = (
+                _finance_source_label(resolved_row_source)
+                if resolved_row_source
+                else row_source
+            )
+            reason: str | None = (
+                f"the published resilience row is labelled {row_label}, not the "
+                f"selected {_finance_source_label(requested_source)} source; "
+                "refusing to show another source's numbers under this basis"
+            )
+        else:
+            reason = unavailable_reason
+        # No basis line here on purpose: a basis describes the numbers below it,
+        # and there are none. Printing "Yahoo financials · Our View mining
+        # assumptions" above "no data is available" states the provenance of
+        # data that does not exist.
         return disclosure(
             escape(title) + explain,
-            f'<p class="hint resilience-basis">{escape(basis)}</p>'
             '<p class="hint">'
             + escape(
-                unavailable_reason
+                reason
                 or "No resilience row has been published for this ticker and source."
             )
             + "</p>",
@@ -1319,21 +1416,63 @@ def _resilience_group(
     )
     degraded = ""
     if status and status != "OK":
-        degraded_reason = (
-            _text(tool_d_row, "tool_d_explanation")
-            or _text(tool_d_row, "missing_inputs")
-            or status
-        )
-        degraded = notice(
-            "degraded",
+        # W8: the explanation and the persisted missing-input list are BOTH
+        # shown. The old `explanation or missing_inputs` meant the explanation
+        # always won and the user never learned WHICH inputs were absent.
+        degraded_reason = _text(tool_d_row, "tool_d_explanation") or status
+        missing_inputs = _humanize_missing_inputs(_text(tool_d_row, "missing_inputs"))
+        degraded_html = (
             "<p>Resilience is unavailable for the selected financial source: "
-            f"{escape(degraded_reason)}.</p>",
+            + escape(_one_sentence(degraded_reason))
+            + "</p>"
         )
+        if missing_inputs:
+            degraded_html += f"<p>Missing: {escape(missing_inputs)}.</p>"
+        degraded = notice("degraded", degraded_html)
     return disclosure(
         escape(title) + explain,
         f'<p class="hint resilience-basis">{escape(basis)}</p>'
         + degraded
         + _fixed_table(rows, region_id="corporate-resilience", label="Resilience thresholds"),
+    )
+
+
+def _statement_period_rows(
+    *,
+    finance_source: str,
+    statement_period: FundamentalsStatementPeriod | None,
+    app_config: AppConfig | None,
+) -> str:
+    """The financial-statement period, stated as its own fact.
+
+    Every other date in this table is a RUN date — when Tool B ran, when the
+    market snapshot was taken. None of them is the period the financials
+    describe, and reading a run date as one is exactly the mistake this row
+    exists to prevent. The values are the same ones the Yahoo provenance
+    tooltip already discloses ("Period end: 2025-12-31"), read from the same
+    artifact; nothing is resolved or inferred here.
+    """
+
+    if finance_source != "yahoo":
+        return _fixed_row(
+            "Statement period",
+            escape("not recorded"),
+            "Our View financial inputs are entered by hand and carry no statement period",
+            help_key="ticker_cf_statement_period",
+            app_config=app_config,
+        )
+    period_text = statement_period.period_end_text if statement_period else ""
+    fetched_text = statement_period.fetched_at_text if statement_period else ""
+    return _fixed_row(
+        "Statement period end",
+        escape(period_text or "not published"),
+        "the period the Yahoo financials describe — not a run date",
+        help_key="ticker_cf_statement_period",
+        app_config=app_config,
+    ) + _fixed_row(
+        "Yahoo fundamentals fetched",
+        escape(fetched_text or "not published"),
+        "when those statements were retrieved",
     )
 
 
@@ -1344,6 +1483,7 @@ def _data_quality_group(
     spot_gold_usd: float | None,
     data: TickerPageData,
     finance_source: str,
+    statement_period: FundamentalsStatementPeriod | None,
     app_config: AppConfig | None,
 ) -> str:
     rows = (
@@ -1357,6 +1497,12 @@ def _data_quality_group(
             escape(_text(tool_b_row, "financial_data_status") or "n/a"),
             "Tool B",
             help_key="ticker_cf_financial_data_status",
+            app_config=app_config,
+        )
+        # Field-level truth BEFORE the run dates, so the two are never confused.
+        + _statement_period_rows(
+            finance_source=finance_source,
+            statement_period=statement_period,
             app_config=app_config,
         )
         + _fixed_row(
@@ -1431,14 +1577,21 @@ def render_corporate_finance_section(
     tool_b_row: Mapping[str, Any],
     tool_d_row: Mapping[str, Any],
     tool_d_reason: str | None = None,
+    statement_period: FundamentalsStatementPeriod | None = None,
     app_config: AppConfig | None = None,
 ) -> str:
     """The ``#corporate-finance`` section (requirements §2 position 2).
 
     ``tool_b_row`` and ``tool_d_row`` are the rows the detail route already
     holds (workspace state, LRU-cached) — this function opens no files.
+
+    ``finance_source`` is normalized ONCE, here, and every helper below compares
+    the canonical token. It matters beyond tidiness: ``gold_response_row`` keys
+    on an exact ``finance_source`` match, so an alias like ``"official"`` would
+    silently find no row and report a published artifact as missing.
     """
 
+    finance_source = normalize_finance_source(finance_source)
     gold_row = data.gold_response_row(ticker, finance_source=finance_source)
     spot = _spot_value(gold_row)
     spot_date = _text(gold_row, "spot_gold_date")
@@ -1564,6 +1717,7 @@ def render_corporate_finance_section(
             spot_gold_usd=spot,
             data=data,
             finance_source=finance_source,
+            statement_period=statement_period,
             app_config=app_config,
         )
     )

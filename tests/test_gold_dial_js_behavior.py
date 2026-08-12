@@ -27,6 +27,8 @@ selected row reaches the same source-agnostic state machine.
 from __future__ import annotations
 
 import json
+import math
+import re
 import subprocess
 from pathlib import Path
 
@@ -36,6 +38,7 @@ import pytest
 from golden_vector.common.numeric import optional_finite_float
 from golden_vector.serve.ticker_page.corporate import (
     METRIC_FORMATS,
+    METRIC_UNITS,
     build_gold_dial_payload,
     format_metric,
 )
@@ -61,6 +64,9 @@ CARD_METRIC = "ev_ebitda"
 
 #: The server's no-JavaScript fallback for a line-metric spot cell.
 PENDING_TEXT = "needs the gold dial (JavaScript)"
+#: What ``_spot_dial_cell`` ships instead once no scenario is possible: promising
+#: a dial that cannot run would be the lie, so the cell states its own state.
+UNAVAILABLE_TEXT = "Unavailable — see reason above"
 #: The server's persisted headline value for the card under test.
 CARD_SPOT_TEXT = "6.72×"
 
@@ -154,7 +160,10 @@ def _valuetext_at_rest(spot: float) -> str:
     return f"{format_metric(spot, 'usd2')} per ounce, spot"
 
 
-_SHIM = r"""
+#: The node prelude both shims share — one DOM element stub, not two that can
+#: drift apart. ``doc`` is declared by each shim that follows it; ``El.focus``
+#: only resolves it when a test actually focuses something.
+_DOM_PRELUDE = r"""
 const assert = require("assert");
 const fs = require("fs");
 const vm = require("vm");
@@ -191,7 +200,9 @@ class El {
   addEventListener(name, fn) { this.listeners[name] = fn; }
   focus() { this.focusCount += 1; doc.activeElement = this; }
 }
+"""
 
+_SHIM = _DOM_PRELUDE + r"""
 var doc;
 const timers = new Map();
 let nextTimer = 1;
@@ -220,15 +231,26 @@ basis.textContent = __BASIS__;
 
 const spotCell = new El("td", {"data-metric": "__LINE_METRIC__", "data-basis": "spot"});
 spotCell.textContent = __PENDING__;
-const scenarioCell = new El("td", {
-  "data-metric": "__LINE_METRIC__", "data-basis": "scenario", hidden: "hidden"
-});
-const cardScenario = new El("p", {
-  "data-metric": "__CARD_METRIC__", "data-basis": "scenario", hidden: "hidden"
-});
+
+// The scenario column exists ONLY where the server rendered one. With
+// scenario_enabled False, corporate.py emits NO scenario cell, NO card scenario
+// span and NO scenario header at all (_scenario_cell and _moving_table both
+// return ""), and the line cell's no-JavaScript fallback becomes "Unavailable —
+// see reason above" instead of the needs-JavaScript text (_spot_dial_cell).
+// Building those nodes unconditionally would let assertions describe markup the
+// real page cannot contain.
+const scenarioCells = __SCENARIO_ENABLED__ ? [
+  new El("td", {"data-metric": "__LINE_METRIC__", "data-basis": "scenario", hidden: "hidden"}),
+  new El("p", {"data-metric": "__CARD_METRIC__", "data-basis": "scenario", hidden: "hidden"})
+] : [];
+const scenarioCell = scenarioCells[0] || null;
+const cardScenario = scenarioCells[1] || null;
+const scenarioHeads = __SCENARIO_ENABLED__
+  ? [new El("th", {"data-scenario-head": "1", hidden: "hidden"})]
+  : [];
+const scenarioHead = scenarioHeads[0] || null;
 const cardSpot = new El("p", {"data-headline-spot": "1"});
 cardSpot.textContent = __CARD_SPOT__;
-const scenarioHead = new El("th", {"data-scenario-head": "1", hidden: "hidden"});
 
 // One section-level basis replaces the six repeated per-card dates.
 const corporateBasis = new El("span");
@@ -237,8 +259,8 @@ corporateBasis.textContent = __CORPORATE_BASIS__;
 const section = new El("section");
 section.querySelectorAll = function (selector) {
   if (selector === '[data-metric][data-basis="spot"]') { return [spotCell]; }
-  if (selector === '[data-metric][data-basis="scenario"]') { return [scenarioCell, cardScenario]; }
-  if (selector === "[data-scenario-head]") { return [scenarioHead]; }
+  if (selector === '[data-metric][data-basis="scenario"]') { return scenarioCells; }
+  if (selector === "[data-scenario-head]") { return scenarioHeads; }
   if (selector === "[data-headline-spot]") { return [cardSpot]; }
   // An unmodelled selector must fail loudly rather than silently return nothing.
   throw new Error("unexpected selector: " + selector);
@@ -304,12 +326,19 @@ def _run(
     ``valuetext`` seeds the server-rendered ``aria-valuetext``; the default is
     the live-dial one, and the scenario-unavailable case passes the server's
     own "— scenario unavailable" text so it can be proven untouched.
+
+    The fixture's markup follows the payload: ``scenario_enabled`` drives both
+    whether scenario nodes exist at all and which no-JavaScript fallback the
+    line cell was shipped with, exactly as ``render_corporate_finance_section``
+    does — the shim never offers the module a node the server would not emit.
     """
 
     assert DIAL_JS.exists(), f"{DIAL_JS} is missing"
     resolved = _payload(spot=spot) if payload is None else payload
+    scenario_enabled = bool(resolved.get("scenario_enabled"))
     script = (
         _SHIM.replace("__PAYLOAD__", json.dumps(json.dumps(resolved)))
+        .replace("__SCENARIO_ENABLED__", "true" if scenario_enabled else "false")
         .replace("__PAYLOAD_NODE__", "payloadNode" if with_payload else "null")
         .replace("__VALUE__", json.dumps(value))
         .replace("__MINIMUM__", json.dumps(minimum))
@@ -322,7 +351,10 @@ def _run(
         .replace(
             "__CORPORATE_BASIS__", json.dumps(_corporate_basis_at_rest(spot))
         )
-        .replace("__PENDING__", json.dumps(PENDING_TEXT))
+        .replace(
+            "__PENDING__",
+            json.dumps(PENDING_TEXT if scenario_enabled else UNAVAILABLE_TEXT),
+        )
         .replace("__CARD_SPOT__", json.dumps(CARD_SPOT_TEXT))
         .replace("__LINE_METRIC__", LINE_METRIC)
         .replace("__CARD_METRIC__", card_metric)
@@ -334,9 +366,181 @@ def _run(
         check=False,
         cwd=Path.cwd(),
         text=True,
+        # Asserted strings carry "×", "—" and "$"; the platform codepage would
+        # mangle both the comparison and any failure message node prints.
+        encoding="utf-8",
         capture_output=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+# ---------------------------------------------------------------------------
+# formatter parity — EVERY unit, tie values included
+# ---------------------------------------------------------------------------
+
+#: Values chosen so the Python/JS comparison can actually fail. The first block
+#: is exact decimal TIES at the places the formatters round to (0/1/2 dp): they
+#: are the whole point, because ``format()`` rounds a tie to the even digit and
+#: ``toFixed()`` rounds it away from zero, so ``$2.5m`` used to render "$2m" on
+#: the server and "$3m" in the dial. ``0.1125`` is the pct tie (×100 = 11.25),
+#: ``-0.0`` locks the sign Python keeps, and the rest are ordinary near-tie and
+#: grouping values that must NOT be disturbed by half-even rounding.
+_FORMAT_PROBE_VALUES: tuple[float, ...] = (
+    0.5,
+    2.5,
+    4.5,
+    -2.5,
+    1234.5,
+    -1234.5,
+    0.1125,
+    11.25,
+    0.0625,
+    0.0,
+    -0.0,
+    -0.4,
+    1.005,
+    2.675,
+    1234.545,
+    1234567.89,
+    -3000.0,
+    0.375,
+)
+
+#: The probe shim: the SHIPPED module, booted over one spot cell per case, so
+#: the strings compared below come out of the real ``formatMetric`` through the
+#: real paint path. ``slope`` 0 makes each cell's evaluated value exactly its
+#: ``intercept``, which is how a fixed value is fed to a formatter that is only
+#: reachable from inside the module's closure.
+_FORMAT_PROBE_SHIM = _DOM_PRELUDE + r"""
+var doc;
+
+const CASES = __CASES__;
+
+const payloadNode = new El("script");
+payloadNode.textContent = __PAYLOAD__;
+
+const input = new El("input", {"min": "2000", "step": "1"});
+input.value = "4000";
+
+const cells = CASES.map(function (metric) {
+  return new El("td", {"data-metric": metric, "data-basis": "spot"});
+});
+
+const section = new El("section");
+section.querySelectorAll = function (selector) {
+  if (selector === '[data-metric][data-basis="spot"]') { return cells; }
+  if (selector === '[data-metric][data-basis="scenario"]') { return []; }
+  if (selector === "[data-scenario-head]") { return []; }
+  if (selector === "[data-headline-spot]") { return []; }
+  throw new Error("unexpected selector: " + selector);
+};
+
+const NODES = {
+  "gold-dial-payload": payloadNode,
+  "gold-dial-input": input,
+  "corporate-finance": section
+};
+
+doc = {
+  readyState: "complete",
+  activeElement: null,
+  listeners: {},
+  getElementById(id) { return NODES[id] || null; },
+  addEventListener(name, fn) { this.listeners[name] = fn; }
+};
+
+const win = {
+  matchMedia(query) { return {matches: false}; },
+  setTimeout(fn) { return 1; },
+  clearTimeout(id) {}
+};
+
+vm.runInNewContext(
+  fs.readFileSync("golden_vector/serve/static/gold-dial.js", "utf8"),
+  {document: doc, window: win, console}
+);
+
+console.log(JSON.stringify(cells.map(function (cell) { return cell.textContent; })));
+"""
+
+
+def _js_metric_format_units() -> tuple[str, ...]:
+    """The unit vocabulary the SHIPPED module declares, read from its one table."""
+
+    source = DIAL_JS.read_text(encoding="utf-8")
+    match = re.search(r"var METRIC_FORMATTERS = \{(.*?)\n  \};", source, re.S)
+    assert match is not None, "gold-dial.js no longer declares one METRIC_FORMATTERS table"
+    return tuple(re.findall(r"^\s+(\w+): function", match.group(1), re.M))
+
+
+def _js_formatted(cases: list[tuple[str, str, float]], *, spot: float) -> list[str]:
+    """Run the shipped module over ``(metric, unit, value)`` probes."""
+
+    assert DIAL_JS.exists(), f"{DIAL_JS} is missing"
+    payload = _payload(spot=spot)
+    # The slope carries the value's SIGN, not just zero: IEEE 754 says
+    # (+0) + (-0) == +0, so a plain 0.0 slope would quietly turn a -0.0 probe
+    # into +0.0 before the formatter ever saw it and the signed-zero case would
+    # pass by accident. copysign keeps every other value exact (±0 * g = ±0).
+    payload["lines"] = {
+        metric: {"slope": math.copysign(0.0, value), "intercept": value}
+        for metric, _unit, value in cases
+    }
+    payload["formats"] = {metric: unit for metric, unit, _value in cases}
+    script = _FORMAT_PROBE_SHIM.replace(
+        "__CASES__", json.dumps([metric for metric, _unit, _value in cases])
+    ).replace("__PAYLOAD__", json.dumps(json.dumps(payload)))
+    result = subprocess.run(
+        ["node", "-e", script],
+        check=False,
+        cwd=Path.cwd(),
+        text=True,
+        # The formatted strings carry "×" and "$": decoding node's stdout with
+        # the platform codepage mangles them into a false mismatch.
+        encoding="utf-8",
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_the_two_formatters_declare_the_same_unit_vocabulary():
+    """A unit added on one side only is the drift this pair exists to prevent:
+    an undeclared unit silently falls through to the generic 2-dp path, which
+    prints a plausible-looking WRONG string instead of failing."""
+
+    assert set(_js_metric_format_units()) == set(METRIC_UNITS)
+    # And the payload's per-metric formats stay inside that shared vocabulary.
+    assert set(METRIC_FORMATS.values()) <= set(METRIC_UNITS)
+
+
+def test_every_unit_formats_identically_in_python_and_the_shipped_js():
+    """One assertion per (unit, value) pair, ties included — the shipped module's
+    real output against ``format_metric``'s, never a re-implementation of either."""
+
+    cases: list[tuple[str, str, float]] = []
+    expected: list[str] = []
+    for unit_index, unit in enumerate(METRIC_UNITS):
+        for value_index, value in enumerate(_FORMAT_PROBE_VALUES):
+            cases.append((f"probe{unit_index}x{value_index}", unit, value))
+            expected.append(format_metric(value, unit))
+    produced = _js_formatted(cases, spot=FRACTIONAL_SPOT)
+    assert len(produced) == len(expected)
+    mismatches = [
+        f"{unit} {value!r}: python={want!r} js={got!r}"
+        for (_metric, unit, value), want, got in zip(cases, expected, produced)
+        if want != got
+    ]
+    assert not mismatches, "formatter drift: " + "; ".join(mismatches)
+
+
+def test_the_generic_fallback_path_also_rounds_the_python_way():
+    """An unknown unit is the one path neither vocabulary covers; both sides must
+    still land on the same grouped 2-dp string."""
+
+    cases = [("probeUnknown", "not_a_unit", 0.125), ("probeUnknown2", "not_a_unit", 1234.565)]
+    produced = _js_formatted(cases, spot=FRACTIONAL_SPOT)
+    assert produced == [format_metric(0.125, "not_a_unit"), format_metric(1234.565, "not_a_unit")]
 
 
 # ---------------------------------------------------------------------------
@@ -802,9 +1006,15 @@ def test_a_disabled_dial_replaces_the_no_javascript_fallback_with_the_reason():
 
     reason = "linearity residual 41.2 exceeded tolerance at $6,000"
     body = f"""
+// No artifact means no scenario either, so the server emitted no scenario
+// column here and the line cell shipped its "Unavailable" fallback.
+assert.equal(scenarioCells.length, 0);
+assert.equal(scenarioHeads.length, 0);
+
 assert.equal(input.disabled, true);
 assert.equal(reset.disabled, true);
 assert.equal(spotCell.textContent, {json.dumps(reason)});
+assert.notEqual(spotCell.textContent, {json.dumps(UNAVAILABLE_TEXT)});
 assert.equal(spotCell.attrs["data-unavailable"], "1");
 assert.equal(cardSpot.hidden, false);
 assert.equal(status.textContent, "");
@@ -844,11 +1054,16 @@ def test_a_spot_outside_the_range_keeps_its_true_spot_values_and_an_inert_contro
     payload = _payload(spot=7000.0, scenario_enabled=False, scenario_reason=reason)
     server_valuetext = format_metric(7000.0, "usd2") + " per ounce, spot — scenario unavailable"
     body = f"""
+// The server rendered NO scenario column for this state, so there is nothing
+// for the module to reveal — the absence itself is the contract.
+assert.equal(scenarioCells.length, 0);
+assert.equal(scenarioHeads.length, 0);
+
 // The five line cells carry EVALUATED values at true spot — never the reason,
-// never the no-JavaScript fallback, never a blank.
+// never the shipped fallback, never a blank.
 assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, 7000.0))});
 assert.notEqual(spotCell.textContent, {json.dumps(reason)});
-assert.notEqual(spotCell.textContent, {json.dumps(PENDING_TEXT)});
+assert.notEqual(spotCell.textContent, {json.dumps(UNAVAILABLE_TEXT)});
 assert.notEqual(spotCell.textContent, "");
 assert.equal(spotCell.attrs["data-unavailable"], undefined);
 assert.equal(cardSpot.hidden, false);
@@ -867,10 +1082,6 @@ if (input.listeners.input) {{ input.listeners.input(); }}
 if (input.listeners.change) {{ input.listeners.change(); }}
 flush();
 assert.equal(section.attrs["data-scenario-active"], undefined);
-assert.equal(scenarioCell.hidden, true);
-assert.equal(scenarioCell.textContent, "");
-assert.equal(cardScenario.hidden, true);
-assert.equal(scenarioHead.hidden, true);
 assert.equal(cardSpot.hidden, false);
 
 // Nothing announced, and the server's aria-valuetext + card basis lines stand.

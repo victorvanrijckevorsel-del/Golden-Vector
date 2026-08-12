@@ -7,6 +7,7 @@ import pandas as pd
 from golden_vector.fundamentals.artifacts import normalize_fetched_fundamentals_frame
 from golden_vector.serve.fundamentals_provenance import (
     fundamentals_provenance_lookup,
+    fundamentals_statement_periods,
     provenance_text_for_fields,
 )
 
@@ -139,3 +140,99 @@ def test_fundamentals_provenance_keeps_zero_component_values_and_omits_manual_ta
         ["net_debt_musd", "ebitda_ltm_musd", "da_musd", "interest_expense_musd"],
         lookup,
     )
+
+
+def _fundamentals_frame(*rows: dict) -> pd.DataFrame:
+    """Minimal well-formed provenance rows through the real normalizer."""
+
+    return normalize_fetched_fundamentals_frame(
+        pd.DataFrame(
+            [
+                {
+                    "value": 1.0,
+                    "source": "YAHOO",
+                    "source_run_id": "run",
+                    "period_type": "ANNUAL",
+                    "statement_currency": "USD",
+                    "statement_scale": "absolute_to_usd_millions",
+                    "value_status": "OK",
+                    "value_origin": "yahoo_reported_component",
+                    "calculation_formula": None,
+                    "components_json": None,
+                    **row,
+                }
+                for row in rows
+            ]
+        ),
+        source_run_id="run",
+    )
+
+
+def test_statement_periods_report_the_same_facts_the_tooltip_prints():
+    """The data-quality table needs the statement period as a VALUE, and it must
+    be the same persisted field the "Period end: ..." tooltip renders — read
+    from the same rows, never derived from a run date."""
+
+    frame = _fundamentals_frame(
+        {
+            "ticker": "aem",
+            "field_name": "net_debt_musd",
+            "fetched_at_utc": "2026-06-10T12:00:00Z",
+            "period_end": date(2025, 12, 31),
+        },
+        {
+            "ticker": "AEM",
+            "field_name": "ebitda_ltm_musd",
+            "fetched_at_utc": "2026-06-10T12:00:00Z",
+            "period_end": date(2025, 12, 31),
+        },
+    )
+
+    periods = fundamentals_statement_periods(frame)
+
+    # One ticker key (case/space normalized), and the repeated facts collapse.
+    assert set(periods) == {"AEM"}
+    assert periods["AEM"].period_end_text == "2025-12-31"
+    assert periods["AEM"].fetched_at_text == "2026-06-10T12:00:00Z"
+    # ...and the tooltip's own text still states the same period.
+    assert "Period end: 2025-12-31" in fundamentals_provenance_lookup(frame)[
+        ("AEM", "net_debt_musd")
+    ]
+
+
+def test_statement_periods_keep_every_distinct_value_when_fields_disagree():
+    """Two fields from different statements is a real state. Picking one would
+    label the whole table with a period half the numbers do not come from."""
+
+    frame = _fundamentals_frame(
+        {
+            "ticker": "AEM",
+            "field_name": "net_debt_musd",
+            "fetched_at_utc": "2026-06-10T12:00:00Z",
+            "period_end": date(2025, 12, 31),
+        },
+        {
+            "ticker": "AEM",
+            "field_name": "ebitda_ltm_musd",
+            "fetched_at_utc": "2026-06-10T12:00:00Z",
+            "period_end": date(2025, 9, 30),
+        },
+    )
+
+    assert fundamentals_statement_periods(frame)["AEM"].period_ends == (
+        "2025-12-31",
+        "2025-09-30",
+    )
+
+
+def test_statement_periods_are_empty_when_nothing_was_published():
+    assert fundamentals_statement_periods(pd.DataFrame()) == {}
+    frame = _fundamentals_frame(
+        {
+            "ticker": "AEM",
+            "field_name": "net_debt_musd",
+            "fetched_at_utc": None,
+            "period_end": None,
+        }
+    )
+    assert fundamentals_statement_periods(frame) == {}

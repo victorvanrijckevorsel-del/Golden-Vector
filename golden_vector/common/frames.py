@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from golden_vector.contracts.ticker_page import FINANCE_SOURCES
+from golden_vector.contracts.ticker_page import FINANCE_SOURCES, canonical_finance_source
 
 
 def select_finance_source_rows(
@@ -19,10 +19,16 @@ def select_finance_source_rows(
     ``(ticker, finance_source)``. A non-empty legacy/unlabelled frame fails loud:
     letting it pass would make a later ticker-only lookup choose a source by row
     order. An empty frame remains an honest empty input and needs no schema.
+
+    The REQUESTED source is resolved through the shared alias table, so the
+    legacy `official` token older links still emit selects the Yahoo rows
+    instead of raising (W4). Values stored in the frame's ``finance_source``
+    COLUMN stay strictly canonical — an alias there is a producer bug and still
+    fails loud.
     """
 
-    resolved_source = str(finance_source or "").strip().lower()
-    if resolved_source not in FINANCE_SOURCES:
+    resolved_source = canonical_finance_source(finance_source)
+    if resolved_source is None:
         raise ValueError(
             f"{label} requires a canonical finance source in {FINANCE_SOURCES}; "
             f"got {finance_source!r}."

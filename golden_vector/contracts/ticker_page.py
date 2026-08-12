@@ -6,6 +6,8 @@ in M1b; model-state / manifest wiring lands with them.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pandas as pd
 
 TICKER_PAGE_SCHEMA_VERSIONS: dict[str, int] = {
@@ -53,6 +55,45 @@ PERFORMANCE_SERIES_STATUSES: tuple[str, ...] = (
 )
 RESEARCH_KINDS: tuple[str, ...] = ("weekly", "horizon", "window_fit")
 FINANCE_SOURCES: tuple[str, ...] = ("our", "yahoo")
+
+# The ONE alias table for finance-source tokens (W4). Older surfaces still emit
+# `official` / `market` / `yahoo_fundamentals` in links and stored parameters, so
+# both the request path and the artifact read boundary must agree on what those
+# mean. Two policies read this one table:
+#   * normalize_finance_source  — request/route policy: unknown falls back to the
+#     default Our View, because a user-typed query param must never 500 a page.
+#   * canonical_finance_source  — reader policy: unknown returns None so the
+#     caller can fail loud, because an unrecognized token inside the codebase is
+#     a bug, not a user typo.
+FINANCE_SOURCE_ALIASES: dict[str, str] = {
+    "our": "our",
+    "yahoo": "yahoo",
+    "official": "yahoo",
+    "market": "yahoo",
+    "yahoo_fundamentals": "yahoo",
+}
+
+
+def canonical_finance_source(value: object) -> str | None:
+    """Return the canonical source for a KNOWN token, else ``None``.
+
+    Reader boundary: callers turn ``None`` into their own fail-loud error, so a
+    typo (``"ours"``) can never be silently served as Our View data.
+    """
+
+    return FINANCE_SOURCE_ALIASES.get(str(value or "").strip().lower())
+
+
+def normalize_finance_source(value: object) -> Literal["our", "yahoo"]:
+    """Return the canonical source mode used by Tool B scenario views.
+
+    Request policy: anything unrecognized resolves to ``"our"`` (the default
+    view). Re-exported by ``screening.pipeline`` for its historical callers.
+    """
+
+    resolved = canonical_finance_source(value)
+    return "yahoo" if resolved == "yahoo" else "our"
+
 
 # --- gold response ---------------------------------------------------------
 

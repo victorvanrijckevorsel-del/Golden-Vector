@@ -47,7 +47,14 @@ def test_tool_d_v4_contract_declares_composite_identity_and_migration_reasons():
     assert TOOL_D_SCHEMA_VERSION == 4
     assert TOOL_D_KEY_COLUMNS == ("ticker", "finance_source")
     assert YAHOO_TOOL_D_UNAVAILABLE_REASON == "resilience is computed on Our View inputs"
-    assert "schema v4 rebuild" in YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
+    # W10: this reason is rendered VERBATIM to the user during the v3->v4
+    # window, so it must read as English, not as an internal schema token.
+    assert "Corporate Resilience for Yahoo Fundamentals is not available yet" in (
+        YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
+    )
+    assert "one refresh in the new dual-source format" in YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
+    for internal_token in ("schema", "v4", "Tool D", "rebuild"):
+        assert internal_token not in YAHOO_TOOL_D_REBUILD_REQUIRED_REASON, internal_token
 
 
 def test_tool_d_contract_accepts_one_explicit_row_per_ticker_and_source():

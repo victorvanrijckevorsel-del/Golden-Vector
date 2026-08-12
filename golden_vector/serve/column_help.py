@@ -1719,6 +1719,19 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "the page."
         ),
     ),
+    "ticker_cf_statement_period": ColumnHelp(
+        meaning=(
+            "The financial period the company's statements actually cover — for example a "
+            "31 December year end. It is NOT a run date: every other date in this table "
+            "says when Golden Vector last computed or captured something, which can be "
+            "months after the statements were published."
+        ),
+        calculation=(
+            "Read from the Yahoo fundamentals artifact's own period_end field, the same "
+            "value the source tooltip shows. Our View financials are entered by hand and "
+            "carry no statement period, so nothing is shown rather than a stand-in."
+        ),
+    ),
     "ticker_cost_downside": ColumnHelp(
         meaning=(
             "Two pieces of evidence side by side: today's reported all-in sustaining cost, "

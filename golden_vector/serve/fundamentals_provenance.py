@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from typing import Iterable
 
 import pandas as pd
 
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.strings import normalize_ticker
 from golden_vector.fundamentals.artifacts import load_official_fundamentals
 from golden_vector.serve.column_help import help_icon
 
@@ -26,18 +28,69 @@ METRIC_FIELD_DEPENDENCIES = {
 }
 
 
+@dataclass(frozen=True)
+class FundamentalsStatementPeriod:
+    """The statement facts the provenance tooltip already states, as DATA.
+
+    ``period_end`` is the financial-statement period the Yahoo numbers describe
+    and ``fetched_at`` is when they were retrieved. They are deliberately kept
+    apart from every run date in the UI: a run date says when *we* computed,
+    which is not the period the statement covers.
+
+    Both are the DISTINCT persisted values across the ticker's provenance rows,
+    in the order they appear. Normally there is exactly one of each; when the
+    fields genuinely disagree, every value is reported rather than one being
+    picked — the same per-field truth the tooltip prints.
+    """
+
+    period_ends: tuple[str, ...] = ()
+    fetched_at: tuple[str, ...] = ()
+
+    @property
+    def period_end_text(self) -> str:
+        return "; ".join(self.period_ends)
+
+    @property
+    def fetched_at_text(self) -> str:
+        return "; ".join(self.fetched_at)
+
+
+@dataclass(frozen=True)
+class FundamentalsProvenance:
+    """Two views of ONE read of the official fundamentals artifact.
+
+    The tooltip needs rendered explanations; the ticker page's data-quality
+    table needs the statement period as a value. Reading the parquet twice per
+    request to serve both would be the obvious way to get this wrong.
+    """
+
+    lookup: dict[tuple[str, str], str] = field(default_factory=dict)
+    statement_periods: dict[str, FundamentalsStatementPeriod] = field(
+        default_factory=dict
+    )
+
+
+def load_fundamentals_provenance(paths: ProjectPaths | None) -> FundamentalsProvenance:
+    """Read the official fundamentals artifact once and derive both views."""
+
+    if paths is None:
+        return FundamentalsProvenance()
+    try:
+        frame = load_official_fundamentals(paths)
+    except Exception:
+        return FundamentalsProvenance()
+    return FundamentalsProvenance(
+        lookup=fundamentals_provenance_lookup(frame),
+        statement_periods=fundamentals_statement_periods(frame),
+    )
+
+
 def load_fundamentals_provenance_lookup(
     paths: ProjectPaths | None,
 ) -> dict[tuple[str, str], str]:
     """Return {(ticker, field_name): explanation} for official fundamentals."""
 
-    if paths is None:
-        return {}
-    try:
-        frame = load_official_fundamentals(paths)
-    except Exception:
-        return {}
-    return fundamentals_provenance_lookup(frame)
+    return load_fundamentals_provenance(paths).lookup
 
 
 def fundamentals_provenance_lookup(frame: pd.DataFrame) -> dict[tuple[str, str], str]:
@@ -45,7 +98,7 @@ def fundamentals_provenance_lookup(frame: pd.DataFrame) -> dict[tuple[str, str],
         return {}
     lookup: dict[tuple[str, str], str] = {}
     for row in frame.to_dict(orient="records"):
-        ticker = str(row.get("ticker") or "").upper().strip()
+        ticker = normalize_ticker(row.get("ticker"))
         field_name = str(row.get("field_name") or "").strip()
         if not ticker or not field_name:
             continue
@@ -53,6 +106,37 @@ def fundamentals_provenance_lookup(frame: pd.DataFrame) -> dict[tuple[str, str],
         if text:
             lookup[(ticker, field_name)] = text
     return lookup
+
+
+def fundamentals_statement_periods(
+    frame: pd.DataFrame,
+) -> dict[str, FundamentalsStatementPeriod]:
+    """Return {ticker: statement facts} from the SAME rows the tooltip reads.
+
+    Selection and de-duplication only — the persisted ``period_end`` and
+    ``fetched_at_utc`` are reported as they stand, never coalesced, inferred
+    from a run date, or filled in from the other source.
+    """
+
+    if frame.empty or "ticker" not in frame.columns:
+        return {}
+    periods: dict[str, list[str]] = {}
+    fetched: dict[str, list[str]] = {}
+    for row in frame.to_dict(orient="records"):
+        ticker = normalize_ticker(row.get("ticker"))
+        if not ticker:
+            continue
+        for column, sink in (("period_end", periods), ("fetched_at_utc", fetched)):
+            value = _text(row.get(column))
+            if value and value not in sink.setdefault(ticker, []):
+                sink[ticker].append(value)
+    return {
+        ticker: FundamentalsStatementPeriod(
+            period_ends=tuple(periods.get(ticker, ())),
+            fetched_at=tuple(fetched.get(ticker, ())),
+        )
+        for ticker in set(periods) | set(fetched)
+    }
 
 
 def provenance_icon_for_metric(

@@ -160,4 +160,12 @@
     inset: calc((var(--touch-target-min) - 100%) / -2);
     content: "";
   }
+  /* ...except inside a table header. help_th() puts the "i" right beside a
+     label in a dense sortable header row, where the expanded overlay spills
+     over the label itself and swallows taps meant for the sort. Sorting is the
+     header's primary action, so the icon keeps its own bounds there; the 44px
+     target still applies to every help icon outside a th. */
+  th .help-icon::after {
+    inset: 0;
+  }
 }

@@ -20,6 +20,7 @@ from golden_vector.app.model_state import (
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.contracts.config_models import HedgeReadinessConfig, PortfolioConfig
+from golden_vector.contracts.tool_d import TOOL_D_SCHEMA_VERSION
 from golden_vector.hedge.holdings import Holding
 from golden_vector.hedge.portfolio_totals import compute_portfolio_totals
 from golden_vector.ingestion.persist_options import safe_options_file_name
@@ -760,6 +761,54 @@ def test_portfolio_pipeline_selects_our_view_tool_d_before_ticker_lookup(tmp_pat
 
     assert position["tool_d_quality_rank"] == pytest.approx(82.0)
     assert position["resilience_bucket"] == "Strong resilience"
+
+
+def test_portfolio_refuses_tool_d_artifact_without_a_schema_generation(tmp_path):
+    """W3: Portfolio reads Tool D through the SAME guarded boundary the serve
+    surfaces use. An artifact with no ``tool_d_schema_version`` cannot be trusted
+    to be source-keyed, so its rows are refused WITH a reason instead of being
+    collapsed by row order into a confident resilience rank."""
+
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _portfolio_config()
+    _write_foundation_snapshot(paths, app_config, ticker="NEM", price=100.0, currency="USD")
+    _write_latest_tool_a(paths, ticker="NEM", down_beta=1.5)
+    _write_latest_tool_d_rows(
+        paths,
+        [{"ticker": "NEM", "rank": 82.0, "finance_source": "our"}],
+        schema_version=None,
+    )
+    add_lot(
+        paths,
+        {
+            "ticker": "NEM",
+            "shares": "10",
+            "buy_price": "50",
+            "buy_currency": "USD",
+            "buy_date": "2026-01-02",
+        },
+        ticker_info=build_ticker_info(app_config),
+    )
+
+    build_portfolio_artifacts(
+        paths=paths,
+        app_config=app_config,
+        use_model_state_artifacts=False,
+    )
+    data = load_portfolio_data(paths)
+    position = data.positions.iloc[0]
+    issues = json.loads(data.summary.iloc[0]["data_issues_json"])
+
+    assert position["tool_d_quality_rank"] is None or pd.isna(
+        position["tool_d_quality_rank"]
+    )
+    assert position["resilience_bucket"] == "Missing Tool D"
+    refusals = [
+        issue for issue in issues if issue["issue"] == "unusable_tool_d_artifact"
+    ]
+    assert refusals, issues
+    assert "malformed Tool D schema-version metadata" in refusals[0]["message"]
 
 
 def test_portfolio_pipeline_uses_fresh_foundation_during_refresh_not_pinned_manifest(tmp_path):
@@ -1826,7 +1875,18 @@ def _write_latest_tool_d(paths: ProjectPaths, *, ticker: str, rank: float) -> No
     _write_latest_tool_d_rows(paths, [{"ticker": ticker, "rank": rank}])
 
 
-def _write_latest_tool_d_rows(paths: ProjectPaths, rows: list[dict[str, object]]) -> None:
+def _write_latest_tool_d_rows(
+    paths: ProjectPaths,
+    rows: list[dict[str, object]],
+    *,
+    schema_version: object = TOOL_D_SCHEMA_VERSION,
+) -> None:
+    """Write a Tool D spot alias in the persisted v4 shape.
+
+    ``schema_version=None`` drops the generation column entirely, which is how a
+    pre-v4 / hand-edited artifact looks on disk — the shape the shared read
+    boundary must refuse rather than silently collapse by row order.
+    """
     frame = pd.DataFrame(
         [
             {
@@ -1836,6 +1896,11 @@ def _write_latest_tool_d_rows(paths: ProjectPaths, rows: list[dict[str, object]]
                 "tool_d_quality_rank": row["rank"],
                 "tool_d_quality_score": float(row["rank"]) - 5.0,
                 "tool_d_tags": "strong_headroom",
+                **(
+                    {}
+                    if schema_version is None
+                    else {"tool_d_schema_version": schema_version}
+                ),
             }
             for row in rows
         ]

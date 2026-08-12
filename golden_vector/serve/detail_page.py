@@ -12,6 +12,10 @@ import pandas as pd
 from golden_vector.common.numeric import optional_finite_float
 from golden_vector.common.strings import clean_string, normalize_ticker
 from golden_vector.contracts.config_models import AppConfig, UniverseTicker
+from golden_vector.contracts.tool_d import (
+    ToolDSourceSelection,
+    select_tool_d_source_rows,
+)
 from golden_vector.common.frames import latest_records_by_key
 from golden_vector.hedge.option_trading import OptionTradingDetailData
 from golden_vector.serve.detail_forms import (
@@ -26,11 +30,13 @@ from golden_vector.serve.detail_panels import (
     _detail_alignment,
     _render_financials_source_switcher,
 )
+from golden_vector.serve.fundamentals_provenance import FundamentalsStatementPeriod
 from golden_vector.serve.option_trading_data import OptionPageArtifacts
 from golden_vector.serve.format_helpers import _frame_index_by_ticker, _ticker_rows
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.ui.components import command_bar, section_tabs, terminal_density
 from golden_vector.serve.ui.status import notice
+from golden_vector.serve.ticker_page.corporate import format_metric
 from golden_vector.serve.ticker_page import (
     COMPARE_SECTION_ID,
     LabRequest,
@@ -44,11 +50,7 @@ from golden_vector.serve.ticker_page import (
     render_performance_section,
 )
 from golden_vector.serve.url_helpers import build_page_url
-from golden_vector.serve.workspace_state import (
-    ToolADetailState,
-    WorkspaceState,
-    select_tool_d_source_rows,
-)
+from golden_vector.serve.workspace_state import ToolADetailState, WorkspaceState
 
 
 DETAIL_DEFAULT_LENS_ID = "tool-a"
@@ -134,9 +136,13 @@ def _ticker_quote_html(tool_b_row: Mapping[str, object]) -> str:
     price = optional_finite_float(tool_b_row.get("share_price_usd"))
     if price is None:
         return ""
-    # The persisted field is explicitly USD-normalized. A configured listing
-    # currency (AUD/CAD/GBP) describes the security, not this number's unit.
-    prefix = "US$"
+    # The persisted field is explicitly USD-normalized, and the identity line
+    # right above already states the listing currency ("USD listing"), so the
+    # price uses this page's ONE money convention — the shared format_metric
+    # "$" style — instead of being the single "US$" on the whole page. A
+    # configured listing currency (AUD/CAD/GBP) describes the security, not
+    # this number's unit; that distinction lives in the identity line.
+    price_text = format_metric(price, "usd2")
     raw_date = tool_b_row.get("snapshot_as_of_date")
     if clean_string(raw_date) is None:
         raw_date = tool_b_row.get("as_of_date")
@@ -148,7 +154,7 @@ def _ticker_quote_html(tool_b_row: Mapping[str, object]) -> str:
     )
     return (
         '<p class="ticker-quote">'
-        f'<span class="ticker-quote__value">{escape(prefix)}{price:,.2f}</span>'
+        f'<span class="ticker-quote__value">{escape(price_text)}</span>'
         f"{date_html}</p>"
     )
 
@@ -169,6 +175,7 @@ def _ticker_jump_html(
     allowed_tickers: list[str],
     *,
     financials_source: str,
+    origin_ticker: str | None = None,
 ) -> str:
     options = "".join(
         f'<option value="{escape(value, quote=True)}">'
@@ -179,12 +186,21 @@ def _ticker_jump_html(
         if str(financials_source).strip().lower() == "yahoo"
         else ""
     )
+    # W7: a mistyped jump lands on a 404. Carrying the page the user jumped FROM
+    # lets that page offer a way back instead of only "Back to workspace".
+    origin = normalize_ticker(origin_ticker) if origin_ticker else None
+    hidden_origin = (
+        f'<input type="hidden" name="from" value="{escape(origin, quote=True)}">'
+        if origin
+        else ""
+    )
     return (
         '<form class="ticker-jump-form" method="get" action="/ticker">'
         '<label for="ticker-jump-input">Jump to ticker</label>'
         '<input class="ticker-jump-form__input" id="ticker-jump-input" '
         'name="ticker" list="ticker-jump-options" autocomplete="off" required>'
-        f'<datalist id="ticker-jump-options">{options}</datalist>{hidden_source}'
+        f'<datalist id="ticker-jump-options">{options}</datalist>'
+        f"{hidden_source}{hidden_origin}"
         '<button type="submit" class="control">Go</button>'
         "</form>"
     )
@@ -217,6 +233,9 @@ def render_detail_page(
     financials_source: str = "our",
     query_params: Mapping[str, str] | None = None,
     fundamentals_provenance: dict[tuple[str, str], str] | None = None,
+    fundamentals_statement_periods: (
+        Mapping[str, FundamentalsStatementPeriod] | None
+    ) = None,
     form_overrides: Mapping[str, Mapping[str, str]] | None = None,
     ticker_page_data: TickerPageData | None = None,
     chart_horizon: str = "1Y",
@@ -227,6 +246,10 @@ def render_detail_page(
     option_candidate_slots_frame: object | None = None,
     target_window: int | None = None,
 ) -> str:
+    # ONE ticker-normalization helper everywhere on this page: bare
+    # str(...).upper() does not strip, so a padded symbol used to miss lookups
+    # that normalize_ticker resolves.
+    ticker_key = normalize_ticker(ticker) or ""
     company_row = _frame_index_by_ticker(state.company_inputs).get(ticker, {})
     reporting_row = _frame_index_by_ticker(state.reporting_calendar).get(ticker, {})
     tool_a_row = _frame_index_by_ticker(state.latest_tool_a).get(ticker, {})
@@ -234,14 +257,26 @@ def render_detail_page(
     # Tool D is dual-source in one persisted frame. Resolve the exact
     # (ticker, selected source) key before any ticker-only lookup; otherwise
     # row order would choose the source. Never borrow the alternate source.
-    tool_d_selection = select_tool_d_source_rows(
-        state.latest_tool_d,
-        finance_source=financials_source,
-        ticker=ticker,
-        label=f"ticker {str(ticker).upper()}",
-    )
+    # Tool D is an OPTIONAL disclosure on this page, so a malformed/duplicated
+    # artifact degrades that one section instead of 500ing the whole ticker page
+    # (the WSGI handler catches bare Exception into a generic error page, which
+    # would hide every other section AND the reason). The validation message is
+    # routed into the same selection-reason channel the absent-row path uses, so
+    # the disclosure states exactly what is wrong (W2).
+    try:
+        tool_d_selection = select_tool_d_source_rows(
+            state.latest_tool_d,
+            finance_source=financials_source,
+            ticker=ticker,
+            label=f"ticker {ticker_key}",
+        )
+    except ValueError as exc:
+        tool_d_selection = ToolDSourceSelection(
+            frame=state.latest_tool_d.iloc[0:0].copy(),
+            reason=f"Corporate Resilience data could not be read: {exc}",
+        )
     tool_d_row = latest_records_by_key(tool_d_selection.frame, "ticker").get(
-        str(ticker).upper(),
+        ticker_key,
         {},
     )
     verification_rows = _ticker_rows(state.source_verification, ticker)
@@ -295,6 +330,7 @@ def render_detail_page(
     jump_html = _ticker_jump_html(
         state.tool_b_tickers,
         financials_source=financials_source,
+        origin_ticker=ticker,
     )
     body = [
         f"<p class=\"back-link\"><a href=\"{escape(back_href, quote=True)}\">Back to workspace</a></p>",
@@ -430,6 +466,7 @@ def render_detail_page(
                 tool_b_row=tool_b_row,
                 tool_d_row=tool_d_row,
                 tool_d_reason=tool_d_selection.reason,
+                statement_period=(fundamentals_statement_periods or {}).get(ticker_key),
                 app_config=app_config,
             )
         )

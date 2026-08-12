@@ -10,6 +10,7 @@ import pandas as pd
 
 from golden_vector.common.numeric import optional_float as _optional_float
 from golden_vector.common.numeric import require_finite
+from golden_vector.common.strings import normalize_ticker
 
 
 RATE_FIELDS = {"royalty_rate", "tax_rate"}
@@ -117,7 +118,10 @@ def _frame_index_by_ticker(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
         return {}
     indexed: dict[str, dict[str, Any]] = {}
     for record in frame.to_dict(orient="records"):
-        ticker = str(record.get("ticker") or "").upper()
+        # The ONE ticker normalizer (common.strings): it strips as well as
+        # upper-cases, so a padded symbol in a manual-input frame indexes to the
+        # same key the routes look up.
+        ticker = normalize_ticker(record.get("ticker"))
         if ticker:
             indexed[ticker] = record
     return indexed

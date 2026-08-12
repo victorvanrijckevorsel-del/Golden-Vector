@@ -8,8 +8,9 @@ from collections import defaultdict
 import pandas as pd
 
 from golden_vector.common.eligibility import is_score_eligible
-from golden_vector.common.frames import latest_records_by_key, select_finance_source_rows
+from golden_vector.common.frames import latest_records_by_key
 from golden_vector.common.numeric import optional_float, sum_optional_floats
+from golden_vector.contracts.tool_d import select_tool_d_source_rows
 from golden_vector.model.gold_shock import (
     DEFAULT_GOLD_DOWN_MIN_BETA,
     DEFAULT_GOLD_DOWN_SCENARIO_FRACTION,
@@ -44,20 +45,30 @@ def enrich_portfolio_analytics(
         )
 
     tool_a_by_ticker = latest_records_by_key(tool_a, "ticker", sort_column="as_of_date")
+    data_issues: list[dict[str, object]] = []
     # Portfolio resilience is deliberately an Our View product decision (plan
     # §6.6). Select before the ticker-keyed collapse so Yahoo can never win by
     # input row order; a source-aware portfolio remains separate product scope.
-    our_view_tool_d = select_finance_source_rows(
+    # Routed through the SAME Tool D read boundary the five serve surfaces use
+    # (W3), so a malformed schema version or a duplicated (ticker, source) key
+    # refuses with a reason here too instead of silently collapsing rows.
+    our_view_selection = select_tool_d_source_rows(
         tool_d,
         finance_source="our",
         label="Portfolio Tool D resilience artifact",
     )
+    if our_view_selection.reason and our_view_selection.frame.empty and not tool_d.empty:
+        _add_issue(
+            data_issues,
+            None,
+            "unusable_tool_d_artifact",
+            our_view_selection.reason,
+        )
     tool_d_by_ticker = latest_records_by_key(
-        our_view_tool_d,
+        our_view_selection.frame,
         "ticker",
         sort_column="as_of_date",
     )
-    data_issues: list[dict[str, object]] = []
 
     rows: list[dict[str, object]] = []
     for row in enriched_positions.to_dict(orient="records"):

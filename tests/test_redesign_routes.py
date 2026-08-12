@@ -111,8 +111,7 @@ def test_reporting_post_saves_dates_and_notes_and_redirects(tmp_path):
     assert "Q3 update marker" in page["body"]
 
 
-def test_reporting_post_blank_clears_stored_values(tmp_path):
-    _, app = _full_app(tmp_path)
+def _seed_reporting_calendar(app) -> None:
     call_wsgi_app(
         app,
         method="POST",
@@ -124,7 +123,15 @@ def test_reporting_post_blank_clears_stored_values(tmp_path):
         },
     )
 
-    # Reporting deliberately differs from company inputs: blank means CLEAR.
+
+def test_reporting_post_blank_leaves_stored_values_unchanged(tmp_path):
+    """W11: blank means LEAVE UNCHANGED, exactly like the company and
+    verification forms (and exactly what this form now says on screen). It used
+    to build all three keys unconditionally, so a blank round-trip — or any
+    partial POST — silently nulled fields the user never touched."""
+    _, app = _full_app(tmp_path)
+    _seed_reporting_calendar(app)
+
     response = call_wsgi_app(
         app,
         method="POST",
@@ -137,10 +144,69 @@ def test_reporting_post_blank_clears_stored_values(tmp_path):
     )
 
     assert response["status"].startswith("303")
+    # nothing was written, so the page must not claim a save
+    assert "saved=reporting" not in response["headers"]["Location"]
     page = call_wsgi_app(app, method="GET", path="/ticker/NEM")
+    assert 'value="2026-09-15"' in page["body"]
+    assert 'value="2026-10-01"' in page["body"]
+    assert "Q3 update marker" in page["body"]
+
+
+def test_reporting_partial_post_changes_only_the_provided_field(tmp_path):
+    """W11 (proven live): a POST carrying one field must not null the others."""
+    _, app = _full_app(tmp_path)
+    _seed_reporting_calendar(app)
+
+    response = call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/reporting",
+        data={"next_financial_report_date": "2026-11-30"},
+    )
+
+    assert response["status"].startswith("303")
+    page = call_wsgi_app(app, method="GET", path="/ticker/NEM")
+    assert 'value="2026-11-30"' in page["body"]
     assert 'value="2026-09-15"' not in page["body"]
+    assert 'value="2026-10-01"' in page["body"]  # untouched
+    assert "Q3 update marker" in page["body"]  # untouched
+
+
+def test_reporting_clear_checkbox_is_the_explicit_way_to_empty_a_field(tmp_path):
+    """W11: mirrors the company form — blank leaves alone, the checkbox clears."""
+    _, app = _full_app(tmp_path)
+    _seed_reporting_calendar(app)
+
+    response = call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/reporting",
+        data={
+            "next_financial_report_date": "2026-09-15",
+            "clear_next_production_report_date": "1",
+            "next_production_report_date": "2026-10-01",
+        },
+    )
+
+    assert response["status"].startswith("303")
+    page = call_wsgi_app(app, method="GET", path="/ticker/NEM")
+    assert 'value="2026-09-15"' in page["body"]
     assert 'value="2026-10-01"' not in page["body"]
-    assert "Q3 update marker" not in page["body"]
+    assert "Q3 update marker" in page["body"]
+
+
+def test_reporting_form_states_its_blank_and_clear_semantics_on_screen(tmp_path):
+    _, app = _full_app(tmp_path)
+    _seed_reporting_calendar(app)
+
+    body = call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
+    form = body[body.index('action="/ticker/NEM/reporting"') :]
+    form = form[: form.index("</form>")]
+
+    assert "Blank fields are left unchanged on save." in body
+    assert 'name="clear_next_financial_report_date"' in form
+    assert 'name="clear_next_production_report_date"' in form
+    assert 'name="clear_notes"' in form
 
 
 def test_reporting_post_invalid_date_returns_400_with_tool_a_data(tmp_path):
@@ -367,7 +433,8 @@ def test_unknown_ticker_renders_scoped_404(tmp_path):
     response = call_wsgi_app(app, method="GET", path="/ticker/ZZZZ")
 
     assert response["status"].startswith("404")
-    assert "ZZZZ is not an active Corporate Finance ticker." in response["body"]
+    # W7: user language, not the internal tool name
+    assert "ZZZZ is not one of your tracked tickers." in response["body"]
 
 
 def test_unknown_ticker_action_renders_unsupported_route_404(tmp_path):
@@ -417,7 +484,13 @@ def test_ticker_detail_section_nav_lists_every_present_section(tmp_path):
     degraded-artifact notice."""
     _paths, app = _full_app(tmp_path)
     body = call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
-    assert '<nav class="section-nav" aria-label="On this page">' in body
+    # Phase 4 (d3b1a8a) moved the detail page from section_nav() to
+    # section_tabs(): the SAME renderer with compact styling and a page-specific
+    # label. Still a <nav> landmark, still labelled, still plain anchors.
+    assert (
+        '<nav class="section-nav section-nav--compact" aria-label="Ticker sections">'
+        in body
+    )
     for fragment, label in (
         ("performance", "Performance"),
         ("corporate-finance", "Corporate finance"),
@@ -515,7 +588,7 @@ def test_unknown_ticker_option_lens_404s_under_a_stale_option_schema(tmp_path):
     try:
         bogus = call_wsgi_app(app, method="GET", path="/ticker/BOGUS?lens=option-trading")
         assert bogus["status"].startswith("404"), bogus["status"]
-        assert "not an active Corporate Finance ticker" in bogus["body"]
+        assert "BOGUS is not one of your tracked tickers." in bogus["body"]
 
         # Healthy control: a CONFIGURED benchmark is not rejected as unknown --
         # it proceeds into the option path (and there meets the stale schema),

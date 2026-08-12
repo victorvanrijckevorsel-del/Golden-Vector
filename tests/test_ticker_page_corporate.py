@@ -31,6 +31,7 @@ from golden_vector.contracts.ticker_page import (
 )
 from golden_vector.contracts.tool_d import YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
 from golden_vector.serve.embed import embed_json_payload
+from golden_vector.serve.fundamentals_provenance import FundamentalsStatementPeriod
 from golden_vector.serve.ticker_page import (
     GOLD_DIAL_PAYLOAD_ID,
     TickerPageData,
@@ -164,6 +165,7 @@ def _render(
     tool_b_row: dict[str, object] | None = None,
     tool_d_row: dict[str, object] | None = None,
     tool_d_reason: str | None = None,
+    statement_period: FundamentalsStatementPeriod | None = None,
     app_config=None,
 ) -> str:
     return render_corporate_finance_section(
@@ -173,8 +175,19 @@ def _render(
         tool_b_row=_tool_b_row() if tool_b_row is None else tool_b_row,
         tool_d_row=_tool_d_row() if tool_d_row is None else tool_d_row,
         tool_d_reason=tool_d_reason,
+        statement_period=statement_period,
         app_config=app_config if app_config is not None else _app_config(),
     )
+
+
+_RESILIENCE_TITLE = "Resilience — at what gold price does this break?"
+
+
+def _resilience_html(html: str) -> str:
+    """Just the Resilience disclosure, so section-scoped assertions cannot be
+    satisfied (or defeated) by unrelated parts of the page."""
+    start = html.index(_RESILIENCE_TITLE)
+    return html[start : html.index("</details>", start)]
 
 
 def _payload(html: str) -> dict[str, object]:
@@ -391,10 +404,46 @@ def test_failing_check_sentence_names_the_measured_value_and_your_threshold():
         )
     )
     assert "AISC margin yield 12.6% is below your 15.0% floor." in html
-    assert "These screening checks fail at spot gold" in html
-    assert "$4,452/oz" in html
-    assert "screening basis $4,452/oz" in html
+    # The fixture's screening run WAS judged at this spot, so the price is named
+    # once — see the pair of tests below for both halves of that rule.
+    assert "These screening checks fail at spot gold $4,452/oz:" in html
     assert "do not move with the dial" in html
+
+
+def test_the_failing_check_notice_names_one_price_when_spot_is_the_screening_basis():
+    """"…fail at spot gold · $4,468/oz · screening basis $4,468/oz" reads like a
+    discrepancy between two numbers that are the same number. When the screening
+    run was judged at the spot the page is showing, the price is stated once."""
+
+    html = _render(
+        tool_b_row=_tool_b_row(
+            layer1_fail_reasons="AISC_MARGIN_YIELD_FAIL",
+            aisc_margin_yield=0.126,
+            layer1_status="FAIL",
+            gold_price_assumption=4452.0,
+        )
+    )
+    assert "These screening checks fail at spot gold $4,452/oz:" in html
+    assert "screening basis" not in html.split("</ul>")[0]
+    assert "$4,452/oz · screening basis" not in html
+
+
+def test_the_failing_check_notice_keeps_both_prices_when_they_differ():
+    """The second price exists to disclose that the checks were judged at a
+    DIFFERENT gold price than the one on screen. That case must still say so."""
+
+    html = _render(
+        tool_b_row=_tool_b_row(
+            layer1_fail_reasons="AISC_MARGIN_YIELD_FAIL",
+            aisc_margin_yield=0.126,
+            layer1_status="FAIL",
+            gold_price_assumption=4000.0,
+        )
+    )
+    assert (
+        "These screening checks fail at spot gold · $4,452/oz · "
+        "screening basis $4,000/oz:" in html
+    )
 
 
 def test_multiple_failing_codes_each_get_their_own_sentence():
@@ -719,6 +768,9 @@ def test_resilience_yahoo_degradation_stays_source_specific_and_explained():
         finance_source="yahoo",
         tool_d_row=_tool_d_row(
             finance_source="yahoo",
+            # W6: its OWN sentinel. Reusing the healthy Our View value (1251.44)
+            # made a cross-source leak under the unavailable notice invisible.
+            interest_cover_gold_usd=888.0,
             resilience_data_status="INSUFFICIENT_INTEREST_DATA",
             tool_d_explanation=reason,
         ),
@@ -728,6 +780,123 @@ def test_resilience_yahoo_degradation_stays_source_specific_and_explained():
     assert "Resilience is unavailable for the selected financial source" in html
     assert reason in html
     assert "resilience is computed on Our View inputs" not in html
+    # the degraded row's own value renders; the healthy Our View sentinel must
+    # NOT appear anywhere on the page
+    assert "$888/oz" in html
+    assert "$1,251/oz" not in html
+
+
+def test_degraded_resilience_names_the_missing_inputs_in_plain_english():
+    """W8/W9: the explanation used to WIN over the persisted missing-input list,
+    so the user never learned which inputs were absent — and the appended period
+    doubled up on a reason that already ended in one."""
+
+    html = _render(
+        tool_d_row=_tool_d_row(
+            finance_source="our",
+            interest_cover_gold_usd=888.0,
+            resilience_data_status="INSUFFICIENT_INTEREST_DATA",
+            tool_d_explanation="Not scored because the survival inputs are incomplete.",
+            missing_inputs="interest_expense_musd;net_debt_musd;forward_ebitda_musd_at_g",
+        ),
+    )
+
+    resilience = _resilience_html(html)
+    assert "Missing: interest expense, net debt, forward EBITDA (at gold)." in resilience
+    # the raw column tokens never reach the reader (the gold-dial JSON payload
+    # legitimately carries them as data keys, so this is scoped to the section)
+    for token in ("interest_expense_musd", "net_debt_musd", "forward_ebitda_musd_at_g"):
+        assert token not in resilience
+    # exactly one period ends the explanation sentence
+    assert "incomplete.." not in html
+    assert "are incomplete.</p>" in html
+
+
+def test_degraded_resilience_falls_back_to_the_raw_token_it_cannot_name():
+    """An unmapped token is shown as-is: an unexplained gap is worse than an
+    ugly one, and silently dropping it would understate what is missing."""
+
+    html = _render(
+        tool_d_row=_tool_d_row(
+            resilience_data_status="INSUFFICIENT_DATA",
+            tool_d_explanation="Not scored because the survival inputs are incomplete.",
+            missing_inputs="production_oz;brand_new_column",
+        ),
+    )
+
+    assert "Missing: production, brand_new_column." in html
+
+
+def test_resilience_refuses_a_row_labelled_for_the_other_source():
+    """W5 tripwire: the basis label is derived from the REQUESTED source, so a
+    row carrying the other source must render the unavailable path — never the
+    wrong source's numbers under a confident basis line. Unreachable through
+    current wiring (the route resolves the exact composite key first); this
+    proves the renderer does not simply trust its caller."""
+
+    html = _render(
+        data=_data(_gold_row(finance_source="yahoo")),
+        finance_source="yahoo",
+        tool_d_row=_tool_d_row(finance_source="our", interest_cover_gold_usd=1251.44),
+    )
+
+    assert (
+        "the published resilience row is labelled Our View, not the selected "
+        "Yahoo Fundamentals source" in html
+    )
+    # No basis line: it would describe the provenance of numbers that are being
+    # refused. The healthy path below proves the label still renders where
+    # there ARE numbers to attribute.
+    assert "Yahoo financials · Our View mining assumptions" not in html
+    assert "$1,251/oz" not in html
+    assert "Interest-cover gold" not in html
+
+
+def test_a_finance_source_alias_is_normalized_once_and_reaches_every_label():
+    """Legacy surfaces still emit ``official``/``market`` for Yahoo. The section
+    normalizes at its entry, so the row lookup (which keys on an EXACT
+    finance_source match), the source label, the status-strip label and the
+    resilience basis all resolve to Yahoo together. Before, the row lookup found
+    nothing and the labels disagreed with each other."""
+
+    html = _render(
+        data=_data(_gold_row(finance_source="yahoo")),
+        finance_source="official",
+        tool_d_row=_tool_d_row(finance_source="yahoo"),
+    )
+
+    assert "Yahoo Fundamentals" in html  # the Financials basis label
+    assert "Yahoo data" in html  # the status strip, not "Yahoo reference"
+    assert "Yahoo financials · Our View mining assumptions" in html
+    assert _payload(html)["finance_source"] == "yahoo"
+    # ...and the gold-response row was actually found, so nothing degraded.
+    assert "Spot gold unavailable" not in html
+    assert "no gold-response row was published" not in html
+
+
+def test_resilience_states_no_basis_above_an_empty_section():
+    """A basis describes numbers. With no published row there are none, so
+    "Yahoo financials · Our View mining assumptions" above "no data" claimed a
+    provenance for data that does not exist."""
+
+    html = _render(
+        data=_data(_gold_row(finance_source="yahoo")),
+        finance_source="yahoo",
+        tool_d_row={},
+    )
+
+    assert "No resilience row has been published for this ticker and source." in html
+    assert "Yahoo financials · Our View mining assumptions" not in html
+    assert "Our View financials · Our View mining assumptions" not in html
+
+
+def test_resilience_still_labels_its_basis_when_it_has_numbers():
+    """Healthy control for the two absence tests above — the basis line is
+    removed from the empty branch only, never from the populated one."""
+
+    html = _render()
+    assert "Our View financials · Our View mining assumptions" in html
+    assert "Operating breakeven gold" in html
 
 
 def test_resilience_missing_legacy_yahoo_row_shows_contract_rebuild_reason():
@@ -759,6 +928,76 @@ def test_data_quality_group_labels_every_basis():
     assert "Margin cost basis" in html
     assert "Gold response artifact" in html
     assert "Our View mining assumption" in html
+    # The run dates this table has always carried are untouched.
+    assert "Tool B as of" in html
+    assert "Market snapshot as of" in html
+
+
+def test_data_quality_states_the_yahoo_statement_period_beside_the_run_dates():
+    """The table used to show run dates only — all "today" — while the source
+    tooltip already knew the statements ended 2025-12-31. A reader with only run
+    dates has no way to tell how old the financials themselves are."""
+
+    html = _render(
+        data=_data(_gold_row(finance_source="yahoo")),
+        finance_source="yahoo",
+        tool_d_row=_tool_d_row(finance_source="yahoo"),
+        statement_period=FundamentalsStatementPeriod(
+            period_ends=("2025-12-31",),
+            fetched_at=("2026-08-12T06:15:00Z",),
+        ),
+    )
+
+    assert "Statement period end" in html
+    assert "2025-12-31" in html
+    assert "the period the Yahoo financials describe — not a run date" in html
+    assert "Yahoo fundamentals fetched" in html
+    assert "2026-08-12T06:15:00Z" in html
+    # and the run-date rows are unchanged
+    assert "Tool B as of" in html
+    assert "Market snapshot as of" in html
+
+
+def test_data_quality_reports_disagreeing_statement_periods_rather_than_picking_one():
+    html = _render(
+        data=_data(_gold_row(finance_source="yahoo")),
+        finance_source="yahoo",
+        tool_d_row=_tool_d_row(finance_source="yahoo"),
+        statement_period=FundamentalsStatementPeriod(
+            period_ends=("2025-12-31", "2025-09-30"), fetched_at=()
+        ),
+    )
+
+    assert "2025-12-31; 2025-09-30" in html
+    assert "Yahoo fundamentals fetched" in html
+    assert "not published" in html
+
+
+def test_data_quality_never_stands_a_run_date_in_for_a_missing_statement_period():
+    """No provenance published for this ticker: the row says so. Falling back to
+    a Tool B run date would be presenting a run date as a statement period."""
+
+    html = _render(
+        data=_data(_gold_row(finance_source="yahoo")),
+        finance_source="yahoo",
+        tool_d_row=_tool_d_row(finance_source="yahoo"),
+        statement_period=None,
+    )
+
+    quality = html[html.index("Data quality and sources") :]
+    start = quality.index("Statement period end")
+    period_row = quality[start : quality.index("</tr>", start)]
+    assert "not published" in period_row
+    # ...and no run date was quietly substituted for the missing period.
+    assert "2026-08-11" not in period_row
+    assert "2026-08-12" not in period_row
+
+
+def test_our_view_says_its_manual_inputs_carry_no_statement_period():
+    html = _render()
+    assert "Statement period" in html
+    assert "entered by hand and carry no statement period" in html
+    assert "Yahoo fundamentals fetched" not in html
 
 
 # ---------------------------------------------------------------------------

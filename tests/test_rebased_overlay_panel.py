@@ -129,10 +129,42 @@ def test_overlay_embed_pins_the_coordinate_mapping():
     assert len(tick_dates) == len(set(tick_dates))
     abc = next(s for s in payload["series"] if s["label"] == "ABC")
     # The rebased start (value 100 == base) maps to y=196.0 and the pct label is "0%".
-    assert abc["byDate"]["2024-01-05"] == [196.0, 100.0, "0%"]
+    assert abc["byDate"]["2024-01-05"] == [196.0, 100.0, "0%", "100.0"]
     # A risen point carries a signed pct produced by the SAME server formatter as the gridlines.
     assert abc["byDate"]["2024-02-09"][1] == 130.0
     assert abc["byDate"]["2024-02-09"][2] == "+30%"
+
+
+def test_a_tie_level_reads_the_same_in_the_table_and_the_crosshair_source():
+    """100.25 is a reachable indexed level (values are embedded at 2 dp), and it
+    is an exact rounding TIE at the one decimal both surfaces print. The table
+    cell and the string the tooltip renders must be the SAME server-produced
+    label — the browser rounds a tie up while Python rounds it to even, so the
+    two used to disagree (100.2 in the table, 100.3 in the tooltip)."""
+
+    dates = _window_dates(3)
+    html = _build_multiline_overlay_svg(
+        series_by_label={"ABC": (dates, [100.0, 100.25, 100.46])},
+        series_keys={"ABC": "stock"},
+        data_table_id="chart-data-tie",
+    )
+    by_date = _overlay_payload(html)["series"][0]["byDate"]
+
+    tie = by_date["2024-01-12"]
+    assert tie[1] == 100.25  # the raw value the tie is reachable from
+    assert tie[3] == "100.2"  # Python's half-even level label, embedded once
+    assert f'<td class="numeric">{tie[3]} ({tie[2]})</td>' in html
+    # ...and 100.3 — what toFixed(1) makes of tie[1] — appears nowhere, because
+    # no surface re-rounds the raw value any more. (The healthy control below is
+    # deliberately not a 100.3 level, so this stays a real assertion.)
+    assert "100.3" not in html
+
+    # Healthy control: an ordinary non-tie level rounds normally and still comes
+    # from the same embedded string, so the tie case is not passing by accident.
+    other = by_date["2024-01-19"]
+    assert other[1] == 100.46
+    assert other[3] == "100.5"
+    assert f'<td class="numeric">{other[3]} ({other[2]})</td>' in html
 
 
 def test_overlay_chart_degrades_when_a_benchmark_is_missing():
@@ -288,7 +320,9 @@ svg.setAttribute("data-overlay", JSON.stringify({
     label: "<img src=x onerror=alert(1)>",
     series: "gold\" onclick=\"alert(1)",
     byDate: {
-      "2024-01-02": [88, 100.1, "<pct>"]
+      // 100.25 is an exact tie at one decimal: pt[1].toFixed(1) would say
+      // "100.3", so printing the server's own pt[3] is what this pins.
+      "2024-01-02": [88, 100.25, "<pct>", "100.2"]
     }
   }]
 }));
@@ -304,7 +338,7 @@ svg2.setAttribute("data-overlay", JSON.stringify({
   series: [{
     label: "NEM",
     series: "stock",
-    byDate: { "2024-01-02": [88, 51.0, "USD 51.00"] }
+    byDate: { "2024-01-02": [88, 51.0, "USD 51.00", null] }
   }]
 }));
 
@@ -339,6 +373,9 @@ assert.equal(tip.hidden, false);
 assert.ok(tip.innerHTML.includes("&lt;img src=x onerror=alert(1)&gt;"));
 assert.ok(!tip.innerHTML.includes("<img"));
 assert.ok(tip.innerHTML.includes("(&lt;pct&gt;)"));
+// The level is the SERVER's pre-formatted string, never a second rounding here.
+assert.ok(tip.innerHTML.includes("100.2 (&lt;pct&gt;)"));
+assert.ok(!tip.innerHTML.includes("100.3"));
 // The semantic series key flows through esc() into the class attribute of the
 // innerHTML sink: a double-quote breakout attempt must arrive fully encoded.
 assert.ok(tip.innerHTML.includes("legend-swatch-gold&quot; onclick=&quot;alert(1)"));
@@ -412,7 +449,7 @@ def test_price_mode_labels_axis_crosshair_and_table_in_the_callers_currency():
     # test) — the two modes must not silently share one gutter again.
     assert payload["ticks"][0][1] == 76.0
     stock = payload["series"][0]["byDate"]
-    assert stock["2024-01-05"] == [pytest.approx(196.0, abs=40.0), 6.1, "USD 6.10"]
+    assert stock["2024-01-05"] == [pytest.approx(196.0, abs=40.0), 6.1, "USD 6.10", None]
     assert stock["2024-02-09"][2] == "USD 7.05"
     # the table twin prints the SAME formatted value — units included, nothing truncated
     assert '<td class="numeric">USD 6.10</td>' in html
@@ -479,9 +516,9 @@ def test_sub_cent_price_mode_keeps_distinct_values_everywhere():
     )
 
     stock = _overlay_payload(html)["series"][0]["byDate"]
-    assert stock["2024-01-05"][1:] == [0.001, "USD 0.0010"]
-    assert stock["2024-01-12"][1:] == [0.0015, "USD 0.0015"]
-    assert stock["2024-01-19"][1:] == [0.002, "USD 0.0020"]
+    assert stock["2024-01-05"][1:] == [0.001, "USD 0.0010", None]
+    assert stock["2024-01-12"][1:] == [0.0015, "USD 0.0015", None]
+    assert stock["2024-01-19"][1:] == [0.002, "USD 0.0020", None]
     assert '<td class="numeric">USD 0.0010</td>' in html
     assert '<td class="numeric">USD 0.0015</td>' in html
     assert '<td class="numeric">USD 0.0020</td>' in html
@@ -499,8 +536,8 @@ def test_tenth_dollar_price_mode_uses_three_decimals():
     )
 
     stock = _overlay_payload(html)["series"][0]["byDate"]
-    assert stock["2024-01-05"][1:] == [0.1, "USD 0.100"]
-    assert stock["2024-01-12"][1:] == [0.15, "USD 0.150"]
+    assert stock["2024-01-05"][1:] == [0.1, "USD 0.100", None]
+    assert stock["2024-01-12"][1:] == [0.15, "USD 0.150", None]
 
 
 def test_count_mode_labels_plain_counts_and_owns_its_zero_baseline():

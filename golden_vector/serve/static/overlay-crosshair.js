@@ -2,8 +2,9 @@
 // On mousemove over the chart, snap to the nearest date, draw a vertical line, place a dot on
 // each line, and show a tooltip listing every series' value + % change at that date. Reads the
 // pre-computed points embedded in the SVG's data-overlay attribute (no business math in JS):
-// each byDate entry is [y-px, value, pct-label], the pct already formatted server-side by the
-// SAME formatter as the y-axis gridlines, so the browser never recomputes a percentage.
+// each byDate entry is [y-px, value, pct-label, level-label], both labels already formatted
+// server-side by the SAME formatter as the y-axis gridlines and the chart's data table, so the
+// browser never recomputes a percentage and never re-rounds a level.
 (function () {
   var NS = "http://www.w3.org/2000/svg";
 
@@ -142,11 +143,14 @@
           // labelOnly modes (price, count) pre-format the whole value server-side
           // ("USD 51.00"); repeating the raw number in front of it would read as
           // two values. Indexed keeps "level (percent)" — level + change are
-          // genuinely two different numbers there.
+          // genuinely two different numbers there. BOTH strings are the server's
+          // own: re-rounding pt[1] here made 100.25 read 100.3 in this tooltip
+          // and 100.2 in the chart's data table (JS rounds a tie up, Python
+          // rounds it to even), so the level label is embedded, never derived.
           rows +=
             "<br><span class=\"legend-swatch-" + esc(s.series) + "\">■</span> " +
             esc(s.label) + ": " +
-            (data.labelOnly ? esc(pt[2]) : pt[1].toFixed(1) + " (" + esc(pt[2]) + ")");
+            (data.labelOnly ? esc(pt[2]) : esc(pt[3]) + " (" + esc(pt[2]) + ")");
         } else {
           dots[idx].style.display = "none";
         }

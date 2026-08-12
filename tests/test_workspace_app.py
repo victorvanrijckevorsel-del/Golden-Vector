@@ -16,6 +16,7 @@ from golden_vector.contracts.tool_d import (
     TOOL_D_OUTPUT_COLUMNS,
     TOOL_D_SCHEMA_VERSION,
     YAHOO_TOOL_D_REBUILD_REQUIRED_REASON,
+    select_tool_d_source_rows,
 )
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
@@ -27,10 +28,7 @@ from golden_vector.screening.manual_data import (
 from golden_vector.screening.manual_store import add_stock_note
 from golden_vector.serve.option_trading_data import clear_option_trading_cache
 from golden_vector.serve.workspace import create_workspace_app
-from golden_vector.serve.workspace_state import (
-    _load_tool_a_detail,
-    select_tool_d_source_rows,
-)
+from golden_vector.serve.workspace_state import _load_tool_a_detail
 from tests.helpers import build_test_paths, tool_b_output_row
 
 
@@ -175,7 +173,9 @@ def test_workspace_detail_page_honors_yahoo_fundamentals_source(tmp_path):
     # ... but the compiled verdict is BANNED from this page (requirements §3).
     assert "SCREEN_OUT" not in response["body"]
     assert 'href="/?fundamentals_source=yahoo"' in response["body"]
-    assert "/ticker/NEM?window=6m&amp;fundamentals_source=yahoo" in response["body"]
+    # the 6M beta-window tab keeps the active source (W1 builds tab hrefs from
+    # the page's real query params, so the key ORDER follows the request URL)
+    assert "/ticker/NEM?fundamentals_source=yahoo&amp;window=6m" in response["body"]
     # M3d: the "open the Option Trading lens" teaser is gone. Options are a
     # section OF this page now (#options), so the page links to its own anchor
     # instead of routing away, and the section renders even with no option
@@ -2267,6 +2267,51 @@ def test_tool_d_source_selector_rejects_mixed_legacy_schema_generations() -> Non
     assert "malformed Tool D schema-version metadata" in str(selection.reason)
 
 
+def test_tool_d_source_selector_resolves_the_legacy_official_request_token() -> None:
+    """W4: `official` is the Yahoo token older links still emit. It must take the
+    YAHOO branch of this selector, not fall through to Our View."""
+
+    frame = pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "finance_source": "our",
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                "interest_cover_gold_usd": 2345.0,
+            },
+            {
+                "ticker": "NEM",
+                "finance_source": "yahoo",
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                "interest_cover_gold_usd": 1234.0,
+            },
+        ]
+    )
+
+    selection = select_tool_d_source_rows(
+        frame,
+        finance_source="official",
+        ticker="NEM",
+        label="ticker NEM",
+    )
+
+    assert selection.reason is None
+    assert selection.frame["interest_cover_gold_usd"].tolist() == [1234.0]
+
+    # ...and the same token on a legacy v3 (Our-View-only) artifact reports the
+    # rebuild reason rather than silently serving Our View numbers as Yahoo.
+    legacy = select_tool_d_source_rows(
+        pd.DataFrame(
+            [{"ticker": "NEM", "finance_source": "our", "tool_d_schema_version": 3}]
+        ),
+        finance_source="official",
+        ticker="NEM",
+        label="ticker NEM",
+    )
+    assert legacy.frame.empty
+    assert legacy.reason == YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
+
+
 def test_tool_d_source_selector_rejects_duplicate_source_ticker_rows() -> None:
     duplicate = pd.DataFrame(
         [
@@ -3255,6 +3300,118 @@ def _m3b_app(tmp_path):
     return paths, create_workspace_app(
         paths, app_config=app_config, tool_b_tickers=["NEM"]
     )
+
+
+_RESILIENCE_TITLE = "Resilience — at what gold price does this break?"
+
+
+def _resilience_section(body: str) -> str:
+    """Just the Resilience disclosure of a rendered ticker page."""
+    start = body.index(_RESILIENCE_TITLE)
+    return body[start : body.index("</details>", start)]
+
+
+@pytest.mark.parametrize(
+    ("requested_source", "expected", "other"),
+    [
+        ("our", "$2,345/oz", "$1,234/oz"),
+        ("yahoo", "$1,234/oz", "$2,345/oz"),
+    ],
+)
+def test_ticker_page_resilience_renders_only_the_requested_sources_row(
+    tmp_path,
+    requested_source,
+    expected,
+    other,
+):
+    """W5: end-to-end producer -> consumer lock.
+
+    A REAL v4 dual-source Tool D artifact (written through
+    ``persist_tool_d_outputs``, so it cannot drift from
+    ``TOOL_D_OUTPUT_COLUMNS`` + the validators) carries a distinct
+    interest-cover sentinel per source for the same ticker. The route must
+    render the requested source's sentinel in the Resilience group and the
+    other source's sentinel must appear NOWHERE in that section — the two
+    keys are one row apart in the same file, so row order alone would pass a
+    weaker test.
+    """
+
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_latest_tool_d_output(paths)  # our=2345.0, yahoo=1234.0
+    app = create_workspace_app(
+        paths, app_config=_repo_app_config(), tool_b_tickers=["NEM"]
+    )
+
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path=f"/ticker/NEM?fundamentals_source={requested_source}",
+    )
+
+    assert response["status"].startswith("200")
+    section = _resilience_section(response["body"])
+    assert "Interest-cover gold" in section
+    assert expected in section
+    assert other not in section
+    expected_basis = (
+        "Yahoo financials · Our View mining assumptions"
+        if requested_source == "yahoo"
+        else "Our View financials · Our View mining assumptions"
+    )
+    assert expected_basis in section
+
+
+def test_ticker_page_degrades_one_section_on_a_duplicated_tool_d_key(tmp_path):
+    """W2: a duplicate (ticker, finance_source) Tool D artifact used to raise a
+    ValueError that the WSGI handler turned into a generic error page — losing
+    the whole ticker page AND the reason. Tool D is an optional disclosure, so
+    it degrades per item: the page still renders and the disclosure states the
+    actual validation message."""
+
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    duplicated = pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "finance_source": "our",
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                "interest_cover_gold_usd": 2345.0,
+            },
+            {
+                "ticker": "nem",
+                "finance_source": "our",
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                "interest_cover_gold_usd": 999.0,
+            },
+        ]
+    )
+    write_parquet_atomic(duplicated, paths.latest_tool_d_snapshot_parquet_path)
+    write_parquet_atomic(duplicated, paths.latest_tool_d_spot_snapshot_parquet_path)
+    app = create_workspace_app(
+        paths, app_config=_repo_app_config(), tool_b_tickers=["NEM"]
+    )
+
+    response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert "Workspace Error" not in body
+    # every other section still renders
+    for anchor in ('id="performance"', 'id="corporate-finance"', 'id="market-behaviour"'):
+        assert anchor in body, anchor
+    section = _resilience_section(body)
+    assert "duplicate persisted (ticker, finance_source) rows" in section
+    # ...and neither ambiguous row's number is shown
+    assert "$2,345/oz" not in section
+    assert "$999/oz" not in section
 
 
 def test_ticker_page_sections_render_in_the_required_order(tmp_path):

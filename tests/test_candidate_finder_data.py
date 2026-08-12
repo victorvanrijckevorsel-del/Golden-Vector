@@ -20,7 +20,11 @@ from golden_vector.contracts.option_artifacts import (
     option_artifact_latest_path,
     option_artifact_run_stamped_path,
 )
-from golden_vector.contracts.tool_d import TOOL_D_OUTPUT_COLUMNS, TOOL_D_SCHEMA_VERSION
+from golden_vector.contracts.tool_d import (
+    TOOL_D_OUTPUT_COLUMNS,
+    TOOL_D_SCHEMA_VERSION,
+    select_tool_d_source_rows,
+)
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_options import safe_options_file_name
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
@@ -42,7 +46,9 @@ from golden_vector.serve.candidate_finder_data import (
     CandidateFinderScenario,
     CandidateFinderScenarioError,
     CandidateFinderSourceError,
+    CandidateFinderSourceLoad,
     TOOL_D_FINDER_FIELDS,
+    _persisted_tool_d_source,
     _criteria_config_for_beta_window,
     candidate_finder_result_frame,
     clear_candidate_finder_cache,
@@ -1759,3 +1765,75 @@ def test_joined_frame_healthy_tool_a_supplies_its_own_columns(tmp_path):
     subject = frame.set_index("ticker").loc[tickers]
     assert set(subject["down_beta_core"]) == {1.25}
     assert subject["tool_c_downside_rank"].notna().all()
+
+
+def test_a_duplicated_tool_d_artifact_degrades_the_finder_instead_of_raising():
+    """Corporate Resilience is one criterion group on the page. A duplicated
+    persisted (ticker, finance_source) key raises out of the shared selector,
+    and letting that escape into the route replaced the entire Candidate Finder
+    with a generic error page — losing every other criterion AND the reason.
+    The rows are dropped and the validation message is routed through the same
+    warning channel the absent-row path uses."""
+
+    duplicated = pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "finance_source": "our",
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                "breaks_even_at_gold_usd": 1500.0,
+                "gold_price_used": 4000.0,
+                "spot_gold_usd": 4000.0,
+            },
+            {
+                "ticker": "NEM",
+                "finance_source": "our",
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                "breaks_even_at_gold_usd": 1600.0,
+                "gold_price_used": 4000.0,
+                "spot_gold_usd": 4000.0,
+            },
+        ]
+    )
+    # The premise: the shared selector really does raise on this frame.
+    with pytest.raises(ValueError, match="duplicate persisted"):
+        select_tool_d_source_rows(
+            duplicated, finance_source="our", label="probe"
+        )
+
+    load = _persisted_tool_d_source(
+        CandidateFinderSourceLoad(frame=duplicated),
+        finance_source="our",
+    )
+
+    assert load.frame.empty
+    assert "Corporate Resilience data could not be read" in str(load.warning)
+    assert "duplicate persisted" in str(load.warning)
+    assert "treats Corporate Resilience criteria as missing" in str(load.warning)
+
+
+def test_a_healthy_tool_d_artifact_still_reaches_the_finder_unwarned():
+    """Healthy control for the degradation above — the guard must not swallow
+    a perfectly good frame."""
+
+    healthy = pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "finance_source": "our",
+                "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                "breaks_even_at_gold_usd": 1500.0,
+                "gold_price_used": 4000.0,
+                "spot_gold_usd": 4000.0,
+            }
+        ]
+    )
+
+    load = _persisted_tool_d_source(
+        CandidateFinderSourceLoad(frame=healthy),
+        finance_source="our",
+    )
+
+    assert load.warning is None
+    assert list(load.frame["ticker"]) == ["NEM"]
+    assert list(load.frame["breaks_even_at_gold_usd"]) == [1500.0]

@@ -16,6 +16,7 @@ from golden_vector.app.model_state import (
 )
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
+from golden_vector.contracts.tool_d import select_tool_d_source_rows
 from golden_vector.fundamentals.artifacts import load_official_fundamentals
 from golden_vector.model.tool_d import (
     ToolDExecutionInputs,
@@ -46,7 +47,7 @@ from golden_vector.serve.ui.components import page_header
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.url_helpers import build_page_url
-from golden_vector.serve.workspace_state import WorkspaceState, select_tool_d_source_rows
+from golden_vector.serve.workspace_state import WorkspaceState
 
 
 def _yahoo_scenario_error(

@@ -328,18 +328,31 @@ def render_performance_section(
         for _, row in marker_rows.drop_duplicates(subset=["series"]).iterrows()
     ]
 
-    basis_bits: list[str] = []
+    # Plan §4.6/§5.1: the always-open line ORIENTS (which view, which horizon,
+    # which window) in one short phrase. The per-series price-basis sentence is
+    # metadata — true, and much too long to sit above the chart — so it moves
+    # verbatim into the chart's own data disclosure, one click away, next to the
+    # numbers it describes.
+    anchor_text = ""
+    through_text = ""
+    series_basis = ""
     if not ok_rows.empty:
         first = ok_rows.iloc[0]
         anchor = first.get("rebase_date")
         if view == "rebased" and anchor is not None and not pd.isna(anchor):
-            basis_bits.append(f"indexed to 100 on {_fmt_date(anchor)}")
+            anchor_text = _fmt_date(anchor)
         common_end = first.get("common_end_date")
         if common_end is not None and not pd.isna(common_end):
-            basis_bits.append(f"through {_fmt_date(common_end)}")
-        price_basis = _performance_basis_summary(ok_rows, view=view)
-        if price_basis:
-            basis_bits.append(price_basis)
+            through_text = _fmt_date(common_end)
+        series_basis = _performance_basis_summary(ok_rows, view=view) or ""
+    if anchor_text and through_text:
+        window_text = f"{anchor_text} → {through_text}"
+    elif anchor_text:
+        window_text = f"indexed to 100 on {anchor_text}"
+    elif through_text:
+        window_text = f"through {through_text}"
+    else:
+        window_text = ""
     trim_notes = {
         str(reason)
         for reason in view_rows["trim_reason"].dropna().unique()
@@ -355,12 +368,14 @@ def render_performance_section(
         f"{id_token(horizon)}-{id_token(view)}"
     )
     if series_by_label and view == "price" and currency is None:
+        # No chart means no data disclosure to carry the basis sentence, and
+        # dropping it would delete a fact. It stays visible in this branch only.
         chart_html = notice(
             "degraded",
             "<p>The performance artifact does not state a currency basis for the "
             "share-price view, so the price chart is not drawn. Nothing is assumed "
             "about the currency. The Compare view is unaffected.</p>",
-        )
+        ) + (f'<p class="hint">{escape(series_basis)}</p>' if series_basis else "")
     elif series_by_label:
         chart_html = _build_multiline_overlay_svg(
             series_by_label=series_by_label,
@@ -371,6 +386,7 @@ def render_performance_section(
             ),
             mode="price" if view == "price" else "indexed",
             unit=currency,
+            basis_note=series_basis,
         )
     else:
         chart_html = '<p class="hint">No drawable series in this window.</p>'
@@ -397,8 +413,8 @@ def render_performance_section(
         '<section class="panel performance-panel" id="performance">'
         + heading_html
         + controls_html
-        + f'<p class="hint">{escape(view_label)} · horizon {escape(horizon)}'
-        + (" · " + escape("; ".join(basis_bits)) if basis_bits else "")
+        + f'<p class="hint">{escape(view_label)} · {escape(horizon)}'
+        + (" · " + escape(window_text) if window_text else "")
         + "</p>"
         + visibility_html
         + chart_html

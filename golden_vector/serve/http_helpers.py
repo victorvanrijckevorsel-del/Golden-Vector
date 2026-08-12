@@ -34,11 +34,26 @@ def _flash_message(saved_token: str) -> str | None:
     return messages.get(saved_token)
 
 
-def _render_error_page(message: str, *, detail: str | None = None) -> str:
+def _render_error_page(
+    message: str,
+    *,
+    detail: str | None = None,
+    links: Iterable[tuple[str, str]] | None = None,
+) -> str:
+    """An error page with at least one way out.
+
+    ``links`` is an ordered ``(href, label)`` sequence rendered BEFORE the
+    always-present workspace link, so a dead end can offer the page the user
+    actually came from (W7). Hrefs are caller-built; they are escaped here.
+    """
     detail_html = f"<p class=\"hint\">{escape(detail)}</p>" if detail else ""
+    links_html = "".join(
+        f"<p><a href=\"{escape(href, quote=True)}\">{escape(label)}</a></p>"
+        for href, label in (links or ())
+    )
     return _page_shell(
         "Golden Vector Workspace Error",
-        f"<h1>Workspace Error</h1><div class=\"panel\"><p>{escape(message)}</p>{detail_html}<p><a href=\"/\">Back to workspace</a></p></div>",
+        f"<h1>Workspace Error</h1><div class=\"panel\"><p>{escape(message)}</p>{detail_html}{links_html}<p><a href=\"/\">Back to workspace</a></p></div>",
         # Documented intentional change (plan section 15.11): error pages render
         # the full navigation with no current item instead of highlighting
         # Candidate Finder.
