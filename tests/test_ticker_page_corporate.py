@@ -36,6 +36,7 @@ from golden_vector.serve.ticker_page import (
     render_corporate_finance_section,
     render_gold_dial_control,
 )
+from golden_vector.serve.ticker_page.corporate import format_metric
 
 PARITY_FIXTURE = Path(__file__).parent / "fixtures" / "gold_dial_parity.json"
 
@@ -710,7 +711,69 @@ def test_dial_control_takes_its_range_from_config_and_defaults_to_spot():
     assert '<output class="gold-dial-output"' in control
     assert 'id="gold-dial-reset"' in control
     assert 'aria-live="polite"' in control
-    assert "spot $4,452 as of 2026-08-11" in control
+    assert "spot $4,452.00 as of 2026-08-11" in control
+
+
+def test_slider_value_is_step_aligned_while_the_payload_keeps_exact_spot():
+    """A range control snaps ``value`` onto ``min + k*step`` before any script
+
+    runs, so emitting the exact fractional spot ships a position the browser
+    rewrites — and a client baseline that starts life in a false scenario
+    (plan §4.3, D9). The EXACT spot still owns evaluation, display and
+    provenance; only the control's own position is aligned."""
+    data = _data(_gold_row(spot_gold_usd=4477.4))
+    control = render_gold_dial_control(
+        data, ticker="NEM", finance_source="our", app_config=_app_config()
+    )
+
+    assert 'step="1"' in control
+    assert 'value="4477"' in control  # the position the control can actually hold
+    assert 'value="4477.4"' not in control
+    # ...while every human-readable basis keeps the true price, cents and all
+    assert "spot $4,477.40 as of 2026-08-11" in control
+    assert 'aria-valuetext="$4,477.40 per ounce, spot"' in control
+    assert ">$4,477.40</output>" in control
+    # Nothing to reset FROM at rest: rendered, disabled, out of the tab order.
+    assert 'id="gold-dial-reset" disabled>' in control
+
+    payload = _payload(_render(data=data))
+    assert payload["spot_gold_usd"] == 4477.4
+
+
+def test_a_spot_outside_the_configured_range_is_emitted_at_the_bound():
+    """The browser clamps the position anyway — emitting the bound keeps the
+
+    rendered control and the browser's own value in agreement. The payload and
+    the visible basis text still carry the true, unclamped spot."""
+    dial = _app_config().ticker_page.dial
+    for spot, expected in ((7000.0, dial.max_gold_usd), (1000.0, dial.min_gold_usd)):
+        data = _data(_gold_row(spot_gold_usd=spot))
+        control = render_gold_dial_control(
+            data, ticker="NEM", finance_source="our", app_config=_app_config()
+        )
+        assert f'value="{expected:g}"' in control, spot
+        assert f"spot {format_metric(spot, 'usd2')} as of" in control, spot
+        assert _payload(_render(data=data))["spot_gold_usd"] == spot
+
+
+def test_headline_cards_carry_one_spot_value_and_one_hidden_scenario_slot():
+    """The card contract (§4.4): the spot value gold-dial.js hides while a
+
+    scenario is active, plus the empty slot it writes into — never two
+    unlabelled numbers stacked in one card."""
+    html = _render()
+    for metric in (
+        "margin_usd_per_oz",
+        "margin_pct",
+        "aisc_margin_yield",
+        "ev_ebitda",
+        "forward_pe",
+        "leverage_stressed",
+    ):
+        assert f'data-metric="{metric}" data-basis="scenario" hidden></p>' in html, metric
+    assert html.count('<p class="metric-card-value spot-cell" data-headline-spot="1">') == 6
+    # the marker exists ONLY on the cards — expanded tables keep both columns
+    assert html.count("data-headline-spot") == 6
 
 
 def test_dial_payload_carries_the_artifact_row_and_nothing_computed():

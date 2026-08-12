@@ -23,13 +23,14 @@ The failing-checks notice deliberately does NOT react to the dial (D-4).
 
 from __future__ import annotations
 
+from decimal import Decimal
 from html import escape
 from typing import Any, Mapping
 
 import pandas as pd
 
 from golden_vector.common.strings import clean_string
-from golden_vector.contracts.config_models import AppConfig
+from golden_vector.contracts.config_models import AppConfig, TickerPageDialConfig
 from golden_vector.contracts.ticker_page import (
     GOLD_RESPONSE_CONSTANT_COLUMNS,
     GOLD_RESPONSE_LINE_METRICS,
@@ -365,6 +366,13 @@ def build_gold_dial_payload(
 
     Every number below is a column read. No ratio, no rounding, no derived
     field: the client evaluates, the artifact decides.
+
+    ``spot_gold_usd`` is the EXACT persisted spot and stays that way: every
+    evaluation, display value and provenance line uses it. The slider's own
+    ``value`` attribute is step-aligned separately (``_slider_value_attr``)
+    because a range control cannot hold a fractional position; no aligned
+    baseline is carried here, since gold-dial.js reads the browser-normalized
+    position straight off the control (plan §4.3).
     """
 
     return {
@@ -398,6 +406,54 @@ def build_gold_dial_payload(
     }
 
 
+def _slider_value_attr(spot: float | None, dial_cfg: TickerPageDialConfig) -> str:
+    """The slider ``value`` the control can actually hold, as a string.
+
+    A range input snaps its value onto ``min + k*step`` before any script runs,
+    so emitting the exact fractional spot ($4,477.40 against ``step="1"``) ships
+    a position the browser silently rewrites: the no-JavaScript page then states
+    a gold price it is not showing, and the client baseline starts life
+    disagreeing with the control it reads (plan §4.3, decision D9).
+
+    Serve renders, it does not compute, so the alignment is done the only way a
+    formatter can: when the configured step is a plain decimal step (10, 1,
+    0.1 …) and the minimum sits on that same decimal grid, the step grid IS the
+    decimal grid, and formatting spot to the step's own precision lands exactly
+    on it. Any other step (25, 0.25 …) needs real arithmetic and therefore a
+    model-layer helper; until one exists, the exact spot is emitted unchanged
+    and the browser's own snap stays the authority — never a silent half-fix.
+
+    A spot outside the configured range is emitted at the bound the browser
+    would clamp it to, so the rendered position and the control agree; the
+    visible basis text still reports the true spot beside the range, and gating
+    an out-of-range spot as unavailable is a State-A availability decision, not
+    a formatting one.
+
+    The exact spot is never touched anywhere else: payload, evaluation, cells
+    and basis text all keep ``spot_gold_usd`` verbatim.
+    """
+
+    if spot is None:
+        return ""
+    minimum = float(dial_cfg.min_gold_usd)
+    maximum = float(dial_cfg.max_gold_usd)
+    if spot <= minimum:
+        return f"{minimum:g}"
+    if spot >= maximum:
+        return f"{maximum:g}"
+    step = Decimal(str(float(dial_cfg.step_usd))).normalize()
+    step_parts = step.as_tuple()
+    on_decimal_grid = (
+        step_parts.sign == 0
+        and step_parts.digits == (1,)
+        and Decimal(str(minimum)).normalize().as_tuple().exponent >= step_parts.exponent
+    )
+    if not on_decimal_grid:
+        return f"{spot:g}"
+    places = max(0, -int(step_parts.exponent))
+    return f"{spot:.{places}f}"
+
+
 def render_gold_dial_control(
     data: TickerPageData,
     *,
@@ -428,16 +484,24 @@ def render_gold_dial_control(
     dial_cfg = app_config.ticker_page.dial
     minimum = format_metric(float(dial_cfg.min_gold_usd), "usd")
     maximum = format_metric(float(dial_cfg.max_gold_usd), "usd")
-    value_attr = "" if spot is None else f"{spot:g}"
+    value_attr = _slider_value_attr(spot, dial_cfg)
     disabled_attr = "" if enabled and spot is not None else " disabled"
     explain = help_icon(
         "Gold price scenario", key="ticker_gold_dial", app_config=app_config
     )
+    # The EXACT spot, cents included — the control's own position is on the step
+    # grid, so the basis text is the only place the true price is readable.
+    spot_exact = format_metric(spot, "usd2")
     spot_label = (
-        f"spot {format_metric(spot, 'usd')}"
+        f"spot {spot_exact}"
         + (f" as of {spot_date}" if spot_date else "")
         if spot is not None
         else "spot gold unavailable"
+    )
+    # Truthful at rest without JavaScript, and maintained by gold-dial.js
+    # through every state (plan §4.3).
+    value_text = (
+        f"{spot_exact} per ounce, spot" if spot is not None else "spot gold unavailable"
     )
     reason_html = (
         f'<p class="hint gold-dial-disabled">Dial unavailable for {escape(str(ticker))}: '
@@ -451,12 +515,17 @@ def render_gold_dial_control(
         '<input type="range" id="gold-dial-input" name="gold_dial"'
         f' min="{float(dial_cfg.min_gold_usd):g}" max="{float(dial_cfg.max_gold_usd):g}"'
         f' step="{float(dial_cfg.step_usd):g}" value="{escape(value_attr, quote=True)}"'
+        f' aria-valuetext="{escape(value_text, quote=True)}"'
         f' aria-describedby="gold-dial-spot"{disabled_attr}>'
         '<output class="gold-dial-output" id="gold-dial-output" for="gold-dial-input">'
-        f"{escape(format_metric(spot, 'usd'))}</output>"
+        f"{escape(spot_exact)}</output>"
+        # Rendered but disabled until a scenario exists to reset FROM (§4.3
+        # state B) — disabled also takes it out of the tab order, and without
+        # JavaScript there is never anything to reset.
         '<button type="button" class="button-like" id="gold-dial-reset"'
-        f"{disabled_attr}>Reset to spot</button>"
-        f'<span class="hint" id="gold-dial-spot">{escape(spot_label)} · range '
+        " disabled>Reset to spot</button>"
+        f'<span class="hint" id="gold-dial-spot">'
+        f'<span id="gold-dial-basis">{escape(spot_label)}</span> · range '
         f"{escape(minimum)}–{escape(maximum)}</span>"
         '<p class="hint" id="gold-dial-status" role="status" aria-live="polite"></p>'
         f"{reason_html}"
@@ -712,7 +781,10 @@ def _headline_cards(
             f'<div class="metric-card" data-metric-card="{escape(metric)}">'
             f'<p class="metric-card-label">{escape(label)}'
             f"{help_icon(label, key=_METRIC_HELP_KEYS[metric], app_config=app_config)}</p>"
-            f'<p class="metric-card-value spot-cell">'
+            # data-headline-spot marks the ONE headline value gold-dial.js hides
+            # while a scenario is active, so a card never stacks two unlabelled
+            # numbers (plan §4.4). The expanded tables keep both, labelled.
+            f'<p class="metric-card-value spot-cell" data-headline-spot="1">'
             f"{_cell(gold_row, column, METRIC_FORMATS[metric])}</p>"
             + _scenario_cell(metric, tag="p")
             + f'<p class="hint metric-card-basis">{escape(spot_label)}</p>'

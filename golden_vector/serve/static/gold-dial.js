@@ -17,6 +17,10 @@
  *     forking a second one. It mirrors format_metric() in
  *     serve/ticker_page/corporate.py character for character.
  *   - The module no-ops when its markup is absent (plan §9.5).
+ *   - The clean state is the browser-normalized slider position captured at
+ *     boot — never the exact fractional spot, which a stepped control cannot
+ *     hold. No scenario, and no live-region announcement, without a genuine
+ *     user event (redesign plan §4.3).
  *
  * The dial moves the Corporate finance section ONLY. Performance, market
  * behaviour, the failing-check sentences and every score stay at spot.
@@ -29,10 +33,9 @@
   var OUTPUT_ID = "gold-dial-output";
   var RESET_ID = "gold-dial-reset";
   var STATUS_ID = "gold-dial-status";
+  var BASIS_ID = "gold-dial-basis";
   var SECTION_ID = "corporate-finance";
 
-  /* Float noise guard only — "moved" means the user genuinely left spot. */
-  var SPOT_EPSILON = 1e-9;
   var ANNOUNCE_DELAY_MS = 300;
 
   /* Which persisted constant the cash margin is measured against. Basis-driven
@@ -283,7 +286,33 @@
     var spotCells = section.querySelectorAll('[data-metric][data-basis="spot"]');
     var scenarioCells = section.querySelectorAll('[data-metric][data-basis="scenario"]');
     var scenarioHeads = section.querySelectorAll("[data-scenario-head]");
+    /* The single headline value per card, hidden while a scenario is shown so a
+     * card never stacks two unlabelled numbers (plan §4.4). */
+    var headlineSpotCells = section.querySelectorAll("[data-headline-spot]");
+    var basis = document.getElementById(BASIS_ID);
     var announceTimer = null;
+
+    /* State B (plan §4.3). A range control snaps its value onto its own step
+     * grid before this line runs, so the CLEAN STATE is that browser-normalized
+     * position — never payload.spot_gold_usd, which is the exact fractional
+     * spot a step-1 control cannot hold. Comparing against exact spot is what
+     * made the page open in a scenario nobody asked for. */
+    var baselineText = String(input.value);
+    var baselineGold = Number(baselineText);
+    if (!isFinite(baselineGold)) {
+      baselineGold = spot;
+      baselineText = String(spot);
+    }
+
+    /* The exact spot, cents included: the slider position rounds, the reported
+     * price does not. Spot cells are still evaluated at `spot` itself. */
+    var spotText = formatMetric(spot, "usd2");
+    var basisAtRest = basis ? basis.textContent : "";
+
+    /* Set ONLY inside the input/change/reset handlers. Nothing this module does
+     * at boot may look like a user action: no announcement, no scenario. */
+    var userActed = false;
+    var scenarioActive = false;
 
     function setHidden(node, hidden) {
       if (hidden) {
@@ -295,32 +324,32 @@
       }
     }
 
-    function announce(gold, moved) {
-      if (!status) {
+    function currentGold() {
+      var gold = Number(input.value);
+      return isFinite(gold) ? gold : baselineGold;
+    }
+
+    /* "Moved" is measured against the baseline the control actually holds, so a
+     * value the browser rounded on load is still the clean state. */
+    function isMoved() {
+      return currentGold() !== baselineGold;
+    }
+
+    function announce(message) {
+      if (!status || !userActed) {
         return;
       }
       if (announceTimer !== null) {
         window.clearTimeout(announceTimer);
       }
       announceTimer = window.setTimeout(function () {
-        status.textContent = moved
-          ? "Corporate finance shown at a scenario gold price of " +
-            formatMetric(gold, "usd") +
-            " per ounce, beside the reported values at spot."
-          : "Back at spot gold, " + formatMetric(gold, "usd") + " per ounce.";
+        status.textContent = message;
       }, ANNOUNCE_DELAY_MS);
     }
 
-    function paint() {
-      var gold = Number(input.value);
-      if (!isFinite(gold)) {
-        return;
-      }
-      var moved = Math.abs(gold - spot) > SPOT_EPSILON;
-
-      /* Spot cells never move: they are always evaluated at spot. */
-      var index;
-      for (index = 0; index < spotCells.length; index += 1) {
+    /* Spot cells never move: they are evaluated once, at exact spot. */
+    function paintSpotCells() {
+      for (var index = 0; index < spotCells.length; index += 1) {
         writeCell(
           spotCells[index],
           payload,
@@ -329,7 +358,13 @@
           true
         );
       }
+    }
 
+    function render(moved, gold) {
+      var index;
+      for (index = 0; index < headlineSpotCells.length; index += 1) {
+        setHidden(headlineSpotCells[index], moved);
+      }
       for (index = 0; index < scenarioCells.length; index += 1) {
         setHidden(scenarioCells[index], !moved);
         if (moved) {
@@ -351,21 +386,66 @@
 
       section.setAttribute("data-scenario-active", moved ? "1" : "0");
       if (output) {
-        output.textContent = formatMetric(gold, "usd");
+        output.textContent = moved ? formatMetric(gold, "usd") : spotText;
       }
-      announce(gold, moved);
+      if (basis) {
+        basis.textContent = moved
+          ? "scenario " + formatMetric(gold, "usd") + " · baseline " + basisAtRest
+          : basisAtRest;
+      }
+      input.setAttribute(
+        "aria-valuetext",
+        moved
+          ? formatMetric(gold, "usd") +
+              " per ounce, scenario · spot " +
+              spotText +
+              " per ounce"
+          : spotText + " per ounce, spot"
+      );
+      if (reset) {
+        /* Nothing to reset FROM at the baseline, and disabled keeps it out of
+         * the tab order without removing it from the layout. */
+        reset.disabled = !moved;
+      }
+      scenarioActive = moved;
     }
 
-    input.addEventListener("input", paint);
-    input.addEventListener("change", paint);
+    function onUserInput() {
+      userActed = true;
+      var moved = isMoved();
+      if (!moved && !scenarioActive) {
+        /* An event that lands back on the untouched baseline changed nothing —
+         * repainting it would announce a state the user never left. */
+        return;
+      }
+      var gold = currentGold();
+      render(moved, gold);
+      announce(
+        moved
+          ? "Scenario " +
+              formatMetric(gold, "usd") +
+              " per ounce. Corporate finance values updated."
+          : "Back at spot " + spotText + " per ounce."
+      );
+    }
+
+    input.addEventListener("input", onUserInput);
+    input.addEventListener("change", onUserInput);
     if (reset) {
       reset.addEventListener("click", function () {
-        input.value = String(spot);
-        paint();
+        userActed = true;
+        /* The SAVED baseline, never the fractional exact spot: writing 4477.4
+         * into a step-1 control snaps it straight back to a "moved" position. */
+        input.value = baselineText;
+        render(false, baselineGold);
+        announce("Reset to spot " + spotText + " per ounce.");
+        /* Reset just disabled itself — move focus before it is unreachable. */
         input.focus();
       });
     }
-    paint();
+
+    paintSpotCells();
+    render(false, baselineGold); /* boot: clean state, and nothing announced */
   }
 
   if (document.readyState === "loading") {
