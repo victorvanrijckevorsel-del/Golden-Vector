@@ -1,4 +1,13 @@
 /* Form layouts, filter bars, validation-adjacent structures. */
+/* Explicit form-control class for migrated dense surfaces. Raw inputs keep
+   their legacy dimensions until their page opts into the shared primitive. */
+.form-control {
+  min-height: var(--density-control-height);
+}
+.terminal-density .form-control {
+  padding: var(--density-form-padding-block) var(--density-form-padding-inline);
+  border-radius: var(--terminal-density-radius);
+}
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));

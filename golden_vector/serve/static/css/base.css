@@ -58,6 +58,29 @@ button:hover {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+/* Numeric/data typography utilities. They are deliberately opt-in: prose and
+   identifier columns keep normal UI typography, while comparable values use
+   the data face and a stable digit grid. */
+.data-number,
+.data-value {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.numeric-align-end {
+  text-align: end;
+}
+.data-label {
+  color: var(--text-dim);
+  font-size: var(--data-label-size);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.data-value {
+  color: var(--ink);
+  font-size: var(--data-value-size);
+  line-height: 1.2;
+}
 .full-width {
   grid-column: 1 / -1;
 }

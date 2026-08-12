@@ -59,6 +59,176 @@ def test_section_nav_is_anchor_only_and_escaped():
     assert 'href="/' not in html  # anchors, never routes
 
 
+def test_section_tabs_is_the_compact_section_nav_variant():
+    links = [("performance", "Performance"), ("inputs", "Inputs & notes")]
+    html = components.section_tabs(links, label='Ticker "sections"')
+    assert html.startswith(
+        '<nav class="section-nav section-nav--compact" aria-label="Ticker &quot;sections&quot;">'
+    )
+    assert '<a class="section-nav-link" href="#performance">Performance</a>' in html
+    assert "Inputs &amp; notes" in html
+    assert 'href="/' not in html
+
+
+def test_command_bar_escapes_labels_and_preserves_resolved_fragments():
+    html = components.command_bar(
+        '<strong class="company-name">NEM</strong>',
+        navigation_html='<form action="/ticker"><input name="ticker"></form>',
+        groups=(
+            ("Financials <source>", '<a href="?source=our">Our View</a>'),
+            ("Gold scenario", '<input type="range">'),
+        ),
+        label='Company "command" bar',
+    )
+    assert html.startswith(
+        '<div class="command-bar" role="region" aria-label="Company &quot;command&quot; bar">'
+    )
+    assert '<div class="command-bar__identity"><strong class="company-name">NEM</strong>' in html
+    assert '<div class="command-bar__navigation"><form action="/ticker">' in html
+    assert html.count('class="command-bar__group"') == 2
+    assert "Financials &lt;source&gt;" in html
+    assert '<a href="?source=our">Our View</a>' in html
+    assert '<input type="range">' in html
+
+
+def test_command_bar_omits_empty_navigation_slot():
+    html = components.command_bar("<strong>NEM</strong>")
+    assert "command-bar__navigation" not in html
+    assert "command-bar__group" not in html
+
+
+def test_command_bar_requires_identity_and_an_accessible_label():
+    with pytest.raises(ValueError, match="requires identity_html"):
+        components.command_bar("", label="Company controls")
+    with pytest.raises(ValueError, match="non-empty accessible label"):
+        components.command_bar("<strong>NEM</strong>", label="  ")
+
+
+def test_segmented_control_uses_links_and_exactly_one_current_item():
+    html = components.segmented_control(
+        (
+            ("Our <View>", "/ticker/NEM?source=our&view=price", True),
+            ('Yahoo "official"', "/ticker/NEM?source=yahoo&view=price", False),
+        ),
+        label='Financials "source"',
+    )
+    assert html.startswith(
+        '<div class="segmented-control" role="group" aria-label="Financials &quot;source&quot;">'
+    )
+    assert html.count('class="segmented-control__item"') == 2
+    assert html.count('aria-current="true"') == 1
+    assert 'role="tab"' not in html
+    assert "Our &lt;View&gt;" in html
+    assert "Yahoo &quot;official&quot;" in html
+    assert 'href="/ticker/NEM?source=our&amp;view=price" aria-current="true"' in html
+
+
+@pytest.mark.parametrize(
+    "items",
+    [
+        (("Our View", "?source=our", False), ("Yahoo", "?source=yahoo", False)),
+        (("Our View", "?source=our", True), ("Yahoo", "?source=yahoo", True)),
+    ],
+)
+def test_segmented_control_rejects_missing_or_multiple_selected_items(items):
+    with pytest.raises(ValueError, match="exactly one selected"):
+        components.segmented_control(items, label="Financials source")
+
+
+def test_segmented_control_requires_an_accessible_label():
+    with pytest.raises(ValueError, match="non-empty accessible label"):
+        components.segmented_control((("Our View", "?source=our", True),), label="")
+
+
+def test_data_card_new_contract_escapes_label_and_keeps_resolved_slots():
+    html = components.data_card(
+        "Cash margin <per oz>",
+        '<span data-value="3017">$3,017/oz</span>',
+        help_html='<button class="help-icon">i</button>',
+        basis_html="Forward at spot",
+        state="warning",
+        state_label="Watch threshold",
+    )
+    assert html.startswith('<article class="data-card data-card--warning">')
+    assert '<h3 class="data-card__label">Cash margin &lt;per oz&gt;' in html
+    assert '<button class="help-icon">i</button></h3>' in html
+    assert '<p class="data-card__value"><span data-value="3017">$3,017/oz</span></p>' in html
+    assert '<p class="data-card__state">Watch threshold</p>' in html
+    assert '<p class="data-card__basis">Forward at spot</p>' in html
+    assert "metric-card" not in html
+
+
+def test_data_card_explicit_label_html_and_legacy_bytes():
+    legacy = components.data_card(
+        "",
+        "<strong>12.6%</strong>",
+        label_html='FCF yield <button class="help-icon">i</button>',
+        legacy=True,
+    )
+    assert legacy == (
+        '<article class="panel metric-card">'
+        '<h3>FCF yield <button class="help-icon">i</button></h3>'
+        "<p><strong>12.6%</strong></p>"
+        "</article>"
+    )
+
+
+def test_shared_metric_card_wrapper_preserves_legacy_bytes():
+    from golden_vector.serve.format_helpers import _metric_card
+
+    assert _metric_card("Revenue", "<strong>$26.1bn</strong>") == (
+        '<article class="panel metric-card">'
+        "<h3>Revenue</h3><p><strong>$26.1bn</strong></p>"
+        "</article>"
+    )
+
+
+def test_data_card_rejects_ambiguous_or_unsafe_options():
+    with pytest.raises(ValueError, match="label or label_html"):
+        components.data_card("Label", "1", label_html="<em>Label</em>")
+    with pytest.raises(ValueError, match="requires label or label_html"):
+        components.data_card("", "1")
+    with pytest.raises(ValueError, match="unknown data-card state"):
+        components.data_card("Label", "1", state='warning" onclick="x')
+    with pytest.raises(ValueError, match="visible state_label"):
+        components.data_card("Label", "1", state="warning")
+    with pytest.raises(ValueError, match="requires a semantic state"):
+        components.data_card("Label", "1", state_label="Warning")
+    with pytest.raises(ValueError, match="unknown data-card state"):
+        components.data_card("Label", "1", state="sparkly")
+    with pytest.raises(ValueError, match="does not support"):
+        components.data_card("Label", "1", basis_html="Basis", legacy=True)
+
+
+def test_basis_strip_escapes_labels_and_preserves_resolved_values():
+    html = components.basis_strip(
+        (
+            ("Financials <source>", "Yahoo financials"),
+            ("As of", '<time datetime="2026-08-12">12 Aug 2026</time>'),
+        ),
+        label='Corporate finance "basis"',
+    )
+    assert html.startswith(
+        '<div class="basis-strip" role="group" aria-label="Corporate finance &quot;basis&quot;">'
+    )
+    assert html.count('class="basis-strip__item"') == 2
+    assert "Financials &lt;source&gt;" in html
+    assert '<time datetime="2026-08-12">12 Aug 2026</time>' in html
+
+
+def test_basis_strip_rejects_an_empty_data_family():
+    with pytest.raises(ValueError, match="at least one item"):
+        components.basis_strip((), label="Corporate finance basis")
+    with pytest.raises(ValueError, match="non-empty accessible label"):
+        components.basis_strip((("Source", "Yahoo"),), label=" ")
+
+
+def test_terminal_density_is_an_opt_in_bounded_wrapper():
+    assert components.terminal_density("<section>Dense</section>") == (
+        '<div class="terminal-density"><section>Dense</section></div>'
+    )
+
+
 def test_toolbar_role_group_and_escaped_label():
     html = components.toolbar("<button>Go</button>", label='Scenario "controls"')
     assert 'role="group"' in html

@@ -163,6 +163,28 @@
   --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-data: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
 
+  /* Professional-density system (platform redesign section 5.3).
+     These are semantic component inputs, not global overrides. Consumers opt
+     into them through the Phase 3 primitives or .terminal-density. */
+  --content-max-width: 77.5rem;
+  --density-gap-compact: 0.5rem;
+  --density-gap-standard: 0.75rem;
+  --density-panel-padding-block: 0.875rem;
+  --density-panel-padding-inline: 1rem;
+  --density-card-padding-block: 0.75rem;
+  --density-card-padding-inline: 0.875rem;
+  --density-control-height: 2rem;
+  --density-control-padding-inline: 0.75rem;
+  --density-form-padding-block: 0.375rem;
+  --density-form-padding-inline: 0.625rem;
+  --density-table-padding-block: 0.45rem;
+  --density-table-padding-inline: 0.625rem;
+  --data-label-size: 0.7rem;
+  --data-value-size: 1.25rem;
+  --command-bar-wrap-gap: 0.75rem;
+  --touch-target-min: 2.75rem;
+  --terminal-density-radius: 0.375rem;
+
   /* Shape */
   --radius-control: 0.375rem;
   --radius-surface: 0.5rem;

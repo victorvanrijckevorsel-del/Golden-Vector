@@ -69,6 +69,67 @@ def test_shell_marks_exactly_one_nav_entry_current():
     assert 'aria-current="page" href="/tool-b"' in html
 
 
+def test_shell_context_extension_preserves_unmigrated_output_byte_for_byte():
+    """Omitting the new context arguments keeps the historical active-nav mapping."""
+    cases = (
+        ("tool_a", "tool_a", "Gold Sensitivity"),
+        ("", "error", "Golden Vector"),
+        ("not-a-nav-item", "not-a-nav-item", "Golden Vector"),
+    )
+    for active_nav, page_id, header_label in cases:
+        legacy_call = _page_shell("Title", "<p>Body</p>", active_nav=active_nav)
+        explicit_equivalent = _page_shell(
+            "Title",
+            "<p>Body</p>",
+            active_nav=active_nav,
+            page_id=page_id,
+            header_label=header_label,
+        )
+        assert legacy_call.encode("utf-8") == explicit_equivalent.encode("utf-8")
+
+
+def test_shell_page_header_and_active_navigation_are_independent():
+    html = _page_shell(
+        "Ticker title",
+        "x",
+        active_nav="tool_a",
+        page_id="ticker_detail",
+        header_label="NEM & profile",
+    )
+    assert 'data-page="ticker_detail"' in html
+    assert '<span class="app-header-title">NEM &amp; profile</span>' in html
+    assert html.count('aria-current="page"') == 1
+    assert 'aria-current="page" href="/tool-a"' in html
+    assert 'data-page="tool_a"' not in html
+    assert '<span class="app-header-title">Gold Sensitivity</span>' not in html
+
+
+def test_shell_supports_future_neutral_ticker_detail_context():
+    html = _page_shell(
+        "Golden Vector Workspace - NEM",
+        "x",
+        page_id="ticker_detail",
+        header_label="NEM company profile",
+    )
+    assert 'data-page="ticker_detail"' in html
+    assert '<span class="app-header-title">NEM company profile</span>' in html
+    assert 'aria-current="page"' not in html
+
+
+def test_shell_preserves_genuine_option_trading_state_for_ticker_lens():
+    html = _page_shell(
+        "Golden Vector Workspace - NEM",
+        "x",
+        active_nav="option_trading",
+        page_id="ticker_detail",
+        header_label="NEM option analysis",
+    )
+    assert 'data-page="ticker_detail"' in html
+    assert '<span class="app-header-title">NEM option analysis</span>' in html
+    assert html.count('aria-current="page"') == 1
+    assert 'aria-current="page" href="/option-trading"' in html
+
+
 def test_error_shell_renders_nav_with_no_current_item(tmp_path):
     """Documented intentional change (plan 15.11): error pages highlight nothing."""
     app = _shell_app(tmp_path)

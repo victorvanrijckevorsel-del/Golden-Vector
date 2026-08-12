@@ -75,3 +75,20 @@ table input,
 table select {
   max-width: 100%;
 }
+/* Dense tables remain inside the labelled table-region component. This is an
+   opt-in wrapper rule, not a global table default. */
+.terminal-density .table-region th,
+.terminal-density .table-region td {
+  padding: var(--density-table-padding-block) var(--density-table-padding-inline);
+}
+.terminal-density .table-region td.numeric,
+.terminal-density .table-region td[data-order] {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums lining-nums;
+  text-align: end;
+}
+.terminal-density .table-region th[data-sort-numeric] {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums lining-nums;
+  text-align: end;
+}

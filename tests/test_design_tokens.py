@@ -232,7 +232,142 @@ ALLOWED_DYNAMIC_SELECTORS = {
     # ui/status.py, so the literal class names never appear in source.
     "notice-success", "notice-info", "notice-danger", "notice-degraded",
     "notice-neutral",
+    # Phase 3 opt-in utilities and control variants are public CSS contracts;
+    # consumers migrate in Phases 4-5 after the primitives land.
+    "data-label", "data-number", "data-value", "numeric-align-end", "control",
+    "control--primary", "control--danger", "control--quiet", "form-control",
+    # data_card validates these state names and composes the modifier class.
+    "data-card--positive", "data-card--negative", "data-card--warning",
+    "data-card--neutral",
 }
+
+
+PHASE3_DENSITY_TOKENS = {
+    "--content-max-width",
+    "--density-gap-compact",
+    "--density-gap-standard",
+    "--density-panel-padding-block",
+    "--density-panel-padding-inline",
+    "--density-card-padding-block",
+    "--density-card-padding-inline",
+    "--density-control-height",
+    "--density-control-padding-inline",
+    "--density-form-padding-block",
+    "--density-form-padding-inline",
+    "--density-table-padding-block",
+    "--density-table-padding-inline",
+    "--data-label-size",
+    "--data-value-size",
+    "--command-bar-wrap-gap",
+    "--touch-target-min",
+    "--terminal-density-radius",
+}
+
+
+PHASE3_SELECTOR_OWNERS = {
+    "base.css": {"data-label", "data-number", "data-value", "numeric-align-end"},
+    "components.css": {
+        "command-bar", "command-bar__identity", "command-bar__navigation",
+        "command-bar__group", "command-bar__label", "command-bar__content",
+        "segmented-control", "segmented-control__item", "data-card",
+        "data-card__label", "data-card__value", "data-card__basis",
+        "data-card__state",
+        "basis-strip", "basis-strip__item", "basis-strip__label",
+        "basis-strip__value", "section-nav--compact", "control",
+        "control--primary", "control--danger", "control--quiet", "button-like",
+        "data-card--positive", "data-card--negative", "data-card--warning",
+        "data-card--neutral", "terminal-density",
+    },
+    "forms.css": {"form-control"},
+}
+
+
+def _class_selectors(path: Path) -> set[str]:
+    body = _strip_css_comments(path.read_text(encoding="utf-8"))
+    return set(re.findall(r"\.([A-Za-z][A-Za-z0-9_-]*)", body))
+
+
+def test_phase3_density_and_content_tokens_are_centralized():
+    body = _strip_css_comments((CSS_DIR / "tokens.css").read_text(encoding="utf-8"))
+    defined = set(re.findall(r"(--[\w-]+)\s*:", body))
+    assert PHASE3_DENSITY_TOKENS <= defined
+    for path in _first_party_css_files():
+        if path.name == "tokens.css":
+            continue
+        declarations = set(re.findall(r"(--[\w-]+)\s*:", _strip_css_comments(path.read_text(encoding="utf-8"))))
+        assert not (declarations & PHASE3_DENSITY_TOKENS), (
+            f"{path.name} duplicates centralized density tokens: "
+            f"{sorted(declarations & PHASE3_DENSITY_TOKENS)}"
+        )
+
+
+def test_phase3_primitives_live_in_their_canonical_css_modules():
+    all_selectors = {path.name: _class_selectors(path) for path in _first_party_css_files()}
+    for owner, expected in PHASE3_SELECTOR_OWNERS.items():
+        assert expected <= all_selectors[owner], (
+            f"{owner} is missing Phase 3 selectors: {sorted(expected - all_selectors[owner])}"
+        )
+    # Responsive/density modules may reference a primitive to refine it. The
+    # page-local module may not grow a second implementation of the system.
+    canonical = set().union(*PHASE3_SELECTOR_OWNERS.values())
+    assert not (canonical & all_selectors["pages.css"]), (
+        "page-local duplicate of shared primitive: "
+        f"{sorted(canonical & all_selectors['pages.css'])}"
+    )
+
+
+def test_phase3_density_never_targets_raw_buttons_or_fields():
+    offenders: list[str] = []
+    raw_controls = re.compile(r"(?<![-\w.])(button|input|select|textarea)(?![-\w])")
+    for path in _first_party_css_files():
+        body = _strip_css_comments(path.read_text(encoding="utf-8"))
+        for selector, _ in re.findall(r"([^{}]+)\{([^}]*)\}", body):
+            if ".terminal-density" in selector and raw_controls.search(selector):
+                offenders.append(f"{path.name}: {selector.strip()}")
+    assert not offenders, "terminal density targets raw controls: " + "; ".join(offenders)
+
+
+def test_phase3_numeric_type_does_not_restyle_legacy_numeric_cells_globally():
+    body = _strip_css_comments((CSS_DIR / "base.css").read_text(encoding="utf-8"))
+    assert not re.search(r"(?:^|,)\s*\.numeric\s*(?:,|\{)", body)
+    assert ".data-number" in body
+
+
+def test_coarse_pointer_help_target_expands_without_resizing_the_icon():
+    body = _strip_css_comments((CSS_DIR / "responsive.css").read_text(encoding="utf-8"))
+    coarse = re.search(r"@media\s*\(pointer:\s*coarse\)\s*\{(.*)\}\s*$", body, re.S)
+    assert coarse is not None
+    rules = coarse.group(1)
+    assert ".help-icon::after" in rules
+    assert "var(--touch-target-min)" in rules
+    assert not re.search(r"\.help-icon\s*\{[^}]*\b(?:width|height)\s*:", rules, re.S)
+
+
+def test_button_like_is_an_explicit_temporary_control_compatibility_mapping():
+    body = _strip_css_comments((CSS_DIR / "components.css").read_text(encoding="utf-8"))
+    rules = {
+        " ".join(selector.split()): declarations
+        for selector, declarations in re.findall(r"([^{}]+)\{([^}]*)\}", body)
+    }
+    base_mapping = next(
+        declarations
+        for selector, declarations in rules.items()
+        if selector == ".control, .button-like"
+    )
+    assert "min-height: var(--density-control-height)" in base_mapping
+    assert "border: 1px solid var(--line)" in base_mapping
+    assert ".control[aria-current=\"true\"]" in body
+    assert ".button-like.active" in body
+
+
+def test_global_main_width_is_unchanged_during_the_opt_in_pilot():
+    body = _strip_css_comments((CSS_DIR / "base.css").read_text(encoding="utf-8"))
+    main_rule = next(
+        rule for selector, rule in re.findall(r"([^{}]+)\{([^}]*)\}", body)
+        if selector.strip() == "main"
+    )
+    assert re.search(r"max-width\s*:\s*1240px\s*;", main_rule)
+    assert "var(--content-max-width)" not in main_rule
 
 
 def test_no_dead_first_party_selectors():

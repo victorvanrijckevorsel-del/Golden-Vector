@@ -60,6 +60,18 @@
   main {
     padding: 18px 14px 40px;
   }
+  .command-bar {
+    align-items: stretch;
+  }
+  .command-bar__identity,
+  .command-bar__navigation,
+  .command-bar__group {
+    flex-basis: 100%;
+    width: 100%;
+  }
+  .command-bar__content {
+    width: 100%;
+  }
 }
 @media (max-width: 29.9375rem) {
   main {
@@ -85,5 +97,21 @@
   * {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+  }
+}
+@media (pointer: coarse) {
+  .control,
+  .button-like,
+  .segmented-control__item,
+  .form-control {
+    min-height: var(--touch-target-min);
+  }
+  .help-icon {
+    position: relative;
+  }
+  .help-icon::after {
+    position: absolute;
+    inset: calc((var(--touch-target-min) - 100%) / -2);
+    content: "";
   }
 }

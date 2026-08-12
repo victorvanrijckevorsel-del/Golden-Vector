@@ -102,10 +102,13 @@ def _metric_card(
         heading = help_term(title, text=help_text)
     else:
         heading = escape(title)
-    return (
-        "<article class=\"panel metric-card\">"
-        f"<h3>{heading}</h3><p>{value}</p>"
-        "</article>"
+    from golden_vector.serve.ui.components import data_card
+
+    return data_card(
+        "",
+        value,
+        label_html=heading,
+        legacy=True,
     )
 
 

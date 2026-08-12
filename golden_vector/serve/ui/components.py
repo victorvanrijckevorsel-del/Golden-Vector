@@ -10,6 +10,12 @@ from __future__ import annotations
 from html import escape
 
 _HEADING_LEVELS = (2, 3, 4)
+_DATA_CARD_STATES = ("positive", "negative", "warning", "neutral")
+
+
+def _require_accessible_label(label: str, component: str) -> None:
+    if not label.strip():
+        raise ValueError(f"{component} requires a non-empty accessible label")
 
 
 def page_header(title: str, *, lead_html: str = "", actions_html: str = "") -> str:
@@ -51,7 +57,12 @@ def section_heading(
     )
 
 
-def section_nav(links, *, label: str = "On this page") -> str:
+def section_nav(
+    links,
+    *,
+    label: str = "On this page",
+    compact: bool = False,
+) -> str:
     """In-page anchor navigation (plan 10.3): ``(fragment_id, text)`` pairs.
 
     Anchors only — never routes. Callers include only the sections that exist
@@ -61,9 +72,164 @@ def section_nav(links, *, label: str = "On this page") -> str:
         f"<a class=\"section-nav-link\" href=\"#{escape(fragment)}\">{escape(text)}</a>"
         for fragment, text in links
     )
-    return (
-        f"<nav class=\"section-nav\" aria-label=\"{escape(label)}\">{items}</nav>"
+    classes = "section-nav section-nav--compact" if compact else "section-nav"
+    return f'<nav class="{classes}" aria-label="{escape(label)}">{items}</nav>'
+
+
+def section_tabs(links, *, label: str = "Sections") -> str:
+    """Compact rectangular variant of :func:`section_nav`.
+
+    These remain ordinary in-page anchors. The alias makes the visual intent
+    explicit at migrated call sites without creating a second renderer.
+    """
+    return section_nav(links, label=label, compact=True)
+
+
+def command_bar(
+    identity_html: str,
+    *,
+    navigation_html: str = "",
+    groups=(),
+    label: str = "Company controls",
+) -> str:
+    """Render the professional command-bar shell from resolved fragments.
+
+    ``identity_html`` and ``navigation_html`` are trusted, pre-escaped HTML.
+    ``groups`` contains ``(label, content_html)`` pairs; group labels are plain
+    text and escaped here while each content fragment is trusted HTML. Groups
+    and navigation may be empty so callers can opt in one command-bar region at
+    a time while migrating; identity remains the stable required slot.
+    """
+    _require_accessible_label(label, "command_bar")
+    if not identity_html.strip():
+        raise ValueError("command_bar requires identity_html")
+    navigation = (
+        f'<div class="command-bar__navigation">{navigation_html}</div>' if navigation_html else ""
     )
+    group_markup = "".join(
+        '<div class="command-bar__group">'
+        f'<span class="command-bar__label">{escape(str(group_label))}</span>'
+        f'<div class="command-bar__content">{content_html}</div>'
+        "</div>"
+        for group_label, content_html in groups
+    )
+    return (
+        f'<div class="command-bar" role="region" aria-label="{escape(label)}">'
+        f'<div class="command-bar__identity">{identity_html}</div>'
+        f"{navigation}{group_markup}</div>"
+    )
+
+
+def segmented_control(items, *, label: str) -> str:
+    """Render an accessible group of URL-backed choices.
+
+    ``items`` contains ``(text, href, selected)`` triples. They stay ordinary
+    links (not ARIA tabs), and exactly one carries ``aria-current=\"true\"``.
+    Caller-built URLs are not rewritten; they are escaped only for safe use in
+    the HTML attribute.
+    """
+    _require_accessible_label(label, "segmented_control")
+    selected_seen = False
+    links: list[str] = []
+    for item_label, href, selected in items:
+        current = ""
+        if selected:
+            if selected_seen:
+                raise ValueError("segmented_control requires exactly one selected item")
+            selected_seen = True
+            current = ' aria-current="true"'
+        links.append(
+            '<a class="segmented-control__item" '
+            f'href="{escape(str(href), quote=True)}"{current}>'
+            f"{escape(str(item_label))}</a>"
+        )
+    if not selected_seen:
+        raise ValueError("segmented_control requires exactly one selected item")
+    return (
+        f'<div class="segmented-control" role="group" aria-label="{escape(label)}">'
+        f"{''.join(links)}</div>"
+    )
+
+
+def data_card(
+    label: str,
+    value_html: str,
+    *,
+    label_html: str = "",
+    help_html: str = "",
+    basis_html: str = "",
+    state: str = "",
+    state_label: str = "",
+    legacy: bool = False,
+) -> str:
+    """Render one data card from already-resolved display fragments.
+
+    ``label`` is escaped plain text. ``label_html`` is the explicit trusted-HTML
+    alternative used by the legacy ``_metric_card`` compatibility wrapper when
+    its heading already includes help markup. ``value_html``, ``help_html``, and
+    ``basis_html`` are likewise trusted, pre-escaped fragments.
+
+    ``legacy=True`` deliberately emits the old bytes and rejects new-only slots,
+    keeping unmigrated callers visually and structurally unchanged.
+    """
+    if label.strip() and label_html.strip():
+        raise ValueError("data_card accepts label or label_html, not both")
+    if not label.strip() and not label_html.strip():
+        raise ValueError("data_card requires label or label_html")
+    heading = label_html if label_html else escape(label)
+    if legacy:
+        if basis_html or state or state_label:
+            raise ValueError("legacy data_card does not support basis or state")
+        return (
+            '<article class="panel metric-card">'
+            f"<h3>{heading}{help_html}</h3><p>{value_html}</p>"
+            "</article>"
+        )
+    state_class = ""
+    if state:
+        if state not in _DATA_CARD_STATES:
+            raise ValueError(f"unknown data-card state: {state!r}")
+        if not state_label.strip():
+            raise ValueError("data_card state requires a visible state_label")
+        state_class = f" data-card--{state}"
+    elif state_label.strip():
+        raise ValueError("data_card state_label requires a semantic state")
+    basis = f'<p class="data-card__basis">{basis_html}</p>' if basis_html else ""
+    state_markup = (
+        f'<p class="data-card__state">{escape(state_label)}</p>'
+        if state_label
+        else ""
+    )
+    return (
+        f'<article class="data-card{state_class}">'
+        f'<h3 class="data-card__label">{heading}{help_html}</h3>'
+        f'<p class="data-card__value">{value_html}</p>'
+        f"{state_markup}{basis}</article>"
+    )
+
+
+def basis_strip(items, *, label: str = "Data basis") -> str:
+    """Render compact source/date/basis facts without interpreting them.
+
+    ``items`` contains ``(label, value_html)`` pairs. Labels are escaped text;
+    values are trusted, pre-escaped display fragments resolved by the caller.
+    """
+    _require_accessible_label(label, "basis_strip")
+    parts = "".join(
+        '<span class="basis-strip__item">'
+        f'<span class="basis-strip__label">{escape(str(item_label))}</span>'
+        f'<span class="basis-strip__value">{value_html}</span>'
+        "</span>"
+        for item_label, value_html in items
+    )
+    if not parts:
+        raise ValueError("basis_strip requires at least one item")
+    return f'<div class="basis-strip" role="group" aria-label="{escape(label)}">{parts}</div>'
+
+
+def terminal_density(content_html: str) -> str:
+    """Opt a bounded surface into the tighter terminal-density presentation."""
+    return f'<div class="terminal-density">{content_html}</div>'
 
 
 def toolbar(content_html: str, *, label: str) -> str:

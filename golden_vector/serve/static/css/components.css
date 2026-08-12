@@ -270,6 +270,261 @@
   gap: 8px;
   margin: 10px 0;
 }
+/* Analytical command bar: a pure layout shell for already-resolved identity,
+   navigation, source and scenario groups. It wraps by semantic group rather
+   than clipping labels or turning into an anonymous horizontal scroller. */
+.command-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--command-bar-wrap-gap);
+  min-width: 0;
+  margin: 0 0 var(--density-gap-standard);
+  padding: var(--density-panel-padding-block) var(--density-panel-padding-inline);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--terminal-density-radius);
+}
+.command-bar__identity {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+.command-bar__navigation,
+.command-bar__group {
+  flex: 0 1 auto;
+  min-width: 8rem;
+}
+.command-bar__group {
+  display: grid;
+  gap: 0.25rem;
+}
+.command-bar__label {
+  color: var(--text-dim);
+  font-size: var(--data-label-size);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+.command-bar__content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--density-gap-compact);
+  min-width: 0;
+}
+/* URL-backed state controls stay ordinary links. The selected item has font,
+   underline and inset-marker cues in addition to colour. */
+.segmented-control {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--terminal-density-radius);
+  background: var(--paper);
+}
+.segmented-control__item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--density-control-height);
+  margin: -1px 0 -1px -1px;
+  padding: 0 var(--density-control-padding-inline);
+  border: 1px solid var(--line);
+  border-radius: var(--terminal-density-radius);
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+}
+.segmented-control__item:first-child {
+  margin-left: -1px;
+}
+.segmented-control__item:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+.segmented-control__item[aria-current="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--button-ink);
+  color: var(--button-ink);
+  font-weight: 800;
+  text-decoration: underline;
+  text-decoration-thickness: 0.1em;
+  text-underline-offset: 0.16em;
+}
+/* Shared data card. This new name intentionally does not touch either legacy
+   metric-card structure; callers migrate explicitly in Phases 4 and 5. */
+.data-card {
+  display: grid;
+  align-content: start;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: var(--density-card-padding-block) var(--density-card-padding-inline);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--terminal-density-radius);
+}
+.data-card__label {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--data-label-size);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+.data-card__value {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-data);
+  font-size: var(--data-value-size);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.data-card__basis {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+.data-card__state {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.data-card--positive { border-inline-start: 3px solid var(--positive); }
+.data-card--negative { border-inline-start: 3px solid var(--negative); }
+.data-card--warning { border-inline-start: 3px solid var(--color-warning); }
+.data-card--neutral { border-inline-start: 3px solid var(--line); }
+/* One compact statement of source/date/basis per data family. */
+.basis-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--density-gap-compact) var(--density-gap-standard);
+  min-width: 0;
+  margin: var(--density-gap-compact) 0;
+  padding: var(--density-gap-compact) var(--density-card-padding-inline);
+  background: var(--paper);
+  border-inline-start: 2px solid var(--accent);
+  border-radius: var(--terminal-density-radius);
+}
+.basis-strip__label {
+  color: var(--text-dim);
+  font-size: var(--data-label-size);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.basis-strip__value {
+  color: var(--ink-soft);
+  font-size: 0.8125rem;
+}
+.basis-strip__item {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem;
+  min-width: 0;
+}
+/* Rectangular, terminal-density variant of the existing anchor-only nav. */
+.section-nav--compact {
+  gap: 0.25rem;
+  padding-block: var(--density-gap-compact);
+}
+.section-nav--compact .section-nav-link {
+  min-height: var(--density-control-height);
+  padding: 0.35rem var(--density-control-padding-inline);
+  border-radius: var(--terminal-density-radius);
+  font-size: 0.75rem;
+}
+/* Canonical compact action class. .button-like is a temporary compatibility
+   mapping for the seven existing emitters and is removed after migration. */
+.control,
+.button-like {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--density-control-height);
+  padding: 0 var(--density-control-padding-inline);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+.control:hover,
+.button-like:hover {
+  background: var(--surface-hover);
+}
+.control[aria-current="true"],
+.control.is-active,
+.button-like.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--button-ink);
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+.control--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--button-ink);
+}
+.control--primary:hover {
+  background: var(--color-brand-gold-hover);
+}
+.control--danger {
+  background: var(--flash-error-bg);
+  border-color: var(--flash-error-border);
+  color: var(--tint-red-ink);
+}
+.control--danger:hover {
+  background: var(--flash-error-bg);
+  border-color: var(--negative);
+}
+.control--quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--link);
+}
+.control--quiet:hover {
+  background: var(--surface-hover);
+}
+.control[disabled],
+.control[aria-disabled="true"],
+.button-like[disabled],
+.button-like[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+/* Opt-in terminal density. Only explicit component classes are affected; raw
+   buttons, fields and the global .panel default remain unchanged. */
+.terminal-density > .panel {
+  padding: var(--density-panel-padding-block) var(--density-panel-padding-inline);
+  border-radius: var(--terminal-density-radius);
+  margin-bottom: var(--density-gap-standard);
+}
+.terminal-density .command-bar,
+.terminal-density .data-card,
+.terminal-density .basis-strip {
+  border-radius: var(--terminal-density-radius);
+}
 /* Empty/unavailable state shell */
 .empty-state {
   padding: 22px 16px;

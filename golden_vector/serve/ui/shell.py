@@ -59,21 +59,35 @@ def _render_nav(active: str) -> str:
     )
 
 
-def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
+def _page_shell(
+    title: str,
+    body: str,
+    *,
+    active_nav: str = "",
+    page_id: str | None = None,
+    header_label: str | None = None,
+) -> str:
     """Semantic application shell: skip link, sidebar navigation, header, main.
 
-    ``active_nav`` selects the ``aria-current`` navigation entry and the header
-    page label; an empty value (error pages) renders the full navigation with
-    no current item — a documented intentional state (plan section 15.11).
-    The signature is a preserved compatibility contract.
+    ``active_nav`` selects the ``aria-current`` navigation entry. ``page_id``
+    and ``header_label`` can override their concerns independently; omitting
+    either one preserves its historical ``active_nav``-derived value. Omitting
+    both therefore preserves the historical output byte-for-byte. An empty
+    ``active_nav`` (error pages) renders the full navigation with no current
+    item — a documented intentional state (plan section 15.11).
 
     The ``dark`` root class activates the vendored DataTables dark theme
     (GV-RD-CX-004). The inline bootstrap adds the ``js`` class that
     responsive.css keys its drawer rules on, so without JavaScript the sidebar
     stays in normal flow and navigation remains reachable (GV-RD-CX-001).
     """
-    page_label = _PAGE_LABELS.get(active_nav, "Golden Vector")
-    page_attr = escape(active_nav or "error")
+    resolved_page_id = (active_nav or "error") if page_id is None else page_id
+    resolved_header_label = (
+        _PAGE_LABELS.get(active_nav, "Golden Vector")
+        if header_label is None
+        else header_label
+    )
+    page_attr = escape(resolved_page_id)
     return f"""<!doctype html>
 <html lang="en" class="dark">
 <head>
@@ -107,7 +121,7 @@ def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
     <div class="app-content">
       <header class="app-header">
         <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="app-sidebar">Menu</button>
-        <span class="app-header-title">{escape(page_label)}</span>
+        <span class="app-header-title">{escape(resolved_header_label)}</span>
       </header>
       <main id="main-content" tabindex="-1">{body}</main>
     </div>
