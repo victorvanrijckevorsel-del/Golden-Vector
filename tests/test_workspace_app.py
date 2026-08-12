@@ -1260,6 +1260,13 @@ def _write_latest_tool_d_output(paths, *, current_schema: bool = True) -> None:
         write_parquet_atomic(legacy, paths.latest_tool_d_spot_snapshot_parquet_path)
         return
 
+    context = RunContext.start(
+        paths=paths,
+        command="tool-d",
+        parameters={},
+        config_hash="hash",
+    )
+
     def row(*, source: str, rank: float, score: float, interest_cover: float) -> dict:
         result = {column: None for column in TOOL_D_OUTPUT_COLUMNS}
         result.update(
@@ -1284,17 +1291,11 @@ def _write_latest_tool_d_output(paths, *, current_schema: bool = True) -> None:
                 "resilience_data_status": "OK",
                 "tool_d_tags": "strong_headroom",
                 "snapshot_refresh_run_id": "refresh-run",
-                "source_run_id": "tool-d-run",
+                "source_run_id": context.run_id,
             }
         )
         return result
 
-    context = RunContext.start(
-        paths=paths,
-        command="tool-d",
-        parameters={},
-        config_hash="hash",
-    )
     persist_tool_d_outputs(
         paths=paths,
         run_context=context,
@@ -2199,6 +2200,71 @@ def test_tool_d_source_selector_rejects_fractional_schema_versions(version: floa
     assert selection.frame.empty
     assert "malformed Tool D schema-version metadata" in str(selection.reason)
     assert selection.reason != YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
+
+
+def test_tool_d_source_selector_never_serves_selected_rows_with_malformed_version() -> None:
+    selection = select_tool_d_source_rows(
+        pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "finance_source": "our",
+                    "tool_d_schema_version": 4.9,
+                }
+            ]
+        ),
+        finance_source="our",
+        ticker="NEM",
+        label="ticker NEM",
+    )
+
+    assert selection.frame.empty
+    assert "malformed Tool D schema-version metadata" in str(selection.reason)
+
+
+def test_tool_d_source_selector_rejects_yahoo_row_labelled_as_legacy_v3() -> None:
+    selection = select_tool_d_source_rows(
+        pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "finance_source": "yahoo",
+                    "tool_d_schema_version": 3,
+                }
+            ]
+        ),
+        finance_source="yahoo",
+        ticker="NEM",
+        label="ticker NEM",
+    )
+
+    assert selection.frame.empty
+    assert "legacy Tool D artifact contains a non-Our-View source" in str(selection.reason)
+    assert selection.reason != YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
+
+
+def test_tool_d_source_selector_rejects_mixed_legacy_schema_generations() -> None:
+    selection = select_tool_d_source_rows(
+        pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "finance_source": "our",
+                    "tool_d_schema_version": 1,
+                },
+                {
+                    "ticker": "AEM",
+                    "finance_source": "our",
+                    "tool_d_schema_version": 3,
+                },
+            ]
+        ),
+        finance_source="our",
+        label="Corporate Resilience overview",
+    )
+
+    assert selection.frame.empty
+    assert "malformed Tool D schema-version metadata" in str(selection.reason)
 
 
 def test_tool_d_source_selector_rejects_duplicate_source_ticker_rows() -> None:

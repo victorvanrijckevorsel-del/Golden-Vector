@@ -1405,9 +1405,11 @@ def test_c6_custom_tool_d_scenario_cannot_enter_spot_ticker_build():
                     {
                         "ticker": ticker,
                         "finance_source": source,
-                        "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
-                        "as_of_date": "2026-06-01",
-                        "gold_price_used": 4000.0,
+                            "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
+                            "as_of_date": "2026-06-01",
+                            "source_run_id": "tool-d-run",
+                            "snapshot_refresh_run_id": "refresh-run",
+                            "gold_price_used": 4000.0,
                         "spot_gold_usd": 4000.0,
                         "resilience_data_status": "OK",
                     }
@@ -1421,7 +1423,7 @@ def test_c6_custom_tool_d_scenario_cannot_enter_spot_ticker_build():
     ) is spot_frame
 
     scenario_frame = v4_frame()
-    scenario_frame.loc[0, "gold_price_used"] = 3000.0
+    scenario_frame.loc[:, "gold_price_used"] = 3000.0
     with _pytest.raises(ValueError, match="at-spot"):
         _assert_tool_d_is_spot(scenario_frame, active_tickers=["AAA", "BBB"])
 

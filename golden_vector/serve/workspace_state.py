@@ -85,9 +85,54 @@ def select_tool_d_source_rows(
     borrow the alternate source to make an empty selection look complete.
     """
 
+    normalized_source = str(finance_source).strip().lower()
+    # Keep the same fail-loud request contract as the shared selector even
+    # when schema metadata is malformed; invalid caller input is not a
+    # data-degradation state. The empty probe validates without inspecting
+    # stored rows before their schema generation is known.
+    select_finance_source_rows(
+        frame.iloc[0:0].copy(),
+        finance_source=finance_source,
+        label=label,
+    )
+    schema_state = _tool_d_schema_state(frame)
+    if schema_state == "malformed":
+        return ToolDSourceSelection(
+            frame=frame.iloc[0:0].copy(),
+            reason=(
+                "Corporate Resilience artifact has malformed Tool D schema-version "
+                "metadata; selected-source data is unavailable."
+            ),
+        )
+
+    # Legacy v3 is an explicitly Our-View-only compatibility state. Validate
+    # every stored source before deciding whether Yahoo needs a rebuild so a
+    # malformed v3 Yahoo row can never be served as if it were legitimate.
+    selection_source = normalized_source
+    if schema_state == "legacy_our":
+        legacy_our = select_finance_source_rows(
+            frame,
+            finance_source="our",
+            label=label,
+        )
+        if len(legacy_our.index) != len(frame.index):
+            return ToolDSourceSelection(
+                frame=frame.iloc[0:0].copy(),
+                reason=(
+                    "Corporate Resilience legacy Tool D artifact contains a non-Our-View "
+                    "source; selected-source data is unavailable."
+                ),
+            )
+        if normalized_source == "yahoo":
+            return ToolDSourceSelection(
+                frame=frame.iloc[0:0].copy(),
+                reason=YAHOO_TOOL_D_REBUILD_REQUIRED_REASON,
+            )
+        selection_source = "our"
+
     selected = select_finance_source_rows(
         frame,
-        finance_source=finance_source,
+        finance_source=selection_source,
         label=label,
     )
     if "ticker" in selected.columns:
@@ -112,21 +157,6 @@ def select_tool_d_source_rows(
     if not selected.empty:
         return ToolDSourceSelection(frame=selected)
 
-    normalized_source = str(finance_source).strip().lower()
-    schema_state = _tool_d_schema_state(frame)
-    if normalized_source == "yahoo" and schema_state == "legacy_v3":
-        return ToolDSourceSelection(
-            frame=selected,
-            reason=YAHOO_TOOL_D_REBUILD_REQUIRED_REASON,
-        )
-    if schema_state == "malformed":
-        return ToolDSourceSelection(
-            frame=selected,
-            reason=(
-                "Corporate Resilience artifact has malformed Tool D schema-version "
-                "metadata; selected-source data is unavailable."
-            ),
-        )
     source_label = "Yahoo Fundamentals" if normalized_source == "yahoo" else "Our View"
     return ToolDSourceSelection(
         frame=selected,
@@ -147,8 +177,14 @@ def _tool_d_schema_state(frame: pd.DataFrame) -> str:
         return "malformed"
     if bool(versions.eq(float(TOOL_D_SCHEMA_VERSION)).all()):
         return "v4"
-    if bool(versions.eq(3.0).all()):
-        return "legacy_v3"
+    # Pre-v4 artifacts were Our-View-only. Integer schema generations remain
+    # readable for that source so their existing field-level migration notices
+    # (for example the v1 FCF rebuild notice) can render honestly. Yahoo stays
+    # unavailable until a dual-source v4 refresh is published.
+    legacy_versions = versions.ge(1.0) & versions.lt(float(TOOL_D_SCHEMA_VERSION))
+    integral_versions = versions.eq(versions.round())
+    if bool((legacy_versions & integral_versions).all()) and versions.nunique() == 1:
+        return "legacy_our"
     return "malformed"
 
 

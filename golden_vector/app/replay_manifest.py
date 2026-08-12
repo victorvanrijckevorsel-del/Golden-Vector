@@ -204,6 +204,7 @@ def update_manifest_with_tool_d_sources(
         snapshot_subdir=TOOL_D_SNAPSHOT_DIR,
         source_paths=source_paths,
         metadata=metadata,
+        require_manifest_write=True,
     )
 
 
@@ -640,6 +641,7 @@ def _update_manifest_with_named_sources(
     snapshot_subdir: str,
     source_paths: dict[str, Path],
     metadata: dict[str, Any] | None = None,
+    require_manifest_write: bool = False,
 ) -> list[Path]:
     manifest_path = run_dir / REPLAY_MANIFEST_FILE
     copied_paths: list[Path] = []
@@ -676,6 +678,8 @@ def _update_manifest_with_named_sources(
     try:
         _write_json_atomic(manifest_path, manifest)
     except Exception:
+        if require_manifest_write:
+            raise
         return copied_paths
     return copied_paths
 

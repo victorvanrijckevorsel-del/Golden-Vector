@@ -21,6 +21,10 @@ def _tool_d_row(
     finance_source: str,
     as_of_date: date,
     rank: float,
+    *,
+    source_run_id: str,
+    snapshot_refresh_run_id: str = "refresh-run",
+    **overrides: object,
 ) -> dict[str, object]:
     row = {column: None for column in TOOL_D_OUTPUT_COLUMNS}
     row.update(
@@ -29,10 +33,17 @@ def _tool_d_row(
             "finance_source": finance_source,
             "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
             "as_of_date": as_of_date,
+            "source_run_id": source_run_id,
             "resilience_data_status": "OK",
+            "snapshot_refresh_run_id": snapshot_refresh_run_id,
+            "gold_price_used": 4000.0,
+            "spot_gold_usd": 4000.0,
+            "spot_gold_date": str(as_of_date),
+            "tool_d_quality_score": rank,
             "tool_d_quality_rank": rank,
         }
     )
+    row.update(overrides)
     return row
 
 
@@ -49,10 +60,22 @@ def test_persist_tool_d_outputs_writes_latest_and_source_snapshots(tmp_path):
     pd.DataFrame([{"ticker": "AAA"}]).to_parquet(source_path, index=False)
     outputs = pd.DataFrame(
         [
-            _tool_d_row("AAA", "our", date(2026, 6, 1), 90.0),
-            _tool_d_row("AAA", "yahoo", date(2026, 6, 1), 91.0),
-            _tool_d_row("BBB", "our", date(2026, 6, 1), 80.0),
-            _tool_d_row("BBB", "yahoo", date(2026, 6, 1), 81.0),
+            _tool_d_row(
+                " aaa ", "our", date(2026, 6, 1), 90.0,
+                source_run_id=run_context.run_id,
+            ),
+            _tool_d_row(
+                "AAA", "yahoo", date(2026, 6, 1), 91.0,
+                source_run_id=run_context.run_id,
+            ),
+            _tool_d_row(
+                "bbb", "our", date(2026, 6, 1), 80.0,
+                source_run_id=run_context.run_id,
+            ),
+            _tool_d_row(
+                "BBB", "yahoo", date(2026, 6, 1), 81.0,
+                source_run_id=run_context.run_id,
+            ),
         ],
         columns=TOOL_D_OUTPUT_COLUMNS,
     )
@@ -147,7 +170,12 @@ def test_persist_tool_d_rejects_a_half_keyed_generation_before_writing(tmp_path)
         config_hash="hash",
     )
     outputs = pd.DataFrame(
-        [_tool_d_row("AAA", "our", date(2026, 6, 1), 90.0)],
+        [
+            _tool_d_row(
+                "AAA", "our", date(2026, 6, 1), 90.0,
+                source_run_id=run_context.run_id,
+            )
+        ],
         columns=TOOL_D_OUTPUT_COLUMNS,
     )
 
@@ -162,6 +190,186 @@ def test_persist_tool_d_rejects_a_half_keyed_generation_before_writing(tmp_path)
     assert not list(paths.output_tool_d_dir.glob("tool_d_*"))
 
 
+def test_persist_tool_d_rejects_normalized_duplicate_keys_before_writing(tmp_path):
+    paths = build_test_paths(tmp_path)
+    run_context = RunContext.start(
+        paths=paths,
+        command="tool-d",
+        parameters={},
+        config_hash="hash",
+    )
+    outputs = pd.DataFrame(
+        [
+            _tool_d_row(
+                " aaa ", "our", date(2026, 6, 1), 90.0,
+                source_run_id=run_context.run_id,
+            ),
+            _tool_d_row(
+                "AAA", "our", date(2026, 6, 1), 89.0,
+                source_run_id=run_context.run_id,
+            ),
+            _tool_d_row(
+                "AAA", "yahoo", date(2026, 6, 1), 80.0,
+                source_run_id=run_context.run_id,
+            ),
+        ],
+        columns=TOOL_D_OUTPUT_COLUMNS,
+    )
+
+    with pytest.raises(ValueError, match=r"duplicate keys on \(ticker, finance_source\)"):
+        persist_tool_d_outputs(
+            paths=paths,
+            run_context=run_context,
+            tool_d_outputs=outputs,
+            expected_tickers=["AAA"],
+        )
+
+    assert not list(paths.output_tool_d_dir.glob("tool_d_*"))
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "message"),
+    [
+        ("source_run_id", "other-run", "must match persistence run_context"),
+        (
+            "snapshot_refresh_run_id",
+            "other-refresh",
+            "must contain exactly one nonblank generation value",
+        ),
+        ("as_of_date", date(2026, 5, 31), "source-pair as_of_date values differ"),
+        ("gold_price_used", 3900.0, "source-pair gold_price_used values differ"),
+        ("spot_gold_usd", 4100.0, "source-pair spot_gold_usd values differ"),
+        ("spot_gold_date", "2026-05-31", "source-pair spot_gold_date values differ"),
+    ],
+)
+def test_persist_tool_d_rejects_incoherent_generation_before_writing(
+    tmp_path,
+    column,
+    value,
+    message,
+):
+    paths = build_test_paths(tmp_path)
+    run_context = RunContext.start(
+        paths=paths,
+        command="tool-d",
+        parameters={},
+        config_hash="hash",
+    )
+    yahoo = _tool_d_row(
+        "AAA", "yahoo", date(2026, 6, 1), 80.0,
+        source_run_id=run_context.run_id,
+    )
+    yahoo[column] = value
+    outputs = pd.DataFrame(
+        [
+            _tool_d_row(
+                "AAA", "our", date(2026, 6, 1), 90.0,
+                source_run_id=run_context.run_id,
+            ),
+            yahoo,
+        ],
+        columns=TOOL_D_OUTPUT_COLUMNS,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        persist_tool_d_outputs(
+            paths=paths,
+            run_context=run_context,
+            tool_d_outputs=outputs,
+            expected_tickers=["AAA"],
+        )
+
+    assert not list(paths.output_tool_d_dir.glob("tool_d_*"))
+
+
+def test_persist_tool_d_rejects_cross_ticker_scenario_anchor_mismatch(tmp_path):
+    paths = build_test_paths(tmp_path)
+    run_context = RunContext.start(
+        paths=paths,
+        command="tool-d",
+        parameters={},
+        config_hash="hash",
+    )
+    outputs = pd.DataFrame(
+        [
+            _tool_d_row(
+                ticker, source, date(2026, 6, 1), rank,
+                source_run_id=run_context.run_id,
+                gold_price_used=(3900.0 if ticker == "BBB" else 4000.0),
+            )
+            for ticker, rank in (("AAA", 90.0), ("BBB", 80.0))
+            for source in ("our", "yahoo")
+        ],
+        columns=TOOL_D_OUTPUT_COLUMNS,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="gold_price_used must contain one coherent generation-wide value",
+    ):
+        persist_tool_d_outputs(
+            paths=paths,
+            run_context=run_context,
+            tool_d_outputs=outputs,
+            expected_tickers=["AAA", "BBB"],
+            publish_spot_latest_aliases=True,
+        )
+
+    assert not list(paths.output_tool_d_dir.glob("tool_d_*"))
+    assert not paths.latest_tool_d_snapshot_parquet_path.exists()
+    assert not paths.latest_tool_d_spot_snapshot_parquet_path.exists()
+
+
+def test_persist_tool_d_replay_manifest_write_failure_prevents_publication(
+    tmp_path,
+    monkeypatch,
+):
+    import golden_vector.app.replay_manifest as replay_module
+
+    paths = build_test_paths(tmp_path)
+    run_context = RunContext.start(
+        paths=paths,
+        command="tool-d",
+        parameters={},
+        config_hash="hash",
+    )
+    source_path = paths.output_tool_b_dir / "tool_b_latest.parquet"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([{"ticker": "AAA"}]).to_parquet(source_path, index=False)
+    outputs = pd.DataFrame(
+        [
+            _tool_d_row(
+                "AAA", "our", date(2026, 6, 1), 90.0,
+                source_run_id=run_context.run_id,
+            ),
+            _tool_d_row(
+                "AAA", "yahoo", date(2026, 6, 1), 80.0,
+                source_run_id=run_context.run_id,
+            ),
+        ],
+        columns=TOOL_D_OUTPUT_COLUMNS,
+    )
+
+    def fail_manifest_write(_target_path, _payload):
+        raise OSError("injected final replay manifest write failure")
+
+    monkeypatch.setattr(replay_module, "_write_json_atomic", fail_manifest_write)
+
+    with pytest.raises(OSError, match="injected final replay manifest write failure"):
+        persist_tool_d_outputs(
+            paths=paths,
+            run_context=run_context,
+            tool_d_outputs=outputs,
+            source_paths={"tool_b_latest": source_path},
+            expected_tickers=["AAA"],
+            publish_spot_latest_aliases=True,
+        )
+
+    assert not list(paths.output_tool_d_dir.glob("tool_d_*"))
+    assert not paths.latest_tool_d_snapshot_parquet_path.exists()
+    assert not paths.latest_tool_d_spot_snapshot_parquet_path.exists()
+
+
 def test_persist_tool_d_refuses_immutable_collision_before_alias_changes(tmp_path):
     paths = build_test_paths(tmp_path)
     run_context = RunContext.start(
@@ -172,8 +380,14 @@ def test_persist_tool_d_refuses_immutable_collision_before_alias_changes(tmp_pat
     )
     outputs = pd.DataFrame(
         [
-            _tool_d_row("AAA", "our", date(2026, 6, 1), 90.0),
-            _tool_d_row("AAA", "yahoo", date(2026, 6, 1), 80.0),
+            _tool_d_row(
+                "AAA", "our", date(2026, 6, 1), 90.0,
+                source_run_id=run_context.run_id,
+            ),
+            _tool_d_row(
+                "AAA", "yahoo", date(2026, 6, 1), 80.0,
+                source_run_id=run_context.run_id,
+            ),
         ],
         columns=TOOL_D_OUTPUT_COLUMNS,
     )
@@ -213,8 +427,14 @@ def test_persist_tool_d_staging_failure_leaves_previous_aliases_intact(
     )
     first = pd.DataFrame(
         [
-            _tool_d_row("AAA", "our", date(2026, 6, 1), 90.0),
-            _tool_d_row("AAA", "yahoo", date(2026, 6, 1), 80.0),
+            _tool_d_row(
+                "AAA", "our", date(2026, 6, 1), 90.0,
+                source_run_id=first_context.run_id,
+            ),
+            _tool_d_row(
+                "AAA", "yahoo", date(2026, 6, 1), 80.0,
+                source_run_id=first_context.run_id,
+            ),
         ],
         columns=TOOL_D_OUTPUT_COLUMNS,
     )
@@ -275,8 +495,14 @@ def test_persist_tool_d_swap_failure_rolls_back_every_alias(tmp_path, monkeypatc
     )
     first = pd.DataFrame(
         [
-            _tool_d_row("AAA", "our", date(2026, 6, 1), 90.0),
-            _tool_d_row("AAA", "yahoo", date(2026, 6, 1), 80.0),
+            _tool_d_row(
+                "AAA", "our", date(2026, 6, 1), 90.0,
+                source_run_id=first_context.run_id,
+            ),
+            _tool_d_row(
+                "AAA", "yahoo", date(2026, 6, 1), 80.0,
+                source_run_id=first_context.run_id,
+            ),
         ],
         columns=TOOL_D_OUTPUT_COLUMNS,
     )
@@ -337,8 +563,14 @@ def test_persist_tool_d_swaps_spot_parquet_last(tmp_path, monkeypatch):
     )
     outputs = pd.DataFrame(
         [
-            _tool_d_row("AAA", "our", date(2026, 6, 1), 90.0),
-            _tool_d_row("AAA", "yahoo", date(2026, 6, 1), 80.0),
+            _tool_d_row(
+                "AAA", "our", date(2026, 6, 1), 90.0,
+                source_run_id=run_context.run_id,
+            ),
+            _tool_d_row(
+                "AAA", "yahoo", date(2026, 6, 1), 80.0,
+                source_run_id=run_context.run_id,
+            ),
         ],
         columns=TOOL_D_OUTPUT_COLUMNS,
     )

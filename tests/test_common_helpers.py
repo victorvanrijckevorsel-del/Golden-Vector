@@ -98,6 +98,39 @@ def test_select_finance_source_rows_rejects_noncanonical_requested_source():
         )
 
 
+@pytest.mark.parametrize(
+    "stored_source",
+    [None, pd.NA, "", "   ", "ours", "official"],
+)
+def test_select_finance_source_rows_rejects_malformed_stored_source(stored_source):
+    frame = pd.DataFrame(
+        [
+            {"ticker": "NEM", "finance_source": "our", "value": 80},
+            {"ticker": "AEM", "finance_source": stored_source, "value": 70},
+        ]
+    )
+
+    with pytest.raises(ValueError, match="null, blank, or non-canonical"):
+        select_finance_source_rows(
+            frame,
+            finance_source="our",
+            label="test Tool D artifact",
+        )
+
+
+def test_select_finance_source_rows_allows_valid_other_source_only_artifact():
+    selected = select_finance_source_rows(
+        pd.DataFrame(
+            [{"ticker": "NEM", "finance_source": "yahoo", "value": 5}]
+        ),
+        finance_source="our",
+        label="test Tool D artifact",
+    )
+
+    assert selected.empty
+    assert list(selected.columns) == ["ticker", "finance_source", "value"]
+
+
 def test_sum_optional_floats_ignores_missing_values_and_reports_no_data():
     assert sum_optional_floats([1, None, "2.5", pd.NA]) == pytest.approx(3.5)
     assert sum_optional_floats([None, pd.NA, ""]) is None

@@ -8,6 +8,8 @@ module owns the shape that producers persist and readers may trust.
 from __future__ import annotations
 
 from collections.abc import Iterable
+import math
+from typing import Any
 
 import pandas as pd
 
@@ -16,6 +18,26 @@ from golden_vector.contracts.ticker_page import FINANCE_SOURCES, validate_frame_
 TOOL_D_SCHEMA_VERSION = 4
 
 TOOL_D_KEY_COLUMNS: tuple[str, ...] = ("ticker", "finance_source")
+
+# A non-OK resilience row is an explicit evidence/status row, not a ranked
+# observation.  Keeping this list beside the schema makes the fail-closed rule
+# reusable at every producer boundary.
+TOOL_D_RANKING_OUTPUT_COLUMNS: tuple[str, ...] = (
+    "cost_curve_aisc_percentile",
+    "survival_distance_component",
+    "cost_curve_resilience_component",
+    "fragility_resilience_component",
+    "balance_sheet_resilience_component",
+    "tool_d_quality_score",
+    "tool_d_quality_rank",
+)
+
+TOOL_D_SOURCE_PAIR_CONTEXT_COLUMNS: tuple[str, ...] = (
+    "as_of_date",
+    "gold_price_used",
+    "spot_gold_usd",
+    "spot_gold_date",
+)
 
 # Kept central during the v3 -> v4 migration so readers never invent a
 # different explanation or silently borrow Our View data for Yahoo.
@@ -87,6 +109,7 @@ def validate_tool_d_output_frame(
     *,
     expected_tickers: Iterable[str] | None = None,
     require_complete_sources: bool = True,
+    expected_source_run_id: str | None = None,
 ) -> list[str]:
     """Return all Tool D v4 contract violations without mutating ``frame``.
 
@@ -103,6 +126,7 @@ def validate_tool_d_output_frame(
         columns=tuple(TOOL_D_OUTPUT_COLUMNS),
         key_columns=TOOL_D_KEY_COLUMNS,
     )
+    violations.extend(_normalized_key_violations(frame))
 
     if "tool_d_schema_version" in frame.columns:
         versions = pd.to_numeric(frame["tool_d_schema_version"], errors="coerce")
@@ -117,6 +141,46 @@ def validate_tool_d_output_frame(
         null_dates = int(frame["as_of_date"].isna().sum())
         if null_dates:
             violations.append(f"null as_of_date values: {null_dates} row(s)")
+        parsed_dates = pd.to_datetime(frame["as_of_date"], errors="coerce")
+        invalid_dates = int((frame["as_of_date"].notna() & parsed_dates.isna()).sum())
+        if invalid_dates:
+            violations.append(f"invalid as_of_date values: {invalid_dates} row(s)")
+
+    violations.extend(
+        _single_generation_identity_violations(
+            frame,
+            "source_run_id",
+            expected_value=expected_source_run_id,
+        )
+    )
+    violations.extend(
+        _single_generation_identity_violations(
+            frame,
+            "snapshot_refresh_run_id",
+        )
+    )
+    for column in ("gold_price_used", "spot_gold_usd", "spot_gold_date"):
+        violations.extend(_single_generation_context_violations(frame, column))
+
+    for column in ("gold_price_used", "spot_gold_usd"):
+        if column not in frame.columns:
+            continue
+        numeric = pd.to_numeric(frame[column], errors="coerce")
+        invalid = numeric.isna() | ~numeric.map(_is_finite_positive)
+        count = int(invalid.sum())
+        if count:
+            violations.append(
+                f"{column} must be finite and positive: {count} row(s) invalid"
+            )
+
+    if "spot_gold_date" in frame.columns:
+        nonblank = _nonblank(frame, "spot_gold_date")
+        parsed_spot_dates = pd.to_datetime(frame["spot_gold_date"], errors="coerce")
+        invalid_spot_dates = int((nonblank & parsed_spot_dates.isna()).sum())
+        if invalid_spot_dates:
+            violations.append(
+                f"invalid spot_gold_date values: {invalid_spot_dates} row(s)"
+            )
 
     if "finance_source" in frame.columns:
         present_sources = {
@@ -129,9 +193,18 @@ def validate_tool_d_output_frame(
             )
 
     if "ticker" in frame.columns:
-        blank_tickers = int(frame["ticker"].fillna("").astype(str).str.strip().eq("").sum())
+        ticker_text = frame["ticker"].astype("string")
+        canonical_tickers = ticker_text.str.strip().str.upper()
+        blank_tickers = int(canonical_tickers.fillna("").eq("").sum())
         if blank_tickers:
             violations.append(f"blank ticker values: {blank_tickers} row(s)")
+        noncanonical = ticker_text.notna() & ticker_text.ne(canonical_tickers)
+        count = int(noncanonical.sum())
+        if count:
+            violations.append(
+                "ticker values must be stored uppercase and stripped: "
+                f"{count} row(s) non-canonical"
+            )
 
     if "resilience_data_status" in frame.columns:
         statuses = frame["resilience_data_status"]
@@ -151,6 +224,21 @@ def validate_tool_d_output_frame(
                     "degraded rows without tool_d_explanation or missing_inputs: "
                     f"{count} row(s)"
                 )
+        non_ok = ~statuses.astype("string").eq("OK").fillna(False)
+        populated_outputs: list[str] = []
+        for column in TOOL_D_RANKING_OUTPUT_COLUMNS:
+            if column not in frame.columns:
+                continue
+            count = int(frame.loc[non_ok, column].notna().sum())
+            if count:
+                populated_outputs.append(f"{column}={count}")
+        if populated_outputs:
+            violations.append(
+                "non-OK rows must keep ranking/score/percentile outputs null: "
+                + ", ".join(populated_outputs)
+            )
+
+    violations.extend(_source_pair_context_violations(frame))
 
     if require_complete_sources and all(
         column in frame.columns for column in TOOL_D_KEY_COLUMNS
@@ -193,6 +281,21 @@ def validate_tool_d_output_frame(
     return violations
 
 
+def canonicalize_tool_d_tickers(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy whose non-null ticker keys are stripped uppercase values.
+
+    Validation remains pure and reports non-canonical inputs.  Persistence uses
+    this one boundary normalizer before validation, so stored keys are stable
+    while normalized collisions still fail loud instead of last-row-wins.
+    """
+
+    normalized = frame.copy()
+    normalized.attrs.update(frame.attrs)
+    if "ticker" in normalized.columns:
+        normalized["ticker"] = normalized["ticker"].map(_canonical_ticker_value)
+    return normalized
+
+
 def _canonical_tickers(values: Iterable[str]) -> set[str]:
     return {str(value).strip().upper() for value in values if str(value).strip()}
 
@@ -202,3 +305,141 @@ def _nonblank(frame: pd.DataFrame, column: str) -> pd.Series:
         return pd.Series(False, index=frame.index, dtype=bool)
     values = frame[column]
     return values.notna() & values.astype(str).str.strip().ne("")
+
+
+def _normalized_key_violations(frame: pd.DataFrame) -> list[str]:
+    if not all(column in frame.columns for column in TOOL_D_KEY_COLUMNS):
+        return []
+    keys = frame.loc[:, list(TOOL_D_KEY_COLUMNS)].copy()
+    keys["ticker"] = keys["ticker"].map(_canonical_ticker_value)
+    keys["finance_source"] = keys["finance_source"].map(_canonical_source_value)
+    duplicate_count = int(keys.duplicated(subset=list(TOOL_D_KEY_COLUMNS)).sum())
+    if not duplicate_count:
+        return []
+    return [
+        "duplicate normalized keys on (ticker, finance_source): "
+        f"{duplicate_count} row(s)"
+    ]
+
+
+def _single_generation_identity_violations(
+    frame: pd.DataFrame,
+    column: str,
+    *,
+    expected_value: str | None = None,
+) -> list[str]:
+    if column not in frame.columns:
+        return []
+    values = frame[column]
+    text = values.astype("string").str.strip()
+    blank = values.isna() | text.fillna("").eq("")
+    violations: list[str] = []
+    blank_count = int(blank.sum())
+    if blank_count:
+        violations.append(f"blank {column} values: {blank_count} row(s)")
+    distinct = sorted(set(text.loc[~blank].astype(str).tolist()))
+    if len(distinct) != 1:
+        violations.append(
+            f"{column} must contain exactly one nonblank generation value; "
+            f"observed={distinct}"
+        )
+    if expected_value is not None:
+        expected = str(expected_value).strip()
+        if not expected or distinct != [expected]:
+            violations.append(
+                f"{column} must match persistence run_context {expected!r}; "
+                f"observed={distinct}"
+            )
+    return violations
+
+
+def _source_pair_context_violations(frame: pd.DataFrame) -> list[str]:
+    required = {"ticker", "finance_source", *TOOL_D_SOURCE_PAIR_CONTEXT_COLUMNS}
+    if not required.issubset(frame.columns):
+        return []
+    working = frame.loc[:, list(required)].copy()
+    working["_canonical_ticker"] = working["ticker"].map(_canonical_ticker_value)
+    working["_canonical_source"] = working["finance_source"].map(
+        _canonical_source_value
+    )
+    working = working[
+        working["_canonical_ticker"].notna()
+        & working["_canonical_ticker"].ne("")
+        & working["_canonical_source"].isin(FINANCE_SOURCES)
+    ]
+
+    mismatches: dict[str, list[str]] = {
+        column: [] for column in TOOL_D_SOURCE_PAIR_CONTEXT_COLUMNS
+    }
+    for ticker, pair in working.groupby("_canonical_ticker", sort=True):
+        if not set(FINANCE_SOURCES).issubset(pair["_canonical_source"]):
+            continue
+        for column in TOOL_D_SOURCE_PAIR_CONTEXT_COLUMNS:
+            tokens = {
+                _context_comparison_token(column, value)
+                for value in pair[column].tolist()
+            }
+            if len(tokens) != 1:
+                mismatches[column].append(str(ticker))
+
+    return [
+        f"source-pair {column} values differ for ticker(s): " + ", ".join(tickers)
+        for column, tickers in mismatches.items()
+        if tickers
+    ]
+
+
+def _single_generation_context_violations(
+    frame: pd.DataFrame,
+    column: str,
+) -> list[str]:
+    if column not in frame.columns:
+        return []
+    tokens = {
+        _context_comparison_token(column, value)
+        for value in frame[column].tolist()
+    }
+    if len(tokens) == 1:
+        return []
+    return [
+        f"{column} must contain one coherent generation-wide value; "
+        f"observed {len(tokens)} distinct normalized values"
+    ]
+
+
+def _context_comparison_token(column: str, value: Any) -> tuple[str, object]:
+    if _is_missing(value):
+        return ("missing", "")
+    if column in {"as_of_date", "spot_gold_date"}:
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.isna(parsed):
+            return ("invalid-date", str(value).strip())
+        return ("date", pd.Timestamp(parsed).date().isoformat())
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(numeric):
+        return ("invalid-number", str(value).strip())
+    return ("number", float(numeric))
+
+
+def _canonical_ticker_value(value: Any) -> Any:
+    return value if _is_missing(value) else str(value).strip().upper()
+
+
+def _canonical_source_value(value: Any) -> Any:
+    return value if _is_missing(value) else str(value).strip().lower()
+
+
+def _is_missing(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_finite_positive(value: Any) -> bool:
+    if _is_missing(value):
+        return False
+    numeric = float(value)
+    return numeric > 0 and math.isfinite(numeric)

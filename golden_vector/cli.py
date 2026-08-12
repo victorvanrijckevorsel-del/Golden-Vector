@@ -1695,6 +1695,11 @@ def run_tool_d(
             gold_price=gold_price,
             _use_model_state_inputs=_use_model_state_inputs,
         )
+        if exit_code != 0:
+            error_summary = (
+                f"tool-d failed with exit code {exit_code}; "
+                "inspect the latest Tool D run metadata and log for details"
+            )
         return exit_code
     except Exception as exc:
         error_summary = str(exc)
@@ -1794,6 +1799,7 @@ def _run_tool_d_unlocked(
             load_official_fundamentals_with_source_path(
                 paths,
                 prefer_latest_alias=not _use_model_state_inputs,
+                require_immutable_source=True,
             )
         )
         base_inputs = ToolDExecutionInputs(

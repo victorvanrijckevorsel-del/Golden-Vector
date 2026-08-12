@@ -233,6 +233,37 @@ def test_run_tool_d_standalone_refuses_when_shared_writer_lock_is_busy(
     assert not list(paths.runs_dir.glob("*-tool-d-*"))
 
 
+def test_run_tool_d_records_nonzero_exit_detail_when_releasing_writer_lock(
+    tmp_path,
+    monkeypatch,
+):
+    paths = build_test_paths(tmp_path)
+    lock = SimpleNamespace(
+        already_running=False,
+        started=True,
+        adopted=False,
+        status=SimpleNamespace(process_id=123, job_id="tool-d-job"),
+    )
+    completed = {}
+    monkeypatch.setattr("golden_vector.cli.acquire_refresh_lock", lambda *_a, **_k: lock)
+    monkeypatch.setattr("golden_vector.cli._run_tool_d_unlocked", lambda *_a, **_k: 1)
+
+    def capture_completion(_paths, **kwargs):
+        completed.update(kwargs)
+
+    monkeypatch.setattr("golden_vector.cli.complete_options_refresh", capture_completion)
+
+    assert run_tool_d(paths, gold_price=None) == 1
+    assert completed == {
+        "job_id": "tool-d-job",
+        "return_code": 1,
+        "error_summary": (
+            "tool-d failed with exit code 1; "
+            "inspect the latest Tool D run metadata and log for details"
+        ),
+    }
+
+
 def test_run_tool_d_standalone_uses_model_state_foundation_and_tool_b(tmp_path, monkeypatch):
     paths = build_test_paths(tmp_path)
     real_loaded = _nem_only_app_config(load_app_config(ProjectPaths.discover()).app)

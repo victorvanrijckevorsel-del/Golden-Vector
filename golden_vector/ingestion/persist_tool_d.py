@@ -14,6 +14,7 @@ from golden_vector.common.parquet import write_parquet_into
 from golden_vector.contracts.tool_d import (
     TOOL_D_KEY_COLUMNS,
     TOOL_D_SCHEMA_VERSION,
+    canonicalize_tool_d_tickers,
     validate_tool_d_output_frame,
 )
 from golden_vector.ingestion.persist import _latest_snapshot
@@ -32,26 +33,25 @@ def persist_tool_d_outputs(
 ) -> list[Path]:
     """Persist one complete Tool D generation as a rollback-safe group."""
 
+    persisted_outputs = canonicalize_tool_d_tickers(tool_d_outputs)
     violations = validate_tool_d_output_frame(
-        tool_d_outputs,
+        persisted_outputs,
         expected_tickers=expected_tickers,
         require_complete_sources=True,
+        expected_source_run_id=run_context.run_id,
     )
     if violations:
         raise ValueError(
             "Tool D output does not satisfy schema v4: " + "; ".join(violations)
         )
 
-    persisted_outputs = tool_d_outputs.copy()
-    persisted_outputs.attrs.update(tool_d_outputs.attrs)
     persisted_outputs.attrs["schema_version"] = TOOL_D_SCHEMA_VERSION
     persisted_outputs.attrs["source_run_id"] = run_context.run_id
     snapshot_ids = _unique_nonblank_values(
         persisted_outputs,
         "snapshot_refresh_run_id",
     )
-    if len(snapshot_ids) == 1:
-        persisted_outputs.attrs["snapshot_refresh_run_id"] = snapshot_ids[0]
+    persisted_outputs.attrs["snapshot_refresh_run_id"] = snapshot_ids[0]
     latest_snapshot = _latest_snapshot(
         persisted_outputs,
         key_columns=TOOL_D_KEY_COLUMNS,

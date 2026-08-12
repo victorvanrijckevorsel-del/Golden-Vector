@@ -8,6 +8,7 @@ from golden_vector.contracts.ticker_page import FINANCE_SOURCES
 from golden_vector.contracts.tool_d import (
     TOOL_D_KEY_COLUMNS,
     TOOL_D_OUTPUT_COLUMNS,
+    TOOL_D_RANKING_OUTPUT_COLUMNS,
     TOOL_D_SCHEMA_VERSION,
     YAHOO_TOOL_D_REBUILD_REQUIRED_REASON,
     YAHOO_TOOL_D_UNAVAILABLE_REASON,
@@ -23,7 +24,12 @@ def _row(ticker: str, source: str, **overrides: object) -> dict[str, object]:
             "finance_source": source,
             "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
             "as_of_date": date(2026, 8, 12),
+            "source_run_id": "tool-d-run",
             "resilience_data_status": "OK",
+            "snapshot_refresh_run_id": "refresh-run",
+            "gold_price_used": 4000.0,
+            "spot_gold_usd": 4100.0,
+            "spot_gold_date": "2026-08-12",
         }
     )
     row.update(overrides)
@@ -65,6 +71,23 @@ def test_tool_d_contract_rejects_duplicate_composite_keys_and_noncanonical_sourc
     assert any("non-canonical finance_source values: OUR" in item for item in violations)
 
 
+def test_tool_d_contract_rejects_normalized_key_collisions_and_noncanonical_tickers():
+    frame = pd.DataFrame(
+        [
+            _row(" nem ", "our"),
+            _row("NEM", "OUR"),
+            _row("NEM", "yahoo"),
+        ],
+        columns=TOOL_D_OUTPUT_COLUMNS,
+    )
+
+    violations = validate_tool_d_output_frame(frame, expected_tickers=("NEM",))
+
+    assert any("duplicate normalized keys" in item for item in violations)
+    assert any("stored uppercase and stripped" in item for item in violations)
+    assert any("non-canonical finance_source values: OUR" in item for item in violations)
+
+
 def test_tool_d_contract_rejects_missing_source_and_wrong_schema_version():
     frame = pd.DataFrame(
         [_row("NEM", "our", tool_d_schema_version=3)],
@@ -87,6 +110,89 @@ def test_tool_d_contract_accepts_explicit_degraded_row_but_requires_its_reason()
     frame.loc[yahoo, "missing_inputs"] = None
     violations = validate_tool_d_output_frame(frame, expected_tickers=("NEM",))
     assert any("degraded rows without" in item for item in violations)
+
+
+def test_tool_d_contract_requires_all_non_ok_ranking_outputs_to_be_null():
+    frame = _healthy_frame("NEM")
+    yahoo = frame["finance_source"].eq("yahoo")
+    frame.loc[yahoo, "resilience_data_status"] = "INSUFFICIENT_INTEREST_DATA"
+    frame.loc[yahoo, "missing_inputs"] = "interest_expense_musd"
+    for column in TOOL_D_RANKING_OUTPUT_COLUMNS:
+        frame.loc[yahoo, column] = 42.0
+
+    violations = validate_tool_d_output_frame(frame, expected_tickers=("NEM",))
+
+    violation = next(
+        item for item in violations if "ranking/score/percentile outputs null" in item
+    )
+    for column in TOOL_D_RANKING_OUTPUT_COLUMNS:
+        assert f"{column}=1" in violation
+
+
+def test_tool_d_contract_rejects_split_generation_identity():
+    frame = _healthy_frame("NEM")
+    yahoo = frame["finance_source"].eq("yahoo")
+    frame.loc[yahoo, "source_run_id"] = "other-tool-d-run"
+    frame.loc[yahoo, "snapshot_refresh_run_id"] = "other-refresh-run"
+
+    violations = validate_tool_d_output_frame(
+        frame,
+        expected_tickers=("NEM",),
+        expected_source_run_id="tool-d-run",
+    )
+
+    assert any("source_run_id must contain exactly one" in item for item in violations)
+    assert any("source_run_id must match persistence run_context" in item for item in violations)
+    assert any(
+        "snapshot_refresh_run_id must contain exactly one" in item
+        for item in violations
+    )
+
+
+def test_tool_d_contract_rejects_blank_generation_identity():
+    frame = _healthy_frame("NEM")
+    frame.loc[0, "source_run_id"] = " "
+    frame.loc[1, "snapshot_refresh_run_id"] = None
+
+    violations = validate_tool_d_output_frame(frame, expected_tickers=("NEM",))
+
+    assert any("blank source_run_id values: 1" in item for item in violations)
+    assert any("blank snapshot_refresh_run_id values: 1" in item for item in violations)
+
+
+def test_tool_d_contract_rejects_incoherent_source_pair_context():
+    frame = _healthy_frame("NEM")
+    yahoo = frame["finance_source"].eq("yahoo")
+    frame.loc[yahoo, "as_of_date"] = date(2026, 8, 11)
+    frame.loc[yahoo, "gold_price_used"] = 3999.0
+    frame.loc[yahoo, "spot_gold_usd"] = 4099.0
+    frame.loc[yahoo, "spot_gold_date"] = "2026-08-11"
+
+    violations = validate_tool_d_output_frame(frame, expected_tickers=("NEM",))
+
+    for column in ("as_of_date", "gold_price_used", "spot_gold_usd", "spot_gold_date"):
+        assert any(f"source-pair {column} values differ" in item for item in violations)
+
+
+def test_tool_d_contract_requires_global_scenario_and_spot_anchors():
+    frame = _healthy_frame("NEM", "AEM")
+    aem = frame["ticker"].eq("AEM")
+    frame.loc[aem, "as_of_date"] = date(2026, 8, 11)
+    frame.loc[aem, "gold_price_used"] = 3900.0
+    frame.loc[aem, "spot_gold_usd"] = 4050.0
+    frame.loc[aem, "spot_gold_date"] = "2026-08-11"
+
+    violations = validate_tool_d_output_frame(frame, expected_tickers=("NEM", "AEM"))
+
+    assert not any(
+        "as_of_date must contain one coherent generation-wide value" in item
+        for item in violations
+    )
+    for column in ("gold_price_used", "spot_gold_usd", "spot_gold_date"):
+        assert any(
+            f"{column} must contain one coherent generation-wide value" in item
+            for item in violations
+        )
 
 
 def test_tool_d_contract_rejects_missing_columns_dates_and_unexpected_ticker():

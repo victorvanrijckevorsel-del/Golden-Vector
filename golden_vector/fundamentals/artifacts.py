@@ -83,19 +83,21 @@ def load_official_fundamentals_with_source_path(
     paths: ProjectPaths,
     *,
     prefer_latest_alias: bool = False,
+    require_immutable_source: bool = False,
 ) -> tuple[pd.DataFrame, Path | None]:
-    """Load official fundamentals and report the exact artifact that was read.
+    """Load official fundamentals and report the immutable artifact actually read.
 
     Tool D snapshots every upstream used by a generation for replay. Returning
-    the resolved path with the normalized frame avoids recording the mutable
-    latest alias when the loader actually fell back to a prior manifest-backed
-    immutable artifact.
+    the run-stamped path with the frame prevents a mutable latest alias from
+    changing between computation and replay capture. Callers that require
+    auditable provenance set ``require_immutable_source=True``; legacy callers
+    may still consume an alias only when no matching immutable sibling exists.
     """
 
     alias_path = fetched_fundamentals_latest_path(paths)
     if prefer_latest_alias and alias_path.exists():
         try:
-            return _read_official_fundamentals_path(alias_path), alias_path
+            alias_frame = _read_official_fundamentals_path(alias_path)
         except Exception:
             # The refresh bypass should use this run's fresh alias only when it is actually
             # readable. If the stale/missing guard was triggered by a corrupt alias and the
@@ -108,7 +110,18 @@ def load_official_fundamentals_with_source_path(
             )
             if path is None:
                 return empty_fetched_fundamentals_frame(), None
-            return _read_official_fundamentals_path(path), path
+            return _load_official_fundamentals_from_provenance_path(
+                paths=paths,
+                frame=_read_official_fundamentals_path(path),
+                path=path,
+                require_immutable_source=require_immutable_source,
+            )
+        return _load_official_fundamentals_from_provenance_path(
+            paths=paths,
+            frame=alias_frame,
+            path=alias_path,
+            require_immutable_source=require_immutable_source,
+        )
 
     path = resolve_current_model_artifact_path(
         paths,
@@ -117,7 +130,44 @@ def load_official_fundamentals_with_source_path(
     )
     if path is None:
         return empty_fetched_fundamentals_frame(), None
-    return _read_official_fundamentals_path(path), path
+    return _load_official_fundamentals_from_provenance_path(
+        paths=paths,
+        frame=_read_official_fundamentals_path(path),
+        path=path,
+        require_immutable_source=require_immutable_source,
+    )
+
+
+def _load_official_fundamentals_from_provenance_path(
+    *,
+    paths: ProjectPaths,
+    frame: pd.DataFrame,
+    path: Path,
+    require_immutable_source: bool,
+) -> tuple[pd.DataFrame, Path]:
+    source_run_id = _source_run_id_from_frame(frame)
+    immutable_path = fetched_fundamentals_run_stamped_path(paths, source_run_id)
+    if path == immutable_path:
+        return frame, immutable_path
+    if not immutable_path.exists():
+        if require_immutable_source:
+            raise FileNotFoundError(
+                "official fundamentals alias names source_run_id "
+                f"{source_run_id!r}, but immutable artifact {immutable_path} is missing"
+            )
+        return frame, path
+
+    immutable_frame = _read_official_fundamentals_path(immutable_path)
+    try:
+        pd.testing.assert_frame_equal(frame, immutable_frame)
+    except AssertionError as exc:
+        if require_immutable_source:
+            raise ValueError(
+                "official fundamentals alias does not match its immutable "
+                f"source_run_id generation {source_run_id!r}"
+            ) from exc
+        return frame, path
+    return immutable_frame, immutable_path
 
 
 def _read_official_fundamentals_path(path: Path) -> pd.DataFrame:

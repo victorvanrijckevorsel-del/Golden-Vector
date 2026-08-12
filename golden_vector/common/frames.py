@@ -34,6 +34,15 @@ def select_finance_source_rows(
             f"{label} has rows but no 'finance_source' column; refusing to infer a source."
         )
     source_values = frame["finance_source"].astype("string").str.strip().str.lower()
+    invalid_values = source_values.isna() | source_values.eq("") | ~source_values.isin(
+        FINANCE_SOURCES
+    )
+    if invalid_values.any():
+        invalid_count = int(invalid_values.sum())
+        raise ValueError(
+            f"{label} has {invalid_count} row(s) with null, blank, or non-canonical "
+            f"'finance_source' values; expected one of {FINANCE_SOURCES}."
+        )
     return frame.loc[source_values.eq(resolved_source)].copy()
 
 
