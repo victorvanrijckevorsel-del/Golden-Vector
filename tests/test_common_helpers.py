@@ -9,7 +9,7 @@ from golden_vector.common.files import (
     atomic_write_text,
 )
 from golden_vector.common.eligibility import is_score_eligible, score_eligible_mask
-from golden_vector.common.frames import latest_records_by_key
+from golden_vector.common.frames import latest_records_by_key, select_finance_source_rows
 from golden_vector.common.numeric import (
     align_to_step,
     optional_finite_float,
@@ -50,6 +50,52 @@ def test_latest_records_by_key_normalizes_keys_and_keeps_latest_sort_value():
 
     assert records["NEM"]["value"] == 2
     assert records["AEM"]["value"] == 3
+
+
+def test_select_finance_source_rows_selects_explicit_source_before_key_collapse():
+    frame = pd.DataFrame(
+        [
+            {"ticker": "NEM", "finance_source": "our", "value": 80},
+            {"ticker": "NEM", "finance_source": "yahoo", "value": 5},
+            {"ticker": "AEM", "finance_source": " OUR ", "value": 70},
+        ]
+    )
+
+    selected = select_finance_source_rows(
+        frame,
+        finance_source="our",
+        label="test Tool D artifact",
+    )
+
+    assert selected[["ticker", "value"]].to_dict(orient="records") == [
+        {"ticker": "NEM", "value": 80},
+        {"ticker": "AEM", "value": 70},
+    ]
+
+
+def test_select_finance_source_rows_fails_loud_on_nonempty_unlabelled_frame():
+    with pytest.raises(ValueError, match="no 'finance_source' column"):
+        select_finance_source_rows(
+            pd.DataFrame([{"ticker": "NEM", "value": 80}]),
+            finance_source="our",
+            label="test Tool D artifact",
+        )
+
+    empty = select_finance_source_rows(
+        pd.DataFrame(),
+        finance_source="our",
+        label="empty Tool D artifact",
+    )
+    assert empty.empty
+
+
+def test_select_finance_source_rows_rejects_noncanonical_requested_source():
+    with pytest.raises(ValueError, match="canonical finance source"):
+        select_finance_source_rows(
+            pd.DataFrame(),
+            finance_source="ours",
+            label="test Tool D artifact",
+        )
 
 
 def test_sum_optional_floats_ignores_missing_values_and_reports_no_data():

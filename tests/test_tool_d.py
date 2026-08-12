@@ -7,6 +7,7 @@ import golden_vector.model.tool_d as tool_d_module
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import ToolDConfig
+from golden_vector.contracts.tool_d import TOOL_D_SCHEMA_VERSION
 from golden_vector.model.tool_d import (
     TOOL_D_OUTPUT_COLUMNS,
     ToolDExecutionInputs,
@@ -60,6 +61,7 @@ def test_compute_tool_d_outputs_uses_forward_ebitda_not_tool_b_leverage(tmp_path
 
     expected_leverage = row["net_debt_musd"] / row["forward_ebitda_musd_at_g"]
     assert list(output.columns) == TOOL_D_OUTPUT_COLUMNS
+    assert row["tool_d_schema_version"] == TOOL_D_SCHEMA_VERSION == 4
     assert row["source_tool_b_run_id"] == "tool-b-run"
     assert row["leverage_stressed_at_g"] == pytest.approx(expected_leverage)
     assert row["leverage_stressed_at_g"] != 999.0

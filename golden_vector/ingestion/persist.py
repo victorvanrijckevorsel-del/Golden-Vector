@@ -334,8 +334,12 @@ def _concat_frames(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return pd.concat(materialized, ignore_index=True)
 
 
-def _latest_snapshot(frame: pd.DataFrame) -> pd.DataFrame:
-    """Return the most recent row per ticker.
+def _latest_snapshot(
+    frame: pd.DataFrame,
+    *,
+    key_columns: tuple[str, ...] = ("ticker",),
+) -> pd.DataFrame:
+    """Return the most recent row per requested entity key.
 
     Previously this took the global max `as_of_date` and filtered to it.
     That silently dropped active tickers whose last complete weekly bar
@@ -344,23 +348,50 @@ def _latest_snapshot(frame: pd.DataFrame) -> pd.DataFrame:
     normalization gap). Emanuel would see "60 active tickers" everywhere
     except Tool A latest, which would show 59.
 
-    Per-ticker latest preserves the full universe; downstream consumers
+    Per-key latest preserves the full universe; downstream consumers
     can derive "this row is at the global max date vs a week behind" by
     comparing each row's `as_of_date` to the max. Tool B is unaffected
     because all its rows share one `as_of_date`.
+
+    The default remains ticker-only for Tool A/B/C. Tool D passes its composite
+    ``(ticker, finance_source)`` contract. Requested key columns are explicit
+    and required; duplicate rows for one key at the same authoritative date are
+    ambiguous and fail loudly instead of being silently resolved by row order.
     """
-    if frame.empty or "as_of_date" not in frame.columns:
+    if frame.empty:
         return frame.copy()
-    if "ticker" in frame.columns:
-        # Per-ticker latest: sort by (ticker, as_of_date), keep last
-        # row per ticker.
-        sorted_frame = frame.sort_values(["ticker", "as_of_date"])
-        latest = sorted_frame.drop_duplicates(subset=["ticker"], keep="last").copy()
-    else:
-        # No ticker column to group by - fall back to the original
-        # global-max behavior.
-        latest_as_of_date = frame["as_of_date"].max()
-        latest = frame[frame["as_of_date"] == latest_as_of_date].copy()
+    if not key_columns:
+        raise ValueError("key_columns must contain at least one column")
+    missing_keys = [column for column in key_columns if column not in frame.columns]
+    if missing_keys:
+        raise ValueError(
+            "latest snapshot is missing requested key columns: "
+            + ", ".join(missing_keys)
+        )
+    null_keys = {
+        column: int(frame[column].isna().sum())
+        for column in key_columns
+        if int(frame[column].isna().sum())
+    }
+    if null_keys:
+        detail = ", ".join(f"{column}={count}" for column, count in null_keys.items())
+        raise ValueError(f"latest snapshot has null key values: {detail}")
+
+    if "as_of_date" not in frame.columns:
+        return frame.copy()
+
+    duplicate_mask = frame.duplicated(
+        subset=[*key_columns, "as_of_date"], keep=False
+    )
+    if duplicate_mask.any():
+        duplicate_count = int(duplicate_mask.sum())
+        raise ValueError(
+            "latest snapshot has duplicate rows at the same authoritative date "
+            f"for key ({', '.join(key_columns)}): {duplicate_count} row(s)"
+        )
+
+    sorted_frame = frame.sort_values([*key_columns, "as_of_date"])
+    latest = sorted_frame.drop_duplicates(subset=list(key_columns), keep="last").copy()
     sort_columns = [
         column
         for column in (

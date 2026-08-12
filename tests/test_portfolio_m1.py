@@ -726,6 +726,42 @@ def test_portfolio_pipeline_enriches_core_analytics_from_tool_artifacts(tmp_path
     assert summary["largest_position_weight_fraction"] == pytest.approx(1.0)
 
 
+def test_portfolio_pipeline_selects_our_view_tool_d_before_ticker_lookup(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _portfolio_config()
+    _write_foundation_snapshot(paths, app_config, ticker="NEM", price=100.0, currency="USD")
+    _write_latest_tool_a(paths, ticker="NEM", down_beta=1.5)
+    _write_latest_tool_d_rows(
+        paths,
+        [
+            {"ticker": "NEM", "rank": 82.0, "finance_source": "our"},
+            {"ticker": "NEM", "rank": 5.0, "finance_source": "yahoo"},
+        ],
+    )
+    add_lot(
+        paths,
+        {
+            "ticker": "NEM",
+            "shares": "10",
+            "buy_price": "50",
+            "buy_currency": "USD",
+            "buy_date": "2026-01-02",
+        },
+        ticker_info=build_ticker_info(app_config),
+    )
+
+    build_portfolio_artifacts(
+        paths=paths,
+        app_config=app_config,
+        use_model_state_artifacts=False,
+    )
+    position = load_portfolio_data(paths).positions.iloc[0]
+
+    assert position["tool_d_quality_rank"] == pytest.approx(82.0)
+    assert position["resilience_bucket"] == "Strong resilience"
+
+
 def test_portfolio_pipeline_uses_fresh_foundation_during_refresh_not_pinned_manifest(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -1795,6 +1831,7 @@ def _write_latest_tool_d_rows(paths: ProjectPaths, rows: list[dict[str, object]]
         [
             {
                 "ticker": row["ticker"],
+                "finance_source": row.get("finance_source", "our"),
                 "as_of_date": "2026-06-08",
                 "tool_d_quality_rank": row["rank"],
                 "tool_d_quality_score": float(row["rank"]) - 5.0,

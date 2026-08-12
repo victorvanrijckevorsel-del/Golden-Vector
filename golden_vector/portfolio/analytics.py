@@ -8,7 +8,7 @@ from collections import defaultdict
 import pandas as pd
 
 from golden_vector.common.eligibility import is_score_eligible
-from golden_vector.common.frames import latest_records_by_key
+from golden_vector.common.frames import latest_records_by_key, select_finance_source_rows
 from golden_vector.common.numeric import optional_float, sum_optional_floats
 from golden_vector.model.gold_shock import (
     DEFAULT_GOLD_DOWN_MIN_BETA,
@@ -44,7 +44,19 @@ def enrich_portfolio_analytics(
         )
 
     tool_a_by_ticker = latest_records_by_key(tool_a, "ticker", sort_column="as_of_date")
-    tool_d_by_ticker = latest_records_by_key(tool_d, "ticker", sort_column="as_of_date")
+    # Portfolio resilience is deliberately an Our View product decision (plan
+    # §6.6). Select before the ticker-keyed collapse so Yahoo can never win by
+    # input row order; a source-aware portfolio remains separate product scope.
+    our_view_tool_d = select_finance_source_rows(
+        tool_d,
+        finance_source="our",
+        label="Portfolio Tool D resilience artifact",
+    )
+    tool_d_by_ticker = latest_records_by_key(
+        our_view_tool_d,
+        "ticker",
+        sort_column="as_of_date",
+    )
     data_issues: list[dict[str, object]] = []
 
     rows: list[dict[str, object]] = []
