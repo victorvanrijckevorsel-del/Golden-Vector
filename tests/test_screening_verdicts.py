@@ -67,6 +67,7 @@ def test_compute_fundamental_checks_counts_visible_passes():
     assert result["fundamental_check_score"] == 85.7143
     assert result["fundamental_check_summary"].startswith("6/7:")
     assert "Reserve life FAIL" in result["fundamental_check_summary"]
+    assert result["fundamental_check_fail_codes"] == "RESERVE_LIFE_FAIL"
 
 
 def test_compute_fundamental_checks_marks_missing_forward_pe_as_not_passed():
@@ -88,6 +89,8 @@ def test_compute_fundamental_checks_marks_missing_forward_pe_as_not_passed():
     assert result["fundamental_checks_passed"] == 0
     assert result["fundamental_check_score"] == 0.0
     assert "Forward P/E N/A" in result["fundamental_check_summary"]
+    # N/A is not a failure — only the genuinely failed check earns a code.
+    assert result["fundamental_check_fail_codes"] == "DATA_COMPLETE_FAIL"
 
 
 def test_compute_fundamental_checks_uses_strong_pe_cutoff_not_watchlist_cutoff():
@@ -114,3 +117,29 @@ def test_compute_fundamental_checks_uses_strong_pe_cutoff_not_watchlist_cutoff()
     ) == "WATCHLIST"
     assert result["fundamental_checks_passed"] == 6
     assert "Forward P/E FAIL" in result["fundamental_check_summary"]
+
+
+def test_compute_fundamental_checks_emits_forward_pe_fail_code():
+    thresholds = load_app_config(ProjectPaths.discover()).app.screening_params.verdict_thresholds
+    all_pass_layer1 = {
+        "data_complete": "PASS",
+        "aisc": "PASS",
+        "margin": "PASS",
+        "aisc_margin_yield": "PASS",
+        "reserve_life": "PASS",
+        "leverage": "PASS",
+    }
+
+    failing = compute_fundamental_checks(
+        layer1_check_statuses=all_pass_layer1,
+        forward_pe=thresholds.strong_candidate_forward_pe_max + 1.0,
+        thresholds=thresholds,
+    )
+    assert failing["fundamental_check_fail_codes"] == "FORWARD_PE_FAIL"
+
+    healthy = compute_fundamental_checks(
+        layer1_check_statuses=all_pass_layer1,
+        forward_pe=thresholds.strong_candidate_forward_pe_max - 1.0,
+        thresholds=thresholds,
+    )
+    assert healthy["fundamental_check_fail_codes"] is None

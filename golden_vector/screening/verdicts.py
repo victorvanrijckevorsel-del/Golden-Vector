@@ -81,11 +81,20 @@ def compute_fundamental_checks(
         f"{FUNDAMENTAL_CHECK_LABELS[key]} {statuses[key]}"
         for key in FUNDAMENTAL_CHECK_ORDER
     ]
+    # Machine-readable failure codes (e.g. FORWARD_PE_FAIL) so serve can render
+    # per-check sentences without parsing the display summary. The ticker page
+    # surfaces a check only when it FAILS; N/A is not a failure.
+    fail_codes = [
+        f"{key.upper()}_FAIL"
+        for key in FUNDAMENTAL_CHECK_ORDER
+        if statuses[key] == "FAIL"
+    ]
     return {
         "fundamental_check_score": round(100.0 * passed / total, 4),
         "fundamental_checks_passed": passed,
         "fundamental_checks_total": total,
         "fundamental_check_summary": f"{passed}/{total}: " + "; ".join(summary_parts),
+        "fundamental_check_fail_codes": ";".join(fail_codes) if fail_codes else None,
     }
 
 

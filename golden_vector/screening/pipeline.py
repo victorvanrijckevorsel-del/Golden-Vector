@@ -75,6 +75,10 @@ YAHOO_FINANCE_SOURCE_COLUMN_MAP: dict[str, str] = {
     "fundamental_checks_passed": "fundamental_checks_passed_official",
     "fundamental_checks_total": "fundamental_checks_total_official",
     "fundamental_check_summary": "fundamental_check_summary_official",
+    # fundamental_check_fail_codes is deliberately NOT in this map: map values
+    # must be REQUIRED columns (see test_tool_b_schema_contract), and the fail
+    # codes stay optional so pre-existing artifacts keep validating. Serve
+    # selects the _official variant explicitly when rendering the yahoo source.
 }
 
 
@@ -551,11 +555,17 @@ def _build_tool_b_rows(
                     if official_check_score is not None
                     else None
                 ),
+                "fundamental_check_fail_codes_official": (
+                    official_checks["fundamental_check_fail_codes"]
+                    if official_check_score is not None
+                    else None
+                ),
                 "fundamental_check_score": fundamental_checks["fundamental_check_score"],
                 "fundamental_check_rank": None,
                 "fundamental_checks_passed": fundamental_checks["fundamental_checks_passed"],
                 "fundamental_checks_total": fundamental_checks["fundamental_checks_total"],
                 "fundamental_check_summary": fundamental_checks["fundamental_check_summary"],
+                "fundamental_check_fail_codes": fundamental_checks["fundamental_check_fail_codes"],
                 "missing_manual_fields": None if not missing_fields else ";".join(missing_fields),
                 "next_financial_report_date": row.get("next_financial_report_date"),
                 "next_production_report_date": row.get("next_production_report_date"),

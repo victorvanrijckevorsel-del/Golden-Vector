@@ -159,11 +159,16 @@ TOOL_B_OUTPUT_COLUMNS = [
     "fundamental_checks_passed_official",
     "fundamental_checks_total_official",
     "fundamental_check_summary_official",
+    # Machine-readable check failures (e.g. FORWARD_PE_FAIL). Deliberately NOT
+    # in REQUIRED_TOOL_B_FUNDAMENTAL_COLUMNS: pre-existing artifacts stay valid
+    # and serve treats a missing column as "no codes published yet".
+    "fundamental_check_fail_codes_official",
     "fundamental_check_score",
     "fundamental_check_rank",
     "fundamental_checks_passed",
     "fundamental_checks_total",
     "fundamental_check_summary",
+    "fundamental_check_fail_codes",
     "missing_manual_fields",
     "next_financial_report_date",
     "next_production_report_date",
