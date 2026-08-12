@@ -73,6 +73,46 @@ class TickerPageData:
             return None
         return match.iloc[0]
 
+    def research_rows(self, ticker: str, *, kind: str) -> pd.DataFrame:
+        """Published research-series rows for one ticker and kind.
+
+        Only ``kind_status == "OK"`` rows are data: the producer writes a single
+        marker row (with a reason) for a kind it could not build, and a marker
+        must never be drawn as an observation.
+        """
+        rows = _ticker_rows(self.research_series.frame, ticker)
+        if rows.empty or "kind" not in rows.columns:
+            return rows.iloc[0:0]
+        kind_rows = rows.loc[rows["kind"].eq(kind)]
+        if kind_rows.empty or "kind_status" not in kind_rows.columns:
+            return kind_rows
+        return kind_rows.loc[kind_rows["kind_status"].eq("OK")]
+
+    def research_kind_state(self, ticker: str, *, kind: str) -> tuple[str, str]:
+        """``(status, reason)`` for one ticker/kind — selection, never inference.
+
+        The artifact's own state wins when it is not OK (a MISSING artifact
+        cannot have per-kind rows). Otherwise the persisted ``kind_status`` /
+        ``kind_reason`` are reported verbatim.
+        """
+        if self.research_series.status != "OK":
+            return (
+                self.research_series.status,
+                self.research_series.reason or "research series unavailable",
+            )
+        rows = _ticker_rows(self.research_series.frame, ticker)
+        if rows.empty or "kind" not in rows.columns:
+            return ("MISSING", "no research series published for this ticker")
+        kind_rows = rows.loc[rows["kind"].eq(kind)]
+        if kind_rows.empty:
+            return ("MISSING", f"no {kind} rows published for this ticker")
+        first = kind_rows.iloc[0]
+        status = str(first.get("kind_status") or "MISSING")
+        reason = str(first.get("kind_reason") or "")
+        if status == "OK":
+            return ("OK", reason)
+        return (status, reason or f"{kind} series unavailable")
+
     def metric_peers(self, *, metric_key: str, finance_source: str) -> pd.DataFrame:
         """All tickers' rows for one metric — for peer strips/scatters.
 

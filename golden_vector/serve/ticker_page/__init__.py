@@ -6,6 +6,13 @@ No arithmetic, coalescing, or eligibility resolution happens in this package —
 the model layer emits display-ready columns and the sections only format them.
 """
 
+from golden_vector.serve.ticker_page.behaviour import (
+    LabRequest,
+    clear_lab_render_cache,
+    parse_lab_request,
+    render_market_behaviour_section,
+    render_window_switcher,
+)
 from golden_vector.serve.ticker_page.corporate import (
     GOLD_DIAL_PAYLOAD_ID,
     YAHOO_RESILIENCE_REASON,
@@ -22,13 +29,18 @@ from golden_vector.serve.ticker_page.sections import (
 
 __all__ = [
     "GOLD_DIAL_PAYLOAD_ID",
+    "LabRequest",
     "TickerPageData",
     "YAHOO_RESILIENCE_REASON",
     "build_gold_dial_payload",
+    "clear_lab_render_cache",
     "load_ticker_page_data",
+    "parse_lab_request",
     "render_corporate_finance_section",
     "render_cost_downside_card",
     "render_currency_attribution_block",
     "render_gold_dial_control",
+    "render_market_behaviour_section",
     "render_performance_section",
+    "render_window_switcher",
 ]

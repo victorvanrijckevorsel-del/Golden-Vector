@@ -398,6 +398,22 @@ def default_lab_horizon() -> int:
     return int(default_gold_profile_config().default_profile_horizon)
 
 
+def lab_artifact_pointer(paths: ProjectPaths) -> tuple[int, int]:
+    """``(mtime_ns, size)`` of the Lab's published meta pointer.
+
+    ``dial_meta.json`` is written atomically AFTER every rebuild, so it is the
+    one file whose stat changes exactly when the Lab artifact set changes. Cache
+    keys include it so a rebuild invalidates cached Lab renders. A missing file
+    returns ``(0, 0)`` — an unbuilt Lab is one cacheable state, not an error.
+    """
+
+    try:
+        stat = (lab_dir(paths) / DIAL_ARTIFACT_META_FILENAME).stat()
+    except OSError:
+        return (0, 0)
+    return (int(stat.st_mtime_ns), int(stat.st_size))
+
+
 def load_dial_cells(
     paths: ProjectPaths,
     *,
@@ -660,6 +676,11 @@ def _ticker_profile(
                 "p_beat_raw": (row.get(f"p_beat_{b}") if usable else None),
                 "median_alpha": (row.get(f"median_alpha_{b}") if usable else None),
                 "effective_n": (row.get(f"{b}_effective_n") if row else None),
+                # Persisted Wilson bounds, carried so a renderer can DRAW the
+                # published uncertainty (the ticker page does). Nothing derives an
+                # interval in serve; an absent bound stays absent.
+                "wilson_low": (row.get(f"{b}_wilson_low") if usable else None),
+                "wilson_high": (row.get(f"{b}_wilson_high") if usable else None),
             }
         )
     return points, usable_down, usable_up

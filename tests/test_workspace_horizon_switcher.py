@@ -25,8 +25,13 @@ import pandas as pd
 from golden_vector.serve.detail_panels import (
     _canonical_anchor_window,
     _resolve_active_window,
-    _render_window_switcher,
-    _render_structural_window_table,
+)
+from golden_vector.serve.ticker_page.behaviour import (
+    _MEASURED_EXPLANATION_TITLES,
+    _build_measured_beta_explanations,
+    render_structural_window_table,
+    render_up_down_beta_panel,
+    render_window_switcher,
 )
 from golden_vector.serve.workspace import create_workspace_app
 from tests.helpers import build_test_paths
@@ -70,7 +75,7 @@ def test_canonical_anchor_window_defaults_to_12m_when_missing():
 # ---------------------------------------------------------------- T2 ----
 
 def test_window_switcher_renders_all_tabs_and_marks_active_and_canonical():
-    html = _render_window_switcher(ticker="NEM", active="6M", canonical="12M")
+    html = render_window_switcher(ticker="NEM", active="6M", canonical="12M")
     # All five lookbacks present (12M renders as "1Y").
     for label in ("6M", "1Y", "2Y", "3Y", "5Y"):
         assert f">{label}" in html
@@ -78,12 +83,21 @@ def test_window_switcher_renders_all_tabs_and_marks_active_and_canonical():
     assert 'class="window-tab active"' in html
     # Canonical tab carries the 'anchor' marker.
     assert "window-canonical" in html
-    # Mismatch banner appears when active != canonical.
+    # Mismatch banner appears when active != canonical, naming both windows and
+    # nothing about the removed score / confidence / profile.
     assert 'class="hint window-mismatch"' in html
+    assert (
+        "Viewing 6M — the canonical anchor window for this ticker is 1Y."
+    ) in html
+    # M3c: it is a labelled control group inside the section header, not a panel,
+    # the active tab is announced, and every tab anchors back at the section.
+    assert '<div class="window-switcher" role="group" aria-label="Beta window">' in html
+    assert 'aria-current="true"' in html
+    assert html.count("#market-behaviour") == 5
 
 
 def test_window_switcher_has_no_mismatch_banner_when_active_equals_canonical():
-    html = _render_window_switcher(ticker="NEM", active="12M", canonical="12M")
+    html = render_window_switcher(ticker="NEM", active="12M", canonical="12M")
     assert 'class="hint window-mismatch"' not in html
 
 
@@ -95,7 +109,7 @@ def test_window_switcher_preserves_option_sizing_contracts_state():
         side="call", horizon_days=180, horizon_explicit=True,
         bucket="directional", size_mode="contracts", quantity=7, size_explicit=True,
     )
-    html = _render_window_switcher(
+    html = render_window_switcher(
         ticker="NEM", active="6M", canonical="12M",
         lens="option-trading", anchor="option-trading", sizing_request=req,
     )
@@ -109,7 +123,7 @@ def test_window_switcher_preserves_budget_mode_and_omits_quantity():
     from golden_vector.hedge.option_trading import OptionSizingRequest
 
     req = OptionSizingRequest(side="put", size_mode="budget", budget=500.0, size_explicit=True)
-    html = _render_window_switcher(
+    html = render_window_switcher(
         ticker="NEM", active="6M", canonical="12M", lens="option-trading", sizing_request=req,
     )
     assert "size_mode=budget" in html
@@ -123,7 +137,7 @@ def test_window_switcher_omits_non_explicit_horizon():
     from golden_vector.hedge.option_trading import OptionSizingRequest
 
     req = OptionSizingRequest(side="put", horizon_days=90, horizon_explicit=False)
-    html = _render_window_switcher(
+    html = render_window_switcher(
         ticker="NEM", active="6M", canonical="12M", lens="option-trading", sizing_request=req,
     )
     assert "horizon=" not in html
@@ -133,7 +147,7 @@ def test_window_switcher_omits_silent_default_sizing():
     # A default sizing request (user touched nothing) must not pollute tab URLs.
     from golden_vector.hedge.option_trading import OptionSizingRequest
 
-    html = _render_window_switcher(
+    html = render_window_switcher(
         ticker="NEM", active="6M", canonical="12M",
         lens="option-trading", sizing_request=OptionSizingRequest(),
     )
@@ -156,7 +170,7 @@ def test_detail_page_without_window_param_defaults_to_canonical_anchor(tmp_path)
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
     # The canonical 12M window renders under the user-facing 1Y label.
-    assert "Structural Delta (1Y)" in body
+    assert "Gold beta (1Y)" in body
     # 12M is the canonical anchor, so no mismatch banner should show.
     # Check for the banner paragraph, not the CSS class selector block.
     assert 'class="hint window-mismatch"' not in body
@@ -175,8 +189,8 @@ def test_detail_page_with_6m_window_param_renders_6m_scorecards(tmp_path):
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM?window=6m")
     body = response["body"]
-    assert "Structural Delta (6M)" in body
-    assert "Gamma Down-Up (6M)" in body
+    assert "Gold beta (6M)" in body
+    assert "Down-minus-up beta (6M)" in body
     # Mismatch banner: user picked 6M but canonical is 12M.
     assert 'class="hint window-mismatch"' in body
     assert "canonical anchor" in body
@@ -193,51 +207,14 @@ def test_detail_page_with_3y_window_param_renders_3y_scorecards(tmp_path):
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM?window=3y")
     body = response["body"]
-    assert "Structural Delta (3Y)" in body
-    assert "Gamma Down-Up (3Y)" in body
+    assert "Gold beta (3Y)" in body
+    assert "Down-minus-up beta (3Y)" in body
 
 
 # ---------------------------------------------------------------- T6, T7 ----
 
-def test_scatter_panel_hint_adapts_to_active_window():
-    """Unit test: the scatter panel's hint / empty-state text must name the
-    active window (not the ticker's canonical anchor). Tested at the render-
-    function layer because the WSGI fixture does not ship a weekly-return
-    sample for the scatter SVG path.
-    """
-    from golden_vector.serve.detail_panels import _render_scatter_panel
-    # Empty-state path: references the active window.
-    html_empty = _render_scatter_panel(
-        ticker="NEM",
-        tool_a_row={"anchor_window_id": "12M"},
-        anchor_metric={},
-        anchor_sample=pd.DataFrame(),
-        active_window="6M",
-    )
-    assert "6M window" in html_empty
-    # Populated path: hint text references the active window, not anchor.
-    sample = pd.DataFrame(
-        {
-            "gold_weekly_log_return": [0.01, -0.02, 0.03, -0.01, 0.005, 0.0],
-            "stock_weekly_log_return": [0.02, -0.03, 0.04, -0.015, 0.008, -0.001],
-        }
-    )
-    html_live = _render_scatter_panel(
-        ticker="NEM",
-        tool_a_row={"anchor_window_id": "12M"},
-        anchor_metric={"structural_delta": 1.8, "intercept_alpha": 0.0},
-        anchor_sample=sample,
-        active_window="3Y",
-    )
-    # Hint names the ACTIVE window (3Y), not the ticker's canonical anchor (12M).
-    assert "3Y sample" in html_live
-    assert "12M sample" not in html_live
-
-
 def test_up_down_beta_panel_hint_adapts_to_active_window():
-    from golden_vector.serve.detail_panels import _render_up_down_beta_panel
-    html = _render_up_down_beta_panel(
-        {"anchor_window_id": "12M"},
+    html = render_up_down_beta_panel(
         anchor_metric={"up_beta": 2.0, "down_beta": 1.5},
         active_window="3Y",
     )
@@ -388,7 +365,7 @@ def test_volatility_panel_suppresses_numbers_when_window_not_eligible(tmp_path):
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM?window=6m")
     body = response["body"]
     # Volatility panel must explicitly say the window is not eligible.
-    assert "Volatility Diagnostics (6M)" in body
+    assert "<h4>Volatility diagnostics (6M)" in body
     assert "is not eligible for this ticker" in body
 
 
@@ -403,24 +380,35 @@ def test_volatility_panel_renders_numbers_for_canonical_eligible_window(tmp_path
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert "Volatility Diagnostics (1Y)" in body
-    assert "Volatility Context" in body
+    assert "<h4>Volatility diagnostics (1Y)" in body
+    assert "Volatility context" in body
     assert "is not eligible for this ticker" not in body
 
 
 # ---------------------------------------------------------------- T12 ----
 
+def _window_fit_rows(*windows: str) -> pd.DataFrame:
+    """Published ``window_fit`` research-series rows — the table's only input now."""
+
+    return pd.DataFrame(
+        [
+            {
+                "window": window,
+                "up_beta": 1.6,
+                "down_beta": 1.4,
+                "r_squared": 0.5,
+                "weeks": 52,
+                "window_status": "ELIGIBLE",
+            }
+            for window in windows
+        ]
+    )
+
+
 def test_structural_window_table_marks_the_active_row():
-    tool_a_row = {
-        "anchor_window_id": "12M",
-        "structural_delta_6m": 1.8,
-        "structural_delta_12m": 1.9,
-        "structural_delta_3y": 1.7,
-        "window_status_6m": "ELIGIBLE",
-        "window_status_12m": "ELIGIBLE",
-        "window_status_3y": "ELIGIBLE",
-    }
-    html = _render_structural_window_table(tool_a_row, active_window="3Y")
+    html = render_structural_window_table(
+        _window_fit_rows("6M", "12M", "3Y"), active_window="3Y", canonical_anchor="12M"
+    )
     # Exactly the active row carries the active-row class.
     assert html.count('class="active-row"') == 1
     # 3Y cell is marked as Active; canonical 12M renders as 1Y Anchor.
@@ -462,21 +450,18 @@ def test_invalid_window_param_falls_back_to_canonical_without_error(tmp_path):
     assert response["status"].startswith("200")
     body = response["body"]
     # Falls back to canonical (12M), rendered under the user-facing 1Y label.
-    assert "Structural Delta (1Y)" in body
+    assert "Gold beta (1Y)" in body
 
 
 
 # -------------------------------------------- T15 (horizon consistency) ----
 
 def test_structural_window_table_lists_all_windows_and_flags_display_only():
-    row = {"anchor_window_id": "12M"}
-    for w in ("6m", "12m", "2y", "3y", "5y"):
-        row.update({
-            f"structural_delta_{w}": 1.5, f"gamma_{w}": -0.2, f"up_beta_{w}": 1.6,
-            f"down_beta_{w}": 1.4, f"asymmetry_ratio_{w}": 1.14, f"r_squared_{w}": 0.5,
-            f"weeks_{w}": 52, f"window_status_{w}": "ELIGIBLE",
-        })
-    html = _render_structural_window_table(row, active_window="3Y")
+    html = render_structural_window_table(
+        _window_fit_rows("6M", "12M", "2Y", "3Y", "5Y"),
+        active_window="3Y",
+        canonical_anchor="12M",
+    )
     # all five lookbacks are listed
     for label in ("6M", "1Y", "2Y", "3Y", "5Y"):
         assert f"<td>{label}" in html
@@ -488,9 +473,10 @@ def test_structural_window_table_lists_all_windows_and_flags_display_only():
 
 
 def test_detail_page_is_horizon_consistent_with_no_silent_mixing(tmp_path):
-    """Pick a horizon (2Y) -> every descriptive metric is that horizon, while
-    Score/Confidence/Profile are an explicitly-labelled cross-window summary (never
-    faked per-window). This is the anti-mixing guarantee for the detail page.
+    """Pick a window (2Y) -> every descriptive metric is that window, while the
+    cross-window blends are an explicitly-labelled summary (never faked per-window)
+    and the canonical-only volatility numbers are withheld rather than estimated.
+    This is the anti-mixing guarantee for the ticker page.
     """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -502,14 +488,17 @@ def test_detail_page_is_horizon_consistent_with_no_silent_mixing(tmp_path):
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     body = _call_wsgi_app(app, method="GET", path="/ticker/NEM?window=2y")["body"]
 
-    # Descriptive cards follow the selected horizon.
-    assert "Structural Delta (2Y)" in body
-    assert "Volatility Context (2Y)" in body
-    # Score/Confidence/Profile are a labelled cross-window summary, NOT faked as 2Y.
-    assert "Across scoring windows" in body
-    assert "do not change with the horizon switcher" in body
-    assert "Gold Sensitivity Score" in body
-    assert "Gold Sensitivity Score (2Y)" not in body
+    # Descriptive cards follow the selected window.
+    assert "Gold beta (2Y)" in body
+    # Volatility is published for the canonical window only, so the 2Y panel refuses
+    # rather than dressing the published 52-week numbers up as 2Y values.
+    assert "<h4>Volatility diagnostics (2Y)" in body
+    assert "Volatility is not shown." in body
+    assert "LOW_NOISE" not in body
+    # The cross-window blends are a labelled summary, NOT faked as 2Y.
+    assert "Across the scoring windows (6M / 1Y / 3Y)" in body
+    assert "do not change with the beta-window switcher" in body
+    assert "Gold beta (cross-window)" in body
     # The all-lookbacks reference table marks the display-only windows.
     assert "display-only" in body
 
@@ -517,10 +506,9 @@ def test_detail_page_is_horizon_consistent_with_no_silent_mixing(tmp_path):
 def test_detail_page_splits_per_window_narrative_from_cross_window_block(tmp_path):
     """Regression (live-verify sweep, Root Cause A): the per-window narrative cards
     (Delta/Gamma/Asymmetry/Volatility) must render UNDER the active-window block, never
-    beneath the cross-window 'do not change with the horizon switcher' banner — which
+    beneath the cross-window 'do not change with the beta-window switcher' banner — which
     previously made the page contradict itself (per-window prose flipping while the banner
-    promised invariance). The cross-window narrative (Confidence/Interaction/Summary) stays
-    under the cross-window block.
+    promised invariance).
     """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -532,23 +520,20 @@ def test_detail_page_splits_per_window_narrative_from_cross_window_block(tmp_pat
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     body = _call_wsgi_app(app, method="GET", path="/ticker/NEM?window=2y")["body"]
 
-    per_window_hint = "These read-outs describe the active window"
-    invariant_hint = "do not change with the horizon switcher"
+    per_window_hint = "These read-outs describe the active beta window (2Y)"
+    invariant_hint = "do not change with the beta-window switcher"
     assert per_window_hint in body
     assert invariant_hint in body
     # Per-window narrative + its hint sit BEFORE the cross-window invariance banner.
     assert body.index(per_window_hint) < body.index(invariant_hint)
-    assert body.index("<h3>Delta</h3>") < body.index(invariant_hint)
-    assert body.index("<h3>Volatility</h3>") < body.index(invariant_hint)
-    # Cross-window narrative sits AFTER the banner (it really is invariant).
-    assert body.index(invariant_hint) < body.index("<h3>Interaction</h3>")
-    assert body.index(invariant_hint) < body.index("<h3>Summary</h3>")
+    for title in _MEASURED_EXPLANATION_TITLES:
+        assert body.index(f"<h4>{title}</h4>") < body.index(invariant_hint)
 
 
 def test_detail_page_uses_1y_label_not_raw_12m_anywhere(tmp_path):
     """Regression (live-verify sweep, Root Cause B): the 12M window must surface as its
     display label '1Y' everywhere user-facing — including the active-window narrative prose
-    and the Canonical Anchor card. The raw '12M' id must never leak, and the misleading
+    and the beta-window switcher. The raw '12M' id must never leak, and the misleading
     'anchor window' wording is gone (the active window is not always the canonical anchor).
     """
     paths = build_test_paths(tmp_path)
@@ -567,69 +552,54 @@ def test_detail_page_uses_1y_label_not_raw_12m_anywhere(tmp_path):
     assert "12M anchor window" not in body
     assert "12M window" not in body
     assert "anchor window" not in body
-    # Canonical Anchor card is present and shows the LABEL ('1Y'), not the raw '12M' id — assert
-    # the exact card so a regression of the anchor-card label mapping fails here.
-    assert "Canonical Anchor" in body
-    assert "<h3>Canonical Anchor</h3><p>1Y</p>" in body
+    # The raw id must not leak from the switcher either: 12M's tab is labelled 1Y and
+    # carries the canonical 'anchor' marker.
+    assert "12M" not in body
+    assert ">1Y <span class=\"window-canonical\">anchor</span></a>" in body
+    # The active-window read-outs are labelled with the display label too.
+    assert "Active window: 1Y" in body
 
 
-def test_interaction_summary_use_cross_window_volatility_not_active_window():
-    # Regression (fleet review): Interaction + Summary are CROSS-WINDOW cards rendered under the
-    # "does not change with the horizon switcher" banner, so they must read the PUBLISHED
-    # cross-window volatility_context, never the active-window recompute. Previously they flipped
-    # per window for CONVEX tickers whose volatility band crossed between windows.
-    from golden_vector.serve.detail_panels import _build_active_window_explanations
-
-    scoring_config = _repo_app_config().scoring
-    row = {
-        "score_eligible": True,
-        "score_eligibility_reason": "OK",
-        "profile_label": "CONVEX",
-        "confidence_label": "HIGH",
-        "confidence_score": 0.9,
-        "volatility_context": "LOW_NOISE",  # published cross-window value
-        "structural_delta_core": 2.0,
-        "structural_gamma_core": -0.1,
-        "asymmetry_ratio_core": 1.5,
-    }
-    # Active-window recompute says HIGH_NOISE at 5Y but LOW_NOISE at 1Y — the per-window
-    # Volatility card SHOULD reflect that; Interaction/Summary must NOT.
-    at_5y = dict(_build_active_window_explanations(
-        tool_a_row=row, active_window="5Y", scoring_config=scoring_config,
-        volatility_diag={"volatility_context": "HIGH_NOISE"}))
-    at_1y = dict(_build_active_window_explanations(
-        tool_a_row=row, active_window="12M", scoring_config=scoring_config,
-        volatility_diag={"volatility_context": "LOW_NOISE"}))
-
-    assert at_5y["Interaction"] == at_1y["Interaction"]
-    assert at_5y["Summary"] == at_1y["Summary"]
-    # Control: the per-window Volatility card DOES track the active-window context (so the test
-    # would fail if the builder ignored the active window entirely).
-    assert at_5y["Volatility"] != at_1y["Volatility"]
-
-
-def test_explanation_card_partition_is_exhaustive_and_disjoint():
-    # Regression (fleet review): the per-window / cross-window split is by exact title membership.
-    # A future title rename/addition not reflected in the two constants would silently drop a card
-    # from BOTH grids ("never silently hide results"). Lock the partition against the builder.
-    from golden_vector.serve.detail_panels import (
-        _CROSS_WINDOW_EXPLANATION_TITLES,
-        _PER_WINDOW_EXPLANATION_TITLES,
-        _build_active_window_explanations,
-    )
-
-    cards = _build_active_window_explanations(
-        tool_a_row={"score_eligible": True, "score_eligibility_reason": "OK"},
+def test_measured_explanation_cards_are_exactly_the_declared_titles():
+    # Regression (fleet review), ported: the narrative grid is driven by exact title membership.
+    # A title rename/addition not reflected in the constant would silently drop a card from the
+    # grid ("never silently hide results"). Lock the constant against the builder.
+    cards = _build_measured_beta_explanations(
+        tool_a_row={"score_eligible": True, "score_eligibility_reason": ""},
         active_window="12M",
         scoring_config=_repo_app_config().scoring,
-        volatility_diag={},
     )
-    returned = {title for title, _ in cards}
-    per = set(_PER_WINDOW_EXPLANATION_TITLES)
-    cross = set(_CROSS_WINDOW_EXPLANATION_TITLES)
+    returned = [title for title, _ in cards]
+    assert returned == list(_MEASURED_EXPLANATION_TITLES)
+    assert len(set(returned)) == len(returned), "a card title is rendered twice"
+    # The score-era cards went with the score and must not come back silently.
+    assert {"Confidence", "Interaction", "Summary"}.isdisjoint(returned)
 
-    assert per.isdisjoint(cross), "a card title is in both grids"
-    assert per | cross == returned, "every narrative card must be categorized (none silently dropped)"
+
+def test_measured_volatility_card_reads_the_published_52w_fields_only():
+    # The old builder took a per-window recompute (volatility_diag) and the card flipped with the
+    # window; there is no recompute any more, so the card must be identical across windows and
+    # sourced from the PUBLISHED 52-week fields.
+    scoring_config = _repo_app_config().scoring
+    row = {
+        "score_eligibility_reason": "",
+        "volatility_context": "LOW_NOISE",
+        "residual_volatility_52w": 0.28,
+        "downside_volatility_52w": 0.24,
+    }
+    at_5y = dict(_build_measured_beta_explanations(
+        tool_a_row=row, active_window="5Y", scoring_config=scoring_config))
+    at_1y = dict(_build_measured_beta_explanations(
+        tool_a_row=row, active_window="12M", scoring_config=scoring_config))
+    assert at_5y["Volatility"] == at_1y["Volatility"]
+    # Control: the genuinely per-window cards DO still follow the active window.
+    per_window_row = dict(row, structural_delta_12m=1.9, structural_delta_5y=0.4)
+    assert (
+        dict(_build_measured_beta_explanations(
+            tool_a_row=per_window_row, active_window="5Y", scoring_config=scoring_config))["Delta"]
+        != dict(_build_measured_beta_explanations(
+            tool_a_row=per_window_row, active_window="12M", scoring_config=scoring_config))["Delta"]
+    )
 
 
 def test_resolve_active_window_honors_1y_alias_not_canonical_fallback():

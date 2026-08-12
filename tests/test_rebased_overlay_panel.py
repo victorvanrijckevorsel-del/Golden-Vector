@@ -1,12 +1,13 @@
-"""Render-level coverage for the rebased gold/stock/ETF overlay panel.
+"""Render-level coverage for the rebased gold/stock/ETF overlay chart.
 
-This chart replaced the old rolling-beta line: the beta NUMBERS now live in the
-windowed table above, and this panel answers a different question — "did the
-miner actually beat gold AND the gold-miner ETFs over the lookback?". The series
-are rebased in the backend (``model.structural.build_rebased_comparison_series``);
-the panel only draws them. The assertions below pin the user-facing contract:
-every supplied line is drawn, a missing benchmark degrades to one fewer line
-(never a crash), and too little data falls back to the unavailable panel.
+The old ``_render_rebased_overlay_panel`` wrapper was DELETED in M3c — the M3a
+Performance section (``golden_vector/serve/ticker_page/sections.py``
+``render_performance_section``) replaced that chart on the ticker page. The SVG
+builder ``_build_multiline_overlay_svg`` is unchanged and still used, so every
+assertion that pinned the *chart's* contract lives on here, addressed directly at
+the builder: every supplied line is drawn, the percent gridlines bracket the span,
+the crosshair embed carries the exact coordinate mapping, and corrupt dates
+degrade instead of crashing.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ from pathlib import Path
 import pandas as pd
 
 from golden_vector.serve.charts import _build_multiline_overlay_svg
-from golden_vector.serve.detail_panels import _render_rebased_overlay_panel
 
 
 def _overlay_payload(html: str) -> dict:
@@ -46,15 +46,13 @@ def _full_overlay() -> dict[str, dict[str, tuple[list, list]]]:
     }
 
 
-def test_overlay_panel_draws_every_supplied_series_with_a_baseline():
-    html = _render_rebased_overlay_panel(
-        ticker="ABC",
-        rebased_overlay_by_window=_full_overlay(),
-        active_window="12M",
-    )
+def _full_series() -> dict[str, tuple[list, list]]:
+    return _full_overlay()["12M"]
 
-    assert "Gold vs Stock vs Gold-Miner ETFs" in html
-    assert "indexed to 100" in html
+
+def test_overlay_chart_draws_every_supplied_series_with_a_baseline():
+    html = _build_multiline_overlay_svg(series_by_label=_full_series())
+
     # One legend chip per line — including the ticker itself.
     for label in ("ABC", "Gold", "GDX", "GDXJ"):
         assert f"&#9632; {label}" in html
@@ -65,11 +63,7 @@ def test_overlay_panel_draws_every_supplied_series_with_a_baseline():
 
 
 def test_overlay_chart_has_percent_gridlines_and_crosshair_data():
-    html = _render_rebased_overlay_panel(
-        ticker="ABC",
-        rebased_overlay_by_window=_full_overlay(),
-        active_window="12M",
-    )
+    html = _build_multiline_overlay_svg(series_by_label=_full_series())
 
     # Readable y-axis: gridlines labelled as % change from the rebase start (not raw index nums).
     assert ">0%</text>" in html
@@ -85,11 +79,7 @@ def test_overlay_embed_pins_the_coordinate_mapping():
     # Decode the data-overlay payload and assert the ACTUAL pixel mapping the crosshair relies on,
     # so a swapped/inverted x_at/y_at or a byDate field-order change fails the test (not silently
     # ships a misaligned crosshair). Fixture spans values 100..130 with base 100.
-    payload = _overlay_payload(
-        _render_rebased_overlay_panel(
-            ticker="ABC", rebased_overlay_by_window=_full_overlay(), active_window="12M"
-        )
-    )
+    payload = _overlay_payload(_build_multiline_overlay_svg(series_by_label=_full_series()))
     assert payload["base"] == 100.0
     # First date sits at the left padding (x=48); the last at width-padding_right (720-24=696).
     assert payload["ticks"][0] == ["2024-01-05", 48.0]
@@ -103,6 +93,20 @@ def test_overlay_embed_pins_the_coordinate_mapping():
     # A risen point carries a signed pct produced by the SAME server formatter as the gridlines.
     assert abc["byDate"]["2024-02-09"][1] == 130.0
     assert abc["byDate"]["2024-02-09"][2] == "+30%"
+
+
+def test_overlay_chart_degrades_when_a_benchmark_is_missing():
+    series = _full_series()
+    # Simulate GDXJ history being unavailable for this ticker.
+    series.pop("GDXJ")
+
+    html = _build_multiline_overlay_svg(series_by_label=series)
+
+    # Still renders: stock + gold + GDX = three drawable lines.
+    assert html.count("<polyline") == 3
+    assert "&#9632; GDX" in html
+    # GDXJ is now absent EVERYWHERE — no legend chip, nothing claiming it was drawn.
+    assert "GDXJ" not in html
 
 
 def test_overlay_embed_escapes_html_in_series_labels():
@@ -272,95 +276,6 @@ assert.equal(tip.hidden, true);
         capture_output=True,
     )
     assert result.returncode == 0, result.stderr
-
-
-def test_overlay_panel_degrades_when_a_benchmark_is_missing():
-    overlay = _full_overlay()
-    # Simulate GDXJ history being unavailable for this ticker.
-    overlay["12M"].pop("GDXJ")
-
-    html = _render_rebased_overlay_panel(
-        ticker="ABC",
-        rebased_overlay_by_window=overlay,
-        active_window="12M",
-    )
-
-    # Still renders: stock + gold + GDX = three drawable lines.
-    assert html.count("<polyline") == 3
-    assert "&#9632; GDX" in html
-    # GDXJ is now absent EVERYWHERE — no legend chip AND no caption claim that it is shown
-    # (the caption must name only the benchmarks that actually drew).
-    assert "GDXJ" not in html
-    assert "gold-miner ETF (GDX)" in html
-
-
-def test_overlay_panel_caption_admits_when_no_benchmarks_are_available():
-    dates = _window_dates()
-    overlay = {
-        "12M": {
-            "ABC": (dates, [100.0, 110.0, 105.0, 120.0, 118.0, 130.0]),
-            "Gold": (dates, [100.0, 102.0, 101.0, 104.0, 103.0, 106.0]),
-        }
-    }
-
-    html = _render_rebased_overlay_panel(
-        ticker="ABC",
-        rebased_overlay_by_window=overlay,
-        active_window="12M",
-    )
-
-    # Two lines draw (gold + stock); the caption must not imply GDX/GDXJ are present.
-    assert html.count("<polyline") == 2
-    assert "benchmark history was unavailable" in html
-
-
-def test_overlay_panel_falls_back_when_fewer_than_two_drawable_series():
-    dates = _window_dates(3)
-    overlay = {
-        "12M": {
-            # Only gold has data; an all-None stock line is not drawable.
-            "Gold": (dates, [100.0, 101.0, 102.0]),
-            "ABC": (dates, [None, None, None]),
-        }
-    }
-
-    html = _render_rebased_overlay_panel(
-        ticker="ABC",
-        rebased_overlay_by_window=overlay,
-        active_window="12M",
-    )
-
-    assert "Not Available Yet" in html
-    assert "<polyline" not in html
-
-
-def test_overlay_panel_falls_back_when_series_have_only_one_dated_point():
-    dates = [pd.Timestamp("2024-01-05")]
-    overlay = {
-        "12M": {
-            "Gold": (dates, [100.0]),
-            "ABC": (dates, [100.0]),
-        }
-    }
-
-    html = _render_rebased_overlay_panel(
-        ticker="ABC",
-        rebased_overlay_by_window=overlay,
-        active_window="12M",
-    )
-
-    assert "Not Available Yet" in html
-    assert "<polyline" not in html
-
-
-def test_overlay_panel_falls_back_when_window_has_no_overlay():
-    html = _render_rebased_overlay_panel(
-        ticker="ABC",
-        rebased_overlay_by_window={},
-        active_window="12M",
-    )
-
-    assert "Not Available Yet" in html
 
 
 def test_multiline_overlay_svg_does_not_crash_on_all_nat_dates():

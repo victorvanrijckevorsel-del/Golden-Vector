@@ -236,6 +236,60 @@ def _render_behaviour(curve: LabCurveData) -> str:
     )
 
 
+def lab_unavailable_reason(
+    status: str | None,
+    *,
+    scenario_bucket: str = "",
+    default_reason: str = "No persisted episodes for this ticker yet.",
+) -> tuple[str, str, str]:
+    """``(reason, notice_tone, rebuild_html)`` for an unavailable Lab artifact.
+
+    ONE mapping for every Lab surface — the ``/lab`` drill-down and the ticker
+    page's Market-behaviour disclosure both read it, so an operator can never be
+    told two different things about the same broken file.
+    """
+
+    key = str(status or "")
+    reason_map = {
+        "CORRUPT": "Lab artifact is corrupt and could not be read.",
+        "EMPTY": "Lab artifact built but contains no rows (empty universe).",
+        "STALE": "Lab artifact was built by an older version (missing this "
+        "horizon/benchmark). Rebuild it.",
+        "META_MISSING": "Lab metadata file is missing — the artifact's health "
+        "can't be verified. Rebuild it.",
+        "META_CORRUPT": "Lab metadata file is unreadable. Rebuild it.",
+        "CELLS_MISSING": "Lab scenario-cells artifact is missing (the profile, "
+        "win-rate and headline numbers all come from it). Rebuild it.",
+        "CELLS_CORRUPT": "Lab scenario-cells artifact is corrupt and could not "
+        "be read. Rebuild it.",
+        "CELLS_EMPTY": "Lab scenario-cells artifact is empty (no rows). Rebuild it.",
+        "CELLS_STALE": "Lab scenario-cells artifact was built by an older "
+        "version (missing columns). Rebuild it.",
+        "UNKNOWN_SCENARIO": (
+            f"Unknown gold scenario “{scenario_bucket}”. Choose one "
+            "of: gold_down_big, gold_down, gold_flat, gold_up, gold_up_big."
+        ),
+    }
+    reason = reason_map.get(key, default_reason)
+    # A mistyped scenario is a URL problem, not a build problem — don't tell the
+    # operator to rebuild for it.
+    rebuild = "" if key == "UNKNOWN_SCENARIO" else (
+        " Rebuild: <code>python -m golden_vector.lab.conditional_dial</code>."
+    )
+    # Plan 10.5 mapping: corrupt/unreadable artifacts are danger; STALE /
+    # CELLS_STALE are freshness states and stay warning, as do empty builds, URL
+    # problems, and simply-absent episode data.
+    danger_statuses = (
+        "CORRUPT",
+        "META_MISSING",
+        "META_CORRUPT",
+        "CELLS_MISSING",
+        "CELLS_CORRUPT",
+    )
+    tone = "danger" if key in danger_statuses else "warning"
+    return reason, tone, rebuild
+
+
 def _render_lab_curve_page(curve: LabCurveData) -> str:
     title = f"{curve.ticker or 'Ticker'} relative performance - Golden Vector"
     body: list[str] = []
@@ -249,39 +303,9 @@ def _render_lab_curve_page(curve: LabCurveData) -> str:
     )
 
     if not curve.available:
-        status = str(curve.error_status)
-        reason_map = {
-            "CORRUPT": "Lab artifact is corrupt and could not be read.",
-            "EMPTY": "Lab artifact built but contains no rows (empty universe).",
-            "STALE": "Lab artifact was built by an older version (missing this "
-            "horizon/benchmark). Rebuild it.",
-            "META_MISSING": "Lab metadata file is missing — the artifact's health "
-            "can't be verified. Rebuild it.",
-            "META_CORRUPT": "Lab metadata file is unreadable. Rebuild it.",
-            "CELLS_MISSING": "Lab scenario-cells artifact is missing (the profile, "
-            "win-rate and headline numbers all come from it). Rebuild it.",
-            "CELLS_CORRUPT": "Lab scenario-cells artifact is corrupt and could not "
-            "be read. Rebuild it.",
-            "CELLS_EMPTY": "Lab scenario-cells artifact is empty (no rows). Rebuild it.",
-            "CELLS_STALE": "Lab scenario-cells artifact was built by an older "
-            "version (missing columns). Rebuild it.",
-            "UNKNOWN_SCENARIO": (
-                f"Unknown gold scenario “{curve.scenario_bucket}”. Choose one "
-                "of: gold_down_big, gold_down, gold_flat, gold_up, gold_up_big."
-            ),
-        }
-        reason = reason_map.get(status, "No persisted episodes for this ticker yet.")
-        # A mistyped scenario is a URL problem, not a build problem — don't tell the
-        # operator to rebuild for it.
-        rebuild = "" if status == "UNKNOWN_SCENARIO" else (
-            " Rebuild: <code>python -m golden_vector.lab.conditional_dial</code>."
+        reason, tone, rebuild = lab_unavailable_reason(
+            curve.error_status, scenario_bucket=curve.scenario_bucket
         )
-        # Plan 10.5 mapping: corrupt/unreadable artifacts are danger; STALE /
-        # CELLS_STALE are freshness states and stay warning, as do empty
-        # builds, URL problems, and simply-absent episode data.
-        # UNKNOWN_SCENARIO carries no rebuild action.
-        danger_statuses = ("CORRUPT", "META_MISSING", "META_CORRUPT", "CELLS_MISSING", "CELLS_CORRUPT")
-        tone = "danger" if status in danger_statuses else "warning"
         body.append(notice(tone, f"{escape(reason)}{rebuild}"))
         return _page_shell(title, "".join(body), active_nav="lab")
 
@@ -409,16 +433,35 @@ def _render_tilt_label(curve: LabCurveData) -> str:
     return ""
 
 
-def _render_profile(curve: LabCurveData) -> str:
+def _render_profile(
+    curve: LabCurveData,
+    *,
+    uncertainty: bool = False,
+    heading_level: int = 2,
+    period_label: str = "",
+) -> str:
     """Hero: how the miner behaves vs the benchmark across ALL gold scenarios at
     the selected horizon, with the auto tilt-label (v2) above it. The shape is the
-    story; gaps where a scenario had too little history."""
+    story; gaps where a scenario had too little history.
 
+    The three keyword params exist so the ticker page's Market-behaviour
+    disclosure can REUSE this one renderer instead of forking it (plan §9.2):
+    ``uncertainty`` draws the persisted Wilson interval as a bar (the ticker
+    page's locked requirement), ``heading_level`` keeps the heading outline
+    valid inside a section, ``period_label`` prints the chart's own window next
+    to its title. All three default to today's ``/lab`` behaviour (D-5).
+    """
+
+    level = int(heading_level)
+    period_html = (
+        f"<p class=\"hint chart-period\">{escape(period_label)}</p>" if period_label else ""
+    )
     pts = curve.profile_points
     usable = [p for p in pts if p["usable"]]
     if not pts or not usable:
         return (
-            "<section class=\"panel\"><h2>Gold profile</h2>"
+            f"<section class=\"panel\"><h{level}>Gold profile</h{level}>"
+            f"{period_html}"
             f"{_render_tilt_label(curve)}"
             f"<p class=\"hint\">No countable cross-scenario history for "
             f"{escape(curve.ticker)} at {int(curve.horizon)} weeks yet.</p></section>"
@@ -453,12 +496,17 @@ def _render_profile(curve: LabCurveData) -> str:
             "isn't enough to compare how it behaves when gold falls versus rises."
         )
     svg = _build_profile_svg(
-        pts, ticker=curve.ticker, benchmark=curve.benchmark, horizon=int(curve.horizon)
+        pts,
+        ticker=curve.ticker,
+        benchmark=curve.benchmark,
+        horizon=int(curve.horizon),
+        uncertainty=uncertainty,
     )
     return (
         "<section class=\"panel lab-profile\">"
-        f"<h2>{escape(curve.ticker)} — how it behaved vs {escape(curve.benchmark)} as gold moved "
-        f"({int(curve.horizon)}w)</h2>"
+        f"<h{level}>{escape(curve.ticker)} — how it behaved vs {escape(curve.benchmark)} as gold moved "
+        f"({int(curve.horizon)}w)</h{level}>"
+        f"{period_html}"
         f"{_render_tilt_label(curve)}"
         f"{svg}"
         f"<p class=\"hint\">Each point = how often {escape(curve.ticker)} actually beat "
@@ -472,7 +520,12 @@ def _render_profile(curve: LabCurveData) -> str:
 
 
 def _build_profile_svg(
-    points: list[dict[str, Any]], *, ticker: str, benchmark: str, horizon: int
+    points: list[dict[str, Any]],
+    *,
+    ticker: str,
+    benchmark: str,
+    horizon: int,
+    uncertainty: bool = False,
 ) -> str:
     n = len(points)
     width, height = 700, 220
@@ -515,6 +568,26 @@ def _build_profile_svg(
             med = f"{float(p['median_alpha']) * 100:+.0f}%" if p["median_alpha"] is not None else "-"
             eff = p["effective_n"]
             eff_s = f"{float(eff):.1f}" if eff is not None and eff == eff else "-"
+            if uncertainty:
+                # The PERSISTED Wilson interval (build-computed), drawn as a bar.
+                # Serve never widens, narrows, or derives an interval — a missing
+                # bound simply draws no bar rather than a guessed one.
+                low = p.get("wilson_low")
+                high = p.get("wilson_high")
+                if (
+                    low is not None
+                    and low == low
+                    and high is not None
+                    and high == high
+                ):
+                    y_low = y_at(float(low) * 100)
+                    y_high = y_at(float(high) * 100)
+                    parts.append(
+                        f"<line x1=\"{x:.1f}\" y1=\"{y_low:.1f}\" x2=\"{x:.1f}\" "
+                        f"y2=\"{y_high:.1f}\" class=\"series-strip\" stroke-width=\"2\">"
+                        f"<title>{escape(p['label'])}: 95% interval "
+                        f"{float(low) * 100:.0f}%–{float(high) * 100:.0f}%</title></line>"
+                    )
             parts.append(
                 f"<circle cx=\"{x:.1f}\" cy=\"{y:.1f}\" r=\"5\" class=\"{cls}\">"
                 f"<title>{escape(p['label'])}: beat {escape(benchmark)} {pct:.0f}% of weeks "
@@ -617,7 +690,31 @@ def _render_headline(curve: LabCurveData) -> str:
     )
 
 
-def _render_distribution(curve: LabCurveData) -> str:
+def points_since_year(points: list[dict[str, Any]], year: int | None) -> list[dict[str, Any]]:
+    """Row SELECTION only: keep episodes whose week starts in ``year`` or later.
+
+    Used by the ticker page's Lab disclosure (config ``lab.scatter_from_year``);
+    ``None`` keeps every point, which is today's ``/lab`` behaviour (D-5). The
+    persisted ISO ``date`` string is read, never re-derived.
+    """
+
+    if year is None:
+        return list(points)
+    kept: list[dict[str, Any]] = []
+    for point in points:
+        head = str(point.get("date") or "")[:4]
+        if head.isdigit() and int(head) >= int(year):
+            kept.append(point)
+    return kept
+
+
+def _render_distribution(
+    curve: LabCurveData,
+    *,
+    since_year: int | None = None,
+    heading_level: int = 2,
+    period_label: str = "",
+) -> str:
     """Distribution strip: each highlighted scenario week as a tick on a +/- axis, so
     the SPREAD of outcomes (how big the wins/losses were) is visible, not just the
     share that beat. Render-only — ticks are the raw persisted per-week alphas, the
@@ -631,7 +728,7 @@ def _render_distribution(curve: LabCurveData) -> str:
     # headline counts (alpha_simple is non-null iff the log alpha is).
     scenario = [
         p
-        for p in curve.points
+        for p in points_since_year(curve.points, since_year)
         if p["is_scenario"]
         and p.get("alpha_simple") is not None
         and p["alpha_simple"] == p["alpha_simple"]  # not NaN
@@ -640,15 +737,26 @@ def _render_distribution(curve: LabCurveData) -> str:
         return ""
     median = _cell_field(curve, "median_alpha")  # persisted, simple-return basis
     svg = _build_distribution_svg(scenario, median=median, benchmark=curve.benchmark)
+    level = int(heading_level)
+    period_html = (
+        f"<p class=\"hint chart-period\">{escape(period_label)}</p>" if period_label else ""
+    )
     return (
         "<section class=\"panel lab-dist\">"
-        f"<h2>Spread of outcomes in {escape(curve.scenario_label)} weeks</h2>"
+        f"<h{level}>Spread of outcomes in {escape(curve.scenario_label)} weeks</h{level}>"
+        f"{period_html}"
         f"{svg}"
         f"<p class=\"hint\">Each tick is one highlighted scenario week: how "
         f"{escape(curve.ticker)} did vs {escape(curve.benchmark)} over the next "
         f"{int(curve.horizon)} weeks (green = beat, red = lagged). The clustering shows "
-        "where most outcomes landed; the marker is the median. Counted history, "
-        "survivor-only, exploratory — not a forecast.</p>"
+        "where most outcomes landed; the marker is the median. "
+        + (
+            "The ticks are trimmed to the window named above; the median marker is the "
+            "persisted one over the full published history. "
+            if since_year is not None
+            else ""
+        )
+        + "Counted history, survivor-only, exploratory — not a forecast.</p>"
         "</section>"
     )
 
@@ -735,8 +843,17 @@ def _build_distribution_svg(
     )
 
 
-def _render_chart_a(curve: LabCurveData) -> str:
-    svg = _build_dots_svg(curve.points, horizon=int(curve.horizon), benchmark=curve.benchmark)
+def _render_chart_a(
+    curve: LabCurveData,
+    *,
+    since_year: int | None = None,
+    period_label: str = "",
+) -> str:
+    points = points_since_year(curve.points, since_year)
+    svg = _build_dots_svg(points, horizon=int(curve.horizon), benchmark=curve.benchmark)
+    period_html = (
+        f"<p class=\"hint chart-period\">{escape(period_label)}</p>" if period_label else ""
+    )
     highlight_caption = (
         f"Highlighted = weeks where gold WENT ON to {escape(_scenario_phrase(curve))} "
         f"over the FOLLOWING {int(curve.horizon)} weeks (a hindsight grouping you chose, "
@@ -747,6 +864,7 @@ def _render_chart_a(curve: LabCurveData) -> str:
     return (
         "<details class=\"panel lab-curve-chart\">"
         "<summary>When did it happen? — forward performance vs benchmark, week by week</summary>"
+        f"{period_html}"
         f"{svg}"
         f"<p class=\"hint\">Each dot is one week: how {escape(curve.ticker)} did versus "
         f"{escape(curve.benchmark)} over the <strong>next {int(curve.horizon)} weeks</strong>. "

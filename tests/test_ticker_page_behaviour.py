@@ -1,0 +1,708 @@
+"""M3c: the ticker page's Market-behaviour section.
+
+Everything here is fixture-driven — no test reads a real ``data/`` artifact.
+The Lab loaders are monkeypatched with constructed ``LabCellsData`` /
+``LabCurveData`` values so the disclosure's states (unavailable, empty bucket,
+drawn charts) are exercised without a built Lab on disk.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from golden_vector.app.config import load_app_config
+from golden_vector.app.paths import ProjectPaths
+from golden_vector.app.ticker_page_state import TickerPageArtifactState
+from golden_vector.serve.lab_curve_data import LabCellsData, LabCurveData
+from golden_vector.serve.ticker_page import TickerPageData
+from golden_vector.serve.ticker_page import behaviour as B
+from golden_vector.serve.workspace_state import (
+    DETAIL_ALIGNMENT_ALIGNED,
+    StructuralHistoryLoad,
+    ToolADetailState,
+)
+
+
+def _app_config():
+    return load_app_config(ProjectPaths.discover()).app
+
+
+# ---------------------------------------------------------------------------
+# fixtures
+# ---------------------------------------------------------------------------
+
+_WINDOWS = ("6M", "12M", "2Y", "3Y", "5Y")
+
+
+def _tool_a_row(**overrides) -> dict[str, object]:
+    row: dict[str, object] = {
+        "ticker": "NEM",
+        "as_of_date": "2026-08-08",
+        "anchor_window_id": "12M",
+        "volatility_anchor_window_id": "12M",
+        "total_volatility_52w": 0.412,
+        "residual_volatility_52w": 0.287,
+        "downside_volatility_52w": 0.331,
+        "volatility_context": "HIGH_NOISE",
+        "structural_delta_core": 1.44,
+        "structural_gamma_core": 0.22,
+        "asymmetry_ratio_core": 0.91,
+        "up_beta_core": 1.31,
+        "down_beta_core": 1.53,
+        "score_eligibility_reason": "",
+        "normalization_issue_summary": None,
+    }
+    for window in _WINDOWS:
+        win = window.lower()
+        row[f"structural_delta_{win}"] = 1.4
+        row[f"gamma_{win}"] = 0.2
+        row[f"up_beta_{win}"] = 1.3
+        row[f"down_beta_{win}"] = 1.5
+        row[f"asymmetry_ratio_{win}"] = 0.9
+        row[f"r_squared_{win}"] = 0.55
+        row[f"weeks_{win}"] = 52
+        row[f"window_status_{win}"] = "ELIGIBLE"
+    row.update(overrides)
+    return row
+
+
+def _detail_state(**overrides) -> ToolADetailState:
+    kwargs: dict[str, object] = {
+        "weekly_series": pd.DataFrame(),
+        "structural_window_metrics": pd.DataFrame(),
+        "structural_metrics_load": StructuralHistoryLoad(
+            status="ok", history=pd.DataFrame(), error_message=""
+        ),
+        "exploratory_horizons": pd.DataFrame(),
+        "benchmark_comparison_by_window": {},
+    }
+    kwargs.update(overrides)
+    return ToolADetailState(**kwargs)  # type: ignore[arg-type]
+
+
+def _percentile_frame(*rows: dict[str, object]) -> pd.DataFrame:
+    return pd.DataFrame(list(rows))
+
+
+def _pct_row(metric_key: str, **overrides) -> dict[str, object]:
+    row: dict[str, object] = {
+        "ticker": "NEM",
+        "finance_source": "our",
+        "metric_key": metric_key,
+        "category": "trading",
+        "raw_value": 0.32,
+        "unit": "percent",
+        "basis": "tool C window",
+        "metric_available": True,
+        "metric_reason": None,
+        "pct_low_good": 61.0,
+        "pct_high_good": 39.0,
+        "eligible_observation_count": 44,
+        "hit_count": 6,
+        "source_period_start": pd.Timestamp("2019-01-04"),
+        "source_period_end": pd.Timestamp("2026-08-07"),
+        "source_verification_status": None,
+        "source_verification_date": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def _research_frame(*rows: dict[str, object]) -> pd.DataFrame:
+    return pd.DataFrame(list(rows))
+
+
+def _weekly_row(date: str, stock: float, gold: float, **overrides) -> dict[str, object]:
+    row: dict[str, object] = {
+        "ticker": "NEM",
+        "kind": "weekly",
+        "date": pd.Timestamp(date),
+        "stock_return": stock,
+        "gold_return": gold,
+        "kind_status": "OK",
+        "kind_reason": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def _window_fit_row(window: str, **overrides) -> dict[str, object]:
+    row: dict[str, object] = {
+        "ticker": "NEM",
+        "kind": "window_fit",
+        "window": window,
+        "up_beta": 1.21,
+        "down_beta": 1.64,
+        "r_squared": 0.51,
+        "weeks": 52,
+        "window_status": "ELIGIBLE",
+        "kind_status": "OK",
+        "kind_reason": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def _horizon_row(label: str, **overrides) -> dict[str, object]:
+    row: dict[str, object] = {
+        "ticker": "NEM",
+        "kind": "horizon",
+        "horizon_label": label,
+        "horizon_return": 0.18,
+        "horizon_gold_return": 0.09,
+        "horizon_gold_delta": 2.0,
+        "horizon_coverage_flag": "PARTIAL",
+        "horizon_coverage_reason": "only 34 of 52 weeks present",
+        "horizon_start_date": pd.Timestamp("2025-08-08"),
+        "horizon_end_date": pd.Timestamp("2026-08-07"),
+        "kind_status": "OK",
+        "kind_reason": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def _data(
+    *,
+    percentiles: pd.DataFrame | None = None,
+    research: pd.DataFrame | None = None,
+    research_status: str = "OK",
+    research_reason: str | None = None,
+) -> TickerPageData:
+    blank = TickerPageArtifactState(status="OK", reason=None, frame=pd.DataFrame())
+    return TickerPageData(
+        gold_response=blank,
+        percentiles=TickerPageArtifactState(
+            status="OK",
+            reason=None,
+            frame=percentiles if percentiles is not None else pd.DataFrame(),
+        ),
+        performance=blank,
+        research_series=TickerPageArtifactState(
+            status=research_status,
+            reason=research_reason,
+            frame=research if research is not None else pd.DataFrame(),
+        ),
+        fx_attribution=blank,
+    )
+
+
+def _full_percentiles() -> pd.DataFrame:
+    return _percentile_frame(
+        _pct_row("rel_strength_vs_gdx", raw_value=0.58),
+        _pct_row("rel_weakness_vs_gdx", raw_value=0.42),
+        _pct_row("upside_hit_rate", raw_value=0.21, hit_count=9, eligible_observation_count=43),
+        _pct_row("downside_hit_rate", raw_value=0.14, hit_count=6, eligible_observation_count=44),
+        _pct_row("tail_best10", raw_value=0.11),
+        _pct_row("tail_worst10", raw_value=-0.13),
+        _pct_row("aisc", raw_value=1480.0, unit="usd_per_oz", basis="Our View mining assumption"),
+    )
+
+
+def _full_research() -> pd.DataFrame:
+    return _research_frame(
+        *(_window_fit_row(window) for window in _WINDOWS),
+        _weekly_row("2026-07-31", 0.021, 0.014),
+        _weekly_row("2026-08-07", -0.018, -0.009),
+        _weekly_row("2026-08-14", 0.004, 0.002),
+        _horizon_row("12M"),
+    )
+
+
+def _render(**overrides) -> str:
+    kwargs: dict[str, object] = {
+        "ticker": "NEM",
+        "tool_a_row": _tool_a_row(),
+        "tool_a_detail": _detail_state(),
+        "alignment": DETAIL_ALIGNMENT_ALIGNED,
+        "active_window": "12M",
+        "canonical_anchor": "12M",
+        "data": _data(percentiles=_full_percentiles(), research=_full_research()),
+        "finance_source": "our",
+        "app_config": _app_config(),
+    }
+    kwargs.update(overrides)
+    return B.render_market_behaviour_section(**kwargs)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# section composition + the removed verdicts
+# ---------------------------------------------------------------------------
+
+
+def test_section_mounts_at_market_behaviour_with_the_beta_window_switcher():
+    html = _render()
+    assert 'id="market-behaviour"' in html
+    # the switcher MOVED here out of the global control bar
+    assert 'class="window-switcher"' in html
+    assert 'aria-label="Beta window"' in html
+    assert "window=6m" in html  # the window param round-trips exactly as before
+
+
+def test_open_by_default_bars_and_rugs_render_from_the_published_window_fit():
+    comparison = _StubComparison()
+    html = _render(
+        tool_a_detail=_detail_state(benchmark_comparison_by_window={"12M": comparison}),
+    )
+    assert "Up vs Down Beta" in html
+    assert "Where its gold beta ranks vs the miner universe" in html
+    # both are OUTSIDE any disclosure: everything before the first <details>
+    open_part = html.split("<details", 1)[0]
+    assert "Up vs Down Beta" in open_part
+    assert "Where its gold beta ranks vs the miner universe" in open_part
+
+
+def test_relative_record_states_the_exact_counted_evidence():
+    html = _render()
+    assert "Relative record vs GDX" in html
+    assert "Big down-week hit rate" in html
+    assert "Big up-week hit rate" in html
+    # the SAME evidence wording the cost/downside card uses (one helper)
+    assert "6 large falls in 44 qualifying weak-gold weeks" in html
+    assert "9 large rises in 43 qualifying strong-gold weeks" in html
+    assert "Period 2019-01-04 to 2026-08-07" in html
+    # thresholds come from config, never a hardcoded twin
+    assert "A big down week is a weekly return of -10% or worse" in html
+
+
+def test_relative_record_reports_a_missing_metric_instead_of_inventing_one():
+    frame = _percentile_frame(
+        _pct_row("rel_strength_vs_gdx", raw_value=0.58),
+        _pct_row(
+            "downside_hit_rate",
+            metric_available=False,
+            raw_value=None,
+            metric_reason="fewer than 8 qualifying weeks",
+        ),
+    )
+    html = _render(data=_data(percentiles=frame, research=_full_research()))
+    assert "fewer than 8 qualifying weeks" in html
+    assert "no published row for this metric" in html  # the untouched metrics
+
+
+@pytest.mark.parametrize(
+    "banned",
+    ["Gold Sensitivity Score", "Confidence", "tool_a_rank", "screening verdict", "fundamental check"],
+)
+def test_no_compiled_verdict_survives_anywhere_in_the_section(banned):
+    """Requirements §3: no compiled score/verdict is displayed on this page.
+
+    Asserted over the WHOLE section string, so a value hidden inside a closed
+    disclosure fails just as loudly as one in the open part.
+    """
+    assert banned not in _render()
+
+
+def test_explanation_cards_describe_measured_betas_only():
+    cards = B._build_measured_beta_explanations(
+        tool_a_row=_tool_a_row(),
+        active_window="12M",
+        scoring_config=_app_config().scoring,
+    )
+    assert [title for title, _ in cards] == ["Delta", "Gamma", "Asymmetry", "Volatility"]
+
+
+# ---------------------------------------------------------------------------
+# the Lab disclosure
+# ---------------------------------------------------------------------------
+
+
+class _StubMark:
+    """One resolved universe tick (position is a backend-computed 0..1 fraction)."""
+
+    def __init__(self, ticker: str, beta: float, position: float) -> None:
+        self.ticker = ticker
+        self.beta = beta
+        self.position = position
+
+
+class _StubComparison:
+    """Minimal resolved comparison object (the model layer builds the real one)."""
+
+    available = True
+    window_label = "1Y"
+    down_domain = (0.0, 2.0)
+    up_domain = (0.0, 2.0)
+    down_universe_marks = (
+        _StubMark("AEM", 0.8, 0.4),
+        _StubMark("GOLD", 1.2, 0.6),
+        _StubMark("NEM", 1.64, 0.8),
+    )
+    up_universe_marks = (
+        _StubMark("AEM", 0.7, 0.35),
+        _StubMark("GOLD", 1.1, 0.55),
+        _StubMark("NEM", 1.21, 0.6),
+    )
+    universe_down_n = 61
+    universe_up_n = 61
+    benchmarks = ()
+
+    class _Subject:
+        label = "NEM"
+        up_beta = 1.21
+        down_beta = 1.64
+        up_pos = 0.6
+        down_pos = 0.8
+        up_percentile = 62.0
+        down_percentile = 77.0
+
+    subject = _Subject()
+
+
+def _lab_curve(**overrides) -> LabCurveData:
+    points = [
+        {
+            "date": "2014-06-06",
+            "alpha": 0.02,
+            "alpha_simple": 0.02,
+            "beat": True,
+            "is_scenario": True,
+            "is_anchor": True,
+        },
+        {
+            "date": "2019-03-01",
+            "alpha": 0.05,
+            "alpha_simple": 0.05,
+            "beat": True,
+            "is_scenario": True,
+            "is_anchor": True,
+        },
+        {
+            "date": "2021-07-02",
+            "alpha": -0.04,
+            "alpha_simple": -0.04,
+            "beat": False,
+            "is_scenario": True,
+            "is_anchor": False,
+        },
+        {
+            "date": "2023-11-03",
+            "alpha": 0.01,
+            "alpha_simple": 0.01,
+            "beat": True,
+            "is_scenario": True,
+            "is_anchor": True,
+        },
+    ]
+    profile_points = [
+        {
+            "bucket": bucket,
+            "label": label,
+            "usable": True,
+            "p_beat_raw": 0.55,
+            "p_beat_shrunk": 0.53,
+            "median_alpha": 0.02,
+            "effective_n": 12.0,
+            "wilson_low": 0.41,
+            "wilson_high": 0.69,
+        }
+        for bucket, label in (
+            ("gold_down_big", "Gold down more than 15%"),
+            ("gold_down", "Gold down 5% to 15%"),
+            ("gold_flat", "Gold flat (−5% to +5%)"),
+            ("gold_up", "Gold up 5% to 15%"),
+            ("gold_up_big", "Gold up more than 15%"),
+        )
+    ]
+    kwargs: dict[str, object] = {
+        "available": True,
+        "ticker": "NEM",
+        "benchmark": "GDX",
+        "horizon": 8,
+        "scenario_bucket": "gold_down",
+        "scenario_label": "Gold down 5% to 15%",
+        "points": points,
+        "profile_points": profile_points,
+        "profile_usable_down": 2,
+        "profile_usable_up": 2,
+        "profile_label_status": "UNAVAILABLE",
+        "cell": {
+            "p_beat_gdx": 0.55,
+            "p_beat_gdx_shrunk": 0.53,
+            "median_alpha_gdx": 0.02,
+            "gdx_effective_n": 12.0,
+            "gdx_insufficient_history": False,
+        },
+    }
+    kwargs.update(overrides)
+    return LabCurveData(**kwargs)  # type: ignore[arg-type]
+
+
+def _lab_cells(**overrides) -> LabCellsData:
+    kwargs: dict[str, object] = {
+        "available": True,
+        "horizon": 8,
+        "horizons": [4, 8, 13, 26],
+        "buckets": [("gold_down", "Gold down 5% to 15%")],
+        "selected_bucket": "gold_down",
+        "bucket_availability": {
+            "8": {
+                "gold_down_big": 0,
+                "gold_down": 54,
+                "gold_flat": 61,
+                "gold_up": 58,
+                "gold_up_big": 12,
+            }
+        },
+        "rows": [],
+    }
+    kwargs.update(overrides)
+    return LabCellsData(**kwargs)  # type: ignore[arg-type]
+
+
+@pytest.fixture
+def lab_paths(tmp_path) -> ProjectPaths:
+    data_dir = tmp_path / "data"
+    return ProjectPaths(
+        repo_root=tmp_path,
+        config_dir=tmp_path / "config",
+        data_dir=data_dir,
+        raw_dir=data_dir / "raw",
+        intermediate_dir=data_dir / "intermediate",
+        output_dir=data_dir / "output",
+        manual_dir=data_dir / "manual",
+        runs_dir=data_dir / "runs",
+        reviews_dir=tmp_path / "reviews",
+        tests_dir=tmp_path / "tests",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _drop_lab_cache():
+    B.clear_lab_render_cache()
+    yield
+    B.clear_lab_render_cache()
+
+
+def _stub_lab(monkeypatch, *, cells: LabCellsData, curve: LabCurveData) -> None:
+    monkeypatch.setattr(B, "load_dial_cells", lambda *a, **k: cells)
+    monkeypatch.setattr(B, "load_ticker_curve", lambda *a, **k: curve)
+
+
+def test_lab_disclosure_is_closed_by_default(monkeypatch, lab_paths):
+    _stub_lab(monkeypatch, cells=_lab_cells(), curve=_lab_curve())
+    html = _render(paths=lab_paths)
+    assert "How it behaved in past gold moves" in html
+    marker = '<details class="disclosure lab-history"'
+    assert marker in html
+    assert marker + ">" in html  # no open attribute
+
+
+def test_a_valid_lab_query_reopens_and_anchors_the_disclosure(monkeypatch, lab_paths):
+    _stub_lab(monkeypatch, cells=_lab_cells(), curve=_lab_curve())
+    request = B.parse_lab_request(
+        {"lab_h": ["13"], "lab_b": ["GDXJ"], "lab_s": ["gold_up"]},
+        app_config=_app_config(),
+    )
+    assert request.active is True
+    assert (request.horizon, request.benchmark, request.bucket) == (13, "GDXJ", "gold_up")
+    html = _render(paths=lab_paths, lab_request=request)
+    assert '<details class="disclosure lab-history" open>' in html
+    assert 'id="market-behaviour"' in html
+    assert "#market-behaviour" in html  # the controls submit back to this section
+
+
+def test_lab_defaults_are_config_driven_and_eight_weeks_is_marked_default(
+    monkeypatch, lab_paths
+):
+    _stub_lab(monkeypatch, cells=_lab_cells(), curve=_lab_curve())
+    config = _app_config()
+    assert config.ticker_page.lab.default_horizon_weeks == 8
+    request = B.parse_lab_request(None, app_config=config)
+    assert (request.horizon, request.benchmark, request.bucket, request.active) == (
+        8,
+        "GDX",
+        "gold_down",
+        False,
+    )
+    html = _render(paths=lab_paths, app_config=config)
+    for weeks in (4, 8, 13, 26):
+        assert f"lab_h={weeks}" in html
+        assert f">{weeks}w" in html
+    assert '>8w <span class="hint">default</span></a>' in html
+    for param in ("lab_b=GDX", "lab_s=gold_down"):
+        assert param in html
+
+
+def test_an_invalid_lab_param_defaults_with_a_visible_note(monkeypatch, lab_paths):
+    _stub_lab(monkeypatch, cells=_lab_cells(), curve=_lab_curve())
+    request = B.parse_lab_request({"lab_h": ["7"]}, app_config=_app_config())
+    assert request.horizon == 8
+    assert request.active is True  # the user asked for the Lab; keep it open and explain
+    assert "look-ahead 7 is not one of 4w, 8w, 13w, 26w" in request.note
+    html = _render(paths=lab_paths, lab_request=request)
+    assert "look-ahead 7 is not one of 4w, 8w, 13w, 26w" in html
+
+
+def test_lab_charts_carry_their_own_period_labels_and_the_survivor_caveat(
+    monkeypatch, lab_paths
+):
+    _stub_lab(monkeypatch, cells=_lab_cells(), curve=_lab_curve())
+    config = _app_config()
+    html = _render(paths=lab_paths, app_config=config)
+    year = config.ticker_page.lab.scatter_from_year
+    assert f"Episodes since {year}" in html
+    assert "Beat-rate: full published history" in html
+    assert "published 95% interval" in html
+    assert "Survivor-only history" in html
+
+
+def test_lab_scatter_is_trimmed_to_the_configured_year(monkeypatch, lab_paths):
+    """Q44: the episode charts start at the configured year, not at 2014."""
+    curve = _lab_curve()
+    _stub_lab(monkeypatch, cells=_lab_cells(), curve=curve)
+    html = _render(paths=lab_paths)
+    assert "2014-06-06" not in html  # trimmed away
+    assert "2019-03-01" in html  # kept
+
+
+def test_an_empty_bucket_renders_its_reason_not_a_guessed_chart(monkeypatch, lab_paths):
+    _stub_lab(monkeypatch, cells=_lab_cells(), curve=_lab_curve())
+    request = B.parse_lab_request({"lab_s": ["gold_down_big"]}, app_config=_app_config())
+    html = _render(paths=lab_paths, lab_request=request)
+    assert "No countable history for “Gold down more than 15%” at 8 weeks" in html
+    assert "0 miners with enough independent weeks" in html
+    assert "Spread of outcomes" not in html
+
+
+def test_an_unavailable_lab_artifact_states_the_reason_once(monkeypatch, lab_paths):
+    _stub_lab(
+        monkeypatch,
+        cells=_lab_cells(available=False, error_status="CELLS_CORRUPT"),
+        curve=_lab_curve(),
+    )
+    html = _render(paths=lab_paths)
+    assert "Lab scenario-cells artifact is corrupt" in html
+    assert "python -m golden_vector.lab.conditional_dial" in html
+
+
+def test_the_lab_never_embeds_raw_episode_rows(monkeypatch, lab_paths):
+    """Plan §12 rule 1: Lab charts are server-side SVG only."""
+    _stub_lab(monkeypatch, cells=_lab_cells(), curve=_lab_curve())
+    html = _render(paths=lab_paths)
+    assert "application/json" not in html
+    assert "<script" not in html
+
+
+def test_the_lab_render_cache_is_bounded_and_invalidates_on_a_rebuild(
+    monkeypatch, lab_paths
+):
+    calls: list[int] = []
+
+    def _counting_cells(*_args, **_kwargs):
+        calls.append(1)
+        return _lab_cells()
+
+    monkeypatch.setattr(B, "load_dial_cells", _counting_cells)
+    monkeypatch.setattr(B, "load_ticker_curve", lambda *a, **k: _lab_curve())
+    monkeypatch.setattr(B, "lab_artifact_pointer", lambda _paths: (111, 222))
+    request = B.parse_lab_request(None, app_config=_app_config())
+    for _ in range(3):
+        B.render_lab_history(lab_paths, ticker="NEM", request=request, app_config=_app_config())
+    assert len(calls) == 1  # memoized
+
+    # A Lab REBUILD moves the artifact pointer, which must invalidate.
+    monkeypatch.setattr(B, "lab_artifact_pointer", lambda _paths: (999, 222))
+    B.render_lab_history(lab_paths, ticker="NEM", request=request, app_config=_app_config())
+    assert len(calls) == 2
+
+    # Bounded: 40 combinations cannot grow the cache past its cap.
+    for horizon in (4, 8, 13, 26):
+        for benchmark in ("GDX", "GDXJ"):
+            for bucket in (
+                "gold_down_big",
+                "gold_down",
+                "gold_flat",
+                "gold_up",
+                "gold_up_big",
+            ):
+                B.render_lab_history(
+                    lab_paths,
+                    ticker="NEM",
+                    request=B.LabRequest(
+                        horizon=horizon, benchmark=benchmark, bucket=bucket
+                    ),
+                    app_config=_app_config(),
+                )
+    assert len(B._LAB_CACHE) <= B._LAB_CACHE_MAX == 32
+
+
+# ---------------------------------------------------------------------------
+# Full research detail — research-series consumption
+# ---------------------------------------------------------------------------
+
+
+def test_weekly_scatter_and_ladder_render_from_the_research_series():
+    html = _render()
+    assert "Weekly return scatter" in html
+    assert "3 weekly observations · 2026-07-31 to 2026-08-14" in html
+    assert "Exploratory horizon ladder" in html
+    assert "only 34 of 52 weeks present" in html  # the ladder's coverage reason
+    assert "PARTIAL" in html
+
+
+def test_a_degraded_research_kind_renders_its_persisted_reason():
+    frame = _research_frame(
+        {
+            "ticker": "NEM",
+            "kind": "weekly",
+            "kind_status": "MISSING",
+            "kind_reason": "fewer than 12 clean weekly observations",
+        },
+        *(_window_fit_row(window) for window in _WINDOWS),
+    )
+    html = _render(data=_data(percentiles=_full_percentiles(), research=frame))
+    assert "fewer than 12 clean weekly observations" in html
+    assert "The published weekly return series is MISSING" in html
+    # the marker row is never drawn as an observation
+    assert "weekly observations ·" not in html
+
+
+def test_structural_window_table_shows_betas_and_drops_the_score_inputs():
+    html = B.render_structural_window_table(
+        _research_frame(*(_window_fit_row(window) for window in _WINDOWS)),
+        active_window="12M",
+        canonical_anchor="12M",
+    )
+    assert "Fitted betas by window" in html
+    for header in ("Up beta", "Down beta", "R^2", "Weeks", "Status"):
+        assert header in html
+    for dropped in ("Delta", "Gamma", "Asymmetry", "Score", "Confidence"):
+        assert f">{dropped}<" not in html
+    assert "1.21" in html and "1.64" in html and "ELIGIBLE" in html
+    assert "(Anchor, Active)" in html
+
+
+# ---------------------------------------------------------------------------
+# volatility: published only, never recomputed
+# ---------------------------------------------------------------------------
+
+
+def test_volatility_renders_the_published_fields_on_the_canonical_window():
+    html = B.render_volatility_panel(_tool_a_row(), active_window="12M")
+    assert "41.2%" in html and "28.7%" in html and "33.1%" in html
+    assert "HIGH_NOISE" in html
+    assert "Published 52-week values for the canonical window." in html
+
+
+def test_volatility_is_never_estimated_for_a_non_canonical_window():
+    html = B.render_volatility_panel(_tool_a_row(), active_window="3Y")
+    assert "Volatility diagnostics are published for the canonical window only." in html
+    assert "41.2%" not in html  # the canonical number is not shown under another name
+
+
+def test_volatility_is_suppressed_when_the_window_is_not_eligible():
+    row = _tool_a_row(window_status_3y="LOW_OBSERVATION")
+    html = B.render_volatility_panel(row, active_window="3Y")
+    assert "is not eligible for this ticker" in html
+    assert "LOW_OBSERVATION" in html
+
+
+def test_no_serve_module_fits_a_regression_in_the_request_path():
+    """The sanctioned ``np.polyfit`` exception was DELETED with the recompute."""
+    for module in sorted(Path("golden_vector/serve").rglob("*.py")):
+        source = module.read_text(encoding="utf-8")
+        assert "polyfit" not in source, module

@@ -245,6 +245,32 @@ def render_currency_attribution_block(
 # Cost position and downside record card (Feature B UI)
 # ---------------------------------------------------------------------------
 
+def format_hit_evidence(row: pd.Series, *, hit_noun: str, window_noun: str) -> str:
+    """The ONE evidence sentence for every counted-hit metric on this page.
+
+    "N large falls in M qualifying weak-gold weeks" — the persisted counts read
+    verbatim, never a rate re-expressed as a count. Both the cost/downside card
+    and the Market-behaviour relative record render through this, so the two can
+    never word the same evidence differently.
+    """
+
+    hits = row.get("hit_count")
+    count = row.get("eligible_observation_count")
+    return (
+        f"{'' if hits is None or pd.isna(hits) else int(hits)} {hit_noun} in "
+        f"{'' if count is None or pd.isna(count) else int(count)} {window_noun}"
+    )
+
+
+def format_evidence_period(row: pd.Series) -> str:
+    """"Period <start> to <end>" from the persisted evidence window."""
+
+    return (
+        f"Period {_fmt_date(row.get('source_period_start'))} to "
+        f"{_fmt_date(row.get('source_period_end'))}"
+    )
+
+
 _DOWNSIDE_CAVEAT = (
     "Current reported AISC is compared with historical share-price behavior in "
     "today's surviving eligible universe. The association does not establish "
@@ -312,13 +338,12 @@ def render_cost_downside_card(
     # -- historical large-fall record -----------------------------------------
     if downside_row is not None and bool(downside_row.get("metric_available")):
         rate = downside_row.get("raw_value")
-        hits = downside_row.get("hit_count")
-        count = downside_row.get("eligible_observation_count")
         period_start = downside_row.get("source_period_start")
         period_end = downside_row.get("source_period_end")
-        evidence = (
-            f"{'' if hits is None or pd.isna(hits) else int(hits)} large falls in "
-            f"{'' if count is None or pd.isna(count) else int(count)} qualifying weak-gold weeks"
+        evidence = format_hit_evidence(
+            downside_row,
+            hit_noun="large falls",
+            window_noun="qualifying weak-gold weeks",
         )
         low_good_pct = downside_row.get("pct_low_good")
         standing = (

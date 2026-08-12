@@ -43,7 +43,7 @@ from golden_vector.serve.detail_panels import (
     _resolve_active_window,
 )
 from golden_vector.serve.detail_forms import COMPANY_FORM_FIELDS
-from golden_vector.serve.ticker_page import load_ticker_page_data
+from golden_vector.serve.ticker_page import load_ticker_page_data, parse_lab_request
 from golden_vector.serve.detail_page import (
     DETAIL_DEFAULT_LENS_ID,
     DETAIL_OPTION_TRADING_LENS_ID,
@@ -603,6 +603,8 @@ def create_workspace_app(
                             canonical_anchor=canonical_anchor,
                             lens=detail_lens,
                             ticker_page_data=ticker_page_data,
+                            paths=paths,
+                            lab_request=parse_lab_request(query, app_config=app_config),
                             chart_horizon=_resolve_chart_horizon(
                                 query.get("chart_h", [""])[0], app_config
                             ),
@@ -702,6 +704,10 @@ def create_workspace_app(
                                 # their nav entries) silently vanished behind
                                 # the error, which reads as data loss.
                                 ticker_page_data=load_ticker_page_data(paths),
+                                paths=paths,
+                                lab_request=parse_lab_request(
+                                    merged_query, app_config=app_config
+                                ),
                                 chart_horizon=_resolve_chart_horizon(
                                     (merged_query.get("chart_h") or [""])[0], app_config
                                 ),

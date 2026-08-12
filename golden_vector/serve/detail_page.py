@@ -14,24 +14,24 @@ from golden_vector.serve.detail_forms import (
     _render_reporting_form,
     _render_verification_section,
 )
+from golden_vector.app.paths import ProjectPaths
 from golden_vector.serve.detail_panels import (
     _detail_alignment,
     _render_financials_source_switcher,
-    _render_latest_panels,
     _render_option_trading_link_panel,
     _render_option_trading_panel,
-    _render_window_switcher,
 )
 from golden_vector.serve.format_helpers import _frame_index_by_ticker, _ticker_rows
 from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.ui.components import page_header, section_nav
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ticker_page import (
+    LabRequest,
     TickerPageData,
     render_corporate_finance_section,
-    render_cost_downside_card,
     render_currency_attribution_block,
     render_gold_dial_control,
+    render_market_behaviour_section,
     render_performance_section,
 )
 from golden_vector.serve.url_helpers import build_page_url
@@ -98,6 +98,8 @@ def render_detail_page(
     ticker_page_data: TickerPageData | None = None,
     chart_horizon: str = "1Y",
     chart_view: str = "rebased",
+    paths: ProjectPaths | None = None,
+    lab_request: LabRequest | None = None,
 ) -> str:
     company_row = _frame_index_by_ticker(state.company_inputs).get(ticker, {})
     reporting_row = _frame_index_by_ticker(state.reporting_calendar).get(ticker, {})
@@ -160,25 +162,11 @@ def render_detail_page(
     # The gold dial, the financials-source switcher (moved here out of the old
     # corporate snapshot panel) and the structural-window tabs are one control
     # region at the top of the page.
+    # The beta-window switcher is NOT here any more: the beta window is a
+    # market-behaviour concept, independent of the performance chart's horizon
+    # (requirements §3), so it renders in that section's header instead.
     controls: list[str] = []
     if show_workspace_panels:
-        controls.append(
-            _render_window_switcher(
-                ticker=ticker,
-                active=active_window,
-                canonical=canonical_anchor,
-                lens=DETAIL_OPTION_TRADING_LENS_ID if option_lens_active else None,
-                anchor="option-trading" if option_lens_active else None,
-                sizing_request=(
-                    option_trading_detail.sizing.request
-                    if option_lens_active
-                    and option_trading_detail is not None
-                    and option_trading_detail.sizing is not None
-                    else None
-                ),
-                financials_source=financials_source,
-            )
-        )
         controls.append(
             _render_financials_source_switcher(
                 ticker=ticker,
@@ -271,37 +259,30 @@ def render_detail_page(
 
     # --- 3. Market behaviour ----------------------------------------------
     if show_workspace_panels:
-        behaviour: list[str] = [
-            _render_latest_panels(
+        body.append(
+            render_market_behaviour_section(
                 ticker=ticker,
                 tool_a_row=tool_a_row,
                 tool_a_detail=tool_a_detail,
                 alignment=alignment,
                 active_window=active_window,
+                canonical_anchor=canonical_anchor,
+                data=ticker_page_data,
+                finance_source=financials_source,
                 app_config=app_config,
+                paths=paths,
+                lab_request=lab_request,
+                query_params=current_query,
+                option_lens_active=option_lens_active,
+                sizing_request=(
+                    option_trading_detail.sizing.request
+                    if option_lens_active
+                    and option_trading_detail is not None
+                    and option_trading_detail.sizing is not None
+                    else None
+                ),
             )
-        ]
-        if ticker_page_data is not None:
-            behaviour.append(
-                render_cost_downside_card(
-                    ticker=ticker,
-                    aisc_row=ticker_page_data.metric_row(
-                        ticker, metric_key="aisc", finance_source=financials_source
-                    ),
-                    downside_row=ticker_page_data.metric_row(
-                        ticker,
-                        metric_key="downside_hit_rate",
-                        finance_source=financials_source,
-                    ),
-                    aisc_peers=ticker_page_data.metric_peers(
-                        metric_key="aisc", finance_source=financials_source
-                    ),
-                    downside_peers=ticker_page_data.metric_peers(
-                        metric_key="downside_hit_rate", finance_source=financials_source
-                    ),
-                )
-            )
-        body.append("<div id=\"market-behaviour\">" + "".join(behaviour) + "</div>")
+        )
 
     # --- 4. Options --------------------------------------------------------
     if options_html:

@@ -1542,6 +1542,147 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "an ordinary weekly price return of −10% or worse."
         ),
     ),
+    # --- ticker page: market behaviour (M3c) --------------------------------
+    "ticker_behaviour_section": ColumnHelp(
+        meaning=(
+            "How this share has actually moved with gold: betas measured on weekly "
+            "returns, its counted record against the gold-miner ETFs, and the history "
+            "behind the disclosures."
+        ),
+        calculation=(
+            "Every number is read from a published artifact. Nothing on this page is a "
+            "compiled score or a verdict — the composites stay on the ranking pages."
+        ),
+    ),
+    "ticker_up_down_beta": ColumnHelp(
+        meaning=(
+            "Gold beta measured separately on the weeks gold ROSE and the weeks gold "
+            "FELL, over the beta window selected at the top of this section."
+        ),
+        calculation=(
+            "Two regressions of the share's weekly log return on gold's, one per regime, "
+            "over the selected window. Published per window; never re-fitted here."
+        ),
+        direction=(
+            "A taller down bar than up bar means it falls more with gold than it rises — "
+            "an asymmetric, fragile profile. Either beta can be negative."
+        ),
+    ),
+    "ticker_beta_percentile_rug": ColumnHelp(
+        meaning=(
+            "Where this share's up and down gold beta sit inside the whole scored miner "
+            "universe, on the same selected beta window."
+        ),
+        calculation=(
+            "Each light tick is one scored miner's published beta for that window; the "
+            "marked position is this share's. Positions are resolved in the model layer."
+        ),
+        direction=(
+            "A higher down-beta percentile means it falls MORE with gold than most "
+            "miners; a higher up-beta percentile means it rises more."
+        ),
+    ),
+    "ticker_relative_record": ColumnHelp(
+        meaning=(
+            "The counted record against GDX: how often this share was stronger or "
+            "weaker, how often the big weekly moves landed, and what the tails averaged."
+        ),
+        calculation=(
+            "Shares of qualifying weeks over the Tool C window, each published with its "
+            "own hit count and observation count. No ranking, no composite."
+        ),
+    ),
+    "ticker_rel_strength_vs_gdx": ColumnHelp(
+        meaning="Share of weeks this stock outperformed GDX over the Tool C window.",
+        calculation="Weeks outperforming GDX ÷ eligible weeks in the window.",
+        direction="Higher is stronger relative performance.",
+    ),
+    "ticker_rel_weakness_vs_gdx": ColumnHelp(
+        meaning="Share of weeks this stock underperformed GDX over the Tool C window.",
+        calculation="Weeks underperforming GDX ÷ eligible weeks in the window.",
+        direction="Lower is better — it lagged the ETF less often.",
+    ),
+    "ticker_upside_hit_rate": ColumnHelp(
+        meaning=(
+            "How often this share posted a big UP week during qualifying strong-gold "
+            "weeks."
+        ),
+        calculation="Hits ÷ qualifying weeks, with both counts shown as the evidence.",
+        thresholds=lambda config: (
+            f"A big up week is a weekly return of "
+            f"{config.tool_c.upside_hit_rate_threshold_pct:+.0f}% or better."
+        ),
+        direction="Higher means it captured more of gold's strong weeks.",
+    ),
+    "ticker_downside_hit_rate": ColumnHelp(
+        meaning=(
+            "How often this share posted a big DOWN week during qualifying weak-gold "
+            "weeks."
+        ),
+        calculation="Hits ÷ qualifying weeks, with both counts shown as the evidence.",
+        thresholds=lambda config: (
+            f"A big down week is a weekly return of "
+            f"{config.tool_c.downside_hit_rate_threshold_pct:.0f}% or worse."
+        ),
+        direction="Lower is better — fewer violent falls in weak-gold weeks.",
+    ),
+    "ticker_tail_best10": ColumnHelp(
+        meaning="The average weekly return across this share's best 10% of weeks.",
+        calculation="Mean of the top decile of weekly returns over the Tool C window.",
+        direction="Higher means a fatter upside tail.",
+    ),
+    "ticker_tail_worst10": ColumnHelp(
+        meaning="The average weekly return across this share's worst 10% of weeks.",
+        calculation="Mean of the bottom decile of weekly returns over the Tool C window.",
+        direction="Closer to zero is better — a shallower downside tail.",
+    ),
+    "ticker_lab_history": ColumnHelp(
+        meaning=(
+            "Counted history: in past gold moves of the size you pick, how often did "
+            "this share beat the ETF over the following weeks, and by how much?"
+        ),
+        calculation=(
+            "Every scenario week is grouped by what gold WENT ON to do, then the share's "
+            "forward return over the look-ahead is compared with the benchmark's. The "
+            "grouping is hindsight, not a signal that was available on the date."
+        ),
+        details=(
+            "Survivor-only: delisted miners are absent, so real beat-rates were probably "
+            "lower. Overlapping look-ahead windows mean the effective (independent) "
+            "sample is much smaller than the number of dots. Exploratory — not a forecast."
+        ),
+    ),
+    "ticker_weekly_scatter": ColumnHelp(
+        meaning=(
+            "Every published weekly observation: gold's return on the x axis, this "
+            "share's on the y axis."
+        ),
+        calculation=(
+            "Read from the published weekly research series. No line is fitted in the "
+            "page — the measured betas per window are in the table above the chart."
+        ),
+    ),
+    "ticker_volatility_diagnostics": ColumnHelp(
+        meaning=(
+            "How volatile this share has been in total, after removing the part gold "
+            "explains (residual), and on down weeks only (downside)."
+        ),
+        calculation=(
+            "Annualized from weekly log returns and published for ONE canonical window "
+            "per ticker. Other windows are never estimated in the page."
+        ),
+        direction="Lower residual volatility means gold explains more of the movement.",
+    ),
+    "ticker_research_detail": ColumnHelp(
+        meaning=(
+            "The raw research behind the charts above: the per-window fits, the weekly "
+            "scatter, volatility diagnostics and the exploratory horizon ladder."
+        ),
+        calculation=(
+            "All published artifact rows, shown unrounded and unblended. It is closed by "
+            "default because it is reference material, not the headline read."
+        ),
+    ),
     "tool_d_quality_rank": ColumnHelp(
         meaning="A 0–100 resilience score — where this miner sits across the universe on the four resilience components (survival, cost, fragility, balance sheet).",
         calculation="Percentile rank of the average of the four resilience components, ×100. Only fully-scored, data-OK names are scored.",
