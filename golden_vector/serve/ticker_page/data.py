@@ -8,6 +8,8 @@ rows for one ticker — never computes, never coalesces.
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 
 import pandas as pd
@@ -128,14 +130,48 @@ class TickerPageData:
         ]
 
 
+#: Bounded generation cache (plan §5.4, Codex 2026-08-12 P2). The five loaders
+#: are manifest-first: everything they read is resolved through the model-state
+#: pointer, so an unchanged pointer stat means an unchanged generation. Alias
+#: refreshes without a pointer publish deliberately do NOT serve (standalone
+#: runs are non-authoritative), so the pointer stat is the complete identity.
+#: Two entries give hysteresis across a publish flip; the lock is cheap on the
+#: single-threaded local server and correct if that ever changes.
+_DATA_CACHE: OrderedDict[tuple[object, ...], TickerPageData] = OrderedDict()
+_DATA_CACHE_MAX = 2
+_DATA_CACHE_LOCK = threading.Lock()
+
+
+def _generation_key(paths: ProjectPaths) -> tuple[object, ...]:
+    pointer = paths.latest_model_state_manifest_path
+    try:
+        stat = pointer.stat()
+    except OSError:
+        # No manifest yet (or unreadable): key on absence so the first publish
+        # invalidates. The loaders themselves report the honest pending state.
+        return (str(pointer), None)
+    return (str(pointer), stat.st_mtime_ns, stat.st_size)
+
+
 def load_ticker_page_data(paths: ProjectPaths) -> TickerPageData:
-    return TickerPageData(
+    key = _generation_key(paths)
+    with _DATA_CACHE_LOCK:
+        cached = _DATA_CACHE.get(key)
+        if cached is not None:
+            _DATA_CACHE.move_to_end(key)
+            return cached
+    loaded = TickerPageData(
         gold_response=load_gold_response(paths),
         percentiles=load_score_percentiles(paths),
         performance=load_performance_series(paths),
         research_series=load_research_series(paths),
         fx_attribution=load_fx_attribution(paths),
     )
+    with _DATA_CACHE_LOCK:
+        _DATA_CACHE[key] = loaded
+        while len(_DATA_CACHE) > _DATA_CACHE_MAX:
+            _DATA_CACHE.popitem(last=False)
+    return loaded
 
 
 def _ticker_rows(frame: pd.DataFrame, ticker: str) -> pd.DataFrame:
