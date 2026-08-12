@@ -616,6 +616,10 @@ def _build_multiline_overlay_svg(
         "top": round(padding_top, 1),
         "bottom": round(height - padding_bottom, 1),
         "base": anchor,
+        # Mirrors table_shows_value: a pre-formatted label ("USD 51.00") IS the
+        # whole value, so the crosshair prints it alone; indexed keeps
+        # "level (percent)". One flag so tooltip and table can never disagree.
+        "labelOnly": not display.table_shows_value,
         "ticks": sorted(tick_x_by_date.items()),
         "series": [
             {

@@ -105,6 +105,8 @@ def test_overlay_embed_pins_the_coordinate_mapping():
     # ships a misaligned crosshair). Fixture spans values 100..130 with base 100.
     payload = _overlay_payload(_build_multiline_overlay_svg(series_by_label=_full_series()))
     assert payload["base"] == 100.0
+    # indexed keeps the two-number tooltip: raw level + the percent label
+    assert payload["labelOnly"] is False
     # First date sits at the left padding (x=48); the last at width-padding_right (720-24=696).
     assert payload["ticks"][0] == ["2024-01-05", 48.0]
     assert payload["ticks"][-1] == ["2024-02-09", 696.0]
@@ -245,11 +247,26 @@ svg.setAttribute("data-overlay", JSON.stringify({
   }]
 }));
 
+// A labelOnly chart (price/count modes): the server pre-formats the WHOLE value,
+// so the tooltip must print the label alone — never "51.0 (USD 51.00)".
+const svg2 = new Element("svg");
+svg2.setAttribute("data-overlay", JSON.stringify({
+  top: 20,
+  bottom: 212,
+  labelOnly: true,
+  ticks: [["2024-01-02", 696]],
+  series: [{
+    label: "NEM",
+    series: "stock",
+    byDate: { "2024-01-02": [88, 51.0, "USD 51.00"] }
+  }]
+}));
+
 const document = {
   readyState: "complete",
   body: new Element("body"),
   listeners: {},
-  querySelectorAll(selector) { return selector === "svg.overlay-chart" ? [svg] : []; },
+  querySelectorAll(selector) { return selector === "svg.overlay-chart" ? [svg, svg2] : []; },
   createElement(tag) {
     const el = new Element(tag);
     if (tag === "div") el.rect = { left: 0, top: 0, width: 80, height: 30 };
@@ -291,6 +308,14 @@ assert.notEqual(tip.style.left, firstLeft);
 
 window.listeners.blur();
 assert.equal(tip.hidden, true);
+
+// The labelOnly chart re-opens the tooltip and prints the pre-formatted value
+// alone; the indexed chart above already proved the "level (percent)" form.
+svg2.listeners.pointermove({ clientX: 196, clientY: 95 });
+assert.equal(tip.hidden, false);
+assert.ok(tip.innerHTML.includes("NEM: USD 51.00"));
+assert.ok(!tip.innerHTML.includes("51.0 ("));
+assert.ok(!tip.innerHTML.includes("("));
 """
     result = subprocess.run(
         ["node", "-e", script],
@@ -322,6 +347,9 @@ def test_price_mode_labels_axis_crosshair_and_table_in_the_callers_currency():
     axis = _axis_labels(html)
     assert "USD 6.20" in axis and "USD 7.00" in axis
     payload = _overlay_payload(html)
+    # the tooltip prints the pre-formatted label ALONE in this mode (one flag
+    # shared with the table logic, proven at runtime by the node test above)
+    assert payload["labelOnly"] is True
     stock = payload["series"][0]["byDate"]
     assert stock["2024-01-05"] == [pytest.approx(196.0, abs=40.0), 6.1, "USD 6.10"]
     assert stock["2024-02-09"][2] == "USD 7.05"
