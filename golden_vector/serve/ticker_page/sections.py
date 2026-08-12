@@ -7,6 +7,7 @@ no arithmetic, no fallback resolution, no eligibility decisions.
 
 from __future__ import annotations
 
+import re
 from html import escape
 from typing import Any
 
@@ -60,6 +61,32 @@ def _fmt_share(value: Any) -> str:
 _SERIES_LABELS = {"stock": "Stock", "gold": "Gold", "gdx": "GDX", "gdxj": "GDXJ"}
 _SERIES_KEYS = {label: key for key, label in _SERIES_LABELS.items()}
 
+#: A currency basis is an ISO-4217 code. Anything else (blank, "INDEX_100", a
+#: sentence) is NOT a currency and must not be printed as one.
+_CURRENCY_CODE = re.compile(r"[A-Z]{3}")
+
+
+def _price_currency(rows: pd.DataFrame) -> str | None:
+    """The currency the drawn price rows explicitly declare, or ``None``.
+
+    Read 1:1 from the artifact's ``currency_basis`` column — never inferred from
+    the ticker, the exchange or the price magnitude. Disagreeing or unusable
+    values return ``None`` so the caller can disclose a degraded state instead of
+    labelling a chart with a currency the data never claimed.
+    """
+
+    if "currency_basis" not in rows.columns:
+        return None
+    declared = {
+        text
+        for text in (str(value).strip() for value in rows["currency_basis"].dropna())
+        if text
+    }
+    if len(declared) != 1:
+        return None
+    code = declared.pop()
+    return code if _CURRENCY_CODE.fullmatch(code) else None
+
 
 def render_performance_section(
     performance_rows: pd.DataFrame,
@@ -72,8 +99,9 @@ def render_performance_section(
 ) -> str:
     """The performance chart from the v2 artifact — actual dates, one shared
 
-    anchor, series markers for omitted/missing lines. ``view`` is
-    ``rebased`` (Compare, indexed to 100) or ``price`` (the stock alone, USD).
+    anchor, series markers for omitted/missing lines. ``view`` is ``rebased``
+    (Compare, indexed to 100) or ``price`` (the stock alone at persisted price
+    levels, in the currency the artifact's ``currency_basis`` declares).
 
     The chart carries the same accessible ``<details>`` data-table twin as every
     other chart on the page: one row per drawn date, built by the shared overlay
@@ -108,11 +136,13 @@ def render_performance_section(
         )
 
     horizon_rows = performance_rows.loc[performance_rows["horizon"].eq(horizon)]
-    ok_rows = horizon_rows.loc[
-        horizon_rows["series_status"].eq("OK") & horizon_rows["view"].eq(view)
-    ]
+    view_rows = horizon_rows.loc[horizon_rows["view"].eq(view)]
     if view == "price":
-        ok_rows = ok_rows.loc[ok_rows["series"].eq("stock")]
+        # Share price is deliberately stock-only. Apply that same boundary to
+        # its status and trim notices so unavailable Compare benchmarks do not
+        # appear below a chart in which they could never be drawn.
+        view_rows = view_rows.loc[view_rows["series"].eq("stock")]
+    ok_rows = view_rows.loc[view_rows["series_status"].eq("OK")]
 
     series_by_label: dict[str, tuple[list[pd.Timestamp], list[float | None]]] = {}
     for series_name, group in ok_rows.groupby("series"):
@@ -123,9 +153,7 @@ def render_performance_section(
             [None if pd.isna(value) else float(value) for value in ordered["value"]],
         )
 
-    marker_rows = horizon_rows.loc[
-        ~horizon_rows["series_status"].isin(["OK"]) & horizon_rows["view"].eq(view)
-    ]
+    marker_rows = view_rows.loc[~view_rows["series_status"].isin(["OK"])]
     notices = [
         (
             f'<p class="hint">{escape(_SERIES_LABELS.get(str(row["series"]), str(row["series"]).upper()))}: '
@@ -148,24 +176,44 @@ def render_performance_section(
             basis_bits.append(f"basis: {escape(str(price_basis))}")
     trim_notes = {
         str(reason)
-        for reason in horizon_rows["trim_reason"].dropna().unique()
+        for reason in view_rows["trim_reason"].dropna().unique()
         if str(reason).strip()
     }
 
-    chart_html = (
-        _build_multiline_overlay_svg(
+    # The share-price view draws currency levels, so it is rendered in the chart's
+    # price mode with the currency the artifact declares. Without an explicit
+    # currency basis the chart is withheld rather than labelled with a guess.
+    currency = _price_currency(ok_rows) if view == "price" else None
+    if series_by_label and view == "price" and currency is None:
+        chart_html = notice(
+            "degraded",
+            "<p>The performance artifact does not state a currency basis for the "
+            "share-price view, so the price chart is not drawn. Nothing is assumed "
+            "about the currency. The Compare view is unaffected.</p>",
+        )
+    elif series_by_label:
+        chart_html = _build_multiline_overlay_svg(
             series_by_label=series_by_label,
             series_keys=_SERIES_KEYS,
             data_table_id=(
                 f"chart-data-performance-{id_token(ticker)}-"
                 f"{id_token(horizon)}-{id_token(view)}"
             ),
+            mode="price" if view == "price" else "indexed",
+            unit=currency,
         )
-        if series_by_label
-        else '<p class="hint">No drawable series in this window.</p>'
-    )
+    else:
+        chart_html = '<p class="hint">No drawable series in this window.</p>'
 
-    view_label = "Compare (indexed to 100)" if view == "rebased" else "Share price (USD)"
+    if view == "rebased":
+        view_label = "Compare (indexed to 100)"
+    elif currency:
+        view_label = f"Share price ({currency})"
+    elif series_by_label:
+        # There IS a line to draw, but no stated currency to label it with.
+        view_label = "Share price (currency basis unavailable)"
+    else:
+        view_label = "Share price"
     return (
         f'<section class="panel" id="performance"><h2>Performance — {escape(ticker)}'
         + help_icon(

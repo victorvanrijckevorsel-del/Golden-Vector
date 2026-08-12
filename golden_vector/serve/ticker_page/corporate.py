@@ -23,13 +23,15 @@ The failing-checks notice deliberately does NOT react to the dial (D-4).
 
 from __future__ import annotations
 
+from decimal import Decimal
 from html import escape
 from typing import Any, Mapping
 
 import pandas as pd
 
+from golden_vector.common.numeric import align_to_step, optional_finite_float
 from golden_vector.common.strings import clean_string
-from golden_vector.contracts.config_models import AppConfig
+from golden_vector.contracts.config_models import AppConfig, TickerPageDialConfig
 from golden_vector.contracts.ticker_page import (
     GOLD_RESPONSE_CONSTANT_COLUMNS,
     GOLD_RESPONSE_LINE_METRICS,
@@ -44,6 +46,10 @@ from golden_vector.serve.ui.tables import table_region
 
 #: The one payload id shared by the server (embed) and gold-dial.js (read).
 GOLD_DIAL_PAYLOAD_ID = "gold-dial-payload"
+
+NON_FINITE_SPOT_REASON = (
+    "no finite spot gold price is published for this ticker and source"
+)
 
 #: Exact reason the resilience group carries in Yahoo mode (plan §3.2/P6). The
 #: persisted Tool D artifact is Our-View; mixing sources would be a lie.
@@ -255,6 +261,15 @@ def _value(row: Any, column: str) -> float | None:
         return None
 
 
+def _spot_value(row: Any) -> float | None:
+    """Resolve the dial spot once so state, markup, and JSON always agree."""
+
+    if row is None:
+        return None
+    raw = row.get("spot_gold_usd") if hasattr(row, "get") else None
+    return optional_finite_float(raw)
+
+
 def _text(row: Any, column: str) -> str:
     if row is None:
         return ""
@@ -339,9 +354,17 @@ def _cell(row: Any, column: str, unit: str) -> str:
 
 
 def _dial_state(
-    gold_row: pd.Series | None, artifact_status: str, artifact_reason: str | None
+    gold_row: pd.Series | None,
+    artifact_status: str,
+    artifact_reason: str | None,
 ) -> tuple[bool, str]:
-    """(enabled, reason) — the ONE place the dial's availability is decided."""
+    """(enabled, reason) — ARTIFACT availability, and nothing else.
+
+    "Enabled" answers one question only: did the producer publish a usable
+    gold-response row for this ticker and source? It never reacts to the
+    configured slider range, because the persisted lines are just as valid at a
+    price the control cannot reach — see ``_dial_and_scenario_state``.
+    """
 
     if artifact_status != "OK":
         return False, str(artifact_reason or f"gold-response artifact state {artifact_status}")
@@ -353,6 +376,58 @@ def _dial_state(
     return True, ""
 
 
+def _dial_and_scenario_state(
+    gold_row: pd.Series | None,
+    artifact_status: str,
+    artifact_reason: str | None,
+    *,
+    spot: float | None,
+    dial_cfg: TickerPageDialConfig | None,
+) -> tuple[bool, str, bool, str]:
+    """(enabled, reason, scenario_enabled, scenario_reason) — the ONE decision.
+
+    Two DIFFERENT questions, deliberately kept apart (plan §4.3 State A):
+
+    ``enabled`` / ``reason``
+        Is there a published gold-response row at all? When this is False the
+        line metrics cannot be evaluated at any price, so the client replaces
+        their no-JavaScript fallback with the reason.
+    ``scenario_enabled`` / ``scenario_reason``
+        Can the dial express a *scenario*? False whenever the artifact is
+        unavailable (same reason), and also False when the artifact is fine but
+        the true spot sits outside the configured ``[min, max]`` range: a slider
+        pinned at a bound the price does not occupy would present every position
+        as a scenario the model never anchored. Crucially this does NOT blank
+        the spot values — the producer verified those lines AT TRUE SPOT, so the
+        client still evaluates and shows them.
+
+    Both call sites (the control bar and the section payload) read this one
+    helper, so the rendered control and the embedded payload cannot disagree.
+    """
+
+    enabled, reason = _dial_state(gold_row, artifact_status, artifact_reason)
+    if not enabled:
+        return enabled, reason, False, reason
+    if spot is None:
+        return False, NON_FINITE_SPOT_REASON, False, NON_FINITE_SPOT_REASON
+    if dial_cfg is not None:
+        minimum = float(dial_cfg.min_gold_usd)
+        maximum = float(dial_cfg.max_gold_usd)
+        if spot < minimum or spot > maximum:
+            return (
+                enabled,
+                reason,
+                False,
+                "spot gold "
+                + format_metric(spot, "usd2")
+                + " is outside the configured dial range "
+                + format_metric(minimum, "usd")
+                + "–"
+                + format_metric(maximum, "usd"),
+            )
+    return enabled, reason, True, ""
+
+
 def build_gold_dial_payload(
     gold_row: pd.Series | None,
     *,
@@ -360,11 +435,34 @@ def build_gold_dial_payload(
     finance_source: str,
     enabled: bool,
     disabled_reason: str,
+    scenario_enabled: bool,
+    scenario_reason: str,
+    spot_gold_usd: float | None,
 ) -> dict[str, Any]:
     """Backend-resolved inputs for gold-dial.js — artifact values, nothing else.
 
     Every number below is a column read. No ratio, no rounding, no derived
     field: the client evaluates, the artifact decides.
+
+    Two availability flags travel together, and they mean different things
+    (``_dial_and_scenario_state`` decides both):
+
+    ``enabled`` / ``disabled_reason``
+        ARTIFACT availability. False means no usable gold-response row exists,
+        so no price can be evaluated and the client shows the reason in the
+        line-metric cells instead of their no-JavaScript fallback.
+    ``scenario_enabled`` / ``scenario_reason``
+        SCENARIO availability. False with ``enabled`` True means the published
+        values are trustworthy at true spot but the slider must not move (spot
+        outside the configured range): the client paints the spot cells from the
+        persisted lines and then leaves the control inert.
+
+    ``spot_gold_usd`` is the EXACT persisted spot and stays that way: every
+    evaluation, display value and provenance line uses it. The slider's own
+    ``value`` attribute is step-aligned separately (``_slider_value_attr``)
+    because a range control cannot hold a fractional position; no aligned
+    baseline is carried here, since gold-dial.js reads the browser-normalized
+    position straight off the control (plan §4.3).
     """
 
     return {
@@ -377,7 +475,9 @@ def build_gold_dial_payload(
         "gold_response_reason": _text(gold_row, "gold_response_reason") or None,
         "enabled": bool(enabled),
         "disabled_reason": disabled_reason or None,
-        "spot_gold_usd": _value(gold_row, "spot_gold_usd"),
+        "scenario_enabled": bool(scenario_enabled),
+        "scenario_reason": scenario_reason or "",
+        "spot_gold_usd": spot_gold_usd,
         "spot_gold_date": _text(gold_row, "spot_gold_date") or None,
         "margin_basis": _text(gold_row, "spot_margin_basis") or None,
         "lines": {
@@ -398,6 +498,48 @@ def build_gold_dial_payload(
     }
 
 
+def _slider_value_attr(spot: float | None, dial_cfg: TickerPageDialConfig) -> str:
+    """The slider ``value`` the control can actually hold, as a string.
+
+    A range input snaps its value onto ``min + k*step`` before any script runs,
+    so emitting the exact fractional spot ($4,477.40 against ``step="1"``) ships
+    a position the browser silently rewrites: the no-JavaScript page then states
+    a gold price it is not showing, and the client baseline starts life
+    disagreeing with the control it reads (plan §4.3, decision D9).
+
+    Serve renders, it does not compute: the grid math lives once in
+    ``common.numeric.align_to_step`` and this function only formats its result
+    to the greater precision carried by the step or minimum, so the emitted
+    text sits exactly on the configured grid.
+
+    A spot outside the configured range is emitted at the nearest legal edge
+    grid point the browser would hold, so the rendered position and control agree; the
+    visible basis text still reports the true spot beside the range, and
+    ``_dial_and_scenario_state`` separately withholds the SCENARIO for that spot
+    (State A) — alignment here is formatting, not an availability decision.
+
+    The exact spot is never touched anywhere else: payload, evaluation, cells
+    and basis text all keep ``spot_gold_usd`` verbatim.
+    """
+
+    if spot is None:
+        return ""
+    minimum = float(dial_cfg.min_gold_usd)
+    maximum = float(dial_cfg.max_gold_usd)
+    step_value = float(dial_cfg.step_usd)
+    target = minimum if spot <= minimum else spot
+    aligned = align_to_step(
+        target,
+        minimum=minimum,
+        step=step_value,
+        maximum=maximum,
+    )
+    step_places = -int(Decimal(str(step_value)).normalize().as_tuple().exponent)
+    minimum_places = -int(Decimal(str(minimum)).normalize().as_tuple().exponent)
+    places = max(0, step_places, minimum_places)
+    return f"{aligned:.{places}f}"
+
+
 def render_gold_dial_control(
     data: TickerPageData,
     *,
@@ -413,10 +555,7 @@ def render_gold_dial_control(
     """
 
     gold_row = data.gold_response_row(ticker, finance_source=finance_source)
-    enabled, reason = _dial_state(
-        gold_row, data.gold_response.status, data.gold_response.reason
-    )
-    spot = _value(gold_row, "spot_gold_usd")
+    spot = _spot_value(gold_row)
     spot_date = _text(gold_row, "spot_gold_date")
 
     if app_config is None:
@@ -426,24 +565,55 @@ def render_gold_dial_control(
             "</div>"
         )
     dial_cfg = app_config.ticker_page.dial
+    _enabled, _reason, scenario_enabled, scenario_reason = _dial_and_scenario_state(
+        gold_row,
+        data.gold_response.status,
+        data.gold_response.reason,
+        spot=spot,
+        dial_cfg=dial_cfg,
+    )
     minimum = format_metric(float(dial_cfg.min_gold_usd), "usd")
     maximum = format_metric(float(dial_cfg.max_gold_usd), "usd")
-    value_attr = "" if spot is None else f"{spot:g}"
-    disabled_attr = "" if enabled and spot is not None else " disabled"
+    value_attr = _slider_value_attr(spot, dial_cfg)
+    # ONE predicate drives the whole disabled treatment: a control that cannot
+    # express a scenario is inert, says why, and points at its own explanation.
+    # ``scenario_enabled`` already subsumes "no artifact" and "no spot".
+    disabled_attr = "" if scenario_enabled else " disabled"
     explain = help_icon(
         "Gold price scenario", key="ticker_gold_dial", app_config=app_config
     )
+    # The EXACT spot, cents included — the control's own position is on the step
+    # grid, so the basis text is the only place the true price is readable.
+    spot_exact = format_metric(spot, "usd2")
     spot_label = (
-        f"spot {format_metric(spot, 'usd')}"
+        f"spot {spot_exact}"
         + (f" as of {spot_date}" if spot_date else "")
         if spot is not None
         else "spot gold unavailable"
     )
+    # Truthful at rest without JavaScript, and maintained by gold-dial.js
+    # through every state (plan §4.3). A disabled dial says so in the value
+    # text itself — a screen-reader user landing on the control should not
+    # need the description to learn it does nothing (§4.3 State A).
+    if spot is None:
+        value_text = "spot gold unavailable"
+    elif not scenario_enabled:
+        value_text = f"{spot_exact} per ounce, spot — scenario unavailable"
+    else:
+        value_text = f"{spot_exact} per ounce, spot"
     reason_html = (
-        f'<p class="hint gold-dial-disabled">Dial unavailable for {escape(str(ticker))}: '
-        f"{escape(reason)}</p>"
-        if not enabled or spot is None
-        else ""
+        ""
+        if scenario_enabled
+        else (
+            '<p class="hint gold-dial-disabled" id="gold-dial-reason">'
+            f"Dial unavailable for {escape(str(ticker))}: "
+            f"{escape(scenario_reason)}</p>"
+        )
+    )
+    # The visible reason joins the accessible description while it exists
+    # (plan §4.3 State A: the disabled range points at its own explanation).
+    describedby = (
+        "gold-dial-spot" if scenario_enabled else "gold-dial-spot gold-dial-reason"
     )
     return (
         '<div class="gold-dial" id="gold-dial">'
@@ -451,12 +621,17 @@ def render_gold_dial_control(
         '<input type="range" id="gold-dial-input" name="gold_dial"'
         f' min="{float(dial_cfg.min_gold_usd):g}" max="{float(dial_cfg.max_gold_usd):g}"'
         f' step="{float(dial_cfg.step_usd):g}" value="{escape(value_attr, quote=True)}"'
-        f' aria-describedby="gold-dial-spot"{disabled_attr}>'
+        f' aria-valuetext="{escape(value_text, quote=True)}"'
+        f' aria-describedby="{describedby}"{disabled_attr}>'
         '<output class="gold-dial-output" id="gold-dial-output" for="gold-dial-input">'
-        f"{escape(format_metric(spot, 'usd'))}</output>"
+        f"{escape(spot_exact)}</output>"
+        # Rendered but disabled until a scenario exists to reset FROM (§4.3
+        # state B) — disabled also takes it out of the tab order, and without
+        # JavaScript there is never anything to reset.
         '<button type="button" class="button-like" id="gold-dial-reset"'
-        f"{disabled_attr}>Reset to spot</button>"
-        f'<span class="hint" id="gold-dial-spot">{escape(spot_label)} · range '
+        " disabled>Reset to spot</button>"
+        f'<span class="hint" id="gold-dial-spot">'
+        f'<span id="gold-dial-basis">{escape(spot_label)}</span> · range '
         f"{escape(minimum)}–{escape(maximum)}</span>"
         '<p class="hint" id="gold-dial-status" role="status" aria-live="polite"></p>'
         f"{reason_html}"
@@ -712,7 +887,10 @@ def _headline_cards(
             f'<div class="metric-card" data-metric-card="{escape(metric)}">'
             f'<p class="metric-card-label">{escape(label)}'
             f"{help_icon(label, key=_METRIC_HELP_KEYS[metric], app_config=app_config)}</p>"
-            f'<p class="metric-card-value spot-cell">'
+            # data-headline-spot marks the ONE headline value gold-dial.js hides
+            # while a scenario is active, so a card never stacks two unlabelled
+            # numbers (plan §4.4). The expanded tables keep both, labelled.
+            f'<p class="metric-card-value spot-cell" data-headline-spot="1">'
             f"{_cell(gold_row, column, METRIC_FORMATS[metric])}</p>"
             + _scenario_cell(metric, tag="p")
             + f'<p class="hint metric-card-basis">{escape(spot_label)}</p>'
@@ -962,6 +1140,7 @@ def _data_quality_group(
     gold_row: pd.Series | None,
     tool_b_row: Mapping[str, Any],
     *,
+    spot_gold_usd: float | None,
     data: TickerPageData,
     finance_source: str,
     app_config: AppConfig | None,
@@ -1010,7 +1189,7 @@ def _data_quality_group(
         )
         + _fixed_row(
             "Spot gold used",
-            _cell(gold_row, "spot_gold_usd", "usd_per_oz"),
+            escape(format_metric(spot_gold_usd, "usd_per_oz")),
             "gold-response artifact as of " + (_text(gold_row, "spot_gold_date") or "n/a"),
         )
         + _fixed_row(
@@ -1059,11 +1238,18 @@ def render_corporate_finance_section(
     """
 
     gold_row = data.gold_response_row(ticker, finance_source=finance_source)
-    enabled, reason = _dial_state(
-        gold_row, data.gold_response.status, data.gold_response.reason
-    )
-    spot = _value(gold_row, "spot_gold_usd")
+    spot = _spot_value(gold_row)
     spot_date = _text(gold_row, "spot_gold_date")
+    # The SAME helper the control-bar call uses, with the same inputs, so the
+    # embedded payload and the rendered control can never disagree about either
+    # availability (§4.3 State A).
+    enabled, reason, scenario_enabled, scenario_reason = _dial_and_scenario_state(
+        gold_row,
+        data.gold_response.status,
+        data.gold_response.reason,
+        spot=spot,
+        dial_cfg=app_config.ticker_page.dial if app_config is not None else None,
+    )
     spot_label = (
         "fwd @ spot " + format_metric(spot, "usd") + "/oz"
         if spot is not None
@@ -1106,6 +1292,17 @@ def render_corporate_finance_section(
                 f"{escape(reason)}. Spot values below are the published ones.</p>",
             )
         )
+    elif not scenario_enabled:
+        # The artifact IS published and its spot values stand; only the scenario
+        # is withheld, so this notice must not claim the numbers are limited.
+        pieces.append(
+            notice(
+                "warning",
+                f"<p>The gold dial cannot run a scenario for {escape(str(ticker))}: "
+                f"{escape(scenario_reason)}. The values below are unaffected and "
+                "stay at spot.</p>",
+            )
+        )
 
     pieces.append(_headline_cards(gold_row, app_config=app_config, spot_label=spot_label))
     pieces.append(
@@ -1126,6 +1323,7 @@ def render_corporate_finance_section(
         _data_quality_group(
             gold_row,
             tool_b_row,
+            spot_gold_usd=spot,
             data=data,
             finance_source=finance_source,
             app_config=app_config,
@@ -1140,6 +1338,9 @@ def render_corporate_finance_section(
                 finance_source=finance_source,
                 enabled=enabled,
                 disabled_reason=reason,
+                scenario_enabled=scenario_enabled,
+                scenario_reason=scenario_reason,
+                spot_gold_usd=spot,
             ),
         )
     )

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import dataclass, replace
 from html import escape
+from typing import Literal
 
 import pandas as pd
 
 from golden_vector.model.benchmark_comparison import BetaUniverseMark
+from golden_vector.serve.format_helpers import _fmt_number
 from golden_vector.serve.ui.tables import table_region
 
 
@@ -360,25 +363,162 @@ def _nice_overlay_grid_step(span: float, *, max_intervals: int = 6) -> float:
     return 10 * magnitude
 
 
+@dataclass(frozen=True)
+class _OverlayDisplayMode:
+    """What a set of overlay values MEANS, in display terms.
+
+    The builder used to bake in "indexed to 100" semantics: percent gridlines, a dashed
+    base-100 line, an ``aria-label`` of "Rebased price comparison" and an "indexed value"
+    table caption — which every caller inherited, including the share-price view (currency
+    levels) and the option open-interest trend (counts). The mode makes the meaning an
+    explicit argument, so units, baseline treatment and wording can never contradict the data.
+
+    ``decimals is None`` selects the percent formatter (``_pct_label``, value − base);
+    otherwise values are formatted as plain numbers, optionally prefixed by ``unit`` (a
+    currency code). Price mode resolves its concrete decimal count from the drawn scale.
+    """
+
+    title: str
+    #: Caption tail after "<title> — "; ``{unit}`` is substituted.
+    unit_clause: str
+    #: aria-label tail after the title; ``{unit}`` is substituted.
+    aria_clause: str
+    #: Reference line/range contract. Indexed charts use the caller's ``base``;
+    #: count charts always own a zero anchor; prices have no anchor.
+    anchor: Literal["base", "zero", "none"]
+    #: Accessible cell prints the raw value before the formatted label (indexed only).
+    table_shows_value: bool
+    #: Left gutter — currency labels need more room than "+30%".
+    padding_left: int
+    decimals: int | None
+    #: Smallest grid step this mode's own precision can DISTINGUISH. A nice step
+    #: finer than the label format prints the same text twice ("1", "1", "2",
+    #: "2") on a narrow span; clamping to this keeps every axis label unique.
+    #: ``None`` for the percent formatter, whose precision adapts to the value.
+    min_step: float | None
+    unit_prefix: bool
+    requires_unit: bool
+
+
+_OVERLAY_DISPLAY_MODES: dict[str, _OverlayDisplayMode] = {
+    "indexed": _OverlayDisplayMode(
+        title="Rebased price comparison",
+        unit_clause="indexed value (change vs the rebase start)",
+        aria_clause="",
+        anchor="base",
+        table_shows_value=True,
+        padding_left=48,
+        decimals=None,
+        min_step=None,
+        unit_prefix=False,
+        requires_unit=False,
+    ),
+    "price": _OverlayDisplayMode(
+        title="Share price over time",
+        unit_clause="{unit} per share",
+        aria_clause=" ({unit})",
+        anchor="none",
+        table_shows_value=False,
+        padding_left=76,
+        decimals=2,
+        min_step=0.01,
+        unit_prefix=True,
+        requires_unit=True,
+    ),
+    "count": _OverlayDisplayMode(
+        title="Daily totals over time",
+        unit_clause="{unit}",
+        # A screen-reader user cannot see the axis, so the unit belongs in the label.
+        aria_clause=" ({unit})",
+        anchor="zero",
+        table_shows_value=False,
+        padding_left=48,
+        decimals=0,
+        min_step=1.0,
+        unit_prefix=False,
+        requires_unit=True,
+    ),
+}
+
+
+def _overlay_value_label(
+    display: _OverlayDisplayMode, value: float, *, base: float, unit: str | None
+) -> str:
+    """The ONE display rule for a plotted value in this mode.
+
+    Used for the y-axis gridline labels, the embedded crosshair payload and the accessible
+    table alike, so the three can never disagree. Returns unescaped text; every render site
+    escapes once (the unit is caller data)."""
+
+    if display.decimals is None:
+        return _pct_label(value - base)
+    text = _fmt_number(value, decimals=display.decimals)
+    if display.unit_prefix and unit:
+        return f"{unit} {text}"
+    return text
+
+
+def _price_display_decimals(values: list[float]) -> int:
+    """Resolve one currency precision from the scale of the prices being drawn.
+
+    Ordinary share prices retain the familiar two decimals. Low-priced shares
+    receive enough precision that distinct persisted values never all collapse
+    to the same visible ``0.00`` label.
+    """
+
+    scale = max((abs(value) for value in values), default=0.0)
+    if scale >= 1.0:
+        return 2
+    if scale >= 0.1:
+        return 3
+    return 4
+
+
 def _build_multiline_overlay_svg(
     *,
     series_by_label: dict[str, tuple[list[pd.Timestamp], list[float | None]]],
     series_keys: dict[str, str] | None = None,
     base: float = 100.0,
     data_table_id: str | None = None,
+    mode: str = "indexed",
+    unit: str | None = None,
+    title: str | None = None,
 ) -> str:
-    """SVG line chart of several already-rebased series sharing one indexed y-axis.
+    """SVG line chart of several persisted series sharing one y-axis.
 
-    ``series_by_label`` maps a label → (dates, values) where values are pre-rebased upstream
-    (``model.structural.build_rebased_comparison_series``). All series are drawn; a dashed
-    baseline at ``base`` (100) anchors the comparison. ``None`` values (gaps / pre-anchor points)
-    are skipped within each line. The x-axis spans the union of dates so different-length series
-    align. Serve-render only: it maps pre-computed values to pixels, no business arithmetic."""
+    ``series_by_label`` maps a label → (dates, values); the values are already resolved
+    upstream (rebased index levels, USD price levels or counts — the caller says which via
+    ``mode``). All series are drawn; ``None`` values (gaps / pre-anchor points) split lines into
+    contiguous segments instead of being bridged. The x-axis spans the union of dates so
+    different-length series align.
+    Serve-render only: it maps pre-computed values to pixels, no business arithmetic.
+
+    ``mode`` selects the display contract (see ``_OVERLAY_DISPLAY_MODES``):
+
+    * ``indexed`` — rebased comparison: percent gridlines, dashed baseline at ``base`` (100).
+    * ``price`` — currency levels: ``unit`` (an explicit currency code from the caller's
+      artifact, never inferred) formats the axis, crosshair and table; no baseline, no
+      percent or "indexed" wording anywhere.
+    * ``count`` — plain counts (e.g. open interest), ``unit`` naming what is counted; zero is
+      owned by the mode as its anchor, independent of the indexed ``base`` argument.
+
+    ``title`` overrides the mode's default wording; it drives the ``aria-label``, the table
+    caption and the disclosure label together, so those three can never drift apart. A mode
+    that requires a unit fails loudly when the caller has none — an unlabelled currency or
+    count chart is a degraded state for the caller to disclose, not something to guess here.
+    """
+
+    try:
+        display = _OVERLAY_DISPLAY_MODES[mode]
+    except KeyError:
+        raise ValueError(f"unknown overlay display mode: {mode!r}") from None
+    if display.requires_unit and not (unit or "").strip():
+        raise ValueError(f"overlay display mode {mode!r} requires an explicit unit")
 
     series_keys = series_keys or {}
     width = 720
     height = 240
-    padding_left = 48
+    padding_left = display.padding_left
     padding_right = 24
     padding_top = 20
     padding_bottom = 28
@@ -386,25 +526,52 @@ def _build_multiline_overlay_svg(
     inner_h = height - padding_top - padding_bottom
 
     cleaned: dict[str, list[tuple[pd.Timestamp, float]]] = {}
+    segments_by_label: dict[str, list[list[tuple[pd.Timestamp, float]]]] = {}
     all_values: list[float] = []
     all_dates: list[pd.Timestamp] = []
     for label, series in series_by_label.items():
         dates, values = series
         if not dates or not values or len(dates) != len(values):
             continue
-        # Skip points with a missing value OR a missing/NaT date — a NaT date would
-        # otherwise propagate into min()/max() below and crash strftime on corrupt input.
-        points = [
-            (d, float(v)) for d, v in zip(dates, values) if v is not None and pd.notna(d)
-        ]
+        # Keep explicit gaps long enough to split the SVG line. Removing them and
+        # joining every surviving point into one polyline invents a move across a
+        # missing capture. A missing/NaT date is a break for the same reason and
+        # must not propagate into min()/max() or strftime below.
+        points: list[tuple[pd.Timestamp, float]] = []
+        segments: list[list[tuple[pd.Timestamp, float]]] = []
+        current_segment: list[tuple[pd.Timestamp, float]] = []
+        for date_value, value in zip(dates, values):
+            if value is None or pd.isna(date_value) or pd.isna(value):
+                if current_segment:
+                    segments.append(current_segment)
+                    current_segment = []
+                continue
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                if current_segment:
+                    segments.append(current_segment)
+                    current_segment = []
+                continue
+            point = (date_value, numeric)
+            points.append(point)
+            current_segment.append(point)
+        if current_segment:
+            segments.append(current_segment)
         if not points:
             continue
         cleaned[label] = points
+        segments_by_label[label] = segments
         all_dates.extend(d for d, _ in points)
         all_values.extend(v for _, v in points)
 
     if not cleaned:
         return "<p>No comparison data available.</p>"
+
+    # Resolve price precision once per chart, then carry the resulting immutable
+    # display contract through the axis, crosshair payload and accessible table.
+    if mode == "price":
+        decimals = _price_display_decimals(all_values)
+        display = replace(display, decimals=decimals, min_step=10 ** (-decimals))
 
     min_date = min(all_dates)
     max_date = max(all_dates)
@@ -413,8 +580,14 @@ def _build_multiline_overlay_svg(
     def x_at(date_value: pd.Timestamp) -> float:
         return padding_left + ((date_value - min_date).days / date_span_days) * inner_w
 
-    value_lo = min(all_values + [base])
-    value_hi = max(all_values + [base])
+    # An anchored mode keeps its reference level (100 for indexed, 0 for counts) inside the
+    # drawn range and marks it with the dashed baseline. Price levels have no such reference —
+    # forcing 100 into a $6 chart would both squash the line and imply a rebase that never
+    # happened — so the range comes from the data alone.
+    anchor = {"base": base, "zero": 0.0, "none": None}[display.anchor]
+    anchor_values = [] if anchor is None else [anchor]
+    value_lo = min(all_values + anchor_values)
+    value_hi = max(all_values + anchor_values)
     if value_hi == value_lo:
         value_hi = value_lo + 1.0
     pad = (value_hi - value_lo) * 0.1
@@ -425,10 +598,10 @@ def _build_multiline_overlay_svg(
         return padding_top + (1.0 - (value - value_lo) / (value_hi - value_lo)) * inner_h
 
     baseline = ""
-    if value_lo <= base <= value_hi:
+    if anchor is not None and value_lo <= anchor <= value_hi:
         baseline = (
-            f"<line x1=\"{padding_left}\" y1=\"{y_at(base):.1f}\" "
-            f"x2=\"{width - padding_right}\" y2=\"{y_at(base):.1f}\" "
+            f"<line x1=\"{padding_left}\" y1=\"{y_at(anchor):.1f}\" "
+            f"x2=\"{width - padding_right}\" y2=\"{y_at(anchor):.1f}\" "
             f"class=\"chart-axis-line\" stroke-width=\"1\" stroke-dasharray=\"3 3\" />"
         )
 
@@ -441,35 +614,50 @@ def _build_multiline_overlay_svg(
     legend_parts: list[str] = []
     for label, points in cleaned.items():
         series_key = escape(resolved_series[label])
-        coords = " ".join(f"{x_at(d):.1f},{y_at(v):.1f}" for d, v in points)
-        lines_html += (
-            f"<polyline points=\"{coords}\" class=\"series-{series_key}\" "
-            f"stroke-width=\"1.8\" opacity=\"0.9\" />"
-        )
+        for segment in segments_by_label[label]:
+            coords = " ".join(f"{x_at(d):.1f},{y_at(v):.1f}" for d, v in segment)
+            lines_html += (
+                f"<polyline points=\"{coords}\" class=\"series-{series_key}\" "
+                f"stroke-width=\"1.8\" opacity=\"0.9\" />"
+            )
+            if len(segment) == 1:
+                point_x = x_at(segment[0][0])
+                point_y = y_at(segment[0][1])
+                lines_html += (
+                    f"<circle cx=\"{point_x:.1f}\" cy=\"{point_y:.1f}\" r=\"2.4\" "
+                    f"class=\"series-{series_key}\" opacity=\"0.9\" />"
+                )
         legend_parts.append(
             f"<span class=\"chart-legend-item legend-swatch-{series_key}\">"
             f"&#9632; {escape(label)}</span>"
         )
     legend_html = "<p class=\"chart-legend\">" + " ".join(legend_parts) + "</p>"
 
-    # Horizontal gridlines at nice levels, labelled as % change from the rebase start (base=100)
-    # so the lines are actually readable ("AEM +120%, gold +60%"). Display-only axis math.
+    # Horizontal gridlines at nice levels, labelled in the mode's own units — % change from
+    # the rebase start for indexed, currency levels for price, plain counts for count — so the
+    # lines are actually readable ("AEM +120%, gold +60%"). Display-only axis math.
     step = _nice_overlay_grid_step(value_hi - value_lo)
+    if display.min_step is not None:
+        # A step finer than the mode can print labels the reader cannot tell
+        # apart: a 3-contract count span picks 0.5 and prints "1", "1", "2",
+        # "2". The mode's own precision is the floor.
+        step = max(step, display.min_step)
     grid_lines = ""
     grid_labels = ""
-    tick = base + math.floor((value_lo - base) / step) * step
+    grid_origin = 0.0 if anchor is None else anchor
+    tick = grid_origin + math.floor((value_lo - grid_origin) / step) * step
     max_tick_count = 12
     tick_count = 0
     while tick <= value_hi + 1e-9 and tick_count < max_tick_count:
         if tick >= value_lo - 1e-9:
             gy = y_at(tick)
-            is_base = abs(tick - base) < 1e-9
-            if not is_base:  # the dashed baseline already marks 0%
+            is_base = anchor is not None and abs(tick - anchor) < 1e-9
+            if not is_base:  # the dashed baseline already marks the anchor
                 grid_lines += (
                     f"<line x1=\"{padding_left}\" y1=\"{gy:.1f}\" x2=\"{width - padding_right}\" "
                     f"y2=\"{gy:.1f}\" class=\"chart-grid-line\" stroke-width=\"1\" />"
                 )
-            label_text = _pct_label(tick - base)
+            label_text = escape(_overlay_value_label(display, tick, base=base, unit=unit))
             grid_labels += (
                 f"<text x=\"{padding_left - 6}\" y=\"{gy + 4:.1f}\" text-anchor=\"end\" "
                 f"font-size=\"11\" class=\"chart-label\">{label_text}</text>"
@@ -486,23 +674,34 @@ def _build_multiline_overlay_svg(
 
     # Embed the data so the hover crosshair (overlay-crosshair.js) can show each line's value +
     # date at the cursor: ticks = union dates with x-px (for snapping); each series carries
-    # byDate -> [y-px, value, pct-label]. The pct label is produced HERE by _pct_label (the same
-    # formatter as the y-axis gridlines), so the JS only renders pre-formatted strings — no
-    # percent arithmetic in the browser. Serve mirrors already-rebased values; no business math.
-    # Ticks are keyed by the SAME date string as byDate (one entry per calendar day) so a tick and
-    # its point can never desync, even if two timestamps happen to share a day.
+    # byDate -> [y-px, value, display-label]. The label is produced HERE by the mode's formatter
+    # (the same one as the y-axis gridlines), so the JS only renders pre-formatted strings — no
+    # percent or currency arithmetic in the browser. Serve mirrors persisted values; no business
+    # math. Ticks are keyed by the SAME date string as byDate (one entry per calendar day) so a
+    # tick and its point can never desync, even if two timestamps happen to share a day.
     tick_x_by_date = {d.strftime("%Y-%m-%d"): round(x_at(d), 1) for d in all_dates}
+    raw_decimals = 2 if display.decimals is None else display.decimals
     overlay_data = {
         "top": round(padding_top, 1),
         "bottom": round(height - padding_bottom, 1),
-        "base": base,
+        # No "base": the anchor drives the y-range and the dashed baseline HERE,
+        # and overlay-crosshair.js never reads it — shipping it invited a second
+        # consumer to re-derive percentages in the browser.
+        # Mirrors table_shows_value: a pre-formatted label ("USD 51.00") IS the
+        # whole value, so the crosshair prints it alone; indexed keeps
+        # "level (percent)". One flag so tooltip and table can never disagree.
+        "labelOnly": not display.table_shows_value,
         "ticks": sorted(tick_x_by_date.items()),
         "series": [
             {
                 "label": label,
                 "series": resolved_series[label],
                 "byDate": {
-                    d.strftime("%Y-%m-%d"): [round(y_at(v), 1), round(v, 2), _pct_label(v - base)]
+                    d.strftime("%Y-%m-%d"): [
+                        round(y_at(v), 1),
+                        round(v, raw_decimals),
+                        _overlay_value_label(display, v, base=base, unit=unit),
+                    ]
                     for d, v in points
                 },
             }
@@ -511,8 +710,10 @@ def _build_multiline_overlay_svg(
     }
     data_attr = escape(json.dumps(overlay_data, separators=(",", ":")))
 
+    chart_title = title if title is not None else display.title
+    aria_label = chart_title + display.aria_clause.format(unit=unit or "")
     svg = (
-        f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Rebased price comparison\" "
+        f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"{escape(aria_label)}\" "
         f"class=\"overlay-chart\" data-overlay=\"{data_attr}\">"
         f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" class=\"chart-bg\" rx=\"12\" ry=\"12\" />"
         f"{grid_lines}{baseline}{lines_html}{grid_labels}{date_labels}"
@@ -521,8 +722,9 @@ def _build_multiline_overlay_svg(
     if not data_table_id:
         return legend_html + svg
     # Text equivalent of the crosshair: one row per snapped date, one column per series, each cell
-    # rendered from the SAME overlay_data payload the JS reads ("100.0 (+0.0%)" — value to one
-    # decimal, then the pre-formatted percent label). No new arithmetic; every date is listed.
+    # rendered from the SAME overlay_data payload the JS reads. Indexed cells keep the index level
+    # plus its percent label ("100.0 (+0.0%)"); the unit-carrying modes print the mode's formatted
+    # value alone ("USD 51.00", "12,345"). No new arithmetic; every date is listed.
     series_entries = overlay_data["series"]
     header_cells = "".join(
         f"<th scope=\"col\">{escape(str(entry['label']))}</th>" for entry in series_entries
@@ -532,15 +734,17 @@ def _build_multiline_overlay_svg(
         cells = ""
         for entry in series_entries:
             point = entry["byDate"].get(date_key)
-            cells += (
-                f"<td>{escape(f'{point[1]:.1f}')} ({escape(str(point[2]))})</td>"
-                if point
-                else "<td>—</td>"
-            )
+            if not point:
+                cells += "<td>—</td>"
+            elif display.table_shows_value:
+                cells += f"<td>{escape(f'{point[1]:.1f}')} ({escape(str(point[2]))})</td>"
+            else:
+                cells += f"<td>{escape(str(point[2]))}</td>"
         body_rows += f"<tr><th scope=\"row\">{escape(date_key)}</th>{cells}</tr>"
+    caption = f"{chart_title} — {display.unit_clause.format(unit=unit or '')}"
     table_html = (
         "<table>"
-        "<caption>Rebased price comparison — indexed value (change vs the rebase start)</caption>"
+        f"<caption>{escape(caption)}</caption>"
         f"<thead><tr><th scope=\"col\">Date</th>{header_cells}</tr></thead>"
         f"<tbody>{body_rows}</tbody></table>"
     )
@@ -550,6 +754,6 @@ def _build_multiline_overlay_svg(
         + _chart_data_disclosure(
             table_html=table_html,
             region_id=data_table_id,
-            label="Rebased price comparison — chart data table",
+            label=f"{chart_title} — chart data table",
         )
     )

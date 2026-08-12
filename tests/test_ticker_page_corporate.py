@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
@@ -36,6 +37,8 @@ from golden_vector.serve.ticker_page import (
     render_corporate_finance_section,
     render_gold_dial_control,
 )
+from golden_vector.contracts.config_models import TickerPageDialConfig
+from golden_vector.serve.ticker_page.corporate import _slider_value_attr, format_metric
 
 PARITY_FIXTURE = Path(__file__).parent / "fixtures" / "gold_dial_parity.json"
 
@@ -660,6 +663,9 @@ def test_degraded_gold_response_row_disables_the_dial_with_its_persisted_reason(
     payload = _payload(html)
     assert payload["enabled"] is False
     assert payload["disabled_reason"] == reason
+    # no artifact means no scenario either, and the reason is the same one
+    assert payload["scenario_enabled"] is False
+    assert payload["scenario_reason"] == reason
     assert payload["gold_response_status"] == "DEGRADED_NONLINEAR"
     assert payload["gold_response_reason"] == reason
 
@@ -691,6 +697,37 @@ def test_pending_artifact_renders_one_honest_degraded_notice():
     assert _payload(html)["enabled"] is False
 
 
+@pytest.mark.parametrize(
+    "spot",
+    [None, float("nan"), float("inf"), float("-inf")],
+    ids=("missing", "nan", "positive-infinity", "negative-infinity"),
+)
+def test_non_finite_spot_is_one_honest_disabled_state(spot):
+    """Missing/non-finite spot is State A and must always stay JSON-safe."""
+
+    reason = "no finite spot gold price is published for this ticker and source"
+    data = _data(_gold_row(spot_gold_usd=spot))
+
+    control = render_gold_dial_control(
+        data, ticker="NEM", finance_source="our", app_config=_app_config()
+    )
+    assert 'aria-describedby="gold-dial-spot gold-dial-reason" disabled>' in control
+    assert reason in control
+    assert 'aria-valuetext="spot gold unavailable"' in control
+
+    html = _render(data=data)
+    assert "The gold dial is disabled for NEM" in html
+    assert reason in html
+    assert "$inf" not in html and "-$inf" not in html
+    assert '<th scope="row">Spot gold used</th><td class="spot-cell">n/a</td>' in html
+    payload = _payload(html)  # Regression: +/-Infinity used to crash JSON embedding.
+    assert payload["spot_gold_usd"] is None
+    assert payload["enabled"] is False
+    assert payload["disabled_reason"] == reason
+    assert payload["scenario_enabled"] is False
+    assert payload["scenario_reason"] == reason
+
+
 # ---------------------------------------------------------------------------
 # dial control + payload
 # ---------------------------------------------------------------------------
@@ -710,7 +747,138 @@ def test_dial_control_takes_its_range_from_config_and_defaults_to_spot():
     assert '<output class="gold-dial-output"' in control
     assert 'id="gold-dial-reset"' in control
     assert 'aria-live="polite"' in control
-    assert "spot $4,452 as of 2026-08-11" in control
+    assert "spot $4,452.00 as of 2026-08-11" in control
+
+
+def test_slider_value_is_step_aligned_while_the_payload_keeps_exact_spot():
+    """A range control snaps ``value`` onto ``min + k*step`` before any script
+
+    runs, so emitting the exact fractional spot ships a position the browser
+    rewrites — and a client baseline that starts life in a false scenario
+    (plan §4.3, D9). The EXACT spot still owns evaluation, display and
+    provenance; only the control's own position is aligned."""
+    data = _data(_gold_row(spot_gold_usd=4477.4))
+    control = render_gold_dial_control(
+        data, ticker="NEM", finance_source="our", app_config=_app_config()
+    )
+
+    assert 'step="1"' in control
+    assert 'value="4477"' in control  # the position the control can actually hold
+    assert 'value="4477.4"' not in control
+    # ...while every human-readable basis keeps the true price, cents and all
+    assert "spot $4,477.40 as of 2026-08-11" in control
+    assert 'aria-valuetext="$4,477.40 per ounce, spot"' in control
+    assert ">$4,477.40</output>" in control
+    # Nothing to reset FROM at rest: rendered, disabled, out of the tab order.
+    assert 'id="gold-dial-reset" disabled>' in control
+
+    payload = _payload(_render(data=data))
+    assert payload["spot_gold_usd"] == 4477.4
+
+
+def test_a_spot_outside_the_configured_range_disables_the_dial_with_a_reason():
+    """§4.3 State A: never silently clamp an out-of-range spot into a slider —
+
+    a control pinned at a bound the price does not occupy would present every
+    position as a scenario the model never anchored. The SCENARIO is withheld
+    with one visible reason; the position still emits the bound the browser
+    would hold, and the payload plus every human-readable basis keep the TRUE
+    spot.
+
+    The ARTIFACT is untouched by this: ``enabled`` stays True, because the
+    published lines were verified at true spot and the client must still
+    evaluate the five line-metric cells there. Blanking them would throw away
+    five values the artifact stands behind — hence two separate flags."""
+    dial = _app_config().ticker_page.dial
+    for spot, bound in ((7000.0, dial.max_gold_usd), (1000.0, dial.min_gold_usd)):
+        data = _data(_gold_row(spot_gold_usd=spot))
+        control = render_gold_dial_control(
+            data, ticker="NEM", finance_source="our", app_config=_app_config()
+        )
+        exact = format_metric(spot, "usd2")
+        assert "is outside the configured dial range $2,000–$6,000" in control, spot
+        # the disabled range names its own explanation and says so in its value
+        assert 'aria-describedby="gold-dial-spot gold-dial-reason" disabled>' in control, spot
+        assert 'id="gold-dial-reason"' in control, spot
+        assert f'aria-valuetext="{exact} per ounce, spot — scenario unavailable"' in control, spot
+        assert f'value="{bound:g}"' in control, spot
+        assert f"spot {exact} as of" in control, spot
+        payload = _payload(_render(data=data))
+        assert payload["spot_gold_usd"] == spot
+        # artifact availability is NOT what failed here
+        assert payload["enabled"] is True
+        assert payload["disabled_reason"] is None
+        assert payload["scenario_enabled"] is False
+        assert "outside the configured dial range" in payload["scenario_reason"]
+        # ...and the section says only the scenario is withheld
+        section = _render(data=data)
+        assert "The gold dial cannot run a scenario for NEM" in section
+        assert "The values below are unaffected and stay at spot." in section
+        assert "Spot values below are the published ones" not in section
+
+    # a spot exactly ON a bound is inside the range and keeps the dial live
+    data = _data(_gold_row(spot_gold_usd=float(dial.max_gold_usd)))
+    control = render_gold_dial_control(
+        data, ticker="NEM", finance_source="our", app_config=_app_config()
+    )
+    assert "outside the configured dial range" not in control
+    live = _payload(_render(data=data))
+    assert live["enabled"] is True
+    assert live["scenario_enabled"] is True
+    assert live["scenario_reason"] == ""
+
+
+def test_slider_value_attr_lands_on_the_grid_for_every_step_shape():
+    """The grid math lives ONCE in ``common.numeric.align_to_step``; this
+
+    formatter emits its result at the step's own decimal precision, so exotic
+    steps (25, 0.25) align exactly instead of falling back to the raw spot."""
+    cases = (
+        (1.0, 4477.4, "4477"),
+        (10.0, 4477.4, "4480"),
+        (0.1, 4477.44, "4477.4"),
+        (25.0, 4477.4, "4475"),
+        (0.25, 4477.4, "4477.50"),
+    )
+    for step, spot, expected in cases:
+        cfg = TickerPageDialConfig(min_gold_usd=2000.0, max_gold_usd=6000.0, step_usd=step)
+        assert _slider_value_attr(spot, cfg) == expected, (step, spot)
+    fractional_origin = TickerPageDialConfig(
+        min_gold_usd=2000.5,
+        max_gold_usd=6000.5,
+        step_usd=1.0,
+        probe_gold_usd=[2000.5, 4000.5, 6000.5],
+    )
+    assert _slider_value_attr(4477.4, fractional_origin) == "4477.5"
+    uneven_range = TickerPageDialConfig(
+        min_gold_usd=0.0,
+        max_gold_usd=10.0,
+        step_usd=6.0,
+        probe_gold_usd=[0.0, 5.0, 10.0],
+    )
+    assert _slider_value_attr(9.0, uneven_range) == "6"
+    assert _slider_value_attr(10.0, uneven_range) == "6"
+    assert _slider_value_attr(None, TickerPageDialConfig()) == ""
+
+
+def test_headline_cards_carry_one_spot_value_and_one_hidden_scenario_slot():
+    """The card contract (§4.4): the spot value gold-dial.js hides while a
+
+    scenario is active, plus the empty slot it writes into — never two
+    unlabelled numbers stacked in one card."""
+    html = _render()
+    for metric in (
+        "margin_usd_per_oz",
+        "margin_pct",
+        "aisc_margin_yield",
+        "ev_ebitda",
+        "forward_pe",
+        "leverage_stressed",
+    ):
+        assert f'data-metric="{metric}" data-basis="scenario" hidden></p>' in html, metric
+    assert html.count('<p class="metric-card-value spot-cell" data-headline-spot="1">') == 6
+    # the marker exists ONLY on the cards — expanded tables keep both columns
+    assert html.count("data-headline-spot") == 6
 
 
 def test_dial_payload_carries_the_artifact_row_and_nothing_computed():
@@ -728,6 +896,8 @@ def test_dial_payload_carries_the_artifact_row_and_nothing_computed():
     assert payload["spot_gold_date"] == "2026-08-11"
     assert payload["margin_basis"] == "aisc"
     assert payload["enabled"] is True
+    assert payload["scenario_enabled"] is True
+    assert payload["scenario_reason"] == ""
 
     assert set(payload["lines"]) == set(GOLD_RESPONSE_LINE_METRICS)
     assert set(payload["constants"]) == set(GOLD_RESPONSE_CONSTANT_COLUMNS)
@@ -740,6 +910,8 @@ def test_dial_payload_carries_the_artifact_row_and_nothing_computed():
         "gold_response_reason",
         "enabled",
         "disabled_reason",
+        "scenario_enabled",
+        "scenario_reason",
         "spot_gold_usd",
         "spot_gold_date",
         "margin_basis",

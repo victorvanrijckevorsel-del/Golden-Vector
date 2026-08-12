@@ -227,6 +227,8 @@
           }
         },
         "margin_basis": "aisc",
+        "scenario_enabled": true,
+        "scenario_reason": "",
         "spot_display": {
           "aisc_margin_yield": 0.137465,
           "ev_ebitda": 6.716432,
@@ -467,6 +469,8 @@
           }
         },
         "margin_basis": "aisc",
+        "scenario_enabled": true,
+        "scenario_reason": "",
         "spot_display": {
           "aisc_margin_yield": 0.137465,
           "ev_ebitda": 6.716432,

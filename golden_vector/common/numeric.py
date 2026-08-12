@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
+from decimal import ROUND_FLOOR, Decimal
 
 import pandas as pd
 
@@ -25,6 +26,49 @@ def optional_float(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return None if is_missing(numeric) else numeric
+
+
+def align_to_step(
+    value: float,
+    *,
+    minimum: float,
+    step: float,
+    maximum: float | None = None,
+) -> float:
+    """Nearest value an HTML ``min``/``step`` grid can hold (range-input snap).
+
+    The ONE copy of the slider-grid math. Serve-layer formatters are barred from
+    arithmetic, so they call this to emit a range ``value`` the browser will not
+    silently rewrite (ticker gold dial, redesign plan D9). Exact-half ties go to
+    the higher value, matching HTML's positive-infinity rule rather than Python's
+    ties-to-even ``round``. When ``maximum`` is supplied, the result is capped at
+    the highest legal grid point at or below it. Callers still own the lower-bound
+    availability decision.
+    """
+
+    if (
+        step <= 0
+        or not math.isfinite(value)
+        or not math.isfinite(minimum)
+        or not math.isfinite(step)
+    ):
+        return value
+
+    decimal_value = Decimal(str(value))
+    decimal_minimum = Decimal(str(minimum))
+    decimal_step = Decimal(str(step))
+    delta = (decimal_value - decimal_minimum) / decimal_step
+    index = int((delta + Decimal("0.5")).to_integral_value(rounding=ROUND_FLOOR))
+
+    if maximum is not None and math.isfinite(maximum):
+        maximum_index = int(
+            ((Decimal(str(maximum)) - decimal_minimum) / decimal_step).to_integral_value(
+                rounding=ROUND_FLOOR
+            )
+        )
+        index = min(index, maximum_index)
+
+    return float(decimal_minimum + Decimal(index) * decimal_step)
 
 
 def optional_finite_float(value: object) -> float | None:

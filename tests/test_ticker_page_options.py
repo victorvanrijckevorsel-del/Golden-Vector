@@ -691,6 +691,42 @@ def test_three_open_interest_series_are_drawn_separately(app_config):
     assert "Call open interest" in html
     assert "Total open interest" in html
     assert "Open interest over time" in html
+    chart = html[html.index('class="options-oi-trend"') :]
+    expected_keys = {
+        "Put open interest": "gdx",
+        "Call open interest": "gdxj",
+        "Total open interest": "stock",
+    }
+    polyline_keys = set(re.findall(r'<polyline[^>]+class="series-([^"]+)"', chart))
+    assert set(expected_keys.values()) <= polyline_keys
+    for label, key in expected_keys.items():
+        assert f'legend-swatch-{key}">&#9632; {label}</span>' in chart
+    assert len(set(expected_keys.values())) == len(expected_keys)
+
+
+def test_oi_trend_is_labelled_as_counts_not_a_rebased_price_comparison(app_config):
+    """The trend plots contract counts. It used to inherit the overlay builder's
+    baked-in "Rebased price comparison" ARIA label and "indexed value" caption
+    from the share-price chart — a screen-reader user was told this chart was
+    something it has never been."""
+    html = render(app_config)
+
+    for wrong in ("Rebased price comparison", "indexed value", "rebase"):
+        assert wrong not in html, wrong
+    chart = html[html.index('class="options-oi-trend"') :]
+    assert 'aria-label="Open interest over time (contracts)"' in chart
+    assert "<caption>Open interest over time — contracts by day</caption>" in chart
+    assert 'aria-label="Open interest over time — chart data table"' in chart
+    # counts are labelled as counts: the axis reads whole contracts, no percents
+    axis = re.findall(r'class="chart-label">([^<]+)</text>', chart)
+    assert "0" in axis, axis  # the zero line stays meaningful for counts
+    assert not [label for label in axis if "%" in label], axis
+    # exactly ONE data table for this chart — the capture-aware one — and so
+    # exactly one element carrying its region id (the builder used to emit a
+    # second, duplicate-id twin of the same numbers).
+    assert chart.count('id="options-oi-trend-table"') == 1
+    assert chart.count("<summary>Chart data (table)</summary>") == 1
+    assert "<th>Capture</th>" in chart  # the capture-aware columns survive
 
 
 def _help_button(html: str, title: str) -> str:

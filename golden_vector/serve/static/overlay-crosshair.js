@@ -118,9 +118,14 @@
           dots[idx].style.display = "";
           dots[idx].setAttribute("cx", xpx);
           dots[idx].setAttribute("cy", pt[0]);
+          // labelOnly modes (price, count) pre-format the whole value server-side
+          // ("USD 51.00"); repeating the raw number in front of it would read as
+          // two values. Indexed keeps "level (percent)" — level + change are
+          // genuinely two different numbers there.
           rows +=
             "<br><span class=\"legend-swatch-" + esc(s.series) + "\">■</span> " +
-            esc(s.label) + ": " + pt[1].toFixed(1) + " (" + esc(pt[2]) + ")";
+            esc(s.label) + ": " +
+            (data.labelOnly ? esc(pt[2]) : pt[1].toFixed(1) + " (" + esc(pt[2]) + ")");
         } else {
           dots[idx].style.display = "none";
         }
