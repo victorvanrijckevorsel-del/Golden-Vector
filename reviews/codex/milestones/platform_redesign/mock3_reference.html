@@ -1,0 +1,875 @@
+<title>Ticker page v3 — complete company profile (NEM)</title>
+<style>
+  .gv{--canvas:#0B0D10;--shell:#0E1116;--s1:#141920;--s2:#1A2028;--elev:#202833;
+    --line:#2F3945;--line2:#465362;--ink:#F4F6F8;--ink2:#B7C0CB;--ink3:#8D98A7;
+    --gold:#D8B45A;--goldink:#19150B;--soft:#2B2213;--pos:#55C58A;--neg:#F0787F;
+    --warn:#E2B65B;--info:#69A9E6;--ver:#4DB6AC;--focus:#78B7FF;
+    --ui:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    --data:ui-monospace,"Cascadia Code","SFMono-Regular",Consolas,monospace;
+    --rc:.375rem;--rs:.5rem;--rp:.75rem}
+  .gv,.gv *{box-sizing:border-box}
+  .gv{background:var(--canvas);color:var(--ink);font-family:var(--ui);font-size:15px;line-height:1.5;
+    margin:0 auto;max-width:1300px;border:1px solid var(--line);border-radius:var(--rp);overflow:hidden}
+  .gv h1,.gv h2,.gv h3,.gv h4,.gv p{margin:0}
+  .n{font-family:var(--data);font-variant-numeric:tabular-nums}
+  .gv :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+  .mockbar{display:flex;gap:.7rem;align-items:center;flex-wrap:wrap;background:#191307;
+    border-bottom:1px solid #3A2F14;color:#E7C66D;padding:.5rem 1rem;font-size:.76rem}
+  .mockbar .tag{background:var(--gold);color:var(--goldink);border-radius:2rem;padding:.06rem .5rem;
+    font-weight:700;font-size:.64rem;letter-spacing:.06em}
+  .mockbar button{margin-left:auto;background:transparent;color:#E7C66D;border:1px solid #4A3B18;
+    border-radius:var(--rc);padding:.22rem .6rem;font:inherit;cursor:pointer}
+  .frame{display:grid;grid-template-columns:170px minmax(0,1fr)}
+  .rail{background:var(--shell);border-right:1px solid var(--line);padding:.85rem .65rem}
+  .rail .wm{color:var(--gold);font-weight:700;font-size:.86rem}
+  .rail .ds{color:var(--ink3);font-size:.62rem;margin-bottom:.7rem}
+  .rail .grp{color:var(--ink3);font-size:.55rem;letter-spacing:.12em;text-transform:uppercase;margin:.65rem 0 .2rem}
+  .rail a{display:block;color:var(--ink2);text-decoration:none;font-size:.75rem;padding:.2rem .35rem;border-radius:var(--rc)}
+  .rail a.on{background:var(--soft);color:var(--gold);font-weight:600}
+  .main{padding:.85rem 1rem 2rem;min-width:0}
+  .ctl{position:sticky;top:0;z-index:10;background:var(--shell);border:1px solid var(--line);
+    border-radius:var(--rs);padding:.55rem .75rem;margin-bottom:.8rem;display:flex;gap:.9rem;align-items:center;flex-wrap:wrap}
+  .idb{display:flex;align-items:baseline;gap:.45rem;margin-right:auto}
+  .idb .tk{font-size:1.3rem;font-weight:700}.idb .co{color:var(--ink3);font-size:.74rem}
+  .idb .px{font-family:var(--data);font-size:.92rem}
+  .fld{display:flex;flex-direction:column;gap:.12rem}
+  .fld>label{font-size:.55rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+  .seg{display:flex;border:1px solid var(--line);border-radius:var(--rc);overflow:hidden}
+  .seg button{background:var(--s1);color:var(--ink2);border:0;border-right:1px solid var(--line);
+    font:inherit;font-size:.72rem;padding:.22rem .48rem;cursor:pointer}
+  .seg button:last-child{border-right:0}
+  .seg button[aria-pressed="true"]{background:var(--gold);color:var(--goldink);font-weight:650}
+  .dial{display:flex;align-items:center;gap:.4rem}
+  .dial input[type=range]{width:160px;accent-color:var(--gold)}
+  .dial output{font-family:var(--data);font-size:.9rem;color:var(--gold);min-width:4.6rem}
+  .dial .rel{font-size:.64rem;color:var(--ink3);min-width:3rem}
+  .search{background:var(--s1);border:1px solid var(--line);border-radius:var(--rc);color:var(--ink);
+    font:inherit;font-size:.75rem;padding:.22rem .45rem;width:6.5rem}
+  .block{background:var(--s1);border:1px solid var(--line);border-radius:var(--rp);padding:.9rem;margin-bottom:.8rem}
+  .block>header{display:flex;align-items:baseline;gap:.5rem;flex-wrap:wrap;margin-bottom:.12rem}
+  .block h2{font-size:1rem;font-weight:650}
+  .block .lede{color:var(--ink2);font-size:.79rem;margin-bottom:.7rem}
+  .qm{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;
+    border:1px solid var(--line2);background:var(--s2);color:var(--ink3);font-size:.58rem;font-style:italic;
+    font-weight:700;cursor:help;margin-left:.25rem;flex:0 0 auto}
+  .pill{display:inline-block;font-size:.62rem;font-weight:650;padding:.05rem .4rem;border-radius:2rem}
+  .pill.good{background:#14301F;color:var(--pos)}.pill.warn{background:#332713;color:var(--warn)}
+  .pill.bad{background:#331A1C;color:var(--neg)}.pill.info{background:#12232F;color:var(--info)}
+  .pill.mut{background:var(--s2);color:var(--ink3)}.pill.gold{background:var(--soft);color:var(--gold)}
+  .chartwrap{background:var(--s2);border:1px solid var(--line);border-radius:var(--rs);padding:.55rem}
+  .chartwrap svg{display:block;width:100%;height:220px}
+  .legend{display:flex;gap:.7rem;flex-wrap:wrap;font-size:.72rem;margin:.3rem 0 .05rem}
+  .legend button{background:none;border:0;color:var(--ink2);font:inherit;font-size:.72rem;cursor:pointer;
+    display:flex;align-items:center;gap:.28rem;padding:.08rem .15rem}
+  .legend button[aria-pressed="false"]{opacity:.35}
+  .legend .sw{width:11px;height:3px;border-radius:2px;display:inline-block}
+  .chartfoot{display:flex;justify-content:space-between;font-size:.64rem;color:var(--ink3);margin-top:.1rem}
+  .mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(146px,100%),1fr));gap:.5rem}
+  .m{background:var(--s2);border:1px solid var(--line);border-radius:var(--rs);padding:.45rem .55rem}
+  .m.live{border-left:3px solid var(--gold)}
+  .m .k{font-size:.58rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);display:flex;align-items:center}
+  .m .v{font-family:var(--data);font-size:1.12rem;margin-top:.05rem}
+  .m .v small{font-size:.66rem;color:var(--ink3)}
+  .m .sc{font-family:var(--data);font-size:.86rem;color:var(--gold)}
+  .m .d{font-size:.62rem;color:var(--ink3)}
+  .grouphd{font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);
+    margin:.8rem 0 .35rem;display:flex;align-items:center;gap:.5rem}
+  .grouphd::after{content:"";flex:1;height:1px;background:var(--line)}
+  table.fin{width:100%;border-collapse:collapse;font-size:.79rem}
+  table.fin th,table.fin td{padding:.26rem .45rem;border-bottom:1px solid var(--line);text-align:right}
+  table.fin th:first-child,table.fin td:first-child{text-align:left;font-weight:500}
+  table.fin thead th{font-size:.56rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+  table.fin td.num{font-family:var(--data);font-variant-numeric:tabular-nums}
+  table.fin td.sc{font-family:var(--data);color:var(--gold)}
+  table.fin tr.moves td:first-child::before{content:"◆";color:var(--gold);font-size:.55rem;margin-right:.35rem}
+  table.fin .alt{color:var(--warn);font-size:.7rem}
+  .scroller{overflow-x:auto}
+  .twocol{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:.75rem}
+  .panel2{background:var(--s2);border:1px solid var(--line);border-radius:var(--rs);padding:.65rem .7rem}
+  .panel2 h3{font-size:.78rem;font-weight:650;margin-bottom:.1rem}
+  .panel2 .sub{font-size:.7rem;color:var(--ink3);margin-bottom:.45rem}
+  .panel2 svg{display:block;width:100%}
+  .rugbox{margin-bottom:.6rem}.rugbox .rl{font-size:.68rem;color:var(--ink2);display:flex;justify-content:space-between}
+  .rugbox svg{height:36px}
+  .contracts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(255px,100%),1fr));gap:.65rem}
+  .cside{background:var(--s2);border:1px solid var(--line);border-radius:var(--rs);padding:.6rem .65rem}
+  .cside h3{font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;margin-bottom:.45rem}
+  .cside.put h3{color:var(--neg)}.cside.call h3{color:var(--pos)}
+  .ct{display:flex;justify-content:space-between;align-items:baseline;gap:.4rem;padding:.35rem 0;border-bottom:1px solid var(--line)}
+  .ct:last-child{border-bottom:0}.ct .st{font-family:var(--data);font-size:1rem}
+  .ct .mo{font-size:.62rem;color:var(--ink3)}.ct .rhs{text-align:right}
+  .ct .pr{font-family:var(--data);font-size:.92rem}.ct .iv{font-size:.62rem;color:var(--ink3)}
+  .trendrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr));gap:.65rem;margin-top:.8rem}
+  .tc{background:var(--s2);border:1px solid var(--line);border-radius:var(--rs);padding:.55rem .65rem}
+  .tc .th{display:flex;justify-content:space-between;align-items:baseline;gap:.35rem}
+  .tc .tt{font-size:.62rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
+  .tc .now{font-family:var(--data);font-size:1.15rem}
+  .tc svg{display:block;width:100%;height:44px;margin:.25rem 0 .05rem}
+  .tc .ft{font-size:.62rem;color:var(--ink3);display:flex;justify-content:space-between;gap:.3rem}
+  .tc .say{font-size:.7rem;color:var(--ink2);margin-top:.2rem}
+  details.fold{background:var(--s2);border:1px solid var(--line);border-radius:var(--rs);margin-top:.55rem}
+  details.fold>summary{cursor:pointer;padding:.5rem .7rem;font-weight:600;font-size:.83rem;
+    display:flex;align-items:center;gap:.45rem;list-style:none}
+  details.fold>summary::-webkit-details-marker{display:none}
+  details.fold>summary::before{content:"▸";color:var(--gold);font-size:.72rem}
+  details.fold[open]>summary::before{content:"▾"}
+  details.fold>summary .hint{margin-left:auto;font-weight:400;font-size:.68rem;color:var(--ink3)}
+  details.fold .body{padding:0 .7rem .7rem;font-size:.81rem;color:var(--ink2)}
+  .notice{border-radius:var(--rc);padding:.45rem .65rem;font-size:.76rem;margin-top:.55rem;border-left:3px solid}
+  .notice.warn{background:#241C0C;border-color:var(--warn);color:#F0DDAE}
+  .notice.info{background:#0F1D28;border-color:var(--info);color:#CBE2F5}
+  .notice.mut{background:var(--s2);border-color:var(--line2);color:var(--ink2)}
+  .sbcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:.75rem}
+  .sbcat{background:var(--s2);border:1px solid var(--line);border-radius:var(--rs);padding:.6rem .65rem}
+  .sbcat h3{font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin-bottom:.4rem}
+  .sbrow{display:flex;gap:.45rem;align-items:center;padding:.2rem 0;font-size:.77rem}
+  .sbrow label{display:flex;gap:.3rem;align-items:center;flex:1;min-width:0;cursor:pointer}
+  .sbrow .pts{font-family:var(--data);font-size:.72rem;color:var(--gold);min-width:2.6rem;text-align:right}
+  .sbrow .dirbtn{background:var(--s1);border:1px solid var(--line);color:var(--ink2);border-radius:var(--rc);
+    font:inherit;font-size:.6rem;padding:0 .28rem;cursor:pointer}
+  .sbrow.off{opacity:.4}
+  .sbrow input[type=range]{accent-color:var(--gold);width:80px}
+  .sbresult{margin-top:.75rem;background:var(--s2);border:1px solid var(--line);border-radius:var(--rs);padding:.65rem .7rem}
+  .sbempty{color:var(--ink3);font-size:.78rem;text-align:center;padding:1rem .5rem}
+  .contrib{display:flex;flex-direction:column;gap:.18rem;margin:.5rem 0}
+  .contrib .cr{display:grid;grid-template-columns:9rem 1fr 3.2rem;gap:.4rem;align-items:center;font-size:.72rem}
+  .contrib .bar{position:relative;height:12px;background:var(--s1);border-radius:2px}
+  .contrib .bar i{position:absolute;top:0;bottom:0;border-radius:2px}
+  .ranklist{max-height:190px;overflow-y:auto;border:1px solid var(--line);border-radius:var(--rc)}
+  .ranklist button{display:grid;grid-template-columns:1.8rem 1fr 3rem;gap:.4rem;width:100%;text-align:left;
+    background:none;border:0;border-bottom:1px solid var(--line);color:var(--ink2);font:inherit;font-size:.75rem;
+    padding:.22rem .45rem;cursor:pointer}
+  .ranklist button:hover{background:var(--elev);color:var(--ink)}
+  .ranklist button.me{background:var(--soft);color:var(--gold);font-weight:650}
+  .ranklist .n{text-align:right}
+  .dn{display:none;background:#0F1D28;border:1px dashed #2C4E68;color:#CBE2F5;border-radius:var(--rc);
+    padding:.42rem .6rem;font-size:.75rem;margin:.45rem 0 0}
+  .gv.notes .dn{display:block}.dn b{color:#8FC7F0}
+  @media (max-width:56rem){.frame{grid-template-columns:1fr}.rail{display:none}.ctl{position:static}}
+  @media (prefers-reduced-motion:reduce){.gv *{transition:none!important}}
+</style>
+
+<div class="gv" id="gv">
+  <div class="mockbar"><span class="tag">MOCK v3</span>
+    <span>Complete <code>/ticker/NEM</code> — every number is your real data, 10 Aug 2026.</span>
+    <button type="button" id="notesBtn" aria-pressed="false">Show design notes</button></div>
+
+  <div class="frame">
+    <nav class="rail" aria-label="Primary">
+      <div class="wm">Golden Vector</div><div class="ds">Gold-equities research</div>
+      <p class="grp">Discover</p><a href="#">Candidate Finder</a>
+      <p class="grp">Analyse</p><a href="#" class="on">Gold Sensitivity</a><a href="#">Corporate Finance</a>
+      <a href="#">Gold Downside</a><a href="#">Corporate Resilience</a><a href="#">Option Trading</a>
+      <p class="grp">Manage</p><a href="#">Portfolio</a>
+      <p class="grp">Research</p><a href="#">Lab</a><a href="#">Scorecard</a></nav>
+
+    <main class="main">
+      <div class="ctl">
+        <div class="idb"><span class="tk">NEM</span><span class="co">Newmont · USD · jurisdiction tier 2</span>
+          <span class="px">$116.14</span></div>
+        <div class="fld"><label for="jump">Jump to</label>
+          <input class="search" id="jump" type="search" placeholder="ticker…" aria-label="Jump to ticker"></div>
+        <div class="fld"><label for="gold">Gold price scenario</label>
+          <div class="dial"><input type="range" id="gold" min="2000" max="6000" step="1" value="4422">
+            <output id="goldOut" for="gold">$4,422</output><span class="rel" id="goldRel">spot</span>
+            <button type="button" id="goldReset" style="border:1px solid var(--line);background:var(--s1);
+              color:var(--ink2);border-radius:var(--rc);font:inherit;font-size:.68rem;padding:.16rem .4rem;cursor:pointer">reset</button>
+          </div></div>
+        <div class="fld"><label>Financials source</label>
+          <div class="seg" role="group" aria-label="Financials source">
+            <button type="button" aria-pressed="true">Ours</button><button type="button">Yahoo</button></div></div>
+      </div>
+
+      <!-- PERFORMANCE -->
+      <section class="block" id="performance">
+        <header><h2>Performance</h2><span class="pill mut" id="perfRange">1Y</span></header>
+        <p class="lede">How Newmont has done, on its own and against gold and the miner ETFs.</p>
+        <div style="display:flex;gap:.7rem;flex-wrap:wrap;margin-bottom:.45rem">
+          <div class="seg" role="group" aria-label="Chart view">
+            <button type="button" id="vRebase" aria-pressed="true">Compare (rebased)</button>
+            <button type="button" id="vPrice">Share price</button></div>
+          <div class="seg" role="group" aria-label="Horizon">
+            <button type="button" class="ch" data-h="y1" aria-pressed="true">1Y</button>
+            <button type="button" class="ch" data-h="y3">3Y</button>
+            <button type="button" class="ch" data-h="y5">5Y</button></div>
+        </div>
+        <div class="chartwrap"><div class="legend" id="legend"></div>
+          <svg id="chart" viewBox="0 0 960 220" preserveAspectRatio="none" role="img"
+            aria-label="Newmont versus gold, GDX and GDXJ"></svg>
+          <div class="chartfoot"><span id="cFrom"></span><span id="cNote"></span><span id="cTo"></span></div></div>
+        <p class="dn"><b>1 · One chart, two questions.</b> Compare indexes everything to 100; Share price
+          shows dollars. Horizon is independent of the beta window below.</p>
+      </section>
+
+      <!-- CORPORATE FINANCE -->
+      <section class="block" id="finance">
+        <header><h2>Corporate finance</h2><span class="pill gold" id="goldBadge">at spot $4,422</span>
+          <span class="pill mut">data OK · FX current</span></header>
+        <p class="lede">Everything we hold on the business. Rows marked ◆ move with the gold dial; the rest
+          are facts that don't depend on the gold price.</p>
+
+        <div class="mgrid" id="headline"></div>
+        <div id="checkFail"></div>
+
+        <div class="grouphd">Earnings and cash at this gold price</div>
+        <div class="scroller"><table class="fin"><thead><tr>
+          <th>Metric</th><th>Reported (spot $4,422)</th><th class="scHd" id="scHd1" hidden>At your scenario</th><th>Basis</th>
+        </tr></thead><tbody id="tblEarn"></tbody></table></div>
+
+        <div class="grouphd">Valuation</div>
+        <div class="scroller"><table class="fin"><thead><tr>
+          <th>Metric</th><th>Reported (spot $4,422)</th><th class="scHd" id="scHd2" hidden>At your scenario</th><th>Basis</th>
+        </tr></thead><tbody id="tblVal"></tbody></table></div>
+
+        <div class="grouphd">Balance sheet, cost and scale <span class="pill mut">fixed</span></div>
+        <div class="scroller"><table class="fin"><tbody id="tblFixed"></tbody></table></div>
+
+        <div class="grouphd">Resilience — at what gold price does this break?</div>
+        <div class="scroller"><table class="fin"><tbody id="tblResil"></tbody></table></div>
+
+        <details class="fold"><summary>Data quality and sources
+          <span class="hint">our vs Yahoo · staleness · reporting dates</span></summary>
+          <div class="body"><div class="scroller"><table class="fin"><tbody id="tblQual"></tbody></table></div></div></details>
+        <p class="dn"><b>2 · Everything, structured.</b> Every field we hold, grouped by the question it
+          answers, with the gold-driven ones marked and a second column that appears only once you move the
+          dial. No verdicts, no scores — when a screening check fails you get the sentence, not a label.</p>
+      </section>
+
+      <!-- MARKET BEHAVIOUR -->
+      <section class="block" id="behaviour">
+        <header><h2>Market behaviour</h2><span class="pill mut">1Y window</span>
+          <span class="pill info">gold explains 62%</span></header>
+        <p class="lede">How the share price actually responds to gold — measured over 1,353 weeks.</p>
+        <div class="twocol">
+          <div class="panel2"><h3>Up vs down beta</h3>
+            <p class="sub">Measured separately on weeks gold rose and weeks gold fell, against GDX and GDXJ.</p>
+            <svg id="betaBars" viewBox="0 0 420 200" role="img" aria-label="Up and down beta"></svg></div>
+          <div class="panel2"><h3>Where it ranks among your 61 miners</h3>
+            <p class="sub">Each tick is a miner; gold marker is Newmont, dashed blue are the ETFs.</p>
+            <div class="rugbox"><div class="rl"><span>Down beta — weeks gold fell</span><span class="n" id="rugDownLbl"></span></div>
+              <svg id="rugDown" viewBox="0 0 420 36" role="img" aria-label="Down beta percentile"></svg></div>
+            <div class="rugbox"><div class="rl"><span>Up beta — weeks gold rose</span><span class="n" id="rugUpLbl"></span></div>
+              <svg id="rugUp" viewBox="0 0 420 36" role="img" aria-label="Up beta percentile"></svg></div></div>
+        </div>
+
+        <div class="grouphd">How often it beat gold and the ETFs</div>
+        <div class="scroller"><table class="fin"><tbody id="tblRel"></tbody></table></div>
+
+        <details class="fold"><summary>How it behaved in past gold moves
+          <span class="hint">counted history · survivor-only · not a forecast</span></summary>
+          <div class="body">
+            <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin:.25rem 0 .6rem">
+              <div class="fld"><label>Look-ahead</label><div class="seg" role="group" aria-label="Look-ahead">
+                <button type="button" class="labH" data-h="4">4w</button>
+                <button type="button" class="labH" data-h="8" aria-pressed="true">8w</button>
+                <button type="button" class="labH" data-h="13">13w</button>
+                <button type="button" class="labH" data-h="26">26w</button></div></div>
+              <div class="fld"><label>Benchmark</label><div class="seg" role="group" aria-label="Benchmark">
+                <button type="button" aria-pressed="true">GDX</button><button type="button">GDXJ</button></div></div>
+              <div class="fld"><label>Gold scenario</label><div class="seg" role="group" aria-label="Gold scenario" id="bucketSeg">
+                <button type="button" data-b="gold_down_big">down &gt;15%</button>
+                <button type="button" data-b="gold_down" aria-pressed="true">down 5-15%</button>
+                <button type="button" data-b="gold_flat">flat</button>
+                <button type="button" data-b="gold_up">up 5-15%</button>
+                <button type="button" data-b="gold_up_big">up &gt;15%</button></div></div>
+            </div>
+            <p style="margin-bottom:.4rem;font-size:.8rem">How often Newmont beat GDX over the following 8
+              weeks, in each kind of gold week:</p>
+            <svg id="labChart" viewBox="0 0 620 180" role="img" aria-label="Beat rate by gold scenario"></svg>
+
+            <div class="grouphd" style="margin-top:.9rem">Spread of outcomes — <span id="spreadLbl"></span></div>
+            <svg id="labSpread" viewBox="0 0 620 90" role="img" aria-label="Spread of outcomes"></svg>
+            <p style="font-size:.72rem;color:var(--ink3)">Each tick is one scenario week: how Newmont did
+              against GDX over the following 8 weeks. Green beat, red lagged; the marker is the median.</p>
+
+            <div class="grouphd" style="margin-top:.9rem">When did it happen?</div>
+            <svg id="labWhen" viewBox="0 0 620 170" role="img" aria-label="Forward performance week by week"></svg>
+            <p style="font-size:.72rem;color:var(--ink3)">Every week since 2016 as a faint dot; the
+              highlighted scenario weeks in colour. Clustering in one era means the tendency isn't durable.</p>
+
+            <div class="notice mut">Survivors only — miners that failed or were acquired aren't in this
+              history, so it flatters the past. Scenarios with too little history stay empty rather than guessed.</div>
+          </div></details>
+
+        <details class="fold"><summary>Full research detail
+          <span class="hint">weekly scatter · every lookback · volatility · horizon ladder</span></summary>
+          <div class="body">The existing deep panels, unchanged and one click away.</div></details>
+        <p class="dn"><b>3 · Measured first, history second.</b> Betas lead because they're regressions on
+          1,353 weeks. The Lab sits behind a disclosure — three charts, 8-week default (≈18 independent
+          observations against 13 weeks' 12.5), trimmed to 2016 onward.</p>
+      </section>
+
+      <!-- OPTIONS -->
+      <section class="block" id="options">
+        <header><h2>Options</h2><span class="pill mut">987 contracts · 14 expiries</span>
+          <span class="pill warn">thin market</span></header>
+        <p class="lede">Where the option market stands on Newmont, and what you could trade.</p>
+
+        <div class="twocol">
+          <div class="panel2"><h3>Open interest — puts, calls and total</h3>
+            <p class="sub">Every contract outstanding across all 14 expiries.</p>
+            <svg id="oiChart" viewBox="0 0 460 150" role="img" aria-label="Put, call and total open interest over time"></svg>
+            <div class="legend" style="margin-top:.2rem">
+              <span style="display:flex;gap:.28rem;align-items:center;font-size:.7rem;color:var(--ink2)"><span class="sw" style="background:#F0787F"></span>Puts 211,900</span>
+              <span style="display:flex;gap:.28rem;align-items:center;font-size:.7rem;color:var(--ink2)"><span class="sw" style="background:#55C58A"></span>Calls 322,506</span>
+              <span style="display:flex;gap:.28rem;align-items:center;font-size:.7rem;color:var(--ink2)"><span class="sw" style="background:#8D98A7"></span>Total 534,406</span></div></div>
+          <div class="panel2"><h3>What the balance says</h3>
+            <p class="sub">Two ratios that disagree — and the disagreement is the useful part.</p>
+            <div class="mgrid" style="grid-template-columns:1fr 1fr">
+              <div class="m"><div class="k">Whole chain</div><div class="v">0.66</div>
+                <div class="d">puts ÷ calls · <span style="color:var(--pos)">more calls</span></div></div>
+              <div class="m"><div class="k">Out-of-the-money only</div><div class="v">1.42</div>
+                <div class="d">puts ÷ calls · <span style="color:var(--neg)">more puts</span></div></div>
+            </div>
+            <p style="font-size:.76rem;color:var(--ink2);margin-top:.5rem">Across everything there are more
+              calls — positioning leans <strong>bullish</strong>. But among out-of-the-money contracts, where
+              speculation and hedging live, puts outnumber calls 1.4 to 1. Read together: holders are long
+              and buying downside protection, not betting on a collapse.</p>
+            <div class="tc" style="margin-top:.55rem;border:0;padding:0;background:none">
+              <div class="th"><span class="tt">Put/call ratio over time</span><span class="n" style="color:var(--pos)">▼ 0.77 → 0.66</span></div>
+              <svg id="spPcr" viewBox="0 0 240 40" preserveAspectRatio="none" role="img" aria-label="Put call ratio over time"></svg>
+              <div class="say">Falling for ten weeks — the market has been rotating out of puts.</div></div></div>
+        </div>
+
+        <div class="trendrow">
+          <div class="tc"><div class="th"><span class="tt">Implied move by January</span></div>
+            <div class="now">±15.3%</div>
+            <svg id="spMove" viewBox="0 0 240 40" preserveAspectRatio="none" role="img" aria-label="Implied move over time"></svg>
+            <div class="ft"><span>$98 – $134</span><span>narrowing</span></div>
+            <div class="say">What options price in as the likely range by expiry.</div></div>
+          <div class="tc"><div class="th"><span class="tt">Implied volatility (90d)</span></div>
+            <div class="now">42.8%</div>
+            <svg id="spIv" viewBox="0 0 240 40" preserveAspectRatio="none" role="img" aria-label="Implied volatility over time"></svg>
+            <div class="ft"><span>vs its own 10 weeks</span><span>near the low</span></div>
+            <div class="say">Options are cheaper than they've been — better for buying than selling.</div></div>
+          <div class="tc"><div class="th"><span class="tt">Contracts traded per day</span></div>
+            <div class="now">32.9k</div>
+            <svg id="spVol" viewBox="0 0 240 40" preserveAspectRatio="none" role="img" aria-label="Daily option volume"></svg>
+            <div class="ft"><span>1 Jun</span><span>activity</span><span>now</span></div>
+            <div class="say">How much actually changes hands — your fill risk.</div></div>
+        </div>
+
+        <div class="grouphd">Most liquid contracts</div>
+        <div style="display:flex;gap:.45rem;flex-wrap:wrap;margin-bottom:.5rem">
+          <div class="seg" role="group" aria-label="Expiry">
+            <button type="button" aria-pressed="true">Jan 2027 · 5mo</button>
+            <button type="button">Mar 2027 · 7mo</button>
+            <button type="button">Jun 2027 · 10mo</button>
+            <button type="button">Jan 2028 · 17mo</button></div></div>
+        <div class="contracts">
+          <div class="cside put"><h3>Puts — profit if it falls</h3>
+            <div class="ct"><div class="lhs"><span class="st">$115</span><span class="mo">at the money · 1% below spot</span></div>
+              <div class="rhs"><div class="pr">$11.93</div><div class="iv">IV 42% · 2,569 OI · 3.8% spread</div></div></div>
+            <div class="ct"><div class="lhs"><span class="st">$95</span><span class="mo">directional · 18% below spot</span></div>
+              <div class="rhs"><div class="pr">$3.95</div><div class="iv">IV 42% · 1,874 OI · 2.5% spread</div></div></div></div>
+          <div class="cside call"><h3>Calls — profit if it rises</h3>
+            <div class="ct"><div class="lhs"><span class="st">$120</span><span class="mo">at the money · 3% above spot</span></div>
+              <div class="rhs"><div class="pr">$12.50</div><div class="iv">IV 47% · 4,564 OI · 2.4% spread</div></div></div>
+            <div class="ct"><div class="lhs"><span class="st">$135</span><span class="mo">directional · 16% above spot</span></div>
+              <div class="rhs"><div class="pr">$7.55</div><div class="iv">IV 47% · 1,089 OI · 9.3% spread</div></div></div></div>
+        </div>
+
+        <details class="fold"><summary>Where the crowd is positioned
+          <span class="hint">open interest by strike · skew</span></summary>
+          <div class="body">
+            <svg id="oiStrike" viewBox="0 0 620 160" role="img" aria-label="Open interest by strike"></svg>
+            <p style="font-size:.73rem;color:var(--ink3)">Near-the-money strikes only. Puts cluster below
+              spot, calls above — the classic protection-plus-upside shape.</p>
+            <div class="grouphd" style="margin-top:.7rem">Skew — what each side costs</div>
+            <svg id="skewChart" viewBox="0 0 620 150" role="img" aria-label="Implied volatility by delta"></svg>
+            <p style="font-size:.73rem;color:var(--ink3)">Out-of-the-money calls carry the higher implied
+              volatility here (50.1% at 10-delta versus 43.3% for puts) — upside is priced dearer than
+              downside, unusual outside a metals bull market.</p>
+          </div></details>
+
+        <details class="fold"><summary>Work out a position
+          <span class="hint">budget → contracts → value at expiry</span></summary>
+          <div class="body">
+            <div style="display:flex;gap:.8rem;flex-wrap:wrap;align-items:flex-end;margin:.25rem 0 .6rem">
+              <div class="fld"><label for="budget">Budget (USD)</label>
+                <input class="search" id="budget" type="number" min="500" step="500" value="5000" style="width:6.5rem"></div>
+              <div class="fld"><label>Contract</label><div class="seg" role="group" aria-label="Contract">
+                <button type="button" class="pick" data-k="p115" aria-pressed="true">$115 put</button>
+                <button type="button" class="pick" data-k="p95">$95 put</button>
+                <button type="button" class="pick" data-k="c120">$120 call</button>
+                <button type="button" class="pick" data-k="c135">$135 call</button></div></div>
+              <div class="fld"><label for="spx">Newmont share price at expiry</label>
+                <div class="dial"><input type="range" id="spx" min="60" max="190" step="1" value="116">
+                  <output id="spxOut" class="n">$116</output>
+                  <span class="rel" id="spxRel">spot</span></div></div>
+            </div>
+            <div class="scroller"><table class="fin"><tbody id="sizeOut"></tbody></table></div>
+            <div class="grouphd" style="margin-top:.7rem">Across a range of prices</div>
+            <div class="scroller"><table class="fin"><thead><tr><th>Share price at expiry</th>
+              <th>Contract worth</th><th>Your result</th><th>On money used</th></tr></thead>
+              <tbody id="ladderOut"></tbody></table></div>
+            <p style="font-size:.7rem;color:var(--ink3);margin-top:.45rem">Value at expiry — intrinsic only,
+              time value ignored. Nothing here is estimated: it's strike minus price, times 100, times contracts.</p>
+          </div></details>
+
+        <details class="fold"><summary>Greeks and full chain
+          <span class="hint">delta, theta, vega · every strike</span></summary>
+          <div class="body"><div class="scroller"><table class="fin"><thead><tr><th>Contract</th><th>Delta</th>
+            <th>IV</th><th>OI</th><th>Spread</th></tr></thead><tbody>
+            <tr><td>$115 put · Jan 2027</td><td class="num">−0.41</td><td class="num">42.1%</td><td class="num">2,569</td><td class="num">3.8%</td></tr>
+            <tr><td>$95 put · Jan 2027</td><td class="num">−0.18</td><td class="num">42.3%</td><td class="num">1,874</td><td class="num">2.5%</td></tr>
+            <tr><td>$120 call · Jan 2027</td><td class="num">0.54</td><td class="num">46.5%</td><td class="num">4,564</td><td class="num">2.4%</td></tr>
+            <tr><td>$135 call · Jan 2027</td><td class="num">0.39</td><td class="num">47.1%</td><td class="num">1,089</td><td class="num">9.3%</td></tr>
+            </tbody></table></div>
+            <p style="font-size:.73rem;color:var(--ink3);margin-top:.4rem">Theta and vega per contract, and
+              the complete strike ladder, would sit here too.</p></div></details>
+
+        <p class="dn"><b>4 · Market first, tools hidden.</b> The whole section disappears for a miner with no
+          listed options — no empty tables, no proxy suggestion. Sizing now moves the share price directly:
+          no beta estimate, no invented precision.</p>
+      </section>
+
+      <!-- SCORE BUILDER -->
+      <section class="block" id="score">
+        <header><h2>Compare on your own terms</h2>
+          <span class="pill mut" id="ptsLeft">100 points to spend</span></header>
+        <p class="lede">Pick what matters and split 100 points across it. Nothing is scored until you do —
+          the product never rates a company on its own.</p>
+        <div class="sbcols">
+          <div class="sbcat"><h3>Trading behaviour</h3><div id="catA"></div></div>
+          <div class="sbcat"><h3>Corporate finance</h3><div id="catB"></div></div></div>
+        <div class="sbresult" id="sbResult"><div class="sbempty">Tick a metric to begin.</div></div>
+        <p class="dn"><b>5 · Your weights, in points.</b> A 100-point budget makes the trade-off real. The
+          contribution bars show which metrics carry Newmont and which drag it; the list is clickable to
+          compare against any other miner; and the stability line warns you when the ranking is too fragile
+          to mean anything.</p>
+      </section>
+
+      <details class="fold" style="background:var(--s1)"><summary>Your inputs and notes
+        <span class="hint">company data · reporting dates · verification · notes</span></summary>
+        <div class="body">The four maintenance forms, closed by default. Next financial and production
+          reports are both due 19 Feb 2026.</div></details>
+    </main>
+  </div>
+</div>
+
+<script>window.GVD={"chart":{"y1":{"dates":["2025-08-15","2025-08-22","2025-08-29","2025-09-05","2025-09-12","2025-09-19","2025-09-26","2025-10-03","2025-10-10","2025-10-17","2025-10-24","2025-10-31","2025-11-07","2025-11-14","2025-11-21","2025-11-28","2025-12-05","2025-12-12","2025-12-19","2025-12-26","2026-01-02","2026-01-09","2026-01-16","2026-01-23","2026-01-30","2026-02-06","2026-02-13","2026-02-20","2026-02-27","2026-03-06","2026-03-13","2026-03-20","2026-03-27","2026-04-03","2026-04-10","2026-04-17","2026-04-24","2026-05-01","2026-05-08","2026-05-15","2026-05-22","2026-05-29","2026-06-05","2026-06-12","2026-06-19","2026-06-26","2026-07-03","2026-07-10","2026-07-17","2026-07-24","2026-07-31","2026-08-07","2026-08-14"],"NEM":[69.33,70.77,74.4,76.17,79.25,81.72,85.25,86.86,85.14,90.77,83.37,80.97,83.39,87.8,83.49,90.73,89.76,98.14,101.29,105.78,101.22,108.99,114.12,124.31,112.35,115.32,125.8,122.13,130.0,116.29,109.58,95.8,102.1,114.05,120.9,116.5,120.7,108.62,116.51,109.06,107.64,109.81,99.71,100.23,103.79,96.13,97.04,95.29,89.7,93.19,93.71,112.98,116.13],"Gold":[3336.0,3374.4,3473.7,3613.2,3649.4,3671.5,3775.3,3880.8,3975.9,4189.9,4118.4,3982.2,3999.4,4087.6,4076.7,4218.3,4212.9,4300.1,4361.4,4529.1,4314.4,4490.3,4588.4,4976.2,4713.9,4951.2,5022.0,5059.3,5230.5,5146.1,5052.5,4570.4,4492.0,4651.5,4761.9,4857.6,4722.3,4629.9,4720.4,4555.8,4521.0,4560.5,4337.1,4215.0,4224.1,4078.7,4112.7,4104.1,4012.7,4067.6,4049.1,4340.7,4422.3],"GDX":[58.28,60.18,63.17,66.34,69.75,72.36,74.68,77.08,75.78,78.73,72.8,72.06,72.55,76.16,73.65,83.23,81.03,85.66,87.79,91.29,85.73,92.56,97.24,107.02,94.2,97.39,103.94,106.26,115.84,101.38,93.26,80.12,85.79,94.59,99.39,100.34,94.34,87.11,94.59,87.35,85.02,89.49,78.84,80.03,82.51,77.0,78.43,75.53,71.32,75.23,74.1,89.89,89.94],"GDXJ":[73.88,76.27,80.05,84.86,90.03,91.98,96.21,99.74,99.9,103.11,94.87,93.67,93.03,97.44,93.98,109.28,106.68,114.3,117.63,121.6,113.2,121.95,128.07,145.03,124.09,128.56,136.34,142.01,156.19,136.17,123.93,104.77,110.58,122.19,128.84,133.12,123.75,115.38,125.84,116.37,111.62,119.29,100.59,104.26,107.22,100.29,102.91,98.88,92.2,97.8,95.39,117.62,118.09]},"y3":{"dates":["2023-08-11","2023-08-18","2023-08-25","2023-09-01","2023-09-08","2023-09-15","2023-09-22","2023-09-29","2023-10-06","2023-10-13","2023-10-20","2023-10-27","2023-11-03","2023-11-10","2023-11-17","2023-11-24","2023-12-01","2023-12-08","2023-12-15","2023-12-22","2023-12-29","2024-01-05","2024-01-12","2024-01-19","2024-01-26","2024-02-02","2024-02-09","2024-02-16","2024-02-23","2024-03-01","2024-03-08","2024-03-15","2024-03-22","2024-03-29","2024-04-05","2024-04-12","2024-04-19","2024-04-26","2024-05-03","2024-05-10","2024-05-17","2024-05-24","2024-05-31","2024-06-07","2024-06-14","2024-06-21","2024-06-28","2024-07-05","2024-07-12","2024-07-19","2024-07-26","2024-08-02","2024-08-09","2024-08-16","2024-08-23","2024-08-30","2024-09-06","2024-09-13","2024-09-20","2024-09-27","2024-10-04","2024-10-11","2024-10-18","2024-10-25","2024-11-01","2024-11-08","2024-11-15","2024-11-22","2024-11-29","2024-12-06","2024-12-13","2024-12-20","2024-12-27","2025-01-03","2025-01-10","2025-01-17","2025-01-24","2025-01-31","2025-02-07","2025-02-14","2025-02-21","2025-02-28","2025-03-07","2025-03-14","2025-03-21","2025-03-28","2025-04-04","2025-04-11","2025-04-18","2025-04-25","2025-05-02","2025-05-09","2025-05-16","2025-05-23","2025-05-30","2025-06-06","2025-06-13","2025-06-20","2025-06-27","2025-07-04","2025-07-11","2025-07-18","2025-07-25","2025-08-01","2025-08-08","2025-08-15","2025-08-22","2025-08-29","2025-09-05","2025-09-12","2025-09-19","2025-09-26","2025-10-03","2025-10-10","2025-10-17","2025-10-24","2025-10-31","2025-11-07","2025-11-14","2025-11-21","2025-11-28","2025-12-05","2025-12-12","2025-12-19","2025-12-26","2026-01-02","2026-01-09","2026-01-16","2026-01-23","2026-01-30","2026-02-06","2026-02-13","2026-02-20","2026-02-27","2026-03-06","2026-03-13","2026-03-20","2026-03-27","2026-04-03","2026-04-10","2026-04-17","2026-04-24","2026-05-01","2026-05-08","2026-05-15","2026-05-22","2026-05-29","2026-06-05","2026-06-12","2026-06-19","2026-06-26","2026-07-03","2026-07-10","2026-07-17","2026-07-24","2026-07-31","2026-08-07","2026-08-14"],"NEM":[40.19,38.2,38.31,39.32,38.73,40.33,40.74,36.95,37.8,39.43,38.8,38.97,39.02,34.2,36.35,37.59,41.2,39.08,40.87,42.06,41.39,40.34,37.64,34.58,34.21,34.41,32.79,33.43,31.28,31.94,33.91,33.88,33.77,35.84,39.65,38.64,39.02,42.73,40.66,42.49,43.74,41.98,41.94,40.36,40.82,42.26,41.87,44.51,47.51,47.0,46.73,48.51,47.71,50.21,52.04,53.39,50.34,53.71,54.47,53.9,53.34,54.3,57.62,48.42,45.26,45.04,40.93,43.38,41.94,41.11,40.22,38.28,37.84,38.11,39.1,41.67,42.04,42.72,44.84,46.54,45.33,42.84,43.87,46.24,47.36,48.08,44.18,54.97,55.08,53.94,51.53,53.98,50.1,53.65,52.72,52.36,57.9,58.23,56.76,59.9,60.13,58.19,65.75,62.59,68.98,69.33,70.77,74.4,76.17,79.25,81.72,85.25,86.86,85.14,90.77,83.37,80.97,83.39,87.8,83.49,90.73,89.76,98.14,101.29,105.78,101.22,108.99,114.12,124.31,112.35,115.32,125.8,122.13,130.0,116.29,109.58,95.8,102.1,114.05,120.9,116.5,120.7,108.62,116.51,109.06,107.64,109.81,99.71,100.23,103.79,96.13,97.04,95.29,89.7,93.19,93.71,112.98,116.13],"Gold":[1912.9,1886.1,1911.1,1939.8,1918.4,1923.7,1925.4,1848.1,1830.2,1927.4,1982.5,1988.6,1991.5,1932.6,1981.6,2002.2,2071.0,1998.3,2021.1,2057.1,2062.4,2042.4,2046.7,2026.5,2016.8,2036.1,2023.3,2011.5,2038.6,2086.9,2178.6,2157.3,2158.1,2217.4,2325.7,2356.2,2398.4,2334.8,2299.0,2367.3,2412.2,2332.5,2322.9,2305.2,2331.4,2316.4,2327.7,2388.5,2414.0,2395.5,2380.0,2425.7,2432.1,2498.6,2508.4,2493.8,2493.5,2581.3,2619.9,2644.3,2645.8,2657.6,2713.7,2740.9,2738.6,2687.5,2565.7,2709.9,2657.0,2638.6,2656.0,2628.7,2617.2,2645.0,2708.5,2744.3,2777.3,2812.5,2867.3,2883.6,2937.6,2836.8,2904.7,2994.5,3018.2,3086.5,3012.0,3222.2,3308.7,3282.4,3231.9,3335.4,3182.0,3363.6,3288.9,3322.7,3431.2,3368.1,3273.7,3332.5,3356.0,3353.0,3334.0,3347.7,3439.1,3336.0,3374.4,3473.7,3613.2,3649.4,3671.5,3775.3,3880.8,3975.9,4189.9,4118.4,3982.2,3999.4,4087.6,4076.7,4218.3,4212.9,4300.1,4361.4,4529.1,4314.4,4490.3,4588.4,4976.2,4713.9,4951.2,5022.0,5059.3,5230.5,5146.1,5052.5,4570.4,4492.0,4651.5,4761.9,4857.6,4722.3,4629.9,4720.4,4555.8,4521.0,4560.5,4337.1,4215.0,4224.1,4078.7,4112.7,4104.1,4012.7,4067.6,4049.1,4340.7,4422.3],"GDX":[29.46,27.45,28.4,29.09,28.34,29.72,28.87,26.91,26.89,28.95,29.48,29.2,29.47,27.25,28.43,29.32,31.81,29.68,30.95,31.56,31.01,29.77,29.7,27.69,28.07,28.02,26.97,26.86,26.66,27.33,29.64,29.89,29.6,31.62,33.84,33.76,34.07,34.58,33.44,35.25,36.87,35.26,35.3,33.54,33.41,33.99,33.93,36.27,38.17,37.39,36.48,36.48,35.84,38.49,39.34,38.62,36.32,40.09,40.51,40.36,39.55,40.05,43.15,41.56,39.85,39.02,35.51,38.28,37.66,36.82,36.65,34.73,34.26,35.0,35.97,36.75,37.95,38.96,40.86,41.08,40.8,39.72,41.64,43.64,44.5,45.57,41.68,49.7,50.92,48.81,47.08,50.37,46.33,50.53,50.65,51.62,54.46,52.29,50.73,52.91,52.42,51.13,53.96,52.45,58.06,58.28,60.18,63.17,66.34,69.75,72.36,74.68,77.08,75.78,78.73,72.8,72.06,72.55,76.16,73.65,83.23,81.03,85.66,87.79,91.29,85.73,92.56,97.24,107.02,94.2,97.39,103.94,106.26,115.84,101.38,93.26,80.12,85.79,94.59,99.39,100.34,94.34,87.11,94.59,87.35,85.02,89.49,78.84,80.03,82.51,77.0,78.43,75.53,71.32,75.23,74.1,89.89,89.94],"GDXJ":[35.41,33.3,34.69,35.56,34.04,35.79,34.15,32.23,31.83,33.89,34.71,34.43,35.48,32.86,34.6,35.86,39.44,36.44,37.55,38.83,37.91,35.98,36.36,33.89,34.13,34.0,32.8,32.43,32.32,33.24,35.93,36.74,36.15,38.74,41.89,41.99,42.19,42.39,40.73,43.44,46.35,44.6,45.13,41.96,41.85,42.42,42.12,45.09,47.59,45.9,44.43,43.7,42.59,46.53,47.73,45.97,42.62,48.98,49.71,49.62,48.64,49.53,53.87,52.87,50.84,49.52,45.11,48.34,47.68,47.31,47.01,44.37,43.05,44.25,45.32,46.02,47.63,48.37,50.94,50.68,50.37,48.66,51.97,54.99,55.53,56.85,51.38,61.22,64.12,61.04,58.71,64.33,58.71,64.67,65.32,69.0,71.23,67.2,65.5,68.45,68.84,66.19,67.82,65.03,72.23,73.88,76.27,80.05,84.86,90.03,91.98,96.21,99.74,99.9,103.11,94.87,93.67,93.03,97.44,93.98,109.28,106.68,114.3,117.63,121.6,113.2,121.95,128.07,145.03,124.09,128.56,136.34,142.01,156.19,136.17,123.93,104.77,110.58,122.19,128.84,133.12,123.75,115.38,125.84,116.37,111.62,119.29,100.59,104.26,107.22,100.29,102.91,98.88,92.2,97.8,95.39,117.62,118.09]},"y5":{"dates":["2021-08-13","2021-08-20","2021-08-27","2021-09-03","2021-09-10","2021-09-17","2021-09-24","2021-10-01","2021-10-08","2021-10-15","2021-10-22","2021-10-29","2021-11-05","2021-11-12","2021-11-19","2021-11-26","2021-12-03","2021-12-10","2021-12-17","2021-12-24","2021-12-31","2022-01-07","2022-01-14","2022-01-21","2022-01-28","2022-02-04","2022-02-11","2022-02-18","2022-02-25","2022-03-04","2022-03-11","2022-03-18","2022-03-25","2022-04-01","2022-04-08","2022-04-15","2022-04-22","2022-04-29","2022-05-06","2022-05-13","2022-05-20","2022-05-27","2022-06-03","2022-06-10","2022-06-17","2022-06-24","2022-07-01","2022-07-08","2022-07-15","2022-07-22","2022-07-29","2022-08-05","2022-08-12","2022-08-19","2022-08-26","2022-09-02","2022-09-09","2022-09-16","2022-09-23","2022-09-30","2022-10-07","2022-10-14","2022-10-21","2022-10-28","2022-11-04","2022-11-11","2022-11-18","2022-11-25","2022-12-02","2022-12-09","2022-12-16","2022-12-23","2022-12-30","2023-01-06","2023-01-13","2023-01-20","2023-01-27","2023-02-03","2023-02-10","2023-02-17","2023-02-24","2023-03-03","2023-03-10","2023-03-17","2023-03-24","2023-03-31","2023-04-07","2023-04-14","2023-04-21","2023-04-28","2023-05-05","2023-05-12","2023-05-19","2023-05-26","2023-06-02","2023-06-09","2023-06-16","2023-06-23","2023-06-30","2023-07-07","2023-07-14","2023-07-21","2023-07-28","2023-08-04","2023-08-11","2023-08-18","2023-08-25","2023-09-01","2023-09-08","2023-09-15","2023-09-22","2023-09-29","2023-10-06","2023-10-13","2023-10-20","2023-10-27","2023-11-03","2023-11-10","2023-11-17","2023-11-24","2023-12-01","2023-12-08","2023-12-15","2023-12-22","2023-12-29","2024-01-05","2024-01-12","2024-01-19","2024-01-26","2024-02-02","2024-02-09","2024-02-16","2024-02-23","2024-03-01","2024-03-08","2024-03-15","2024-03-22","2024-03-29","2024-04-05","2024-04-12","2024-04-19","2024-04-26","2024-05-03","2024-05-10","2024-05-17","2024-05-24","2024-05-31","2024-06-07","2024-06-14","2024-06-21","2024-06-28","2024-07-05","2024-07-12","2024-07-19","2024-07-26","2024-08-02","2024-08-09","2024-08-16","2024-08-23","2024-08-30","2024-09-06","2024-09-13","2024-09-20","2024-09-27","2024-10-04","2024-10-11","2024-10-18","2024-10-25","2024-11-01","2024-11-08","2024-11-15","2024-11-22","2024-11-29","2024-12-06","2024-12-13","2024-12-20","2024-12-27","2025-01-03","2025-01-10","2025-01-17","2025-01-24","2025-01-31","2025-02-07","2025-02-14","2025-02-21","2025-02-28","2025-03-07","2025-03-14","2025-03-21","2025-03-28","2025-04-04","2025-04-11","2025-04-18","2025-04-25","2025-05-02","2025-05-09","2025-05-16","2025-05-23","2025-05-30","2025-06-06","2025-06-13","2025-06-20","2025-06-27","2025-07-04","2025-07-11","2025-07-18","2025-07-25","2025-08-01","2025-08-08","2025-08-15","2025-08-22","2025-08-29","2025-09-05","2025-09-12","2025-09-19","2025-09-26","2025-10-03","2025-10-10","2025-10-17","2025-10-24","2025-10-31","2025-11-07","2025-11-14","2025-11-21","2025-11-28","2025-12-05","2025-12-12","2025-12-19","2025-12-26","2026-01-02","2026-01-09","2026-01-16","2026-01-23","2026-01-30","2026-02-06","2026-02-13","2026-02-20","2026-02-27","2026-03-06","2026-03-13","2026-03-20","2026-03-27","2026-04-03","2026-04-10","2026-04-17","2026-04-24","2026-05-01","2026-05-08","2026-05-15","2026-05-22","2026-05-29","2026-06-05","2026-06-12","2026-06-19","2026-06-26","2026-07-03","2026-07-10","2026-07-17","2026-07-24","2026-07-31","2026-08-07","2026-08-14"],"NEM":[58.84,56.35,58.19,59.67,56.99,55.22,53.87,53.56,54.31,57.03,57.61,54.0,56.36,58.73,56.55,55.94,54.67,56.1,59.24,59.53,62.02,59.43,61.22,63.09,59.86,60.93,63.86,67.67,67.9,74.28,76.89,73.96,78.95,82.78,82.12,84.77,74.52,72.85,72.87,65.25,67.19,68.71,67.82,66.85,63.76,64.18,61.17,59.36,54.73,51.39,45.28,44.77,46.55,43.53,43.22,41.67,43.17,43.71,41.25,42.03,42.6,40.74,42.37,42.86,40.99,46.53,45.13,45.85,48.67,46.4,46.14,47.85,47.2,52.69,54.35,53.34,53.32,49.85,47.98,45.42,43.54,44.7,42.16,48.17,48.55,49.02,52.05,49.52,47.62,47.4,48.72,45.94,43.66,40.68,42.09,41.46,43.83,41.58,42.66,42.24,44.98,43.21,42.42,40.87,40.19,38.2,38.31,39.32,38.73,40.33,40.74,36.95,37.8,39.43,38.8,38.97,39.02,34.2,36.35,37.59,41.2,39.08,40.87,42.06,41.39,40.34,37.64,34.58,34.21,34.41,32.79,33.43,31.28,31.94,33.91,33.88,33.77,35.84,39.65,38.64,39.02,42.73,40.66,42.49,43.74,41.98,41.94,40.36,40.82,42.26,41.87,44.51,47.51,47.0,46.73,48.51,47.71,50.21,52.04,53.39,50.34,53.71,54.47,53.9,53.34,54.3,57.62,48.42,45.26,45.04,40.93,43.38,41.94,41.11,40.22,38.28,37.84,38.11,39.1,41.67,42.04,42.72,44.84,46.54,45.33,42.84,43.87,46.24,47.36,48.08,44.18,54.97,55.08,53.94,51.53,53.98,50.1,53.65,52.72,52.36,57.9,58.23,56.76,59.9,60.13,58.19,65.75,62.59,68.98,69.33,70.77,74.4,76.17,79.25,81.72,85.25,86.86,85.14,90.77,83.37,80.97,83.39,87.8,83.49,90.73,89.76,98.14,101.29,105.78,101.22,108.99,114.12,124.31,112.35,115.32,125.8,122.13,130.0,116.29,109.58,95.8,102.1,114.05,120.9,116.5,120.7,108.62,116.51,109.06,107.64,109.81,99.71,100.23,103.79,96.13,97.04,95.29,89.7,93.19,93.71,112.98,116.13],"Gold":[1775.2,1781.0,1816.6,1830.9,1789.6,1749.4,1749.7,1757.0,1756.3,1767.2,1795.5,1783.0,1816.4,1867.9,1851.2,1785.3,1782.0,1782.9,1803.8,1811.2,1827.5,1797.0,1816.5,1831.8,1784.9,1806.6,1840.8,1898.6,1886.5,1965.1,1982.7,1928.2,1953.8,1919.1,1941.6,1970.9,1931.0,1909.3,1881.2,1807.4,1841.8,1851.3,1845.4,1871.5,1835.6,1826.5,1798.9,1740.6,1702.4,1727.1,1762.9,1772.9,1798.6,1747.6,1736.1,1709.8,1716.2,1671.7,1645.3,1662.4,1700.5,1641.7,1651.0,1639.6,1672.5,1766.0,1751.9,1753.3,1795.9,1798.1,1790.0,1795.9,1819.7,1864.2,1918.4,1926.4,1928.6,1862.9,1862.8,1840.4,1808.8,1847.7,1862.0,1969.8,1982.1,1969.0,2011.9,2002.2,1979.5,1990.1,2017.4,2014.5,1978.7,1944.1,1952.4,1962.2,1958.4,1919.1,1921.1,1926.2,1960.1,1964.3,1960.4,1939.6,1912.9,1886.1,1911.1,1939.8,1918.4,1923.7,1925.4,1848.1,1830.2,1927.4,1982.5,1988.6,1991.5,1932.6,1981.6,2002.2,2071.0,1998.3,2021.1,2057.1,2062.4,2042.4,2046.7,2026.5,2016.8,2036.1,2023.3,2011.5,2038.6,2086.9,2178.6,2157.3,2158.1,2217.4,2325.7,2356.2,2398.4,2334.8,2299.0,2367.3,2412.2,2332.5,2322.9,2305.2,2331.4,2316.4,2327.7,2388.5,2414.0,2395.5,2380.0,2425.7,2432.1,2498.6,2508.4,2493.8,2493.5,2581.3,2619.9,2644.3,2645.8,2657.6,2713.7,2740.9,2738.6,2687.5,2565.7,2709.9,2657.0,2638.6,2656.0,2628.7,2617.2,2645.0,2708.5,2744.3,2777.3,2812.5,2867.3,2883.6,2937.6,2836.8,2904.7,2994.5,3018.2,3086.5,3012.0,3222.2,3308.7,3282.4,3231.9,3335.4,3182.0,3363.6,3288.9,3322.7,3431.2,3368.1,3273.7,3332.5,3356.0,3353.0,3334.0,3347.7,3439.1,3336.0,3374.4,3473.7,3613.2,3649.4,3671.5,3775.3,3880.8,3975.9,4189.9,4118.4,3982.2,3999.4,4087.6,4076.7,4218.3,4212.9,4300.1,4361.4,4529.1,4314.4,4490.3,4588.4,4976.2,4713.9,4951.2,5022.0,5059.3,5230.5,5146.1,5052.5,4570.4,4492.0,4651.5,4761.9,4857.6,4722.3,4629.9,4720.4,4555.8,4521.0,4560.5,4337.1,4215.0,4224.1,4078.7,4112.7,4104.1,4012.7,4067.6,4049.1,4340.7,4422.3],"GDX":[32.82,30.85,32.61,33.28,31.5,30.58,29.68,29.33,30.67,32.52,32.99,31.71,32.75,34.77,33.67,32.12,30.69,30.49,31.13,31.3,32.03,30.01,30.97,31.65,29.3,30.4,32.43,34.5,34.39,37.4,38.29,37.22,38.72,39.49,39.67,40.86,36.94,34.99,34.24,30.88,32.06,32.51,32.56,32.57,30.39,29.66,28.16,27.06,25.59,25.41,26.27,26.28,27.22,25.25,24.9,23.79,25.1,24.0,22.44,24.12,24.39,22.72,24.34,24.72,24.95,28.3,27.37,28.44,29.92,29.07,28.6,28.87,28.66,31.56,32.65,32.42,32.31,30.32,29.62,28.41,26.99,28.63,27.2,30.58,31.55,32.35,34.43,35.09,33.61,33.58,35.4,33.6,32.16,30.41,31.41,31.08,31.39,29.79,30.11,29.45,31.96,31.49,30.72,29.56,29.46,27.45,28.4,29.09,28.34,29.72,28.87,26.91,26.89,28.95,29.48,29.2,29.47,27.25,28.43,29.32,31.81,29.68,30.95,31.56,31.01,29.77,29.7,27.69,28.07,28.02,26.97,26.86,26.66,27.33,29.64,29.89,29.6,31.62,33.84,33.76,34.07,34.58,33.44,35.25,36.87,35.26,35.3,33.54,33.41,33.99,33.93,36.27,38.17,37.39,36.48,36.48,35.84,38.49,39.34,38.62,36.32,40.09,40.51,40.36,39.55,40.05,43.15,41.56,39.85,39.02,35.51,38.28,37.66,36.82,36.65,34.73,34.26,35.0,35.97,36.75,37.95,38.96,40.86,41.08,40.8,39.72,41.64,43.64,44.5,45.57,41.68,49.7,50.92,48.81,47.08,50.37,46.33,50.53,50.65,51.62,54.46,52.29,50.73,52.91,52.42,51.13,53.96,52.45,58.06,58.28,60.18,63.17,66.34,69.75,72.36,74.68,77.08,75.78,78.73,72.8,72.06,72.55,76.16,73.65,83.23,81.03,85.66,87.79,91.29,85.73,92.56,97.24,107.02,94.2,97.39,103.94,106.26,115.84,101.38,93.26,80.12,85.79,94.59,99.39,100.34,94.34,87.11,94.59,87.35,85.02,89.49,78.84,80.03,82.51,77.0,78.43,75.53,71.32,75.23,74.1,89.89,89.94],"GDXJ":[42.85,39.69,43.08,43.98,40.91,40.48,38.93,38.35,40.78,43.58,44.44,43.27,44.75,47.99,45.92,42.92,40.59,40.57,40.48,41.61,41.93,39.24,40.47,41.06,37.13,38.18,41.42,42.76,42.92,46.57,47.64,47.06,48.26,48.2,48.42,51.03,45.61,42.95,41.45,37.1,39.09,39.87,40.87,40.31,36.76,35.58,33.05,31.21,30.04,30.78,33.62,33.74,34.53,31.33,30.94,29.29,31.14,29.29,27.01,29.46,30.03,27.75,29.85,29.95,31.24,34.68,33.59,35.23,37.22,35.7,35.23,36.12,35.65,39.48,40.4,40.27,39.49,36.86,35.64,34.59,33.03,35.12,32.88,36.71,37.89,39.5,41.36,42.39,40.04,39.75,41.81,39.97,38.3,36.32,37.57,37.41,37.18,35.21,35.66,35.06,38.37,37.91,36.55,35.56,35.41,33.3,34.69,35.56,34.04,35.79,34.15,32.23,31.83,33.89,34.71,34.43,35.48,32.86,34.6,35.86,39.44,36.44,37.55,38.83,37.91,35.98,36.36,33.89,34.13,34.0,32.8,32.43,32.32,33.24,35.93,36.74,36.15,38.74,41.89,41.99,42.19,42.39,40.73,43.44,46.35,44.6,45.13,41.96,41.85,42.42,42.12,45.09,47.59,45.9,44.43,43.7,42.59,46.53,47.73,45.97,42.62,48.98,49.71,49.62,48.64,49.53,53.87,52.87,50.84,49.52,45.11,48.34,47.68,47.31,47.01,44.37,43.05,44.25,45.32,46.02,47.63,48.37,50.94,50.68,50.37,48.66,51.97,54.99,55.53,56.85,51.38,61.22,64.12,61.04,58.71,64.33,58.71,64.67,65.32,69.0,71.23,67.2,65.5,68.45,68.84,66.19,67.82,65.03,72.23,73.88,76.27,80.05,84.86,90.03,91.98,96.21,99.74,99.9,103.11,94.87,93.67,93.03,97.44,93.98,109.28,106.68,114.3,117.63,121.6,113.2,121.95,128.07,145.03,124.09,128.56,136.34,142.01,156.19,136.17,123.93,104.77,110.58,122.19,128.84,133.12,123.75,115.38,125.84,116.37,111.62,119.29,100.59,104.26,107.22,100.29,102.91,98.88,92.2,97.8,95.39,117.62,118.09]}},"beta":{"uni":{"down":[1.628,1.418,1.13,1.485,1.199,1.142,1.55,0.8,1.292,1.233,1.125,0.335,0.712,1.407,1.255,1.618,0.693,0.067,1.261,1.208,1.05,1.001,1.127,1.734,0.532,0.462,0.885,1.117,1.47,1.145,-0.079,1.392,0.992,1.233,-1.008,0.189,0.99,0.486,0.716,0.499,0.559,0.084,0.725,1.205,-0.51,-0.718,-1.407,-0.361,1.177,1.03,1.662,0.712,1.172,2.072,1.711,1.624,1.277,0.523,0.118,-0.043,0.868],"up":[1.759,2.398,1.642,1.428,0.811,1.213,1.555,2.037,0.316,1.259,1.696,2.07,1.367,1.241,1.544,1.194,1.217,1.428,1.212,1.409,1.063,1.08,1.564,1.859,0.911,1.269,0.938,1.284,1.504,0.565,1.414,1.963,1.312,1.291,0.993,0.871,1.062,0.492,0.609,1.422,0.915,0.805,1.215,1.845,0.874,0.488,-0.233,1.339,0.968,0.377,1.013,-0.505,1.1,0.939,0.974,0.901,0.438,0.583,-0.104,-0.466,0.122]},"nem":{"down":1.117,"up":1.284,"r2":0.615},"bench":{"None":{"down":1.482,"up":1.448}},"pct":{"down":51.0,"up":62.0}},"lab":[{"bucket":"gold_down","bucket_label":"Gold down 5% to 15%","p_beat_gdx":0.7535,"p_beat_gdx_shrunk":0.6626,"gdx_wilson_low":0.5211,"gdx_wilson_high":0.8957,"gdx_n_weeks":142.0,"gdx_effective_n":17.75,"gdx_insufficient_history":false,"median_alpha_gdx":0.0413},{"bucket":"gold_down_big","bucket_label":"Gold down more than 15%","p_beat_gdx":null,"p_beat_gdx_shrunk":null,"gdx_wilson_low":null,"gdx_wilson_high":null,"gdx_n_weeks":5.0,"gdx_effective_n":0.62,"gdx_insufficient_history":true,"median_alpha_gdx":null},{"bucket":"gold_flat","bucket_label":"Gold flat (?5% to +5%)","p_beat_gdx":0.5364,"p_beat_gdx_shrunk":0.5326,"gdx_wilson_low":0.4237,"gdx_wilson_high":0.6455,"gdx_n_weeks":591.0,"gdx_effective_n":73.88,"gdx_insufficient_history":false,"median_alpha_gdx":0.0045},{"bucket":"gold_up","bucket_label":"Gold up 5% to 15%","p_beat_gdx":0.4182,"p_beat_gdx_shrunk":0.4318,"gdx_wilson_low":0.2698,"gdx_wilson_high":0.583,"gdx_n_weeks":275.0,"gdx_effective_n":34.38,"gdx_insufficient_history":false,"median_alpha_gdx":-0.0186},{"bucket":"gold_up_big","bucket_label":"Gold up more than 15%","p_beat_gdx":null,"p_beat_gdx_shrunk":null,"gdx_wilson_low":null,"gdx_wilson_high":null,"gdx_n_weeks":33.0,"gdx_effective_n":4.12,"gdx_insufficient_history":true,"median_alpha_gdx":null}],"ep":{"gold_down":{"dates":["2016-08-12","2016-08-19","2016-09-23","2016-09-30","2016-10-07","2016-10-14","2016-10-21","2016-10-28","2016-11-04","2016-11-11","2017-09-08","2018-05-25","2018-06-01","2018-06-08","2018-06-22","2020-01-24","2020-07-31","2020-08-07","2020-10-02","2020-12-25","2021-01-01","2021-01-08","2021-01-15","2021-01-22","2021-01-29","2021-05-28","2021-06-11","2022-03-11","2022-03-18","2022-03-25","2022-04-15","2022-05-20","2022-05-27","2022-06-10","2022-07-29","2022-08-05","2022-08-12","2022-08-19","2026-01-23","2026-02-06","2026-02-13","2026-02-27","2026-03-06","2026-03-13","2026-04-10","2026-04-17","2026-04-24","2026-05-01","2026-05-08","2026-05-15","2026-05-22","2026-05-29","2026-06-05"],"alpha":[0.0159,0.0105,0.0607,0.0418,0.0639,0.067,0.1256,0.1279,0.0786,0.0462,0.0337,-0.035,0.0027,0.0038,0.014,0.3058,-0.0042,-0.0048,0.0688,0.0312,0.0506,0.0486,0.0046,0.0528,0.0973,-0.0199,-0.0202,0.0598,0.0634,0.0278,-0.0026,0.0288,-0.0353,-0.17,0.0807,0.0365,0.035,0.054,0.0315,0.0203,0.0071,0.1424,0.0871,0.0483,0.0421,0.0812,-0.0145,0.0036,0.0068,0.0128,-0.0043,0.0095,-0.0001],"beat":[1,1,1,1,1,1,1,1,1,1,1,0,1,1,1,1,0,0,1,1,1,1,1,1,1,0,0,1,1,1,0,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,1,0,1,0],"anchor":[false,false,false,false,false,false,false,false,true,false,false,false,false,false,false,true,false,false,false,true,false,false,false,false,false,false,true,false,true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,true,false,false,false,false]},"gold_flat":{"dates":["2016-02-12","2016-02-19","2016-02-26","2016-03-04","2016-03-11","2016-03-18","2016-03-25","2016-04-01","2016-04-08","2016-04-15","2016-04-29","2016-05-06","2016-06-10","2016-06-17","2016-06-24","2016-07-01","2016-07-08","2016-07-15","2016-07-22","2016-07-29","2016-08-05","2016-08-26","2016-09-02","2016-09-09","2016-09-16","2016-11-18","2016-11-25","2016-12-02","2017-01-06","2017-01-13","2017-01-20","2017-02-03","2017-02-10","2017-02-17","2017-02-24","2017-03-03","2017-03-10","2017-03-17","2017-03-24","2017-03-31","2017-04-07","2017-04-14","2017-04-21","2017-04-28","2017-05-05","2017-05-12","2017-05-19","2017-05-26","2017-06-02","2017-06-09","2017-06-16","2017-06-23","2017-06-30","2017-07-28","2017-08-04","2017-08-11","2017-08-18","2017-08-25","2017-09-01","2017-09-15","2017-09-22","2017-09-29","2017-10-06","2017-10-13","2017-10-20","2017-10-27","2017-11-03","2017-11-10","2017-11-17","2017-11-24","2017-12-15","2017-12-29","2018-01-05","2018-01-12","2018-01-19","2018-01-26","2018-02-02","2018-02-09","2018-02-16","2018-02-23","2018-03-02","2018-03-09","2018-03-16","2018-03-23","2018-03-30","2018-04-06","2018-04-13","2018-04-20","2018-04-27","2018-05-04","2018-05-11","2018-05-18","2018-06-15","2018-06-29","2018-07-06","2018-07-13","2018-07-20","2018-07-27","2018-08-03","2018-08-10","2018-08-17","2018-08-24","2018-08-31","2018-09-07","2018-09-14","2018-09-21","2018-09-28","2018-10-05","2018-10-12","2018-10-19","2018-10-26","2018-11-02","2018-11-23","2018-12-28","2019-01-04","2019-01-11","2019-01-18","2019-01-25","2019-02-01","2019-02-08","2019-02-15","2019-02-22","2019-03-01","2019-03-08","2019-03-15","2019-03-22","2019-03-29","2019-04-05","2019-04-12","2019-07-19","2019-08-02","2019-08-09","2019-08-16","2019-08-23","2019-08-30","2019-09-06","2019-09-13","2019-09-20","2019-09-27","2019-10-04","2019-10-11","2019-10-18","2019-10-25","2019-11-01","2020-01-03","2020-01-17","2020-01-31","2020-02-07","2020-02-21","2020-03-06","2020-04-10","2020-04-17","2020-04-24","2020-05-01","2020-05-08","2020-05-15","2020-05-22","2020-07-24","2020-08-14","2020-08-21","2020-08-28","2020-09-04","2020-09-11","2020-09-18","2020-09-25","2020-10-09","2020-10-16","2020-10-23","2020-10-30","2020-11-06","2020-11-13","2020-11-20","2020-11-27","2020-12-04","2020-12-11","2020-12-18","2021-02-05","2021-02-12","2021-02-19","2021-02-26","2021-03-05","2021-04-23","2021-04-30","2021-05-07","2021-05-14","2021-05-21","2021-06-04","2021-06-18","2021-06-25","2021-07-02","2021-07-09","2021-07-16","2021-07-23","2021-07-30","2021-08-06","2021-08-13","2021-08-20","2021-08-27","2021-09-03","2021-09-10","2021-10-01","2021-10-08","2021-10-15","2021-10-22","2021-10-29","2021-11-05","2021-11-12","2021-11-19","2021-11-26","2021-12-03","2021-12-10","2021-12-17","2021-12-24","2021-12-31","2022-02-18","2022-02-25","2022-03-04","2022-04-01","2022-04-08","2022-04-22","2022-04-29","2022-05-06","2022-05-13","2022-06-03","2022-06-17","2022-06-24","2022-07-01","2022-07-08","2022-07-15","2022-07-22","2022-08-26","2022-09-02","2022-09-09","2022-12-09","2022-12-16","2022-12-23","2022-12-30","2023-01-06","2023-01-13","2023-01-20","2023-01-27","2023-03-17","2023-03-24","2023-03-31","2023-04-07","2023-04-14","2023-04-21","2023-04-28","2023-05-05","2023-05-12","2023-05-19","2023-05-26","2023-06-02","2023-06-09","2023-06-16","2023-06-23","2023-06-30","2023-07-07","2023-07-14","2023-07-21","2023-07-28","2023-08-04","2023-08-11","2023-08-18","2023-08-25","2023-09-01","2023-09-08","2023-09-15","2023-09-22","2023-10-13","2023-10-20","2023-10-27","2023-11-03","2023-11-17","2023-11-24","2023-12-01","2023-12-08","2023-12-15","2023-12-22","2023-12-29","2024-01-05","2024-04-05","2024-04-12","2024-04-19","2024-04-26","2024-05-03","2024-05-10","2024-05-17","2024-05-24","2024-05-31","2024-06-14","2024-07-05","2024-07-12","2024-09-13","2024-09-20","2024-09-27","2024-10-04","2024-10-11","2024-10-18","2024-10-25","2024-11-01","2024-11-08","2024-11-22","2024-11-29","2025-04-11","2025-04-18","2025-04-25","2025-05-02","2025-05-09","2025-05-23","2025-05-30","2025-06-06","2025-06-13","2025-06-20","2025-06-27","2025-07-04","2025-10-17","2026-01-30","2026-02-20","2026-03-20","2026-03-27","2026-04-03","2026-06-12"],"alpha":[-0.0072,-0.0202,0.0202,0.023,0.0171,0.0193,0.0745,0.0842,0.0297,0.0428,0.0276,0.0232,0.0661,0.0524,0.0604,0.0579,0.0998,0.0755,0.0284,0.0185,0.0121,0.0056,0.0036,0.0139,0.0246,-0.0236,-0.0228,-0.0591,-0.0299,-0.0002,-0.0427,-0.0355,-0.0178,-0.0569,-0.0317,-0.0075,0.0019,0.0254,0.0071,0.029,0.0241,0.0703,0.0313,-0.021,-0.0327,0.0181,0.0399,0.0336,0.0835,0.078,0.06,0.051,0.0771,-0.0,0.0107,0.0245,0.0379,0.0316,0.0187,0.0055,-0.0158,-0.0166,0.0249,0.0108,0.0048,0.0108,-0.0012,0.0225,0.0369,0.0326,0.0311,0.0908,0.088,0.0587,0.0492,0.0432,0.0488,0.0537,0.0498,0.0377,0.0172,0.0013,0.0118,0.0071,-0.0055,-0.0271,-0.0521,-0.0478,-0.0524,-0.0309,-0.0487,-0.0459,0.0024,-0.0,-0.0002,0.0045,-0.0012,-0.0242,-0.0491,-0.0485,-0.0482,-0.0437,-0.0546,-0.0153,-0.0047,0.0231,0.0282,0.0332,0.0232,0.0334,0.041,0.012,-0.0681,-0.0546,-0.0344,-0.0856,-0.0461,-0.0287,0.0684,0.0787,0.1058,0.0072,-0.0247,0.013,0.0253,0.0084,-0.0031,-0.0347,-0.0174,0.0362,0.0564,0.0378,0.0262,0.0729,0.0612,0.0456,-0.0372,0.0129,0.0175,0.0316,0.0617,0.0546,0.072,0.0425,0.1593,0.3627,0.2271,0.2024,0.2299,0.0293,-0.1442,-0.1376,-0.084,-0.0756,-0.0859,-0.1284,-0.0936,-0.0158,-0.0228,-0.015,-0.0165,0.052,0.0225,0.105,0.0742,0.0928,0.0737,0.0689,0.0029,0.0122,-0.004,0.0454,0.0275,0.0275,0.0157,0.0193,0.0842,0.0553,0.0591,0.0535,0.0173,0.0143,0.0119,0.0307,0.0031,-0.0203,-0.0261,-0.0229,0.0013,-0.0306,-0.0368,0.0036,0.0053,0.0185,0.0244,-0.0029,-0.0308,-0.012,-0.0412,-0.0488,-0.0463,0.006,0.0595,0.1005,0.1085,0.1167,0.1636,0.1681,0.136,0.1383,0.0706,0.017,0.0313,0.0197,0.0653,0.029,0.0558,0.0082,0.0144,0.0485,0.0478,0.029,0.0466,-0.1725,-0.1849,-0.2033,-0.2009,-0.2015,-0.1851,-0.0874,0.0163,0.0031,-0.0448,0.0129,-0.0126,-0.0354,-0.0205,-0.0648,-0.06,-0.0335,-0.0587,-0.132,-0.1178,-0.1172,-0.1047,-0.0453,-0.0046,-0.0013,0.0397,0.0595,0.047,0.036,0.0305,0.0365,-0.023,-0.003,-0.0479,-0.0576,-0.0189,-0.0008,0.0326,0.0035,0.0411,-0.0111,-0.0142,-0.0024,-0.0311,-0.0751,-0.0939,-0.0236,0.0133,-0.0078,0.0017,-0.0151,-0.0321,-0.0742,-0.0824,-0.0942,-0.0661,-0.121,-0.1375,0.014,0.0577,0.0732,0.0122,0.021,0.0242,0.0555,0.0621,0.0846,0.0895,0.1265,0.119,-0.1384,-0.1428,-0.1514,-0.1693,-0.1716,-0.1733,-0.0483,-0.0331,-0.0621,-0.0052,-0.0168,-0.0786,-0.0125,0.0124,0.027,0.0613,0.0769,0.1707,0.1765,0.1175,0.0683,0.051,0.0403,-0.0034,-0.0001,0.0122,0.0442,0.0638,0.0201,0.0036],"beat":[0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,0,1,1,1,1,1,1,0,0,1,1,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,0,0,0,0,0,0,1,1,1,1,0,1,1,1,0,0,0,1,1,1,1,1,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,0,0,1,1,1,1,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,1,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1],"anchor":[false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,false,true,false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,true,false,true,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,false,true,false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,true,false,false,false,true,false,false,false,true,false,false,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,false,true,false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false]},"gold_up":{"dates":["2016-01-22","2016-01-29","2016-02-05","2016-04-22","2016-05-13","2016-05-20","2016-05-27","2016-06-03","2016-12-09","2016-12-16","2016-12-23","2016-12-30","2017-01-27","2017-07-07","2017-07-14","2017-07-21","2017-12-01","2017-12-08","2017-12-22","2018-11-09","2018-11-16","2018-11-30","2018-12-07","2018-12-14","2018-12-21","2019-04-19","2019-04-26","2019-05-03","2019-05-10","2019-05-17","2019-05-24","2019-05-31","2019-06-07","2019-06-14","2019-06-21","2019-06-28","2019-07-05","2019-07-12","2019-07-26","2019-11-08","2019-11-15","2019-11-22","2019-11-29","2019-12-06","2019-12-13","2019-12-20","2019-12-27","2020-01-10","2020-02-14","2020-02-28","2020-03-13","2020-03-27","2020-04-03","2020-05-29","2020-06-19","2020-06-26","2020-07-03","2020-07-10","2020-07-17","2021-03-12","2021-03-19","2021-03-26","2021-04-02","2021-04-09","2021-04-16","2021-09-17","2021-09-24","2022-01-07","2022-01-14","2022-01-21","2022-01-28","2022-02-04","2022-02-11","2022-09-16","2022-09-23","2022-09-30","2022-10-07","2022-10-14","2022-10-21","2022-10-28","2022-11-04","2022-11-11","2022-11-18","2022-11-25","2022-12-02","2023-02-03","2023-02-10","2023-02-17","2023-02-24","2023-03-03","2023-03-10","2023-09-29","2023-10-06","2023-11-10","2024-01-12","2024-01-19","2024-01-26","2024-02-02","2024-02-09","2024-03-01","2024-03-08","2024-03-15","2024-03-22","2024-03-29","2024-06-07","2024-06-21","2024-06-28","2024-07-19","2024-07-26","2024-08-02","2024-08-09","2024-08-16","2024-08-23","2024-08-30","2024-09-06","2024-11-15","2024-12-06","2024-12-13","2024-12-20","2024-12-27","2025-01-03","2025-01-10","2025-01-17","2025-01-24","2025-01-31","2025-02-07","2025-02-14","2025-02-21","2025-03-07","2025-03-14","2025-03-21","2025-03-28","2025-04-04","2025-05-16","2025-07-11","2025-07-18","2025-07-25","2025-08-01","2025-08-08","2025-09-05","2025-09-12","2025-09-19","2025-09-26","2025-10-03","2025-10-10","2025-10-24","2025-10-31","2025-11-07","2025-11-14","2025-11-21","2025-12-05","2025-12-26","2026-01-09","2026-01-16"],"alpha":[0.0543,-0.0699,-0.075,0.0006,-0.0191,-0.0127,0.0004,0.0299,-0.0569,-0.1054,-0.1105,-0.0819,-0.0119,0.0331,0.0196,0.0242,0.0134,0.0334,0.0772,-0.0413,-0.0387,-0.0769,-0.0977,-0.0899,-0.0966,-0.0012,0.011,0.0147,0.022,0.0134,-0.0914,-0.1047,-0.1471,-0.1368,-0.0826,-0.119,-0.1172,-0.0974,0.0199,0.0483,0.0527,0.0711,0.0652,0.0459,0.0507,0.0246,0.0903,0.2014,0.2753,0.0958,-0.1093,-0.0675,-0.0985,-0.0593,-0.0673,-0.049,-0.0567,-0.0075,0.009,0.009,0.0232,-0.0028,0.0133,0.0508,0.0193,-0.0646,-0.0746,0.0029,0.0231,0.004,0.0052,0.0533,0.0588,-0.0972,-0.103,-0.0748,-0.0687,-0.0993,-0.0623,-0.0489,-0.0026,0.0103,0.0045,0.0154,0.0094,-0.0696,-0.0579,-0.1089,-0.1134,-0.0873,-0.1121,-0.0663,-0.0695,0.0728,-0.0902,-0.0852,-0.0565,-0.0697,-0.0287,0.0657,0.0628,0.0634,0.0398,0.0504,0.1051,0.0492,0.072,0.071,0.0548,0.0092,0.0181,0.0444,0.0144,-0.1531,-0.1806,-0.0623,-0.0293,-0.0116,0.0159,0.0059,-0.0095,-0.025,-0.06,-0.0336,-0.0321,-0.0284,-0.0179,-0.0206,0.0389,0.0114,0.0161,0.0063,-0.0134,0.0657,0.0043,0.0017,-0.0701,-0.0402,-0.0484,-0.0214,0.0116,0.0208,-0.0069,-0.0298,-0.0112,0.0104,0.0268,0.0228,0.017,0.0308,0.0689,-0.0081,-0.0239,0.0032],"beat":[1,0,0,1,0,0,1,1,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,0,1,1,1,0,0,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,1,1,1,1,0,1,1,1,0,0,0,0,1,1,0,0,0,1,1,1,1,1,1,0,0,1],"anchor":[false,true,false,false,false,true,false,false,false,false,false,true,false,false,false,false,true,false,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,false,false,true,false,false,false,false,true,false,false,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,true,false,false,false,true,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,true,false,false,false,false,false,false,true,false,false,false,true]},"gold_up_big":{"dates":["2016-01-01","2016-01-08","2016-01-15","2020-03-20","2020-06-05","2020-06-12","2024-02-16","2024-02-23","2025-02-28","2025-08-15","2025-08-22","2025-08-29","2025-11-28","2025-12-12","2025-12-19","2026-01-02"],"alpha":[0.0344,0.068,-0.0115,-0.0593,-0.0447,-0.0509,-0.0731,-0.0162,0.0307,-0.0524,-0.0163,-0.0244,0.0579,0.0261,0.0414,-0.0495],"beat":[1,1,0,0,0,0,0,0,1,0,0,0,1,1,1,0],"anchor":[false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false]},"__all__":{"dates":["2016-01-01","2016-01-08","2016-01-15","2016-01-22","2016-01-29","2016-02-05","2016-02-12","2016-02-19","2016-02-26","2016-03-04","2016-03-11","2016-03-18","2016-03-25","2016-04-01","2016-04-08","2016-04-15","2016-04-22","2016-04-29","2016-05-06","2016-05-13","2016-05-20","2016-05-27","2016-06-03","2016-06-10","2016-06-17","2016-06-24","2016-07-01","2016-07-08","2016-07-15","2016-07-22","2016-07-29","2016-08-05","2016-08-12","2016-08-19","2016-08-26","2016-09-02","2016-09-09","2016-09-16","2016-09-23","2016-09-30","2016-10-07","2016-10-14","2016-10-21","2016-10-28","2016-11-04","2016-11-11","2016-11-18","2016-11-25","2016-12-02","2016-12-09","2016-12-16","2016-12-23","2016-12-30","2017-01-06","2017-01-13","2017-01-20","2017-01-27","2017-02-03","2017-02-10","2017-02-17","2017-02-24","2017-03-03","2017-03-10","2017-03-17","2017-03-24","2017-03-31","2017-04-07","2017-04-14","2017-04-21","2017-04-28","2017-05-05","2017-05-12","2017-05-19","2017-05-26","2017-06-02","2017-06-09","2017-06-16","2017-06-23","2017-06-30","2017-07-07","2017-07-14","2017-07-21","2017-07-28","2017-08-04","2017-08-11","2017-08-18","2017-08-25","2017-09-01","2017-09-08","2017-09-15","2017-09-22","2017-09-29","2017-10-06","2017-10-13","2017-10-20","2017-10-27","2017-11-03","2017-11-10","2017-11-17","2017-11-24","2017-12-01","2017-12-08","2017-12-15","2017-12-22","2017-12-29","2018-01-05","2018-01-12","2018-01-19","2018-01-26","2018-02-02","2018-02-09","2018-02-16","2018-02-23","2018-03-02","2018-03-09","2018-03-16","2018-03-23","2018-03-30","2018-04-06","2018-04-13","2018-04-20","2018-04-27","2018-05-04","2018-05-11","2018-05-18","2018-05-25","2018-06-01","2018-06-08","2018-06-15","2018-06-22","2018-06-29","2018-07-06","2018-07-13","2018-07-20","2018-07-27","2018-08-03","2018-08-10","2018-08-17","2018-08-24","2018-08-31","2018-09-07","2018-09-14","2018-09-21","2018-09-28","2018-10-05","2018-10-12","2018-10-19","2018-10-26","2018-11-02","2018-11-09","2018-11-16","2018-11-23","2018-11-30","2018-12-07","2018-12-14","2018-12-21","2018-12-28","2019-01-04","2019-01-11","2019-01-18","2019-01-25","2019-02-01","2019-02-08","2019-02-15","2019-02-22","2019-03-01","2019-03-08","2019-03-15","2019-03-22","2019-03-29","2019-04-05","2019-04-12","2019-04-19","2019-04-26","2019-05-03","2019-05-10","2019-05-17","2019-05-24","2019-05-31","2019-06-07","2019-06-14","2019-06-21","2019-06-28","2019-07-05","2019-07-12","2019-07-19","2019-07-26","2019-08-02","2019-08-09","2019-08-16","2019-08-23","2019-08-30","2019-09-06","2019-09-13","2019-09-20","2019-09-27","2019-10-04","2019-10-11","2019-10-18","2019-10-25","2019-11-01","2019-11-08","2019-11-15","2019-11-22","2019-11-29","2019-12-06","2019-12-13","2019-12-20","2019-12-27","2020-01-03","2020-01-10","2020-01-17","2020-01-24","2020-01-31","2020-02-07","2020-02-14","2020-02-21","2020-02-28","2020-03-06","2020-03-13","2020-03-20","2020-03-27","2020-04-03","2020-04-10","2020-04-17","2020-04-24","2020-05-01","2020-05-08","2020-05-15","2020-05-22","2020-05-29","2020-06-05","2020-06-12","2020-06-19","2020-06-26","2020-07-03","2020-07-10","2020-07-17","2020-07-24","2020-07-31","2020-08-07","2020-08-14","2020-08-21","2020-08-28","2020-09-04","2020-09-11","2020-09-18","2020-09-25","2020-10-02","2020-10-09","2020-10-16","2020-10-23","2020-10-30","2020-11-06","2020-11-13","2020-11-20","2020-11-27","2020-12-04","2020-12-11","2020-12-18","2020-12-25","2021-01-01","2021-01-08","2021-01-15","2021-01-22","2021-01-29","2021-02-05","2021-02-12","2021-02-19","2021-02-26","2021-03-05","2021-03-12","2021-03-19","2021-03-26","2021-04-02","2021-04-09","2021-04-16","2021-04-23","2021-04-30","2021-05-07","2021-05-14","2021-05-21","2021-05-28","2021-06-04","2021-06-11","2021-06-18","2021-06-25","2021-07-02","2021-07-09","2021-07-16","2021-07-23","2021-07-30","2021-08-06","2021-08-13","2021-08-20","2021-08-27","2021-09-03","2021-09-10","2021-09-17","2021-09-24","2021-10-01","2021-10-08","2021-10-15","2021-10-22","2021-10-29","2021-11-05","2021-11-12","2021-11-19","2021-11-26","2021-12-03","2021-12-10","2021-12-17","2021-12-24","2021-12-31","2022-01-07","2022-01-14","2022-01-21","2022-01-28","2022-02-04","2022-02-11","2022-02-18","2022-02-25","2022-03-04","2022-03-11","2022-03-18","2022-03-25","2022-04-01","2022-04-08","2022-04-15","2022-04-22","2022-04-29","2022-05-06","2022-05-13","2022-05-20","2022-05-27","2022-06-03","2022-06-10","2022-06-17","2022-06-24","2022-07-01","2022-07-08","2022-07-15","2022-07-22","2022-07-29","2022-08-05","2022-08-12","2022-08-19","2022-08-26","2022-09-02","2022-09-09","2022-09-16","2022-09-23","2022-09-30","2022-10-07","2022-10-14","2022-10-21","2022-10-28","2022-11-04","2022-11-11","2022-11-18","2022-11-25","2022-12-02","2022-12-09","2022-12-16","2022-12-23","2022-12-30","2023-01-06","2023-01-13","2023-01-20","2023-01-27","2023-02-03","2023-02-10","2023-02-17","2023-02-24","2023-03-03","2023-03-10","2023-03-17","2023-03-24","2023-03-31","2023-04-07","2023-04-14","2023-04-21","2023-04-28","2023-05-05","2023-05-12","2023-05-19","2023-05-26","2023-06-02","2023-06-09","2023-06-16","2023-06-23","2023-06-30","2023-07-07","2023-07-14","2023-07-21","2023-07-28","2023-08-04","2023-08-11","2023-08-18","2023-08-25","2023-09-01","2023-09-08","2023-09-15","2023-09-22","2023-09-29","2023-10-06","2023-10-13","2023-10-20","2023-10-27","2023-11-03","2023-11-10","2023-11-17","2023-11-24","2023-12-01","2023-12-08","2023-12-15","2023-12-22","2023-12-29","2024-01-05","2024-01-12","2024-01-19","2024-01-26","2024-02-02","2024-02-09","2024-02-16","2024-02-23","2024-03-01","2024-03-08","2024-03-15","2024-03-22","2024-03-29","2024-04-05","2024-04-12","2024-04-19","2024-04-26","2024-05-03","2024-05-10","2024-05-17","2024-05-24","2024-05-31","2024-06-07","2024-06-14","2024-06-21","2024-06-28","2024-07-05","2024-07-12","2024-07-19","2024-07-26","2024-08-02","2024-08-09","2024-08-16","2024-08-23","2024-08-30","2024-09-06","2024-09-13","2024-09-20","2024-09-27","2024-10-04","2024-10-11","2024-10-18","2024-10-25","2024-11-01","2024-11-08","2024-11-15","2024-11-22","2024-11-29","2024-12-06","2024-12-13","2024-12-20","2024-12-27","2025-01-03","2025-01-10","2025-01-17","2025-01-24","2025-01-31","2025-02-07","2025-02-14","2025-02-21","2025-02-28","2025-03-07","2025-03-14","2025-03-21","2025-03-28","2025-04-04","2025-04-11","2025-04-18","2025-04-25","2025-05-02","2025-05-09","2025-05-16","2025-05-23","2025-05-30","2025-06-06","2025-06-13","2025-06-20","2025-06-27","2025-07-04","2025-07-11","2025-07-18","2025-07-25","2025-08-01","2025-08-08","2025-08-15","2025-08-22","2025-08-29","2025-09-05","2025-09-12","2025-09-19","2025-09-26","2025-10-03","2025-10-10","2025-10-17","2025-10-24","2025-10-31","2025-11-07","2025-11-14","2025-11-21","2025-11-28","2025-12-05","2025-12-12","2025-12-19","2025-12-26","2026-01-02","2026-01-09","2026-01-16","2026-01-23","2026-01-30","2026-02-06","2026-02-13","2026-02-20","2026-02-27","2026-03-06","2026-03-13","2026-03-20","2026-03-27","2026-04-03","2026-04-10","2026-04-17","2026-04-24","2026-05-01","2026-05-08","2026-05-15","2026-05-22","2026-05-29","2026-06-05","2026-06-12"],"alpha":[0.0344,0.068,-0.0115,0.0543,-0.0699,-0.075,-0.0072,-0.0202,0.0202,0.023,0.0171,0.0193,0.0745,0.0842,0.0297,0.0428,0.0006,0.0276,0.0232,-0.0191,-0.0127,0.0004,0.0299,0.0661,0.0524,0.0604,0.0579,0.0998,0.0755,0.0284,0.0185,0.0121,0.0159,0.0105,0.0056,0.0036,0.0139,0.0246,0.0607,0.0418,0.0639,0.067,0.1256,0.1279,0.0786,0.0462,-0.0236,-0.0228,-0.0591,-0.0569,-0.1054,-0.1105,-0.0819,-0.0299,-0.0002,-0.0427,-0.0119,-0.0355,-0.0178,-0.0569,-0.0317,-0.0075,0.0019,0.0254,0.0071,0.029,0.0241,0.0703,0.0313,-0.021,-0.0327,0.0181,0.0399,0.0336,0.0835,0.078,0.06,0.051,0.0771,0.0331,0.0196,0.0242,-0.0,0.0107,0.0245,0.0379,0.0316,0.0187,0.0337,0.0055,-0.0158,-0.0166,0.0249,0.0108,0.0048,0.0108,-0.0012,0.0225,0.0369,0.0326,0.0134,0.0334,0.0311,0.0772,0.0908,0.088,0.0587,0.0492,0.0432,0.0488,0.0537,0.0498,0.0377,0.0172,0.0013,0.0118,0.0071,-0.0055,-0.0271,-0.0521,-0.0478,-0.0524,-0.0309,-0.0487,-0.0459,-0.035,0.0027,0.0038,0.0024,0.014,-0.0,-0.0002,0.0045,-0.0012,-0.0242,-0.0491,-0.0485,-0.0482,-0.0437,-0.0546,-0.0153,-0.0047,0.0231,0.0282,0.0332,0.0232,0.0334,0.041,0.012,-0.0413,-0.0387,-0.0681,-0.0769,-0.0977,-0.0899,-0.0966,-0.0546,-0.0344,-0.0856,-0.0461,-0.0287,0.0684,0.0787,0.1058,0.0072,-0.0247,0.013,0.0253,0.0084,-0.0031,-0.0347,-0.0174,-0.0012,0.011,0.0147,0.022,0.0134,-0.0914,-0.1047,-0.1471,-0.1368,-0.0826,-0.119,-0.1172,-0.0974,0.0362,0.0199,0.0564,0.0378,0.0262,0.0729,0.0612,0.0456,-0.0372,0.0129,0.0175,0.0316,0.0617,0.0546,0.072,0.0425,0.0483,0.0527,0.0711,0.0652,0.0459,0.0507,0.0246,0.0903,0.1593,0.2014,0.3627,0.3058,0.2271,0.2024,0.2753,0.2299,0.0958,0.0293,-0.1093,-0.0593,-0.0675,-0.0985,-0.1442,-0.1376,-0.084,-0.0756,-0.0859,-0.1284,-0.0936,-0.0593,-0.0447,-0.0509,-0.0673,-0.049,-0.0567,-0.0075,0.009,-0.0158,-0.0042,-0.0048,-0.0228,-0.015,-0.0165,0.052,0.0225,0.105,0.0742,0.0688,0.0928,0.0737,0.0689,0.0029,0.0122,-0.004,0.0454,0.0275,0.0275,0.0157,0.0193,0.0312,0.0506,0.0486,0.0046,0.0528,0.0973,0.0842,0.0553,0.0591,0.0535,0.0173,0.009,0.0232,-0.0028,0.0133,0.0508,0.0193,0.0143,0.0119,0.0307,0.0031,-0.0203,-0.0199,-0.0261,-0.0202,-0.0229,0.0013,-0.0306,-0.0368,0.0036,0.0053,0.0185,0.0244,-0.0029,-0.0308,-0.012,-0.0412,-0.0488,-0.0646,-0.0746,-0.0463,0.006,0.0595,0.1005,0.1085,0.1167,0.1636,0.1681,0.136,0.1383,0.0706,0.017,0.0313,0.0197,0.0029,0.0231,0.004,0.0052,0.0533,0.0588,0.0653,0.029,0.0558,0.0598,0.0634,0.0278,0.0082,0.0144,-0.0026,0.0485,0.0478,0.029,0.0466,0.0288,-0.0353,-0.1725,-0.17,-0.1849,-0.2033,-0.2009,-0.2015,-0.1851,-0.0874,0.0807,0.0365,0.035,0.054,0.0163,0.0031,-0.0448,-0.0972,-0.103,-0.0748,-0.0687,-0.0993,-0.0623,-0.0489,-0.0026,0.0103,0.0045,0.0154,0.0094,0.0129,-0.0126,-0.0354,-0.0205,-0.0648,-0.06,-0.0335,-0.0587,-0.0696,-0.0579,-0.1089,-0.1134,-0.0873,-0.1121,-0.132,-0.1178,-0.1172,-0.1047,-0.0453,-0.0046,-0.0013,0.0397,0.0595,0.047,0.036,0.0305,0.0365,-0.023,-0.003,-0.0479,-0.0576,-0.0189,-0.0008,0.0326,0.0035,0.0411,-0.0111,-0.0142,-0.0024,-0.0311,-0.0751,-0.0939,-0.0663,-0.0695,-0.0236,0.0133,-0.0078,0.0017,0.0728,-0.0151,-0.0321,-0.0742,-0.0824,-0.0942,-0.0661,-0.121,-0.1375,-0.0902,-0.0852,-0.0565,-0.0697,-0.0287,-0.0731,-0.0162,0.0657,0.0628,0.0634,0.0398,0.0504,0.014,0.0577,0.0732,0.0122,0.021,0.0242,0.0555,0.0621,0.0846,0.1051,0.0895,0.0492,0.072,0.1265,0.119,0.071,0.0548,0.0092,0.0181,0.0444,0.0144,-0.1531,-0.1806,-0.1384,-0.1428,-0.1514,-0.1693,-0.1716,-0.1733,-0.0483,-0.0331,-0.0621,-0.0623,-0.0052,-0.0168,-0.0293,-0.0116,0.0159,0.0059,-0.0095,-0.025,-0.06,-0.0336,-0.0321,-0.0284,-0.0179,-0.0206,0.0307,0.0389,0.0114,0.0161,0.0063,-0.0134,-0.0786,-0.0125,0.0124,0.027,0.0613,0.0657,0.0769,0.1707,0.1765,0.1175,0.0683,0.051,0.0403,0.0043,0.0017,-0.0701,-0.0402,-0.0484,-0.0524,-0.0163,-0.0244,-0.0214,0.0116,0.0208,-0.0069,-0.0298,-0.0112,-0.0034,0.0104,0.0268,0.0228,0.017,0.0308,0.0579,0.0689,0.0261,0.0414,-0.0081,-0.0495,-0.0239,0.0032,0.0315,-0.0001,0.0203,0.0071,0.0122,0.1424,0.0871,0.0483,0.0442,0.0638,0.0201,0.0421,0.0812,-0.0145,0.0036,0.0068,0.0128,-0.0043,0.0095,-0.0001,0.0036],"bucket":["gold_up_big","gold_up_big","gold_up_big","gold_up","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_flat","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_down","gold_down","gold_flat","gold_flat","gold_flat","gold_flat","gold_down","gold_down","gold_down","gold_down","gold_down","gold_down","gold_down","gold_down","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_down","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_flat","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_down","gold_down","gold_down","gold_flat","gold_down","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_up","gold_flat","gold_down","gold_flat","gold_flat","gold_up","gold_flat","gold_up","gold_flat","gold_up","gold_up_big","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_up_big","gold_up_big","gold_up","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_down","gold_down","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_down","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_down","gold_down","gold_down","gold_down","gold_down","gold_down","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_down","gold_flat","gold_down","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_down","gold_down","gold_down","gold_flat","gold_flat","gold_down","gold_flat","gold_flat","gold_flat","gold_flat","gold_down","gold_down","gold_flat","gold_down","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_down","gold_down","gold_down","gold_down","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up_big","gold_up_big","gold_up","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_flat","gold_up","gold_up","gold_flat","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_flat","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up_big","gold_up","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up_big","gold_up_big","gold_up_big","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up","gold_flat","gold_up","gold_up","gold_up","gold_up","gold_up","gold_up_big","gold_up","gold_up_big","gold_up_big","gold_up","gold_up_big","gold_up","gold_up","gold_down","gold_flat","gold_down","gold_down","gold_flat","gold_down","gold_down","gold_down","gold_flat","gold_flat","gold_flat","gold_down","gold_down","gold_down","gold_down","gold_down","gold_down","gold_down","gold_down","gold_down","gold_flat"]}},"opt":{"dates":["2026-06-01","2026-06-05","2026-06-08","2026-06-09","2026-06-11","2026-06-12","2026-06-16","2026-06-17","2026-06-18","2026-06-19","2026-06-22","2026-06-23","2026-06-24","2026-06-25","2026-06-26","2026-07-07","2026-07-09","2026-07-10","2026-07-13","2026-07-14","2026-07-17","2026-07-20","2026-07-21","2026-07-23","2026-07-24","2026-07-27","2026-07-29","2026-07-30","2026-07-31","2026-08-03","2026-08-04","2026-08-05","2026-08-06","2026-08-10"],"oi":[526159,538151,544159,552013,578612,583788,596705,603454,497276,497276,502002,508919,515515,521384,515667,546683,547309,538303,539068,545354,455586,464348,470778,491343,480282,485256,492586,514087,504710,508545,516403,518056,527641,534406],"pcr":[0.7652,0.73,0.7349,0.7417,0.7088,0.7163,0.7068,0.71,0.6646,0.6646,0.6693,0.6711,0.6695,0.6674,0.6634,0.6127,0.6022,0.6129,0.6069,0.607,0.6606,0.6603,0.6647,0.6455,0.6584,0.66,0.6673,0.6322,0.636,0.6446,0.6531,0.6486,0.6567,0.657],"iv":[0.0,52.21,51.23,49.49,48.54,48.35,46.54,47.2,45.39,47.2,46.87,48.54,48.31,111.87,48.98,null,null,null,null,null,44.98,44.4,43.81,45.95,42.31,43.05,46.88,42.82,42.77,null,null,null,null,null],"move":[null,17.88,20.82,20.04,19.83,19.59,18.52,19.0,18.17,18.31,17.86,18.02,17.58,null,17.43,null,null,null,null,null,17.58,17.16,16.7,17.04,15.98,15.82,16.27,15.44,15.3,null,null,null,null,null],"skew":[72.8,-2.15,-1.83,-1.38,1.51,-1.0,-1.76,-7.43,-4.59,-3.88,-2.99,-1.56,-3.81,null,-3.44,null,null,null,null,null,-2.61,-2.86,-6.62,-3.58,-5.44,0.34,-5.08,-3.23,-2.11,null,null,null,null,null],"vol":[45370,41921,30495,36799,47995,35567,36823,31943,13047,17009,16897,14185,17965,28855,28094,15862,16810,13737,12820,32609,24319,23278,21024,20073,18861,24771,77697,75685,34151,42097,23696,38916,25324,32902]},"oisplit":{"dates":["2026-06-01","2026-06-05","2026-06-08","2026-06-09","2026-06-11","2026-06-12","2026-06-16","2026-06-17","2026-06-18","2026-06-19","2026-06-22","2026-06-23","2026-06-24","2026-06-25","2026-06-26","2026-07-07","2026-07-09","2026-07-10","2026-07-13","2026-07-14","2026-07-17","2026-07-20","2026-07-21","2026-07-23","2026-07-24","2026-07-27","2026-07-29","2026-07-30","2026-07-31","2026-08-03","2026-08-04","2026-08-05","2026-08-06","2026-08-10"],"puts":[228078,227074,230513,235068,239996,243644,247109,250561,198542,198542,201283,204372,206725,208686,205662,207703,205703,204560,203587,205999,181228,184677,187978,192748,190675,192931,197155,199112,196202,199327,204009,203819,209158,211900],"calls":[298081,311077,313646,316945,338616,340144,349596,352893,298734,298734,300719,304547,308790,312698,310005,338980,341606,333743,335481,339355,274358,279671,282800,298595,289607,292325,295431,314975,308508,309218,312394,314237,318483,322506],"vol":[45370,41921,30495,36799,47995,35567,36823,31943,13047,17009,16897,14185,17965,28855,28094,15862,16810,13737,12820,32609,24319,23278,21024,20073,18861,24771,77697,75685,34151,42097,23696,38916,25324,32902]},"oextra":{"oi_strike":[{"k":75.0,"s":"P","oi":1209,"v":10},{"k":77.5,"s":"P","oi":304,"v":1},{"k":80.0,"s":"P","oi":787,"v":2},{"k":82.5,"s":"P","oi":177,"v":3},{"k":85.0,"s":"P","oi":1772,"v":28},{"k":87.5,"s":"P","oi":1124,"v":27},{"k":90.0,"s":"P","oi":5405,"v":27},{"k":92.5,"s":"P","oi":1600,"v":9},{"k":95.0,"s":"P","oi":2574,"v":117},{"k":97.5,"s":"P","oi":855,"v":46},{"k":100.0,"s":"P","oi":7391,"v":191},{"k":105.0,"s":"P","oi":4155,"v":7},{"k":110.0,"s":"P","oi":1459,"v":82},{"k":140.0,"s":"C","oi":4061,"v":7},{"k":145.0,"s":"C","oi":319,"v":1},{"k":150.0,"s":"C","oi":4430,"v":90},{"k":155.0,"s":"C","oi":462,"v":11},{"k":160.0,"s":"C","oi":1533,"v":97},{"k":165.0,"s":"C","oi":201,"v":18},{"k":170.0,"s":"C","oi":1161,"v":3},{"k":175.0,"s":"C","oi":234,"v":77},{"k":180.0,"s":"C","oi":786,"v":14},{"k":185.0,"s":"C","oi":795,"v":59},{"k":190.0,"s":"C","oi":1006,"v":78},{"k":195.0,"s":"C","oi":80,"v":34},{"k":200.0,"s":"C","oi":439,"v":213}],"skew":[{"h":180,"d":0.1,"s":"P","iv":43.26},{"h":180,"d":0.25,"s":"P","iv":42.08},{"h":180,"d":0.35,"s":"P","iv":41.58},{"h":180,"d":0.1,"s":"C","iv":50.11},{"h":180,"d":0.25,"s":"C","iv":47.62},{"h":180,"d":0.35,"s":"C","iv":47.33},{"h":230,"d":0.1,"s":"P","iv":42.71},{"h":230,"d":0.25,"s":"P","iv":41.6},{"h":230,"d":0.35,"s":"P","iv":42.36},{"h":230,"d":0.1,"s":"C","iv":50.53},{"h":230,"d":0.25,"s":"C","iv":49.31},{"h":230,"d":0.35,"s":"C","iv":47.97},{"h":550,"d":0.1,"s":"P","iv":41.01},{"h":550,"d":0.25,"s":"P","iv":39.33},{"h":550,"d":0.35,"s":"P","iv":40.7},{"h":550,"d":0.1,"s":"C","iv":48.41},{"h":550,"d":0.25,"s":"C","iv":48.41},{"h":550,"d":0.35,"s":"C","iv":49.4}]},"uni":[{"t":"AAR.AX","down_beta_12m":1.127,"up_beta_12m":1.5635,"asymmetry_ratio_core":1.1253,"r_squared_12m":0.4329,"aisc_usd_per_oz":1460.0,"margin_pct":0.6699,"fcf_yield":1.1822,"ev_ebitda":0.4972,"leverage":null,"reserve_life_years":18.5,"cost_curve_aisc_percentile":26.6667,"fragility_ebitda_pct_per_10pct_gold":0.1449},{"t":"AAUC.TO","down_beta_12m":-0.3605,"up_beta_12m":1.3394,"asymmetry_ratio_core":-3.7153,"r_squared_12m":0.2197,"aisc_usd_per_oz":1790.0,"margin_pct":0.5952,"fcf_yield":0.5044,"ev_ebitda":1.5929,"leverage":-0.3917,"reserve_life_years":20.0,"cost_curve_aisc_percentile":56.6667,"fragility_ebitda_pct_per_10pct_gold":0.1406},{"t":"AAZ.L","down_beta_12m":0.5228,"up_beta_12m":0.5826,"asymmetry_ratio_core":0.5534,"r_squared_12m":0.1632,"aisc_usd_per_oz":1500.0,"margin_pct":0.6608,"fcf_yield":0.106,"ev_ebitda":6.6484,"leverage":-0.0556,"reserve_life_years":8.0,"cost_curve_aisc_percentile":33.3333,"fragility_ebitda_pct_per_10pct_gold":0.1345},{"t":"AEM","down_beta_12m":1.208,"up_beta_12m":1.4092,"asymmetry_ratio_core":1.2646,"r_squared_12m":0.6726,"aisc_usd_per_oz":1275.0,"margin_pct":0.7117,"fcf_yield":0.1109,"ev_ebitda":7.8522,"leverage":-0.0746,"reserve_life_years":14.0,"cost_curve_aisc_percentile":18.3333,"fragility_ebitda_pct_per_10pct_gold":0.1277},{"t":"AGI","down_beta_12m":1.4855,"up_beta_12m":1.4282,"asymmetry_ratio_core":1.116,"r_squared_12m":0.6377,"aisc_usd_per_oz":1375.0,"margin_pct":0.6891,"fcf_yield":0.1326,"ev_ebitda":6.2305,"leverage":-0.3906,"reserve_life_years":12.0,"cost_curve_aisc_percentile":21.6667,"fragility_ebitda_pct_per_10pct_gold":0.1304},{"t":"ALK.AX","down_beta_12m":-0.7185,"up_beta_12m":0.4882,"asymmetry_ratio_core":-3.7163,"r_squared_12m":0.1699,"aisc_usd_per_oz":1885.0,"margin_pct":0.5738,"fcf_yield":0.2469,"ev_ebitda":2.8972,"leverage":-1.375,"reserve_life_years":10.0,"cost_curve_aisc_percentile":67.5,"fragility_ebitda_pct_per_10pct_gold":0.1538},{"t":"ALTN.L","down_beta_12m":1.1723,"up_beta_12m":1.1005,"asymmetry_ratio_core":0.9387,"r_squared_12m":0.3333,"aisc_usd_per_oz":1357.0,"margin_pct":0.6931,"fcf_yield":0.3972,"ev_ebitda":2.2954,"leverage":0.5,"reserve_life_years":90.0,"cost_curve_aisc_percentile":20.0,"fragility_ebitda_pct_per_10pct_gold":0.1235},{"t":"ARIS.TO","down_beta_12m":1.2334,"up_beta_12m":1.2586,"asymmetry_ratio_core":1.5364,"r_squared_12m":0.5226,"aisc_usd_per_oz":1641.0,"margin_pct":0.6289,"fcf_yield":0.2403,"ev_ebitda":3.4839,"leverage":0.1894,"reserve_life_years":15.0,"cost_curve_aisc_percentile":48.3333,"fragility_ebitda_pct_per_10pct_gold":0.135},{"t":"ASE.V","down_beta_12m":1.6235,"up_beta_12m":0.9011,"asymmetry_ratio_core":0.7245,"r_squared_12m":0.2966,"aisc_usd_per_oz":4574.0,"margin_pct":-0.0343,"fcf_yield":-0.2571,"ev_ebitda":0.623,"leverage":1.3889,"reserve_life_years":8.0,"cost_curve_aisc_percentile":100.0,"fragility_ebitda_pct_per_10pct_gold":0.1312},{"t":"AU","down_beta_12m":1.6618,"up_beta_12m":1.0129,"asymmetry_ratio_core":0.9813,"r_squared_12m":0.6026,"aisc_usd_per_oz":1766.0,"margin_pct":0.6007,"fcf_yield":0.1465,"ev_ebitda":5.1673,"leverage":-0.0818,"reserve_life_years":12.0,"cost_curve_aisc_percentile":55.0,"fragility_ebitda_pct_per_10pct_gold":0.1383},{"t":"B","down_beta_12m":1.1453,"up_beta_12m":0.5654,"asymmetry_ratio_core":1.2647,"r_squared_12m":0.5024,"aisc_usd_per_oz":1538.0,"margin_pct":0.6522,"fcf_yield":0.1247,"ev_ebitda":6.637,"leverage":-0.0362,"reserve_life_years":18.0,"cost_curve_aisc_percentile":36.6667,"fragility_ebitda_pct_per_10pct_gold":0.1367},{"t":"BGL.AX","down_beta_12m":0.9905,"up_beta_12m":1.0624,"asymmetry_ratio_core":1.2889,"r_squared_12m":0.3392,"aisc_usd_per_oz":1943.0,"margin_pct":0.5606,"fcf_yield":0.1766,"ev_ebitda":4.2565,"leverage":0.5,"reserve_life_years":20.0,"cost_curve_aisc_percentile":75.0,"fragility_ebitda_pct_per_10pct_gold":0.1533},{"t":"BTG","down_beta_12m":1.4182,"up_beta_12m":2.3982,"asymmetry_ratio_core":1.8337,"r_squared_12m":0.5547,"aisc_usd_per_oz":1479.0,"margin_pct":0.6656,"fcf_yield":0.4101,"ev_ebitda":1.9896,"leverage":0.0556,"reserve_life_years":10.0,"cost_curve_aisc_percentile":31.6667,"fragility_ebitda_pct_per_10pct_gold":0.1245},{"t":"CDE","down_beta_12m":1.1302,"up_beta_12m":1.642,"asymmetry_ratio_core":1.6139,"r_squared_12m":0.5662,"aisc_usd_per_oz":1215.0,"margin_pct":0.7253,"fcf_yield":0.064,"ev_ebitda":12.9334,"leverage":-0.5,"reserve_life_years":12.0,"cost_curve_aisc_percentile":15.0,"fragility_ebitda_pct_per_10pct_gold":0.1269},{"t":"CG","down_beta_12m":0.1184,"up_beta_12m":-0.1037,"asymmetry_ratio_core":-0.9345,"r_squared_12m":0.0356,"aisc_usd_per_oz":1750.0,"margin_pct":0.6043,"fcf_yield":0.0414,"ev_ebitda":17.9232,"leverage":-1.6057,"reserve_life_years":20.0,"cost_curve_aisc_percentile":53.3333,"fragility_ebitda_pct_per_10pct_gold":0.1345},{"t":"CLA.AX","down_beta_12m":0.4992,"up_beta_12m":1.4216,"asymmetry_ratio_core":2.8478,"r_squared_12m":0.1501,"aisc_usd_per_oz":null,"margin_pct":null,"fcf_yield":null,"ev_ebitda":null,"leverage":2.2963,"reserve_life_years":35.3,"cost_curve_aisc_percentile":null,"fragility_ebitda_pct_per_10pct_gold":null},{"t":"CMCL","down_beta_12m":0.693,"up_beta_12m":1.2169,"asymmetry_ratio_core":1.6018,"r_squared_12m":0.469,"aisc_usd_per_oz":1937.0,"margin_pct":0.562,"fcf_yield":0.3773,"ev_ebitda":2.9051,"leverage":1.25,"reserve_life_years":10.0,"cost_curve_aisc_percentile":73.3333,"fragility_ebitda_pct_per_10pct_gold":0.1615},{"t":"CMM.AX","down_beta_12m":0.7157,"up_beta_12m":0.6089,"asymmetry_ratio_core":1.1792,"r_squared_12m":0.3307,"aisc_usd_per_oz":1060.0,"margin_pct":0.7603,"fcf_yield":0.0703,"ev_ebitda":12.2576,"leverage":-1.2686,"reserve_life_years":10.0,"cost_curve_aisc_percentile":6.6667,"fragility_ebitda_pct_per_10pct_gold":0.1342},{"t":"CYL.AX","down_beta_12m":-1.4072,"up_beta_12m":-0.2334,"asymmetry_ratio_core":-0.5018,"r_squared_12m":0.1142,"aisc_usd_per_oz":1723.0,"margin_pct":0.6104,"fcf_yield":0.2143,"ev_ebitda":3.4219,"leverage":-1.0667,"reserve_life_years":10.0,"cost_curve_aisc_percentile":51.6667,"fragility_ebitda_pct_per_10pct_gold":0.1481},{"t":"DPM.TO","down_beta_12m":1.2327,"up_beta_12m":1.2911,"asymmetry_ratio_core":1.2617,"r_squared_12m":0.5335,"aisc_usd_per_oz":1168.0,"margin_pct":0.7359,"fcf_yield":0.0549,"ev_ebitda":13.7233,"leverage":-1.9564,"reserve_life_years":10.0,"cost_curve_aisc_percentile":11.6667,"fragility_ebitda_pct_per_10pct_gold":0.1179},{"t":"DRD","down_beta_12m":1.2924,"up_beta_12m":0.316,"asymmetry_ratio_core":1.0901,"r_squared_12m":0.5401,"aisc_usd_per_oz":1881.0,"margin_pct":0.5747,"fcf_yield":0.1649,"ev_ebitda":5.4615,"leverage":-0.2419,"reserve_life_years":20.0,"cost_curve_aisc_percentile":65.0,"fragility_ebitda_pct_per_10pct_gold":0.167},{"t":"EDV.L","down_beta_12m":0.5321,"up_beta_12m":0.9106,"asymmetry_ratio_core":1.9192,"r_squared_12m":0.5345,"aisc_usd_per_oz":1569.0,"margin_pct":0.6452,"fcf_yield":0.2398,"ev_ebitda":3.4544,"leverage":0.2078,"reserve_life_years":10.0,"cost_curve_aisc_percentile":41.6667,"fragility_ebitda_pct_per_10pct_gold":0.1254},{"t":"ELD.TO","down_beta_12m":0.8849,"up_beta_12m":0.9379,"asymmetry_ratio_core":1.6868,"r_squared_12m":0.3822,"aisc_usd_per_oz":1679.0,"margin_pct":0.6203,"fcf_yield":0.1173,"ev_ebitda":6.7366,"leverage":0.2198,"reserve_life_years":15.0,"cost_curve_aisc_percentile":50.0,"fragility_ebitda_pct_per_10pct_gold":0.1355},{"t":"EMR.AX","down_beta_12m":0.486,"up_beta_12m":0.4921,"asymmetry_ratio_core":1.4816,"r_squared_12m":0.3737,"aisc_usd_per_oz":1186.0,"margin_pct":0.7318,"fcf_yield":0.11,"ev_ebitda":7.3669,"leverage":-1.2167,"reserve_life_years":10.0,"cost_curve_aisc_percentile":13.3333,"fragility_ebitda_pct_per_10pct_gold":0.1229},{"t":"EQX","down_beta_12m":1.5498,"up_beta_12m":1.555,"asymmetry_ratio_core":1.1854,"r_squared_12m":0.518,"aisc_usd_per_oz":1950.0,"margin_pct":0.5591,"fcf_yield":0.1753,"ev_ebitda":4.6234,"leverage":-0.0972,"reserve_life_years":11.36,"cost_curve_aisc_percentile":78.3333,"fragility_ebitda_pct_per_10pct_gold":0.1632},{"t":"EVN.AX","down_beta_12m":-0.0785,"up_beta_12m":1.414,"asymmetry_ratio_core":4.4583,"r_squared_12m":0.4097,"aisc_usd_per_oz":1121.0,"margin_pct":0.7465,"fcf_yield":0.1098,"ev_ebitda":8.0749,"leverage":0.4625,"reserve_life_years":15.0,"cost_curve_aisc_percentile":8.3333,"fragility_ebitda_pct_per_10pct_gold":0.1283},{"t":"FSM","down_beta_12m":1.6181,"up_beta_12m":1.194,"asymmetry_ratio_core":1.2287,"r_squared_12m":0.5038,"aisc_usd_per_oz":1987.0,"margin_pct":0.5507,"fcf_yield":0.1992,"ev_ebitda":2.8768,"leverage":-1.0914,"reserve_life_years":10.0,"cost_curve_aisc_percentile":83.3333,"fragility_ebitda_pct_per_10pct_gold":0.1286},{"t":"GAU","down_beta_12m":1.1246,"up_beta_12m":1.6959,"asymmetry_ratio_core":1.5081,"r_squared_12m":0.3723,"aisc_usd_per_oz":2300.0,"margin_pct":0.4799,"fcf_yield":0.7742,"ev_ebitda":0.7005,"leverage":-0.7733,"reserve_life_years":8.0,"cost_curve_aisc_percentile":95.0,"fragility_ebitda_pct_per_10pct_gold":0.1448},{"t":"GFI","down_beta_12m":1.1419,"up_beta_12m":1.2132,"asymmetry_ratio_core":1.4251,"r_squared_12m":0.5862,"aisc_usd_per_oz":1557.0,"margin_pct":0.6479,"fcf_yield":0.1661,"ev_ebitda":5.1445,"leverage":0.2472,"reserve_life_years":14.0,"cost_curve_aisc_percentile":38.3333,"fragility_ebitda_pct_per_10pct_gold":0.1372},{"t":"GGP.L","down_beta_12m":1.2552,"up_beta_12m":1.5444,"asymmetry_ratio_core":1.2303,"r_squared_12m":0.5387,"aisc_usd_per_oz":1401.0,"margin_pct":0.6832,"fcf_yield":0.1295,"ev_ebitda":5.557,"leverage":-1.5833,"reserve_life_years":17.0,"cost_curve_aisc_percentile":23.3333,"fragility_ebitda_pct_per_10pct_gold":0.1386},{"t":"GMIN.TO","down_beta_12m":2.0717,"up_beta_12m":0.9394,"asymmetry_ratio_core":0.6971,"r_squared_12m":0.5777,"aisc_usd_per_oz":1046.0,"margin_pct":0.7635,"fcf_yield":0.0497,"ev_ebitda":16.9442,"leverage":-0.4,"reserve_life_years":10.0,"cost_curve_aisc_percentile":5.0,"fragility_ebitda_pct_per_10pct_gold":0.1226},{"t":"HMY","down_beta_12m":1.1989,"up_beta_12m":0.8109,"asymmetry_ratio_core":1.3852,"r_squared_12m":0.4264,"aisc_usd_per_oz":1806.0,"margin_pct":0.5916,"fcf_yield":0.2712,"ev_ebitda":2.9929,"leverage":-0.272,"reserve_life_years":12.0,"cost_curve_aisc_percentile":58.3333,"fragility_ebitda_pct_per_10pct_gold":0.1538},{"t":"HOC.L","down_beta_12m":0.7997,"up_beta_12m":2.0372,"asymmetry_ratio_core":1.7737,"r_squared_12m":0.5483,"aisc_usd_per_oz":2080.0,"margin_pct":0.5297,"fcf_yield":0.1835,"ev_ebitda":4.3587,"leverage":0.4795,"reserve_life_years":8.0,"cost_curve_aisc_percentile":88.3333,"fragility_ebitda_pct_per_10pct_gold":0.1538},{"t":"IAG","down_beta_12m":1.6277,"up_beta_12m":1.7588,"asymmetry_ratio_core":1.3742,"r_squared_12m":0.5946,"aisc_usd_per_oz":1956.0,"margin_pct":0.5577,"fcf_yield":0.1454,"ev_ebitda":5.2643,"leverage":0.4545,"reserve_life_years":12.0,"cost_curve_aisc_percentile":80.0,"fragility_ebitda_pct_per_10pct_gold":0.1555},{"t":"JAG.TO","down_beta_12m":1.7113,"up_beta_12m":0.9736,"asymmetry_ratio_core":0.8898,"r_squared_12m":0.5614,"aisc_usd_per_oz":1844.0,"margin_pct":0.583,"fcf_yield":0.4563,"ev_ebitda":1.4193,"leverage":-0.7027,"reserve_life_years":8.0,"cost_curve_aisc_percentile":61.6667,"fragility_ebitda_pct_per_10pct_gold":0.134},{"t":"KCN.AX","down_beta_12m":0.7124,"up_beta_12m":-0.5052,"asymmetry_ratio_core":0.9828,"r_squared_12m":0.1771,"aisc_usd_per_oz":2024.0,"margin_pct":0.5423,"fcf_yield":0.2229,"ev_ebitda":3.21,"leverage":-0.4632,"reserve_life_years":10.0,"cost_curve_aisc_percentile":85.0,"fragility_ebitda_pct_per_10pct_gold":0.1484},{"t":"KGC","down_beta_12m":1.4073,"up_beta_12m":1.2409,"asymmetry_ratio_core":1.1935,"r_squared_12m":0.6439,"aisc_usd_per_oz":1622.0,"margin_pct":0.6332,"fcf_yield":0.1661,"ev_ebitda":4.9572,"leverage":-0.1516,"reserve_life_years":10.0,"cost_curve_aisc_percentile":46.6667,"fragility_ebitda_pct_per_10pct_gold":0.135},{"t":"KNT.TO","down_beta_12m":1.2611,"up_beta_12m":1.2119,"asymmetry_ratio_core":1.5664,"r_squared_12m":0.5458,"aisc_usd_per_oz":1254.0,"margin_pct":0.7164,"fcf_yield":0.0983,"ev_ebitda":7.9877,"leverage":-0.6607,"reserve_life_years":12.0,"cost_curve_aisc_percentile":16.6667,"fragility_ebitda_pct_per_10pct_gold":0.1212},{"t":"LUG.TO","down_beta_12m":0.7124,"up_beta_12m":1.3666,"asymmetry_ratio_core":1.9183,"r_squared_12m":0.5268,"aisc_usd_per_oz":1036.0,"margin_pct":0.7657,"fcf_yield":0.1022,"ev_ebitda":9.726,"leverage":-0.625,"reserve_life_years":12.0,"cost_curve_aisc_percentile":3.3333,"fragility_ebitda_pct_per_10pct_gold":0.1296},{"t":"MTL.L","down_beta_12m":1.2048,"up_beta_12m":1.8454,"asymmetry_ratio_core":1.669,"r_squared_12m":0.3794,"aisc_usd_per_oz":1923.0,"margin_pct":0.5652,"fcf_yield":0.3327,"ev_ebitda":1.7182,"leverage":-1.0,"reserve_life_years":8.0,"cost_curve_aisc_percentile":71.6667,"fragility_ebitda_pct_per_10pct_gold":0.1269},{"t":"MUX","down_beta_12m":1.7345,"up_beta_12m":1.8592,"asymmetry_ratio_core":1.0719,"r_squared_12m":0.692,"aisc_usd_per_oz":2275.0,"margin_pct":0.4856,"fcf_yield":0.2169,"ev_ebitda":4.1053,"leverage":0.625,"reserve_life_years":8.0,"cost_curve_aisc_percentile":92.5,"fragility_ebitda_pct_per_10pct_gold":0.1874},{"t":"NEM","down_beta_12m":1.117,"up_beta_12m":1.2837,"asymmetry_ratio_core":1.4055,"r_squared_12m":0.615,"aisc_usd_per_oz":1566.0,"margin_pct":0.6459,"fcf_yield":0.1263,"ev_ebitda":6.6973,"leverage":0.0422,"reserve_life_years":22.0,"cost_curve_aisc_percentile":40.0,"fragility_ebitda_pct_per_10pct_gold":0.1379},{"t":"NST.AX","down_beta_12m":0.0835,"up_beta_12m":0.8049,"asymmetry_ratio_core":4.1704,"r_squared_12m":0.2872,"aisc_usd_per_oz":1909.0,"margin_pct":0.5683,"fcf_yield":0.1575,"ev_ebitda":4.6751,"leverage":-0.3395,"reserve_life_years":15.0,"cost_curve_aisc_percentile":70.0,"fragility_ebitda_pct_per_10pct_gold":0.1481},{"t":"OBM.AX","down_beta_12m":1.2765,"up_beta_12m":0.4384,"asymmetry_ratio_core":0.8701,"r_squared_12m":0.2854,"aisc_usd_per_oz":1885.0,"margin_pct":0.5738,"fcf_yield":0.1692,"ev_ebitda":4.4216,"leverage":-0.3027,"reserve_life_years":10.0,"cost_curve_aisc_percentile":67.5,"fragility_ebitda_pct_per_10pct_gold":0.1561},{"t":"OGC.TO","down_beta_12m":1.001,"up_beta_12m":1.0801,"asymmetry_ratio_core":1.3758,"r_squared_12m":0.6029,"aisc_usd_per_oz":2052.0,"margin_pct":0.536,"fcf_yield":0.2041,"ev_ebitda":3.5549,"leverage":-0.3877,"reserve_life_years":10.0,"cost_curve_aisc_percentile":86.6667,"fragility_ebitda_pct_per_10pct_gold":0.1495},{"t":"ORE.TO","down_beta_12m":0.0672,"up_beta_12m":1.4283,"asymmetry_ratio_core":11.2549,"r_squared_12m":0.3552,"aisc_usd_per_oz":1958.0,"margin_pct":0.5572,"fcf_yield":0.3163,"ev_ebitda":2.2697,"leverage":0.4286,"reserve_life_years":12.0,"cost_curve_aisc_percentile":81.6667,"fragility_ebitda_pct_per_10pct_gold":0.1257},{"t":"PAF.L","down_beta_12m":1.1765,"up_beta_12m":0.968,"asymmetry_ratio_core":1.0118,"r_squared_12m":0.4923,"aisc_usd_per_oz":1575.0,"margin_pct":0.6439,"fcf_yield":0.2632,"ev_ebitda":3.6072,"leverage":0.6637,"reserve_life_years":15.0,"cost_curve_aisc_percentile":43.3333,"fragility_ebitda_pct_per_10pct_gold":0.1388},{"t":"PNR.AX","down_beta_12m":-1.0082,"up_beta_12m":0.9929,"asymmetry_ratio_core":-0.9848,"r_squared_12m":0.225,"aisc_usd_per_oz":1463.0,"margin_pct":0.6692,"fcf_yield":0.4097,"ev_ebitda":1.7987,"leverage":-0.6778,"reserve_life_years":10.0,"cost_curve_aisc_percentile":29.1667,"fragility_ebitda_pct_per_10pct_gold":0.1386},{"t":"PRU","down_beta_12m":-0.043,"up_beta_12m":-0.466,"asymmetry_ratio_core":2.0593,"r_squared_12m":0.0566,"aisc_usd_per_oz":1463.0,"margin_pct":0.6692,"fcf_yield":0.0268,"ev_ebitda":31.5332,"leverage":-1.3078,"reserve_life_years":10.0,"cost_curve_aisc_percentile":29.1667,"fragility_ebitda_pct_per_10pct_gold":0.1355},{"t":"RMS.AX","down_beta_12m":0.5592,"up_beta_12m":0.9146,"asymmetry_ratio_core":1.6357,"r_squared_12m":0.4391,"aisc_usd_per_oz":1008.0,"margin_pct":0.7721,"fcf_yield":0.1187,"ev_ebitda":6.3346,"leverage":-0.878,"reserve_life_years":12.0,"cost_curve_aisc_percentile":1.6667,"fragility_ebitda_pct_per_10pct_gold":0.1264},{"t":"RRL.AX","down_beta_12m":0.9918,"up_beta_12m":1.3118,"asymmetry_ratio_core":1.3226,"r_squared_12m":0.38,"aisc_usd_per_oz":1944.0,"margin_pct":0.5604,"fcf_yield":0.1973,"ev_ebitda":3.28,"leverage":-0.518,"reserve_life_years":7.0,"cost_curve_aisc_percentile":76.6667,"fragility_ebitda_pct_per_10pct_gold":0.1388},{"t":"RSG.AX","down_beta_12m":0.1893,"up_beta_12m":0.871,"asymmetry_ratio_core":4.6023,"r_squared_12m":0.2737,"aisc_usd_per_oz":2200.0,"margin_pct":0.5025,"fcf_yield":0.3143,"ev_ebitda":2.1559,"leverage":-0.3513,"reserve_life_years":8.0,"cost_curve_aisc_percentile":90.0,"fragility_ebitda_pct_per_10pct_gold":0.1508},{"t":"SBM.AX","down_beta_12m":0.3348,"up_beta_12m":2.0695,"asymmetry_ratio_core":5.1583,"r_squared_12m":0.35,"aisc_usd_per_oz":2860.0,"margin_pct":0.3533,"fcf_yield":0.1611,"ev_ebitda":3.6775,"leverage":-2.5,"reserve_life_years":13.0,"cost_curve_aisc_percentile":98.3333,"fragility_ebitda_pct_per_10pct_gold":0.2369},{"t":"SRB.L","down_beta_12m":0.7252,"up_beta_12m":1.2153,"asymmetry_ratio_core":1.6758,"r_squared_12m":0.3442,"aisc_usd_per_oz":1816.0,"margin_pct":0.5894,"fcf_yield":0.4209,"ev_ebitda":1.6222,"leverage":-0.84,"reserve_life_years":11.0,"cost_curve_aisc_percentile":60.0,"fragility_ebitda_pct_per_10pct_gold":0.1383},{"t":"SSRM","down_beta_12m":1.4705,"up_beta_12m":1.5036,"asymmetry_ratio_core":1.0643,"r_squared_12m":0.4676,"aisc_usd_per_oz":2359.0,"margin_pct":0.4666,"fcf_yield":0.159,"ev_ebitda":3.9697,"leverage":-0.4444,"reserve_life_years":8.0,"cost_curve_aisc_percentile":96.6667,"fragility_ebitda_pct_per_10pct_gold":0.1484},{"t":"THX.L","down_beta_12m":1.392,"up_beta_12m":1.9633,"asymmetry_ratio_core":1.4104,"r_squared_12m":0.436,"aisc_usd_per_oz":1129.0,"margin_pct":0.7447,"fcf_yield":0.4585,"ev_ebitda":1.4857,"leverage":-0.7611,"reserve_life_years":2.0,"cost_curve_aisc_percentile":10.0,"fragility_ebitda_pct_per_10pct_gold":0.1195},{"t":"TXG","down_beta_12m":0.8681,"up_beta_12m":0.122,"asymmetry_ratio_core":1.0564,"r_squared_12m":0.0345,"aisc_usd_per_oz":1600.0,"margin_pct":0.6382,"fcf_yield":0.1069,"ev_ebitda":7.4398,"leverage":0.0909,"reserve_life_years":10.0,"cost_curve_aisc_percentile":45.0,"fragility_ebitda_pct_per_10pct_gold":0.135},{"t":"VAU.AX","down_beta_12m":1.0305,"up_beta_12m":0.3774,"asymmetry_ratio_core":1.0402,"r_squared_12m":0.272,"aisc_usd_per_oz":1853.0,"margin_pct":0.581,"fcf_yield":0.1795,"ev_ebitda":4.13,"leverage":-0.945,"reserve_life_years":8.0,"cost_curve_aisc_percentile":63.3333,"fragility_ebitda_pct_per_10pct_gold":0.1533},{"t":"WAF.AX","down_beta_12m":-0.5102,"up_beta_12m":0.8741,"asymmetry_ratio_core":-1.7133,"r_squared_12m":0.1296,"aisc_usd_per_oz":1532.0,"margin_pct":0.6536,"fcf_yield":0.3033,"ev_ebitda":2.4924,"leverage":-0.4444,"reserve_life_years":15.0,"cost_curve_aisc_percentile":35.0,"fragility_ebitda_pct_per_10pct_gold":0.1292},{"t":"WDO.TO","down_beta_12m":1.05,"up_beta_12m":1.0634,"asymmetry_ratio_core":1.5058,"r_squared_12m":0.4578,"aisc_usd_per_oz":1419.0,"margin_pct":0.6791,"fcf_yield":0.1291,"ev_ebitda":5.4044,"leverage":-0.6762,"reserve_life_years":8.0,"cost_curve_aisc_percentile":25.0,"fragility_ebitda_pct_per_10pct_gold":0.134},{"t":"WGX.AX","down_beta_12m":0.4625,"up_beta_12m":1.269,"asymmetry_ratio_core":2.3099,"r_squared_12m":0.408,"aisc_usd_per_oz":2275.0,"margin_pct":0.4856,"fcf_yield":0.1765,"ev_ebitda":3.1331,"leverage":-0.9294,"reserve_life_years":10.0,"cost_curve_aisc_percentile":92.5,"fragility_ebitda_pct_per_10pct_gold":0.1386}]};</script>
+<script>
+(function(){
+var D=window.GVD, gv=document.getElementById('gv');
+var SPOT=4422.30, PRICE=116.13, OZ=5.9, AISC=1566, MCAP=122374.35, EV=122874.35, SHARES=MCAP/PRICE;
+function press(l,e){l.forEach(function(b){b.setAttribute('aria-pressed',String(b===e));});}
+function money(v,d){return '$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:d||0,maximumFractionDigits:d||0});}
+function bn(v){return v>=1000?('$'+(v/1000).toFixed(1)+'bn'):('$'+Math.round(v)+'m');}
+var nb=document.getElementById('notesBtn');
+nb.addEventListener('click',function(){var on=gv.classList.toggle('notes');
+  nb.setAttribute('aria-pressed',String(on));nb.textContent=on?'Hide design notes':'Show design notes';});
+
+/* ---------- model reconstruction (exact: fitted to two real Tool B runs) ---------- */
+function model(g){
+  var ebitda=5.723130*g-6962.60, fcf=5.900000*g-10639.37, ni=4.120460*g-6956.20, eps=ni/SHARES;
+  return {gold:g, rev:OZ*g, margin_oz:g-AISC, margin_pct:(g-AISC)/g*100, ebitda:ebitda,
+    ni:ni, eps:eps, fcf:fcf, fcf_yield:fcf/MCAP*100, ev_ebitda:ebitda>0?EV/ebitda:null,
+    pe:eps>0?PRICE/eps:null, lev:ebitda>0?500/ebitda:null,
+    headroom:(g-AISC)/g*100, ebitda_chg:(ebitda/(5.723130*SPOT-6962.60)-1)*100};
+}
+var S=model(SPOT);
+
+var HEAD=[['Revenue','rev',bn,'Gold price × 5.90 Moz produced'],
+  ['Cash margin / oz','margin_oz',function(v){return money(v);},'Gold price − AISC of $1,566'],
+  ['Margin %','margin_pct',function(v){return v.toFixed(1)+'%';},'Cash margin ÷ gold price'],
+  ['EBITDA','ebitda',bn,'Operating margin × ounces, less royalties'],
+  ['Free cash flow','fcf',bn,'Sustainable FCF at this gold price'],
+  ['FCF yield','fcf_yield',function(v){return v.toFixed(2)+'%';},'FCF ÷ market cap — higher is cheaper'],
+  ['EV / EBITDA','ev_ebitda',function(v){return v==null?'—':v.toFixed(1)+'×';},'LOWER is cheaper. Rises when gold falls: earnings shrink, price does not.'],
+  ['Forward P/E','pe',function(v){return v==null||v<0?'—':v.toFixed(1)+'×';},'LOWER is cheaper. Rises when gold falls.']];
+
+var EARN=[['Revenue','rev',bn],['EBITDA','ebitda',bn],['Net income','ni',bn],
+  ['Earnings per share','eps',function(v){return money(v,2);}],['Free cash flow','fcf',bn],
+  ['Cash margin / oz','margin_oz',function(v){return money(v);}],['Margin %','margin_pct',function(v){return v.toFixed(1)+'%';}],
+  ['Headroom above breakeven','headroom',function(v){return v.toFixed(1)+'%';}]];
+var VAL=[['EV / EBITDA (forward)','ev_ebitda',function(v){return v==null?'—':v.toFixed(2)+'×';},'Yahoo 6.6'],
+  ['Forward P/E','pe',function(v){return v==null||v<0?'—':v.toFixed(2)+'×';},''],
+  ['FCF yield','fcf_yield',function(v){return v.toFixed(2)+'%';},''],
+  ['Net debt / EBITDA','lev',function(v){return v==null?'—':v.toFixed(2)+'×';},'Yahoo −0.15']];
+var FIXED=[['Share price','$116.14',''],['Market cap','$122,374m',''],['Enterprise value','$122,874m',''],
+  ['Net debt','$500m',''],['Trailing EBITDA','$11,850m','last twelve months'],
+  ['Interest expense','$200m','per year'],['Production','5,900,000 oz','per year'],
+  ['AISC','$1,566 / oz','40th percentile of your 61'],['Cash cost','$1,180 / oz',''],
+  ['Sustaining capex','$1,400m',''],['Reserve life','22 years',''],
+  ['EV / EBITDA (trailing)','10.37×','on last-twelve-month earnings'],['Jurisdiction tier','2','']];
+var RESIL=[['FCF breakeven gold','$1,803 / oz','below this it stops generating free cash'],
+  ['Operating breakeven gold','$1,566 / oz','below this each ounce loses money'],
+  ['Interest-cover gold','$1,251 / oz','below this it cannot cover interest from earnings'],
+  ['Debt-stress gold','$1,246 / oz','below this leverage becomes distressed'],
+  ['Survival distance','71.7%','gold could fall this far before interest cover breaks'],
+  ['Cost-curve position','40th percentile','cheaper to run than 60% of your universe'],
+  ['EBITDA fragility','13.8% per 10% gold','how much earnings move for a 10% gold move'],
+  ['Stressed net debt / EBITDA','0.027×','leverage measured at your scenario price']];
+var QUAL=[['Financial data status','OK',''],['Confidence','ESTIMATED','some inputs are estimates, not filings'],
+  ['Divergent fields vs Yahoo','4','net debt +124%, EBITDA −12.5%, interest −12.7%, D&A −0.8%'],
+  ['FX staleness','0 days','policy allows 5'],['Next financial report','19 Feb 2026',''],
+  ['Next production report','19 Feb 2026',''],['As of','10 Aug 2026','']];
+
+function fillStatic(){
+  document.getElementById('tblFixed').innerHTML=FIXED.map(function(r){
+    return '<tr><td>'+r[0]+'</td><td class="num">'+r[1]+'</td><td style="color:var(--ink3);font-size:.72rem">'+r[2]+'</td></tr>';}).join('');
+  document.getElementById('tblResil').innerHTML=RESIL.map(function(r){
+    return '<tr><td>'+r[0]+'</td><td class="num">'+r[1]+'</td><td style="color:var(--ink3);font-size:.72rem">'+r[2]+'</td></tr>';}).join('');
+  document.getElementById('tblQual').innerHTML=QUAL.map(function(r){
+    return '<tr><td>'+r[0]+'</td><td class="num">'+r[1]+'</td><td style="color:var(--ink3);font-size:.72rem">'+r[2]+'</td></tr>';}).join('');
+  var rel=[['Beat gold in gold-down weeks','62%','259 weeks'],
+    ['Beat GDX in gold-down weeks','32.5%','212 weeks'],['Beat GDXJ in gold-down weeks','30.4%','168 weeks'],
+    ['Beat gold in gold-up weeks','65.0%','286 weeks'],['Beat GDX in gold-up weeks','33.5%','221 weeks'],
+    ['Beat GDXJ in gold-up weeks','31.2%','173 weeks'],
+    ['Fell 10%+ when gold fell 10%','9.3%','259 weeks'],['Rose 10%+ when gold rose 10%','11.2%','286 weeks'],
+    ['Average of its worst 10% weeks','−5.9%','133 weeks'],['Average of its best 10% weeks','+5.9%','145 weeks']];
+  document.getElementById('tblRel').innerHTML=rel.map(function(r){
+    return '<tr><td>'+r[0]+'</td><td class="num">'+r[1]+'</td><td style="color:var(--ink3);font-size:.72rem">'+r[2]+'</td></tr>';}).join('');
+}
+
+var goldEl=document.getElementById('gold');
+function paintFinance(){
+  var g=Number(goldEl.value), m=model(g), moved=Math.abs(g-SPOT)>1;
+  document.getElementById('goldOut').textContent=money(g);
+  var rel=(g-SPOT)/SPOT*100;
+  document.getElementById('goldRel').textContent=moved?((rel>0?'+':'')+rel.toFixed(0)+'%'):'spot';
+  document.getElementById('goldBadge').textContent=moved?('scenario '+money(g)):'at spot $4,422';
+  document.getElementById('headline').innerHTML=HEAD.map(function(h){
+    var now=m[h[1]], base=S[h[1]], f=h[2];
+    return '<div class="m live"><div class="k">'+h[0]+'<span class="qm" title="'+h[3]+'">i</span></div>'+
+      '<div class="v">'+f(base)+'</div>'+
+      (moved?'<div class="sc">'+f(now)+' <small>at '+money(g)+'</small></div>':'<div class="d">at spot</div>')+'</div>';}).join('');
+  [['scHd1'],['scHd2']].forEach(function(x){var e=document.getElementById(x[0]); if(e) e.hidden=!moved;});
+  function rows(defs,host){
+    document.getElementById(host).innerHTML=defs.map(function(r){
+      var f=r[2], alt=r[3]?('<span class="alt"> ('+r[3]+')</span>'):'';
+      return '<tr class="moves"><td>'+r[0]+'</td><td class="num">'+f(S[r[1]])+alt+'</td>'+
+        (moved?'<td class="sc">'+f(m[r[1]])+'</td>':'')+
+        '<td style="color:var(--ink3);font-size:.72rem">moves with gold</td></tr>';}).join('');
+  }
+  rows(EARN,'tblEarn'); rows(VAL,'tblVal');
+  var fails=[];
+  if(m.fcf_yield<15) fails.push('FCF yield '+m.fcf_yield.toFixed(1)+'% is below your 15% floor');
+  if(m.pe==null||m.pe<0||m.pe>10) fails.push('Forward P/E '+(m.pe==null||m.pe<0?'unavailable':m.pe.toFixed(1)+'×')+' is above your 10× watchlist cut-off');
+  if(m.margin_pct<50) fails.push('Margin '+m.margin_pct.toFixed(1)+'% is below your 50% floor');
+  if(m.margin_oz<0) fails.push('Cash margin is negative — it loses money on every ounce');
+  document.getElementById('checkFail').innerHTML = fails.length
+    ? '<div class="notice warn"><strong>'+fails.length+' of your 7 screening checks '+(fails.length===1?'fails':'fail')+
+      (Math.abs(g-SPOT)>1?' at '+money(g):' at spot')+':</strong> '+fails.join('; ')+'. The rest pass.</div>'
+    : '<div class="notice info">All 7 screening checks pass at this gold price.</div>';
+}
+goldEl.addEventListener('input',paintFinance);
+document.getElementById('goldReset').addEventListener('click',function(){goldEl.value=4422;paintFinance();});
+
+/* ---------- performance chart ---------- */
+var view='rebase',horizon='y1',shown={NEM:true,Gold:true,GDX:true,GDXJ:true};
+var COL={NEM:'#E8975A',Gold:'#D8B45A',GDX:'#69A9E6',GDXJ:'#A98FE0'},DASH={NEM:'',Gold:'8 4',GDX:'5 3',GDXJ:'2 3'};
+function buildLegend(){var L=document.getElementById('legend');L.innerHTML='';
+  Object.keys(COL).forEach(function(k){ if(view==='price'&&k!=='NEM') return;
+    var b=document.createElement('button');b.type='button';b.setAttribute('aria-pressed',String(!!shown[k]));
+    b.innerHTML='<span class="sw" style="background:'+COL[k]+'"></span>'+k;
+    b.addEventListener('click',function(){shown[k]=!shown[k];buildLegend();drawChart();});L.appendChild(b);});}
+function drawChart(){
+  var s=D.chart[horizon],W=960,H=220,pl=48,pr=10,pt=10,pb=20;
+  var keys=(view==='price'?['NEM']:['NEM','Gold','GDX','GDXJ']).filter(function(k){return shown[k];});
+  var ser={};keys.forEach(function(k){var raw=s[k];ser[k]=view==='price'?raw.slice():raw.map(function(v){return v/raw[0]*100;});});
+  var all=[];keys.forEach(function(k){all=all.concat(ser[k]);});
+  var el=document.getElementById('chart'); if(!all.length){el.innerHTML='';return;}
+  var lo=Math.min.apply(null,all),hi=Math.max.apply(null,all);if(hi===lo)hi=lo+1;
+  var pad=(hi-lo)*.08;lo-=pad;hi+=pad;var n=s.dates.length;
+  var X=function(i){return pl+i*(W-pl-pr)/(n-1);},Y=function(v){return H-pb-(v-lo)/(hi-lo)*(H-pt-pb);};
+  var o=[];
+  for(var t=0;t<=4;t++){var val=lo+(hi-lo)*t/4,y=Y(val);
+    o.push('<line x1="'+pl+'" y1="'+y.toFixed(1)+'" x2="'+(W-pr)+'" y2="'+y.toFixed(1)+'" stroke="#2F3945"/>');
+    o.push('<text x="4" y="'+(y+4).toFixed(1)+'" fill="#8D98A7" font-size="11" font-family="ui-monospace,monospace">'+
+      (view==='price'?('$'+val.toFixed(0)):((val-100>=0?'+':'')+(val-100).toFixed(0)+'%'))+'</text>');}
+  keys.forEach(function(k){
+    var d=ser[k].map(function(v,i){return (i?'L':'M')+X(i).toFixed(1)+' '+Y(v).toFixed(1);}).join(' ');
+    o.push('<path d="'+d+'" fill="none" stroke="'+COL[k]+'" stroke-width="'+(k==='NEM'?2.2:1.4)+
+      '" stroke-dasharray="'+DASH[k]+'" stroke-linejoin="round"/>');
+    o.push('<circle cx="'+X(n-1).toFixed(1)+'" cy="'+Y(ser[k][n-1]).toFixed(1)+'" r="3" fill="'+COL[k]+'"/>');});
+  el.innerHTML=o.join('');
+  document.getElementById('cFrom').textContent=s.dates[0];
+  document.getElementById('cTo').textContent=s.dates[n-1];
+  document.getElementById('cNote').textContent=view==='price'?'Newmont share price, USD':'indexed to 100 at the start';
+  document.getElementById('perfRange').textContent=horizon.replace('y','')+'Y';}
+var vR=document.getElementById('vRebase'),vP=document.getElementById('vPrice');
+vR.addEventListener('click',function(){view='rebase';press([vR,vP],vR);buildLegend();drawChart();});
+vP.addEventListener('click',function(){view='price';press([vR,vP],vP);buildLegend();drawChart();});
+var chB=[].slice.call(document.querySelectorAll('.ch'));
+chB.forEach(function(b){b.addEventListener('click',function(){horizon=b.dataset.h;press(chB,b);drawChart();});});
+
+/* ---------- beta bars + rugs ---------- */
+(function(){var rows=[['NEM',D.beta.nem.up,D.beta.nem.down],['GDX',1.239,1.278],['GDXJ',1.448,1.482]];
+  var W=420,base=150,maxV=1.6,o=['<line x1="20" y1="'+base+'" x2="'+(W-10)+'" y2="'+base+'" stroke="#465362"/>'];
+  [{lab:'Up-gold (weeks gold rose)',x0:35,i:1},{lab:'Down-gold (weeks gold fell)',x0:235,i:2}].forEach(function(g){
+    rows.forEach(function(r,i){var v=r[g.i],h=v/maxV*110,x=g.x0+i*48,c=i===0?'#E8975A':(i===1?'#69A9E6':'#A98FE0');
+      o.push('<rect x="'+x+'" y="'+(base-h).toFixed(1)+'" width="34" height="'+h.toFixed(1)+'" fill="'+c+'" rx="2"/>');
+      o.push('<text x="'+(x+17)+'" y="'+(base-h-5).toFixed(1)+'" text-anchor="middle" fill="#F4F6F8" font-size="12" font-family="ui-monospace,monospace">'+v.toFixed(2)+'</text>');
+      o.push('<text x="'+(x+17)+'" y="'+(base+14)+'" text-anchor="middle" fill="#8D98A7" font-size="10">'+r[0]+'</text>');});
+    o.push('<text x="'+(g.x0+72)+'" y="'+(base+32)+'" text-anchor="middle" fill="#B7C0CB" font-size="11">'+g.lab+'</text>');});
+  document.getElementById('betaBars').innerHTML=o.join('');})();
+function rug(id,lbl,vals,mine,pct){var W=420,y=19,px=14;
+  var lo=Math.min.apply(null,vals),hi=Math.max.apply(null,vals),X=function(v){return px+(v-lo)/(hi-lo)*(W-px*2);};
+  var o=['<line x1="'+px+'" y1="'+y+'" x2="'+(W-px)+'" y2="'+y+'" stroke="#465362"/>'];
+  vals.forEach(function(v){o.push('<line x1="'+X(v).toFixed(1)+'" y1="'+(y-6)+'" x2="'+X(v).toFixed(1)+'" y2="'+(y+6)+'" stroke="#465362"/>');});
+  [1.278,1.482].forEach(function(b){if(b>=lo&&b<=hi)o.push('<line x1="'+X(b).toFixed(1)+'" y1="'+(y-8)+'" x2="'+X(b).toFixed(1)+'" y2="'+(y+8)+'" stroke="#69A9E6" stroke-width="1.4" stroke-dasharray="2 2"/>');});
+  o.push('<circle cx="'+X(mine).toFixed(1)+'" cy="'+y+'" r="5" fill="#D8B45A"/>');
+  o.push('<text x="'+px+'" y="34" fill="#8D98A7" font-size="10" font-family="ui-monospace,monospace">'+lo.toFixed(2)+'</text>');
+  o.push('<text x="'+(W-px)+'" y="34" text-anchor="end" fill="#8D98A7" font-size="10" font-family="ui-monospace,monospace">'+hi.toFixed(2)+'</text>');
+  document.getElementById(id).innerHTML=o.join('');
+  document.getElementById(lbl).textContent=mine.toFixed(2)+' · '+pct+'th percentile';}
+rug('rugDown','rugDownLbl',D.beta.uni.down,D.beta.nem.down,D.beta.pct.down);
+rug('rugUp','rugUpLbl',D.beta.uni.up,D.beta.nem.up,D.beta.pct.up);
+
+/* ---------- lab: beat rate, spread, when ---------- */
+var BUCKETS=['gold_down_big','gold_down','gold_flat','gold_up','gold_up_big'];
+var BSHORT={gold_down_big:'down >15%',gold_down:'down 5-15%',gold_flat:'flat',gold_up:'up 5-15%',gold_up_big:'up >15%'};
+var activeBucket='gold_down';
+(function(){var byB={};D.lab.forEach(function(r){byB[r.bucket]=r;});
+  var W=620,H=180,pl=40,pb=40,pt=14,o=[],Y=function(p){return H-pb-(p-.2)/(.9-.2)*(H-pt-pb);};
+  [.25,.5,.75].forEach(function(g){
+    o.push('<line x1="'+pl+'" y1="'+Y(g).toFixed(1)+'" x2="'+(W-14)+'" y2="'+Y(g).toFixed(1)+'" stroke="'+(g===.5?'#465362':'#2F3945')+'" stroke-dasharray="'+(g===.5?'4 3':'')+'"/>');
+    o.push('<text x="6" y="'+(Y(g)+4).toFixed(1)+'" fill="#8D98A7" font-size="10" font-family="ui-monospace,monospace">'+(g*100)+'%</text>');});
+  var pts=[];
+  BUCKETS.forEach(function(b,i){var x=pl+i*(W-pl-20)/(BUCKETS.length-1),r=byB[b];
+    o.push('<text x="'+x.toFixed(1)+'" y="'+(H-16)+'" text-anchor="middle" fill="#B7C0CB" font-size="10">'+BSHORT[b]+'</text>');
+    if(!r||r.p_beat_gdx==null){o.push('<text x="'+x.toFixed(1)+'" y="'+Y(.5).toFixed(1)+'" text-anchor="middle" fill="#8D98A7" font-size="10">too few</text>');return;}
+    o.push('<line x1="'+x.toFixed(1)+'" y1="'+Y(r.gdx_wilson_low).toFixed(1)+'" x2="'+x.toFixed(1)+'" y2="'+Y(r.gdx_wilson_high).toFixed(1)+'" stroke="#4DB6AC" stroke-width="2" opacity=".45"/>');
+    pts.push([x,Y(r.p_beat_gdx),r]);});
+  if(pts.length>1)o.push('<path d="'+pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1);}).join(' ')+'" fill="none" stroke="#4DB6AC" stroke-width="1.8"/>');
+  pts.forEach(function(p){o.push('<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="4.5" fill="#4DB6AC"/>');
+    o.push('<text x="'+p[0].toFixed(1)+'" y="'+(p[1]-9).toFixed(1)+'" text-anchor="middle" fill="#F4F6F8" font-size="11" font-family="ui-monospace,monospace">'+Math.round(p[2].p_beat_gdx*100)+'%</text>');
+    o.push('<text x="'+p[0].toFixed(1)+'" y="'+(H-4)+'" text-anchor="middle" fill="#8D98A7" font-size="9">n='+Math.round(p[2].gdx_effective_n)+'</text>');});
+  o.push('<text x="'+pl+'" y="9" fill="#8D98A7" font-size="10">% of 8-week periods NEM beat GDX · bars = uncertainty</text>');
+  document.getElementById('labChart').innerHTML=o.join('');})();
+
+function drawSpread(){
+  var ep=D.ep[activeBucket], el=document.getElementById('labSpread');
+  document.getElementById('spreadLbl').textContent='gold '+BSHORT[activeBucket]+' weeks';
+  if(!ep||!ep.alpha.length){el.innerHTML='<text x="20" y="45" fill="#8D98A7" font-size="12">Too little history in this scenario to show outcomes.</text>';return;}
+  var W=620,H=90,px=16,y0=20,y1=62;
+  var lo=Math.min.apply(null,ep.alpha),hi=Math.max.apply(null,ep.alpha);
+  var X=function(v){return px+(v-lo)/((hi-lo)||1)*(W-px*2);};
+  var srt=ep.alpha.slice().sort(function(a,b){return a-b;}), med=srt[Math.floor(srt.length/2)];
+  var o=['<rect x="0" y="'+(y0-6)+'" width="'+W+'" height="'+(y1-y0+14)+'" fill="#141920" rx="4"/>'];
+  if(lo<0&&hi>0){o.push('<line x1="'+X(0).toFixed(1)+'" y1="'+(y0-4)+'" x2="'+X(0).toFixed(1)+'" y2="'+(y1+4)+'" stroke="#8D98A7" stroke-dasharray="2 2"/>');}
+  ep.alpha.forEach(function(v,i){
+    o.push('<line x1="'+X(v).toFixed(1)+'" y1="'+y0+'" x2="'+X(v).toFixed(1)+'" y2="'+y1+'" stroke="'+(ep.beat[i]?'#55C58A':'#F0787F')+'" stroke-width="1.1" opacity=".85"/>');});
+  o.push('<path d="M'+(X(med)-5).toFixed(1)+' '+(y0-12)+' L'+(X(med)+5).toFixed(1)+' '+(y0-12)+' L'+X(med).toFixed(1)+' '+(y0-3)+' Z" fill="#F4F6F8"/>');
+  o.push('<text x="'+X(med).toFixed(1)+'" y="'+(y0-15)+'" text-anchor="middle" fill="#F4F6F8" font-size="10">median '+(med>=0?'+':'')+(med*100).toFixed(0)+'%</text>');
+  o.push('<text x="'+px+'" y="'+(y1+16)+'" fill="#8D98A7" font-size="10" font-family="ui-monospace,monospace">'+(lo*100).toFixed(0)+'%</text>');
+  o.push('<text x="'+(W-px)+'" y="'+(y1+16)+'" text-anchor="end" fill="#8D98A7" font-size="10" font-family="ui-monospace,monospace">+'+(hi*100).toFixed(0)+'%</text>');
+  o.push('<text x="'+(W/2)+'" y="'+(y1+16)+'" text-anchor="middle" fill="#8D98A7" font-size="10">'+ep.alpha.length+' weeks · green beat GDX, red lagged</text>');
+  el.innerHTML=o.join('');}
+
+function drawWhen(){
+  var all=D.ep['__all__'], el=document.getElementById('labWhen');
+  var W=620,H=170,pl=38,pb=24,pt=10;
+  var xs=all.dates.map(function(d){return new Date(d).getTime();});
+  var t0=Math.min.apply(null,xs),t1=Math.max.apply(null,xs);
+  var vals=all.alpha, lo=Math.min.apply(null,vals), hi=Math.max.apply(null,vals);
+  var X=function(t){return pl+(t-t0)/((t1-t0)||1)*(W-pl-14);},Y=function(v){return H-pb-(v-lo)/((hi-lo)||1)*(H-pt-pb);};
+  var o=['<line x1="'+pl+'" y1="'+Y(0).toFixed(1)+'" x2="'+(W-14)+'" y2="'+Y(0).toFixed(1)+'" stroke="#465362" stroke-dasharray="3 3"/>'];
+  o.push('<text x="6" y="'+(Y(0)+4).toFixed(1)+'" fill="#8D98A7" font-size="10">0</text>');
+  all.dates.forEach(function(d,i){
+    var hit=all.bucket[i]===activeBucket, v=all.alpha[i];
+    var c=hit?(v>=0?'#55C58A':'#F0787F'):'#3A4553', r=hit?3.2:1.6;
+    o.push('<circle cx="'+X(new Date(d).getTime()).toFixed(1)+'" cy="'+Y(v).toFixed(1)+'" r="'+r+'" fill="'+c+'" opacity="'+(hit?'.95':'.5')+'"/>');});
+  o.push('<text x="'+pl+'" y="'+(H-6)+'" fill="#8D98A7" font-size="10">'+all.dates[0]+'</text>');
+  o.push('<text x="'+(W-14)+'" y="'+(H-6)+'" text-anchor="end" fill="#8D98A7" font-size="10">'+all.dates[all.dates.length-1]+'</text>');
+  o.push('<text x="'+pl+'" y="9" fill="#8D98A7" font-size="10">outperformance vs GDX over the next 8 weeks · highlighted = '+BSHORT[activeBucket]+'</text>');
+  el.innerHTML=o.join('');}
+var bkB=[].slice.call(document.querySelectorAll('#bucketSeg button'));
+bkB.forEach(function(b){b.addEventListener('click',function(){activeBucket=b.dataset.b;press(bkB,b);drawSpread();drawWhen();});});
+
+/* ---------- options charts ---------- */
+function spark(id,data,colour,fill){var svg=document.getElementById(id);if(!svg)return;
+  var W=240,H=40,p=3,vals=data.filter(function(v){return v!==null;});if(!vals.length)return;
+  var lo=Math.min.apply(null,vals),hi=Math.max.apply(null,vals);if(hi===lo)hi=lo+1;
+  var X=function(i){return p+i*(W-p*2)/(data.length-1);},Y=function(v){return H-p-(v-lo)/(hi-lo)*(H-p*2);};
+  var segs=[],cur=[];data.forEach(function(v,i){if(v===null){if(cur.length)segs.push(cur);cur=[];}else cur.push([X(i),Y(v)]);});
+  if(cur.length)segs.push(cur);
+  var o=['<line x1="0" y1="'+(H-p)+'" x2="'+W+'" y2="'+(H-p)+'" stroke="#2F3945"/>'];
+  segs.forEach(function(sg){var d=sg.map(function(q,i){return (i?'L':'M')+q[0].toFixed(1)+' '+q[1].toFixed(1);}).join(' ');
+    if(sg.length>1)o.push('<path d="'+d+' L'+sg[sg.length-1][0].toFixed(1)+' '+(H-p)+' L'+sg[0][0].toFixed(1)+' '+(H-p)+' Z" fill="'+fill+'"/>');
+    o.push('<path d="'+d+'" fill="none" stroke="'+colour+'" stroke-width="1.6"/>');});
+  var L=segs[segs.length-1];if(L&&L.length)o.push('<circle cx="'+L[L.length-1][0].toFixed(1)+'" cy="'+L[L.length-1][1].toFixed(1)+'" r="2.6" fill="'+colour+'"/>');
+  svg.innerHTML=o.join('');}
+var ivClean=D.opt.iv.map(function(v){return (v===null||v<5||v>90)?null:v;});
+var mvClean=D.opt.move.map(function(v){return (v===null||v<=0||v>60)?null:v;});
+spark('spPcr',D.opt.pcr,'#D8B45A','rgba(216,180,90,.14)');
+spark('spIv',ivClean,'#D8B45A','rgba(216,180,90,.12)');
+spark('spMove',mvClean,'#69A9E6','rgba(105,169,230,.12)');
+spark('spVol',D.oisplit.vol,'#4DB6AC','rgba(77,182,172,.12)');
+
+(function(){ // puts / calls / total lines
+  var s=D.oisplit, W=460,H=150,pl=44,pr=8,pt=10,pb=20;
+  var all=s.puts.concat(s.calls).filter(function(v){return v!=null;});
+  var lo=0,hi=Math.max.apply(null,all)*1.05;
+  var tot=s.puts.map(function(v,i){return (v==null||s.calls[i]==null)?null:v+s.calls[i];});
+  hi=Math.max(hi,Math.max.apply(null,tot.filter(function(v){return v!=null;}))*1.05);
+  var n=s.dates.length,X=function(i){return pl+i*(W-pl-pr)/(n-1);},Y=function(v){return H-pb-(v-lo)/(hi-lo)*(H-pt-pb);};
+  var o=[];
+  for(var t=0;t<=3;t++){var val=lo+(hi-lo)*t/3,y=Y(val);
+    o.push('<line x1="'+pl+'" y1="'+y.toFixed(1)+'" x2="'+(W-pr)+'" y2="'+y.toFixed(1)+'" stroke="#2F3945"/>');
+    o.push('<text x="4" y="'+(y+4).toFixed(1)+'" fill="#8D98A7" font-size="10" font-family="ui-monospace,monospace">'+Math.round(val/1000)+'k</text>');}
+  [['puts','#F0787F',s.puts],['calls','#55C58A',s.calls],['total','#8D98A7',tot]].forEach(function(ln){
+    var pts=[];ln[2].forEach(function(v,i){if(v!=null)pts.push((pts.length?'L':'M')+X(i).toFixed(1)+' '+Y(v).toFixed(1));});
+    o.push('<path d="'+pts.join(' ')+'" fill="none" stroke="'+ln[1]+'" stroke-width="'+(ln[0]==='total'?1.2:1.8)+'" stroke-dasharray="'+(ln[0]==='total'?'4 3':'')+'"/>');});
+  o.push('<text x="'+pl+'" y="'+(H-4)+'" fill="#8D98A7" font-size="10">'+s.dates[0]+'</text>');
+  o.push('<text x="'+(W-pr)+'" y="'+(H-4)+'" text-anchor="end" fill="#8D98A7" font-size="10">'+s.dates[n-1]+'</text>');
+  document.getElementById('oiChart').innerHTML=o.join('');})();
+
+(function(){ // OI by strike
+  var rows=D.oextra.oi_strike, W=620,H=160,pl=36,pb=28,pt=12;
+  var strikes=[].concat.apply([],rows.map(function(r){return [r.k];})).filter(function(v,i,a){return a.indexOf(v)===i;}).sort(function(a,b){return a-b;});
+  var maxOI=Math.max.apply(null,rows.map(function(r){return r.oi;}));
+  var X=function(k){return pl+(strikes.indexOf(k))*(W-pl-14)/(strikes.length-1||1);},
+      Y=function(v){return H-pb-v/maxOI*(H-pt-pb);};
+  var o=['<line x1="'+pl+'" y1="'+(H-pb)+'" x2="'+(W-14)+'" y2="'+(H-pb)+'" stroke="#465362"/>'];
+  var sx=X(strikes.reduce(function(a,b){return Math.abs(b-PRICE)<Math.abs(a-PRICE)?b:a;}));
+  o.push('<line x1="'+sx.toFixed(1)+'" y1="'+pt+'" x2="'+sx.toFixed(1)+'" y2="'+(H-pb)+'" stroke="#D8B45A" stroke-dasharray="3 3"/>');
+  o.push('<text x="'+(sx+4).toFixed(1)+'" y="'+(pt+9)+'" fill="#D8B45A" font-size="10">spot $116</text>');
+  rows.forEach(function(r){var x=X(r.k),h=(H-pb)-Y(r.oi),w=8;
+    o.push('<rect x="'+(x-(r.s==='P'?w:0)).toFixed(1)+'" y="'+Y(r.oi).toFixed(1)+'" width="'+w+'" height="'+h.toFixed(1)+
+      '" fill="'+(r.s==='P'?'#F0787F':'#55C58A')+'" opacity=".85"><title>$'+r.k+' '+(r.s==='P'?'put':'call')+' — '+r.oi.toLocaleString()+' OI</title></rect>');});
+  strikes.forEach(function(k,i){if(i%3===0)o.push('<text x="'+X(k).toFixed(1)+'" y="'+(H-12)+'" text-anchor="middle" fill="#8D98A7" font-size="9">'+k+'</text>');});
+  o.push('<text x="'+pl+'" y="9" fill="#8D98A7" font-size="10">open interest by strike · red puts, green calls</text>');
+  document.getElementById('oiStrike').innerHTML=o.join('');})();
+
+(function(){ // skew
+  var pts=D.oextra.skew.filter(function(p){return p.h===180;});
+  var W=620,H=150,pl=40,pb=28,pt=12;
+  var ivs=pts.map(function(p){return p.iv;});
+  var lo=Math.min.apply(null,ivs)-1,hi=Math.max.apply(null,ivs)+1;
+  var deltas=[0.1,0.25,0.35];
+  var X=function(d){return pl+deltas.indexOf(d)*(W-pl-20)/(deltas.length-1);},
+      Y=function(v){return H-pb-(v-lo)/((hi-lo)||1)*(H-pt-pb);};
+  var o=[];
+  [lo,(lo+hi)/2,hi].forEach(function(v){o.push('<line x1="'+pl+'" y1="'+Y(v).toFixed(1)+'" x2="'+(W-20)+'" y2="'+Y(v).toFixed(1)+'" stroke="#2F3945"/>');
+    o.push('<text x="4" y="'+(Y(v)+4).toFixed(1)+'" fill="#8D98A7" font-size="10" font-family="ui-monospace,monospace">'+v.toFixed(0)+'%</text>');});
+  ['P','C'].forEach(function(side){
+    var sp=deltas.map(function(d){var f=pts.filter(function(p){return p.s===side&&p.d===d;})[0];return f?[X(d),Y(f.iv),f.iv]:null;}).filter(Boolean);
+    if(sp.length<2)return;
+    o.push('<path d="'+sp.map(function(q,i){return (i?'L':'M')+q[0].toFixed(1)+' '+q[1].toFixed(1);}).join(' ')+
+      '" fill="none" stroke="'+(side==='P'?'#F0787F':'#55C58A')+'" stroke-width="2"/>');
+    sp.forEach(function(q){o.push('<circle cx="'+q[0].toFixed(1)+'" cy="'+q[1].toFixed(1)+'" r="3.5" fill="'+(side==='P'?'#F0787F':'#55C58A')+'"/>');
+      o.push('<text x="'+q[0].toFixed(1)+'" y="'+(q[1]-8).toFixed(1)+'" text-anchor="middle" fill="#F4F6F8" font-size="10" font-family="ui-monospace,monospace">'+q[2].toFixed(1)+'</text>');});});
+  deltas.forEach(function(d){o.push('<text x="'+X(d).toFixed(1)+'" y="'+(H-10)+'" text-anchor="middle" fill="#B7C0CB" font-size="10">'+(d*100)+'-delta</text>');});
+  o.push('<text x="'+pl+'" y="9" fill="#8D98A7" font-size="10">implied vol by delta, 180-day · red puts, green calls</text>');
+  document.getElementById('skewChart').innerHTML=o.join('');})();
+
+/* ---------- sizing (share price driven) ---------- */
+var CONTRACTS={p115:{k:'put',strike:115,prem:11.925,lab:'$115 put'},p95:{k:'put',strike:95,prem:3.95,lab:'$95 put'},
+  c120:{k:'call',strike:120,prem:12.50,lab:'$120 call'},c135:{k:'call',strike:135,prem:7.55,lab:'$135 call'}};
+var pickKey='p115';
+var picks=[].slice.call(document.querySelectorAll('.pick'));
+picks.forEach(function(b){b.addEventListener('click',function(){pickKey=b.dataset.k;press(picks,b);paintSizing();});});
+document.getElementById('spx').addEventListener('input',paintSizing);
+document.getElementById('budget').addEventListener('input',paintSizing);
+function intrinsic(c,px){return c.k==='put'?Math.max(0,c.strike-px):Math.max(0,px-c.strike);}
+function paintSizing(){
+  var c=CONTRACTS[pickKey],px=Number(document.getElementById('spx').value),budget=Number(document.getElementById('budget').value)||0;
+  document.getElementById('spxOut').textContent=money(px);
+  var rel=(px-PRICE)/PRICE*100;
+  document.getElementById('spxRel').textContent=Math.abs(rel)<0.6?'spot':((rel>0?'+':'')+rel.toFixed(0)+'%');
+  var per=c.prem*100,nC=Math.floor(budget/per),spend=nC*per,iv=intrinsic(c,px),value=iv*100*nC,pnl=value-spend;
+  document.getElementById('sizeOut').innerHTML=[
+    ['Contracts you can buy',nC+' × '+c.lab+' at '+money(per)+' each'],
+    ['Money used',money(spend)+(budget-spend>0?' (leaves '+money(budget-spend)+')':'')],
+    ['Break-even share price',c.k==='put'?money(c.strike-c.prem,2):money(c.strike+c.prem,2)],
+    ['Contract worth at expiry',money(iv,2)+' each · '+money(value)+' total'],
+    ['Your result',(pnl>=0?'+':'−')+money(Math.abs(pnl))+(spend>0?' ('+(pnl/spend*100).toFixed(0)+'% on money used)':'')]
+  ].map(function(r,i,a){var st=i===a.length-1?' style="color:'+(pnl>=0?'#55C58A':'#F0787F')+';font-weight:650"':'';
+    return '<tr><td>'+r[0]+'</td><td class="num"'+st+'>'+r[1]+'</td></tr>';}).join('');
+  var lad=[];
+  for(var p=70;p<=170;p+=10){
+    var i2=intrinsic(c,p),v2=i2*100*nC,pl2=v2-spend;
+    lad.push('<tr'+(Math.abs(p-px)<5?' style="background:var(--soft)"':'')+'><td class="num">'+money(p)+'</td>'+
+      '<td class="num">'+money(i2,2)+'</td><td class="num" style="color:'+(pl2>=0?'#55C58A':'#F0787F')+'">'+
+      (pl2>=0?'+':'−')+money(Math.abs(pl2))+'</td><td class="num" style="color:'+(pl2>=0?'#55C58A':'#F0787F')+'">'+
+      (spend>0?((pl2/spend*100).toFixed(0)+'%'):'—')+'</td></tr>');}
+  document.getElementById('ladderOut').innerHTML=lad.join('');}
+
+/* ---------- score builder ---------- */
+var METRICS=[
+  {id:'down_beta_12m',cat:'A',lab:'Down beta',hi:true},{id:'up_beta_12m',cat:'A',lab:'Up beta',hi:true},
+  {id:'asymmetry_ratio_core',cat:'A',lab:'Asymmetry',hi:true},{id:'r_squared_12m',cat:'A',lab:'Gold link (R²)',hi:true},
+  {id:'fragility_ebitda_pct_per_10pct_gold',cat:'A',lab:'EBITDA fragility',hi:false},
+  {id:'aisc_usd_per_oz',cat:'B',lab:'AISC',hi:false},{id:'margin_pct',cat:'B',lab:'Margin %',hi:true},
+  {id:'fcf_yield',cat:'B',lab:'FCF yield',hi:true},{id:'ev_ebitda',cat:'B',lab:'EV / EBITDA',hi:false},
+  {id:'leverage',cat:'B',lab:'Net debt / EBITDA',hi:false},{id:'reserve_life_years',cat:'B',lab:'Reserve life',hi:true},
+  {id:'cost_curve_aisc_percentile',cat:'B',lab:'Cost-curve position',hi:false}];
+var uni=D.uni, me=uni.filter(function(r){return r.t==='NEM';})[0], st={};
+METRICS.forEach(function(m){st[m.id]={on:false,w:0,hi:m.hi,avail:me[m.id]!=null};});
+function onList(){return METRICS.filter(function(m){return st[m.id].on&&st[m.id].avail;});}
+function rebalance(changed){
+  var on=onList(); if(!on.length) return;
+  if(changed){var others=on.filter(function(m){return m.id!==changed;});
+    var rest=100-st[changed].w, cur=others.reduce(function(a,m){return a+st[m.id].w;},0);
+    if(!others.length){st[changed].w=100;return;}
+    others.forEach(function(m){st[m.id].w=cur>0?Math.round(st[m.id].w/cur*rest):Math.round(rest/others.length);});
+  } else {var each=Math.floor(100/on.length); on.forEach(function(m){st[m.id].w=each;});}
+  var tot=on.reduce(function(a,m){return a+st[m.id].w;},0);
+  if(tot!==100&&on.length) st[on[0].id].w+=100-tot;
+}
+function buildSB(){
+  ['A','B'].forEach(function(cat){
+    var host=document.getElementById(cat==='A'?'catA':'catB'); host.innerHTML='';
+    METRICS.filter(function(m){return m.cat===cat;}).forEach(function(m){
+      var s=st[m.id],row=document.createElement('div');row.className='sbrow'+(s.on?'':' off');
+      row.innerHTML='<label><input type="checkbox" '+(s.on?'checked':'')+(s.avail?'':' disabled')+' data-m="'+m.id+'"><span>'+m.lab+'</span></label>'+
+        (s.on?'<input type="range" min="0" max="100" step="5" value="'+s.w+'" data-w="'+m.id+'">':'')+
+        '<span class="pts">'+(s.avail?(s.on?s.w+' pts':'—'):'n/a')+'</span>'+
+        '<button type="button" class="dirbtn" data-d="'+m.id+'">'+(s.hi?'high ▲':'low ▼')+'</button>';
+      host.appendChild(row);});});
+  document.querySelectorAll('[data-m]').forEach(function(el){el.addEventListener('change',function(){
+    st[el.dataset.m].on=el.checked; rebalance(null); buildSB(); score();});});
+  document.querySelectorAll('[data-w]').forEach(function(el){el.addEventListener('input',function(){
+    st[el.dataset.w].w=Number(el.value); rebalance(el.dataset.w); buildSB(); score();});});
+  document.querySelectorAll('[data-d]').forEach(function(el){el.addEventListener('click',function(){
+    st[el.dataset.d].hi=!st[el.dataset.d].hi; buildSB(); score();});});
+  var used=onList().reduce(function(a,m){return a+st[m.id].w;},0);
+  document.getElementById('ptsLeft').textContent=onList().length?(used+' of 100 points allocated'):'100 points to spend';
+}
+function pctRank(id,hi){var vals=uni.map(function(r){return r[id];}).filter(function(v){return v!=null;});
+  var out={};uni.forEach(function(r){var v=r[id];if(v==null){out[r.t]=null;return;}
+    var below=vals.filter(function(x){return x<v;}).length,p=below/(vals.length-1)*100;out[r.t]=hi?p:100-p;});return out;}
+function score(){
+  var chosen=onList(),host=document.getElementById('sbResult');
+  if(!chosen.length){host.innerHTML='<div class="sbempty">Tick a metric to begin.</div>';return;}
+  var ranks={};chosen.forEach(function(m){ranks[m.id]=pctRank(m.id,st[m.id].hi);});
+  function sc(t){var num=0,den=0;chosen.forEach(function(m){var p=ranks[m.id][t];if(p==null)return;
+    num+=p*st[m.id].w;den+=st[m.id].w;});return den?num/den:null;}
+  var all=uni.map(function(r){var v=sc(r.t);return v==null?null:{t:r.t,s:v};}).filter(Boolean)
+    .sort(function(a,b){return b.s-a.s;});
+  var mine=all.filter(function(r){return r.t==='NEM';})[0],rank=all.indexOf(mine)+1;
+  var moves=[];chosen.forEach(function(m){var old=st[m.id].w;st[m.id].w=Math.min(100,old+10);
+    var r2=uni.map(function(r){var v=sc(r.t);return v==null?null:{t:r.t,s:v};}).filter(Boolean).sort(function(a,b){return b.s-a.s;});
+    moves.push(Math.abs(r2.findIndex(function(x){return x.t==='NEM';})+1-rank));st[m.id].w=old;});
+  var maxMove=moves.length?Math.max.apply(null,moves):0;
+  var contrib=chosen.map(function(m){var p=ranks[m.id]['NEM'];return {lab:m.lab,p:p,w:st[m.id].w,raw:me[m.id]};})
+    .sort(function(a,b){return (b.p==null?-1:b.p)-(a.p==null?-1:a.p);});
+  var bars=contrib.map(function(c){
+    if(c.p==null)return '<div class="cr"><span>'+c.lab+'</span><span style="color:var(--ink3);font-size:.7rem">not available</span><span></span></div>';
+    var above=c.p-50,w=Math.abs(above),col=above>=0?'#55C58A':'#F0787F';
+    return '<div class="cr"><span>'+c.lab+'</span><div class="bar">'+
+      '<i style="'+(above>=0?'left:50%':'right:50%')+';width:'+w+'%;background:'+col+'"></i>'+
+      '<i style="left:50%;width:1px;background:#8D98A7"></i></div>'+
+      '<span class="n" style="font-size:.7rem;color:'+col+'">'+c.p.toFixed(0)+'th</span></div>';}).join('');
+  var list=all.map(function(r,i){
+    return '<button type="button" class="'+(r.t==='NEM'?'me':'')+'"><span class="n">'+(i+1)+'</span><span>'+r.t+'</span><span class="n">'+r.s.toFixed(0)+'</span></button>';}).join('');
+  host.innerHTML=
+    '<div style="display:flex;align-items:baseline;gap:.5rem;flex-wrap:wrap">'+
+    '<span class="n" style="font-size:1.5rem;color:var(--gold)">'+mine.s.toFixed(0)+'</span>'+
+    '<span style="font-size:.83rem">Newmont ranks <strong>'+rank+' of '+all.length+'</strong> on your weighting</span></div>'+
+    '<div style="font-size:.7rem;color:'+(maxMove<=3?'var(--ink3)':'var(--warn)')+';margin:.3rem 0 .1rem">'+
+    (maxMove<=3?'Stable — shifting any one weight by 10 points moves it at most '+maxMove+' place'+(maxMove===1?'':'s')+'.'
+      :'Fragile — shifting one weight by 10 points moves it up to '+maxMove+' places. Don\'t read much into this order.')+'</div>'+
+    '<div class="grouphd" style="margin:.5rem 0 .3rem">What carries it, what drags it</div>'+
+    '<div class="contrib">'+bars+'</div>'+
+    '<div class="grouphd" style="margin:.5rem 0 .3rem">Every miner on your weighting</div>'+
+    '<div class="ranklist">'+list+'</div>';
+}
+
+fillStatic(); buildLegend(); drawChart(); paintFinance();
+drawSpread(); drawWhen(); paintSizing(); buildSB(); score();
+})();
+</script>
