@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
@@ -696,6 +697,37 @@ def test_pending_artifact_renders_one_honest_degraded_notice():
     assert _payload(html)["enabled"] is False
 
 
+@pytest.mark.parametrize(
+    "spot",
+    [None, float("nan"), float("inf"), float("-inf")],
+    ids=("missing", "nan", "positive-infinity", "negative-infinity"),
+)
+def test_non_finite_spot_is_one_honest_disabled_state(spot):
+    """Missing/non-finite spot is State A and must always stay JSON-safe."""
+
+    reason = "no finite spot gold price is published for this ticker and source"
+    data = _data(_gold_row(spot_gold_usd=spot))
+
+    control = render_gold_dial_control(
+        data, ticker="NEM", finance_source="our", app_config=_app_config()
+    )
+    assert 'aria-describedby="gold-dial-spot gold-dial-reason" disabled>' in control
+    assert reason in control
+    assert 'aria-valuetext="spot gold unavailable"' in control
+
+    html = _render(data=data)
+    assert "The gold dial is disabled for NEM" in html
+    assert reason in html
+    assert "$inf" not in html and "-$inf" not in html
+    assert '<th scope="row">Spot gold used</th><td class="spot-cell">n/a</td>' in html
+    payload = _payload(html)  # Regression: +/-Infinity used to crash JSON embedding.
+    assert payload["spot_gold_usd"] is None
+    assert payload["enabled"] is False
+    assert payload["disabled_reason"] == reason
+    assert payload["scenario_enabled"] is False
+    assert payload["scenario_reason"] == reason
+
+
 # ---------------------------------------------------------------------------
 # dial control + payload
 # ---------------------------------------------------------------------------
@@ -811,6 +843,21 @@ def test_slider_value_attr_lands_on_the_grid_for_every_step_shape():
     for step, spot, expected in cases:
         cfg = TickerPageDialConfig(min_gold_usd=2000.0, max_gold_usd=6000.0, step_usd=step)
         assert _slider_value_attr(spot, cfg) == expected, (step, spot)
+    fractional_origin = TickerPageDialConfig(
+        min_gold_usd=2000.5,
+        max_gold_usd=6000.5,
+        step_usd=1.0,
+        probe_gold_usd=[2000.5, 4000.5, 6000.5],
+    )
+    assert _slider_value_attr(4477.4, fractional_origin) == "4477.5"
+    uneven_range = TickerPageDialConfig(
+        min_gold_usd=0.0,
+        max_gold_usd=10.0,
+        step_usd=6.0,
+        probe_gold_usd=[0.0, 5.0, 10.0],
+    )
+    assert _slider_value_attr(9.0, uneven_range) == "6"
+    assert _slider_value_attr(10.0, uneven_range) == "6"
     assert _slider_value_attr(None, TickerPageDialConfig()) == ""
 
 

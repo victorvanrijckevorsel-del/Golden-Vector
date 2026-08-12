@@ -12,15 +12,16 @@ JavaScript coverage must fail hard when node is missing — never skip.
 
 The shim reproduces exactly one browser behaviour that the old code got wrong: a
 ``<input type="range" step="1">`` snaps ``value`` onto its step grid *before* any
-script runs. So every fractional-spot case boots with ``input.value = "4477"``
-while the payload carries the exact ``4477.4`` — which is precisely the state that
+script runs. Fractional-spot cases therefore boot with a snapped control
+position while their payload keeps the exact price — precisely the state that
 used to open the page in a scenario nobody asked for.
 
 The payload is built by the real ``build_gold_dial_payload`` and every expected
 cell string comes from ``mirror_evaluate`` + ``format_metric`` (the pinned parity
 mirror), so these tests also re-prove backend/JS agreement at the scenario price.
-``finance_source`` is not read by the module at all — the two sources differ only
-in which row the server embeds, which the Python payload tests already cover.
+``finance_source`` is intentionally not read by the module. Distinct Our View and
+Yahoo sentinels still run through clean boot, movement, and Reset to prove the
+selected row reaches the same source-agnostic state machine.
 """
 
 from __future__ import annotations
@@ -30,7 +31,9 @@ import subprocess
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
+from golden_vector.common.numeric import optional_finite_float
 from golden_vector.serve.ticker_page.corporate import (
     METRIC_FORMATS,
     build_gold_dial_payload,
@@ -47,6 +50,11 @@ FRACTIONAL_BASELINE = "4477"
 INTEGER_SPOT = 4452.0
 INTEGER_BASELINE = "4452"
 
+SOURCE_STATE_CASES = (
+    pytest.param("our", FRACTIONAL_SPOT, FRACTIONAL_BASELINE, 4200.0, id="our-view"),
+    pytest.param("yahoo", 4321.6, "4322", 4200.0, id="yahoo"),
+)
+
 #: One line metric (client-evaluated at spot) and one card metric.
 LINE_METRIC = "forward_revenue_musd"
 CARD_METRIC = "ev_ebitda"
@@ -60,6 +68,7 @@ CARD_SPOT_TEXT = "6.72×"
 def _payload(
     *,
     spot: float = FRACTIONAL_SPOT,
+    finance_source: str = "our",
     enabled: bool = True,
     reason: str = "",
     scenario_enabled: bool = True,
@@ -71,15 +80,22 @@ def _payload(
     ``_dial_and_scenario_state``) — the two states behave differently and both
     are exercised below."""
 
-    row = pd.Series(_gold_row(spot_gold_usd=spot, **overrides))
+    row = pd.Series(
+        _gold_row(
+            spot_gold_usd=spot,
+            finance_source=finance_source,
+            **overrides,
+        )
+    )
     return build_gold_dial_payload(
         row,
         ticker="NEM",
-        finance_source="our",
+        finance_source=finance_source,
         enabled=enabled,
         disabled_reason=reason,
         scenario_enabled=scenario_enabled,
         scenario_reason=scenario_reason,
+        spot_gold_usd=optional_finite_float(spot),
     )
 
 
@@ -181,7 +197,11 @@ payloadNode.textContent = __PAYLOAD__;
 // the module runs — that is the whole point of the fractional-spot cases.
 // The server rendered an aria-valuetext with it, so "the module left the
 // server's text alone" is provable rather than merely "wrote no attribute".
-const input = new El("input", {"aria-valuetext": __VALUETEXT__});
+const input = new El("input", {
+  "aria-valuetext": __VALUETEXT__,
+  "min": __MINIMUM__,
+  "step": __STEP__
+});
 input.value = __VALUE__;
 const output = new El("output");
 const reset = new El("button");
@@ -282,6 +302,8 @@ def _run(
     with_payload: bool = True,
     reduced_motion: bool = False,
     valuetext: str | None = None,
+    minimum: str = "2000",
+    step: str = "1",
 ) -> None:
     """Run the shipped module against the shim and assert node exits clean.
 
@@ -296,6 +318,8 @@ def _run(
         _SHIM.replace("__PAYLOAD__", json.dumps(json.dumps(resolved)))
         .replace("__PAYLOAD_NODE__", "payloadNode" if with_payload else "null")
         .replace("__VALUE__", json.dumps(value))
+        .replace("__MINIMUM__", json.dumps(minimum))
+        .replace("__STEP__", json.dumps(step))
         .replace(
             "__VALUETEXT__",
             json.dumps(_valuetext_at_rest(spot) if valuetext is None else valuetext),
@@ -324,8 +348,19 @@ def _run(
 # ---------------------------------------------------------------------------
 
 
-def test_fractional_spot_boots_clean_with_one_value_per_card_and_no_announcement():
-    payload = _payload()
+@pytest.mark.parametrize(
+    ("finance_source", "spot", "baseline", "scenario_gold"), SOURCE_STATE_CASES
+)
+def test_fractional_spot_boots_clean_with_one_value_per_card_and_no_announcement(
+    finance_source: str,
+    spot: float,
+    baseline: str,
+    scenario_gold: float,
+):
+    del scenario_gold  # Shared source matrix; this state remains at its baseline.
+    payload = _payload(spot=spot, finance_source=finance_source)
+    assert payload["finance_source"] == finance_source
+    assert payload["spot_gold_usd"] == spot
     body = f"""
 // Nothing was announced, and nothing was even queued to announce.
 assert.equal(status.textContent, "");
@@ -344,25 +379,25 @@ assert.equal(cardSpot.hidden, false);
 assert.equal(cardSpot.textContent, {json.dumps(CARD_SPOT_TEXT)});
 
 // The control reports the EXACT spot even though its position is the snapped one.
-assert.equal(input.value, {json.dumps(FRACTIONAL_BASELINE)});
-assert.equal(output.textContent, {json.dumps(format_metric(FRACTIONAL_SPOT, "usd2"))});
+assert.equal(input.value, {json.dumps(baseline)});
+assert.equal(output.textContent, {json.dumps(format_metric(spot, "usd2"))});
 assert.equal(
   input.attrs["aria-valuetext"],
-  {json.dumps(format_metric(FRACTIONAL_SPOT, "usd2") + " per ounce, spot")}
+  {json.dumps(format_metric(spot, "usd2") + " per ounce, spot")}
 );
-assert.equal(basis.textContent, {json.dumps(_basis_at_rest(FRACTIONAL_SPOT))});
+assert.equal(basis.textContent, {json.dumps(_basis_at_rest(spot))});
 
 // Every card's basis line is the server's own text, untouched at rest.
 cardBasisTexts().forEach(function (text) {{
-  assert.equal(text, {json.dumps(_card_basis_at_rest(FRACTIONAL_SPOT))});
+  assert.equal(text, {json.dumps(_card_basis_at_rest(spot))});
 }});
 
 // The line-metric spot cell is evaluated at exact spot, not at the snapped position.
-assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, FRACTIONAL_SPOT))});
-assert.notEqual(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, 4477.0))});
+assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, spot))});
+assert.notEqual(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, float(baseline)))});
 assert.equal(reducedMotionQuery, "(prefers-reduced-motion: reduce)");
 """
-    _run(body, payload=payload)
+    _run(body, payload=payload, value=baseline, spot=spot)
 
 
 def test_an_input_event_at_the_baseline_changes_nothing():
@@ -391,8 +426,17 @@ assert.equal(output.textContent, "$4,477.40");
 # ---------------------------------------------------------------------------
 
 
-def test_genuine_movement_activates_the_scenario_and_announces_once_debounced():
-    payload = _payload()
+@pytest.mark.parametrize(
+    ("finance_source", "spot", "baseline", "scenario_gold"), SOURCE_STATE_CASES
+)
+def test_genuine_movement_activates_the_scenario_and_announces_once_debounced(
+    finance_source: str,
+    spot: float,
+    baseline: str,
+    scenario_gold: float,
+):
+    assert scenario_gold == 4200.0
+    payload = _payload(spot=spot, finance_source=finance_source)
     body = f"""
 slide("4200");
 
@@ -417,21 +461,21 @@ assert.equal(cardScenario.textContent, {json.dumps(_expected(payload, CARD_METRI
 assert.equal(scenarioHead.hidden, false);
 assert.equal(scenarioCell.hidden, false);
 assert.equal(scenarioCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, 4200.0))});
-assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, FRACTIONAL_SPOT))});
+assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, spot))});
 assert.equal(scenarioCell.classes["is-updated"], true);
 
 assert.equal(output.textContent, "$4,200");
-assert.equal(input.attrs["aria-valuetext"], {json.dumps(_scenario_valuetext(4200))});
+assert.equal(input.attrs["aria-valuetext"], {json.dumps(_scenario_valuetext(4200, spot))});
 assert.equal(
   basis.textContent,
-  {json.dumps("scenario $4,200 · baseline " + _basis_at_rest(FRACTIONAL_SPOT))}
+  {json.dumps("scenario $4,200 · baseline " + _basis_at_rest(spot))}
 );
 
 // ALL SIX card basis lines now say scenario — a card must never print a
 // scenario-only number under "fwd @ spot ...".
 assert.equal(cardBases.length, 6);
 cardBasisTexts().forEach(function (text) {{
-  assert.equal(text, {json.dumps(_card_basis_scenario(4200.0))});
+  assert.equal(text, {json.dumps(_card_basis_scenario(4200.0, spot))});
 }});
 assert.ok(!cardBasisTexts().some(function (text) {{ return text.indexOf("fwd @ spot") === 0; }}));
 
@@ -445,7 +489,91 @@ assert.equal(
   "Scenario $4,201 per ounce. Corporate finance values updated."
 );
 """
-    _run(body, payload=payload)
+    _run(body, payload=payload, value=baseline, spot=spot)
+
+
+def test_fractional_step_keeps_the_scenario_price_exact_in_every_user_surface():
+    scenario_gold = 4477.5
+    scenario_text = format_metric(scenario_gold, "usd2")
+    spot_text = format_metric(INTEGER_SPOT, "usd2")
+    rest_basis = _basis_at_rest(INTEGER_SPOT)
+    card_basis = (
+        f"fwd @ scenario {scenario_text}/oz · baseline "
+        + _card_basis_at_rest(INTEGER_SPOT).removeprefix("fwd @ ")
+    )
+    body = f"""
+slide("4477.5");
+flush();
+
+assert.equal(output.textContent, {json.dumps(scenario_text)});
+assert.equal(
+  input.attrs["aria-valuetext"],
+  {json.dumps(f"{scenario_text} per ounce, scenario · spot {spot_text} per ounce")}
+);
+assert.equal(
+  basis.textContent,
+  {json.dumps(f"scenario {scenario_text} · baseline {rest_basis}")}
+);
+assert.equal(
+  status.textContent,
+  {json.dumps(f"Scenario {scenario_text} per ounce. Corporate finance values updated.")}
+);
+cardBasisTexts().forEach(function (text) {{
+  assert.equal(text, {json.dumps(card_basis)});
+}});
+"""
+    _run(
+        body,
+        payload=_payload(spot=INTEGER_SPOT),
+        value=INTEGER_BASELINE,
+        spot=INTEGER_SPOT,
+        step="0.5",
+    )
+
+
+def test_fractional_grid_origin_keeps_scenario_price_exact_with_integer_step():
+    """A fractional ``min`` makes every legal grid point fractional even when
+
+    ``step`` itself is an integer; display precision must follow the full grid.
+    """
+
+    scenario_gold = 4478.5
+    scenario_text = format_metric(scenario_gold, "usd2")
+    spot_text = format_metric(FRACTIONAL_SPOT, "usd2")
+    rest_basis = _basis_at_rest(FRACTIONAL_SPOT)
+    card_basis = (
+        f"fwd @ scenario {scenario_text}/oz · baseline "
+        + _card_basis_at_rest(FRACTIONAL_SPOT).removeprefix("fwd @ ")
+    )
+    body = f"""
+slide("4478.5");
+flush();
+
+assert.equal(output.textContent, {json.dumps(scenario_text)});
+assert.equal(
+  input.attrs["aria-valuetext"],
+  {json.dumps(f"{scenario_text} per ounce, scenario · spot {spot_text} per ounce")}
+);
+assert.equal(
+  basis.textContent,
+  {json.dumps(f"scenario {scenario_text} · baseline {rest_basis}")}
+);
+assert.equal(
+  status.textContent,
+  {json.dumps(f"Scenario {scenario_text} per ounce. Corporate finance values updated.")}
+);
+cardBasisTexts().forEach(function (text) {{
+  assert.equal(text, {json.dumps(card_basis)});
+}});
+"""
+    _run(
+        body,
+        payload=_payload(spot=FRACTIONAL_SPOT),
+        value="4477.5",
+        spot=FRACTIONAL_SPOT,
+        minimum="2000.5",
+        step="1",
+    )
 
 
 def test_a_scenario_that_cannot_be_evaluated_renders_its_guard_not_a_blank():
@@ -518,18 +646,28 @@ assert.equal(
     _run(body, payload=payload)
 
 
-def test_reset_restores_the_saved_baseline_and_never_the_fractional_spot():
+@pytest.mark.parametrize(
+    ("finance_source", "spot", "baseline", "scenario_gold"), SOURCE_STATE_CASES
+)
+def test_reset_restores_the_saved_baseline_and_never_the_fractional_spot(
+    finance_source: str,
+    spot: float,
+    baseline: str,
+    scenario_gold: float,
+):
+    assert scenario_gold == 4200.0
+    payload = _payload(spot=spot, finance_source=finance_source)
     body = f"""
 slide("4200");
 flush();
-assert.equal(cardBasisTexts()[0], {json.dumps(_card_basis_scenario(4200.0))});
+assert.equal(cardBasisTexts()[0], {json.dumps(_card_basis_scenario(4200.0, spot))});
 reset.listeners.click();
 
 // The SAVED baseline: writing 4477.4 back would snap straight to a moved position.
-assert.equal(input.value, {json.dumps(FRACTIONAL_BASELINE)});
+assert.equal(input.value, {json.dumps(baseline)});
 // Reset restores the server's card basis text byte-exact, exactly like a manual return.
 cardBasisTexts().forEach(function (text) {{
-  assert.equal(text, {json.dumps(_card_basis_at_rest(FRACTIONAL_SPOT))});
+  assert.equal(text, {json.dumps(_card_basis_at_rest(spot))});
 }});
 assert.equal(section.attrs["data-scenario-active"], "0");
 assert.equal(reset.disabled, true);
@@ -537,10 +675,10 @@ assert.equal(scenarioCell.hidden, true);
 assert.equal(cardScenario.hidden, true);
 assert.equal(scenarioHead.hidden, true);
 assert.equal(cardSpot.hidden, false);
-assert.equal(output.textContent, {json.dumps(format_metric(FRACTIONAL_SPOT, "usd2"))});
+assert.equal(output.textContent, {json.dumps(format_metric(spot, "usd2"))});
 assert.equal(
   input.attrs["aria-valuetext"],
-  {json.dumps(format_metric(FRACTIONAL_SPOT, "usd2") + " per ounce, spot")}
+  {json.dumps(format_metric(spot, "usd2") + " per ounce, spot")}
 );
 
 // Focus leaves the control that just disabled itself.
@@ -550,7 +688,7 @@ assert.equal(doc.activeElement, input);
 flush();
 assert.equal(
   status.textContent,
-  {json.dumps("Reset to spot " + format_metric(FRACTIONAL_SPOT, "usd2") + " per ounce.")}
+  {json.dumps("Reset to spot " + format_metric(spot, "usd2") + " per ounce.")}
 );
 
 // ...and the reset state is the clean state: no loop back into a scenario.
@@ -560,7 +698,7 @@ assert.equal(section.attrs["data-scenario-active"], "0");
 assert.equal(reset.disabled, true);
 assert.equal(cardSpot.hidden, false);
 """
-    _run(body)
+    _run(body, payload=payload, value=baseline, spot=spot)
 
 
 # ---------------------------------------------------------------------------

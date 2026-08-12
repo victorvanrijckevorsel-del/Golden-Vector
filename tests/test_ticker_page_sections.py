@@ -238,6 +238,35 @@ def test_performance_section_price_view_shows_stock_alone():
     assert "Gold" not in html.split("chart-axis")[0] or "Stock" in html
 
 
+def test_performance_price_view_hides_compare_benchmark_notices():
+    rows = _performance_rows()
+    stale_gdx_reason = "gdx last observation is 9 trading day(s) behind"
+
+    price = render_performance_section(rows, ticker="AAR.AX", horizon="1Y", view="price")
+    compare = render_performance_section(
+        rows, ticker="AAR.AX", horizon="1Y", view="rebased"
+    )
+
+    assert stale_gdx_reason not in price.lower()
+    assert stale_gdx_reason in compare.lower()
+
+
+def test_performance_stock_notice_remains_visible_in_both_views():
+    rows = _performance_rows()
+    stock_rows = rows["series"].eq("stock")
+    stale_stock_reason = "stock last observation is 4 trading day(s) behind"
+    rows.loc[stock_rows, "series_status"] = "STALE_OMITTED"
+    rows.loc[stock_rows, "series_reason"] = stale_stock_reason
+
+    price = render_performance_section(rows, ticker="AAR.AX", horizon="1Y", view="price")
+    compare = render_performance_section(
+        rows, ticker="AAR.AX", horizon="1Y", view="rebased"
+    )
+
+    assert stale_stock_reason in price.lower()
+    assert stale_stock_reason in compare.lower()
+
+
 def test_performance_price_view_is_currency_true_end_to_end():
     """The share-price view draws currency levels, so every user-facing string
     from the hint down to the accessible cell must say currency — and none of

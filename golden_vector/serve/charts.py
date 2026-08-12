@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html import escape
+from typing import Literal
 
 import pandas as pd
 
@@ -373,8 +374,8 @@ class _OverlayDisplayMode:
     explicit argument, so units, baseline treatment and wording can never contradict the data.
 
     ``decimals is None`` selects the percent formatter (``_pct_label``, value − base);
-    otherwise values are formatted as plain numbers with the given decimals, optionally
-    prefixed by ``unit`` (a currency code).
+    otherwise values are formatted as plain numbers, optionally prefixed by ``unit`` (a
+    currency code). Price mode resolves its concrete decimal count from the drawn scale.
     """
 
     title: str
@@ -382,8 +383,9 @@ class _OverlayDisplayMode:
     unit_clause: str
     #: aria-label tail after the title; ``{unit}`` is substituted.
     aria_clause: str
-    #: Draw the dashed baseline at ``base`` and keep ``base`` inside the value range.
-    anchored: bool
+    #: Reference line/range contract. Indexed charts use the caller's ``base``;
+    #: count charts always own a zero anchor; prices have no anchor.
+    anchor: Literal["base", "zero", "none"]
     #: Accessible cell prints the raw value before the formatted label (indexed only).
     table_shows_value: bool
     #: Left gutter — currency labels need more room than "+30%".
@@ -403,7 +405,7 @@ _OVERLAY_DISPLAY_MODES: dict[str, _OverlayDisplayMode] = {
         title="Rebased price comparison",
         unit_clause="indexed value (change vs the rebase start)",
         aria_clause="",
-        anchored=True,
+        anchor="base",
         table_shows_value=True,
         padding_left=48,
         decimals=None,
@@ -415,7 +417,7 @@ _OVERLAY_DISPLAY_MODES: dict[str, _OverlayDisplayMode] = {
         title="Share price over time",
         unit_clause="{unit} per share",
         aria_clause=" ({unit})",
-        anchored=False,
+        anchor="none",
         table_shows_value=False,
         padding_left=76,
         decimals=2,
@@ -428,7 +430,7 @@ _OVERLAY_DISPLAY_MODES: dict[str, _OverlayDisplayMode] = {
         unit_clause="{unit}",
         # A screen-reader user cannot see the axis, so the unit belongs in the label.
         aria_clause=" ({unit})",
-        anchored=True,
+        anchor="zero",
         table_shows_value=False,
         padding_left=48,
         decimals=0,
@@ -456,6 +458,22 @@ def _overlay_value_label(
     return text
 
 
+def _price_display_decimals(values: list[float]) -> int:
+    """Resolve one currency precision from the scale of the prices being drawn.
+
+    Ordinary share prices retain the familiar two decimals. Low-priced shares
+    receive enough precision that distinct persisted values never all collapse
+    to the same visible ``0.00`` label.
+    """
+
+    scale = max((abs(value) for value in values), default=0.0)
+    if scale >= 1.0:
+        return 2
+    if scale >= 0.1:
+        return 3
+    return 4
+
+
 def _build_multiline_overlay_svg(
     *,
     series_by_label: dict[str, tuple[list[pd.Timestamp], list[float | None]]],
@@ -470,8 +488,9 @@ def _build_multiline_overlay_svg(
 
     ``series_by_label`` maps a label → (dates, values); the values are already resolved
     upstream (rebased index levels, USD price levels or counts — the caller says which via
-    ``mode``). All series are drawn; ``None`` values (gaps / pre-anchor points) are skipped
-    within each line. The x-axis spans the union of dates so different-length series align.
+    ``mode``). All series are drawn; ``None`` values (gaps / pre-anchor points) split lines into
+    contiguous segments instead of being bridged. The x-axis spans the union of dates so
+    different-length series align.
     Serve-render only: it maps pre-computed values to pixels, no business arithmetic.
 
     ``mode`` selects the display contract (see ``_OVERLAY_DISPLAY_MODES``):
@@ -480,7 +499,8 @@ def _build_multiline_overlay_svg(
     * ``price`` — currency levels: ``unit`` (an explicit currency code from the caller's
       artifact, never inferred) formats the axis, crosshair and table; no baseline, no
       percent or "indexed" wording anywhere.
-    * ``count`` — plain counts (e.g. open interest), ``unit`` naming what is counted.
+    * ``count`` — plain counts (e.g. open interest), ``unit`` naming what is counted; zero is
+      owned by the mode as its anchor, independent of the indexed ``base`` argument.
 
     ``title`` overrides the mode's default wording; it drives the ``aria-label``, the table
     caption and the disclosure label together, so those three can never drift apart. A mode
@@ -506,25 +526,52 @@ def _build_multiline_overlay_svg(
     inner_h = height - padding_top - padding_bottom
 
     cleaned: dict[str, list[tuple[pd.Timestamp, float]]] = {}
+    segments_by_label: dict[str, list[list[tuple[pd.Timestamp, float]]]] = {}
     all_values: list[float] = []
     all_dates: list[pd.Timestamp] = []
     for label, series in series_by_label.items():
         dates, values = series
         if not dates or not values or len(dates) != len(values):
             continue
-        # Skip points with a missing value OR a missing/NaT date — a NaT date would
-        # otherwise propagate into min()/max() below and crash strftime on corrupt input.
-        points = [
-            (d, float(v)) for d, v in zip(dates, values) if v is not None and pd.notna(d)
-        ]
+        # Keep explicit gaps long enough to split the SVG line. Removing them and
+        # joining every surviving point into one polyline invents a move across a
+        # missing capture. A missing/NaT date is a break for the same reason and
+        # must not propagate into min()/max() or strftime below.
+        points: list[tuple[pd.Timestamp, float]] = []
+        segments: list[list[tuple[pd.Timestamp, float]]] = []
+        current_segment: list[tuple[pd.Timestamp, float]] = []
+        for date_value, value in zip(dates, values):
+            if value is None or pd.isna(date_value) or pd.isna(value):
+                if current_segment:
+                    segments.append(current_segment)
+                    current_segment = []
+                continue
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                if current_segment:
+                    segments.append(current_segment)
+                    current_segment = []
+                continue
+            point = (date_value, numeric)
+            points.append(point)
+            current_segment.append(point)
+        if current_segment:
+            segments.append(current_segment)
         if not points:
             continue
         cleaned[label] = points
+        segments_by_label[label] = segments
         all_dates.extend(d for d, _ in points)
         all_values.extend(v for _, v in points)
 
     if not cleaned:
         return "<p>No comparison data available.</p>"
+
+    # Resolve price precision once per chart, then carry the resulting immutable
+    # display contract through the axis, crosshair payload and accessible table.
+    if mode == "price":
+        decimals = _price_display_decimals(all_values)
+        display = replace(display, decimals=decimals, min_step=10 ** (-decimals))
 
     min_date = min(all_dates)
     max_date = max(all_dates)
@@ -537,7 +584,7 @@ def _build_multiline_overlay_svg(
     # drawn range and marks it with the dashed baseline. Price levels have no such reference —
     # forcing 100 into a $6 chart would both squash the line and imply a rebase that never
     # happened — so the range comes from the data alone.
-    anchor = base if display.anchored else None
+    anchor = {"base": base, "zero": 0.0, "none": None}[display.anchor]
     anchor_values = [] if anchor is None else [anchor]
     value_lo = min(all_values + anchor_values)
     value_hi = max(all_values + anchor_values)
@@ -567,11 +614,19 @@ def _build_multiline_overlay_svg(
     legend_parts: list[str] = []
     for label, points in cleaned.items():
         series_key = escape(resolved_series[label])
-        coords = " ".join(f"{x_at(d):.1f},{y_at(v):.1f}" for d, v in points)
-        lines_html += (
-            f"<polyline points=\"{coords}\" class=\"series-{series_key}\" "
-            f"stroke-width=\"1.8\" opacity=\"0.9\" />"
-        )
+        for segment in segments_by_label[label]:
+            coords = " ".join(f"{x_at(d):.1f},{y_at(v):.1f}" for d, v in segment)
+            lines_html += (
+                f"<polyline points=\"{coords}\" class=\"series-{series_key}\" "
+                f"stroke-width=\"1.8\" opacity=\"0.9\" />"
+            )
+            if len(segment) == 1:
+                point_x = x_at(segment[0][0])
+                point_y = y_at(segment[0][1])
+                lines_html += (
+                    f"<circle cx=\"{point_x:.1f}\" cy=\"{point_y:.1f}\" r=\"2.4\" "
+                    f"class=\"series-{series_key}\" opacity=\"0.9\" />"
+                )
         legend_parts.append(
             f"<span class=\"chart-legend-item legend-swatch-{series_key}\">"
             f"&#9632; {escape(label)}</span>"
@@ -625,6 +680,7 @@ def _build_multiline_overlay_svg(
     # math. Ticks are keyed by the SAME date string as byDate (one entry per calendar day) so a
     # tick and its point can never desync, even if two timestamps happen to share a day.
     tick_x_by_date = {d.strftime("%Y-%m-%d"): round(x_at(d), 1) for d in all_dates}
+    raw_decimals = 2 if display.decimals is None else display.decimals
     overlay_data = {
         "top": round(padding_top, 1),
         "bottom": round(height - padding_bottom, 1),
@@ -643,7 +699,7 @@ def _build_multiline_overlay_svg(
                 "byDate": {
                     d.strftime("%Y-%m-%d"): [
                         round(y_at(v), 1),
-                        round(v, 2),
+                        round(v, raw_decimals),
                         _overlay_value_label(display, v, base=base, unit=unit),
                     ]
                     for d, v in points

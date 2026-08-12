@@ -283,6 +283,11 @@ def test_align_to_step_matches_html_range_snap_semantics():
     assert align_to_step(4477.4, minimum=2000.0, step=0.25) == pytest.approx(4477.5)
     # off-grid minimum: the grid is anchored at min, not at zero
     assert align_to_step(4477.4, minimum=2000.5, step=1.0) == pytest.approx(4477.5)
+    # HTML resolves exact-half ties toward positive infinity, not ties-to-even.
+    assert align_to_step(4476.5, minimum=2000.0, step=1.0) == 4477.0
+    assert align_to_step(2001.0, minimum=2000.5, step=1.0) == pytest.approx(2001.5)
+    # A maximum that is not itself on the grid clamps to the highest legal step.
+    assert align_to_step(9.0, minimum=0.0, step=6.0, maximum=10.0) == 6.0
     # degenerate inputs pass through untouched — bound-checking is the caller's job
     assert align_to_step(4477.4, minimum=2000.0, step=0.0) == 4477.4
     import math

@@ -561,7 +561,11 @@ def _render_oi_trend(history_rows: list[dict[str, Any]]) -> str:
     # the builder for a second one duplicated both the numbers and the region id.
     svg = _build_multiline_overlay_svg(
         series_by_label=series_by_label,
-        base=0.0,
+        series_keys={
+            "Put open interest": "gdx",
+            "Call open interest": "gdxj",
+            "Total open interest": "stock",
+        },
         mode="count",
         unit="contracts",
         title="Open interest over time",

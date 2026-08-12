@@ -691,6 +691,17 @@ def test_three_open_interest_series_are_drawn_separately(app_config):
     assert "Call open interest" in html
     assert "Total open interest" in html
     assert "Open interest over time" in html
+    chart = html[html.index('class="options-oi-trend"') :]
+    expected_keys = {
+        "Put open interest": "gdx",
+        "Call open interest": "gdxj",
+        "Total open interest": "stock",
+    }
+    polyline_keys = set(re.findall(r'<polyline[^>]+class="series-([^"]+)"', chart))
+    assert set(expected_keys.values()) <= polyline_keys
+    for label, key in expected_keys.items():
+        assert f'legend-swatch-{key}">&#9632; {label}</span>' in chart
+    assert len(set(expected_keys.values())) == len(expected_keys)
 
 
 def test_oi_trend_is_labelled_as_counts_not_a_rebased_price_comparison(app_config):

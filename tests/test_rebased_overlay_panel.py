@@ -69,6 +69,12 @@ def _caption(html: str) -> str:
     return re.search(r"<caption>([^<]+)</caption>", html).group(1)
 
 
+def _polyline_points(html: str) -> list[list[str]]:
+    """Return each independently drawn line segment's coordinate pairs."""
+
+    return [points.split() for points in re.findall(r'<polyline points="([^"]*)"', html)]
+
+
 def _price_series() -> dict[str, tuple[list, list]]:
     """A share-price series in currency levels — nowhere near 100."""
     return {"Stock": (_window_dates(), [6.10, 6.40, 6.25, 6.80, 6.55, 7.05])}
@@ -135,6 +141,34 @@ def test_overlay_chart_degrades_when_a_benchmark_is_missing():
     assert "&#9632; GDX" in html
     # GDXJ is now absent EVERYWHERE — no legend chip, nothing claiming it was drawn.
     assert "GDXJ" not in html
+
+
+def test_count_mode_preserves_a_mid_series_gap_as_disconnected_visible_segments():
+    dates = _window_dates(3)
+    html = _build_multiline_overlay_svg(
+        series_by_label={"Total open interest": (dates, [1200.0, None, 1800.0])},
+        mode="count",
+        unit="contracts",
+        title="Open interest over time",
+    )
+
+    # Each complete capture remains a separate one-point polyline. A circle makes
+    # that one-point segment visible; no SVG element connects across the missing day.
+    segments = _polyline_points(html)
+    assert len(segments) == 2
+    assert [len(segment) for segment in segments] == [1, 1]
+    assert html.count("<circle") == 2
+    assert all('class="series-gdx"' in circle for circle in re.findall(r"<circle[^>]+>", html))
+
+
+def test_leading_missing_values_keep_one_contiguous_polyline():
+    dates = _window_dates(4)
+    html = _build_multiline_overlay_svg(
+        series_by_label={"ABC": (dates, [None, None, 100.0, 105.0])}
+    )
+
+    assert [len(segment) for segment in _polyline_points(html)] == [2]
+    assert "<circle" not in html
 
 
 def test_overlay_embed_escapes_html_in_series_labels():
@@ -411,13 +445,47 @@ def test_price_mode_honours_a_non_usd_currency_from_the_caller():
     assert _caption(html) == "Share price over time — CAD per share"
 
 
-def test_count_mode_labels_plain_counts_and_keeps_its_zero_baseline():
+def test_sub_cent_price_mode_keeps_distinct_values_everywhere():
+    dates = _window_dates(3)
+    html = _build_multiline_overlay_svg(
+        series_by_label={"Stock": (dates, [0.001, 0.0015, 0.002])},
+        series_keys={"Stock": "stock"},
+        data_table_id="chart-data-sub-cent-price",
+        mode="price",
+        unit="USD",
+    )
+
+    stock = _overlay_payload(html)["series"][0]["byDate"]
+    assert stock["2024-01-05"][1:] == [0.001, "USD 0.0010"]
+    assert stock["2024-01-12"][1:] == [0.0015, "USD 0.0015"]
+    assert stock["2024-01-19"][1:] == [0.002, "USD 0.0020"]
+    assert "<td>USD 0.0010</td>" in html
+    assert "<td>USD 0.0015</td>" in html
+    assert "<td>USD 0.0020</td>" in html
+    price_axis = [label for label in _axis_labels(html) if label.startswith("USD ")]
+    assert len(price_axis) == len(set(price_axis))
+    assert all(re.fullmatch(r"USD \d+\.\d{4}", label) for label in price_axis)
+
+
+def test_tenth_dollar_price_mode_uses_three_decimals():
+    dates = _window_dates(2)
+    html = _build_multiline_overlay_svg(
+        series_by_label={"Stock": (dates, [0.1, 0.15])},
+        mode="price",
+        unit="USD",
+    )
+
+    stock = _overlay_payload(html)["series"][0]["byDate"]
+    assert stock["2024-01-05"][1:] == [0.1, "USD 0.100"]
+    assert stock["2024-01-12"][1:] == [0.15, "USD 0.150"]
+
+
+def test_count_mode_labels_plain_counts_and_owns_its_zero_baseline():
     dates = _window_dates()
     html = _build_multiline_overlay_svg(
         series_by_label={
             "Put open interest": (dates, [1200.0, 1400.0, 1500.0, 1450.0, 1600.0, 1800.0]),
         },
-        base=0.0,
         data_table_id="chart-data-oi",
         mode="count",
         unit="contracts",
@@ -446,7 +514,6 @@ def test_count_mode_never_labels_two_gridlines_the_same():
         series_by_label={
             "Put open interest": (dates, [1.0, 2.0, 2.0, 1.0, 2.0, 2.0]),
         },
-        base=0.0,
         mode="count",
         unit="contracts",
         title="Open interest over time",
@@ -460,7 +527,6 @@ def test_count_mode_never_labels_two_gridlines_the_same():
     wide = _axis_labels(
         _build_multiline_overlay_svg(
             series_by_label={"Put open interest": (dates, [1200.0, 1400.0, 1500.0, 1450.0, 1600.0, 1800.0])},
-            base=0.0,
             mode="count",
             unit="contracts",
         )

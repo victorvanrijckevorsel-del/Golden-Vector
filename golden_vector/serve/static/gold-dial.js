@@ -329,6 +329,17 @@
      * price does not. Spot cells are still evaluated at `spot` itself. */
     var spotText = formatMetric(spot, "usd2");
     var basisAtRest = basis ? basis.textContent : "";
+    var configuredStep = Number(input.getAttribute("step"));
+    var configuredMinimum = Number(input.getAttribute("min"));
+    var scenarioPriceUnit =
+      (isFinite(configuredStep) && configuredStep % 1 !== 0) ||
+      (isFinite(configuredMinimum) && configuredMinimum % 1 !== 0)
+        ? "usd2"
+        : "usd";
+
+    function formatScenarioPrice(gold) {
+      return formatMetric(gold, scenarioPriceUnit);
+    }
 
     /* Set ONLY inside the input/change/reset handlers. Nothing this module does
      * at boot may look like a user action: no announcement, no scenario. */
@@ -407,7 +418,7 @@
       for (index = 0; index < cardBases.length; index += 1) {
         cardBases[index].node.textContent = moved
           ? "fwd @ scenario " +
-            formatMetric(gold, "usd") +
+            formatScenarioPrice(gold) +
             "/oz · baseline " +
             cardBases[index].original.replace(/^fwd @ /, "")
           : cardBases[index].original;
@@ -415,17 +426,17 @@
 
       section.setAttribute("data-scenario-active", moved ? "1" : "0");
       if (output) {
-        output.textContent = moved ? formatMetric(gold, "usd") : spotText;
+        output.textContent = moved ? formatScenarioPrice(gold) : spotText;
       }
       if (basis) {
         basis.textContent = moved
-          ? "scenario " + formatMetric(gold, "usd") + " · baseline " + basisAtRest
+          ? "scenario " + formatScenarioPrice(gold) + " · baseline " + basisAtRest
           : basisAtRest;
       }
       input.setAttribute(
         "aria-valuetext",
         moved
-          ? formatMetric(gold, "usd") +
+          ? formatScenarioPrice(gold) +
               " per ounce, scenario · spot " +
               spotText +
               " per ounce"
@@ -452,7 +463,7 @@
       announce(
         moved
           ? "Scenario " +
-              formatMetric(gold, "usd") +
+              formatScenarioPrice(gold) +
               " per ounce. Corporate finance values updated."
           : "Back at spot " + spotText + " per ounce."
       );

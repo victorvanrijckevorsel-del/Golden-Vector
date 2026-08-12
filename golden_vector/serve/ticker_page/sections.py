@@ -136,11 +136,13 @@ def render_performance_section(
         )
 
     horizon_rows = performance_rows.loc[performance_rows["horizon"].eq(horizon)]
-    ok_rows = horizon_rows.loc[
-        horizon_rows["series_status"].eq("OK") & horizon_rows["view"].eq(view)
-    ]
+    view_rows = horizon_rows.loc[horizon_rows["view"].eq(view)]
     if view == "price":
-        ok_rows = ok_rows.loc[ok_rows["series"].eq("stock")]
+        # Share price is deliberately stock-only. Apply that same boundary to
+        # its status and trim notices so unavailable Compare benchmarks do not
+        # appear below a chart in which they could never be drawn.
+        view_rows = view_rows.loc[view_rows["series"].eq("stock")]
+    ok_rows = view_rows.loc[view_rows["series_status"].eq("OK")]
 
     series_by_label: dict[str, tuple[list[pd.Timestamp], list[float | None]]] = {}
     for series_name, group in ok_rows.groupby("series"):
@@ -151,9 +153,7 @@ def render_performance_section(
             [None if pd.isna(value) else float(value) for value in ordered["value"]],
         )
 
-    marker_rows = horizon_rows.loc[
-        ~horizon_rows["series_status"].isin(["OK"]) & horizon_rows["view"].eq(view)
-    ]
+    marker_rows = view_rows.loc[~view_rows["series_status"].isin(["OK"])]
     notices = [
         (
             f'<p class="hint">{escape(_SERIES_LABELS.get(str(row["series"]), str(row["series"]).upper()))}: '
@@ -176,7 +176,7 @@ def render_performance_section(
             basis_bits.append(f"basis: {escape(str(price_basis))}")
     trim_notes = {
         str(reason)
-        for reason in horizon_rows["trim_reason"].dropna().unique()
+        for reason in view_rows["trim_reason"].dropna().unique()
         if str(reason).strip()
     }
 

@@ -29,7 +29,7 @@ from typing import Any, Mapping
 
 import pandas as pd
 
-from golden_vector.common.numeric import align_to_step
+from golden_vector.common.numeric import align_to_step, optional_finite_float
 from golden_vector.common.strings import clean_string
 from golden_vector.contracts.config_models import AppConfig, TickerPageDialConfig
 from golden_vector.contracts.ticker_page import (
@@ -46,6 +46,10 @@ from golden_vector.serve.ui.tables import table_region
 
 #: The one payload id shared by the server (embed) and gold-dial.js (read).
 GOLD_DIAL_PAYLOAD_ID = "gold-dial-payload"
+
+NON_FINITE_SPOT_REASON = (
+    "no finite spot gold price is published for this ticker and source"
+)
 
 #: Exact reason the resilience group carries in Yahoo mode (plan §3.2/P6). The
 #: persisted Tool D artifact is Our-View; mixing sources would be a lie.
@@ -257,6 +261,15 @@ def _value(row: Any, column: str) -> float | None:
         return None
 
 
+def _spot_value(row: Any) -> float | None:
+    """Resolve the dial spot once so state, markup, and JSON always agree."""
+
+    if row is None:
+        return None
+    raw = row.get("spot_gold_usd") if hasattr(row, "get") else None
+    return optional_finite_float(raw)
+
+
 def _text(row: Any, column: str) -> str:
     if row is None:
         return ""
@@ -396,7 +409,7 @@ def _dial_and_scenario_state(
     if not enabled:
         return enabled, reason, False, reason
     if spot is None:
-        return enabled, reason, False, "spot gold is unavailable for this ticker"
+        return False, NON_FINITE_SPOT_REASON, False, NON_FINITE_SPOT_REASON
     if dial_cfg is not None:
         minimum = float(dial_cfg.min_gold_usd)
         maximum = float(dial_cfg.max_gold_usd)
@@ -424,6 +437,7 @@ def build_gold_dial_payload(
     disabled_reason: str,
     scenario_enabled: bool,
     scenario_reason: str,
+    spot_gold_usd: float | None,
 ) -> dict[str, Any]:
     """Backend-resolved inputs for gold-dial.js — artifact values, nothing else.
 
@@ -463,7 +477,7 @@ def build_gold_dial_payload(
         "disabled_reason": disabled_reason or None,
         "scenario_enabled": bool(scenario_enabled),
         "scenario_reason": scenario_reason or "",
-        "spot_gold_usd": _value(gold_row, "spot_gold_usd"),
+        "spot_gold_usd": spot_gold_usd,
         "spot_gold_date": _text(gold_row, "spot_gold_date") or None,
         "margin_basis": _text(gold_row, "spot_margin_basis") or None,
         "lines": {
@@ -495,11 +509,11 @@ def _slider_value_attr(spot: float | None, dial_cfg: TickerPageDialConfig) -> st
 
     Serve renders, it does not compute: the grid math lives once in
     ``common.numeric.align_to_step`` and this function only formats its result
-    to the step's own decimal precision, so the emitted text sits exactly on
-    the grid for every configured step (1, 10, 0.1, 25, 0.25 …).
+    to the greater precision carried by the step or minimum, so the emitted
+    text sits exactly on the configured grid.
 
-    A spot outside the configured range is emitted at the bound the browser
-    would clamp it to, so the rendered position and the control agree; the
+    A spot outside the configured range is emitted at the nearest legal edge
+    grid point the browser would hold, so the rendered position and control agree; the
     visible basis text still reports the true spot beside the range, and
     ``_dial_and_scenario_state`` separately withholds the SCENARIO for that spot
     (State A) — alignment here is formatting, not an availability decision.
@@ -512,13 +526,17 @@ def _slider_value_attr(spot: float | None, dial_cfg: TickerPageDialConfig) -> st
         return ""
     minimum = float(dial_cfg.min_gold_usd)
     maximum = float(dial_cfg.max_gold_usd)
-    if spot <= minimum:
-        return f"{minimum:g}"
-    if spot >= maximum:
-        return f"{maximum:g}"
     step_value = float(dial_cfg.step_usd)
-    aligned = align_to_step(spot, minimum=minimum, step=step_value)
-    places = max(0, -int(Decimal(str(step_value)).normalize().as_tuple().exponent))
+    target = minimum if spot <= minimum else spot
+    aligned = align_to_step(
+        target,
+        minimum=minimum,
+        step=step_value,
+        maximum=maximum,
+    )
+    step_places = -int(Decimal(str(step_value)).normalize().as_tuple().exponent)
+    minimum_places = -int(Decimal(str(minimum)).normalize().as_tuple().exponent)
+    places = max(0, step_places, minimum_places)
     return f"{aligned:.{places}f}"
 
 
@@ -537,7 +555,7 @@ def render_gold_dial_control(
     """
 
     gold_row = data.gold_response_row(ticker, finance_source=finance_source)
-    spot = _value(gold_row, "spot_gold_usd")
+    spot = _spot_value(gold_row)
     spot_date = _text(gold_row, "spot_gold_date")
 
     if app_config is None:
@@ -1122,6 +1140,7 @@ def _data_quality_group(
     gold_row: pd.Series | None,
     tool_b_row: Mapping[str, Any],
     *,
+    spot_gold_usd: float | None,
     data: TickerPageData,
     finance_source: str,
     app_config: AppConfig | None,
@@ -1170,7 +1189,7 @@ def _data_quality_group(
         )
         + _fixed_row(
             "Spot gold used",
-            _cell(gold_row, "spot_gold_usd", "usd_per_oz"),
+            escape(format_metric(spot_gold_usd, "usd_per_oz")),
             "gold-response artifact as of " + (_text(gold_row, "spot_gold_date") or "n/a"),
         )
         + _fixed_row(
@@ -1219,7 +1238,7 @@ def render_corporate_finance_section(
     """
 
     gold_row = data.gold_response_row(ticker, finance_source=finance_source)
-    spot = _value(gold_row, "spot_gold_usd")
+    spot = _spot_value(gold_row)
     spot_date = _text(gold_row, "spot_gold_date")
     # The SAME helper the control-bar call uses, with the same inputs, so the
     # embedded payload and the rendered control can never disagree about either
@@ -1304,6 +1323,7 @@ def render_corporate_finance_section(
         _data_quality_group(
             gold_row,
             tool_b_row,
+            spot_gold_usd=spot,
             data=data,
             finance_source=finance_source,
             app_config=app_config,
@@ -1320,6 +1340,7 @@ def render_corporate_finance_section(
                 disabled_reason=reason,
                 scenario_enabled=scenario_enabled,
                 scenario_reason=scenario_reason,
+                spot_gold_usd=spot,
             ),
         )
     )
