@@ -281,7 +281,7 @@ def test_ticker_page_serve_package_has_no_backend_arithmetic():
     The sections render persisted columns only. Formatting multiplies by 100
     for display; no ratio math, coalescing, or eligibility logic may creep in.
     """
-    for name in ("sections.py", "data.py", "__init__.py"):
+    for name in ("sections.py", "data.py", "corporate.py", "__init__.py"):
         source = Path(f"golden_vector/serve/ticker_page/{name}").read_text(encoding="utf-8")
         for forbidden in (
             ".fillna(",
@@ -294,3 +294,51 @@ def test_ticker_page_serve_package_has_no_backend_arithmetic():
             "import numpy",
         ):
             assert forbidden not in source, f"{name}: {forbidden}"
+
+
+def test_corporate_section_contains_no_arithmetic_at_all():
+    """Stricter than the token sweep, because corporate.py is where the gold
+
+    maths WANTS to leak in: the dial's scenario values must come from
+    gold-dial.js evaluating persisted lines, never from the request path.
+
+    An AST scan is used rather than string matching so a rename or a clever
+    one-liner cannot slip past. String concatenation (``+``) stays legal —
+    that is markup assembly; every other binary operator is banned.
+    """
+    import ast
+
+    path = Path("golden_vector/serve/ticker_page/corporate.py")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    banned = (ast.Mult, ast.Div, ast.FloorDiv, ast.Sub, ast.Pow, ast.Mod, ast.MatMult)
+    offenders = [
+        f"line {node.lineno}: {type(node.op).__name__}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, banned)
+    ]
+    assert not offenders, "arithmetic in serve/ticker_page/corporate.py: " + "; ".join(
+        offenders
+    )
+
+
+def test_gold_dial_js_guards_mirror_the_screening_layers():
+    """The client module is the sanctioned exception (plan §3.1) — it must carry
+
+    the SAME guards the backend screens on, spelled out, so a reviewer can
+    diff them against screening/layer1.py and layer2.py."""
+    source = Path("golden_vector/serve/static/gold-dial.js").read_text(encoding="utf-8")
+    assert "screening/layer1.py" in source and "screening/layer2.py" in source
+    for reason in ("EBITDA ≤ 0 here", "EPS ≤ 0 here", "market cap ≤ 0 here"):
+        assert reason in source, reason
+    # no network, no third-party libraries, no shared mutable state
+    for forbidden in ("fetch(", "XMLHttpRequest", "import ", "require(", "localStorage"):
+        assert forbidden not in source, forbidden
+    # the dial position is ephemeral by design — it must never touch the URL
+    for forbidden in ("history.pushState", "history.replaceState", "location.search"):
+        assert forbidden not in source, forbidden
+    # a disabled dial replaces the no-JavaScript fallback with the real reason
+    assert "payload.disabled_reason" in source
+    assert 'setAttribute("data-unavailable", "1")' in source
+    # reduced motion is honoured, and the live region is polite and single
+    assert "prefers-reduced-motion: reduce" in source
+    assert source.count('var STATUS_ID = "gold-dial-status"') == 1

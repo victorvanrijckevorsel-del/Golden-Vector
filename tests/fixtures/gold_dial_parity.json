@@ -1,0 +1,484 @@
+{
+  "cases": {
+    "healthy": {
+      "expected": {
+        "2000": {
+          "aisc_margin_est_musd": {
+            "formatted": "$2,561m",
+            "reason": null,
+            "value": 2560.6
+          },
+          "aisc_margin_yield": {
+            "formatted": "2.1%",
+            "reason": null,
+            "value": 0.020672339
+          },
+          "ev_ebitda": {
+            "formatted": "27.73\u00d7",
+            "reason": null,
+            "value": 27.734611954
+          },
+          "forward_ebitda_musd": {
+            "formatted": "$4,484m",
+            "reason": null,
+            "value": 4484.0
+          },
+          "forward_eps": {
+            "formatted": "$1.22",
+            "reason": null,
+            "value": 1.219845
+          },
+          "forward_net_income_musd": {
+            "formatted": "$1,284m",
+            "reason": null,
+            "value": 1284.48
+          },
+          "forward_pe": {
+            "formatted": "96.38\u00d7",
+            "reason": null,
+            "value": 96.381097598
+          },
+          "forward_revenue_musd": {
+            "formatted": "$11,800m",
+            "reason": null,
+            "value": 11800.0
+          },
+          "leverage_stressed": {
+            "formatted": "0.11\u00d7",
+            "reason": null,
+            "value": 0.111507583
+          },
+          "margin_pct": {
+            "formatted": "21.7%",
+            "reason": null,
+            "value": 0.217
+          },
+          "margin_usd_per_oz": {
+            "formatted": "$434/oz",
+            "reason": null,
+            "value": 434.0
+          }
+        },
+        "4000": {
+          "aisc_margin_est_musd": {
+            "formatted": "$14,361m",
+            "reason": null,
+            "value": 14360.6
+          },
+          "aisc_margin_yield": {
+            "formatted": "11.6%",
+            "reason": null,
+            "value": 0.115936577
+          },
+          "ev_ebitda": {
+            "formatted": "7.81\u00d7",
+            "reason": null,
+            "value": 7.806779661
+          },
+          "forward_ebitda_musd": {
+            "formatted": "$15,930m",
+            "reason": null,
+            "value": 15930.0
+          },
+          "forward_eps": {
+            "formatted": "$9.04",
+            "reason": null,
+            "value": 9.041845
+          },
+          "forward_net_income_musd": {
+            "formatted": "$9,526m",
+            "reason": null,
+            "value": 9525.6
+          },
+          "forward_pe": {
+            "formatted": "13.00\u00d7",
+            "reason": null,
+            "value": 13.002877178
+          },
+          "forward_revenue_musd": {
+            "formatted": "$23,600m",
+            "reason": null,
+            "value": 23600.0
+          },
+          "leverage_stressed": {
+            "formatted": "0.03\u00d7",
+            "reason": null,
+            "value": 0.03138732
+          },
+          "margin_pct": {
+            "formatted": "60.9%",
+            "reason": null,
+            "value": 0.6085
+          },
+          "margin_usd_per_oz": {
+            "formatted": "$2,434/oz",
+            "reason": null,
+            "value": 2434.0
+          }
+        },
+        "6000": {
+          "aisc_margin_est_musd": {
+            "formatted": "$26,161m",
+            "reason": null,
+            "value": 26160.6
+          },
+          "aisc_margin_yield": {
+            "formatted": "21.1%",
+            "reason": null,
+            "value": 0.211200814
+          },
+          "ev_ebitda": {
+            "formatted": "4.54\u00d7",
+            "reason": null,
+            "value": 4.542738165
+          },
+          "forward_ebitda_musd": {
+            "formatted": "$27,376m",
+            "reason": null,
+            "value": 27376.0
+          },
+          "forward_eps": {
+            "formatted": "$16.86",
+            "reason": null,
+            "value": 16.863845
+          },
+          "forward_net_income_musd": {
+            "formatted": "$17,767m",
+            "reason": null,
+            "value": 17766.72
+          },
+          "forward_pe": {
+            "formatted": "6.97\u00d7",
+            "reason": null,
+            "value": 6.971719676
+          },
+          "forward_revenue_musd": {
+            "formatted": "$35,400m",
+            "reason": null,
+            "value": 35400.0
+          },
+          "leverage_stressed": {
+            "formatted": "0.02\u00d7",
+            "reason": null,
+            "value": 0.018264173
+          },
+          "margin_pct": {
+            "formatted": "73.9%",
+            "reason": null,
+            "value": 0.739
+          },
+          "margin_usd_per_oz": {
+            "formatted": "$4,434/oz",
+            "reason": null,
+            "value": 4434.0
+          }
+        }
+      },
+      "payload": {
+        "constants": {
+          "aisc_usd_per_oz": 1566.0,
+          "cash_cost_usd_per_oz": 1180.0,
+          "ebitda_ltm_musd": 11850.0,
+          "enterprise_value_musd": 124362.0,
+          "interest_expense_musd": 200.0,
+          "market_cap_musd": 123866.0,
+          "net_debt_musd": 500.0,
+          "production_oz": 5900000.0,
+          "share_price_usd": 117.57
+        },
+        "disabled_reason": null,
+        "enabled": true,
+        "finance_source": "our",
+        "formats": {
+          "aisc_margin_est_musd": "musd",
+          "aisc_margin_yield": "pct",
+          "ev_ebitda": "ratio",
+          "forward_ebitda_musd": "musd",
+          "forward_eps": "usd2",
+          "forward_net_income_musd": "musd",
+          "forward_pe": "ratio",
+          "forward_revenue_musd": "musd",
+          "leverage_stressed": "ratio",
+          "margin_pct": "pct",
+          "margin_usd_per_oz": "usd_per_oz"
+        },
+        "gold_response_reason": null,
+        "gold_response_status": "OK",
+        "lines": {
+          "aisc_margin_est_musd": {
+            "intercept": -9239.4,
+            "slope": 5.9
+          },
+          "forward_ebitda_musd": {
+            "intercept": -6962.0,
+            "slope": 5.723
+          },
+          "forward_eps": {
+            "intercept": -6.602155,
+            "slope": 0.003911
+          },
+          "forward_net_income_musd": {
+            "intercept": -6956.64,
+            "slope": 4.12056
+          },
+          "forward_revenue_musd": {
+            "intercept": 0.0,
+            "slope": 5.9
+          }
+        },
+        "margin_basis": "aisc",
+        "spot_display": {
+          "aisc_margin_yield": 0.137465,
+          "ev_ebitda": 6.716432,
+          "forward_pe": 10.876869,
+          "leverage_stressed": 0.027003,
+          "margin_pct": 0.648248,
+          "margin_usd_per_oz": 2886.0
+        },
+        "spot_gold_date": "2026-08-11",
+        "spot_gold_usd": 4452.0,
+        "ticker": "NEM"
+      }
+    },
+    "stressed": {
+      "expected": {
+        "2000": {
+          "aisc_margin_est_musd": {
+            "formatted": "$2,561m",
+            "reason": null,
+            "value": 2560.6
+          },
+          "aisc_margin_yield": {
+            "formatted": "2.1%",
+            "reason": null,
+            "value": 0.020672339
+          },
+          "ev_ebitda": {
+            "formatted": "EBITDA \u2264 0 here",
+            "reason": "EBITDA \u2264 0 here",
+            "value": null
+          },
+          "forward_ebitda_musd": {
+            "formatted": "-$3,000m",
+            "reason": null,
+            "value": -3000.0
+          },
+          "forward_eps": {
+            "formatted": "-$1.00",
+            "reason": null,
+            "value": -1.0
+          },
+          "forward_net_income_musd": {
+            "formatted": "$1,284m",
+            "reason": null,
+            "value": 1284.48
+          },
+          "forward_pe": {
+            "formatted": "EPS \u2264 0 here",
+            "reason": "EPS \u2264 0 here",
+            "value": null
+          },
+          "forward_revenue_musd": {
+            "formatted": "$11,800m",
+            "reason": null,
+            "value": 11800.0
+          },
+          "leverage_stressed": {
+            "formatted": "EBITDA \u2264 0 here",
+            "reason": "EBITDA \u2264 0 here",
+            "value": null
+          },
+          "margin_pct": {
+            "formatted": "21.7%",
+            "reason": null,
+            "value": 0.217
+          },
+          "margin_usd_per_oz": {
+            "formatted": "$434/oz",
+            "reason": null,
+            "value": 434.0
+          }
+        },
+        "4000": {
+          "aisc_margin_est_musd": {
+            "formatted": "$14,361m",
+            "reason": null,
+            "value": 14360.6
+          },
+          "aisc_margin_yield": {
+            "formatted": "11.6%",
+            "reason": null,
+            "value": 0.115936577
+          },
+          "ev_ebitda": {
+            "formatted": "EBITDA \u2264 0 here",
+            "reason": "EBITDA \u2264 0 here",
+            "value": null
+          },
+          "forward_ebitda_musd": {
+            "formatted": "-$1,000m",
+            "reason": null,
+            "value": -1000.0
+          },
+          "forward_eps": {
+            "formatted": "$1.00",
+            "reason": null,
+            "value": 1.0
+          },
+          "forward_net_income_musd": {
+            "formatted": "$9,526m",
+            "reason": null,
+            "value": 9525.6
+          },
+          "forward_pe": {
+            "formatted": "117.57\u00d7",
+            "reason": null,
+            "value": 117.57
+          },
+          "forward_revenue_musd": {
+            "formatted": "$23,600m",
+            "reason": null,
+            "value": 23600.0
+          },
+          "leverage_stressed": {
+            "formatted": "EBITDA \u2264 0 here",
+            "reason": "EBITDA \u2264 0 here",
+            "value": null
+          },
+          "margin_pct": {
+            "formatted": "60.9%",
+            "reason": null,
+            "value": 0.6085
+          },
+          "margin_usd_per_oz": {
+            "formatted": "$2,434/oz",
+            "reason": null,
+            "value": 2434.0
+          }
+        },
+        "6000": {
+          "aisc_margin_est_musd": {
+            "formatted": "$26,161m",
+            "reason": null,
+            "value": 26160.6
+          },
+          "aisc_margin_yield": {
+            "formatted": "21.1%",
+            "reason": null,
+            "value": 0.211200814
+          },
+          "ev_ebitda": {
+            "formatted": "124.36\u00d7",
+            "reason": null,
+            "value": 124.362
+          },
+          "forward_ebitda_musd": {
+            "formatted": "$1,000m",
+            "reason": null,
+            "value": 1000.0
+          },
+          "forward_eps": {
+            "formatted": "$3.00",
+            "reason": null,
+            "value": 3.0
+          },
+          "forward_net_income_musd": {
+            "formatted": "$17,767m",
+            "reason": null,
+            "value": 17766.72
+          },
+          "forward_pe": {
+            "formatted": "39.19\u00d7",
+            "reason": null,
+            "value": 39.19
+          },
+          "forward_revenue_musd": {
+            "formatted": "$35,400m",
+            "reason": null,
+            "value": 35400.0
+          },
+          "leverage_stressed": {
+            "formatted": "0.50\u00d7",
+            "reason": null,
+            "value": 0.5
+          },
+          "margin_pct": {
+            "formatted": "73.9%",
+            "reason": null,
+            "value": 0.739
+          },
+          "margin_usd_per_oz": {
+            "formatted": "$4,434/oz",
+            "reason": null,
+            "value": 4434.0
+          }
+        }
+      },
+      "payload": {
+        "constants": {
+          "aisc_usd_per_oz": 1566.0,
+          "cash_cost_usd_per_oz": 1180.0,
+          "ebitda_ltm_musd": 11850.0,
+          "enterprise_value_musd": 124362.0,
+          "interest_expense_musd": 200.0,
+          "market_cap_musd": 123866.0,
+          "net_debt_musd": 500.0,
+          "production_oz": 5900000.0,
+          "share_price_usd": 117.57
+        },
+        "disabled_reason": null,
+        "enabled": true,
+        "finance_source": "our",
+        "formats": {
+          "aisc_margin_est_musd": "musd",
+          "aisc_margin_yield": "pct",
+          "ev_ebitda": "ratio",
+          "forward_ebitda_musd": "musd",
+          "forward_eps": "usd2",
+          "forward_net_income_musd": "musd",
+          "forward_pe": "ratio",
+          "forward_revenue_musd": "musd",
+          "leverage_stressed": "ratio",
+          "margin_pct": "pct",
+          "margin_usd_per_oz": "usd_per_oz"
+        },
+        "gold_response_reason": null,
+        "gold_response_status": "OK",
+        "lines": {
+          "aisc_margin_est_musd": {
+            "intercept": -9239.4,
+            "slope": 5.9
+          },
+          "forward_ebitda_musd": {
+            "intercept": -5000.0,
+            "slope": 1.0
+          },
+          "forward_eps": {
+            "intercept": -3.0,
+            "slope": 0.001
+          },
+          "forward_net_income_musd": {
+            "intercept": -6956.64,
+            "slope": 4.12056
+          },
+          "forward_revenue_musd": {
+            "intercept": 0.0,
+            "slope": 5.9
+          }
+        },
+        "margin_basis": "aisc",
+        "spot_display": {
+          "aisc_margin_yield": 0.137465,
+          "ev_ebitda": 6.716432,
+          "forward_pe": 10.876869,
+          "leverage_stressed": 0.027003,
+          "margin_pct": 0.648248,
+          "margin_usd_per_oz": 2886.0
+        },
+        "spot_gold_date": "2026-08-11",
+        "spot_gold_usd": 4452.0,
+        "ticker": "NEM"
+      }
+    }
+  }
+}

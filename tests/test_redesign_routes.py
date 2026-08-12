@@ -407,19 +407,21 @@ def test_method_mismatches_fall_through_to_404_not_405(tmp_path, method, path, e
 
 def test_ticker_detail_section_nav_lists_every_present_section(tmp_path):
     """Plan 15/23: sticky in-page anchors on the detail page — every anchor in
-    the nav resolves to a real section id for the mining-ticker lens."""
+    the nav resolves to a real section id for the mining-ticker lens.
+
+    M3b: the nav is the redesigned five-entry list (requirements §2 order); the
+    old per-form entries (Reporting / Verification / Notes) collapsed into
+    "Inputs & notes" and the composite-bearing "Corporate Finance" snapshot
+    became the "Corporate finance" section."""
     _paths, app = _full_app(tmp_path)
     body = call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
     assert '<nav class="section-nav" aria-label="On this page">' in body
     for fragment, label in (
-        ("gold-sensitivity", "Gold Sensitivity"),
-        ("charts", "Charts"),
-        ("corporate-finance", "Corporate Finance"),
-        ("option-trading", "Option Trading"),
-        ("inputs", "Inputs"),
-        ("reporting", "Reporting"),
-        ("verification", "Verification"),
-        ("notes", "Notes"),
+        ("performance", "Performance"),
+        ("corporate-finance", "Corporate finance"),
+        ("market-behaviour", "Market behaviour"),
+        ("options", "Options"),
+        ("inputs", "Inputs &amp; notes"),
     ):
         assert f'href="#{fragment}">{label}</a>' in body
         assert f'id="{fragment}"' in body  # the anchor target really exists

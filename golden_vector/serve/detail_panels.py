@@ -34,26 +34,15 @@ from golden_vector.serve.format_helpers import (
     _fmt_number,
     _fmt_percent,
     _fmt_text,
-    _fmt_value,
     _is_na,
     _metric_card,
     _optional_float,
-    source_alternate_span,
     format_dte_suffix as _dte_suffix,
     id_token as _id_token,
 )
 from golden_vector.serve.column_help import help_term, help_th
 from golden_vector.serve.fundamentals_provenance import (
-    METRIC_FIELD_DEPENDENCIES,
-    provenance_icon_for_metric,
-    provenance_text_for_fields,
     ticker_provenance_icon,
-)
-from golden_vector.serve.metric_formula import (
-    has_metric_formula,
-    metric_formula_icon,
-    metric_result_text,
-    metric_value_text,
 )
 from golden_vector.serve.model_state_banner import render_option_freshness_box
 from golden_vector.serve.option_signal_charts import render_option_signal_charts
@@ -234,37 +223,28 @@ def _render_latest_panels(
     *,
     ticker: str,
     tool_a_row: dict[str, Any],
-    tool_b_row: dict[str, Any],
     tool_a_detail: ToolADetailState,
     alignment: str,
     active_window: str = "12M",
     app_config: AppConfig | None = None,
-    financials_source: str = "our",
-    query_params: Mapping[str, str] | None = None,
-    fundamentals_provenance: dict[tuple[str, str], str] | None = None,
 ) -> str:
-    provenance_lookup = fundamentals_provenance or {}
-    finance_controls = _render_financials_source_switcher(
+    """The Tool A (market behaviour) panel.
+
+    M3b: the old "Latest Corporate Finance Snapshot" table that used to sit
+    beside it is GONE, not moved — it carried `fundamental_check_summary`,
+    `fundamental_check_rank`, `screening_verdict` and `confidence`, and the
+    locked requirements (§3 "Verdicts and scores") ban every compiled verdict
+    from this page. Corporate finance is now its own section rendered from the
+    persisted gold-response artifact, and the financials-source switcher moved
+    to the global control bar.
+    """
+    return _render_tool_a_panel(
         ticker=ticker,
-        financials_source=financials_source,
-        query_params=query_params or {},
-        fundamentals_provenance=provenance_lookup,
-    )
-    return (
-        _render_tool_a_panel(
-            ticker=ticker,
-            tool_a_row=tool_a_row,
-            tool_a_detail=tool_a_detail,
-            alignment=alignment,
-            active_window=active_window,
-            app_config=app_config,
-        )
-        + "<div class=\"two-up\">"
-        f"<section id=\"corporate-finance\" class=\"panel nested-panel\"><h3>Latest Corporate Finance Snapshot</h3>"
-        f"{finance_controls}"
-        f"{_render_tool_b_snapshot_table(ticker=ticker, row=tool_b_row, columns=['as_of_date', 'gold_price_assumption', 'fundamental_check_summary', 'fundamental_check_rank', 'screening_verdict', 'confidence', 'share_price_usd', 'market_cap_musd', 'cash_margin_usd_per_oz', 'margin_pct', 'aisc_margin_yield', 'leverage', 'forward_pe', 'ev_ebitda', 'snapshot_refresh_run_id', 'snapshot_as_of_date', 'snapshot_normalization_status', 'fx_staleness_days'], financials_source=financials_source, fundamentals_provenance=provenance_lookup)}"
-        "</section>"
-        "</div>"
+        tool_a_row=tool_a_row,
+        tool_a_detail=tool_a_detail,
+        alignment=alignment,
+        active_window=active_window,
+        app_config=app_config,
     )
 
 
@@ -306,84 +286,6 @@ def _render_financials_source_switcher(
         "</div>"
         f"{hint}"
     )
-
-
-def _render_tool_b_snapshot_table(
-    *,
-    ticker: str,
-    row: dict[str, Any],
-    columns: list[str],
-    financials_source: str,
-    fundamentals_provenance: dict[tuple[str, str], str],
-) -> str:
-    if not row:
-        return "<p>No latest output is available yet.</p>"
-    rows_html = "".join(
-        "<tr>"
-        f"<th scope=\"row\">{escape(column_name.replace('_', ' ').strip().title())}</th>"
-        f"<td>{_snapshot_metric_value(column_name, row, financials_source=financials_source)}"
-        f"{_snapshot_metric_icon(ticker, column_name, financials_source, fundamentals_provenance, row)}</td>"
-        "</tr>"
-        for column_name in columns
-        if column_name in row
-    )
-    return table_region(
-        f"<table><tbody>{rows_html}</tbody></table>",
-        region_id="detail-snapshot-table-region",
-        label="Corporate finance snapshot",
-    )
-
-
-def _snapshot_metric_value(
-    column_name: str, row: dict[str, Any], *, financials_source: str = "our"
-) -> str:
-    """Render a snapshot cell value. Ratios use the compact per-metric cell format (scale/decimals,
-    no x/$/oz suffix — the column header + info button carry the unit), so margin_pct shows 57.1%
-    and ev_ebitda shows 2.0 (matching the Tool B overview). Dual-source ratios (ev_ebitda,
-    leverage) also append a "(Yahoo X)" accent when the two sources differ — the SAME divergence
-    the overview shows. Everything else uses the generic value formatter."""
-    if has_metric_formula(column_name):
-        formatted = metric_result_text(column_name, row)
-        if bool(row.get(f"{column_name}_show_alternate")):
-            alt_text = metric_value_text(column_name, row.get(f"{column_name}_alternate_value"))
-            alt_label = str(row.get(f"{column_name}_alternate_label") or "")
-            if alt_text is not None and alt_label:
-                display = formatted if formatted is not None else "-"
-                return f"{display} {source_alternate_span(alt_label, alt_text)}"
-        if formatted is not None:
-            return formatted
-    return _fmt_value(row.get(column_name), column_name)
-
-
-def _snapshot_metric_icon(
-    ticker: str,
-    column_name: str,
-    financials_source: str,
-    fundamentals_provenance: dict[tuple[str, str], str],
-    row: dict[str, Any],
-) -> str:
-    # Ratios get a formula + live-numbers info button (both source modes); in Yahoo mode the
-    # source provenance of the underlying line items is appended below the formula. Raw line
-    # items keep their plain provenance affordance (Yahoo mode only).
-    if has_metric_formula(column_name):
-        extra = ""
-        if financials_source == "yahoo":
-            extra = provenance_text_for_fields(
-                ticker,
-                METRIC_FIELD_DEPENDENCIES.get(column_name, ()),
-                fundamentals_provenance,
-            )
-        icon = metric_formula_icon(column_name, row, extra=extra)
-        if icon:
-            return icon
-        # Degraded ratio (value unavailable): don't lose the Yahoo source provenance the plain
-        # affordance used to show on these rows.
-        if financials_source == "yahoo":
-            return provenance_icon_for_metric(ticker, column_name, fundamentals_provenance)
-        return ""
-    if financials_source != "yahoo":
-        return ""
-    return provenance_icon_for_metric(ticker, column_name, fundamentals_provenance)
 
 
 def _render_option_trading_link_panel(

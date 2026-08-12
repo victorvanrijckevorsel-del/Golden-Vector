@@ -1334,6 +1334,201 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "return, in percentage points."
         ),
     ),
+    # --- ticker page: gold dial + corporate finance (M3b) --------------------
+    "ticker_gold_dial": ColumnHelp(
+        meaning=(
+            "A what-if gold price. Moving it re-prices ONLY the Corporate finance "
+            "section — the performance chart, market-behaviour betas, the failing-check "
+            "sentences and every score stay at spot gold and visibly do not react."
+        ),
+        calculation=(
+            "The backend fits each earnings line against gold and publishes its exact "
+            "slope and intercept; your browser evaluates those published lines at the "
+            "price you choose. Nothing is estimated in the page."
+        ),
+        details=(
+            "The dial position is deliberately NOT saved in the URL — it is a scratch "
+            "what-if, not a saved view, so a link you share always opens at spot. "
+            "\"Reset to spot\" puts it back exactly."
+        ),
+        thresholds=lambda config: (
+            f"Range {config.ticker_page.dial.min_gold_usd:,.0f} to "
+            f"{config.ticker_page.dial.max_gold_usd:,.0f} USD/oz, step "
+            f"{config.ticker_page.dial.step_usd:,.0f}."
+        ),
+    ),
+    "ticker_cf_section": ColumnHelp(
+        meaning=(
+            "Everything held on the business, grouped by the question it answers. Rows "
+            "marked \"moves with gold\" follow the dial; the rest are facts that do not "
+            "depend on the gold price."
+        ),
+        calculation=(
+            "Spot values are published by the backend at TRUE spot gold (not a rounded "
+            "scenario); scenario values are the same published lines evaluated at your "
+            "dial price."
+        ),
+    ),
+    "ticker_cf_forward_revenue": ColumnHelp(
+        meaning="Expected revenue over the next twelve months at this gold price.",
+        calculation="Gold price × annual production ounces, from the published revenue line.",
+    ),
+    "ticker_cf_forward_ebitda": ColumnHelp(
+        meaning=(
+            "Expected forward EBITDA — earnings before interest, tax, depreciation and "
+            "amortisation — at this gold price."
+        ),
+        calculation="The published forward-EBITDA line evaluated at the selected gold price.",
+        direction="Higher is better.",
+    ),
+    "ticker_cf_forward_net_income": ColumnHelp(
+        meaning="Expected forward net income at this gold price, after interest, D&A and tax.",
+        calculation="The published forward-net-income line evaluated at the selected gold price.",
+        direction="Higher is better.",
+    ),
+    "ticker_cf_forward_eps": ColumnHelp(
+        meaning="Expected forward earnings per share at this gold price.",
+        calculation="Forward net income ÷ shares outstanding, from the published EPS line.",
+        direction="Higher is better.",
+    ),
+    "ticker_cf_aisc_margin": ColumnHelp(
+        meaning=(
+            "Estimated cash left after all-in sustaining costs across a year's production "
+            "at this gold price."
+        ),
+        calculation="(Gold price − AISC per ounce) × annual production ounces.",
+        details=(
+            "This is an AISC-margin estimate, NOT reported free cash flow: it ignores "
+            "working capital, growth capex, tax timing and financing."
+        ),
+        direction="Higher is better.",
+    ),
+    "ticker_cf_margin_usd_per_oz": ColumnHelp(
+        meaning="Cash left on every ounce mined at this gold price.",
+        calculation="Gold price − the cost basis named beside the number (AISC or cash cost).",
+        direction="Higher is better.",
+    ),
+    "ticker_cf_margin_pct": ColumnHelp(
+        meaning="The share of each ounce's gold price that survives as margin.",
+        calculation="Cash margin per ounce ÷ gold price.",
+        thresholds=lambda config: (
+            f"Your screening floor is "
+            f"{config.screening_params.layer1_thresholds.margin_min:.0%}."
+        ),
+        direction="Higher is better.",
+    ),
+    "ticker_cf_aisc_margin_yield": ColumnHelp(
+        meaning=(
+            "The AISC margin a full year of production would generate, measured against "
+            "what the whole company costs to buy."
+        ),
+        calculation="AISC margin ($m at this gold price) ÷ market cap.",
+        details=(
+            "Named for what it is: an AISC-margin yield, not a reported free-cash-flow "
+            "yield — it ignores working capital, growth capex, tax timing and financing."
+        ),
+        thresholds=lambda config: (
+            f"Your screening floor is "
+            f"{config.screening_params.layer1_thresholds.aisc_margin_yield_min:.0%}."
+        ),
+        direction="Higher is better (cheaper for the margin you get).",
+    ),
+    "ticker_cf_ev_ebitda": ColumnHelp(
+        meaning=(
+            "What the whole business costs (equity plus net debt) per dollar of forward "
+            "earnings before interest, tax, depreciation and amortisation."
+        ),
+        calculation=(
+            "Enterprise value ÷ forward EBITDA at the selected gold price. Shown blank "
+            "when forward EBITDA is zero or negative — a multiple on negative earnings "
+            "is meaningless."
+        ),
+        details=(
+            "IMPORTANT — this multiple RISES as gold FALLS. The share price and net debt "
+            "in the numerator do not move with your dial, while forward EBITDA in the "
+            "denominator shrinks, so a lower gold price makes the company look MORE "
+            "expensive, not cheaper. Read a rising number as deteriorating earnings, not "
+            "as a re-rating."
+        ),
+        direction="Lower is cheaper.",
+    ),
+    "ticker_cf_forward_pe": ColumnHelp(
+        meaning="What one share costs per dollar of expected forward earnings.",
+        calculation=(
+            "Share price ÷ forward earnings per share at the selected gold price. Shown "
+            "blank when forward EPS is zero or negative."
+        ),
+        details=(
+            "IMPORTANT — this multiple RISES as gold FALLS, for the same reason as "
+            "EV/EBITDA: the share price in the numerator does not move with your dial "
+            "while forward earnings shrink. A rising P/E here means earnings are being "
+            "squeezed, not that the market re-rated the stock."
+        ),
+        thresholds=lambda config: (
+            "Your screening cut-offs are "
+            f"{config.screening_params.verdict_thresholds.strong_candidate_forward_pe_max:.0f}× "
+            "for a strong candidate and "
+            f"{config.screening_params.verdict_thresholds.watchlist_forward_pe_max:.0f}× "
+            "for the watchlist."
+        ),
+        direction="Lower is cheaper.",
+    ),
+    "ticker_cf_leverage_stressed": ColumnHelp(
+        meaning=(
+            "Debt measured against the earnings the company would make at the gold price "
+            "on the dial — how strained the balance sheet becomes in that world."
+        ),
+        calculation="Net debt ÷ FORWARD EBITDA at the selected gold price.",
+        details=(
+            "This is a different number from \"Net debt / EBITDA (LTM)\" in Balance sheet, "
+            "cost and scale: that one divides by the last twelve months of REPORTED "
+            "earnings and never moves with the dial. Two concepts, two rows, two labels."
+        ),
+        direction="Lower is safer.",
+    ),
+    "ticker_cf_leverage_trailing": ColumnHelp(
+        meaning=(
+            "Debt measured against the earnings the company actually reported over the "
+            "last twelve months. It does not move with the gold dial."
+        ),
+        calculation=(
+            "Net debt ÷ trailing-twelve-month EBITDA. Shown blank when trailing EBITDA is "
+            "zero or negative."
+        ),
+        details=(
+            "Distinct from \"Stressed forward leverage\" in the headline cards, which "
+            "divides by FORWARD EBITDA at the dial's gold price."
+        ),
+        thresholds=lambda config: (
+            f"Your screening cap is "
+            f"{config.screening_params.layer1_thresholds.leverage_max:.1f}×."
+        ),
+        direction="Lower is safer.",
+    ),
+    "ticker_cf_resilience": ColumnHelp(
+        meaning=(
+            "The gold prices at which this company's economics break, and how far gold "
+            "would have to fall to reach them."
+        ),
+        calculation=(
+            "Published by the resilience model on Our View inputs at spot gold — these "
+            "rows do not move with the dial."
+        ),
+        details=(
+            "Disabled in Yahoo Fundamentals mode: resilience is computed on Our View "
+            "inputs, and mixing the two sources would misstate the thresholds."
+        ),
+    ),
+    "ticker_cf_data_quality": ColumnHelp(
+        meaning=(
+            "Where each number came from, when it was captured, and whether any stage "
+            "reported a problem."
+        ),
+        calculation=(
+            "Statuses and as-of dates are persisted columns — nothing here is inferred by "
+            "the page."
+        ),
+    ),
     "ticker_cost_downside": ColumnHelp(
         meaning=(
             "Two pieces of evidence side by side: today's reported all-in sustaining cost, "

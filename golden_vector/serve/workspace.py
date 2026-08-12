@@ -696,6 +696,18 @@ def create_workspace_app(
                                 canonical_anchor=error_anchor,
                                 lens=error_lens,
                                 app_config=app_config,
+                                # A rejected POST must re-render the SAME page
+                                # the user was on. Without these the redesigned
+                                # Performance / Corporate finance sections (and
+                                # their nav entries) silently vanished behind
+                                # the error, which reads as data loss.
+                                ticker_page_data=load_ticker_page_data(paths),
+                                chart_horizon=_resolve_chart_horizon(
+                                    (merged_query.get("chart_h") or [""])[0], app_config
+                                ),
+                                chart_view=_resolve_chart_view(
+                                    (merged_query.get("chart_view") or [""])[0]
+                                ),
                                 financials_source=error_source,
                                 query_params=_first_query_values(merged_query),
                                 fundamentals_provenance=error_provenance,

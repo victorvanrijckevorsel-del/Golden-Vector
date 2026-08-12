@@ -141,11 +141,18 @@ def test_workspace_detail_page_honors_yahoo_fundamentals_source(tmp_path):
     )
 
     assert response["status"].startswith("200")
-    assert "Latest Corporate Finance Snapshot" in response["body"]
+    # M3b: the old "Latest Corporate Finance Snapshot" table is gone; the
+    # redesigned Corporate finance section replaces it and the financials-source
+    # switcher moved to the global control bar.
+    assert "Latest Corporate Finance Snapshot" not in response["body"]
+    assert 'id="corporate-finance"' in response["body"]
     assert "Financials source" in response["body"]
     assert "Yahoo Fundamentals" in response["body"]
-    assert "SCREEN_OUT" in response["body"]
+    # Yahoo materialization still drives the numbers (leverage_official 8.88 is
+    # the active trailing leverage) ...
     assert "8.88" in response["body"]
+    # ... but the compiled verdict is BANNED from this page (requirements §3).
+    assert "SCREEN_OUT" not in response["body"]
     assert 'href="/?fundamentals_source=yahoo"' in response["body"]
     assert "/ticker/NEM?window=6m&amp;fundamentals_source=yahoo" in response["body"]
     assert "/ticker/NEM?lens=option-trading&amp;fundamentals_source=yahoo#option-trading" in response["body"]
@@ -2546,14 +2553,21 @@ def test_one_info_affordance_no_legacy_hover_remains():
         assert "th[title]" not in css, css_path
 
 
-def test_snapshot_ratio_cell_is_compact_and_shows_yahoo_divergence():
-    """The ticker-detail snapshot renders dual-source ratios (ev_ebitda) with a compact value (no
-    'x' suffix) plus the SAME '(Yahoo X)' divergence accent the Tool B overview shows."""
+def test_dual_source_ratio_cell_is_compact_and_shows_yahoo_divergence():
+    """The dual-source ratio treatment (compact value, no unit suffix, plus a
+    "(Yahoo X)" divergence accent) survives the M3b ticker-page redesign.
+
+    Its detail-page wrapper (`_snapshot_metric_value`) was DELETED with the old
+    "Latest Corporate Finance Snapshot" table — that table carried
+    `fundamental_check_summary`, `fundamental_check_rank` and
+    `screening_verdict`, which the locked requirements ban from the ticker page.
+    The behaviour itself has one surviving implementation, on the Tool B
+    overview, and this test now pins that one."""
     import pandas as pd
 
     from golden_vector.screening.pipeline import materialize_tool_b_finance_source
     from golden_vector.screening.schema import TOOL_B_OUTPUT_COLUMNS
-    from golden_vector.serve.detail_panels import _snapshot_metric_value
+    from golden_vector.serve.overview_tool_b import _comparison_numeric_td
 
     def materialized(row: dict[str, object], finance_source: str) -> dict[str, object]:
         full_row = {column: None for column in TOOL_B_OUTPUT_COLUMNS}
@@ -2563,54 +2577,45 @@ def test_snapshot_ratio_cell_is_compact_and_shows_yahoo_divergence():
             finance_source=finance_source,
         ).iloc[0].to_dict()
 
+    def cell_text(row: dict[str, object]) -> str:
+        """The displayed value only — the trailing help button is not the cell."""
+        html = _comparison_numeric_td(row, "ev_ebitda", decimals=1, rank_by="ev_ebitda")
+        inner = html[html.index(">") + 1 : html.rindex("</td>")]
+        return inner.split("<button")[0].strip()
+
     # Our View active, our-view 2.0 vs Yahoo 3.5, flagged as differing.
-    row = materialized(
-        {
-            "ev_ebitda": 2.0,
-            "ev_ebitda_our_view": 2.0,
-            "ev_ebitda_official": 3.5,
-            "ev_ebitda_differs": True,
-        },
-        "our",
+    cell = cell_text(
+        materialized(
+            {
+                "ev_ebitda": 2.0,
+                "ev_ebitda_our_view": 2.0,
+                "ev_ebitda_official": 3.5,
+                "ev_ebitda_differs": True,
+            },
+            "our",
+        )
     )
-    cell = _snapshot_metric_value("ev_ebitda", row, financials_source="our")
     assert cell.startswith("2.0 ")  # compact active value, no unit suffix
     assert "x" not in cell  # cell carries no 'x' (header/popover do)
     assert "source-alternate" in cell and "(Yahoo 3.5)" in cell
 
     # No divergence -> plain compact value, no accent.
-    assert _snapshot_metric_value(
-        "ev_ebitda",
-        materialized({"ev_ebitda": 2.0, "ev_ebitda_differs": False}, "our"),
-        financials_source="our",
-    ) == "2.0"
+    plain = cell_text(materialized({"ev_ebitda": 2.0, "ev_ebitda_differs": False}, "our"))
+    assert "source-alternate" not in plain and plain.startswith("2.0")
 
     # Yahoo source active (base materialized to the official value) -> alternate is Our View.
-    yahoo_row = materialized(
-        {
-            "ev_ebitda": 2.0,
-            "ev_ebitda_our_view": 2.0,
-            "ev_ebitda_official": 3.5,
-            "ev_ebitda_differs": True,
-        },
-        "yahoo",
+    ycell = cell_text(
+        materialized(
+            {
+                "ev_ebitda": 2.0,
+                "ev_ebitda_our_view": 2.0,
+                "ev_ebitda_official": 3.5,
+                "ev_ebitda_differs": True,
+            },
+            "yahoo",
+        )
     )
-    ycell = _snapshot_metric_value("ev_ebitda", yahoo_row, financials_source="yahoo")
     assert ycell.startswith("3.5 ") and "(Our View 2.0)" in ycell
-
-    yahoo_missing_row = materialized(
-        {
-            "ev_ebitda": 2.0,
-            "ev_ebitda_our_view": 2.0,
-            "ev_ebitda_official": None,
-            "ev_ebitda_differs": True,
-        },
-        "yahoo",
-    )
-    assert (
-        _snapshot_metric_value("ev_ebitda", yahoo_missing_row, financials_source="yahoo")
-        == '- <span class="source-alternate">(Our View 2.0)</span>'
-    )
 
 
 def test_workspace_candidate_finder_serve_layer_has_no_forked_tool_b_d_math():
@@ -3123,3 +3128,108 @@ def test_overview_empty_states_drop_js_datatable_class(tmp_path):
         body = response["body"]
         assert f'id="{table_id}" class="empty-table"' in body, path
         assert f'id="{table_id}" class="js-datatable"' not in body, path
+
+
+# --------------------------- M3b: page order + POST re-render ---------------
+
+
+def _m3b_app(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    return paths, create_workspace_app(
+        paths, app_config=app_config, tool_b_tickers=["NEM"]
+    )
+
+
+def test_ticker_page_sections_render_in_the_required_order(tmp_path):
+    """Requirements §2: performance -> corporate finance -> market behaviour ->
+    options -> inputs. Asserted by POSITION, so a re-ordered page fails."""
+    _paths, app = _m3b_app(tmp_path)
+    body = _call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
+
+    positions = []
+    for anchor in (
+        'id="performance"',
+        'id="corporate-finance"',
+        'id="market-behaviour"',
+        'id="options"',
+        'id="inputs"',
+    ):
+        assert anchor in body, anchor
+        positions.append(body.index(anchor))
+    assert positions == sorted(positions), positions
+
+
+def test_ticker_page_nav_lists_exactly_the_five_redesigned_entries(tmp_path):
+    _paths, app = _m3b_app(tmp_path)
+    body = _call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
+    nav = body[body.index('<nav class="section-nav"') :]
+    nav = nav[: nav.index("</nav>")]
+
+    assert nav.count("section-nav-link") == 5
+    for fragment, label in (
+        ("performance", "Performance"),
+        ("corporate-finance", "Corporate finance"),
+        ("market-behaviour", "Market behaviour"),
+        ("options", "Options"),
+        ("inputs", "Inputs &amp; notes"),
+    ):
+        assert f'href="#{fragment}">{label}</a>' in nav, fragment
+    # the pre-redesign entries are gone
+    for stale in ("Gold Sensitivity</a>", "Charts</a>", "Reporting</a>", "Notes</a>"):
+        assert stale not in nav, stale
+
+
+def test_ticker_page_never_shows_a_compiled_verdict_or_score(tmp_path):
+    """Requirements §3 "Verdicts and scores": the composites stay on the other
+    pages; this page shows statuses and measured values only."""
+    _paths, app = _m3b_app(tmp_path)
+    body = _call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
+    for banned in (
+        "fundamental_check_summary",
+        "fundamental_check_rank",
+        "screening_verdict",
+        "Fundamental Check Summary",
+        "Screening Verdict",
+        "STRONG_CANDIDATE",
+        "SCREEN_OUT",
+        "WATCHLIST",
+    ):
+        assert banned not in body, banned
+
+
+def test_ticker_page_options_nav_entry_tracks_the_options_region():
+    """The Options entry is listed only when an options region is rendered."""
+    from golden_vector.serve.detail_page import _detail_section_nav
+
+    with_options = _detail_section_nav(
+        has_page_sections=True, has_behaviour=True, has_options=True, has_manual=True
+    )
+    without = _detail_section_nav(
+        has_page_sections=True, has_behaviour=True, has_options=False, has_manual=True
+    )
+    assert 'href="#options">Options</a>' in with_options
+    assert "Options" not in without
+    assert without.count("section-nav-link") == 4
+
+
+def test_rejected_post_re_renders_the_same_page_including_the_new_sections(tmp_path):
+    """A validation error must not silently drop Performance / Corporate finance
+    — the user would read the missing sections as data loss."""
+    _paths, app = _m3b_app(tmp_path)
+    response = _call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/company",
+        body="production_oz=not-a-number&return_to=%2Fticker%2FNEM",
+    )
+    assert response["status"].startswith("400")
+    body = response["body"]
+    assert 'id="performance"' in body
+    assert 'id="corporate-finance"' in body
+    assert 'href="#corporate-finance">Corporate finance</a>' in body
+    assert 'id="gold-dial"' in body

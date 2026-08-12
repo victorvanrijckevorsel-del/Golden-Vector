@@ -247,3 +247,49 @@
 .beh-badge { font-size: 1.05rem; }
 .beh-list { margin: 6px 0; padding-left: 18px; }
 .beh-list li { margin: 4px 0; }
+
+/* --- ticker page: control bar + gold scenario dial (M3b) ----------------- */
+.ticker-control-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+}
+.ticker-control-bar > * { margin: 0; }
+.gold-dial {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.gold-dial-label { font-weight: 600; }
+.gold-dial input[type="range"] { min-width: 200px; }
+.gold-dial-output { font-variant-numeric: tabular-nums; font-weight: 600; }
+.gold-dial input[type="range"]:disabled { opacity: 0.5; }
+.gold-dial-disabled { flex-basis: 100%; }
+#gold-dial-status { flex-basis: 100%; margin: 0; }
+
+/* --- ticker page: corporate finance cards + scenario cells --------------- */
+.metric-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+.metric-card-label { margin: 0; font-size: 0.82rem; color: var(--ink-soft, #5a6472); }
+.metric-card-value { margin: 4px 0 0; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
+.metric-card-basis { margin: 4px 0 0; }
+.scenario-cell { font-variant-numeric: tabular-nums; }
+p.scenario-cell { margin: 2px 0 0; font-weight: 600; }
+.scenario-cell[data-unavailable], td[data-unavailable] { font-style: italic; opacity: 0.85; }
+.spot-cell { font-variant-numeric: tabular-nums; }
+.dial-pending { font-style: italic; opacity: 0.8; }
+td.basis, .basis { font-size: 0.78rem; color: var(--ink-soft, #5a6472); }
+.is-updated { animation: gv-cell-flash 400ms ease-out; }
+@keyframes gv-cell-flash {
+  from { background: var(--accent-soft, rgba(214, 168, 74, 0.35)); }
+  to { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .is-updated { animation: none; }
+}

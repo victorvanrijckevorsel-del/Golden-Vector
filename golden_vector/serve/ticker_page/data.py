@@ -39,6 +39,23 @@ class TickerPageData:
     def fx_attribution_rows(self, ticker: str) -> pd.DataFrame:
         return _ticker_rows(self.fx_attribution.frame, ticker)
 
+    def gold_response_row(
+        self, ticker: str, *, finance_source: str
+    ) -> pd.Series | None:
+        """The one gold-response row for (ticker, finance_source), or ``None``.
+
+        Selection only — the key is (ticker, finance_source) by contract, so a
+        miss is a genuine absence and is reported as one, never back-filled
+        from the other source.
+        """
+        rows = _ticker_rows(self.gold_response.frame, ticker)
+        if rows.empty or "finance_source" not in rows.columns:
+            return None
+        match = rows.loc[rows["finance_source"].eq(finance_source)]
+        if match.empty:
+            return None
+        return match.iloc[0]
+
     def percentile_rows(self, ticker: str, *, finance_source: str) -> pd.DataFrame:
         rows = _ticker_rows(self.percentiles.frame, ticker)
         if rows.empty or "finance_source" not in rows.columns:

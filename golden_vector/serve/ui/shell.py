@@ -89,6 +89,7 @@ def _page_shell(title: str, body: str, *, active_nav: str = "") -> str:
   <script src="/static/help-popover.js" defer></script>
   <script src="/static/rug-tooltip.js" defer></script>
   <script src="/static/overlay-crosshair.js" defer></script>
+  <script src="/static/gold-dial.js" defer></script>
   <link rel="stylesheet" href="/static/workspace.css">
 </head>
 <body data-page="{page_attr}">

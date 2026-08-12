@@ -16,6 +16,7 @@ from golden_vector.serve.detail_forms import (
 )
 from golden_vector.serve.detail_panels import (
     _detail_alignment,
+    _render_financials_source_switcher,
     _render_latest_panels,
     _render_option_trading_link_panel,
     _render_option_trading_panel,
@@ -27,8 +28,10 @@ from golden_vector.serve.ui.components import page_header, section_nav
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ticker_page import (
     TickerPageData,
+    render_corporate_finance_section,
     render_cost_downside_card,
     render_currency_attribution_block,
+    render_gold_dial_control,
     render_performance_section,
 )
 from golden_vector.serve.url_helpers import build_page_url
@@ -45,6 +48,32 @@ def resolve_detail_lens(raw_lens: str | None) -> str:
     if normalized in DETAIL_LENS_IDS:
         return normalized
     return DETAIL_DEFAULT_LENS_ID
+
+
+def _detail_section_nav(
+    *,
+    has_page_sections: bool,
+    has_behaviour: bool,
+    has_options: bool,
+    has_manual: bool,
+) -> str:
+    """The redesigned in-page nav (requirements §2 order, M3b).
+
+    Exactly five entries, in page order, and each is listed ONLY when the
+    section it points at is actually rendered — a nav link to a section that
+    does not exist is a broken promise, not a placeholder.
+    """
+    anchors: list[tuple[str, str]] = []
+    if has_page_sections:
+        anchors.append(("performance", "Performance"))
+        anchors.append(("corporate-finance", "Corporate finance"))
+    if has_behaviour:
+        anchors.append(("market-behaviour", "Market behaviour"))
+    if has_options:
+        anchors.append(("options", "Options"))
+    if has_manual:
+        anchors.append(("inputs", "Inputs & notes"))
+    return section_nav(anchors)
 
 
 def render_detail_page(
@@ -74,6 +103,10 @@ def render_detail_page(
     reporting_row = _frame_index_by_ticker(state.reporting_calendar).get(ticker, {})
     tool_a_row = _frame_index_by_ticker(state.latest_tool_a).get(ticker, {})
     tool_b_row = _frame_index_by_ticker(state.latest_tool_b).get(ticker, {})
+    # Tool D is already in the LRU-cached workspace state; the corporate
+    # section's resilience group reads it here rather than opening a file in
+    # the request path.
+    tool_d_row = _frame_index_by_ticker(state.latest_tool_d).get(ticker, {})
     verification_rows = _ticker_rows(state.source_verification, ticker)
     note_rows = _ticker_rows(state.stock_notes, ticker)
     # Rejected-POST echo: hand the raw submitted strings to the form renderers
@@ -123,8 +156,13 @@ def render_detail_page(
         f"<p class=\"back-link\"><a href=\"{escape(back_href, quote=True)}\">Back to workspace</a></p>",
         page_header(ticker),
     ]
+    # --- global control bar (requirements §3 / D-6) ------------------------
+    # The gold dial, the financials-source switcher (moved here out of the old
+    # corporate snapshot panel) and the structural-window tabs are one control
+    # region at the top of the page.
+    controls: list[str] = []
     if show_workspace_panels:
-        body.append(
+        controls.append(
             _render_window_switcher(
                 ticker=ticker,
                 active=active_window,
@@ -141,88 +179,35 @@ def render_detail_page(
                 financials_source=financials_source,
             )
         )
+        controls.append(
+            _render_financials_source_switcher(
+                ticker=ticker,
+                financials_source=financials_source,
+                query_params=query_params or {},
+                fundamentals_provenance=fundamentals_provenance or {},
+            )
+        )
+        if ticker_page_data is not None:
+            controls.append(
+                render_gold_dial_control(
+                    ticker_page_data,
+                    ticker=ticker,
+                    finance_source=financials_source,
+                    app_config=app_config,
+                )
+            )
     elif option_lens_active:
-        body.append(
+        controls.append(
             "<p class=\"hint\">Option vehicle page. This ticker is used for listed "
             "option liquidity and scenarios, not as a Gold Sensitivity / Corporate Finance mining-company row.</p>"
         )
-    # Sticky in-page anchors (plan 15/23): only sections that exist for the
-    # current lens/vehicle. All targets are ids rendered by the panels/forms.
-    anchors: list[tuple[str, str]] = []
-    if show_workspace_panels:
-        anchors += [
-            ("gold-sensitivity", "Gold Sensitivity"),
-            ("charts", "Charts"),
-            ("corporate-finance", "Corporate Finance"),
-        ]
-    anchors.append(("option-trading", "Option Trading"))
-    if show_manual_sections:
-        anchors += [
-            ("inputs", "Inputs"),
-            ("reporting", "Reporting"),
-            ("verification", "Verification"),
-            ("notes", "Notes"),
-        ]
-    body.append(section_nav(anchors))
-    if flash:
-        body.append(notice("success", escape(flash)))
-    if error:
-        body.append(notice("danger", escape(error)))
-    alignment = _detail_alignment(tool_a_row, state.foundation_manifest)
-    if show_workspace_panels and ticker_page_data is not None:
-        # Redesign M3a: the persisted-performance chart + Currency attribution
-        # (Feature A) render ABOVE the legacy panels; the artifact rows are the
-        # only source — nothing recomputes here.
+    if controls:
         body.append(
-            render_performance_section(
-                ticker_page_data.performance_rows(ticker),
-                ticker=ticker,
-                horizon=chart_horizon,
-                view=chart_view,
-            )
+            "<div class=\"panel ticker-control-bar\" role=\"group\" "
+            "aria-label=\"Page controls\">" + "".join(controls) + "</div>"
         )
-        body.append(
-            render_currency_attribution_block(
-                ticker_page_data.fx_attribution_rows(ticker),
-                ticker=ticker,
-                horizon=chart_horizon,
-            )
-        )
-    if show_workspace_panels:
-        body.append(
-            _render_latest_panels(
-                ticker=ticker,
-                tool_a_row=tool_a_row,
-                tool_b_row=tool_b_row,
-                tool_a_detail=tool_a_detail,
-                alignment=alignment,
-                active_window=active_window,
-                app_config=app_config,
-                financials_source=financials_source,
-                query_params=query_params,
-                fundamentals_provenance=fundamentals_provenance,
-            )
-        )
-    if show_workspace_panels and ticker_page_data is not None:
-        # Feature B: Cost position and downside record (Market Behaviour).
-        body.append(
-            render_cost_downside_card(
-                ticker=ticker,
-                aisc_row=ticker_page_data.metric_row(
-                    ticker, metric_key="aisc", finance_source=financials_source
-                ),
-                downside_row=ticker_page_data.metric_row(
-                    ticker, metric_key="downside_hit_rate", finance_source=financials_source
-                ),
-                aisc_peers=ticker_page_data.metric_peers(
-                    metric_key="aisc", finance_source=financials_source
-                ),
-                downside_peers=ticker_page_data.metric_peers(
-                    metric_key="downside_hit_rate", finance_source=financials_source
-                ),
-            )
-        )
-    body.append(
+
+    options_html = (
         _render_option_trading_panel(
             option_trading_detail,
             model_state_manifest=model_state_manifest,
@@ -239,6 +224,90 @@ def render_detail_page(
             canonical_anchor=canonical_anchor,
         )
     )
+    has_page_sections = show_workspace_panels and ticker_page_data is not None
+    body.append(
+        _detail_section_nav(
+            has_page_sections=has_page_sections,
+            has_behaviour=show_workspace_panels,
+            has_options=bool(options_html),
+            has_manual=show_manual_sections,
+        )
+    )
+    if flash:
+        body.append(notice("success", escape(flash)))
+    if error:
+        body.append(notice("danger", escape(error)))
+    alignment = _detail_alignment(tool_a_row, state.foundation_manifest)
+
+    # --- 1. Performance ----------------------------------------------------
+    if has_page_sections:
+        assert ticker_page_data is not None
+        body.append(
+            render_performance_section(
+                ticker_page_data.performance_rows(ticker),
+                ticker=ticker,
+                horizon=chart_horizon,
+                view=chart_view,
+            )
+        )
+        body.append(
+            render_currency_attribution_block(
+                ticker_page_data.fx_attribution_rows(ticker),
+                ticker=ticker,
+                horizon=chart_horizon,
+            )
+        )
+        # --- 2. Corporate finance ------------------------------------------
+        body.append(
+            render_corporate_finance_section(
+                ticker_page_data,
+                ticker=ticker,
+                finance_source=financials_source,
+                tool_b_row=tool_b_row,
+                tool_d_row=tool_d_row,
+                app_config=app_config,
+            )
+        )
+
+    # --- 3. Market behaviour ----------------------------------------------
+    if show_workspace_panels:
+        behaviour: list[str] = [
+            _render_latest_panels(
+                ticker=ticker,
+                tool_a_row=tool_a_row,
+                tool_a_detail=tool_a_detail,
+                alignment=alignment,
+                active_window=active_window,
+                app_config=app_config,
+            )
+        ]
+        if ticker_page_data is not None:
+            behaviour.append(
+                render_cost_downside_card(
+                    ticker=ticker,
+                    aisc_row=ticker_page_data.metric_row(
+                        ticker, metric_key="aisc", finance_source=financials_source
+                    ),
+                    downside_row=ticker_page_data.metric_row(
+                        ticker,
+                        metric_key="downside_hit_rate",
+                        finance_source=financials_source,
+                    ),
+                    aisc_peers=ticker_page_data.metric_peers(
+                        metric_key="aisc", finance_source=financials_source
+                    ),
+                    downside_peers=ticker_page_data.metric_peers(
+                        metric_key="downside_hit_rate", finance_source=financials_source
+                    ),
+                )
+            )
+        body.append("<div id=\"market-behaviour\">" + "".join(behaviour) + "</div>")
+
+    # --- 4. Options --------------------------------------------------------
+    if options_html:
+        body.append("<div id=\"options\">" + options_html + "</div>")
+
+    # --- 5. Inputs and notes ----------------------------------------------
     if show_manual_sections:
         body.append(
             _render_company_form(
