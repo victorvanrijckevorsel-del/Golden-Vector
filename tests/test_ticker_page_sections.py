@@ -281,7 +281,14 @@ def test_ticker_page_serve_package_has_no_backend_arithmetic():
     The sections render persisted columns only. Formatting multiplies by 100
     for display; no ratio math, coalescing, or eligibility logic may creep in.
     """
-    for name in ("sections.py", "data.py", "corporate.py", "behaviour.py", "__init__.py"):
+    for name in (
+        "sections.py",
+        "data.py",
+        "corporate.py",
+        "behaviour.py",
+        "compare.py",
+        "__init__.py",
+    ):
         source = Path(f"golden_vector/serve/ticker_page/{name}").read_text(encoding="utf-8")
         for forbidden in (
             ".fillna(",

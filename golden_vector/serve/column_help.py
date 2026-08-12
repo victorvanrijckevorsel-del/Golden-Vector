@@ -1872,6 +1872,74 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "default because it is reference material, not the headline read."
         ),
     ),
+    # --- ticker page: compare on your own terms (M3e) -----------------------
+    "ticker_compare_section": ColumnHelp(
+        meaning=(
+            "Your own comparison. Pick the metrics you actually care about, say which "
+            "direction is good, and spend a weight budget across them — the page then "
+            "ranks every miner on YOUR definition, not on a house score."
+        ),
+        calculation=(
+            "Each metric is turned into a percentile across the universe by the backend "
+            "(so units can mix), and your weights combine those percentiles. Nothing is "
+            "scored until you activate a metric, and nothing here changes any other page."
+        ),
+        details=(
+            "The ranks are computed at spot gold. Moving the gold dial re-prices the "
+            "Corporate finance section and deliberately does NOT move these ranks."
+        ),
+    ),
+    "ticker_compare_percentiles": ColumnHelp(
+        meaning=(
+            "A percentile says where this miner sits among its peers on one metric: 90 "
+            "means only 10% of the comparable miners score better on it."
+        ),
+        calculation=(
+            "Ranked across the miners that have that metric present and eligible. Equal "
+            "values share the AVERAGE of the places they span — two miners tied for 3rd "
+            "and 4th both get the 3.5 position — so a tie can never break the order by "
+            "accident. Both directions are computed on the backend, so flipping "
+            "higher/lower reads a published number rather than inverting one here."
+        ),
+        details=(
+            "Miners whose data is degraded or stale are excluded from the metric "
+            "entirely rather than ranked badly — they can never receive a percentile."
+        ),
+    ),
+    "ticker_compare_budget": ColumnHelp(
+        meaning=(
+            "Weights are a fixed budget of points shared across the metrics you "
+            "activate, so a comparison always adds up to the same total and two setups "
+            "are directly comparable."
+        ),
+        calculation=(
+            "Moving one slider re-shares the remaining points across the other active "
+            "metrics proportionally; turning a metric off gives its points back the same "
+            "way. The total is always exactly the budget."
+        ),
+        thresholds=lambda config: (
+            f"Budget {config.ticker_page.score_builder.budget_points:,.0f} points, "
+            "slider step 1."
+        ),
+    ),
+    "ticker_compare_missing": ColumnHelp(
+        meaning=(
+            "A metric this company does not publish is simply not counted — it is never "
+            "treated as a zero or a bad score, because a data gap is not a weakness."
+        ),
+        calculation=(
+            "The company is scored on the weighted average of the metrics it actually "
+            "has. A miner that has too few of your active metrics is listed as unranked "
+            "with the count, instead of being given a misleading score."
+        ),
+        thresholds=lambda config: (
+            "A miner needs at least "
+            f"{config.ticker_page.score_builder.min_active_metric_coverage:.0%} of your "
+            "active metrics to be ranked, and the comparison needs at least "
+            f"{config.ticker_page.score_builder.min_eligible_peers:,.0f} comparable "
+            "miners."
+        ),
+    ),
     "tool_d_quality_rank": ColumnHelp(
         meaning="A 0–100 resilience score — where this miner sits across the universe on the four resilience components (survival, cost, fragility, balance sheet).",
         calculation="Percentile rank of the average of the four resilience components, ×100. Only fully-scored, data-OK names are scored.",

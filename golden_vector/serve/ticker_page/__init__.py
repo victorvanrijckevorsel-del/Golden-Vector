@@ -13,6 +13,13 @@ from golden_vector.serve.ticker_page.behaviour import (
     render_market_behaviour_section,
     render_window_switcher,
 )
+from golden_vector.serve.ticker_page.compare import (
+    COMPARE_SECTION_ID,
+    SCORE_BUILDER_PAYLOAD_ID,
+    SCORE_BUILDER_STATE_PARAM,
+    build_score_builder_payload,
+    render_compare_section,
+)
 from golden_vector.serve.ticker_page.corporate import (
     GOLD_DIAL_PAYLOAD_ID,
     YAHOO_RESILIENCE_REASON,
@@ -36,17 +43,22 @@ from golden_vector.serve.ticker_page.sections import (
 )
 
 __all__ = [
+    "COMPARE_SECTION_ID",
     "GOLD_DIAL_PAYLOAD_ID",
     "LabRequest",
+    "SCORE_BUILDER_PAYLOAD_ID",
+    "SCORE_BUILDER_STATE_PARAM",
     "SIZING_PAYLOAD_ID",
     "TARGET_WINDOW_PARAM",
     "TickerPageData",
     "YAHOO_RESILIENCE_REASON",
     "build_gold_dial_payload",
+    "build_score_builder_payload",
     "build_sizing_payload",
     "clear_lab_render_cache",
     "load_ticker_page_data",
     "parse_lab_request",
+    "render_compare_section",
     "render_options_section",
     "resolve_options_availability",
     "resolve_target_window",

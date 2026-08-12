@@ -409,10 +409,12 @@ def test_ticker_detail_section_nav_lists_every_present_section(tmp_path):
     """Plan 15/23: sticky in-page anchors on the detail page — every anchor in
     the nav resolves to a real section id for the mining-ticker lens.
 
-    M3b: the nav is the redesigned five-entry list (requirements §2 order); the
+    M3b: the nav is the redesigned entry list (requirements §2 order); the
     old per-form entries (Reporting / Verification / Notes) collapsed into
     "Inputs & notes" and the composite-bearing "Corporate Finance" snapshot
-    became the "Corporate finance" section."""
+    became the "Corporate finance" section. M3e adds "Compare", which is listed
+    whenever the section renders — including when it is showing a
+    degraded-artifact notice."""
     _paths, app = _full_app(tmp_path)
     body = call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
     assert '<nav class="section-nav" aria-label="On this page">' in body
@@ -421,6 +423,7 @@ def test_ticker_detail_section_nav_lists_every_present_section(tmp_path):
         ("corporate-finance", "Corporate finance"),
         ("market-behaviour", "Market behaviour"),
         ("options", "Options"),
+        ("compare", "Compare"),
         ("inputs", "Inputs &amp; notes"),
     ):
         assert f'href="#{fragment}">{label}</a>' in body

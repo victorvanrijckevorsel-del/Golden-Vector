@@ -25,8 +25,10 @@ from golden_vector.serve.page_shell import _page_shell
 from golden_vector.serve.ui.components import page_header, section_nav
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ticker_page import (
+    COMPARE_SECTION_ID,
     LabRequest,
     TickerPageData,
+    render_compare_section,
     render_corporate_finance_section,
     render_currency_attribution_block,
     render_gold_dial_control,
@@ -55,13 +57,16 @@ def _detail_section_nav(
     has_page_sections: bool,
     has_behaviour: bool,
     has_options: bool,
+    has_compare: bool,
     has_manual: bool,
 ) -> str:
-    """The redesigned in-page nav (requirements §2 order, M3b).
+    """The redesigned in-page nav (requirements §2 order, M3b/M3e).
 
-    Exactly five entries, in page order, and each is listed ONLY when the
-    section it points at is actually rendered — a nav link to a section that
-    does not exist is a broken promise, not a placeholder.
+    Six entries, in page order, and each is listed ONLY when the section it
+    points at is actually rendered — a nav link to a section that does not
+    exist is a broken promise, not a placeholder. "Compare" follows the same
+    rule as the others: it is listed whenever the section renders, including
+    when the section is showing a degraded-artifact notice.
     """
     anchors: list[tuple[str, str]] = []
     if has_page_sections:
@@ -71,6 +76,8 @@ def _detail_section_nav(
         anchors.append(("market-behaviour", "Market behaviour"))
     if has_options:
         anchors.append(("options", "Options"))
+    if has_compare:
+        anchors.append((COMPARE_SECTION_ID, "Compare"))
     if has_manual:
         anchors.append(("inputs", "Inputs & notes"))
     return section_nav(anchors)
@@ -218,11 +225,26 @@ def render_detail_page(
         query_params=current_query,
     )
     has_page_sections = show_workspace_panels and ticker_page_data is not None
+
+    # --- 5. Compare on your own terms (rendered here, appended in page order)
+    # The section needs the percentiles artifact, so it exists exactly when the
+    # rest of the redesigned page does. It renders even when that artifact is
+    # degraded (as an honest notice), so the nav entry follows the same rule.
+    compare_html = ""
+    if has_page_sections:
+        assert ticker_page_data is not None
+        compare_html = render_compare_section(
+            ticker_page_data,
+            ticker=ticker,
+            finance_source=financials_source,
+            app_config=app_config,
+        )
     body.append(
         _detail_section_nav(
             has_page_sections=has_page_sections,
             has_behaviour=show_workspace_panels,
             has_options=bool(options_html),
+            has_compare=bool(compare_html),
             has_manual=show_manual_sections,
         )
     )
@@ -293,7 +315,11 @@ def render_detail_page(
     if options_html:
         body.append(options_html)
 
-    # --- 5. Inputs and notes ----------------------------------------------
+    # --- 5. Compare on your own terms --------------------------------------
+    if compare_html:
+        body.append(compare_html)
+
+    # --- 6. Inputs and notes ----------------------------------------------
     if show_manual_sections:
         body.append(
             _render_company_form(

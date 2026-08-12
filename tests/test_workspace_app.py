@@ -3048,7 +3048,8 @@ def _m3b_app(tmp_path):
 
 def test_ticker_page_sections_render_in_the_required_order(tmp_path):
     """Requirements §2: performance -> corporate finance -> market behaviour ->
-    options -> inputs. Asserted by POSITION, so a re-ordered page fails."""
+    options -> compare -> inputs. Asserted by POSITION, so a re-ordered page
+    fails."""
     _paths, app = _m3b_app(tmp_path)
     body = _call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
 
@@ -3058,6 +3059,7 @@ def test_ticker_page_sections_render_in_the_required_order(tmp_path):
         'id="corporate-finance"',
         'id="market-behaviour"',
         'id="options"',
+        'id="compare"',
         'id="inputs"',
     ):
         assert anchor in body, anchor
@@ -3065,18 +3067,19 @@ def test_ticker_page_sections_render_in_the_required_order(tmp_path):
     assert positions == sorted(positions), positions
 
 
-def test_ticker_page_nav_lists_exactly_the_five_redesigned_entries(tmp_path):
+def test_ticker_page_nav_lists_exactly_the_six_redesigned_entries(tmp_path):
     _paths, app = _m3b_app(tmp_path)
     body = _call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
     nav = body[body.index('<nav class="section-nav"') :]
     nav = nav[: nav.index("</nav>")]
 
-    assert nav.count("section-nav-link") == 5
+    assert nav.count("section-nav-link") == 6
     for fragment, label in (
         ("performance", "Performance"),
         ("corporate-finance", "Corporate finance"),
         ("market-behaviour", "Market behaviour"),
         ("options", "Options"),
+        ("compare", "Compare"),
         ("inputs", "Inputs &amp; notes"),
     ):
         assert f'href="#{fragment}">{label}</a>' in nav, fragment
@@ -3116,14 +3119,124 @@ def test_ticker_page_options_nav_entry_tracks_the_options_region():
     from golden_vector.serve.detail_page import _detail_section_nav
 
     with_options = _detail_section_nav(
-        has_page_sections=True, has_behaviour=True, has_options=True, has_manual=True
+        has_page_sections=True,
+        has_behaviour=True,
+        has_options=True,
+        has_compare=False,
+        has_manual=True,
     )
     without = _detail_section_nav(
-        has_page_sections=True, has_behaviour=True, has_options=False, has_manual=True
+        has_page_sections=True,
+        has_behaviour=True,
+        has_options=False,
+        has_compare=False,
+        has_manual=True,
     )
     assert 'href="#options">Options</a>' in with_options
     assert "Options" not in without
     assert without.count("section-nav-link") == 4
+
+
+def test_ticker_page_compare_nav_entry_tracks_the_compare_region():
+    """M3e: the Compare entry is listed only when the section is rendered."""
+    from golden_vector.serve.detail_page import _detail_section_nav
+
+    with_compare = _detail_section_nav(
+        has_page_sections=True,
+        has_behaviour=True,
+        has_options=True,
+        has_compare=True,
+        has_manual=True,
+    )
+    without = _detail_section_nav(
+        has_page_sections=True,
+        has_behaviour=True,
+        has_options=True,
+        has_compare=False,
+        has_manual=True,
+    )
+    assert 'href="#compare">Compare</a>' in with_compare
+    assert "Compare" not in without
+    # page order: Compare sits after Options and before Inputs & notes
+    assert with_compare.index("#compare") > with_compare.index("#options")
+    assert with_compare.index("#compare") < with_compare.index("#inputs")
+
+
+def test_ticker_page_compare_serve_layer_has_no_score_arithmetic():
+    """The M3e Compare section renders backend-resolved percentiles only.
+
+    Canon: every new serve surface gets a static-scan guardrail (clone of the
+    Tool-D/Tool-B serve-arithmetic tests). The exhaustive scan (an AST sweep for
+    ANY arithmetic operator) lives with the section's own tests; this is the
+    repo-wide sweep's entry for it, so the surface can never exist without one.
+    """
+    source = Path("golden_vector/serve/ticker_page/compare.py").read_text(encoding="utf-8")
+
+    # It obeys the persisted eligibility verdicts by name (display only).
+    assert "rank_eligible" in source
+    for forbidden in (
+        "oriented_percentile",
+        "sort_values",
+        "rank(",
+        ".fillna(",
+        ".combine_first(",
+        "weight *",
+        "* pct",
+        "/ budget",
+    ):
+        assert forbidden not in source, forbidden
+
+
+#: A realistic comparison definition as score-builder.js writes it: the client
+#: uses encodeURIComponent, so ":" and "," arrive percent-encoded.
+_SB_STATE = "ev_ebitda%3A40%2Cmargin_pct%3A60"
+_SB_DECODED = "ev_ebitda:40,margin_pct:60"
+
+
+def test_score_builder_state_param_is_carried_by_the_page_not_stripped(tmp_path):
+    """M3e: ``sb=`` is CLIENT-owned state. The server has no query whitelist, so
+    the only requirement is that it never drops it — the forms' ``return_to``
+    must round-trip it, or saving an input would silently reset the comparison
+    the user just built."""
+    _paths, app = _m3b_app(tmp_path)
+
+    body = _call_wsgi_app(app, method="GET", path=f"/ticker/NEM?sb={_SB_STATE}")["body"]
+
+    assert f'value="/ticker/NEM?sb={_SB_STATE}"' in body
+
+
+def test_score_builder_state_param_survives_a_rejected_post(tmp_path):
+    """The 400 re-render rebuilds the view from ``return_to``; unknown params
+    pass through untouched."""
+    _paths, app = _m3b_app(tmp_path)
+
+    response = _call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/company",
+        body=f"production_oz=not-a-number&return_to=%2Fticker%2FNEM%3Fsb%3D{_SB_STATE}",
+    )
+
+    assert response["status"].startswith("400")
+    assert f'value="/ticker/NEM?sb={_SB_STATE}"' in response["body"]
+    assert 'id="compare"' in response["body"]
+
+
+def test_score_builder_state_param_survives_a_successful_save(tmp_path):
+    """The post-save redirect adds ``saved=`` and keeps every other param."""
+    _paths, app = _m3b_app(tmp_path)
+
+    response = _call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/company",
+        body=f"aisc_usd_per_oz=1200&return_to=%2Fticker%2FNEM%3Fsb%3D{_SB_STATE}",
+    )
+
+    assert response["status"].startswith("303")
+    location = str(response["headers"]["Location"])
+    assert "saved=company" in location
+    assert f"sb={_SB_STATE}" in location or f"sb={_SB_DECODED}" in location
 
 
 def test_rejected_post_re_renders_the_same_page_including_the_new_sections(tmp_path):
