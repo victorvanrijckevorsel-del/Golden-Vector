@@ -32,18 +32,34 @@ from golden_vector.contracts.fundamentals import (
     FUNDAMENTALS_OFFICIAL_ARTIFACT_NAME,
     fetched_fundamentals_latest_path,
 )
+from golden_vector.contracts.ticker_page import (
+    TICKER_PAGE_SCHEMA_VERSIONS as _TICKER_PAGE_SCHEMA_VERSIONS,
+)
 from golden_vector.contracts.option_artifacts import (
+    ACTIVE_OPTION_SCHEMA_VERSION,
     OPTION_ARTIFACT_NAMES,
     OPTION_ARTIFACT_PREFIXES,
-    OPTION_ARTIFACT_SCHEMA_VERSION,
+    OPTION_TRADING_READ_SET,
     REQUIRED_OPTION_ARTIFACT_NAMES,
+    SUPPORTED_OPTION_SCHEMA_VERSIONS,
+    normalized_option_schema_version,
     option_artifact_latest_path,
+    option_artifact_names_for_version,
 )
 
 MODEL_STATE_MANIFEST_VERSION = 1
 CURRENT_FOUNDATION_UNAVAILABLE_MESSAGE = (
     "Current model-state manifest does not expose a usable immutable foundation artifact."
 )
+
+# The four ticker-page artifacts, keyed by manifest name -> file prefix in
+# ``paths.output_ticker_page_dir`` (plan §5.4). Names carry the ``ticker_page_``
+# prefix so the manifest namespace stays unambiguous; the on-disk prefix stays
+# the short one the producer writes.
+TICKER_PAGE_ARTIFACT_PREFIXES: dict[str, str] = {
+    f"ticker_page_{name}": name for name in sorted(_TICKER_PAGE_SCHEMA_VERSIONS)
+}
+TICKER_PAGE_ARTIFACT_NAMES: tuple[str, ...] = tuple(TICKER_PAGE_ARTIFACT_PREFIXES)
 
 REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "foundation",
@@ -53,6 +69,9 @@ REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "tool_c",
     "tool_d",
     *REQUIRED_OPTION_ARTIFACT_NAMES,
+    # Required from the same commit that ships the refresh stage, so the next
+    # refresh produces them and a missing set is loudly incomplete (plan §5.4).
+    *TICKER_PAGE_ARTIFACT_NAMES,
 )
 
 PLANNED_I3_ARTIFACTS: tuple[str, ...] = OPTION_ARTIFACT_NAMES
@@ -624,7 +643,24 @@ def _artifact_map(
     }
     for name in PLANNED_I3_ARTIFACTS:
         artifacts[name] = _optional_i3_parquet_artifact(paths=paths, name=name)
+    for name in TICKER_PAGE_ARTIFACT_NAMES:
+        artifacts[name] = _parquet_artifact(
+            paths=paths,
+            name=name,
+            path=_ticker_page_latest_path(paths, name),
+            required_for_complete=True,
+        )
     return artifacts
+
+
+def _ticker_page_latest_path(paths: ProjectPaths, name: str) -> Path:
+    return {
+        "ticker_page_gold_response": paths.latest_ticker_page_gold_response_path,
+        "ticker_page_percentiles": paths.latest_ticker_page_percentiles_path,
+        "ticker_page_performance": paths.latest_ticker_page_performance_path,
+        "ticker_page_research_series": paths.latest_ticker_page_research_series_path,
+        "ticker_page_fx_attribution": paths.latest_ticker_page_fx_attribution_path,
+    }[name]
 
 
 def _optional_i3_parquet_artifact(
@@ -1009,6 +1045,15 @@ def _alignment(
         expected_run_id=option_expected_run_id,
         expected_label=option_expected_label,
     )
+    # Ticker-page artifacts belong to the tool generation: they are derived from
+    # all four tool frames, so a mismatch means the page would render one
+    # generation's numbers under another's identity (plan §5.4).
+    ticker_page_ids, ticker_page_warnings = _refresh_alignment(
+        artifacts,
+        names=TICKER_PAGE_ARTIFACT_NAMES,
+        expected_run_id=foundation_id,
+        expected_label="foundation",
+    )
     portfolio_ids, portfolio_warnings = _refresh_alignment(
         artifacts,
         names=PORTFOLIO_ALIGNMENT_ARTIFACTS,
@@ -1017,6 +1062,7 @@ def _alignment(
     )
     warnings.extend(tool_warnings)
     warnings.extend(option_warnings)
+    warnings.extend(ticker_page_warnings)
     warnings.extend(portfolio_warnings)
     status = "OK" if not warnings else "WARN"
     result = {
@@ -1025,6 +1071,8 @@ def _alignment(
         "options_refresh_run_id": options_id,
         "tool_refresh_run_ids": tool_ids,
         "option_artifact_refresh_run_ids": option_ids,
+        "ticker_page_artifact_refresh_run_ids": ticker_page_ids,
+        "ticker_page_artifact_warnings": list(ticker_page_warnings),
         "portfolio_artifact_refresh_run_ids": portfolio_ids,
         "warnings": warnings,
         # Option-artifact alignment warnings, kept separate so option freshness can
@@ -1104,10 +1152,22 @@ def _resolve_option_carry_forward(
     if not isinstance(previous_artifacts, dict):
         return None, "The previous model-state manifest has no artifacts map."
 
+    # Per-generation validation (plan §6.4): the expected NAME SET and schema
+    # version come from the generation's OWN stamp, never from whatever version
+    # this build publishes. A v3 generation therefore stays fully usable and
+    # carry-forwardable under v4 code (legacy reader window) — the health
+    # machinery must never demand v4-only artifacts from a v3 generation.
+    generation_version, version_failure = _generation_option_schema_version(
+        previous_artifacts
+    )
+    if generation_version is None:
+        return None, version_failure
+    generation_names = option_artifact_names_for_version(generation_version)
+
     entries: dict[str, dict[str, Any]] = {}
     source_run_ids: set[str] = set()
     snapshot_run_ids: set[str] = set()
-    for name in OPTION_ARTIFACT_NAMES:
+    for name in generation_names:
         entry = previous_artifacts.get(name)
         if not isinstance(entry, dict):
             return None, f"Previous manifest lacks option artifact {name}."
@@ -1128,11 +1188,11 @@ def _resolve_option_carry_forward(
             return None, f"Could not hash previous option artifact {name}: {exc}."
         if actual_sha != expected_sha:
             return None, f"Previous option artifact {name} failed sha256 verification."
-        if not _schema_version_matches(entry.get("schema_version")):
+        if normalized_option_schema_version(entry.get("schema_version")) != generation_version:
             return None, (
                 f"Previous option artifact {name} has schema version "
-                f"{entry.get('schema_version')!r}; current is "
-                f"{OPTION_ARTIFACT_SCHEMA_VERSION}."
+                f"{entry.get('schema_version')!r}; the generation is "
+                f"v{generation_version}."
             )
         if (
             name in REQUIRED_OPTION_ARTIFACT_NAMES
@@ -1190,14 +1250,69 @@ def _resolve_option_carry_forward(
 
 
 def _schema_version_matches(value: object) -> bool:
-    # Strict parity with the serve reader's gate (audit N2): "3" or "3.0"
-    # match version 3; "3.9" must not.
-    text = _clean_string(value)
-    if not text:
-        return False
-    if text.endswith(".0"):
-        text = text[:-2]
-    return text == str(OPTION_ARTIFACT_SCHEMA_VERSION)
+    """True when a stamped option schema version is one this build can serve.
+
+    Set-aware (plan §6.4): both the active version and every legacy version in
+    the reader window pass, because a generation is validated against ITS OWN
+    name set, not the publisher's. Parity with the serve reader's gate (audit
+    N2): "3" or "3.0" match version 3; "3.9" must not.
+    """
+
+    version = normalized_option_schema_version(_clean_string(value))
+    return version in SUPPORTED_OPTION_SCHEMA_VERSIONS
+
+
+def _single_option_schema_version(artifacts: dict[str, Any]) -> bool:
+    """True when the required option artifacts all carry ONE schema version.
+
+    Same rule as ``_generation_option_schema_version`` (a generation has exactly
+    one option schema version), applied to the artifacts being published so
+    freshness and carry-forward can never disagree about the same manifest.
+    """
+
+    versions = {
+        normalized_option_schema_version(
+            (artifacts.get(name) or {}).get("schema_version")
+        )
+        for name in REQUIRED_OPTION_ARTIFACT_NAMES
+    }
+    return len(versions) == 1 and None not in versions
+
+
+def _generation_option_schema_version(
+    previous_artifacts: dict[str, Any],
+) -> tuple[int | None, str | None]:
+    """Resolve a published generation's own option schema version.
+
+    Read from the v3 BASE artifacts only — they exist in every supported
+    generation, so the version can be resolved before the name set is known.
+    """
+
+    versions: set[int] = set()
+    for name in OPTION_TRADING_READ_SET:
+        entry = previous_artifacts.get(name)
+        if not isinstance(entry, dict):
+            return None, f"Previous manifest lacks option artifact {name}."
+        version = normalized_option_schema_version(entry.get("schema_version"))
+        if version is None:
+            return None, (
+                f"Previous option artifact {name} has no readable schema version "
+                f"({entry.get('schema_version')!r})."
+            )
+        versions.add(version)
+    if len(versions) != 1:
+        return None, (
+            "Previous option artifacts mix schema versions: "
+            + ", ".join(str(version) for version in sorted(versions))
+            + "."
+        )
+    version = versions.pop()
+    if version not in SUPPORTED_OPTION_SCHEMA_VERSIONS:
+        return None, (
+            f"Previous option artifacts carry unsupported schema version {version}; "
+            f"supported: {', '.join(str(item) for item in SUPPORTED_OPTION_SCHEMA_VERSIONS)}."
+        )
+    return version, None
 
 
 def _carried_option_as_of_date(
@@ -1290,10 +1405,14 @@ def _freshness_domains(
         # Audit M3: OK must also mean CURRENT schema — otherwise a publisher
         # running over pre-bump artifacts claims OK while the serve reader
         # fails loud on the same files (dishonest split-brain).
+        # And MIXED versions are never OK: carry-forward resolves a generation's
+        # ONE version via _generation_option_schema_version and rejects a mix, so
+        # freshness must reject it too or the two disagree about the same
+        # manifest (freshness says OK, carry-forward says unusable).
         required_current_schema = all(
             _schema_version_matches(artifacts[name].get("schema_version"))
             for name in REQUIRED_OPTION_ARTIFACT_NAMES
-        )
+        ) and _single_option_schema_version(artifacts)
         if required_usable and required_current_schema:
             option_domain = {
                 "status": OPTION_FRESHNESS_OK,
@@ -1316,7 +1435,7 @@ def _freshness_domains(
                 "status": OPTION_FRESHNESS_UNAVAILABLE,
                 "reason": (
                     "Option artifacts on disk predate the current schema "
-                    f"(v{OPTION_ARTIFACT_SCHEMA_VERSION}); run python main.py "
+                    f"(v{ACTIVE_OPTION_SCHEMA_VERSION}); run python main.py "
                     "refresh to rebuild them."
                 ),
             }
@@ -1678,6 +1797,8 @@ def _tool_latest_directory_and_prefix(paths: ProjectPaths, name: str) -> tuple[P
         return paths.output_fundamentals_dir, FETCHED_FUNDAMENTALS_PREFIX
     if name in OPTION_ARTIFACT_PREFIXES:
         return paths.output_options_dir, OPTION_ARTIFACT_PREFIXES[name]
+    if name in TICKER_PAGE_ARTIFACT_PREFIXES:
+        return paths.output_ticker_page_dir, TICKER_PAGE_ARTIFACT_PREFIXES[name]
     if name in PORTFOLIO_ARTIFACTS:
         return paths.output_portfolio_dir, name
     if name == "portfolio_reconciliation_export_csv":

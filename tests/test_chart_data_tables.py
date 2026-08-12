@@ -8,9 +8,6 @@ row counts must match the chart exactly and no row may be truncated.
 
 from __future__ import annotations
 
-import json
-import re
-from html import unescape
 
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.serve.workspace import create_workspace_app
@@ -45,44 +42,20 @@ def _disclosure_after(html: str, marker: str) -> str:
     return html[start:stop]
 
 
-def _overlay_payload(html: str) -> dict:
-    match = re.search(r'class="overlay-chart" data-overlay="([^"]*)"', html)
-    assert match, "overlay chart data attribute missing"
-    return json.loads(unescape(match.group(1)))
-
-
 def _row_count(block: str) -> int:
     body = block[block.index("<tbody>") : block.index("</tbody>")]
     return body.count("<tr>")
 
 
-def test_overlay_chart_is_followed_by_a_data_table(tmp_path):
-    html = _detail_html(tmp_path)
-    block = _disclosure_after(html, 'class="overlay-chart"')
-    assert "<summary>Chart data (table)</summary>" in block
-    assert 'class="table-region"' in block
-    assert 'id="chart-data-overlay-nem-' in block
-
-
-def test_overlay_table_has_one_row_per_charted_date(tmp_path):
-    html = _detail_html(tmp_path)
-    payload = _overlay_payload(html)
-    block = _disclosure_after(html, 'class="overlay-chart"')
-    assert _row_count(block) == len(payload["ticks"])
-    # Every series in the payload is a column.
-    for entry in payload["series"]:
-        assert f'<th scope="col">{entry["label"]}</th>' in block
-
-
-def test_overlay_table_shows_the_same_values_as_the_crosshair(tmp_path):
-    html = _detail_html(tmp_path)
-    payload = _overlay_payload(html)
-    block = _disclosure_after(html, 'class="overlay-chart"')
-    entry = payload["series"][0]
-    date_key = sorted(entry["byDate"])[len(entry["byDate"]) // 2]
-    value, pct = entry["byDate"][date_key][1], entry["byDate"][date_key][2]
-    assert date_key in block
-    assert f"{value:.1f} ({pct})" in unescape(block)
+# The crosshair overlay chart was removed with the ticker-page redesign (M3c):
+# the locked requirements keep ONE performance chart, rendered by
+# serve/ticker_page/sections.py from the persisted performance artifact. Its
+# table<->chart equivalence is pinned at render level in
+# tests/test_ticker_page_sections.py (the details twin is asserted cell-by-cell
+# against the fixture rows), so the three route-level overlay tests that lived
+# here tested removed markup and were deleted rather than retargeted — a
+# route-level twin assertion needs a published five-artifact generation, which
+# the post-refresh browser gate covers on the real page.
 
 
 def test_rug_strip_tables_match_the_tick_count(tmp_path):

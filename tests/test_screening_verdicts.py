@@ -1,6 +1,7 @@
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.screening.verdicts import (
+    FORWARD_PE_NON_POSITIVE_CODE,
     compute_fundamental_checks,
     determine_screening_verdict,
 )
@@ -54,7 +55,7 @@ def test_compute_fundamental_checks_counts_visible_passes():
             "data_complete": "PASS",
             "aisc": "PASS",
             "margin": "PASS",
-            "fcf_yield": "PASS",
+            "aisc_margin_yield": "PASS",
             "reserve_life": "FAIL",
             "leverage": "PASS",
         },
@@ -67,6 +68,7 @@ def test_compute_fundamental_checks_counts_visible_passes():
     assert result["fundamental_check_score"] == 85.7143
     assert result["fundamental_check_summary"].startswith("6/7:")
     assert "Reserve life FAIL" in result["fundamental_check_summary"]
+    assert result["fundamental_check_fail_codes"] == "RESERVE_LIFE_FAIL"
 
 
 def test_compute_fundamental_checks_marks_missing_forward_pe_as_not_passed():
@@ -77,7 +79,7 @@ def test_compute_fundamental_checks_marks_missing_forward_pe_as_not_passed():
             "data_complete": "FAIL",
             "aisc": "N/A",
             "margin": "N/A",
-            "fcf_yield": "N/A",
+            "aisc_margin_yield": "N/A",
             "reserve_life": "N/A",
             "leverage": "N/A",
         },
@@ -88,6 +90,8 @@ def test_compute_fundamental_checks_marks_missing_forward_pe_as_not_passed():
     assert result["fundamental_checks_passed"] == 0
     assert result["fundamental_check_score"] == 0.0
     assert "Forward P/E N/A" in result["fundamental_check_summary"]
+    # N/A is not a failure — only the genuinely failed check earns a code.
+    assert result["fundamental_check_fail_codes"] == "DATA_COMPLETE_FAIL"
 
 
 def test_compute_fundamental_checks_uses_strong_pe_cutoff_not_watchlist_cutoff():
@@ -98,7 +102,7 @@ def test_compute_fundamental_checks_uses_strong_pe_cutoff_not_watchlist_cutoff()
             "data_complete": "PASS",
             "aisc": "PASS",
             "margin": "PASS",
-            "fcf_yield": "PASS",
+            "aisc_margin_yield": "PASS",
             "reserve_life": "PASS",
             "leverage": "PASS",
         },
@@ -114,3 +118,65 @@ def test_compute_fundamental_checks_uses_strong_pe_cutoff_not_watchlist_cutoff()
     ) == "WATCHLIST"
     assert result["fundamental_checks_passed"] == 6
     assert "Forward P/E FAIL" in result["fundamental_check_summary"]
+
+
+def test_compute_fundamental_checks_emits_forward_pe_fail_code():
+    thresholds = load_app_config(ProjectPaths.discover()).app.screening_params.verdict_thresholds
+    all_pass_layer1 = {
+        "data_complete": "PASS",
+        "aisc": "PASS",
+        "margin": "PASS",
+        "aisc_margin_yield": "PASS",
+        "reserve_life": "PASS",
+        "leverage": "PASS",
+    }
+
+    failing = compute_fundamental_checks(
+        layer1_check_statuses=all_pass_layer1,
+        forward_pe=thresholds.strong_candidate_forward_pe_max + 1.0,
+        thresholds=thresholds,
+    )
+    assert failing["fundamental_check_fail_codes"] == "FORWARD_PE_FAIL"
+
+    healthy = compute_fundamental_checks(
+        layer1_check_statuses=all_pass_layer1,
+        forward_pe=thresholds.strong_candidate_forward_pe_max - 1.0,
+        thresholds=thresholds,
+    )
+    assert healthy["fundamental_check_fail_codes"] is None
+
+
+def test_non_positive_forward_pe_earns_its_own_code_not_the_threshold_code():
+    """Two different failures, two different codes: a P/E built on non-positive
+    earnings is not a multiple that was compared with the cut-off. Consumers
+    route on the code, so the distinction must exist HERE and not be re-derived
+    downstream from the value. The FAIL status itself is unchanged, so the
+    counts and the display summary keep their existing meaning."""
+    thresholds = load_app_config(ProjectPaths.discover()).app.screening_params.verdict_thresholds
+    all_pass_layer1 = {
+        "data_complete": "PASS",
+        "aisc": "PASS",
+        "margin": "PASS",
+        "aisc_margin_yield": "PASS",
+        "reserve_life": "PASS",
+        "leverage": "PASS",
+    }
+
+    for value in (-4.2, 0.0):
+        result = compute_fundamental_checks(
+            layer1_check_statuses=all_pass_layer1,
+            forward_pe=value,
+            thresholds=thresholds,
+        )
+        assert result["fundamental_check_fail_codes"] == FORWARD_PE_NON_POSITIVE_CODE, value
+        # the status vocabulary is untouched: it is still one failed check
+        assert "Forward P/E FAIL" in result["fundamental_check_summary"], value
+        assert result["fundamental_checks_passed"] == 6, value
+
+    # the control: a positive P/E above the cut-off keeps the threshold code
+    above = compute_fundamental_checks(
+        layer1_check_statuses=all_pass_layer1,
+        forward_pe=thresholds.strong_candidate_forward_pe_max + 1.0,
+        thresholds=thresholds,
+    )
+    assert above["fundamental_check_fail_codes"] == "FORWARD_PE_FAIL"

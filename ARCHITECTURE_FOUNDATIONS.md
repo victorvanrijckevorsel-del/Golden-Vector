@@ -36,3 +36,21 @@ The checklist alone isn't enough — debt creeps back without a gate. So:
 - A "warning" that exists to reconcile states that shouldn't be able to diverge in the first place.
 
 **If the next project starts with foundations 1-9 as conventions and runs the milestone checkpoint, the day-long retrofit does not happen.**
+
+## The one sanctioned exception: interactive what-if in the browser (Victor, 2026-08-11)
+
+Foundation 1 ("compute once, persist, serve reads") has exactly one approved exception, decided
+by Victor for the ticker-page redesign: **instant what-if controls** (the gold dial, the
+opt-in score builder, the option sizing ladder) may combine backend-resolved numbers in
+client-side JavaScript, because a slider that round-trips per tick is not the approved product.
+
+The exception is narrow by construction, and anything outside these bounds is a new decision:
+- Only three first-party modules: `gold-dial.js`, `score-builder.js`, `option-sizing.js`.
+- Inputs are exclusively backend-computed, persisted, page-embedded values (line coefficients,
+  constants, percentiles, contract fields) — no fetches, no client-derived state reuse.
+- Every formula exists once, in its module, mirroring a named backend function including its
+  guard semantics; the backend remains the reference implementation.
+- Locked by backend-parity fixtures (pytest) AND real-browser behavioural tests (Playwright
+  driving the actual modules), not by convention.
+- Server-rendered output stays complete and correct at spot without JavaScript.
+- Everything analytical that does not need per-tick interactivity stays under Foundation 1.

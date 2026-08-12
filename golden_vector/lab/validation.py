@@ -885,15 +885,15 @@ def reconstruct_tool_c_scores_at(t: pd.Period, ctx: ToolCReconContext) -> pd.Dat
         weekly_t,
         rolling_weeks=tool_c_cfg.regime_rolling_weeks,
         min_weeks=tool_c_cfg.regime_min_weeks,
-        downside_hit_rate_threshold=tool_c_cfg.downside_hit_rate_threshold,
-        upside_hit_rate_threshold=tool_c_cfg.upside_hit_rate_threshold,
+        downside_hit_rate_log_threshold=tool_c_cfg.downside_hit_rate_log_threshold,
+        upside_hit_rate_log_threshold=tool_c_cfg.upside_hit_rate_log_threshold,
     )
     relative_t = compute_relative_behavior_metrics(
         weekly_returns=weekly_t,
         gold_regimes=gold_regimes_t,
         min_events=tool_c_cfg.min_events,
-        downside_hit_rate_threshold=tool_c_cfg.downside_hit_rate_threshold,
-        upside_hit_rate_threshold=tool_c_cfg.upside_hit_rate_threshold,
+        downside_hit_rate_log_threshold=tool_c_cfg.downside_hit_rate_log_threshold,
+        upside_hit_rate_log_threshold=tool_c_cfg.upside_hit_rate_log_threshold,
     )
     tool_c_t = build_tool_c_output_frame(
         tool_a_latest=tool_a_t,

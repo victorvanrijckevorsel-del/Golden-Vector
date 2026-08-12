@@ -529,3 +529,269 @@ def test_history_persist_refuses_to_shrink_accumulated_dates(tmp_path):
     assert (
         load_option_signal_history(FakePaths())["as_of_date"].astype(str).nunique() == 3
     )
+
+
+def test_new_history_observations_carry_implied_move_and_source_expiry(tmp_path):
+    """Plan §6.2 / P7: new canonical observations carry the widened fields."""
+
+    from golden_vector.hedge.option_signals import LONG_HISTORY_COLUMNS
+
+    app_config = load_app_config(build_test_paths(tmp_path)).app
+    feature = _feature("AEM", skew_60=0.08, skew_90=0.07)
+    feature.update(
+        {
+            "implied_move_90d": 0.062,
+            "source_expiration_90d": "2026-09-18",
+            "source_dte_90d": 92,
+        }
+    )
+    artifacts = build_option_signal_artifacts(
+        app_config=app_config,
+        options_features=pd.DataFrame(
+            [
+                feature,
+                _feature("GDX", skew_60=0.03, skew_90=0.02, vehicle="benchmark_etf"),
+                _feature("GDXJ", skew_60=0.04, skew_90=0.03, vehicle="benchmark_etf"),
+            ]
+        ),
+        contract_metrics=tuple(
+            metric
+            for ticker in ("AEM", "GDX", "GDXJ")
+            for metric in _metrics(ticker, bid=3.0, ask=3.2)
+        ),
+        manifest={"refresh_run_id": "options-run", "as_of_date": "2026-06-08"},
+    )
+    history = artifacts.next_history
+    for column in ("implied_move", "source_expiration", "source_dte"):
+        assert column in LONG_HISTORY_COLUMNS
+        assert column in history.columns
+
+    aem = history[(history["ticker"] == "AEM") & (history["signal_horizon_days"] == 90)]
+    assert len(aem.index) == 1
+    row = aem.iloc[0]
+    assert row["implied_move"] == pytest.approx(0.062)
+    assert row["source_expiration"] == "2026-09-18"
+    assert int(row["source_dte"]) == 92
+
+    # Control: a horizon with no emitted expiry keys records explicit unknowns,
+    # never a silently wrong expiry.
+    other = history[(history["ticker"] == "AEM") & (history["signal_horizon_days"] != 90)]
+    if not other.empty:
+        assert other["source_expiration"].isna().all()
+
+
+def test_history_shrink_guard_is_per_ticker_horizon_key(tmp_path):
+    """P7 regression: the OLD global date-count guard would have passed this."""
+
+    class FakePaths:
+        output_options_dir = tmp_path
+
+    from golden_vector.hedge.option_signals import (
+        load_option_signal_history,
+        persist_option_signal_history,
+    )
+
+    def frame(rows):
+        return pd.DataFrame(
+            [
+                {
+                    "ticker": ticker,
+                    "as_of_date": date,
+                    "signal_horizon_days": 90,
+                    "atm_iv": 0.35,
+                }
+                for ticker, date in rows
+            ]
+        )
+
+    persist_option_signal_history(
+        paths=FakePaths(),
+        history=frame(
+            [
+                ("NEM", "2026-06-10"),
+                ("NEM", "2026-06-11"),
+                ("AEM", "2026-06-10"),
+                ("AEM", "2026-06-11"),
+            ]
+        ),
+    )
+
+    # AEM loses BOTH its dates while two NEW global dates arrive: the global
+    # distinct-date count GROWS (2 -> 4), so the old guard would have allowed
+    # this silent per-ticker wipe.
+    shrinking = frame(
+        [
+            ("NEM", "2026-06-10"),
+            ("NEM", "2026-06-11"),
+            ("NEM", "2026-06-12"),
+            ("NEM", "2026-06-13"),
+        ]
+    )
+    assert shrinking["as_of_date"].nunique() > 2  # the old guard's metric grew
+    with pytest.raises(ValueError, match="destroy accumulated IV history"):
+        persist_option_signal_history(paths=FakePaths(), history=shrinking)
+
+    # Control: keeping every existing key and adding a date is accepted.
+    persist_option_signal_history(
+        paths=FakePaths(),
+        history=frame(
+            [
+                ("NEM", "2026-06-10"),
+                ("NEM", "2026-06-11"),
+                ("NEM", "2026-06-12"),
+                ("AEM", "2026-06-10"),
+                ("AEM", "2026-06-11"),
+            ]
+        ),
+    )
+    stored = load_option_signal_history(FakePaths())
+    assert len(stored.index) == 5
+
+    # A DIFFERENT horizon for an existing ticker/date is a new key, not a rescue.
+    with pytest.raises(ValueError, match="destroy accumulated IV history"):
+        persist_option_signal_history(
+            paths=FakePaths(),
+            history=pd.DataFrame(
+                [
+                    {
+                        "ticker": "AEM",
+                        "as_of_date": "2026-06-10",
+                        "signal_horizon_days": 180,
+                        "atm_iv": 0.35,
+                    },
+                    {
+                        "ticker": "NEM",
+                        "as_of_date": "2026-06-10",
+                        "signal_horizon_days": 90,
+                        "atm_iv": 0.35,
+                    },
+                    {
+                        "ticker": "NEM",
+                        "as_of_date": "2026-06-11",
+                        "signal_horizon_days": 90,
+                        "atm_iv": 0.35,
+                    },
+                    {
+                        "ticker": "NEM",
+                        "as_of_date": "2026-06-12",
+                        "signal_horizon_days": 90,
+                        "atm_iv": 0.35,
+                    },
+                ]
+            ),
+        )
+
+
+def test_widened_schema_merges_with_a_legacy_narrow_history(tmp_path):
+    """Old rows lack the three new columns; they must load and survive as NA."""
+
+    class FakePaths:
+        output_options_dir = tmp_path
+
+    from golden_vector.hedge.option_signals import (
+        _append_history,
+        _normalize_history,
+        load_option_signal_history,
+        persist_option_signal_history,
+    )
+
+    legacy = pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "as_of_date": "2026-06-10",
+                "quote_snapshot_run_id": "old-run",
+                "benchmark_symbol": "GDX",
+                "signal_horizon_days": 90,
+                "skew_residual": 0.02,
+                "atm_iv": 0.31,
+                "iv_rv_ratio": 1.2,
+            }
+        ]
+    )
+    persist_option_signal_history(paths=FakePaths(), history=legacy)
+    loaded = load_option_signal_history(FakePaths())
+    assert loaded.iloc[0]["implied_move"] is None or pd.isna(loaded.iloc[0]["implied_move"])
+    assert loaded.iloc[0]["atm_iv"] == pytest.approx(0.31)
+
+    widened = _normalize_history(
+        pd.DataFrame(
+            [
+                {
+                    "ticker": "NEM",
+                    "as_of_date": "2026-06-11",
+                    "quote_snapshot_run_id": "new-run",
+                    "benchmark_symbol": "GDX",
+                    "signal_horizon_days": 90,
+                    "skew_residual": 0.03,
+                    "atm_iv": 0.33,
+                    "iv_rv_ratio": 1.3,
+                    "implied_move": 0.07,
+                    "source_expiration": "2026-09-18",
+                    "source_dte": 92,
+                }
+            ]
+        )
+    )
+    merged = _append_history(loaded, widened)
+    persist_option_signal_history(paths=FakePaths(), history=merged)
+    stored = load_option_signal_history(FakePaths()).set_index("as_of_date")
+    # Legacy row untouched.
+    assert stored.loc["2026-06-10", "atm_iv"] == pytest.approx(0.31)
+    assert stored.loc["2026-06-10", "skew_residual"] == pytest.approx(0.02)
+    assert pd.isna(stored.loc["2026-06-10", "source_dte"])
+    # New row keeps the widened fields.
+    assert stored.loc["2026-06-11", "implied_move"] == pytest.approx(0.07)
+    assert stored.loc["2026-06-11", "source_expiration"] == "2026-09-18"
+
+
+def test_history_carries_the_producers_real_expiry_and_dte_end_to_end(tmp_path):
+    """The keys compute_options_features actually emits reach the history row."""
+
+    from datetime import date
+
+    from golden_vector.features.options import compute_options_features
+
+    produced = compute_options_features(
+        chain=pd.read_parquet("tests/fixtures/options/aem_chain_20260529.parquet"),
+        underlying_price=50.0,
+        risk_free_rate=0.04,
+        price_history=pd.DataFrame(),
+        as_of_date=date(2026, 5, 29),
+        target_horizons_days=(90,),
+    )
+    expected_expiration = produced["source_expiration_90d"]
+    expected_dte = produced["source_dte_90d"]
+    assert expected_expiration is not None and expected_dte is not None
+
+    app_config = load_app_config(build_test_paths(tmp_path)).app
+    feature = _feature("AEM", skew_60=0.08, skew_90=0.07)
+    # Overlay ONLY the producer's real provenance keys onto the signal fixture.
+    feature.update(
+        {
+            "source_expiration_90d": expected_expiration,
+            "source_dte_90d": expected_dte,
+        }
+    )
+    artifacts = build_option_signal_artifacts(
+        app_config=app_config,
+        options_features=pd.DataFrame(
+            [
+                feature,
+                _feature("GDX", skew_60=0.03, skew_90=0.02, vehicle="benchmark_etf"),
+                _feature("GDXJ", skew_60=0.04, skew_90=0.03, vehicle="benchmark_etf"),
+            ]
+        ),
+        contract_metrics=tuple(
+            metric
+            for ticker in ("AEM", "GDX", "GDXJ")
+            for metric in _metrics(ticker, bid=3.0, ask=3.2)
+        ),
+        manifest={"refresh_run_id": "options-run", "as_of_date": "2026-06-08"},
+    )
+    history = artifacts.next_history
+    row = history[
+        (history["ticker"] == "AEM") & (history["signal_horizon_days"] == 90)
+    ].iloc[0]
+    assert row["source_expiration"] == expected_expiration
+    assert int(row["source_dte"]) == int(expected_dte)

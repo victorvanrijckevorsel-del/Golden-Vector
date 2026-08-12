@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import date
 
 import pandas as pd
 
 from golden_vector.app.model_state import (
+    TICKER_PAGE_ARTIFACT_NAMES,
     build_current_model_state_manifest,
     load_current_model_state_manifest,
     read_current_model_json,
@@ -23,6 +25,14 @@ from golden_vector.contracts.option_artifacts import (
     option_artifact_run_stamped_path,
 )
 from golden_vector.common.parquet import write_parquet_atomic
+from golden_vector.contracts.ticker_page import (
+    FX_ATTRIBUTION_COLUMNS,
+    GOLD_RESPONSE_COLUMNS,
+    PERCENTILES_COLUMNS,
+    PERFORMANCE_COLUMNS,
+    RESEARCH_SERIES_COLUMNS,
+    TICKER_PAGE_SCHEMA_VERSIONS,
+)
 from golden_vector.ingestion.persist import persist_tool_a_outputs, persist_tool_b_outputs
 from golden_vector.ingestion.persist_tool_c import persist_tool_c_outputs
 from golden_vector.ingestion.persist_tool_d import persist_tool_d_outputs
@@ -65,6 +75,24 @@ def test_model_state_manifest_records_complete_aligned_build(tmp_path):
     assert payload["artifacts"]["option_candidate_slots"]["immutable"] is True
     assert payload["artifacts"]["option_candidate_slots"]["row_count"] == 1
     assert payload["stage_timings"]["tool_a"]["duration_seconds"] == 1.25
+    for name in TICKER_PAGE_ARTIFACT_NAMES:
+        assert payload["artifacts"][name]["required_for_complete"] is True
+        assert payload["artifacts"][name]["immutable"] is True
+
+
+def test_model_state_manifest_requires_the_ticker_page_artifacts(tmp_path):
+    """Same build as the complete case minus ticker-page: now 'incomplete', and
+    every missing ticker-page artifact is named."""
+
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(paths, refresh_run_id="refresh-A", include_ticker_page=False)
+
+    payload = build_current_model_state_manifest(paths=paths, config_hash="config-hash")
+
+    assert payload["state"] == "incomplete"
+    for name in TICKER_PAGE_ARTIFACT_NAMES:
+        assert f"Required artifact is missing: {name}." in payload["warnings"]
 
 
 def test_model_state_manifest_warns_when_tool_c_and_tool_d_are_missing(tmp_path):
@@ -665,6 +693,7 @@ def _write_tool_outputs(
     include_tool_c: bool = True,
     include_tool_d: bool = True,
     include_option_artifacts: bool = True,
+    include_ticker_page: bool = True,
 ) -> None:
     tool_a_context = RunContext.start(
         paths=paths,
@@ -758,6 +787,70 @@ def _write_tool_outputs(
         )
     if include_option_artifacts:
         _write_i3_option_artifacts(paths, refresh_run_id=refresh_run_id)
+    if include_ticker_page:
+        _write_ticker_page_artifacts(paths, refresh_run_id=refresh_run_id)
+
+
+TICKER_PAGE_ARTIFACT_SPECS = {
+    "gold_response": (
+        "latest_ticker_page_gold_response_path",
+        GOLD_RESPONSE_COLUMNS,
+        {"ticker": "NEM", "finance_source": "our"},
+    ),
+    "percentiles": (
+        "latest_ticker_page_percentiles_path",
+        PERCENTILES_COLUMNS,
+        {"ticker": "NEM", "finance_source": "our", "metric_key": "margin_pct"},
+    ),
+    "performance": (
+        "latest_ticker_page_performance_path",
+        PERFORMANCE_COLUMNS,
+        {
+            "ticker": "NEM",
+            "series": "stock",
+            "view": "rebased",
+            "horizon": "1Y",
+            "date": "2026-06-01",
+        },
+    ),
+    "research_series": (
+        "latest_ticker_page_research_series_path",
+        RESEARCH_SERIES_COLUMNS,
+        {"ticker": "NEM", "kind": "weekly", "date": "2026-06-01"},
+    ),
+    # Feature A: the fifth ticker artifact is part of a complete generation.
+    "fx_attribution": (
+        "latest_ticker_page_fx_attribution_path",
+        FX_ATTRIBUTION_COLUMNS,
+        {"ticker": "NEM", "horizon": "1Y"},
+    ),
+}
+
+
+def _write_ticker_page_artifacts(paths: ProjectPaths, *, refresh_run_id: str) -> None:
+    """Write the four ticker-page artifacts (run-stamped immutable + alias).
+
+    They are REQUIRED artifacts, so a build without them is 'incomplete'.
+    """
+
+    source_run_id = "20260601T000000Z-ticker-page"
+    paths.output_ticker_page_dir.mkdir(parents=True, exist_ok=True)
+    for prefix, (path_attr, columns, keys) in TICKER_PAGE_ARTIFACT_SPECS.items():
+        row: dict[str, object] = dict.fromkeys(columns, None)
+        row.update(keys)
+        row.update(
+            {
+                "schema_version": TICKER_PAGE_SCHEMA_VERSIONS[prefix],
+                "snapshot_refresh_run_id": refresh_run_id,
+                "source_run_id": source_run_id,
+                "parent_refresh_id": "parent-refresh-A",
+                "config_hash": "config-hash",
+            }
+        )
+        frame = pd.DataFrame([row])
+        run_stamped = paths.output_ticker_page_dir / f"{prefix}_latest_{source_run_id}.parquet"
+        frame.to_parquet(run_stamped, index=False)
+        shutil.copyfile(run_stamped, getattr(paths, path_attr))
 
 
 def _write_i3_option_artifacts(paths: ProjectPaths, *, refresh_run_id: str) -> None:
@@ -821,3 +914,49 @@ def _write_portfolio_outputs(paths: ProjectPaths, *, refresh_run_id: str) -> Non
     csv_run_path.parent.mkdir(parents=True, exist_ok=True)
     csv.to_csv(csv_run_path, index=False)
     csv.to_csv(paths.latest_portfolio_reconciliation_export_csv_path, index=False)
+
+
+def _freshness_artifacts(versions: dict[str, int]) -> dict[str, dict]:
+    artifacts = {
+        "foundation": {"usable": True, "snapshot_as_of_date": "2026-08-10"},
+        "options": {"usable": True, "as_of_date": "2026-08-10"},
+    }
+    for name in REQUIRED_OPTION_ARTIFACT_NAMES:
+        artifacts[name] = {
+            "usable": True,
+            "schema_version": versions[name],
+            "source_run_ids": ["20260810T120000Z-refresh-aaaaaaaa"],
+        }
+    return artifacts
+
+
+def _option_domain(artifacts, tmp_path):
+    from golden_vector.app.model_state import _freshness_domains
+
+    return _freshness_domains(
+        paths=build_test_paths(tmp_path),
+        artifacts=artifacts,
+        option_publish_block=None,
+        carry=None,
+        carry_failure=None,
+    )["option_artifacts"]
+
+
+def test_mixed_option_schema_versions_are_never_reported_fresh(tmp_path):
+    """A manifest mixing v3 and v4 must not claim OK.
+
+    Both versions are individually SUPPORTED, so the per-artifact check passes;
+    only the single-version rule catches the mix. Carry-forward already rejects
+    a mixed generation, so freshness saying OK would be a split brain.
+    """
+
+    versions = dict.fromkeys(REQUIRED_OPTION_ARTIFACT_NAMES, 4)
+    versions[REQUIRED_OPTION_ARTIFACT_NAMES[0]] = 3
+    domain = _option_domain(_freshness_artifacts(versions), tmp_path)
+    assert domain["status"] != "OK"
+
+    # Control: one uniform supported version still reports OK.
+    uniform = _option_domain(
+        _freshness_artifacts(dict.fromkeys(REQUIRED_OPTION_ARTIFACT_NAMES, 4)), tmp_path
+    )
+    assert uniform["status"] == "OK"

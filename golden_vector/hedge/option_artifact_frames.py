@@ -9,7 +9,16 @@ from typing import Any, Literal, cast
 import pandas as pd
 
 from golden_vector.common.strings import normalize_ticker_series
-from golden_vector.contracts.option_artifacts import OPTION_ARTIFACT_SCHEMA_VERSION
+from golden_vector.contracts.config_models import OptionHistoryQualityConfig
+from golden_vector.contracts.option_artifacts import (
+    ACTIVE_OPTION_SCHEMA_VERSION,
+    CHAIN_HISTORY_SCHEMA_COLUMN,
+    OPTION_AVAILABILITY_SCHEMA_COLUMN,
+)
+from golden_vector.hedge.chain_history import build_chain_history_daily
+from golden_vector.hedge.option_availability import build_option_availability
+from golden_vector.features.black_scholes import black_scholes_greeks
+from golden_vector.features.options_chain import CALENDAR_DAYS_PER_YEAR
 from golden_vector.hedge.candidate_puts import (
     CandidateSlotStatus,
     OptionCandidate,
@@ -103,6 +112,9 @@ def build_option_artifact_frames(
     benchmark_tickers: tuple[str, ...] = (),
     tool_a_refresh_id: str = "",
     tool_b_refresh_id: str = "",
+    universe_tickers: tuple[str, ...] = (),
+    previous_chain_history: pd.DataFrame | None = None,
+    history_quality: OptionHistoryQualityConfig | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Return all persisted option artifact frames for one option-artifact run."""
 
@@ -128,13 +140,23 @@ def build_option_artifact_frames(
         "option_liquidity_measurements": _liquidity_measurements_frame(
             built.overview.liquidity_measurements
         ),
-        "option_candidate_slots": _candidate_slots_frame(
-            built.candidate_slots,
-            built.call_candidate_slots,
+        # Greeks are stamped on SELECTED candidate / slot rows only (plan §6.4) —
+        # never on the full option_contract_metrics chain frame.
+        "option_candidate_slots": _add_candidate_greeks(
+            _candidate_slots_frame(
+                built.candidate_slots,
+                built.call_candidate_slots,
+            ),
+            prefix="candidate_",
+            risk_free_rate=risk_free_rate,
         ),
-        "option_selected_candidates": _selected_candidates_frame(
-            built.candidate_grids,
-            built.call_candidate_grids,
+        "option_selected_candidates": _add_candidate_greeks(
+            _selected_candidates_frame(
+                built.candidate_grids,
+                built.call_candidate_grids,
+            ),
+            prefix="",
+            risk_free_rate=risk_free_rate,
         ),
         "option_trading_overview": overview_frame,
         "candidate_finder_inputs": _candidate_finder_inputs_frame(
@@ -147,6 +169,18 @@ def build_option_artifact_frames(
         "option_skew_curve_points": signals.skew_curve_points,
         "option_oi_strike_points": signals.oi_strike_points,
         "option_signal_history_points": signals.history_points,
+        # v4 additions (plan §6.1 / §8). Both are built here so every publisher
+        # of the artifact set emits the complete set for ACTIVE_OPTION_SCHEMA_VERSION.
+        "option_chain_history_daily": _chain_history_frame(
+            options_features=options_features,
+            previous_history=previous_chain_history,
+            quality=history_quality or OptionHistoryQualityConfig(),
+            published_run_id=source_run_id,
+        ),
+        "option_availability": _availability_frame(
+            manifest=manifest,
+            universe_tickers=universe_tickers,
+        ),
     }
     return {
         name: _stamp_frame(
@@ -540,6 +574,77 @@ def _summary_signal_horizon(signal_summary: pd.DataFrame | None) -> int | None:
     return int(values.iloc[0]) if not values.empty else None
 
 
+GREEKS_MODEL_VERSION = "black_scholes_q0_v1"
+
+
+def _add_candidate_greeks(
+    frame: pd.DataFrame,
+    *,
+    prefix: str,
+    risk_free_rate: float,
+) -> pd.DataFrame:
+    """Stamp gamma / vega / theta on candidate-facing rows (plan §6.4, B9).
+
+    Units: gamma per $1 underlying, vega per 1.00 vol, theta per calendar day.
+    Inputs are the row's own quote IV, actual DTE and the run's risk_free_rate;
+    q = 0. Rows without a selected candidate get None. Dormant additive columns:
+    option artifact validation checks names + schema_version only, never a
+    strict column list, so v3 publishing is unchanged.
+    """
+
+    result = frame.copy()
+    required = [f"{prefix}{name}" for name in ("strike", "underlying_price", "days_to_expiry")]
+    if result.empty or any(column not in result.columns for column in required):
+        for name in ("gamma", "vega", "theta"):
+            if f"{prefix}{name}" not in result.columns:
+                result[f"{prefix}{name}"] = None
+        result[f"{prefix}greeks_model_version"] = GREEKS_MODEL_VERSION
+        return result
+
+    gammas: list[float | None] = []
+    vegas: list[float | None] = []
+    thetas: list[float | None] = []
+    for _, row in result.iterrows():
+        greeks = _row_greeks(row, prefix=prefix, risk_free_rate=risk_free_rate)
+        gammas.append(greeks["gamma"])
+        vegas.append(greeks["vega"])
+        thetas.append(greeks["theta"])
+    result[f"{prefix}gamma"] = gammas
+    result[f"{prefix}vega"] = vegas
+    result[f"{prefix}theta"] = thetas
+    result[f"{prefix}greeks_model_version"] = GREEKS_MODEL_VERSION
+    return result
+
+
+def _row_greeks(
+    row: pd.Series,
+    *,
+    prefix: str,
+    risk_free_rate: float,
+) -> dict[str, float | None]:
+    empty: dict[str, float | None] = {"gamma": None, "vega": None, "theta": None}
+    spot = as_float(row.get(f"{prefix}underlying_price"))
+    strike = as_float(row.get(f"{prefix}strike"))
+    days = as_float(row.get(f"{prefix}days_to_expiry"))
+    iv = as_float(row.get(f"{prefix}implied_volatility"))
+    option_type = str(row.get(f"{prefix}option_type") or "").upper()
+    if option_type not in {"P", "C"}:
+        # option_selected_candidates rows carry option_type; slot rows fall back
+        # to the slot's own option_type column.
+        option_type = str(row.get("option_type") or "").upper()
+    if spot is None or strike is None or days is None or option_type not in {"P", "C"}:
+        return empty
+    return black_scholes_greeks(
+        option_type=cast(Literal["P", "C"], option_type),
+        spot=spot,
+        strike=strike,
+        # Same calendar day-count as add_black_scholes_delta.
+        time_to_expiry_years=days / CALENDAR_DAYS_PER_YEAR,
+        risk_free_rate=float(risk_free_rate),
+        implied_volatility=iv,
+    )
+
+
 def _candidate_slot_row(slot: OptionCandidateSlot) -> dict[str, Any]:
     row = {
         key: value
@@ -574,6 +679,93 @@ def _serialize_value(value: object) -> object:
     return value
 
 
+def _chain_history_frame(
+    *,
+    options_features: pd.DataFrame,
+    previous_history: pd.DataFrame | None,
+    quality: OptionHistoryQualityConfig,
+    published_run_id: str,
+) -> pd.DataFrame:
+    """Merge this run's option-features captures into the daily chain history.
+
+    The already-loaded options-features frame IS the capture source (one row per
+    ticker per capture), so nothing is re-read from disk. ``previous_history`` is
+    the currently published artifact, or ``None`` on the first v4 run.
+    """
+
+    features_frames: dict[str, pd.DataFrame] = {}
+    if options_features is not None and not options_features.empty:
+        if "ticker" in options_features.columns:
+            frame = options_features.copy()
+            frame["ticker"] = normalize_ticker_series(frame["ticker"])
+            for ticker, group in frame.groupby("ticker", dropna=True):
+                cleaned = _optional_str(ticker)
+                if cleaned:
+                    features_frames[cleaned] = group
+    history = build_chain_history_daily(
+        features_frames=features_frames,
+        previous_history=_restore_own_schema_version(
+            previous_history, column=CHAIN_HISTORY_SCHEMA_COLUMN
+        ),
+        quality=quality,
+        published_run_id=published_run_id,
+    )
+    return _preserve_own_schema_version(history, column=CHAIN_HISTORY_SCHEMA_COLUMN)
+
+
+def _availability_frame(
+    *,
+    manifest: dict[str, Any],
+    universe_tickers: tuple[str, ...],
+) -> pd.DataFrame:
+    """One availability row per universe ticker (plan §8), from the options manifest."""
+
+    snapshot_records = [
+        record
+        for record in (manifest.get("snapshots") or [])
+        if isinstance(record, dict)
+    ]
+    availability = build_option_availability(
+        universe_tickers=list(universe_tickers),
+        snapshot_records=snapshot_records,
+        capture_date=str(manifest.get("as_of_date") or ""),
+    )
+    return _preserve_own_schema_version(
+        availability, column=OPTION_AVAILABILITY_SCHEMA_COLUMN
+    )
+
+
+def _restore_own_schema_version(
+    frame: pd.DataFrame | None, *, column: str
+) -> pd.DataFrame | None:
+    """Undo the artifact-set stamp on a previously published artifact.
+
+    A published artifact's ``schema_version`` column holds the artifact-SET
+    version; its own version lives in ``column``. Re-reading it as an input must
+    hand the builder back its own version, or carried rows would inherit the set
+    version.
+    """
+
+    if frame is None or frame.empty or column not in frame.columns:
+        return frame
+    result = frame.copy()
+    result["schema_version"] = result[column]
+    return result.drop(columns=[column])
+
+
+def _preserve_own_schema_version(frame: pd.DataFrame, *, column: str) -> pd.DataFrame:
+    """Keep a builder's own ``schema_version`` before the artifact-set stamp lands.
+
+    ``_stamp_frame`` owns the ``schema_version`` column (it is the artifact-SET
+    version every validator and reader gates on), so each v4 artifact's own
+    independent version moves to a dedicated column instead of being lost.
+    """
+
+    result = frame.copy()
+    result[column] = result["schema_version"] if "schema_version" in result.columns else None
+    return result
+
+
 def _stamp_frame(
     frame: pd.DataFrame,
     *,
@@ -587,7 +779,7 @@ def _stamp_frame(
     tool_b_refresh_id: str = "",
 ) -> pd.DataFrame:
     result = frame.copy()
-    result["schema_version"] = OPTION_ARTIFACT_SCHEMA_VERSION
+    result["schema_version"] = ACTIVE_OPTION_SCHEMA_VERSION
     result["snapshot_refresh_run_id"] = str(manifest.get("refresh_run_id") or "")
     result["options_as_of_date"] = str(manifest.get("as_of_date") or "")
     result["source_run_id"] = source_run_id
@@ -600,7 +792,7 @@ def _stamp_frame(
     # artifact itself rather than reconstructed from mutable latest inputs.
     result["built_from_tool_a_refresh_id"] = str(tool_a_refresh_id or "")
     result["built_from_tool_b_refresh_id"] = str(tool_b_refresh_id or "")
-    result.attrs["schema_version"] = OPTION_ARTIFACT_SCHEMA_VERSION
+    result.attrs["schema_version"] = ACTIVE_OPTION_SCHEMA_VERSION
     result.attrs["snapshot_refresh_run_id"] = str(manifest.get("refresh_run_id") or "")
     result.attrs["source_run_id"] = source_run_id
     result.attrs["parent_refresh_id"] = parent_refresh_id

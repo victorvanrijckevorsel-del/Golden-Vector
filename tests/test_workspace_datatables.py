@@ -324,7 +324,7 @@ def test_tool_b_view_numeric_columns_marked_data_sort_numeric(tmp_path):
     assert '<th scope="col" data-col-name="rank" data-sort-numeric>' in body
     assert '<th scope="col" data-col-name="forward_pe" data-sort-numeric>' in body
     assert '<th scope="col" data-col-name="ev_ebitda" data-sort-numeric>' in body
-    assert '<th scope="col" data-col-name="fcf_yield" data-sort-numeric>' in body
+    assert '<th scope="col" data-col-name="aisc_margin_yield" data-sort-numeric>' in body
 
 
 def test_tool_a_view_is_wired_as_a_datatable(tmp_path):

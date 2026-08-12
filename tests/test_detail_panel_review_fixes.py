@@ -12,17 +12,14 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.model.benchmark_comparison import BetaMarker, BetaUniverseComparison
 from golden_vector.serve.charts import _build_dual_bar_svg
-from golden_vector.serve.detail_panels import (
-    _compute_window_volatility,
-    _render_tool_a_panel,
-    _render_up_down_beta_panel,
-    _render_volatility_panel,
+from golden_vector.serve.ticker_page.behaviour import (
+    render_market_behaviour_section,
+    render_up_down_beta_panel,
 )
 from golden_vector.serve.option_signal_charts import _render_signal_history_chart
 from golden_vector.serve.workspace_state import ToolADetailState, StructuralHistoryLoad
@@ -131,73 +128,12 @@ def _comparison(benchmark_labels: tuple[str, ...]) -> BetaUniverseComparison:
 
 # --------------------------------------------------------------------------
 # Item 1 — the window's sample has ONE definition
+#
+# M3c deleted the serve-side per-window volatility recompute entirely, so there
+# is no longer a second sample definition that could drift from the scatter's.
+# The replacement guarantee ("never estimate off-canonical") is proved in
+# tests/test_detail_volatility_context.py.
 # --------------------------------------------------------------------------
-
-
-def test_window_volatility_uses_the_model_date_masked_window(monkeypatch) -> None:
-    """The volatility path must go through the model's build_trailing_window_rows,
-    the same helper the scatter uses — not a private tail-by-count slice."""
-
-    import golden_vector.serve.detail_panels as panels
-
-    calls: list[dict] = []
-    real = panels.build_trailing_window_rows
-
-    def spy(**kwargs):
-        calls.append(kwargs)
-        return real(**kwargs)
-
-    monkeypatch.setattr(panels, "build_trailing_window_rows", spy)
-    diag = _compute_window_volatility(
-        tool_a_row=_tool_a_row(as_of_date="2025-07-11"),
-        active_window="6M",
-        weekly_series=_weekly_series(),
-        scoring_config=_scoring_config(),
-    )
-    assert len(calls) == 1, calls
-    assert calls[0]["window_id"] == "6M"
-    assert calls[0]["as_of_date"] == pd.Timestamp("2025-07-11")
-    assert diag["total_volatility"] is not None
-
-
-def test_window_volatility_matches_the_scatter_sample_when_series_ends_at_as_of() -> None:
-    """When the series' last week IS the as-of date, the date mask and the old
-    tail-by-count slice select the same weeks, so the numbers do not move."""
-
-    from golden_vector.model.structural import (
-        annualize_downside_volatility,
-        annualize_weekly_volatility,
-        build_trailing_window_rows,
-    )
-
-    weekly = _weekly_series()
-    as_of = pd.Timestamp(weekly["as_of_date"].max())
-    diag = _compute_window_volatility(
-        tool_a_row=_tool_a_row(as_of_date=as_of.strftime("%Y-%m-%d")),
-        active_window="6M",
-        weekly_series=weekly,
-        scoring_config=_scoring_config(),
-    )
-    sample = build_trailing_window_rows(
-        weekly_series=weekly, as_of_date=as_of, window_id="6M"
-    )
-    expected_total = annualize_weekly_volatility(sample["stock_weekly_log_return"])
-    expected_down = annualize_downside_volatility(sample["stock_weekly_log_return"])
-    assert diag["total_volatility"] == pytest.approx(expected_total)
-    assert diag["downside_volatility"] == pytest.approx(expected_down)
-
-
-def test_window_volatility_falls_back_to_the_series_last_observation() -> None:
-    """A row with no usable as_of_date still anchors on the series' own end."""
-
-    diag = _compute_window_volatility(
-        tool_a_row={"volatility_anchor_window_id": "12M"},
-        active_window="6M",
-        weekly_series=_weekly_series(),
-        scoring_config=_scoring_config(),
-    )
-    assert diag["total_volatility"] is not None
-    assert diag["volatility_context"] not in (None, "")
 
 
 # --------------------------------------------------------------------------
@@ -230,8 +166,7 @@ def test_dual_bar_still_draws_a_genuine_measured_zero() -> None:
 
 
 def test_up_down_panel_does_not_invent_a_zero_for_a_missing_beta() -> None:
-    html = _render_up_down_beta_panel(
-        _tool_a_row(),
+    html = render_up_down_beta_panel(
         anchor_metric={"up_beta": None, "down_beta": 1.5},
         active_window="12M",
         comparison=None,
@@ -245,120 +180,46 @@ def test_up_down_panel_does_not_invent_a_zero_for_a_missing_beta() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_metric_grid_suppresses_volatility_context_for_an_ineligible_window() -> None:
+def test_behaviour_section_suppresses_volatility_context_for_an_ineligible_window() -> None:
     row = _tool_a_row(window_status_12m="INELIGIBLE_LOW_OBS")
-    html = _render_tool_a_panel(
+    html = render_market_behaviour_section(
         ticker="NEM",
         tool_a_row=row,
         tool_a_detail=_detail_state(),
         alignment="FOUNDATION_MISSING",
         app_config=_app_config(),
         active_window="12M",
+        canonical_anchor="12M",
     )
-    assert "Not eligible (INELIGIBLE_LOW_OBS)" in html
-    # The published label must not leak into the card under the window's name.
-    assert "Volatility Context (1Y)</" not in html or "LOW_NOISE" not in html
-    # The diagnostics panel already suppressed it; both surfaces now agree.
-    assert "is not eligible for this ticker" in html
+    assert "The 1Y window is not eligible for this ticker" in html
+    assert "INELIGIBLE_LOW_OBS" in html
+    # The published label must not leak into the section under the window's name.
+    assert "LOW_NOISE" not in html
 
 
-def test_metric_grid_shows_volatility_context_for_an_eligible_control() -> None:
-    html = _render_tool_a_panel(
+def test_behaviour_section_shows_volatility_context_for_an_eligible_control() -> None:
+    html = render_market_behaviour_section(
         ticker="NEM",
         tool_a_row=_tool_a_row(),
         tool_a_detail=_detail_state(),
         alignment="FOUNDATION_MISSING",
         app_config=_app_config(),
         active_window="12M",
+        canonical_anchor="12M",
     )
-    assert "Not eligible" not in html
+    assert "is not eligible for this ticker" not in html
     assert "LOW_NOISE" in html
 
 
 # --------------------------------------------------------------------------
-# Item 4 — a cross-window fallback carries its true basis
+# Items 4 and 5 — the cross-window fallback's basis label, and the live
+# estimator's "estimated live" hint / single-call guarantee.
+#
+# Both described the deleted request-path estimator: there is no fallback to
+# label and no estimator to run. The panel now shows published values on the
+# canonical window and an honest note everywhere else
+# (tests/test_detail_volatility_context.py).
 # --------------------------------------------------------------------------
-
-
-def test_published_fallback_is_labelled_with_its_52w_basis() -> None:
-    """No weekly series -> the per-window recompute yields {} and we fall back to
-    the published 52-week value. The card must say so, not wear the window's name."""
-
-    state = _detail_state(weekly=pd.DataFrame())
-    html = _render_tool_a_panel(
-        ticker="NEM",
-        tool_a_row=_tool_a_row(volatility_anchor_window_id="12M"),
-        tool_a_detail=state,
-        alignment="FOUNDATION_MISSING",
-        app_config=_app_config(),
-        active_window="6M",
-    )
-    assert "Volatility Context (52w, published)" in html
-    assert "Volatility Context (6M)" not in html
-
-
-def test_per_window_value_keeps_the_window_label_when_it_is_real() -> None:
-    """Control: with a usable series the card is a genuine per-window value and
-    keeps the active window's label."""
-
-    html = _render_tool_a_panel(
-        ticker="NEM",
-        tool_a_row=_tool_a_row(),
-        tool_a_detail=_detail_state(),
-        alignment="FOUNDATION_MISSING",
-        app_config=_app_config(),
-        active_window="6M",
-    )
-    assert "Volatility Context (6M)" in html
-    assert "Volatility Context (52w, published)" not in html
-
-
-# --------------------------------------------------------------------------
-# Item 5 — the live estimator is labelled, and runs once
-# --------------------------------------------------------------------------
-
-
-def test_non_canonical_volatility_panel_declares_its_live_estimate() -> None:
-    html = _render_volatility_panel(
-        _tool_a_row(),
-        active_window="6M",
-        weekly_series=_weekly_series(),
-        scoring_config=_scoring_config(),
-    )
-    assert "Estimated live from the weekly series" in html
-    assert "published values are 52-week" in html
-
-
-def test_canonical_window_panel_carries_no_estimate_hint() -> None:
-    html = _render_volatility_panel(
-        _tool_a_row(),
-        active_window="12M",
-        weekly_series=_weekly_series(),
-        scoring_config=_scoring_config(),
-    )
-    assert "Estimated live from the weekly series" not in html
-
-
-def test_volatility_estimator_runs_once_per_render(monkeypatch) -> None:
-    import golden_vector.serve.detail_panels as panels
-
-    real = panels._compute_window_volatility
-    calls: list[str] = []
-
-    def counting(**kwargs):
-        calls.append(kwargs["active_window"])
-        return real(**kwargs)
-
-    monkeypatch.setattr(panels, "_compute_window_volatility", counting)
-    panels._render_tool_a_panel(
-        ticker="NEM",
-        tool_a_row=_tool_a_row(),
-        tool_a_detail=_detail_state(),
-        alignment="FOUNDATION_MISSING",
-        app_config=_app_config(),
-        active_window="6M",
-    )
-    assert calls == ["6M"], calls
 
 
 # --------------------------------------------------------------------------
@@ -424,8 +285,7 @@ def test_signal_history_still_reports_a_genuinely_empty_history() -> None:
 
 
 def test_grouped_bar_legend_follows_the_resolved_benchmarks() -> None:
-    html = _render_up_down_beta_panel(
-        _tool_a_row(),
+    html = render_up_down_beta_panel(
         anchor_metric={"up_beta": 1.2, "down_beta": 1.5},
         active_window="12M",
         comparison=_comparison(("GDX",)),
@@ -436,8 +296,7 @@ def test_grouped_bar_legend_follows_the_resolved_benchmarks() -> None:
 
 
 def test_grouped_bar_legend_lists_every_resolved_benchmark() -> None:
-    html = _render_up_down_beta_panel(
-        _tool_a_row(),
+    html = render_up_down_beta_panel(
         anchor_metric={"up_beta": 1.2, "down_beta": 1.5},
         active_window="12M",
         comparison=_comparison(("GDX", "GDXJ")),

@@ -1,0 +1,215 @@
+# Ticker page contract config (plan reviews/codex/claude_ticker_page_plan.md §10).
+# M1a lands the contract only — producers and serve wiring come in M1b/M2.
+version: 1
+
+dial:
+  min_gold_usd: 2000
+  max_gold_usd: 6000
+  step_usd: 1
+  probe_gold_usd:
+    - 2000
+    - 4000
+    - 6000
+  # Linearity tolerance = max(abs_tol_family, rel_tol * |value|) — §5.6.
+  linearity_abs_tol_musd: 0.5
+  linearity_abs_tol_eps: 0.005
+  linearity_rel_tol: 0.001
+  # >= this many failing tickers is a systemic failure (fail the stage loud);
+  # fewer degrades those tickers only.
+  systemic_min_tickers: 5
+
+chart:
+  horizons:
+    - 1Y
+    - 3Y
+    - 5Y
+  # A benchmark this far behind the equity as-of is omitted with a reason (§4.4).
+  benchmark_max_staleness_days: 5
+
+lab:
+  # Ticker page only (D-5) — /lab pages keep their own 13w default.
+  default_horizon_weeks: 8
+  scatter_from_year: 2016
+
+score_builder:
+  # Product-locked: weights are integer points summing to exactly 100.
+  budget_points: 100
+  min_eligible_peers: 10
+  min_active_metric_coverage: 0.6
+  rank_stability_shift_points: 10
+  rank_stability_alert_positions: 3
+  # Exact 19-metric catalog (§7). cost_curve_aisc_percentile and
+  # confidence_score are deliberately absent (P5).
+  metrics:
+    - key: down_beta_core
+      label: Down beta
+      category: trading
+      source_tool: tool_a
+      source_column: down_beta_core
+      default_high_good: false
+      unit: ratio
+      basis: structural cross-window
+    - key: up_beta_core
+      label: Up beta
+      category: trading
+      source_tool: tool_a
+      source_column: up_beta_core
+      default_high_good: true
+      unit: ratio
+      basis: structural cross-window
+    - key: asymmetry_ratio_core
+      label: Up/down asymmetry
+      category: trading
+      source_tool: tool_a
+      source_column: asymmetry_ratio_core
+      default_high_good: true
+      unit: ratio
+      basis: structural cross-window
+    - key: downside_volatility_52w
+      label: Downside volatility
+      category: trading
+      source_tool: tool_a
+      source_column: downside_volatility_52w
+      default_high_good: false
+      unit: percent
+      basis: 52w
+    - key: rel_strength_vs_gdx
+      label: Strength vs GDX
+      category: trading
+      source_tool: tool_c
+      source_column: rel_strength_vs_gdx_pct
+      default_high_good: true
+      unit: percent
+      basis: tool C window
+    - key: rel_weakness_vs_gdx
+      label: Weakness vs GDX
+      category: trading
+      source_tool: tool_c
+      source_column: rel_weakness_vs_gdx_pct
+      default_high_good: false
+      unit: percent
+      basis: tool C window
+    - key: downside_hit_rate
+      evidence_count_column: downside_hit_rate_n
+      evidence_hit_count_column: downside_hit_count
+      evidence_period_start_column: downside_period_start
+      evidence_period_end_column: downside_period_end
+      label: Big down-week hit rate
+      category: trading
+      source_tool: tool_c
+      source_column: downside_hit_rate_10pct
+      default_high_good: false
+      unit: percent
+      basis: tool C window
+    - key: upside_hit_rate
+      evidence_count_column: upside_hit_rate_n
+      evidence_hit_count_column: upside_hit_count
+      evidence_period_start_column: upside_period_start
+      evidence_period_end_column: upside_period_end
+      label: Big up-week hit rate
+      category: trading
+      source_tool: tool_c
+      source_column: upside_hit_rate_10pct
+      default_high_good: true
+      unit: percent
+      basis: tool C window
+    - key: tail_worst10
+      label: Worst 10% weeks
+      category: trading
+      source_tool: tool_c
+      source_column: tail_avg_return_worst10pct
+      default_high_good: true
+      unit: percent
+      basis: tool C window
+    - key: tail_best10
+      label: Best 10% weeks
+      category: trading
+      source_tool: tool_c
+      source_column: tail_avg_return_best10pct
+      default_high_good: true
+      unit: percent
+      basis: tool C window
+    - key: margin_pct
+      label: Cash margin
+      category: corporate
+      source_tool: tool_b
+      source_column: margin_pct
+      default_high_good: true
+      unit: percent
+      basis: fwd @ spot
+    - key: aisc_margin_yield
+      label: AISC margin yield
+      category: corporate
+      source_tool: tool_b
+      source_column: aisc_margin_yield
+      default_high_good: true
+      unit: percent
+      basis: fwd @ spot
+      requires_market_snapshot: true
+    - key: ev_ebitda
+      label: EV/EBITDA
+      category: corporate
+      source_tool: tool_b
+      source_column: ev_ebitda
+      default_high_good: false
+      unit: ratio
+      basis: fwd @ spot
+      requires_market_snapshot: true
+      requires_source_financials: true
+    - key: forward_pe
+      label: Forward P/E
+      category: corporate
+      source_tool: tool_b
+      source_column: forward_pe
+      default_high_good: false
+      unit: ratio
+      basis: fwd @ spot
+      requires_market_snapshot: true
+      requires_source_financials: true
+    - key: leverage_trailing
+      label: Net debt / EBITDA
+      category: corporate
+      source_tool: tool_b
+      source_column: leverage
+      default_high_good: false
+      unit: ratio
+      basis: LTM
+      requires_source_financials: true
+    - key: aisc
+      verification_field: aisc_usd_per_oz
+      label: All-in sustaining cost
+      category: corporate
+      source_tool: tool_b
+      source_column: aisc_usd_per_oz
+      default_high_good: false
+      unit: usd_per_oz
+      basis: Our View mining assumption
+      manual_mining_basis: true
+    - key: reserve_life
+      label: Reserve life
+      category: corporate
+      source_tool: tool_b
+      source_column: reserve_life_years
+      default_high_good: true
+      unit: years
+      basis: Our View mining assumption
+      manual_mining_basis: true
+    - key: survival_distance
+      label: Room before interest bites
+      category: corporate
+      source_tool: tool_d
+      source_column: survival_distance_to_interest_cover_pct
+      default_high_good: true
+      unit: percent
+      basis: at spot gold
+    - key: fragility
+      label: EBITDA fragility to gold
+      category: corporate
+      source_tool: tool_d
+      source_column: fragility_ebitda_pct_per_10pct_gold
+      default_high_good: false
+      unit: percent
+      basis: at spot gold
+
+sizing:
+  max_contracts: 10000

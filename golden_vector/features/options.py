@@ -58,6 +58,12 @@ def compute_options_features(
     ticker = _first_value(chain, "ticker")
     run_id = _first_value(chain, "run_id")
 
+    put_oi_total, call_oi_total = _put_call_sums(frame, "open_interest")
+    put_oi_otm, call_oi_otm = _put_call_sums(
+        frame, "open_interest", otm_only=True, spot=underlying_price
+    )
+    put_volume, call_volume = _put_call_sums(frame, "volume")
+
     row: dict[str, Any] = {
         "ticker": ticker,
         "as_of_date": as_of_date.isoformat(),
@@ -66,10 +72,22 @@ def compute_options_features(
         "n_expirations": int(frame["expiration"].nunique()) if not frame.empty else 0,
         "n_contracts": int(len(frame.index)),
         "total_open_interest": _numeric_sum(frame, "open_interest"),
+        "put_oi_total": put_oi_total,
+        "call_oi_total": call_oi_total,
+        "put_oi_otm": put_oi_otm,
+        "call_oi_otm": call_oi_otm,
         "total_volume": _numeric_sum(frame, "volume"),
+        "put_volume": put_volume,
+        "call_volume": call_volume,
+        # Per-side contract COUNTS (not sums): 0 is a genuine count for a
+        # one-sided chain, but an EMPTY chain is unknown, not zero — same
+        # unknown-vs-zero convention as the OI splits above.
+        "put_n_contracts": _side_contract_count(frame, "P"),
+        "call_n_contracts": _side_contract_count(frame, "C"),
         "iv_percentile_cross_sectional": None,
-        "put_call_oi_ratio_total": _put_call_oi_ratio(frame),
-        "put_call_oi_ratio_otm": _put_call_oi_ratio(frame, otm_only=True, spot=underlying_price),
+        # No float() coercion: an unknown side is None and _ratio propagates it.
+        "put_call_oi_ratio_total": _ratio(put_oi_total, call_oi_total),
+        "put_call_oi_ratio_otm": _ratio(put_oi_otm, call_oi_otm),
     }
 
     for horizon in target_horizons_days:
@@ -84,6 +102,11 @@ def compute_options_features(
         row[f"implied_move_{suffix}_gates_ok"] = False
         row[f"realized_vol_{suffix}"] = _realized_vol(price_history, window_days=horizon)
         row[f"iv_rv_ratio_{suffix}"] = None
+        # Provenance for the horizon label: which expiry it actually resolved
+        # to. Defaults live here so an unresolved horizon still emits explicit
+        # unknowns rather than a missing key (option_signals reads these).
+        row[f"source_expiration_{suffix}"] = None
+        row[f"source_dte_{suffix}"] = None
 
     if frame.empty:
         row["optionability_tier"] = "none"
@@ -109,6 +132,11 @@ def compute_options_features(
             continue
 
         expiry_slice = frame[frame["expiration"] == expiry].copy()
+        row[f"source_expiration_{suffix}"] = str(expiry)
+        # Representative DTE = the MINIMUM days_to_expiry across the slice.
+        # Every row of one expiry normally carries the same value; min() is a
+        # deterministic pick that never depends on row order.
+        row[f"source_dte_{suffix}"] = _slice_min_dte(expiry_slice)
         with_delta = add_black_scholes_delta(
             expiry_slice,
             underlying_price=underlying_price,
@@ -218,15 +246,62 @@ def _atm_iv(frame: pd.DataFrame, underlying_price: float) -> float | None:
     return float(values.mean())
 
 
+REALIZED_VOL_PRICE_BASIS_COLUMNS: tuple[str, ...] = (
+    "return_basis_usd",
+    "adj_close_usd",
+    "adj_close_local",
+    "close_local",
+)
+
+
+def realized_vol_price_basis(frame: pd.DataFrame) -> pd.Series | None:
+    """Return the realized-vol PRICE-LEVEL basis column, coerced to numeric.
+
+    ONE copy of the basis-resolution order for realized vol; both the live
+    feature build and the durable-history migration resolve through here so the
+    two can never drift.
+
+    Preference order:
+    * ``return_basis_usd`` / ``adj_close_usd`` — the normalized USD price level
+      (``normalize/prices_usd.py``). These are PRICE LEVELS, not returns: they
+      must be ``pct_change()``d by the caller, or "realized vol" is the stdev of
+      raw dollar prices (the 100x ``iv_rv_ratio`` bug).
+    * ``adj_close_local`` / ``close_local`` — the benchmark ETF fallback. GDX and
+      GDXJ are US-listed USD funds captured into the benchmarks directory with
+      ``*_local`` columns only, so for them local IS USD and no FX conversion is
+      implied (the same USD==local decision the performance producer documents).
+      Without this branch the benchmarks have no basis at all and their iv_rv
+      stays permanently NULL.
+
+    Returns ``None`` when no basis column is present.
+    """
+
+    for column in REALIZED_VOL_PRICE_BASIS_COLUMNS:
+        if column in frame.columns:
+            return pd.to_numeric(frame[column], errors="coerce")
+    return None
+
+
 def _realized_vol(price_history: pd.DataFrame, *, window_days: int) -> float | None:
     if price_history.empty:
         return None
-    if "return_basis_usd" in price_history.columns:
-        returns = pd.to_numeric(price_history["return_basis_usd"], errors="coerce").dropna()
-    elif "adj_close_usd" in price_history.columns:
-        returns = pd.to_numeric(price_history["adj_close_usd"], errors="coerce").pct_change().dropna()
-    else:
+    # Realized vol must not depend on incoming ROW ORDER or duplicate rows: a
+    # vendor frame arriving newest-first, or with the same date twice, would
+    # otherwise produce a different number for identical data. Sort ascending
+    # by date and keep the LAST row per date (the corrected print).
+    history = price_history
+    if "date" in history.columns:
+        history = history.assign(_rv_date=pd.to_datetime(history["date"], errors="coerce"))
+        history = (
+            history.sort_values("_rv_date", kind="mergesort")
+            .drop_duplicates(subset="_rv_date", keep="last")
+        )
+    basis = realized_vol_price_basis(history)
+    if basis is None:
         return None
+    # fill_method=None explicitly: pandas' default pads missing prices forward,
+    # which invents a 0% return day and understates vol. A gap must drop out.
+    returns = basis.pct_change(fill_method=None).dropna()
     # window_days is the option's CALENDAR horizon; returns rows are TRADING
     # days. Convert (252/365.25) so the realized leg covers the same span the
     # IV prices - a 90d option's realized vol uses ~62 trading rows, not 90
@@ -266,23 +341,54 @@ def _optionability_tier(
     return "thin"
 
 
-def _put_call_oi_ratio(
+def _put_call_sums(
     frame: pd.DataFrame,
+    column: str,
     *,
     otm_only: bool = False,
     spot: float | None = None,
-) -> float | None:
-    if frame.empty or "open_interest" not in frame.columns:
-        return None
+) -> tuple[int | None, int | None]:
+    """Return (put_sum, call_sum), or None for a side with NO observed values.
+
+    Unknown is not zero: a vendor chain missing the column entirely, or one
+    whose column is all-null, previously reported 0 — indistinguishable from
+    genuine zero activity, and it silently fed real-looking put/call ratios.
+    """
+
+    if frame.empty or column not in frame.columns:
+        return None, None
     scoped = frame
     if otm_only and spot is not None:
         scoped = frame[
             ((frame["option_type"] == "P") & (frame["strike"] < float(spot)))
             | ((frame["option_type"] == "C") & (frame["strike"] > float(spot)))
         ]
-    puts = scoped.loc[scoped["option_type"] == "P", "open_interest"].sum()
-    calls = scoped.loc[scoped["option_type"] == "C", "open_interest"].sum()
-    return _ratio(float(puts), float(calls))
+    def _side_sum(side: str) -> int | None:
+        values = pd.to_numeric(
+            scoped.loc[scoped["option_type"] == side, column], errors="coerce"
+        ).dropna()
+        if values.empty:
+            return None
+        return int(values.sum())
+
+    return _side_sum("P"), _side_sum("C")
+
+
+def _side_contract_count(frame: pd.DataFrame, side: str) -> int | None:
+    """Chain rows on one side after normalization; None when the chain is empty."""
+
+    if frame.empty or "option_type" not in frame.columns:
+        return None
+    return int((frame["option_type"] == side).sum())
+
+
+def _slice_min_dte(expiry_slice: pd.DataFrame) -> int | None:
+    if expiry_slice.empty or "days_to_expiry" not in expiry_slice.columns:
+        return None
+    values = pd.to_numeric(expiry_slice["days_to_expiry"], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return int(values.min())
 
 
 def _numeric_sum(frame: pd.DataFrame, column: str) -> int:

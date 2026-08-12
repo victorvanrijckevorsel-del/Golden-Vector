@@ -27,8 +27,8 @@ def _row() -> dict[str, float]:
         "aisc_usd_per_oz": 1790.0,
         "cash_margin_usd_per_oz": 2382.9,
         "margin_pct": 0.5710,
-        "sustainable_fcf_musd": 1270.17,
-        "fcf_yield": 0.3935,
+        "aisc_margin_est_musd": 1270.17,
+        "aisc_margin_yield": 0.3935,
         "leverage": -0.3917,
     }
 
@@ -45,13 +45,13 @@ def test_values_line_shows_components_and_result_without_a_formula_head():
 
 
 def test_percent_ratios_render_as_percent():
-    # margin_pct / fcf_yield are stored as fractions and must display as percents, with the
+    # margin_pct / aisc_margin_yield are stored as fractions and must display as percents, with the
     # component value bits present.
     margin = metric_values_text("margin_pct", _row())
     assert "Cash margin 2,383" in margin and "Gold price 4,173" in margin
     assert margin.endswith("→ 57.1%")  # 0.5710 -> 57.1%
-    fcf = metric_values_text("fcf_yield", _row())
-    assert "Sustainable FCF 1,270" in fcf and "Market cap 3,228" in fcf
+    fcf = metric_values_text("aisc_margin_yield", _row())
+    assert "AISC margin est. 1,270" in fcf and "Market cap 3,228" in fcf
     assert fcf.endswith("→ 39.4%")  # 0.3935 -> 39.4%
 
 
@@ -99,7 +99,7 @@ def test_cell_is_compact_but_values_line_keeps_full_unit():
     assert metric_result_text("leverage", row) == "-0.39"  # not "-0.39x"
     assert metric_result_text("cash_margin_usd_per_oz", row) == "2,383"  # not "2,383 $/oz"
     assert metric_result_text("margin_pct", row) == "57.1%"  # % stays
-    assert metric_result_text("fcf_yield", row) == "39.4%"
+    assert metric_result_text("aisc_margin_yield", row) == "39.4%"
     # The values line still spells out the full unit.
     assert metric_values_text("ev_ebitda", row).endswith("→ 2.0x")
     assert metric_values_text("cash_margin_usd_per_oz", row).endswith("→ 2,383 $/oz")

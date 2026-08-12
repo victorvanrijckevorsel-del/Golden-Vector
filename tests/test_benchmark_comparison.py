@@ -19,7 +19,11 @@ from golden_vector.model.benchmark_comparison import (
     resolve_beta_universe_comparisons_by_window,
 )
 from golden_vector.serve.charts import _build_beta_strip_svg
-from golden_vector.serve.detail_panels import _render_beta_comparison_panel
+from golden_vector.serve.ticker_page.behaviour import (
+    _ordinal_percentile,
+    render_beta_comparison_panel,
+    render_up_down_beta_panel,
+)
 
 
 def _universe() -> pd.DataFrame:
@@ -288,20 +292,22 @@ def test_universe_marks_cover_every_member_in_unit_interval_with_ticker():
 
 def test_render_comparison_panel_shows_window_label_percentile_and_rug():
     c = resolve_beta_universe_comparison(ticker="SUBJ", window_id="3Y", universe_df=_universe(), benchmark_df=_benchmarks())
-    html = _render_beta_comparison_panel(c, ticker="SUBJ", active_window="3Y")
+    html = render_beta_comparison_panel(c, ticker="SUBJ", active_window="3Y")
     assert "ranks vs the miner universe" in html
     assert "Over the 3Y window" in html  # registry window label rendered (not "3-year")
     assert "percentile" in html  # subject percentile text rendered
     assert "orange marker" in html  # legend
     assert "<svg" in html  # both strips present
+    # The caption points at the BETA window switcher specifically (M3c wording).
+    assert "Switch the beta window above to re-base all of them to the same period." in html
 
 
 def test_render_comparison_panel_unavailable_and_subject_absent_paths():
     # Fully unavailable (no data resolved yet)
-    assert "No universe comparison" in _render_beta_comparison_panel(None, ticker="SUBJ", active_window="6M")
+    assert "No universe comparison" in render_beta_comparison_panel(None, ticker="SUBJ", active_window="6M")
     # Subject not in the universe -> still renders, with the explanatory message + universe spread
     c = resolve_beta_universe_comparison(ticker="ZZZ", window_id="6M", universe_df=_universe(), benchmark_df=_benchmarks())
-    html = _render_beta_comparison_panel(c, ticker="ZZZ", active_window="6M")
+    html = render_beta_comparison_panel(c, ticker="ZZZ", active_window="6M")
     assert "not in the scored miner universe" in html
     assert "<svg" in html  # universe spread still drawn
 
@@ -309,11 +315,8 @@ def test_render_comparison_panel_unavailable_and_subject_absent_paths():
 def test_render_up_down_panel_groups_stock_with_benchmarks():
     """Emanuel's fix: GDX/GDXJ up/down betas must sit NEXT TO the stock on the Up vs Down chart,
     on the same window, as grouped bars."""
-    from golden_vector.serve.detail_panels import _render_up_down_beta_panel
-
     c = resolve_beta_universe_comparison(ticker="SUBJ", window_id="12M", universe_df=_universe(), benchmark_df=_benchmarks())
-    html = _render_up_down_beta_panel(
-        {"anchor_window_id": "12M"},
+    html = render_up_down_beta_panel(
         anchor_metric={"up_beta": c.subject.up_beta, "down_beta": c.subject.down_beta},
         active_window="12M",
         comparison=c,
@@ -325,10 +328,7 @@ def test_render_up_down_panel_groups_stock_with_benchmarks():
 
 
 def test_up_down_panel_without_comparison_falls_back_to_stock_only():
-    from golden_vector.serve.detail_panels import _render_up_down_beta_panel
-
-    html = _render_up_down_beta_panel(
-        {"anchor_window_id": "12M"},
+    html = render_up_down_beta_panel(
         anchor_metric={"up_beta": 1.1, "down_beta": 1.3},
         active_window="12M",
         comparison=None,
@@ -338,8 +338,6 @@ def test_up_down_panel_without_comparison_falls_back_to_stock_only():
 
 
 def test_percentile_ordinals_render_st_nd_rd_not_th():
-    from golden_vector.serve.detail_panels import _ordinal_percentile
-
     assert _ordinal_percentile(1.0) == "1st percentile"
     assert _ordinal_percentile(2.0) == "2nd percentile"
     assert _ordinal_percentile(3.0) == "3rd percentile"
@@ -372,12 +370,11 @@ def test_missing_benchmark_status_column_is_treated_as_ok():
 def test_subject_with_only_up_beta_is_not_called_absent():
     """One-sided availability: down NA but up present must still describe the up rank, not claim the
     ticker is missing from the universe (Codex LOW)."""
-    from golden_vector.serve.detail_panels import _render_beta_comparison_panel
 
     uni = _universe()
     uni.loc[uni["ticker"] == "SUBJ", "down_beta_6m"] = pd.NA  # only up beta survives for SUBJ
     c = resolve_beta_universe_comparison(ticker="SUBJ", window_id="6M", universe_df=uni, benchmark_df=_benchmarks())
-    html = _render_beta_comparison_panel(c, ticker="SUBJ", active_window="6M")
+    html = render_beta_comparison_panel(c, ticker="SUBJ", active_window="6M")
     assert "not in the scored miner universe" not in html
     assert "up beta" in html and "percentile" in html
 
@@ -387,12 +384,18 @@ def test_comparison_math_is_not_duplicated_in_the_serve_layer():
     ONLY in the model module. The serve panel and chart builder must read resolved fields, never
     recompute them (Emanuel: 'all the calculation in the backend, no UI logic')."""
     charts = Path("golden_vector/serve/charts.py").read_text(encoding="utf-8")
-    panels = Path("golden_vector/serve/detail_panels.py").read_text(encoding="utf-8")
+    # The comparison panels moved to serve/ticker_page/behaviour.py in M3c; both that module and
+    # the module they came from stay under the guardrail so the rule cannot be escaped by a move.
+    panel_sources = {
+        name: Path(f"golden_vector/serve/{name}").read_text(encoding="utf-8")
+        for name in ("detail_panels.py", "ticker_page/behaviour.py")
+    }
     # Genuine rank / percentile / sort COMPUTATION tokens (a formatter like _ordinal_percentile
     # that only renders a resolved number is fine — these catch recomputation, not formatting).
     for forbidden in ("np.percentile", ".rank(", ".quantile(", "np.sort", "def _percentile"):
         assert forbidden not in charts, f"charts.py recomputes comparison math: {forbidden}"
-        assert forbidden not in panels, f"detail_panels.py recomputes comparison math: {forbidden}"
+        for name, source in panel_sources.items():
+            assert forbidden not in source, f"{name} recomputes comparison math: {forbidden}"
     # The strip builder must not clamp, sort, or min/max positions — those are the model's job, and
     # re-clamping in serve would silently hide a backend bug (Codex MEDIUM). Scope the check to that
     # function so the grouped-bar's legitimate value-scaling min/max is not falsely flagged.

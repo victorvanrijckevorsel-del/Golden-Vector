@@ -7,14 +7,19 @@ from dataclasses import dataclass
 import pandas as pd
 
 from golden_vector.common.numeric import optional_float as _optional_float
+from golden_vector.common.numeric import ratio_over_positive as _ratio
 from golden_vector.common.numeric import require_finite_positive as _require_finite_positive
 from golden_vector.contracts.config_models import AppConfig, ToolDConfig
 from golden_vector.features.percentile_ranks import oriented_percentile
+from golden_vector.model.gold_lines import GoldLine, line_from_two_points, x_for_value
 from golden_vector.screening.manual_data import LoadedManualScreeningData
 from golden_vector.screening.pipeline import compute_tool_b_in_memory
 
+TOOL_D_SCHEMA_VERSION = 3
+
 TOOL_D_OUTPUT_COLUMNS = [
     "ticker",
+    "tool_d_schema_version",
     "as_of_date",
     "source_run_id",
     "finance_source",
@@ -27,7 +32,8 @@ TOOL_D_OUTPUT_COLUMNS = [
     "market_cap_musd",
     "screening_verdict",
     "confidence",
-    "fcf_yield",
+    "aisc_margin_yield_at_g",
+    "aisc_margin_yield_at_spot",
     "reserve_life_years",
     "cash_cost_usd_per_oz",
     "production_oz",
@@ -44,7 +50,6 @@ TOOL_D_OUTPUT_COLUMNS = [
     "headroom_to_breakeven_pct_at_spot",
     "headroom_delta_vs_spot",
     "breaks_even_at_gold_usd",
-    "fcf_breakeven_gold_usd",
     "interest_cover_gold_usd",
     "debt_stress_gold_usd",
     "survival_distance_to_interest_cover_pct",
@@ -327,11 +332,6 @@ def _build_tool_d_row(
         anchor_gold_price=ebitda_anchor_gold_price,
         ebitda_at_anchor=anchor_ebitda,
     )
-    fcf_breakeven = _fcf_breakeven_gold(
-        aisc=aisc,
-        sustaining_capex=sustaining_capex,
-        production=production,
-    )
     interest_cover_gold = _threshold_gold(
         ebitda_model=ebitda_model,
         target_ebitda=interest_expense,
@@ -353,7 +353,6 @@ def _build_tool_d_row(
     missing_inputs = _missing_inputs(
         production=production,
         aisc=aisc,
-        sustaining_capex=sustaining_capex,
         interest_expense=interest_expense,
         net_debt=net_debt,
         forward_ebitda=forward_ebitda,
@@ -367,6 +366,7 @@ def _build_tool_d_row(
 
     return {
         "ticker": ticker,
+        "tool_d_schema_version": TOOL_D_SCHEMA_VERSION,
         "as_of_date": stressed_row.get("as_of_date"),
         "source_run_id": source_run_id,
         "finance_source": finance_source,
@@ -384,7 +384,8 @@ def _build_tool_d_row(
         "market_cap_musd": market_cap,
         "screening_verdict": stressed_row.get("screening_verdict"),
         "confidence": stressed_row.get("confidence"),
-        "fcf_yield": _optional_float(spot_row.get("fcf_yield")),
+        "aisc_margin_yield_at_g": _optional_float(stressed_row.get("aisc_margin_yield")),
+        "aisc_margin_yield_at_spot": _optional_float(spot_row.get("aisc_margin_yield")),
         "reserve_life_years": _optional_float(manual_row.get("reserve_life_years")),
         "cash_cost_usd_per_oz": cash_cost,
         "production_oz": production,
@@ -401,7 +402,6 @@ def _build_tool_d_row(
         "headroom_to_breakeven_pct_at_spot": spot_headroom,
         "headroom_delta_vs_spot": _difference(headroom, spot_headroom),
         "breaks_even_at_gold_usd": aisc,
-        "fcf_breakeven_gold_usd": fcf_breakeven,
         "interest_cover_gold_usd": interest_cover_gold,
         "debt_stress_gold_usd": debt_stress_gold,
         "survival_distance_to_interest_cover_pct": survival_distance,
@@ -414,7 +414,6 @@ def _build_tool_d_row(
         "ebitda_pct_change_vs_spot": ebitda_change,
         "survival_order_ladder": _survival_order_ladder(
             breakeven=aisc,
-            fcf_breakeven=fcf_breakeven,
             interest_cover=interest_cover_gold,
         ),
         "resilience_flip_flags": None,
@@ -432,23 +431,27 @@ def _build_tool_d_row(
 
 
 def _add_quality_scores(output: pd.DataFrame, *, config: ToolDConfig) -> None:
+    # C5: percentile pools contain ELIGIBLE rows only. Degraded rows are
+    # excluded BEFORE any percentile is computed — a broken company must not be
+    # able to move a healthy company's component, score, or rank (masking after
+    # the pool still let it shift every healthy percentile).
+    eligible = output["resilience_data_status"].eq("OK")
     output["cost_curve_aisc_percentile"] = oriented_percentile(
-        pd.to_numeric(output["aisc_usd_per_oz"], errors="coerce"),
+        pd.to_numeric(output.loc[eligible, "aisc_usd_per_oz"], errors="coerce"),
         high_good=True,
-    )
+    ).reindex(output.index)
     component_percentiles = pd.DataFrame(index=output.index)
     for raw_column, component_column in TOOL_D_RANK_COMPONENTS.items():
         component_percentiles[component_column] = oriented_percentile(
-            pd.to_numeric(output[raw_column], errors="coerce"),
+            pd.to_numeric(output.loc[eligible, raw_column], errors="coerce"),
             high_good=config.quality_components[raw_column] == "high_good",
-        )
+        ).reindex(output.index)
         output[component_column] = component_percentiles[component_column]
 
     component_count = component_percentiles.notna().sum(axis=1)
     output["tool_d_quality_score"] = component_percentiles.mean(axis=1, skipna=True)
     output["tool_d_quality_score"] = output["tool_d_quality_score"].where(
-        component_count.eq(len(TOOL_D_RANK_COMPONENTS))
-        & output["resilience_data_status"].eq("OK")
+        component_count.eq(len(TOOL_D_RANK_COMPONENTS)) & eligible
     )
     output["tool_d_quality_rank"] = oriented_percentile(
         output["tool_d_quality_score"],
@@ -597,12 +600,6 @@ def _headroom(gold_price: float, aisc: float | None) -> float | None:
     return (gold_price - aisc) / gold_price
 
 
-def _ratio(numerator: float | None, denominator: float | None) -> float | None:
-    if numerator is None or denominator is None or denominator <= 0:
-        return None
-    return numerator / denominator
-
-
 def _safe_ratio(numerator: float | None, denominator: float | None) -> float | None:
     if numerator is None or denominator is None or denominator == 0:
         return None
@@ -621,43 +618,33 @@ def _ebitda_line_from_tool_b(
     ebitda_at_gold: float | None,
     anchor_gold_price: float,
     ebitda_at_anchor: float | None,
-) -> tuple[float, float] | None:
-    if ebitda_at_gold is None or ebitda_at_anchor is None:
+) -> GoldLine | None:
+    line = line_from_two_points(
+        gold_price,
+        ebitda_at_gold,
+        anchor_gold_price,
+        ebitda_at_anchor,
+    )
+    # Tool D only trusts a rising EBITDA-vs-gold line; a flat or falling fit
+    # means the two Tool B evaluations disagree with the model and is dropped.
+    if line is None or line.slope <= 0:
         return None
-    if abs(gold_price - anchor_gold_price) < 0.01:
-        return None
-    slope = (ebitda_at_gold - ebitda_at_anchor) / (gold_price - anchor_gold_price)
-    if slope <= 0:
-        return None
-    intercept = ebitda_at_gold - (slope * gold_price)
-    return slope, intercept
+    return line
 
 
 def _threshold_gold(
     *,
-    ebitda_model: tuple[float, float] | None,
+    ebitda_model: GoldLine | None,
     target_ebitda: float | None,
 ) -> float | None:
-    if ebitda_model is None or target_ebitda is None or target_ebitda <= 0:
+    if target_ebitda is None or target_ebitda <= 0:
         return None
-    slope, intercept = ebitda_model
-    return (target_ebitda - intercept) / slope
-
-
-def _fcf_breakeven_gold(
-    *,
-    aisc: float | None,
-    sustaining_capex: float | None,
-    production: float | None,
-) -> float | None:
-    if aisc is None or sustaining_capex is None or production is None or production <= 0:
-        return None
-    return max(aisc, aisc + (sustaining_capex * 1_000_000.0 / production))
+    return x_for_value(ebitda_model, target_ebitda)
 
 
 def _debt_stress_gold(
     *,
-    ebitda_model: tuple[float, float] | None,
+    ebitda_model: GoldLine | None,
     net_debt: float | None,
     danger_threshold: float,
 ) -> float | None:
@@ -683,12 +670,11 @@ def _fragility_slope(
     *,
     gold_price: float,
     forward_ebitda: float | None,
-    ebitda_model: tuple[float, float] | None,
+    ebitda_model: GoldLine | None,
 ) -> float | None:
     if ebitda_model is None or forward_ebitda is None or forward_ebitda <= 0 or gold_price <= 0:
         return None
-    slope, _ = ebitda_model
-    return (slope * gold_price * 0.10) / forward_ebitda
+    return (ebitda_model.slope * gold_price * 0.10) / forward_ebitda
 
 
 def _ev_ebitda(
@@ -721,7 +707,6 @@ def _missing_inputs(
     *,
     production: float | None,
     aisc: float | None,
-    sustaining_capex: float | None,
     interest_expense: float | None,
     net_debt: float | None,
     forward_ebitda: float | None,
@@ -731,8 +716,6 @@ def _missing_inputs(
         missing.append("production_oz")
     if aisc is None:
         missing.append("aisc_usd_per_oz")
-    if sustaining_capex is None:
-        missing.append("sustaining_capex_musd")
     if interest_expense is None:
         missing.append("interest_expense_musd")
     if net_debt is None:
@@ -747,7 +730,7 @@ def _resilience_data_status(
     production: float | None,
     aisc: float | None,
     interest_expense: float | None,
-    ebitda_model: tuple[float, float] | None,
+    ebitda_model: GoldLine | None,
 ) -> str:
     if production is None or aisc is None:
         return "INSUFFICIENT_DATA"
@@ -761,12 +744,10 @@ def _resilience_data_status(
 def _survival_order_ladder(
     *,
     breakeven: float | None,
-    fcf_breakeven: float | None,
     interest_cover: float | None,
 ) -> str | None:
     levels = [
         ("Breakeven", breakeven),
-        ("FCF breakeven", fcf_breakeven),
         ("Interest cover", interest_cover),
     ]
     available = [(label, value) for label, value in levels if value is not None]

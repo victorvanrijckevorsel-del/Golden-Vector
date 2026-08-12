@@ -17,7 +17,7 @@ def test_layer2_computes_positive_metrics_when_inputs_are_complete():
             "share_price_usd": 25.0,
             "market_cap_musd": 5_000,
             "net_debt_musd": 300,
-            "sustainable_fcf_musd": 900,
+            "aisc_margin_est_musd": 900,
         }
     )
 
@@ -44,7 +44,7 @@ def test_layer2_suppresses_forward_pe_when_forward_eps_is_negative():
             "share_price_usd": 8.0,
             "market_cap_musd": 800,
             "net_debt_musd": 500,
-            "sustainable_fcf_musd": -50,
+            "aisc_margin_est_musd": -50,
         }
     )
 
@@ -69,7 +69,7 @@ def test_layer2_handles_negative_net_debt_as_net_cash():
             "share_price_usd": 22.0,
             "market_cap_musd": 5_500,
             "net_debt_musd": -500,
-            "sustainable_fcf_musd": 1_000,
+            "aisc_margin_est_musd": 1_000,
         }
     )
 

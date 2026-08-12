@@ -74,10 +74,10 @@ criteria:
     default_direction: low_good
     unit: multiple
     available_now: true
-  - id: fcf_yield
-    label: FCF yield
-    description: Cash flow generated per dollar of share price.
-    source_field: fcf_yield
+  - id: aisc_margin_yield
+    label: AISC margin yield
+    description: Margin above reported AISC per dollar of share price (cost proxy, not audited cash flow).
+    source_field: aisc_margin_yield
     group: Corporate Finance
     default_direction: high_good
     unit: percent
@@ -118,14 +118,6 @@ criteria:
     label: Debt-stress gold
     description: Gold price where debt becomes heavy vs earnings; missing can mean no material debt.
     source_field: debt_stress_gold_usd
-    group: Corporate Resilience
-    default_direction: low_good
-    unit: usd_per_oz
-    available_now: true
-  - id: fcf_breakeven_gold
-    label: FCF breakeven gold
-    description: Gold price where cash flow hits zero.
-    source_field: fcf_breakeven_gold_usd
     group: Corporate Resilience
     default_direction: low_good
     unit: usd_per_oz
@@ -192,7 +184,7 @@ presets:
     description: Cheap, financially solid names to own if gold rises; ranks quality first, not rally torque.
     options_side: none
     criteria:
-      - id: fcf_yield
+      - id: aisc_margin_yield
         direction: high_good
         weight: 1.0
       - id: aisc
@@ -229,7 +221,7 @@ presets:
       - id: leverage
         direction: high_good
         weight: 1.0
-      - id: fcf_yield
+      - id: aisc_margin_yield
         direction: low_good
         weight: 1.0
       - id: reserve_life

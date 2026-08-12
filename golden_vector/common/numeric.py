@@ -109,6 +109,19 @@ def sum_optional_floats(values: object) -> float | None:
     return total if seen else None
 
 
+def ratio_over_positive(numerator: float | None, denominator: float | None) -> float | None:
+    """Ratio that only exists over a strictly positive denominator.
+
+    The guard is semantic, not just divide-by-zero safety: consumers use it for
+    quantities like net debt / EBITDA where a non-positive denominator makes
+    the ratio meaningless rather than merely infinite.
+    """
+
+    if numerator is None or denominator is None or denominator <= 0:
+        return None
+    return numerator / denominator
+
+
 def require_finite(numeric: float, *, field: str) -> float:
     """Reject NaN/inf at input boundaries.
 
@@ -133,6 +146,16 @@ def is_missing(value: object) -> bool:
     except Exception:
         return False
     return bool(missing) if isinstance(missing, bool) else False
+
+
+def bool_or_false(value: object) -> bool:
+    """Return scalar truthiness while treating every missing form as ``False``.
+
+    Persisted nullable-boolean columns can yield ``pd.NA``. Calling ``bool`` on
+    that scalar raises, so UI readers use this shared boundary helper instead.
+    """
+
+    return False if is_missing(value) else bool(value)
 
 
 def rebase_to_base(values: Iterable[object], *, base: float = 100.0) -> list[float | None]:

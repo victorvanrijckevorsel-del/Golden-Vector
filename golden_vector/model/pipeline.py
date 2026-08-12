@@ -11,6 +11,7 @@ import pandas as pd
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.run_context import RunContext
 from golden_vector.common.numeric import strict_optional_float as _optional_float
+from golden_vector.common.stage_timing import record_step_timing
 from golden_vector.contracts.config_models import AppConfig, ScoringConfig
 from golden_vector.ingestion.persist import (
     _latest_snapshot,
@@ -718,25 +719,8 @@ def _output_group_count(metrics: pd.DataFrame) -> int:
     return int(metrics[["ticker", "as_of_date"]].drop_duplicates().shape[0])
 
 
-def _record_step_timing(
-    timings: dict[str, dict[str, object]],
-    step: str,
-    started_at: float,
-    *,
-    rows_built: int | None = None,
-    rows_persisted: int | None = None,
-    extra: dict[str, object] | None = None,
-) -> None:
-    entry: dict[str, object] = {
-        "duration_seconds": round(perf_counter() - started_at, 3),
-    }
-    if rows_built is not None:
-        entry["rows_built"] = int(rows_built)
-    if rows_persisted is not None:
-        entry["rows_persisted"] = int(rows_persisted)
-    if extra:
-        entry.update(extra)
-    timings[step] = entry
+# Backwards-compatible alias for existing call sites in this module.
+_record_step_timing = record_step_timing
 
 
 def _build_keep_ratio(*, rows_built: int, rows_persisted: int) -> float | None:

@@ -106,6 +106,13 @@ def clear_workspace_state_cache() -> None:
     """Drop every memoized loader result (test hook)."""
     _STATE_CACHE.clear()
     _DETAIL_CACHE.clear()
+    # The ticker page's Lab render cache is a sibling of _DETAIL_CACHE and must
+    # be dropped by the same hook, or a test that rewrites Lab artifacts sees a
+    # stale render. Imported locally: serve.ticker_page.behaviour imports this
+    # module, so a top-level import would be circular.
+    from golden_vector.serve.ticker_page.behaviour import clear_lab_render_cache
+
+    clear_lab_render_cache()
 
 
 def _stat_entry(path: object) -> tuple:

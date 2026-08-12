@@ -74,7 +74,7 @@ def test_compute_tool_d_outputs_reuses_spot_tool_b_frame_for_spot_run(monkeypatc
         gold = float(kwargs["gold_price_assumption"])
         calls.append(gold)
         return pd.DataFrame(
-            [_tool_b_row("AAA", forward_ebitda=gold / 2.0, fcf_yield=0.01)]
+            [_tool_b_row("AAA", forward_ebitda=gold / 2.0, aisc_margin_yield=0.01)]
         )
 
     monkeypatch.setattr(tool_d_module, "compute_tool_b_in_memory", fake_tool_b)
@@ -117,7 +117,7 @@ def test_compute_tool_d_outputs_threads_official_fundamentals(monkeypatch):
         captured.append(kwargs.get("official_fundamentals"))
         gold = float(kwargs["gold_price_assumption"])
         return pd.DataFrame(
-            [_tool_b_row("AAA", forward_ebitda=gold / 2.0, fcf_yield=0.01)]
+            [_tool_b_row("AAA", forward_ebitda=gold / 2.0, aisc_margin_yield=0.01)]
         )
 
     monkeypatch.setattr(tool_d_module, "compute_tool_b_in_memory", fake_tool_b)
@@ -158,7 +158,7 @@ def test_compute_tool_d_outputs_threads_finance_source_and_uses_source_values(
                 _tool_b_row(
                     "AAA",
                     forward_ebitda=gold / 2.0,
-                    fcf_yield=0.01,
+                    aisc_margin_yield=0.01,
                     net_debt=1000.0,
                     interest_expense=25.0,
                 )
@@ -211,7 +211,7 @@ def test_compute_tool_d_yahoo_source_does_not_fallback_to_manual_debt_or_interes
         row = _tool_b_row(
             "AAA",
             forward_ebitda=gold / 2.0,
-            fcf_yield=0.01,
+            aisc_margin_yield=0.01,
             net_debt=None,
             interest_expense=None,
         )
@@ -324,15 +324,15 @@ def test_tool_d_resilience_rank_uses_survival_components_fcf_context_only():
     )
     stressed = pd.DataFrame(
         [
-            _tool_b_row("AAA", forward_ebitda=2000, fcf_yield=0.01),
+            _tool_b_row("AAA", forward_ebitda=2000, aisc_margin_yield=0.01),
             # BBB has much higher FCF yield, but worse survival/leverage components.
-            _tool_b_row("BBB", forward_ebitda=1000, fcf_yield=0.02),
+            _tool_b_row("BBB", forward_ebitda=1000, aisc_margin_yield=0.02),
         ]
     )
     spot = pd.DataFrame(
         [
-            _tool_b_row("AAA", forward_ebitda=3000, fcf_yield=0.05),
-            _tool_b_row("BBB", forward_ebitda=1800, fcf_yield=0.90),
+            _tool_b_row("AAA", forward_ebitda=3000, aisc_margin_yield=0.05),
+            _tool_b_row("BBB", forward_ebitda=1800, aisc_margin_yield=0.90),
         ]
     )
 
@@ -356,8 +356,12 @@ def test_tool_d_resilience_rank_uses_survival_components_fcf_context_only():
 
     assert rows.loc["AAA", "tool_d_quality_rank"] == 100.0
     assert rows.loc["BBB", "tool_d_quality_rank"] == 50.0
-    assert rows.loc["BBB", "fcf_yield"] > rows.loc["AAA", "fcf_yield"]
-    assert rows.loc["BBB", "fcf_yield"] == 0.90
+    # The context yield carries the STRESSED run's value, with the spot pair
+    # kept alongside — a stressed row must never quietly show spot economics.
+    assert rows.loc["BBB", "aisc_margin_yield_at_g"] == 0.02
+    assert rows.loc["BBB", "aisc_margin_yield_at_spot"] == 0.90
+    assert rows.loc["AAA", "aisc_margin_yield_at_g"] == 0.01
+    assert rows.loc["AAA", "aisc_margin_yield_at_spot"] == 0.05
     component_cols = [
         "survival_distance_component",
         "cost_curve_resilience_component",
@@ -378,14 +382,14 @@ def test_tool_d_quality_component_directions_come_from_config():
     )
     stressed = pd.DataFrame(
         [
-            _tool_b_row("AAA", forward_ebitda=2000, fcf_yield=0.01),
-            _tool_b_row("BBB", forward_ebitda=2000, fcf_yield=0.01),
+            _tool_b_row("AAA", forward_ebitda=2000, aisc_margin_yield=0.01),
+            _tool_b_row("BBB", forward_ebitda=2000, aisc_margin_yield=0.01),
         ]
     )
     spot = pd.DataFrame(
         [
-            _tool_b_row("AAA", forward_ebitda=3000, fcf_yield=0.01),
-            _tool_b_row("BBB", forward_ebitda=3000, fcf_yield=0.01),
+            _tool_b_row("AAA", forward_ebitda=3000, aisc_margin_yield=0.01),
+            _tool_b_row("BBB", forward_ebitda=3000, aisc_margin_yield=0.01),
         ]
     )
 
@@ -443,8 +447,8 @@ def test_tool_d_survival_lines_and_failure_order_are_backend_outputs():
             )
         ]
     )
-    stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=2000, fcf_yield=0.01)])
-    spot = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=3000, fcf_yield=0.01)])
+    stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=2000, aisc_margin_yield=0.01)])
+    spot = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=3000, aisc_margin_yield=0.01)])
 
     output = build_tool_d_output_frame(
         stressed_tool_b=stressed,
@@ -460,11 +464,13 @@ def test_tool_d_survival_lines_and_failure_order_are_backend_outputs():
     row = output.iloc[0]
 
     assert row["breaks_even_at_gold_usd"] == 1200
-    assert row["fcf_breakeven_gold_usd"] == pytest.approx(1350.0)
+    # C1: reported AISC already includes sustaining capital, so the cost
+    # breakeven IS the reported AISC and no separate FCF-breakeven line exists.
+    assert "fcf_breakeven_gold_usd" not in output.columns
     assert row["interest_cover_gold_usd"] == pytest.approx(1100.0)
     assert row["debt_stress_gold_usd"] == pytest.approx(1400.0)
     assert row["survival_order_ladder"] == (
-        "FCF breakeven $1,350/oz -> Breakeven $1,200/oz -> Interest cover $1,100/oz"
+        "Breakeven $1,200/oz -> Interest cover $1,100/oz"
     )
 
 
@@ -475,7 +481,7 @@ def test_tool_d_missing_interest_is_insufficient_not_silently_ranked():
             | {"interest_expense_musd": None}
         ]
     )
-    stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=1000, fcf_yield=0.01)])
+    stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=1000, aisc_margin_yield=0.01)])
     spot = stressed.copy()
 
     output = build_tool_d_output_frame(
@@ -499,8 +505,8 @@ def test_tool_d_missing_interest_is_insufficient_not_silently_ranked():
 
 def test_tool_d_ebitda_nonpositive_makes_leverage_and_ev_ebitda_null():
     manual_data = _manual_data([_manual_payload(ticker="AAA", aisc=3500, net_debt=1000)])
-    stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=-100, fcf_yield=-0.1)])
-    spot = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=900, fcf_yield=0.05)])
+    stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=-100, aisc_margin_yield=-0.1)])
+    spot = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=900, aisc_margin_yield=0.05)])
 
     output = build_tool_d_output_frame(
         stressed_tool_b=stressed,
@@ -524,8 +530,8 @@ def test_tool_d_all_missing_quality_components_leave_score_and_rank_null():
     manual_data = _manual_data(
         [_manual_payload(ticker="AAA", aisc=None, net_debt=None)]
     )
-    stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=None, fcf_yield=0.0)])
-    spot = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=None, fcf_yield=0.0)])
+    stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=None, aisc_margin_yield=0.0)])
+    spot = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=None, aisc_margin_yield=0.0)])
 
     output = build_tool_d_output_frame(
         stressed_tool_b=stressed,
@@ -548,8 +554,8 @@ def test_tool_d_net_cash_flows_through_stressed_leverage_and_ev():
     manual_data = _manual_data(
         [_manual_payload(ticker="AAA", aisc=1400, net_debt=-500)]
     )
-    stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=1000, fcf_yield=0.0)])
-    spot = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=900, fcf_yield=0.0)])
+    stressed = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=1000, aisc_margin_yield=0.0)])
+    spot = pd.DataFrame([_tool_b_row("AAA", forward_ebitda=900, aisc_margin_yield=0.0)])
 
     output = build_tool_d_output_frame(
         stressed_tool_b=stressed,
@@ -574,10 +580,10 @@ def test_tool_d_ignores_decoy_leverage_in_consumed_frames():
         [_manual_payload(ticker="AAA", aisc=1400, net_debt=500)]
     )
     stressed = pd.DataFrame(
-        [_tool_b_row("AAA", forward_ebitda=1000, fcf_yield=0.0) | {"leverage": 999.0}]
+        [_tool_b_row("AAA", forward_ebitda=1000, aisc_margin_yield=0.0) | {"leverage": 999.0}]
     )
     spot = pd.DataFrame(
-        [_tool_b_row("AAA", forward_ebitda=900, fcf_yield=0.0) | {"leverage": 777.0}]
+        [_tool_b_row("AAA", forward_ebitda=900, aisc_margin_yield=0.0) | {"leverage": 777.0}]
     )
     latest = pd.DataFrame(
         [{"ticker": "AAA", "source_run_id": "tool-b-run", "leverage": 555.0}]
@@ -665,7 +671,7 @@ def _tool_b_row(
     ticker: str,
     *,
     forward_ebitda: float,
-    fcf_yield: float,
+    aisc_margin_yield: float,
     net_debt: float | None = None,
     interest_expense: float | None = None,
 ) -> dict[str, object]:
@@ -676,7 +682,7 @@ def _tool_b_row(
         "market_cap_musd": 3000,
         "screening_verdict": "WATCHLIST",
         "confidence": "VERIFIED",
-        "fcf_yield": fcf_yield,
+        "aisc_margin_yield": aisc_margin_yield,
         "forward_ebitda_musd": forward_ebitda,
         "net_debt_musd": net_debt,
         "interest_expense_musd": interest_expense,
@@ -832,3 +838,92 @@ def test_tool_d_flip_panel_excludes_degraded_rows(tmp_path, monkeypatch):
     assert "DEGRADEDCO" not in flip_panel
     # The degraded row still appears in the full table, just not the headline.
     assert "DEGRADEDCO" in response["body"]
+
+
+def test_tool_d_degraded_rows_cannot_move_healthy_components_scores_or_ranks():
+    """C5 invariance: appending ANY number/magnitude of degraded rows leaves
+
+    every healthy company's component percentiles, score, and rank identical.
+    Degraded rows are excluded from the peer pool BEFORE percentiles compute,
+    not masked after — masking after still shifted every healthy percentile.
+    """
+    healthy_manual = [
+        _manual_payload(ticker="AAA", aisc=1500, net_debt=1000),
+        _manual_payload(ticker="BBB", aisc=2000, net_debt=1000),
+        _manual_payload(ticker="CCC", aisc=1200, net_debt=200),
+    ]
+    healthy_stressed = [
+        _tool_b_row("AAA", forward_ebitda=2000, aisc_margin_yield=0.01),
+        _tool_b_row("BBB", forward_ebitda=1000, aisc_margin_yield=0.02),
+        _tool_b_row("CCC", forward_ebitda=2500, aisc_margin_yield=0.03),
+    ]
+    healthy_spot = [
+        _tool_b_row("AAA", forward_ebitda=3000, aisc_margin_yield=0.05),
+        _tool_b_row("BBB", forward_ebitda=1800, aisc_margin_yield=0.06),
+        _tool_b_row("CCC", forward_ebitda=3600, aisc_margin_yield=0.07),
+    ]
+    latest_rows = [
+        {"ticker": "AAA", "source_run_id": "tool-b-run"},
+        {"ticker": "BBB", "source_run_id": "tool-b-run"},
+        {"ticker": "CCC", "source_run_id": "tool-b-run"},
+    ]
+
+    def build(with_degraded: bool):
+        manual = list(healthy_manual)
+        stressed = list(healthy_stressed)
+        spot = list(healthy_spot)
+        latest = list(latest_rows)
+        if with_degraded:
+            # extreme AISC values that WOULD reshuffle every cost percentile if
+            # they ever entered the pool; missing interest makes them degraded
+            for ticker, extreme_aisc in (("BAD1", 1.0), ("BAD2", 99_999.0)):
+                manual.append(
+                    _manual_payload(ticker=ticker, aisc=extreme_aisc, net_debt=500)
+                    | {"interest_expense_musd": None}
+                )
+                stressed.append(
+                    _tool_b_row(ticker, forward_ebitda=1500, aisc_margin_yield=0.04)
+                )
+                spot.append(
+                    _tool_b_row(ticker, forward_ebitda=2000, aisc_margin_yield=0.05)
+                )
+                latest.append({"ticker": ticker, "source_run_id": "tool-b-run"})
+        return build_tool_d_output_frame(
+            stressed_tool_b=pd.DataFrame(stressed),
+            spot_tool_b=pd.DataFrame(spot),
+            manual_data=_manual_data(manual),
+            tool_b_latest=pd.DataFrame(latest),
+            config=ToolDConfig(),
+            gold_price=3000.0,
+            spot_gold_usd=4000.0,
+            spot_gold_date="2026-06-01",
+            source_run_id="tool-d-run",
+        )
+
+    baseline = build(with_degraded=False).set_index("ticker")
+    contested = build(with_degraded=True).set_index("ticker")
+
+    watched_columns = [
+        "cost_curve_aisc_percentile",
+        "survival_distance_component",
+        "cost_curve_resilience_component",
+        "fragility_resilience_component",
+        "balance_sheet_resilience_component",
+        "tool_d_quality_score",
+        "tool_d_quality_rank",
+    ]
+    for ticker in ("AAA", "BBB", "CCC"):
+        for column in watched_columns:
+            base_value = baseline.loc[ticker, column]
+            contested_value = contested.loc[ticker, column]
+            if pd.isna(base_value):
+                assert pd.isna(contested_value), (ticker, column)
+            else:
+                assert contested_value == base_value, (ticker, column)
+
+    # and the degraded rows themselves are explicitly out of every pool
+    for ticker in ("BAD1", "BAD2"):
+        assert contested.loc[ticker, "resilience_data_status"] != "OK"
+        assert pd.isna(contested.loc[ticker, "cost_curve_aisc_percentile"])
+        assert pd.isna(contested.loc[ticker, "tool_d_quality_score"])
+        assert pd.isna(contested.loc[ticker, "tool_d_quality_rank"])

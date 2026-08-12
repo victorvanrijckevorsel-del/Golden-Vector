@@ -57,8 +57,14 @@ TOOL_C_OUTPUT_COLUMNS = [
     "n_weeks_gdxj",
     "downside_hit_rate_10pct",
     "downside_hit_rate_n",
+    "downside_hit_count",
+    "downside_period_start",
+    "downside_period_end",
     "upside_hit_rate_10pct",
     "upside_hit_rate_n",
+    "upside_hit_count",
+    "upside_period_start",
+    "upside_period_end",
     "tail_avg_return_worst10pct",
     "tail_avg_return_worst10pct_n",
     "tail_avg_return_worst20pct",
@@ -123,15 +129,15 @@ def compute_tool_c_outputs(
         weekly_returns,
         rolling_weeks=config.regime_rolling_weeks,
         min_weeks=config.regime_min_weeks,
-        downside_hit_rate_threshold=config.downside_hit_rate_threshold,
-        upside_hit_rate_threshold=config.upside_hit_rate_threshold,
+        downside_hit_rate_log_threshold=config.downside_hit_rate_log_threshold,
+        upside_hit_rate_log_threshold=config.upside_hit_rate_log_threshold,
     )
     relative_metrics = compute_relative_behavior_metrics(
         weekly_returns=weekly_returns,
         gold_regimes=gold_regimes,
         min_events=config.min_events,
-        downside_hit_rate_threshold=config.downside_hit_rate_threshold,
-        upside_hit_rate_threshold=config.upside_hit_rate_threshold,
+        downside_hit_rate_log_threshold=config.downside_hit_rate_log_threshold,
+        upside_hit_rate_log_threshold=config.upside_hit_rate_log_threshold,
     )
     return build_tool_c_output_frame(
         tool_a_latest=inputs.tool_a_latest,
@@ -289,17 +295,19 @@ def _downside_tags(row: pd.Series, *, config: ToolCConfig) -> list[str]:
     tags: list[str] = []
     if not is_score_eligible(row.get("score_eligible")):
         tags.append("score_ineligible")
-    if _optional_float(row.get("confidence_score")) is not None and _optional_float(row.get("confidence_score")) < 0.5:
+    confidence = _optional_float(row.get("confidence_score"))
+    if confidence is not None and confidence < config.tag_low_confidence_below:
         tags.append("low_confidence")
-    if _optional_float(row.get("down_beta_core")) is not None and _optional_float(row.get("down_beta_core")) >= 1.5:
+    down_beta = _optional_float(row.get("down_beta_core"))
+    if down_beta is not None and down_beta >= config.tag_steep_beta_at_least:
         tags.append("steep_down_beta")
     if max(
         _optional_float(row.get("rel_weakness_vs_gold_pct")) or 0.0,
         _optional_float(row.get("rel_weakness_vs_gdx_pct")) or 0.0,
         _optional_float(row.get("rel_weakness_vs_gdxj_pct")) or 0.0,
-    ) >= 0.6:
+    ) >= config.tag_persistent_relative_at_least:
         tags.append("persistent_relative_weakness")
-    if (_optional_float(row.get("downside_hit_rate_10pct")) or 0.0) >= 0.25:
+    if (_optional_float(row.get("downside_hit_rate_10pct")) or 0.0) >= config.tag_frequent_tail_at_least:
         tags.append("frequent_deep_drops")
     if _has_thin_history(
         row,
@@ -321,17 +329,19 @@ def _upside_tags(row: pd.Series, *, config: ToolCConfig) -> list[str]:
     tags: list[str] = []
     if not is_score_eligible(row.get("score_eligible")):
         tags.append("score_ineligible")
-    if _optional_float(row.get("confidence_score")) is not None and _optional_float(row.get("confidence_score")) < 0.5:
+    confidence = _optional_float(row.get("confidence_score"))
+    if confidence is not None and confidence < config.tag_low_confidence_below:
         tags.append("low_confidence")
-    if _optional_float(row.get("up_beta_core")) is not None and _optional_float(row.get("up_beta_core")) >= 1.5:
+    up_beta = _optional_float(row.get("up_beta_core"))
+    if up_beta is not None and up_beta >= config.tag_steep_beta_at_least:
         tags.append("steep_up_beta")
     if max(
         _optional_float(row.get("rel_strength_vs_gold_pct")) or 0.0,
         _optional_float(row.get("rel_strength_vs_gdx_pct")) or 0.0,
         _optional_float(row.get("rel_strength_vs_gdxj_pct")) or 0.0,
-    ) >= 0.6:
+    ) >= config.tag_persistent_relative_at_least:
         tags.append("persistent_relative_strength")
-    if (_optional_float(row.get("upside_hit_rate_10pct")) or 0.0) >= 0.25:
+    if (_optional_float(row.get("upside_hit_rate_10pct")) or 0.0) >= config.tag_frequent_tail_at_least:
         tags.append("frequent_strong_rallies")
     if _has_thin_history(
         row,

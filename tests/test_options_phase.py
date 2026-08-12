@@ -65,6 +65,10 @@ def test_run_options_ingestion_phase_writes_manifest_snapshots_and_features(tmp_
         "GDX",
         "GDXJ",
     }.issubset({item["ticker"] for item in latest_manifest["snapshots"]})
+    # Numeric expiration evidence reaches the manifest, so availability readers
+    # never have to parse the message prose.
+    entries = {item["ticker"]: item for item in latest_manifest["snapshots"]}
+    assert entries["AEM"]["expiration_count_available"] == 2
     manifest = read_manifest(context.run_dir)
     assert manifest["options_manifest_status"] == "captured"
     source_asset_names = {
@@ -311,10 +315,14 @@ class _OptionsPhaseClient:
 
 
 def _price_history() -> pd.DataFrame:
+    # return_basis_usd is a USD price LEVEL, not a return series.
+    prices = [100.0]
+    for step in ([0.001, -0.002, 0.003, -0.001] * 30)[:119]:
+        prices.append(prices[-1] * (1 + step))
     return pd.DataFrame(
         {
             "date": pd.date_range("2026-01-01", periods=120),
             "adj_close_usd": [45 + index * 0.02 for index in range(120)],
-            "return_basis_usd": [0.001, -0.002, 0.003, -0.001] * 30,
+            "return_basis_usd": prices,
         }
     )

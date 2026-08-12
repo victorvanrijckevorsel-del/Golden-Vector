@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 
 
@@ -51,8 +52,14 @@ def build_fx_lookup(frame: pd.DataFrame) -> pd.DataFrame:
     prepared = prepared.sort_values("fx_source_date")
     prepared = prepared.rename(columns={"source_symbol": "fx_source_symbol"})
 
-    lookup = prepared[["fx_source_date", "fx_rate_to_usd", "fx_source_symbol"]]
-    lookup = lookup.dropna(subset=["fx_rate_to_usd"])
+    lookup = prepared[["fx_source_date", "fx_rate_to_usd", "fx_source_symbol"]].copy()
+    # C7: zero/negative/non-finite rates must never convert a price. They are
+    # excluded from matching entirely (raw QA reports them loudly); a day whose
+    # only rate is invalid resolves backward like a missing day and the
+    # staleness policy governs the substitute.
+    rates = pd.to_numeric(lookup["fx_rate_to_usd"], errors="coerce")
+    lookup["fx_rate_to_usd"] = rates
+    lookup = lookup.loc[rates.notna() & np.isfinite(rates) & rates.gt(0)]
     lookup = lookup.drop_duplicates(subset=["fx_source_date"], keep="last")
     return lookup.reset_index(drop=True)
 

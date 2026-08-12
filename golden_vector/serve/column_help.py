@@ -404,7 +404,7 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         ),
         calculation=(
             "INCOMPLETE if any required mining input is missing; otherwise PASS when no "
-            "threshold check fails (AISC, margin, FCF yield, reserve life, leverage), else "
+            "threshold check fails (AISC, margin, AISC margin yield, reserve life, leverage), else "
             "FAIL."
         ),
         direction="PASS is best; INCOMPLETE means missing inputs.",
@@ -415,7 +415,7 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
             "and each check's PASS/FAIL/N/A result."
         ),
         calculation=(
-            "passed/total followed by each check's status (Data complete, AISC, Margin, FCF "
+            "passed/total followed by each check's status (Data complete, AISC, Margin, AISC margin yield, "
             "yield, Reserve life, Net Debt/EBITDA, Forward P/E)."
         ),
     ),
@@ -446,6 +446,195 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         direction=(
             "Higher is safer - more cushion above the AISC breakeven before margin turns "
             "negative."
+        ),
+    ),
+    # --- ticker-page Options section (M3d) ---------------------------------
+    "option_section": ColumnHelp(
+        meaning=(
+            "What the listed option market is doing on this company: how the crowd is "
+            "positioned, what volatility is priced, which contracts are actually "
+            "tradable, and what a position would cost."
+        ),
+        calculation=(
+            "Read from the option artifacts published by the last refresh — the daily "
+            "chain history, the option signal history, and the selected candidate "
+            "contracts. Nothing is computed while the page loads."
+        ),
+        direction=(
+            "Context, not a recommendation. This section is only hidden when the "
+            "company genuinely has no listed options."
+        ),
+    ),
+    "option_put_call_ratio_total": ColumnHelp(
+        meaning=(
+            "The whole-chain put/call open-interest ratio: every open put contract "
+            "divided by every open call contract."
+        ),
+        calculation=(
+            "put_oi_total / call_oi_total, computed during the refresh over the whole "
+            "captured chain and stored as put_call_oi_ratio_total."
+        ),
+        direction=(
+            "Below 1 means calls outnumber puts, which usually reads as bullish "
+            "positioning. Above 1 means puts outnumber calls — bearish or hedged. "
+            "Read it together with the out-of-the-money ratio; they often disagree."
+        ),
+    ),
+    "option_put_call_ratio_otm": ColumnHelp(
+        meaning=(
+            "The put/call open-interest ratio counting ONLY out-of-the-money strikes — "
+            "where speculation and hedging actually live."
+        ),
+        calculation=(
+            "put_oi_otm / call_oi_otm, computed during the refresh and stored as "
+            "put_call_oi_ratio_otm."
+        ),
+        direction=(
+            "Above 1 means out-of-the-money puts outnumber calls. This ratio "
+            "disagreeing with the whole-chain one is the interesting case: the chain "
+            "can lean bullish overall while the speculative strikes lean bearish."
+        ),
+    ),
+    "option_oi_trend": ColumnHelp(
+        meaning=(
+            "Open interest over time, split into puts, calls and the total, so a change "
+            "in the ratio can be traced to which side actually moved."
+        ),
+        calculation=(
+            "One point per captured trading day from option_chain_history_daily. Days "
+            "whose capture was incomplete are left as gaps rather than drawn."
+        ),
+        direction=(
+            "Rising put open interest with flat calls means new downside positioning; "
+            "a falling total usually means contracts expired."
+        ),
+    ),
+    "option_daily_volume": ColumnHelp(
+        meaning=(
+            "Contracts traded on the snapshot day, split into puts, calls and the "
+            "total. Volume is today's activity; open interest is the standing position."
+        ),
+        calculation="put_volume / call_volume / total_volume from the daily chain capture.",
+        direction=(
+            "High volume against low open interest means fresh activity rather than an "
+            "established position."
+        ),
+    ),
+    "option_signal_history": ColumnHelp(
+        meaning=(
+            "Implied volatility measured against its own history, the implied move it "
+            "translates into, and how it compares with the stock's realised volatility."
+        ),
+        calculation=(
+            "Persisted option_signal_history_points at the configured signal horizon; "
+            "the tenor is named in the chart title because these are horizon-specific."
+        ),
+        direction=(
+            "Implied above realised means options are pricing more movement than the "
+            "stock has recently delivered, so protection and speculation both cost more."
+        ),
+    ),
+    "option_most_liquid": ColumnHelp(
+        meaning=(
+            "The most tradable contract on each side for the chosen target window — "
+            "near-the-money and directional."
+        ),
+        calculation=(
+            "Selected during the refresh from the captured chain using the configured "
+            "spread, open-interest and minimum-premium gates."
+        ),
+        direction=(
+            "Puts and calls are selected independently, so the two tables can show "
+            "different expiry dates. Each row states its own expiry and days to expiry."
+        ),
+    ),
+    "option_target_window": ColumnHelp(
+        meaning=(
+            "Roughly how far out you want to be positioned. It selects a band of "
+            "expiries, not one exact date."
+        ),
+        calculation=(
+            "The configured display horizons; each maps to a days-to-expiry band, and "
+            "the contract chosen inside that band is whichever listed expiry fits best."
+        ),
+        direction=(
+            "Longer windows cost more premium but decay more slowly. Because it is a "
+            "band, the put and call rows can land on different expiry dates."
+        ),
+    ),
+    "option_bid_ask": ColumnHelp(
+        meaning=(
+            "The bid is what buyers currently show; the ask is what sellers show. You "
+            "buy at the ask and sell at the bid."
+        ),
+        calculation="Bid and ask from the cached option-chain snapshot, not a live quote.",
+        direction=(
+            "The gap between them is your immediate cost of entering and exiting. A bid "
+            "above the ask is a broken quote and disables sizing for that contract."
+        ),
+    ),
+    "option_contract_volume": ColumnHelp(
+        meaning="How many of this exact contract traded on the snapshot day.",
+        calculation="Contract volume from the cached option chain.",
+        direction=(
+            "Low volume means you may struggle to get filled near the quoted price, "
+            "even when open interest looks healthy."
+        ),
+    ),
+    "option_crowd_positioning": ColumnHelp(
+        meaning=(
+            "Where open interest actually sits across strikes, and how implied "
+            "volatility varies by strike (the skew)."
+        ),
+        calculation=(
+            "Persisted open-interest-by-strike and skew-curve points from the last "
+            "refresh."
+        ),
+        direction=(
+            "Clusters of open interest mark the strikes traders care about. A steeper "
+            "downside skew means puts are priced richer than calls."
+        ),
+    ),
+    "option_sizing_tool": ColumnHelp(
+        meaning=(
+            "Turns a budget into a whole number of contracts and shows what they would "
+            "be worth at expiry across a range of share prices."
+        ),
+        calculation=(
+            "Contracts = budget divided by (ask x 100), rounded down. Value at expiry is "
+            "intrinsic value only — no time value — so it is a floor, not a forecast. "
+            "The share price is your input; it is never derived from a gold move."
+        ),
+        direction=(
+            "Break-even is the strike plus the premium for calls, minus it for puts. "
+            "Contracts with a missing, crossed or stale quote are disabled rather than "
+            "priced off a substitute."
+        ),
+    ),
+    "option_greeks": ColumnHelp(
+        meaning=(
+            "The sensitivity measures for the selected contracts, plus the provenance "
+            "and liquidity detail behind the tables above."
+        ),
+        calculation=(
+            "Computed during the refresh on the selected candidate rows only, using the "
+            "quoted implied volatility, the actual days to expiry and the manifest "
+            "risk-free rate."
+        ),
+    ),
+    "option_greeks_units": ColumnHelp(
+        meaning=(
+            "Gamma is how fast delta changes; vega is sensitivity to implied volatility; "
+            "theta is how much value time decay removes."
+        ),
+        calculation=(
+            "Black-Scholes with a zero dividend yield. Units are fixed: gamma per $1 of "
+            "share price, vega per volatility point, theta per calendar day. The model "
+            "version is shown beneath the table."
+        ),
+        direction=(
+            "Theta is normally negative for a bought option — that is the daily cost of "
+            "holding it."
         ),
     ),
     "option_signal_horizon": ColumnHelp(
@@ -1103,7 +1292,7 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         calculation=(
             "Per window, the slope β of stock_weekly_return = α + β × gold_weekly_return (OLS on "
             "weekly log-returns); the figure shown is the weighted-median blend across the scoring "
-            "windows (6M / 1Y / 3Y) — the same robustness blend behind the Gold Sensitivity Score."
+            "windows (6M / 1Y / 3Y) — the same blend the other tools rank on."
         ),
         details=(
             "Units: roughly the % the stock moves per 1% weekly gold move (1.5 ≈ moves 1.5% per "
@@ -1220,7 +1409,7 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         calculation=(
             "Per window, the slope β of stock_weekly_return = α + β × gold_weekly_return on the "
             "down weeks; the figure shown is the weighted-median blend across the scoring "
-            "windows (6M / 1Y / 3Y) — the same robustness blend behind the Gold Sensitivity Score."
+            "windows (6M / 1Y / 3Y) — the same blend the other tools rank on."
         ),
         details=(
             "Units: ≈ % the stock moves per 1% gold move on down weeks. Usually positive for "
@@ -1238,7 +1427,7 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         calculation=(
             "Per window, the slope β of stock_weekly_return = α + β × gold_weekly_return on the "
             "up weeks; the figure shown is the weighted-median blend across the scoring windows "
-            "(6M / 1Y / 3Y) — the same robustness blend behind the Gold Sensitivity Score."
+            "(6M / 1Y / 3Y) — the same blend the other tools rank on."
         ),
         details=(
             "Units: ≈ % the stock moves per 1% gold move on up weeks. Usually positive for miners "
@@ -1306,10 +1495,10 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         calculation="(Market cap + net debt) / forward EBITDA.",
         direction="Lower is cheaper.",
     ),
-    "tool_b_fcf_yield": ColumnHelp(
-        meaning="Estimated free cash flow as a percent of market value.",
-        calculation="Sustainable free cash flow / market cap.",
-        direction="Higher means more cash generation for the price.",
+    "tool_b_aisc_margin_yield": ColumnHelp(
+        meaning="AISC margin estimate as a percent of market value. It is a cost-margin proxy, not audited free cash flow.",
+        calculation="(Gold price − reported AISC) × production / market cap. Reported AISC already includes sustaining capital, so it is charged once.",
+        direction="Higher means more margin for the price.",
     ),
     "tool_b_leverage": ColumnHelp(
         meaning="Net debt divided by trailing (LTM) EBITDA — roughly how many years of earnings it would take to repay debt.",
@@ -1322,6 +1511,866 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         direction="Higher means a longer runway.",
     ),
     # ---- Tool D: Corporate Resilience (moved from hard-coded titles) ----
+    "ticker_fx_attribution": ColumnHelp(
+        meaning=(
+            "How the listing currency's move changed this stock's USD return over the "
+            "selected chart window. This is about the LISTING currency only — it does not "
+            "measure where the company earns revenue or pays its costs."
+        ),
+        calculation=(
+            "USD return = (1 + local return) × (1 + FX return) − 1, measured at the exact "
+            "chart endpoint dates. The FX contribution is the USD return minus the local "
+            "return, in percentage points."
+        ),
+    ),
+    # --- ticker page: gold dial + corporate finance (M3b) --------------------
+    "ticker_gold_dial": ColumnHelp(
+        meaning=(
+            "A what-if gold price. Moving it re-prices ONLY the Corporate finance "
+            "section — the performance chart, market-behaviour betas, the failing-check "
+            "sentences and every score stay at spot gold and visibly do not react."
+        ),
+        calculation=(
+            "The backend fits each earnings line against gold and publishes its exact "
+            "slope and intercept; your browser evaluates those published lines at the "
+            "price you choose. Nothing is estimated in the page."
+        ),
+        details=(
+            "The dial position is deliberately NOT saved in the URL — it is a scratch "
+            "what-if, not a saved view, so a link you share always opens at spot. "
+            "\"Reset to spot\" puts it back exactly."
+        ),
+        thresholds=lambda config: (
+            f"Range {config.ticker_page.dial.min_gold_usd:,.0f} to "
+            f"{config.ticker_page.dial.max_gold_usd:,.0f} USD/oz, step "
+            f"{config.ticker_page.dial.step_usd:,.0f}."
+        ),
+    ),
+    "ticker_cf_section": ColumnHelp(
+        meaning=(
+            "Everything held on the business, grouped by the question it answers. Rows "
+            "marked \"moves with gold\" follow the dial; the rest are facts that do not "
+            "depend on the gold price."
+        ),
+        calculation=(
+            "Spot values are published by the backend at TRUE spot gold (not a rounded "
+            "scenario); scenario values are the same published lines evaluated at your "
+            "dial price."
+        ),
+    ),
+    "ticker_cf_forward_revenue": ColumnHelp(
+        meaning="Expected revenue over the next twelve months at this gold price.",
+        calculation="Gold price × annual production ounces, from the published revenue line.",
+    ),
+    "ticker_cf_forward_ebitda": ColumnHelp(
+        meaning=(
+            "Expected forward EBITDA — earnings before interest, tax, depreciation and "
+            "amortisation — at this gold price."
+        ),
+        calculation="The published forward-EBITDA line evaluated at the selected gold price.",
+        direction="Higher is better.",
+    ),
+    "ticker_cf_forward_net_income": ColumnHelp(
+        meaning="Expected forward net income at this gold price, after interest, D&A and tax.",
+        calculation="The published forward-net-income line evaluated at the selected gold price.",
+        direction="Higher is better.",
+    ),
+    "ticker_cf_forward_eps": ColumnHelp(
+        meaning="Expected forward earnings per share at this gold price.",
+        calculation="Forward net income ÷ shares outstanding, from the published EPS line.",
+        direction="Higher is better.",
+    ),
+    "ticker_cf_aisc_margin": ColumnHelp(
+        meaning=(
+            "Estimated cash left after all-in sustaining costs across a year's production "
+            "at this gold price."
+        ),
+        calculation="(Gold price − AISC per ounce) × annual production ounces.",
+        details=(
+            "This is an AISC-margin estimate, NOT reported free cash flow: it ignores "
+            "working capital, growth capex, tax timing and financing."
+        ),
+        direction="Higher is better.",
+    ),
+    "ticker_cf_margin_usd_per_oz": ColumnHelp(
+        meaning="Cash left on every ounce mined at this gold price.",
+        calculation="Gold price − the cost basis named beside the number (AISC or cash cost).",
+        direction="Higher is better.",
+    ),
+    "ticker_cf_margin_pct": ColumnHelp(
+        meaning="The share of each ounce's gold price that survives as margin.",
+        calculation="Cash margin per ounce ÷ gold price.",
+        thresholds=lambda config: (
+            f"Your screening floor is "
+            f"{config.screening_params.layer1_thresholds.margin_min:.0%}."
+        ),
+        direction="Higher is better.",
+    ),
+    "ticker_cf_aisc_margin_yield": ColumnHelp(
+        meaning=(
+            "The AISC margin a full year of production would generate, measured against "
+            "what the whole company costs to buy."
+        ),
+        calculation="AISC margin ($m at this gold price) ÷ market cap.",
+        details=(
+            "Named for what it is: an AISC-margin yield, not a reported free-cash-flow "
+            "yield — it ignores working capital, growth capex, tax timing and financing."
+        ),
+        thresholds=lambda config: (
+            f"Your screening floor is "
+            f"{config.screening_params.layer1_thresholds.aisc_margin_yield_min:.0%}."
+        ),
+        direction="Higher is better (cheaper for the margin you get).",
+    ),
+    "ticker_cf_ev_ebitda": ColumnHelp(
+        meaning=(
+            "What the whole business costs (equity plus net debt) per dollar of forward "
+            "earnings before interest, tax, depreciation and amortisation."
+        ),
+        calculation=(
+            "Enterprise value ÷ forward EBITDA at the selected gold price. Shown blank "
+            "when forward EBITDA is zero or negative — a multiple on negative earnings "
+            "is meaningless."
+        ),
+        details=(
+            "IMPORTANT — this multiple RISES as gold FALLS. The share price and net debt "
+            "in the numerator do not move with your dial, while forward EBITDA in the "
+            "denominator shrinks, so a lower gold price makes the company look MORE "
+            "expensive, not cheaper. Read a rising number as deteriorating earnings, not "
+            "as a re-rating."
+        ),
+        direction="Lower is cheaper.",
+    ),
+    "ticker_cf_forward_pe": ColumnHelp(
+        meaning="What one share costs per dollar of expected forward earnings.",
+        calculation=(
+            "Share price ÷ forward earnings per share at the selected gold price. Shown "
+            "blank when forward EPS is zero or negative."
+        ),
+        details=(
+            "IMPORTANT — this multiple RISES as gold FALLS, for the same reason as "
+            "EV/EBITDA: the share price in the numerator does not move with your dial "
+            "while forward earnings shrink. A rising P/E here means earnings are being "
+            "squeezed, not that the market re-rated the stock."
+        ),
+        thresholds=lambda config: (
+            "Your screening cut-offs are "
+            f"{config.screening_params.verdict_thresholds.strong_candidate_forward_pe_max:.0f}× "
+            "for a strong candidate and "
+            f"{config.screening_params.verdict_thresholds.watchlist_forward_pe_max:.0f}× "
+            "for the watchlist."
+        ),
+        direction="Lower is cheaper.",
+    ),
+    "ticker_cf_leverage_stressed": ColumnHelp(
+        meaning=(
+            "Debt measured against the earnings the company would make at the gold price "
+            "on the dial — how strained the balance sheet becomes in that world."
+        ),
+        calculation="Net debt ÷ FORWARD EBITDA at the selected gold price.",
+        details=(
+            "This is a different number from \"Net debt / EBITDA (LTM)\" in Balance sheet, "
+            "cost and scale: that one divides by the last twelve months of REPORTED "
+            "earnings and never moves with the dial. Two concepts, two rows, two labels."
+        ),
+        direction="Lower is safer.",
+    ),
+    "ticker_cf_leverage_trailing": ColumnHelp(
+        meaning=(
+            "Debt measured against the earnings the company actually reported over the "
+            "last twelve months. It does not move with the gold dial."
+        ),
+        calculation=(
+            "Net debt ÷ trailing-twelve-month EBITDA. Shown blank when trailing EBITDA is "
+            "zero or negative."
+        ),
+        details=(
+            "Distinct from \"Stressed forward leverage\" in the headline cards, which "
+            "divides by FORWARD EBITDA at the dial's gold price."
+        ),
+        thresholds=lambda config: (
+            f"Your screening cap is "
+            f"{config.screening_params.layer1_thresholds.leverage_max:.1f}×."
+        ),
+        direction="Lower is safer.",
+    ),
+    "ticker_cf_resilience": ColumnHelp(
+        meaning=(
+            "The gold prices at which this company's economics break, and how far gold "
+            "would have to fall to reach them."
+        ),
+        calculation=(
+            "Published by the resilience model on Our View inputs at spot gold — these "
+            "rows do not move with the dial."
+        ),
+        details=(
+            "Disabled in Yahoo Fundamentals mode: resilience is computed on Our View "
+            "inputs, and mixing the two sources would misstate the thresholds."
+        ),
+    ),
+    "ticker_cf_data_quality": ColumnHelp(
+        meaning=(
+            "Where each number came from, when it was captured, and whether any stage "
+            "reported a problem."
+        ),
+        calculation=(
+            "Statuses and as-of dates are persisted columns — nothing here is inferred by "
+            "the page."
+        ),
+    ),
+    "ticker_cost_downside": ColumnHelp(
+        meaning=(
+            "Two pieces of evidence side by side: today's reported all-in sustaining cost, "
+            "and how often the share actually fell 10%+ in past weak-gold weeks. They are "
+            "shown together for context — no combined score, and no claim that one causes "
+            "the other."
+        ),
+        calculation=(
+            "AISC: company-reported (Our View mining assumption). Large-fall rate: exact "
+            "hits ÷ qualifying weak-gold weeks (gold's rolling weakest 20%), where a hit is "
+            "an ordinary weekly price return at or below the configured cut-off."
+        ),
+        # The cut-off is stated ONCE, from config, in the same words
+        # ``ticker_downside_hit_rate`` uses — this card keeps no copy of it.
+        thresholds=lambda config: (
+            f"A large fall is a weekly price return of "
+            f"{config.tool_c.downside_hit_rate_threshold_pct:.0f}% or worse."
+        ),
+    ),
+    # --- ticker page: market behaviour (M3c) --------------------------------
+    "ticker_behaviour_section": ColumnHelp(
+        meaning=(
+            "How this share has actually moved with gold: betas measured on weekly "
+            "returns, its counted record against the gold-miner ETFs, and the history "
+            "behind the disclosures."
+        ),
+        calculation=(
+            "Every number is read from a published artifact. Nothing on this page is a "
+            "compiled score or a verdict — the composites stay on the ranking pages."
+        ),
+    ),
+    "ticker_up_down_beta": ColumnHelp(
+        meaning=(
+            "Gold beta measured separately on the weeks gold ROSE and the weeks gold "
+            "FELL, over the beta window selected at the top of this section."
+        ),
+        calculation=(
+            "Two regressions of the share's weekly log return on gold's, one per regime, "
+            "over the selected window. Published per window; never re-fitted here."
+        ),
+        direction=(
+            "A taller down bar than up bar means it falls more with gold than it rises — "
+            "an asymmetric, fragile profile. Either beta can be negative."
+        ),
+    ),
+    "ticker_beta_percentile_rug": ColumnHelp(
+        meaning=(
+            "Where this share's up and down gold beta sit inside the whole scored miner "
+            "universe, on the same selected beta window."
+        ),
+        calculation=(
+            "Each light tick is one scored miner's published beta for that window; the "
+            "marked position is this share's. Positions are resolved in the model layer."
+        ),
+        direction=(
+            "A higher down-beta percentile means it falls MORE with gold than most "
+            "miners; a higher up-beta percentile means it rises more."
+        ),
+    ),
+    "ticker_relative_record": ColumnHelp(
+        meaning=(
+            "The counted record against GDX: how often this share was stronger or "
+            "weaker, how often the big weekly moves landed, and what the tails averaged."
+        ),
+        calculation=(
+            "Shares of qualifying weeks over the Tool C window, each published with its "
+            "own hit count and observation count. No ranking, no composite."
+        ),
+    ),
+    "ticker_rel_strength_vs_gdx": ColumnHelp(
+        meaning="Share of weeks this stock outperformed GDX over the Tool C window.",
+        calculation="Weeks outperforming GDX ÷ eligible weeks in the window.",
+        direction="Higher is stronger relative performance.",
+    ),
+    "ticker_rel_weakness_vs_gdx": ColumnHelp(
+        meaning="Share of weeks this stock underperformed GDX over the Tool C window.",
+        calculation="Weeks underperforming GDX ÷ eligible weeks in the window.",
+        direction="Lower is better — it lagged the ETF less often.",
+    ),
+    "ticker_upside_hit_rate": ColumnHelp(
+        meaning=(
+            "How often this share posted a big UP week during qualifying strong-gold "
+            "weeks."
+        ),
+        calculation="Hits ÷ qualifying weeks, with both counts shown as the evidence.",
+        thresholds=lambda config: (
+            f"A big up week is a weekly return of "
+            f"{config.tool_c.upside_hit_rate_threshold_pct:+.0f}% or better."
+        ),
+        direction="Higher means it captured more of gold's strong weeks.",
+    ),
+    "ticker_downside_hit_rate": ColumnHelp(
+        meaning=(
+            "How often this share posted a big DOWN week during qualifying weak-gold "
+            "weeks."
+        ),
+        calculation="Hits ÷ qualifying weeks, with both counts shown as the evidence.",
+        thresholds=lambda config: (
+            f"A big down week is a weekly return of "
+            f"{config.tool_c.downside_hit_rate_threshold_pct:.0f}% or worse."
+        ),
+        direction="Lower is better — fewer violent falls in weak-gold weeks.",
+    ),
+    "ticker_tail_best10": ColumnHelp(
+        meaning="The average weekly return across this share's best 10% of weeks.",
+        calculation="Mean of the top decile of weekly returns over the Tool C window.",
+        direction="Higher means a fatter upside tail.",
+    ),
+    "ticker_tail_worst10": ColumnHelp(
+        meaning="The average weekly return across this share's worst 10% of weeks.",
+        calculation="Mean of the bottom decile of weekly returns over the Tool C window.",
+        direction="Closer to zero is better — a shallower downside tail.",
+    ),
+    "ticker_lab_history": ColumnHelp(
+        meaning=(
+            "Counted history: in past gold moves of the size you pick, how often did "
+            "this share beat the ETF over the following weeks, and by how much?"
+        ),
+        calculation=(
+            "Every scenario week is grouped by what gold WENT ON to do, then the share's "
+            "forward return over the look-ahead is compared with the benchmark's. The "
+            "grouping is hindsight, not a signal that was available on the date."
+        ),
+        details=(
+            "Survivor-only: delisted miners are absent, so real beat-rates were probably "
+            "lower. Overlapping look-ahead windows mean the effective (independent) "
+            "sample is much smaller than the number of dots. Exploratory — not a forecast."
+        ),
+    ),
+    "ticker_weekly_scatter": ColumnHelp(
+        meaning=(
+            "One dot per week in the window you selected: gold's return on the x axis, "
+            "this share's on the y axis. The line is that window's measured gold beta — "
+            "steeper means the share moves more per 1% gold move, and how tightly the "
+            "dots hug the line is how reliable that relationship has been."
+        ),
+        calculation=(
+            "Dots are read from the published weekly research series, trimmed to the "
+            "number of weeks the backend published for this window. The line is drawn "
+            "from that window's published slope and intercept — nothing is fitted in "
+            "the page, so if either coefficient has not been published there is simply "
+            "no line."
+        ),
+        details=(
+            "Top-right = both rose, bottom-left = both fell. Dots far from the line are "
+            "weeks driven by something other than gold (company news, the wider market)."
+        ),
+    ),
+    "ticker_volatility_diagnostics": ColumnHelp(
+        meaning=(
+            "How volatile this share has been in total, after removing the part gold "
+            "explains (residual), and on down weeks only (downside)."
+        ),
+        calculation=(
+            "Annualized from weekly log returns and published for ONE canonical window "
+            "per ticker. Other windows are never estimated in the page."
+        ),
+        direction="Lower residual volatility means gold explains more of the movement.",
+    ),
+    "ticker_research_detail": ColumnHelp(
+        meaning=(
+            "The raw research behind the charts above: the per-window fits, the weekly "
+            "scatter, volatility diagnostics and the exploratory horizon ladder."
+        ),
+        calculation=(
+            "All published artifact rows, shown unrounded and unblended. It is closed by "
+            "default because it is reference material, not the headline read."
+        ),
+    ),
+    # --- ticker page: compare on your own terms (M3e) -----------------------
+    "ticker_compare_section": ColumnHelp(
+        meaning=(
+            "Your own comparison. Pick the metrics you actually care about, say which "
+            "direction is good, and spend a weight budget across them — the page then "
+            "ranks every miner on YOUR definition, not on a house score."
+        ),
+        calculation=(
+            "Each metric is turned into a percentile across the universe by the backend "
+            "(so units can mix), and your weights combine those percentiles. Nothing is "
+            "scored until you activate a metric, and nothing here changes any other page."
+        ),
+        details=(
+            "The ranks are computed at spot gold. Moving the gold dial re-prices the "
+            "Corporate finance section and deliberately does NOT move these ranks."
+        ),
+    ),
+    "ticker_compare_percentiles": ColumnHelp(
+        meaning=(
+            "A percentile says where this miner sits among its peers on one metric: 90 "
+            "means only 10% of the comparable miners score better on it."
+        ),
+        calculation=(
+            "Ranked across the miners that have that metric present and eligible. Equal "
+            "values share the AVERAGE of the places they span — two miners tied for 3rd "
+            "and 4th both get the 3.5 position — so a tie can never break the order by "
+            "accident. Both directions are computed on the backend, so flipping "
+            "higher/lower reads a published number rather than inverting one here."
+        ),
+        details=(
+            "Miners whose data is degraded or stale are excluded from the metric "
+            "entirely rather than ranked badly — they can never receive a percentile. "
+            "Percentiles are published to one decimal place."
+        ),
+    ),
+    "ticker_compare_budget": ColumnHelp(
+        meaning=(
+            "Weights are a fixed budget of points shared across the metrics you "
+            "activate, so a comparison always adds up to the same total and two setups "
+            "are directly comparable."
+        ),
+        calculation=(
+            "Moving one slider re-shares the remaining points across the other active "
+            "metrics proportionally; turning a metric off gives its points back the same "
+            "way. The total is always exactly the budget."
+        ),
+        thresholds=lambda config: (
+            f"Budget {config.ticker_page.score_builder.budget_points:,.0f} points, "
+            "slider step 1."
+        ),
+    ),
+    "ticker_compare_missing": ColumnHelp(
+        meaning=(
+            "A metric this company does not publish is simply not counted — it is never "
+            "treated as a zero or a bad score, because a data gap is not a weakness."
+        ),
+        calculation=(
+            "The company is scored on the weighted average of the metrics it actually "
+            "has. A miner that has too few of your active metrics is listed as unranked "
+            "with the count, instead of being given a misleading score."
+        ),
+        thresholds=lambda config: (
+            "A miner needs at least "
+            f"{config.ticker_page.score_builder.min_active_metric_coverage:.0%} of your "
+            "active metrics to be ranked, and the comparison needs at least "
+            f"{config.ticker_page.score_builder.min_eligible_peers:,.0f} comparable "
+            "miners."
+        ),
+    ),
+    # --- ticker page: M3f explainer sweep ---------------------------------
+    # Added to close the page-wide "?" audit. Every entry below names what the
+    # thing is, where its number comes from, and which way is good.
+    "tool_a_residual_volatility": ColumnHelp(
+        meaning=(
+            "How much this share bounces around for reasons that have nothing to do "
+            "with gold — company news, the wider market, its own story."
+        ),
+        calculation=(
+            "The annualized volatility of what is left over after the gold relationship "
+            "is subtracted from each weekly return, over 52 weeks."
+        ),
+        direction=(
+            "Lower means the share is mostly a gold instrument. High residual "
+            "volatility means you are taking company risk on top of the gold view."
+        ),
+    ),
+    "tool_a_downside_volatility": ColumnHelp(
+        meaning="How violently the share moves on its DOWN weeks only.",
+        calculation=(
+            "Annualized volatility computed from the negative weekly returns over 52 "
+            "weeks, ignoring the up weeks."
+        ),
+        direction=(
+            "Lower is better. Much higher than total volatility means the moves are "
+            "lopsided — it falls harder than it rises."
+        ),
+    ),
+    "tool_a_volatility_context": ColumnHelp(
+        meaning=(
+            "A plain label for how noisy this share has been, so the volatility numbers "
+            "above have a reference point."
+        ),
+        calculation=(
+            "Published by the backend from where this ticker's total volatility sits "
+            "against the universe. It is a label, not an input to anything."
+        ),
+        details=(
+            "High noise means single-week moves tell you little — judge the gold "
+            "relationship over the window, not off one week."
+        ),
+    ),
+    "ticker_performance_chart": ColumnHelp(
+        meaning=(
+            "How this share's price has moved over the horizon you picked, drawn "
+            "against gold and the miner ETFs so you can see whether it led or lagged."
+        ),
+        calculation=(
+            "Every line is rebased to 100 at the start of the horizon, so they share a "
+            "starting point and the gaps between them are relative performance, not "
+            "price levels. Prices are the published daily series in USD."
+        ),
+        details=(
+            "Rebasing hides the actual share price on purpose — a $5 miner and a $50 "
+            "miner are directly comparable here. Switch to the share-price view when "
+            "you want the real level."
+        ),
+    ),
+    "ticker_peer_relationship": ColumnHelp(
+        meaning=(
+            "Whether cheap-to-mine producers really do fall less when gold drops: each "
+            "dot is one miner, cost on one axis and its large-fall rate on the other."
+        ),
+        calculation=(
+            "Both values are the published per-miner numbers — reported AISC and the "
+            "share of large gold falls where the miner fell hard too. Nothing is fitted."
+        ),
+        details=(
+            "A cloud with no pattern is a real answer: it means cost alone does not "
+            "predict downside for this universe."
+        ),
+    ),
+    "ticker_cf_failing_checks": ColumnHelp(
+        meaning=(
+            "The screening checks this miner currently fails, each one naming the "
+            "measured value and the limit you set for it."
+        ),
+        calculation=(
+            "Read from the codes the screening run persisted — the page prints the "
+            "measured column each code names beside your configured threshold, and "
+            "never re-tests anything itself."
+        ),
+        details=(
+            "These lines are fixed at spot gold and deliberately do NOT move with the "
+            "gold dial, so a scenario can never make a real failure disappear."
+        ),
+    ),
+    "ticker_cf_earnings_group": ColumnHelp(
+        meaning=(
+            "What the business earns at a given gold price: revenue, EBITDA, net "
+            "income, earnings per share and the cash margin per ounce."
+        ),
+        calculation=(
+            "Each row is evaluated from its own published straight line against the "
+            "gold price, so moving the dial moves every row consistently."
+        ),
+        direction="Higher is better on all of these.",
+    ),
+    "ticker_cf_valuation_group": ColumnHelp(
+        meaning=(
+            "What the market is paying for those earnings — market cap, enterprise "
+            "value, and the multiples built on them."
+        ),
+        calculation=(
+            "The market values are a fixed snapshot; the multiples divide them by "
+            "earnings at the selected gold price, so only the multiples move with the "
+            "dial."
+        ),
+        details=(
+            "Because the price stays put while earnings move, every multiple here gets "
+            "WORSE as gold falls. That is arithmetic, not the market re-rating."
+        ),
+    ),
+    "ticker_cf_balance_group": ColumnHelp(
+        meaning=(
+            "The fixed facts behind the multiples: debt, interest, trailing earnings, "
+            "unit costs, production and reserve life."
+        ),
+        calculation=(
+            "Balance-sheet and cost inputs as reported, plus the Our-View mining "
+            "assumptions. None of these move with the gold dial."
+        ),
+    ),
+    "ticker_cf_net_debt": ColumnHelp(
+        meaning="Debt minus cash — what the company would still owe after paying down with cash on hand.",
+        calculation="Total borrowings less cash and equivalents, from the latest balance sheet.",
+        direction="Lower is safer; a negative figure means net cash.",
+    ),
+    "ticker_cf_interest_expense": ColumnHelp(
+        meaning="What the debt costs to carry for a year.",
+        calculation="Reported annual interest expense, taken as-is from the income statement.",
+        direction="Lower is safer, and it matters most when earnings are thin.",
+    ),
+    "ticker_cf_ebitda_ltm": ColumnHelp(
+        meaning=(
+            "Earnings before interest, tax, depreciation and amortisation over the last "
+            "twelve months — what the business actually earned recently."
+        ),
+        calculation=(
+            "Reported, summed over the last twelve months (LTM). This is history, not "
+            "the forward figure the gold dial moves."
+        ),
+        direction="Higher is better.",
+    ),
+    "ticker_cf_cash_cost": ColumnHelp(
+        meaning="The cash it costs to pull one ounce out of the ground, before sustaining capital.",
+        calculation="Our-View cash cost per ounce; AISC is this plus sustaining capital and overhead.",
+        direction="Lower is better — a lower cash cost survives a lower gold price.",
+    ),
+    "ticker_cf_production": ColumnHelp(
+        meaning="How many ounces of gold the company produces in a year.",
+        calculation="Our-View annual production assumption, in ounces.",
+        direction=(
+            "Bigger production means each $1 of gold price moves more dollars of "
+            "margin — more leverage to gold in both directions."
+        ),
+    ),
+    "ticker_cf_snapshot_normalization": ColumnHelp(
+        meaning=(
+            "Whether the market snapshot's currency conversion completed cleanly for "
+            "this ticker."
+        ),
+        calculation=(
+            "Set at the one place prices are normalized to USD (including the pence "
+            "conversion for London listings). Anything other than OK means at least one "
+            "figure could not be converted and is shown blank rather than guessed."
+        ),
+        direction="OK is what you want; any other status limits what the page will state.",
+    ),
+    "ticker_cf_fx_staleness": ColumnHelp(
+        meaning=(
+            "How many days old the exchange rate used to convert this company's figures "
+            "into USD is."
+        ),
+        calculation="Days between the FX rate's date and the market snapshot's date.",
+        direction=(
+            "Lower is better. A few days is normal; a large number means the USD "
+            "figures reflect an old rate and small differences should not be read as "
+            "real."
+        ),
+    ),
+    "ticker_cf_financial_data_status": ColumnHelp(
+        meaning="Whether the financial inputs behind this section were complete for this ticker.",
+        calculation=(
+            "Published by the screening run. Anything other than OK names what was "
+            "missing, and the affected checks are skipped rather than guessed."
+        ),
+        direction="OK is what you want.",
+    ),
+    "ticker_cf_scenario_column": ColumnHelp(
+        meaning=(
+            "The same metrics re-priced at the gold price you set on the dial, shown "
+            "beside the reported spot values."
+        ),
+        calculation=(
+            "Evaluated in your browser from each metric's published straight line, "
+            "using the identical formula the server uses at spot. The column stays "
+            "hidden until you move the dial away from spot."
+        ),
+        details=(
+            "This is a what-if, not a forecast: it answers \"what would these numbers "
+            "look like at this gold price\", using today's costs and production."
+        ),
+    ),
+    "ticker_beta_window_switcher": ColumnHelp(
+        meaning=(
+            "How far back to measure this share's relationship with gold — a shorter "
+            "window is more current, a longer one is more reliable."
+        ),
+        calculation=(
+            "Each window has its own published fit. Switching redraws every measured "
+            "beta, the scatter and its line from that window's published numbers; "
+            "nothing is re-measured in the page."
+        ),
+        details=(
+            "The window marked \"anchor\" is the one this ticker is scored on elsewhere "
+            "in the product. 6M / 1Y / 3Y are the scoring windows; 2Y and 5Y are longer "
+            "lookbacks for context only."
+        ),
+    ),
+    "ticker_fitted_betas_panel": ColumnHelp(
+        meaning=(
+            "The same gold-sensitivity measurements repeated for every lookback, so you "
+            "can see whether the relationship is stable or only holds in one window."
+        ),
+        calculation=(
+            "One published regression of weekly share returns on weekly gold returns "
+            "per window, with its fit quality and how many weeks it used."
+        ),
+        details=(
+            "Numbers that swing a lot between windows mean the relationship is not "
+            "settled — trust the ones backed by more weeks and a better fit."
+        ),
+    ),
+    "ticker_lab_controls": ColumnHelp(
+        meaning=(
+            "The three choices behind the history table: how far ahead to look, which "
+            "miner ETF to compare against, and which kind of gold week to start from."
+        ),
+        calculation=(
+            "Each combination is a pre-computed published slice of history — changing a "
+            "control loads a different published slice, it does not run a new study."
+        ),
+        details=(
+            "Exploratory only. The look-ahead windows overlap each other, so the "
+            "effective sample is much smaller than the number of episodes shown."
+        ),
+    ),
+    "ticker_survivor_caveat": ColumnHelp(
+        meaning=(
+            "Why this history flatters the group: only miners still trading today are "
+            "in it."
+        ),
+        calculation=(
+            "The universe is built from companies that currently exist. Miners that "
+            "were taken over, delisted or went bust left no rows behind."
+        ),
+        details=(
+            "The practical effect is that past downside looks milder than it really "
+            "was, because the worst outcomes are missing entirely."
+        ),
+    ),
+    "ticker_compare_score": ColumnHelp(
+        meaning=(
+            "This miner's score on YOUR comparison — a 0-100 blend of the metrics you "
+            "activated, weighted the way you set them."
+        ),
+        calculation=(
+            "Each active metric's percentile is multiplied by its share of the weight "
+            "budget and the results are added up, over the metrics this miner actually "
+            "has."
+        ),
+        details=(
+            "It is a standing against peers on the criteria you chose, not a return "
+            "forecast and not a house score. Change a weight and it changes."
+        ),
+        direction="Higher means a better fit to the criteria you set.",
+    ),
+    "ticker_compare_rank": ColumnHelp(
+        meaning="Where this miner places among its peers on your comparison.",
+        calculation=(
+            "Every miner with enough of your active metrics is scored the same way and "
+            "sorted. Miners with too little data are listed as unranked, never placed "
+            "last."
+        ),
+        direction="1 is the best fit to your criteria.",
+    ),
+    "ticker_compare_contributions": ColumnHelp(
+        meaning=(
+            "Which of your chosen metrics are actually driving the score, biggest "
+            "contributor first."
+        ),
+        calculation=(
+            "Each line is that metric's percentile multiplied by its weight — the "
+            "pieces that add up to the score above."
+        ),
+        details=(
+            "A score carried by one metric is a fragile score; spread the weight if you "
+            "want a broader comparison."
+        ),
+    ),
+    "ticker_compare_ranked_list": ColumnHelp(
+        meaning="Every comparable miner scored on your criteria, best fit first.",
+        calculation=(
+            "The same weighted-percentile score applied across the universe, computed "
+            "in your browser from the published percentiles."
+        ),
+        details=(
+            "The full list is shown deliberately — nothing is hidden behind a cut-off, "
+            "so you can see how close the names behind the leader really are."
+        ),
+    ),
+    "ticker_compare_stability": ColumnHelp(
+        meaning=(
+            "A warning that this ranking is fragile — a small change in your weights "
+            "would reshuffle the order."
+        ),
+        calculation=(
+            "The scores near this miner are compared: when they sit within a narrow "
+            "band, the order between them is close to arbitrary and the warning shows."
+        ),
+        details=(
+            "Treat a warned ranking as a group of near-equals rather than a 1-2-3, and "
+            "separate them on something the comparison does not measure."
+        ),
+    ),
+    "ticker_compare_direction": ColumnHelp(
+        meaning=(
+            "Which way is 'good' for this metric in YOUR comparison — flip it and the "
+            "same numbers rank the opposite way."
+        ),
+        calculation=(
+            "Both directions are ranked on the backend and published, so flipping reads "
+            "a second published percentile rather than inverting one here."
+        ),
+        details=(
+            "Watch the valuation multiples: for EV/EBITDA and forward P/E, lower is "
+            "cheaper, and both RISE when gold falls because earnings shrink while the "
+            "share price does not. A rising multiple there is squeezed earnings, not a "
+            "re-rating."
+        ),
+    ),
+    "option_market_context": ColumnHelp(
+        meaning=(
+            "What the option market as a whole is doing on this stock — how much "
+            "protection is open, how heavily it traded, and how expensive it is."
+        ),
+        calculation=(
+            "Aggregated from the full published option chain for the latest capture, "
+            "counting every listed contract rather than a selected few."
+        ),
+        details=(
+            "This is positioning and pricing, not a signal. It tells you what other "
+            "people already own, which is context for your own trade, not a reason for "
+            "it."
+        ),
+    ),
+    "option_sizing_contract": ColumnHelp(
+        meaning="Which contract the position calculator is working out numbers for.",
+        calculation=(
+            "The list is the tradable candidates from the table above; picking one "
+            "loads its published strike, expiry and mid price into the calculator."
+        ),
+    ),
+    "option_sizing_budget": ColumnHelp(
+        meaning="How much cash you are willing to put into this position.",
+        calculation=(
+            "Divided by the contract's cost (mid price x 100 shares per contract) to "
+            "get how many whole contracts the budget buys. Nothing is rounded up."
+        ),
+        details="It is your input — nothing here checks it against a portfolio.",
+    ),
+    "option_sizing_price": ColumnHelp(
+        meaning=(
+            "The share price you want to test — drag it to see what the position would "
+            "be worth if the stock ended there at expiry."
+        ),
+        calculation=(
+            "The payoff is the standard option value at expiry (for a put, strike minus "
+            "share price, floored at zero) minus what you paid, times 100 shares per "
+            "contract."
+        ),
+        details=(
+            "Expiry only: it ignores time value before expiry, so a live position can "
+            "be worth more or less than this on any day before then."
+        ),
+    ),
+    "option_sizing_ladder": ColumnHelp(
+        meaning=(
+            "What the position is worth at expiry across a range of share prices — your "
+            "profit and loss, step by step."
+        ),
+        calculation=(
+            "The same expiry payoff applied at each price step, net of the premium paid "
+            "and multiplied by the number of contracts your budget buys."
+        ),
+        direction=(
+            "The break-even row is the one that matters: below it the position loses, "
+            "and the most you can lose is the whole premium."
+        ),
+    ),
+    "option_liquidity_windows": ColumnHelp(
+        meaning=(
+            "How many contracts pass, half-pass or fail the tradability test in each "
+            "expiry window."
+        ),
+        calculation=(
+            "Counts of the published per-contract status across every window, so you "
+            "can see whether the window you want is liquid at all."
+        ),
+        direction=(
+            "More tradable contracts means tighter spreads and an easier exit; a window "
+            "with none is one to avoid regardless of how good the idea looks."
+        ),
+    ),
     "tool_d_quality_rank": ColumnHelp(
         meaning="A 0–100 resilience score — where this miner sits across the universe on the four resilience components (survival, cost, fragility, balance sheet).",
         calculation="Percentile rank of the average of the four resilience components, ×100. Only fully-scored, data-OK names are scored.",
@@ -1344,11 +2393,6 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     "tool_d_breakeven": ColumnHelp(
         meaning="The gold price where mine margin reaches zero (AISC breakeven).",
         calculation="Equals AISC per ounce (cash margin = gold − AISC = 0 there).",
-        direction="Lower is safer.",
-    ),
-    "tool_d_fcf_breakeven": ColumnHelp(
-        meaning="The gold price needed to cover AISC plus sustaining capex per ounce.",
-        calculation="AISC + sustaining capex per ounce (floored at AISC).",
         direction="Lower is safer.",
     ),
     "tool_d_debt_stress": ColumnHelp(
@@ -1379,14 +2423,14 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         thresholds=_ev_ebitda_cap_thresholds,
         direction="Lower is cheaper.",
     ),
-    "tool_d_fcf_yield_context": ColumnHelp(
-        meaning="FCF yield shown for context only — it is not used in the resilience score.",
-        calculation="Free cash flow ÷ market value (from the spot valuation).",
+    "tool_d_aisc_margin_yield_context": ColumnHelp(
+        meaning="AISC margin yield at the selected gold price — context only, not used in the resilience score.",
+        calculation="(Gold − reported AISC) × production ÷ market value at the selected gold price. The spot-gold pair is kept alongside it (aisc_margin_yield_at_spot).",
         direction="Higher means more cash generation for the price.",
     ),
     "tool_d_failure_ladder": ColumnHelp(
         meaning="The order in which this miner runs into trouble as gold falls — its survival lines from the highest gold price to the lowest.",
-        calculation="The breakeven, FCF-breakeven and interest-cover gold prices that exist for the name, sorted from highest to lowest.",
+        calculation="The breakeven (= reported AISC) and interest-cover gold prices that exist for the name, sorted from highest to lowest.",
         direction="A higher first rung means trouble starts sooner if gold drops.",
     ),
     "tool_d_resilience_flags": ColumnHelp(

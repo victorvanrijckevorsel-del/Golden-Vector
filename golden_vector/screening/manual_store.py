@@ -95,6 +95,19 @@ FINANCIAL_DUAL_SOURCE_FIELDS = frozenset(
     }
 )
 
+# C11: business-domain bounds enforced at the ONE manual-input boundary
+# (form/CLI upserts and CSV import both funnel through these).
+# - net_debt_musd may be negative (net cash) and is deliberately absent here.
+# - ebitda_ltm_musd may be negative; the leverage gate in layer1 explicitly
+#   fails non-positive EBITDA (LEVERAGE_NON_POSITIVE_EBITDA) — that is the policy.
+POSITIVE_COMPANY_FIELDS = frozenset(
+    {"production_oz", "aisc_usd_per_oz", "cash_cost_usd_per_oz", "reserve_life_years"}
+)
+NON_NEGATIVE_COMPANY_FIELDS = frozenset(
+    {"sustaining_capex_musd", "da_musd", "interest_expense_musd"}
+)
+RATE_COMPANY_FIELDS = frozenset({"royalty_rate", "tax_rate"})
+
 
 @dataclass(frozen=True)
 class ManualStoreSyncResult:
@@ -791,11 +804,28 @@ def _normalize_company_inputs(frame: pd.DataFrame) -> pd.DataFrame:
     normalized = normalized[normalized["ticker"] != ""].copy()
     normalized = normalized.drop_duplicates(subset=["ticker"], keep="last")
     for column in NUMERIC_COMPANY_FIELDS:
-        normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
-    if "royalty_rate" in normalized.columns:
-        normalized["royalty_rate"] = normalized["royalty_rate"].apply(_normalize_rate)
-    if "tax_rate" in normalized.columns:
-        normalized["tax_rate"] = normalized["tax_rate"].apply(_normalize_rate)
+        raw = normalized[column]
+        coerced = pd.to_numeric(raw, errors="coerce")
+        # C11: a present-but-unparseable CSV value must fail loud, never
+        # silently become null (a silent field wipe on import).
+        silently_dropped = raw.notna() & raw.astype(str).str.strip().ne("") & coerced.isna()
+        if silently_dropped.any():
+            bad = normalized.loc[silently_dropped, "ticker"].astype(str).tolist()
+            raise ValueError(
+                f"company_inputs.csv: non-numeric {column} for ticker(s) "
+                f"{', '.join(bad[:5])} — fix the CSV; values are never silently dropped."
+            )
+        normalized[column] = coerced
+    for rate_column in ("royalty_rate", "tax_rate"):
+        normalized[rate_column] = normalized[rate_column].apply(_normalize_rate)
+    for column in NUMERIC_COMPANY_FIELDS:
+        for row_ticker, row_value in zip(normalized["ticker"], normalized[column]):
+            if row_value is None or pd.isna(row_value):
+                continue
+            try:
+                _validate_business_bounds(column, float(row_value))
+            except ValueError as exc:
+                raise ValueError(f"company_inputs.csv [{row_ticker}]: {exc}") from exc
     for column in TIMESTAMP_COLUMNS:
         normalized[column] = normalized[column].apply(_normalize_text_value)
     return normalized[COMPANY_INPUT_COLUMNS].reset_index(drop=True)
@@ -892,9 +922,29 @@ def _normalize_numeric_value(field_name: str, value: object) -> float | None:
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{field_name} must be numeric.") from exc
     require_finite(numeric, field=field_name)
-    if field_name in {"royalty_rate", "tax_rate"}:
-        return percent_to_fraction(numeric)
+    if field_name in RATE_COMPANY_FIELDS:
+        numeric = percent_to_fraction(numeric)
+    _validate_business_bounds(field_name, numeric)
     return numeric
+
+
+def _validate_business_bounds(field_name: str, numeric: float) -> None:
+    """C11: reject economically impossible manual inputs at the boundary.
+
+    A negative sustaining capex would INCREASE the margin estimate; a negative
+    royalty/interest/D&A would improve estimates; a tax rate above 1 (after the
+    percent conversion) would be a >100% tax rate. Net debt and EBITDA are
+    deliberately unbounded below (net cash / loss-making are real states).
+    """
+    if field_name in POSITIVE_COMPANY_FIELDS and numeric <= 0:
+        raise ValueError(f"{field_name} must be positive when supplied (got {numeric}).")
+    if field_name in NON_NEGATIVE_COMPANY_FIELDS and numeric < 0:
+        raise ValueError(f"{field_name} must be zero or positive (got {numeric}).")
+    if field_name in RATE_COMPANY_FIELDS and not 0.0 <= numeric <= 1.0:
+        raise ValueError(
+            f"{field_name} must be between 0 and 1 after percent conversion "
+            f"(got {numeric}; enter e.g. 30 for 30% or 0.30)."
+        )
 
 
 def _normalize_date_value(value: object) -> str | None:
@@ -921,11 +971,9 @@ def _normalize_text_value(value: object) -> str | None:
 def _normalize_rate(value: object) -> float | None:
     if value is None or pd.isna(value):
         return None
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return None
-    return percent_to_fraction(numeric)
+    # Values reaching here are already numeric (the import loop coerces and
+    # fails loud on garbage); the conversion happens exactly once, here.
+    return percent_to_fraction(float(value))
 
 
 def _sqlite_value(value: object) -> object:

@@ -60,6 +60,12 @@ from golden_vector.app.replay_manifest import (
 )
 from golden_vector.app.run_pruning import PruneReport, prune_runs
 from golden_vector.app.run_context import RunContext, to_jsonable
+from golden_vector.app.ticker_page_stage import (
+    TickerPageGenerationMismatchError,
+    assert_tool_generation_aligned,
+    load_ticker_page_stage_inputs,
+    run_ticker_page_stage,
+)
 from golden_vector.features.horizons import parse_requested_horizons
 from golden_vector.features.returns import RETURN_COLUMNS, compute_horizon_returns_for_ticker
 from golden_vector.fundamentals.artifacts import load_official_fundamentals
@@ -70,10 +76,12 @@ from golden_vector.hedge.option_artifact_builder import (
     scan_option_chains_for_artifacts,
     scan_option_contract_metrics,
 )
+from golden_vector.contracts.option_artifacts import option_artifact_latest_path
 from golden_vector.hedge.option_artifact_frames import (
     build_option_artifact_frames,
     tool_refresh_run_id,
 )
+from golden_vector.hedge.history_migrations import migrate_iv_rv_history
 from golden_vector.hedge.option_artifact_sources import load_option_artifact_source_inputs
 from golden_vector.hedge.option_signals import (
     build_option_signal_artifacts,
@@ -212,6 +220,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Gold price G in USD per oz. Defaults to the latest spot gold close.",
+    )
+    subparsers.add_parser(
+        "ticker-page",
+        help=(
+            "Build the ticker-page artifacts (gold response, percentiles, performance, "
+            "research series) from the current model state. Non-authoritative: it does "
+            "not republish model state."
+        ),
     )
     fetch_fundamentals_parser = subparsers.add_parser(
         "fetch-fundamentals",
@@ -612,6 +628,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run id under data/runs, or a direct path to a run directory.",
     )
 
+    subparsers.add_parser(
+        "migrate-option-history",
+        help=(
+            "Recompute iv_rv_ratio in the canonical option signal history with "
+            "corrected realized-volatility semantics (one-time value migration)."
+        ),
+    )
+
     prune_parser = subparsers.add_parser(
         "prune-runs",
         help="Dry-run or apply safe retention pruning for old run-stamped artifacts.",
@@ -654,6 +678,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "tool-d":
         return run_tool_d(paths, gold_price=args.gold_price)
+
+    if args.command == "ticker-page":
+        return run_ticker_page(paths)
 
     if args.command == "fetch-fundamentals":
         return run_fetch_fundamentals(paths, tickers=args.tickers)
@@ -737,6 +764,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "verify-replay":
         return run_verify_replay(paths, run_id_or_path=args.run_id_or_path)
 
+    if args.command == "migrate-option-history":
+        return run_migrate_option_history(paths)
+
     if args.command == "prune-runs":
         return run_prune_runs(
             paths,
@@ -746,6 +776,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser.error(f"Unsupported command: {args.command}")
     return 2
+
+
+def run_migrate_option_history(paths: ProjectPaths) -> int:
+    migration_run_id = (
+        f"iv-rv-migration-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    )
+    try:
+        stats = migrate_iv_rv_history(paths, migration_run_id=migration_run_id)
+    except Exception as exc:
+        print(f"Option signal history migration failed: {exc}")
+        return 1
+    print(f"migration_run_id: {migration_run_id}")
+    print(json.dumps(stats, indent=2, sort_keys=True, default=str))
+    return 0
 
 
 def run_perf_profile(paths: ProjectPaths, *, json_output: bool = False) -> int:
@@ -1803,6 +1847,184 @@ def _is_same_gold_price(left: float, right: float) -> bool:
     return abs(float(left) - float(right)) <= 0.01
 
 
+def run_ticker_page(
+    paths: ProjectPaths,
+    *,
+    parent_refresh_id: str | None = None,
+    snapshot_refresh_run_id: str | None = None,
+    upstream_run_ids: dict[str, str] | None = None,
+    _use_model_state_inputs: bool = True,
+) -> int:
+    """Build + persist the four ticker-page artifacts (plan §5.5).
+
+    Two identity sources, never mixed:
+
+    * **standalone** (``_use_model_state_inputs=True``) — inputs and identity come
+      from the CURRENT model-state manifest, and the run aborts when the four
+      tools name different generations. A standalone run is **non-authoritative**:
+      it refreshes the run-stamped files and aliases but never republishes model
+      state, so it can never make itself "current".
+    * **in-refresh** (``_use_model_state_inputs=False``) — the caller passes the
+      live refresh context's ids; mid-refresh the manifest still points at the
+      PREVIOUS generation, so it is never read here.
+    """
+
+    run_context: RunContext | None = None
+    try:
+        loaded_config = load_app_config(paths)
+        run_context = RunContext.start(
+            paths=paths,
+            command="ticker-page",
+            parameters={
+                "standalone": bool(_use_model_state_inputs),
+                "parent_refresh_id": parent_refresh_id,
+            },
+            config_hash=loaded_config.config_hash,
+        )
+        configure_logging(run_context.log_path)
+
+        resolved_parent_refresh_id = parent_refresh_id
+        if _use_model_state_inputs:
+            manifest = load_current_model_state_manifest(paths)
+            aligned_run_id = assert_tool_generation_aligned(manifest)
+            snapshot_refresh_run_id = snapshot_refresh_run_id or aligned_run_id
+            resolved_parent_refresh_id = resolved_parent_refresh_id or _clean_text(
+                (manifest or {}).get("parent_refresh_id")
+            )
+
+        foundation_snapshot = _load_latest_foundation_snapshot(
+            paths=paths,
+            app_config=loaded_config.app,
+            run_context=run_context,
+            include_gold_history=True,
+            include_equity_histories=True,
+            include_market_snapshots=True,
+            use_model_state=_use_model_state_inputs,
+        )
+        resolved_snapshot_run_id = snapshot_refresh_run_id or str(
+            foundation_snapshot.refresh_run_id or ""
+        )
+        if not resolved_snapshot_run_id:
+            raise ValueError(
+                "The foundation snapshot carries no refresh_run_id; the ticker-page "
+                "stage cannot stamp a generation onto its artifacts."
+            )
+        if not resolved_parent_refresh_id:
+            resolved_parent_refresh_id = resolved_snapshot_run_id
+
+        manual_data = load_manual_screening_data(
+            paths,
+            tickers=sorted(
+                ticker.ticker
+                for ticker in loaded_config.app.universe.tickers
+                if ticker.active and ticker.tool_b_enabled
+            ),
+        )
+        official_fundamentals = load_official_fundamentals(
+            paths,
+            prefer_latest_alias=not _use_model_state_inputs,
+        )
+        inputs = load_ticker_page_stage_inputs(
+            paths=paths,
+            app_config=loaded_config.app,
+            config_hash=loaded_config.config_hash,
+            foundation_snapshot=foundation_snapshot,
+            use_model_state=_use_model_state_inputs,
+            manual_data=manual_data,
+            official_fundamentals=official_fundamentals,
+        )
+
+        summary = run_ticker_page_stage(
+            paths=paths,
+            app_config=loaded_config.app,
+            run_context=run_context,
+            parent_refresh_id=resolved_parent_refresh_id,
+            snapshot_refresh_run_id=resolved_snapshot_run_id,
+            config_hash=loaded_config.config_hash,
+            upstream_run_ids=upstream_run_ids,
+            manual_data=inputs.manual_data,
+            normalized_market_snapshots=inputs.normalized_market_snapshots,
+            official_fundamentals=inputs.official_fundamentals,
+            gold_history=inputs.gold_history,
+            normalized_equity_histories=inputs.normalized_equity_histories,
+            tool_a_latest=inputs.tool_a_latest,
+            tool_b_latest=inputs.tool_b_latest,
+            tool_c_latest=inputs.tool_c_latest,
+            tool_d_latest=inputs.tool_d_latest,
+            structural_window_metrics=inputs.structural_window_metrics,
+            benchmark_histories=inputs.benchmark_histories,
+            benchmark_series_run_ids=inputs.benchmark_series_run_ids,
+            snapshot_as_of_date=inputs.snapshot_as_of_date,
+            input_warnings=inputs.warnings,
+        )
+
+        _print_ticker_page_summary(summary)
+        if _use_model_state_inputs:
+            print(
+                "Standalone ticker-page runs are non-authoritative: the model-state "
+                "manifest was NOT republished. Run `python main.py refresh` to publish "
+                "these artifacts as the current generation."
+            )
+
+        status = "WARN" if summary["warnings"] else "PASS"
+        run_context.finalize(
+            status=status,
+            summary=summary,
+            notes=[
+                "Ticker-page artifacts built from the "
+                + ("current model state." if _use_model_state_inputs else "live refresh context.")
+            ],
+        )
+        LOGGER.info("Ticker-page stage completed with status %s.", status)
+        return 0
+    except TickerPageGenerationMismatchError as exc:
+        print(f"ticker-page aborted: {exc}")
+        if run_context is not None:
+            run_context.finalize(
+                status="FAIL",
+                summary={"error": str(exc)},
+                notes=["Ticker-page stage aborted on a misaligned tool generation."],
+            )
+        return 2
+    except Exception as exc:
+        if run_context is None:
+            run_context = RunContext.start(
+                paths=paths,
+                command="ticker-page",
+                parameters={"standalone": bool(_use_model_state_inputs)},
+                config_hash="UNAVAILABLE",
+            )
+            configure_logging(run_context.log_path)
+        LOGGER.exception("Ticker-page stage failed.")
+        run_context.finalize(
+            status="FAIL",
+            summary={"error": str(exc)},
+            notes=["Ticker-page stage failed before completion."],
+        )
+        print(f"ticker-page failed: {exc}")
+        return 1
+
+
+def _clean_text(value: object) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def _print_ticker_page_summary(summary: dict[str, object]) -> None:
+    rows = summary.get("rows") or {}
+    timings = summary.get("timings") or {}
+    print("Ticker-page stage substeps (seconds / rows):")
+    for step, entry in timings.items():  # type: ignore[union-attr]
+        seconds = entry.get("duration_seconds")
+        built = entry.get("rows_built")
+        persisted = entry.get("rows_persisted")
+        detail = f"rows_built={built}" if built is not None else f"rows_persisted={persisted}"
+        print(f"  {step:<16} {seconds:>8}s  {detail}")
+    print(f"Rows persisted per artifact: {rows}")
+    for warning in summary.get("warnings") or []:  # type: ignore[union-attr]
+        print(f"  warning: {warning}")
+
+
 US_OPTIONS_SESSION_START_ET = time(9, 30)
 US_OPTIONS_SESSION_END_ET = time(16, 0)
 
@@ -2059,6 +2281,16 @@ def _run_option_artifacts_unlocked(
             option_signals=option_signals,
             tool_a_refresh_id=tool_refresh_run_id(sources.tool_a),
             tool_b_refresh_id=tool_refresh_run_id(sources.tool_b),
+            # v4 artifacts: availability is universe-complete, and the chain
+            # history merges forward onto whatever is currently published
+            # (None on the first v4 run).
+            universe_tickers=tuple(
+                ticker.ticker
+                for ticker in loaded_config.app.universe.tickers
+                if ticker.active
+            ),
+            previous_chain_history=_previous_option_chain_history(paths),
+            history_quality=loaded_config.app.hedge_readiness.history_quality,
         )
         # All-or-nothing publish (audit H2 + Codex options-UI review HIGH): stage
         # every artifact to run-stamped paths WITHOUT flipping latest aliases, then
@@ -2118,6 +2350,34 @@ def _run_option_artifacts_unlocked(
             notes=["Option artifact build failed before completion."],
         )
         return OptionArtifactsOutcome(status="FAILED")
+
+
+def _previous_option_chain_history(paths: ProjectPaths) -> pd.DataFrame | None:
+    """The currently published chain-history artifact, or None on the first run.
+
+    This file is the ONLY copy of the accumulated daily chain history, so it is a
+    REQUIRED read whenever it exists — mirroring ``load_option_signal_history``.
+    ``read_optional_parquet`` would swallow a corrupt/unreadable file, return
+    empty, and the no-shrink guard (which compares against what we hand it) would
+    see "no previous rows" and happily publish a history with the entire past
+    missing. Genuinely absent (no manifest entry AND no alias file) is the only
+    None: a true first run.
+    """
+
+    path = resolve_current_model_artifact_path(paths, "option_chain_history_daily")
+    if path is None:
+        path = option_artifact_latest_path(paths, "option_chain_history_daily")
+    if not path.exists():
+        return None
+    try:
+        frame = pd.read_parquet(path)
+    except Exception as exc:
+        raise ValueError(
+            "Published option chain history could not be read: "
+            f"{path} ({exc}). Refusing to rebuild the option artifacts from an "
+            "empty history — the last good published state stays current."
+        ) from exc
+    return None if frame.empty else frame
 
 
 def _previous_option_contract_metrics(paths: ProjectPaths) -> pd.DataFrame:
@@ -3415,8 +3675,15 @@ def _run_refresh_unlocked(
 
     loaded_config_for_refresh = load_app_config(paths)
     portfolio_enabled = loaded_config_for_refresh.app.portfolio.enabled
-    total_steps = (7 if portfolio_enabled else 6) if not skip_tool_b else (4 if portfolio_enabled else 3)
+    # --skip-tool-b skips tool-b/c/d AND the ticker-page stage that depends on all
+    # four tool frames (plan §5.5, P1) — hence the step count only grows on the
+    # full path.
+    total_steps = (8 if portfolio_enabled else 7) if not skip_tool_b else (4 if portfolio_enabled else 3)
     stage_timings: dict[str, dict[str, object]] = {}
+    # Ticker-page failures degrade instead of aborting (perishable options
+    # capture and daily artifact publication must never be lost to a
+    # page-layer failure); the exit code is deferred to the end of the run.
+    deferred_ticker_page_exit = 0
     parent_refresh_id = _new_parent_refresh_id()
 
     def record_step(name: str, started_at: float, exit_code: int) -> None:
@@ -3615,9 +3882,41 @@ def _run_refresh_unlocked(
         if fault_exit is not None:
             return fault_exit
 
+        print()
+        print(f"== Step 7/{total_steps}: ticker-page ==")
+        started_at = perf_counter()
+        # Runs AFTER option-artifacts so the performance producer resolves
+        # GDX/GDXJ from THIS generation's options manifest, not the previous
+        # one (self-review P1-3). Identity comes from the LIVE refresh context:
+        # mid-refresh the model-state manifest still names the PREVIOUS
+        # generation (it is published at the end of this function), so the
+        # stage reads the aliases the earlier steps just wrote and takes
+        # parent_refresh_id from this run (plan §5.5). A BLOCKED options
+        # publish leaves the previous manifest current; the benchmark
+        # staleness rule then marks those series honestly.
+        ticker_page_exit = run_ticker_page(
+            paths,
+            parent_refresh_id=parent_refresh_id,
+            _use_model_state_inputs=False,
+        )
+        record_step("ticker_page", started_at, ticker_page_exit)
+        if ticker_page_exit != 0:
+            deferred_ticker_page_exit = ticker_page_exit
+            print()
+            print(
+                "WARNING: ticker-page failed (exit code {}). Continuing the "
+                "refresh — option publication and portfolio must not be lost "
+                "to a page-layer failure. The model-state manifest will name "
+                "the ticker-page artifacts as missing or stale, and the "
+                "refresh exits non-zero at the end.".format(ticker_page_exit)
+            )
+        fault_exit = injected_fault_after("ticker_page")
+        if fault_exit is not None:
+            return fault_exit
+
         if portfolio_enabled:
             print()
-            print(f"== Step 7/{total_steps}: portfolio ==")
+            print(f"== Step 8/{total_steps}: portfolio ==")
             started_at = perf_counter()
             portfolio_exit = _run_portfolio_refresh_step(
                 paths,
@@ -3670,7 +3969,14 @@ def _run_refresh_unlocked(
 
     print()
     print("== Refresh complete. Operational status: ==")
-    return run_status(paths)
+    status_exit = run_status(paths)
+    if deferred_ticker_page_exit:
+        print(
+            "Refresh completed DEGRADED: the ticker-page stage failed (see "
+            "warning above); exiting non-zero so schedulers surface it."
+        )
+        return deferred_ticker_page_exit
+    return status_exit
 
 
 def _new_parent_refresh_id() -> str:

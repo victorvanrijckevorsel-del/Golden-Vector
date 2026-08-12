@@ -384,6 +384,10 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
         call_order.append(f"tool-d@{gold_price}")
         return 0
 
+    def fake_ticker_page(_paths, **_kwargs):
+        call_order.append("ticker-page")
+        return 0
+
     def fake_option_artifacts(_paths, *, parent_refresh_id, lock_held=False):
         call_order.append("option-artifacts")
         assert lock_held is True  # the refresh holds the lock; the step must not re-acquire
@@ -400,6 +404,7 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
     monkeypatch.setattr("golden_vector.cli.run_tool_c", fake_tool_c)
     monkeypatch.setattr("golden_vector.cli.run_tool_d", fake_tool_d)
+    monkeypatch.setattr("golden_vector.cli.run_ticker_page", fake_ticker_page)
     monkeypatch.setattr("golden_vector.cli.run_option_artifacts_outcome", fake_option_artifacts)
     monkeypatch.setattr("golden_vector.cli._run_portfolio_refresh_step", fake_portfolio)
 
@@ -413,6 +418,7 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
         "tool-c",
         "tool-d@None",
         "option-artifacts",
+        "ticker-page",
         "portfolio",
     ]
     assert paths.latest_model_state_manifest_path.exists()
@@ -426,13 +432,17 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     assert model_state["stage_timings"]["portfolio"]["exit_code"] == 0
     assert read_option_refresh_status(paths).status == "succeeded"
     out = capsys.readouterr().out
-    assert "Step 1/7: update-data" in out
-    assert "Step 2/7: tool-a" in out
-    assert "Step 3/7: tool-b" in out
-    assert "Step 4/7: tool-c" in out
-    assert "Step 5/7: tool-d (spot gold)" in out
-    assert "Step 6/7: option-artifacts" in out
-    assert "Step 7/7: portfolio" in out
+    assert "Step 1/8: update-data" in out
+    assert "Step 2/8: tool-a" in out
+    assert "Step 3/8: tool-b" in out
+    assert "Step 4/8: tool-c" in out
+    assert "Step 5/8: tool-d (spot gold)" in out
+    # Step order (self-review P1-3): option-artifacts publishes THIS
+    # generation's options manifest BEFORE ticker-page reads it for the
+    # benchmark performance series.
+    assert "Step 6/8: option-artifacts" in out
+    assert "Step 7/8: ticker-page" in out
+    assert "Step 8/8: portfolio" in out
     assert "Model state manifest published:" in out
     assert "Refresh complete" in out
 
@@ -481,6 +491,7 @@ def _stub_refresh_pipeline(monkeypatch, *, order):
     monkeypatch.setattr("golden_vector.cli.run_tool_b", lambda _p, *, gold_price, _use_model_state_inputs: (order.append("tool-b"), 0)[1])
     monkeypatch.setattr("golden_vector.cli.run_tool_c", lambda _p, **_k: (order.append("tool-c"), 0)[1])
     monkeypatch.setattr("golden_vector.cli.run_tool_d", lambda _p, *, gold_price, **_k: (order.append("tool-d"), 0)[1])
+    monkeypatch.setattr("golden_vector.cli.run_ticker_page", lambda _p, **_k: (order.append("ticker-page"), 0)[1])
     monkeypatch.setattr("golden_vector.cli.run_option_artifacts_outcome", lambda _p, *, parent_refresh_id, lock_held=False: OptionArtifactsOutcome(status="OK"))
     monkeypatch.setattr("golden_vector.cli._run_portfolio_refresh_step", lambda _p, **_k: (order.append("portfolio"), 0)[1])
 
@@ -644,6 +655,10 @@ def test_refresh_option_artifact_failure_keeps_previous_manifest(
         _write_tool_d(_paths, refresh_run_id="refresh-new")
         return 0
 
+    def fake_ticker_page(_paths, **_kwargs):
+        call_order.append("ticker-page")
+        return 0
+
     def fake_option_artifacts(_paths, *, parent_refresh_id, lock_held=False):
         call_order.append("option-artifacts")
         assert lock_held is True  # the refresh holds the lock; the step must not re-acquire
@@ -655,6 +670,7 @@ def test_refresh_option_artifact_failure_keeps_previous_manifest(
     monkeypatch.setattr("golden_vector.cli.run_tool_b", fake_tool_b)
     monkeypatch.setattr("golden_vector.cli.run_tool_c", fake_tool_c)
     monkeypatch.setattr("golden_vector.cli.run_tool_d", fake_tool_d)
+    monkeypatch.setattr("golden_vector.cli.run_ticker_page", fake_ticker_page)
     monkeypatch.setattr("golden_vector.cli.run_option_artifacts_outcome", fake_option_artifacts)
 
     exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
@@ -668,6 +684,8 @@ def test_refresh_option_artifact_failure_keeps_previous_manifest(
         "tool-b",
         "tool-c",
         "tool-d",
+        # option-artifacts FAILED aborts the refresh at step 6 — ticker-page
+        # (now step 7, after the options manifest it reads) never runs.
         "option-artifacts",
     ]
     assert current_manifest == previous_manifest
@@ -1195,3 +1213,27 @@ def _write_tool_d(paths: ProjectPaths, *, refresh_run_id: str) -> None:
         ),
         publish_spot_latest_aliases=True,
     )
+
+
+def test_refresh_degrades_but_continues_when_ticker_page_fails(tmp_path, monkeypatch, capsys):
+    """A ticker-page failure must never cost the day's option publication or
+    portfolio: the refresh continues, later steps run, and the failure is
+    surfaced through a warning plus a deferred non-zero exit code."""
+    paths = build_test_paths(tmp_path)
+    order: list[str] = []
+    _stub_refresh_pipeline(monkeypatch, order=order)
+    monkeypatch.setattr("golden_vector.cli.run_fetch_fundamentals", lambda _p, **_k: 0)
+    monkeypatch.setattr(
+        "golden_vector.cli.run_ticker_page",
+        lambda _p, **_k: (order.append("ticker-page"), 1)[1],
+    )
+
+    exit_code = run_refresh(paths, gold_price_override=None, skip_tool_b=False)
+    out = capsys.readouterr().out
+
+    assert exit_code == 1, out
+    assert "WARNING: ticker-page failed" in out
+    assert "Refresh completed DEGRADED" in out
+    # Everything after step 6 still ran.
+    assert order.index("portfolio") > order.index("ticker-page")
+    assert "portfolio" in order

@@ -66,8 +66,8 @@ YAHOO_FINANCE_SOURCE_COLUMN_MAP: dict[str, str] = {
     "forward_net_income_musd": "forward_net_income_musd_official",
     "forward_eps": "forward_eps_official",
     "forward_pe": "forward_pe_official",
-    "sustainable_fcf_musd": "sustainable_fcf_musd_official",
-    "fcf_yield": "fcf_yield_official",
+    "aisc_margin_est_musd": "aisc_margin_est_musd_official",
+    "aisc_margin_yield": "aisc_margin_yield_official",
     "ev_ebitda": "ev_ebitda_official",
     "leverage": "leverage_official",
     "fundamental_check_score": "fundamental_check_score_official",
@@ -75,6 +75,16 @@ YAHOO_FINANCE_SOURCE_COLUMN_MAP: dict[str, str] = {
     "fundamental_checks_passed": "fundamental_checks_passed_official",
     "fundamental_checks_total": "fundamental_checks_total_official",
     "fundamental_check_summary": "fundamental_check_summary_official",
+}
+
+#: Columns that resolve exactly like the map above but whose SOURCE column may
+#: legitimately be absent (they postdate some artifacts), so they cannot be
+#: required columns — the schema contract polices only the map above. Applied
+#: tolerantly: present → resolved, absent → the active column is cleared, never
+#: left holding Our-View values under a Yahoo heading. Keeping them here rather
+#: than in serve means every reader gets ONE already-resolved column.
+OPTIONAL_YAHOO_FINANCE_SOURCE_COLUMN_MAP: dict[str, str] = {
+    "fundamental_check_fail_codes": "fundamental_check_fail_codes_official",
 }
 
 
@@ -295,6 +305,17 @@ def materialize_tool_b_finance_source(
             )
         for active_column, source_column in YAHOO_FINANCE_SOURCE_COLUMN_MAP.items():
             materialized[active_column] = materialized[source_column]
+        for (
+            active_column,
+            source_column,
+        ) in OPTIONAL_YAHOO_FINANCE_SOURCE_COLUMN_MAP.items():
+            if source_column in materialized.columns:
+                materialized[active_column] = materialized[source_column]
+            elif active_column in materialized.columns:
+                # The Yahoo variant predates this artifact. The active column
+                # still holds OUR-VIEW values, which must never be shown as
+                # Yahoo's — an absent source means nothing to say, not a guess.
+                materialized[active_column] = None
     return _with_dual_source_display_fields(materialized, finance_source=selected)
 
 
@@ -517,8 +538,8 @@ def _build_tool_b_rows(
                     enterprise_value_musd=layer2["enterprise_value_musd"],
                     ebitda_ltm_musd=our_row.get("ebitda_ltm_musd"),
                 ),
-                "sustainable_fcf_musd": layer1["sustainable_fcf_musd"],
-                "fcf_yield": layer1["fcf_yield"],
+                "aisc_margin_est_musd": layer1["aisc_margin_est_musd"],
+                "aisc_margin_yield": layer1["aisc_margin_yield"],
                 "leverage": layer1["leverage"],
                 "leverage_our_view": layer1["leverage"],
                 "leverage_official": official_layer1["leverage"],
@@ -551,11 +572,17 @@ def _build_tool_b_rows(
                     if official_check_score is not None
                     else None
                 ),
+                "fundamental_check_fail_codes_official": (
+                    official_checks["fundamental_check_fail_codes"]
+                    if official_check_score is not None
+                    else None
+                ),
                 "fundamental_check_score": fundamental_checks["fundamental_check_score"],
                 "fundamental_check_rank": None,
                 "fundamental_checks_passed": fundamental_checks["fundamental_checks_passed"],
                 "fundamental_checks_total": fundamental_checks["fundamental_checks_total"],
                 "fundamental_check_summary": fundamental_checks["fundamental_check_summary"],
+                "fundamental_check_fail_codes": fundamental_checks["fundamental_check_fail_codes"],
                 "missing_manual_fields": None if not missing_fields else ";".join(missing_fields),
                 "next_financial_report_date": row.get("next_financial_report_date"),
                 "next_production_report_date": row.get("next_production_report_date"),
@@ -611,12 +638,12 @@ def _build_tool_b_rows(
                 "forward_eps_official": official_layer2["forward_eps"],
                 "forward_pe_our_view": layer2["forward_pe"],
                 "forward_pe_official": official_layer2["forward_pe"],
-                "sustainable_fcf_musd_our_view": layer1["sustainable_fcf_musd"],
-                "sustainable_fcf_musd_official": official_layer1[
-                    "sustainable_fcf_musd"
+                "aisc_margin_est_musd_our_view": layer1["aisc_margin_est_musd"],
+                "aisc_margin_est_musd_official": official_layer1[
+                    "aisc_margin_est_musd"
                 ],
-                "fcf_yield_our_view": layer1["fcf_yield"],
-                "fcf_yield_official": official_layer1["fcf_yield"],
+                "aisc_margin_yield_our_view": layer1["aisc_margin_yield"],
+                "aisc_margin_yield_official": official_layer1["aisc_margin_yield"],
             }
         )
     return rows

@@ -33,3 +33,15 @@ class _GuardedSocket(_REAL_SOCKET):
 def _block_external_network(monkeypatch):
     monkeypatch.setattr(socket, "socket", _GuardedSocket)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_ticker_page_data_cache():
+    """Every test starts cache-cold: the bounded generation cache in
+    serve/ticker_page/data.py keys on the model-state pointer stat, and two
+    tests sharing one fixture tree must never observe each other's frames."""
+    from golden_vector.serve.ticker_page import data as ticker_page_data
+
+    ticker_page_data._DATA_CACHE.clear()
+    yield
+    ticker_page_data._DATA_CACHE.clear()

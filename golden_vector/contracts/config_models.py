@@ -141,6 +141,48 @@ class BenchmarksConfig(StrictConfigModel):
         return self
 
 
+class OptionHistoryQualityConfig(StrictConfigModel):
+    """Quality gates for the daily option-chain history (plan §6.3, §10)."""
+
+    partial_capture_min_ratio: float = 0.70
+    iv_valid_range: list[float] = Field(default_factory=lambda: [0.01, 3.0])
+    skew_valid_range: list[float] = Field(default_factory=lambda: [-1.0, 1.0])
+    implied_move_valid_range: list[float] = Field(default_factory=lambda: [0.0, 1.0])
+    expiry_floor_ratio: float = 0.5
+    trailing_median_days: int = 20
+    coverage_floor_ratio: float = 0.5
+
+    @field_validator(
+        "partial_capture_min_ratio",
+        "expiry_floor_ratio",
+        "coverage_floor_ratio",
+    )
+    @classmethod
+    def valid_ratio(cls, value: float) -> float:
+        if not math.isfinite(float(value)) or not 0 < value <= 1:
+            raise ValueError("history_quality ratios must be finite and in (0, 1]")
+        return float(value)
+
+    @field_validator("trailing_median_days")
+    @classmethod
+    def positive_trailing_days(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("trailing_median_days must be positive")
+        return int(value)
+
+    @field_validator("iv_valid_range", "skew_valid_range", "implied_move_valid_range")
+    @classmethod
+    def valid_range_pair(cls, value: list[float]) -> list[float]:
+        if len(value) != 2:
+            raise ValueError("valid ranges must be [low, high] pairs")
+        low, high = float(value[0]), float(value[1])
+        if not math.isfinite(low) or not math.isfinite(high):
+            raise ValueError("valid range bounds must be finite")
+        if low >= high:
+            raise ValueError(f"valid range low must be below high; got [{low}, {high}]")
+        return [low, high]
+
+
 class HedgeReadinessConfig(StrictConfigModel):
     version: int = 2
     target_delta: float = -0.25
@@ -234,6 +276,10 @@ class HedgeReadinessConfig(StrictConfigModel):
     # MUST be set once long-dated horizons join target_horizons_days, or names
     # missing a LEAPS quote silently degrade to "thin".
     optionability_core_horizons: list[int] = Field(default_factory=lambda: [90, 180])
+    # Daily option-chain history quality gates (plan §6.3).
+    history_quality: OptionHistoryQualityConfig = Field(
+        default_factory=lambda: OptionHistoryQualityConfig()
+    )
 
     @field_validator("target_delta")
     @classmethod
@@ -583,6 +629,29 @@ class ToolCConfig(StrictConfigModel):
     regime_min_weeks: int = 52
     downside_hit_rate_threshold_pct: float = -10.0
     upside_hit_rate_threshold_pct: float = 10.0
+    tag_low_confidence_below: float = 0.5
+    tag_steep_beta_at_least: float = 1.5
+    tag_persistent_relative_at_least: float = 0.6
+    tag_frequent_tail_at_least: float = 0.25
+
+    @field_validator(
+        "tag_low_confidence_below",
+        "tag_persistent_relative_at_least",
+        "tag_frequent_tail_at_least",
+    )
+    @classmethod
+    def unit_interval_tag_thresholds(cls, value: float) -> float:
+        if not math.isfinite(float(value)) or not 0 < value <= 1:
+            raise ValueError("Tool C tag share thresholds must be finite and in (0, 1]")
+        return float(value)
+
+    @field_validator("tag_steep_beta_at_least")
+    @classmethod
+    def positive_steep_beta_threshold(cls, value: float) -> float:
+        # NaN/+inf silently pass a bare `<= 0` check and would poison the tag.
+        if not math.isfinite(float(value)) or value <= 0:
+            raise ValueError("Tool C steep-beta tag threshold must be finite and positive")
+        return float(value)
 
     @field_validator(
         "min_events",
@@ -615,13 +684,18 @@ class ToolCConfig(StrictConfigModel):
             raise ValueError("Tool C upside hit-rate threshold must be positive")
         return float(value)
 
+    # C2: weekly returns are stored as LOG returns, but the configured
+    # threshold means an ORDINARY price return ("the stock fell at least 10%").
+    # Convert simple -> log exactly once here (log1p); comparing the raw simple
+    # fraction to a log return misclassifies events near the boundary
+    # (a -0.10 log return is only a -9.52% ordinary decline).
     @property
-    def downside_hit_rate_threshold(self) -> float:
-        return self.downside_hit_rate_threshold_pct / 100.0
+    def downside_hit_rate_log_threshold(self) -> float:
+        return math.log1p(self.downside_hit_rate_threshold_pct / 100.0)
 
     @property
-    def upside_hit_rate_threshold(self) -> float:
-        return self.upside_hit_rate_threshold_pct / 100.0
+    def upside_hit_rate_log_threshold(self) -> float:
+        return math.log1p(self.upside_hit_rate_threshold_pct / 100.0)
 
 
 class GoldProfileConfig(StrictConfigModel):
@@ -1254,7 +1328,7 @@ class ScoringConfig(StrictConfigModel):
 class Layer1Thresholds(StrictConfigModel):
     aisc_max: float = 1850.0
     margin_min: float = 0.5
-    fcf_yield_min: float = 0.15
+    aisc_margin_yield_min: float = 0.15
     reserve_life_min: float = 6.0
     leverage_max: float = 2.5
 
@@ -1486,6 +1560,355 @@ class FundamentalsConfig(StrictConfigModel):
         return float(value)
 
 
+TICKER_PAGE_METRIC_CATEGORIES: frozenset[str] = frozenset({"trading", "corporate"})
+TICKER_PAGE_SOURCE_TOOLS: frozenset[str] = frozenset(
+    {"tool_a", "tool_b", "tool_c", "tool_d"}
+)
+TICKER_PAGE_METRIC_UNITS: frozenset[str] = frozenset(
+    {"ratio", "percent", "usd", "usd_per_oz", "years", "count"}
+)
+TICKER_PAGE_CHART_HORIZONS: frozenset[str] = frozenset({"1Y", "3Y", "5Y"})
+TICKER_PAGE_LAB_HORIZON_WEEKS: frozenset[int] = frozenset({4, 8, 13, 26})
+# Product-locked: the score builder always allocates exactly 100 points.
+TICKER_PAGE_SCORE_BUDGET_POINTS = 100
+
+
+class TickerPageDialConfig(StrictConfigModel):
+    """Gold dial bounds + linearity guard (plan §3.2, §5.6)."""
+
+    min_gold_usd: float = 2000.0
+    max_gold_usd: float = 6000.0
+    step_usd: float = 1.0
+    probe_gold_usd: list[float] = Field(
+        default_factory=lambda: [2000.0, 4000.0, 6000.0], min_length=1
+    )
+    linearity_abs_tol_musd: float = 0.5
+    linearity_abs_tol_eps: float = 0.005
+    linearity_rel_tol: float = 0.001
+    systemic_min_tickers: int = 5
+
+    @field_validator(
+        "min_gold_usd",
+        "max_gold_usd",
+        "step_usd",
+        "linearity_abs_tol_musd",
+        "linearity_abs_tol_eps",
+        "linearity_rel_tol",
+    )
+    @classmethod
+    def finite_floats(cls, value: float) -> float:
+        if not math.isfinite(float(value)):
+            raise ValueError("ticker_page.dial values must be finite")
+        return float(value)
+
+    @model_validator(mode="after")
+    def probes_cover_bounds_with_interior(self) -> "TickerPageDialConfig":
+        """C9: the line is fitted at the OUTER probes, so both dial bounds must
+        be probed, plus at least one strictly interior probe (or the fit is
+        never tested where the dial actually reads it)."""
+
+        probes = sorted(float(p) for p in self.probe_gold_usd)
+        tol = 1e-9
+        # coherent_dial owns inverted-bounds / out-of-range-probe errors with
+        # more specific messages; this validator only refines valid geometries.
+        if self.min_gold_usd >= self.max_gold_usd:
+            return self
+        if any(
+            not math.isfinite(p) or not self.min_gold_usd <= p <= self.max_gold_usd
+            for p in probes
+        ):
+            return self
+        if abs(probes[0] - float(self.min_gold_usd)) > tol:
+            raise ValueError(
+                "ticker_page.dial.probe_gold_usd must include min_gold_usd as its lowest probe"
+            )
+        if abs(probes[-1] - float(self.max_gold_usd)) > tol:
+            raise ValueError(
+                "ticker_page.dial.probe_gold_usd must include max_gold_usd as its highest probe"
+            )
+        interior = [p for p in probes if probes[0] + tol < p < probes[-1] - tol]
+        if not interior:
+            raise ValueError(
+                "ticker_page.dial.probe_gold_usd needs at least one probe strictly "
+                "between the dial bounds"
+            )
+        return self
+
+    @field_validator("systemic_min_tickers")
+    @classmethod
+    def at_least_one_ticker(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("systemic_min_tickers must be at least 1")
+        return int(value)
+
+    @model_validator(mode="after")
+    def coherent_dial(self) -> "TickerPageDialConfig":
+        if self.min_gold_usd >= self.max_gold_usd:
+            raise ValueError(
+                "ticker_page.dial.min_gold_usd must be below max_gold_usd; got "
+                f"{self.min_gold_usd} >= {self.max_gold_usd}"
+            )
+        if self.step_usd <= 0:
+            raise ValueError("ticker_page.dial.step_usd must be positive")
+        for tolerance_name in (
+            "linearity_abs_tol_musd",
+            "linearity_abs_tol_eps",
+            "linearity_rel_tol",
+        ):
+            if getattr(self, tolerance_name) <= 0:
+                raise ValueError(f"ticker_page.dial.{tolerance_name} must be positive")
+        outside = [
+            probe
+            for probe in self.probe_gold_usd
+            if not math.isfinite(float(probe))
+            or not self.min_gold_usd <= float(probe) <= self.max_gold_usd
+        ]
+        if outside:
+            raise ValueError(
+                "ticker_page.dial.probe_gold_usd must lie within "
+                f"[{self.min_gold_usd}, {self.max_gold_usd}]; outside: {outside}"
+            )
+        return self
+
+
+class TickerPageFxAttributionConfig(StrictConfigModel):
+    """Currency attribution thresholds (Feature A).
+
+    ``near_zero_return_threshold`` is the |return| below which a leg is treated
+    as flat — the guard that stops "FX was -670% of the move" headlines when
+    local and FX effects nearly cancel.
+    """
+
+    near_zero_return_threshold: float = 0.001
+
+    @field_validator("near_zero_return_threshold")
+    @classmethod
+    def sane_threshold(cls, value: float) -> float:
+        if not math.isfinite(float(value)) or not 0 < float(value) < 0.05:
+            raise ValueError(
+                "ticker_page.fx_attribution.near_zero_return_threshold must be a "
+                "finite fraction in (0, 0.05)"
+            )
+        return float(value)
+
+
+class TickerPageChartConfig(StrictConfigModel):
+    """Performance chart horizons + benchmark freshness policy (plan §4.4)."""
+
+    horizons: list[str] = Field(default_factory=lambda: ["1Y", "3Y", "5Y"], min_length=1)
+    benchmark_max_staleness_days: int = 5
+
+    @field_validator("horizons")
+    @classmethod
+    def known_horizons(cls, value: list[str]) -> list[str]:
+        unknown = [h for h in value if h not in TICKER_PAGE_CHART_HORIZONS]
+        if unknown:
+            allowed = ", ".join(sorted(TICKER_PAGE_CHART_HORIZONS))
+            raise ValueError(
+                f"ticker_page.chart.horizons must be a subset of {{{allowed}}}; "
+                f"unknown: {unknown}"
+            )
+        if len(set(value)) != len(value):
+            raise ValueError("ticker_page.chart.horizons must not repeat a horizon")
+        return list(value)
+
+    @field_validator("benchmark_max_staleness_days")
+    @classmethod
+    def non_negative_staleness(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("benchmark_max_staleness_days must be non-negative")
+        return int(value)
+
+
+class TickerPageLabConfig(StrictConfigModel):
+    """Ticker-page Lab defaults only (D-5) — /lab pages are untouched."""
+
+    default_horizon_weeks: int = 8
+    scatter_from_year: int = 2016
+
+    @field_validator("default_horizon_weeks")
+    @classmethod
+    def known_horizon_weeks(cls, value: int) -> int:
+        if value not in TICKER_PAGE_LAB_HORIZON_WEEKS:
+            allowed = ", ".join(str(w) for w in sorted(TICKER_PAGE_LAB_HORIZON_WEEKS))
+            raise ValueError(
+                f"ticker_page.lab.default_horizon_weeks must be one of {{{allowed}}}; "
+                f"got {value}"
+            )
+        return int(value)
+
+    @field_validator("scatter_from_year")
+    @classmethod
+    def plausible_year(cls, value: int) -> int:
+        if value < 2000:
+            raise ValueError("ticker_page.lab.scatter_from_year must be >= 2000")
+        return int(value)
+
+
+class ScoreMetricSpec(StrictConfigModel):
+    """One entry of the 19-metric score-builder catalog (plan §7).
+
+    C6 eligibility flags (fail closed - a metric that declares a requirement
+    is ineligible whenever the fields the predicate needs are absent):
+    - requires_market_snapshot: value uses share price / market cap, so the
+      row needs a usable normalized snapshot (snapshot_normalization_status OK,
+      which already encodes the FX staleness policy).
+    - requires_source_financials: value derives from the selected finance
+      source's financial fields; in Yahoo mode the row's official statuses
+      must roll up OK (financial_data_status).
+    - manual_mining_basis: value is an Our-View mining assumption (AISC,
+      reserve life) in EITHER display mode - it must never inherit an
+      irrelevant Yahoo financial failure.
+    """
+
+    key: str
+    label: str
+    category: str
+    source_tool: str
+    source_column: str
+    default_high_good: bool
+    unit: str
+    basis: str
+    requires_market_snapshot: bool = False
+    requires_source_financials: bool = False
+    manual_mining_basis: bool = False
+    # Percentile v2 metric evidence (nullable for unrelated metrics): source
+    # columns for the exact numerator/denominator and event period, plus the
+    # manual field whose verification status/date backs the value.
+    evidence_count_column: str | None = None
+    evidence_hit_count_column: str | None = None
+    evidence_period_start_column: str | None = None
+    evidence_period_end_column: str | None = None
+    verification_field: str | None = None
+
+    @field_validator("key", "label", "source_column", "basis")
+    @classmethod
+    def non_blank(cls, value: str) -> str:
+        cleaned = str(value).strip()
+        if not cleaned:
+            raise ValueError("score metric key/label/source_column/basis must not be blank")
+        return cleaned
+
+    @field_validator("category")
+    @classmethod
+    def known_category(cls, value: str) -> str:
+        if value not in TICKER_PAGE_METRIC_CATEGORIES:
+            allowed = ", ".join(sorted(TICKER_PAGE_METRIC_CATEGORIES))
+            raise ValueError(f"score metric category must be one of {{{allowed}}}; got {value}")
+        return value
+
+    @field_validator("source_tool")
+    @classmethod
+    def known_source_tool(cls, value: str) -> str:
+        if value not in TICKER_PAGE_SOURCE_TOOLS:
+            allowed = ", ".join(sorted(TICKER_PAGE_SOURCE_TOOLS))
+            raise ValueError(f"score metric source_tool must be one of {{{allowed}}}; got {value}")
+        return value
+
+    @field_validator("unit")
+    @classmethod
+    def known_unit(cls, value: str) -> str:
+        if value not in TICKER_PAGE_METRIC_UNITS:
+            allowed = ", ".join(sorted(TICKER_PAGE_METRIC_UNITS))
+            raise ValueError(f"score metric unit must be one of {{{allowed}}}; got {value}")
+        return value
+
+
+class TickerPageScoreBuilderConfig(StrictConfigModel):
+    """Score-builder engine parameters + metric catalog (plan §7)."""
+
+    budget_points: int = TICKER_PAGE_SCORE_BUDGET_POINTS
+    min_eligible_peers: int = 10
+    min_active_metric_coverage: float = 0.6
+    rank_stability_shift_points: int = 10
+    rank_stability_alert_positions: int = 3
+    metrics: list[ScoreMetricSpec] = Field(default_factory=list, min_length=1)
+
+    @field_validator("budget_points")
+    @classmethod
+    def locked_budget(cls, value: int) -> int:
+        if int(value) != TICKER_PAGE_SCORE_BUDGET_POINTS:
+            raise ValueError(
+                "ticker_page.score_builder.budget_points is product-locked at "
+                f"{TICKER_PAGE_SCORE_BUDGET_POINTS}; got {value}"
+            )
+        return int(value)
+
+    @field_validator("min_eligible_peers")
+    @classmethod
+    def enough_peers(cls, value: int) -> int:
+        if value < 2:
+            raise ValueError("min_eligible_peers must be at least 2")
+        return int(value)
+
+    @field_validator("min_active_metric_coverage")
+    @classmethod
+    def valid_coverage(cls, value: float) -> float:
+        if not math.isfinite(float(value)) or not 0 < value <= 1:
+            raise ValueError("min_active_metric_coverage must be finite and in (0, 1]")
+        return float(value)
+
+    @field_validator("rank_stability_shift_points")
+    @classmethod
+    def valid_shift_points(cls, value: int) -> int:
+        if not 0 < value <= TICKER_PAGE_SCORE_BUDGET_POINTS:
+            raise ValueError(
+                "rank_stability_shift_points must be in "
+                f"(0, {TICKER_PAGE_SCORE_BUDGET_POINTS}]"
+            )
+        return int(value)
+
+    @field_validator("rank_stability_alert_positions")
+    @classmethod
+    def valid_alert_positions(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("rank_stability_alert_positions must be at least 1")
+        return int(value)
+
+    @model_validator(mode="after")
+    def unique_metric_keys(self) -> "TickerPageScoreBuilderConfig":
+        seen: set[str] = set()
+        for metric in self.metrics:
+            if metric.key in seen:
+                raise ValueError(f"Duplicate ticker_page score metric key: {metric.key}")
+            seen.add(metric.key)
+        categories = {metric.category for metric in self.metrics}
+        if categories != set(TICKER_PAGE_METRIC_CATEGORIES):
+            missing = sorted(set(TICKER_PAGE_METRIC_CATEGORIES) - categories)
+            raise ValueError(
+                "ticker_page score metrics must cover both categories; "
+                f"missing: {missing}"
+            )
+        return self
+
+
+class TickerPageSizingConfig(StrictConfigModel):
+    """Option sizing-tool bounds (plan §9.4)."""
+
+    max_contracts: int = 10000
+
+    @field_validator("max_contracts")
+    @classmethod
+    def at_least_one_contract(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("ticker_page.sizing.max_contracts must be at least 1")
+        return int(value)
+
+
+class TickerPageConfig(StrictConfigModel):
+    """Ticker page contract config (plan §10)."""
+
+    version: int = 1
+    dial: TickerPageDialConfig = Field(default_factory=lambda: TickerPageDialConfig())
+    chart: TickerPageChartConfig = Field(default_factory=lambda: TickerPageChartConfig())
+    fx_attribution: TickerPageFxAttributionConfig = Field(
+        default_factory=lambda: TickerPageFxAttributionConfig()
+    )
+    lab: TickerPageLabConfig = Field(default_factory=lambda: TickerPageLabConfig())
+    score_builder: TickerPageScoreBuilderConfig
+    sizing: TickerPageSizingConfig = Field(default_factory=lambda: TickerPageSizingConfig())
+
+
 class AppConfig(StrictConfigModel):
     universe: UniverseConfig
     benchmarks: BenchmarksConfig
@@ -1500,3 +1923,4 @@ class AppConfig(StrictConfigModel):
     qa: QaConfig
     scoring: ScoringConfig
     screening_params: ScreeningParamsConfig
+    ticker_page: TickerPageConfig

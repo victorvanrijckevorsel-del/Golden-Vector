@@ -30,7 +30,7 @@ _FIELD_SPECS: dict[str, tuple[str, str, str]] = {
     # param, kind, unit
     "gold_price": ("gold_price_assumption", "float", "absolute"),
     "pe_target": ("strong_candidate_forward_pe_max", "float", "absolute"),
-    "fcf_yield_target": ("fcf_yield_min", "float", "percent"),
+    "aisc_margin_yield_target": ("aisc_margin_yield_min", "float", "percent"),
     "aisc_target": ("aisc_max", "float", "absolute"),
     "margin_target": ("margin_min", "float", "percent"),
     "reserve_life_target": ("reserve_life_min", "float", "absolute"),
@@ -115,7 +115,7 @@ def parse_query_overrides(query: Mapping[str, list[str]]) -> ScreeningOverrides:
             if value <= 0:
                 raise ScreeningOverrideError("gold_price must be positive")
             gold_price = value
-        elif target_field in {"aisc_max", "margin_min", "fcf_yield_min", "reserve_life_min", "leverage_max"}:
+        elif target_field in {"aisc_max", "margin_min", "aisc_margin_yield_min", "reserve_life_min", "leverage_max"}:
             if value <= 0:
                 raise ScreeningOverrideError(f"{param_name} must be positive")
             layer1[target_field] = value

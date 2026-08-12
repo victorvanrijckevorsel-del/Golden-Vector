@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
@@ -18,6 +19,7 @@ from golden_vector.screening.manual_data import (
     load_manual_screening_data,
 )
 from golden_vector.screening.manual_store import add_stock_note
+from golden_vector.serve.option_trading_data import clear_option_trading_cache
 from golden_vector.serve.workspace import create_workspace_app
 from golden_vector.serve.workspace_state import _load_tool_a_detail
 from tests.helpers import build_test_paths, tool_b_output_row
@@ -94,7 +96,7 @@ def test_workspace_favicon_returns_no_content(tmp_path):
     assert response["body"] == ""
 
 
-def test_workspace_detail_page_renders_explanations_and_exploratory_ladder(tmp_path):
+def test_workspace_detail_page_renders_explanations_in_market_behaviour_section(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
     app_config = _repo_app_config()
@@ -106,8 +108,9 @@ def test_workspace_detail_page_renders_explanations_and_exploratory_ladder(tmp_p
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
 
     assert response["status"].startswith("200")
-    assert "Gold Sensitivity" in response["body"]
-    assert "Exploratory Horizon Ladder" in response["body"]
+    # M3c: the section is "Market behaviour"; there is no "Gold Sensitivity" heading.
+    assert 'id="market-behaviour"' in response["body"]
+    assert "Market behaviour" in response["body"]
     # Regression guard: the workspace now regenerates narrative cards live from
     # numeric inputs + band thresholds (single source of truth = model/explanations.py).
     # With structural_delta_12m=1.9 and high_min=2.0, the builder picks the "moderately
@@ -116,7 +119,12 @@ def test_workspace_detail_page_renders_explanations_and_exploratory_ladder(tmp_p
         "Moderately high structural delta means this stock has shown strong gold sensitivity"
         in response["body"]
     )
-    assert "Single-Period Ratio" in response["body"]
+    # The ladder now reads the separate research-series artifact, which these fixtures do
+    # not write — so it must state that honestly instead of drawing anything.
+    assert "Exploratory horizon ladder" in response["body"]
+    assert (
+        "No exploratory horizon rows are published for this ticker." in response["body"]
+    )
 
 
 def test_workspace_detail_page_honors_yahoo_fundamentals_source(tmp_path):
@@ -141,14 +149,28 @@ def test_workspace_detail_page_honors_yahoo_fundamentals_source(tmp_path):
     )
 
     assert response["status"].startswith("200")
-    assert "Latest Corporate Finance Snapshot" in response["body"]
+    # M3b: the old "Latest Corporate Finance Snapshot" table is gone; the
+    # redesigned Corporate finance section replaces it and the financials-source
+    # switcher moved to the global control bar.
+    assert "Latest Corporate Finance Snapshot" not in response["body"]
+    assert 'id="corporate-finance"' in response["body"]
     assert "Financials source" in response["body"]
     assert "Yahoo Fundamentals" in response["body"]
-    assert "SCREEN_OUT" in response["body"]
+    # Yahoo materialization still drives the numbers (leverage_official 8.88 is
+    # the active trailing leverage) ...
     assert "8.88" in response["body"]
+    # ... but the compiled verdict is BANNED from this page (requirements §3).
+    assert "SCREEN_OUT" not in response["body"]
     assert 'href="/?fundamentals_source=yahoo"' in response["body"]
     assert "/ticker/NEM?window=6m&amp;fundamentals_source=yahoo" in response["body"]
-    assert "/ticker/NEM?lens=option-trading&amp;fundamentals_source=yahoo#option-trading" in response["body"]
+    # M3d: the "open the Option Trading lens" teaser is gone. Options are a
+    # section OF this page now (#options), so the page links to its own anchor
+    # instead of routing away, and the section renders even with no option
+    # artifacts published — degraded with a reason, never as "no options".
+    assert "lens=option-trading" not in response["body"]
+    assert '<a class="section-nav-link" href="#options">Options</a>' in response["body"]
+    assert 'id="options"' in response["body"]
+    assert "no options" not in response["body"].lower()
     assert "/ticker/NEM?fundamentals_source=yahoo" in response["body"]
     assert 'name="return_to" value="/ticker/NEM?fundamentals_source=yahoo"' in response["body"]
 
@@ -187,7 +209,7 @@ def test_workspace_detail_lens_param_defaults_to_tool_a(tmp_path):
     assert unknown_response["body"] == default_response["body"]
 
 
-def test_workspace_detail_page_surfaces_withheld_tool_a_notice(tmp_path):
+def test_workspace_detail_page_surfaces_normalization_issue_not_a_withheld_score(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
     app_config = _repo_app_config()
@@ -264,8 +286,15 @@ def test_workspace_detail_page_surfaces_withheld_tool_a_notice(tmp_path):
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
 
     assert response["status"].startswith("200")
-    assert "Gold Sensitivity score is withheld" in response["body"]
-    assert "STALE_FX" in response["body"]
+    # Requirements §3: no compiled score/verdict on this page, so the old
+    # "score is withheld" sentence is deleted by design ...
+    assert "Gold Sensitivity score is withheld" not in response["body"]
+    # ... but the DATA-quality status behind it survives, carried by
+    # normalization_issue_summary.
+    assert (
+        "Observed normalization issues in the trailing sample: STALE_FX."
+        in response["body"]
+    )
 
 
 def test_workspace_company_post_updates_store(tmp_path):
@@ -385,7 +414,7 @@ def test_workspace_company_post_preserves_unfilled_fields(tmp_path):
     assert float(row["ebitda_ltm_musd"]) == 11850.0
 
 
-def test_workspace_detail_surfaces_score_withheld_notice(tmp_path):
+def test_workspace_detail_surfaces_normalization_notice_without_any_score_prose(tmp_path):
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
     app_config = _repo_app_config()
@@ -437,14 +466,20 @@ def test_workspace_detail_surfaces_score_withheld_notice(tmp_path):
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
 
     assert response["status"].startswith("200")
-    assert "Gold Sensitivity score is withheld" in response["body"]
-    assert "STALE_FX" in response["body"]
+    # The compiled-score sentence is gone by design (requirements §3); the
+    # data-quality notice it used to sit beside is what survives.
+    assert "Gold Sensitivity score is withheld" not in response["body"]
+    assert (
+        "Observed normalization issues in the trailing sample: STALE_FX."
+        in response["body"]
+    )
 
 
 def test_workspace_detail_suppresses_foundation_backed_panels_when_refresh_is_out_of_sync(tmp_path):
-    """Phase 1A / v3 §1: when the foundation manifest has moved past the displayed Tool A row,
-    the scatter / up-down-beta / exploratory-ladder panels must be replaced with visible
-    fallback cards that carry a title, a reason, and a CLI suggestion. No blank space.
+    """Phase 1A / v3 §1 (M3c scope): when the foundation manifest has moved past the
+    displayed Tool A row, the two foundation-backed panels must be replaced with visible
+    fallback cards carrying a title, a reason, and a CLI suggestion. No blank space.
+    The research-series panels are NOT foundation-backed and must keep rendering.
     """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -500,18 +535,22 @@ def test_workspace_detail_suppresses_foundation_backed_panels_when_refresh_is_ou
     assert response["status"].startswith("200")
     body = response["body"]
     # Detail-page alignment notice points the user at the fix.
-    assert "foundation snapshot has moved ahead" in body
-    # Every foundation-backed panel must appear as a suppressed card with a CLI suggestion.
-    assert "Weekly Return Scatter &mdash; Out of Sync" in body
+    assert "foundation snapshot has moved ahead of the published beta row" in body
+    # Exactly the two foundation-backed panels appear as suppressed cards.
     assert "Up vs Down Beta &mdash; Out of Sync" in body
-    assert "Exploratory Horizon Ladder &mdash; Out of Sync" in body
-    assert body.count("Run <code>python main.py tool-a</code>") >= 3
+    assert "Where its gold beta ranks vs the miner universe &mdash; Out of Sync" in body
+    assert body.count("&mdash; Out of Sync") == 2
+    assert body.count('<p class="hint">Run <code>python main.py tool-a</code> to realign.</p>') == 2
     # Per codex P2: each suppressed card must carry its own reason sentence
     # in addition to the title and CLI suggestion (the v3 fallback bar).
-    expected_reason = "foundation snapshot on disk differs from the published Gold Sensitivity row"
-    assert body.count(expected_reason) >= 3
+    expected_reason = "foundation snapshot on disk differs from the published beta row"
+    assert body.count(expected_reason) == 2
+    # The research-series panels carry their own provenance, so a foundation
+    # misalignment must never blank them.
+    assert "Weekly return scatter &mdash; Out of Sync" not in body
+    assert "Exploratory horizon ladder &mdash; Out of Sync" not in body
     # Volatility panel is not foundation-backed and should still render.
-    assert "Volatility Diagnostics" in body
+    assert "Volatility diagnostics" in body
 
 
 def test_workspace_detail_renders_foundation_backed_panels_when_refresh_is_aligned(tmp_path):
@@ -531,8 +570,9 @@ def test_workspace_detail_renders_foundation_backed_panels_when_refresh_is_align
     assert "Out of Sync" not in body
     assert "foundation snapshot has moved ahead" not in body
     # Normal panel titles render.
-    assert "Weekly Return Scatter" in body
+    assert "Weekly return scatter" in body
     assert "Up vs Down Beta" in body
+    assert "Where its gold beta ranks vs the miner universe" in body
 
 
 def test_workspace_detail_suppresses_panels_when_foundation_manifest_is_missing(tmp_path):
@@ -555,17 +595,20 @@ def test_workspace_detail_suppresses_panels_when_foundation_manifest_is_missing(
     body = response["body"]
     # Page-level alignment notice for the missing-manifest state.
     assert "No validated foundation snapshot is available" in body
-    # All three foundation-backed panels must appear as out-of-sync cards.
-    assert "Weekly Return Scatter &mdash; Out of Sync" in body
+    # Exactly the two foundation-backed panels appear as out-of-sync cards.
     assert "Up vs Down Beta &mdash; Out of Sync" in body
-    assert "Exploratory Horizon Ladder &mdash; Out of Sync" in body
+    assert "Where its gold beta ranks vs the miner universe &mdash; Out of Sync" in body
+    assert body.count("&mdash; Out of Sync") == 2
     # Per-card reason sentence specific to the missing-manifest state.
     expected_reason = "No validated foundation snapshot is available, so this panel cannot be rebuilt safely"
-    assert body.count(expected_reason) >= 3
+    assert body.count(expected_reason) == 2
     # CLI suggestion for this state is update-data, not tool-a.
-    assert body.count("Run <code>python main.py update-data</code>") >= 3
+    assert body.count('<p class="hint">Run <code>python main.py update-data</code> to realign.</p>') == 2
+    # The research-series panels carry their own provenance and are not suppressed.
+    assert "Weekly return scatter &mdash; Out of Sync" not in body
+    assert "Exploratory horizon ladder &mdash; Out of Sync" not in body
     # Volatility panel still renders because it reads from the published Tool A row.
-    assert "Volatility Diagnostics" in body
+    assert "Volatility diagnostics" in body
 
 
 def test_workspace_detail_suppresses_panels_when_tool_a_row_lacks_refresh_id(tmp_path):
@@ -626,14 +669,19 @@ def test_workspace_detail_suppresses_panels_when_tool_a_row_lacks_refresh_id(tmp
 
     assert response["status"].startswith("200")
     body = response["body"]
-    assert "does not carry a snapshot refresh identifier" in body
-    assert "Weekly Return Scatter &mdash; Out of Sync" in body
+    assert "The published beta row does not carry a snapshot refresh identifier" in body
     assert "Up vs Down Beta &mdash; Out of Sync" in body
-    assert "Exploratory Horizon Ladder &mdash; Out of Sync" in body
-    expected_reason = "The published Gold Sensitivity row does not carry a snapshot refresh identifier"
-    assert body.count(expected_reason) >= 3
-    assert body.count("Run <code>python main.py tool-a</code>") >= 3
-    assert "Volatility Diagnostics" in body
+    assert "Where its gold beta ranks vs the miner universe &mdash; Out of Sync" in body
+    assert body.count("&mdash; Out of Sync") == 2
+    expected_reason = (
+        "The published beta row does not carry a snapshot refresh identifier, so this panel"
+    )
+    assert body.count(expected_reason) == 2
+    assert body.count('<p class="hint">Run <code>python main.py tool-a</code> to realign.</p>') == 2
+    # The research-series panels carry their own provenance and are not suppressed.
+    assert "Weekly return scatter &mdash; Out of Sync" not in body
+    assert "Exploratory horizon ladder &mdash; Out of Sync" not in body
+    assert "Volatility diagnostics" in body
 
 
 def test_workspace_verification_post_rejects_oversized_notes_with_clean_400(tmp_path):
@@ -816,10 +864,12 @@ def test_workspace_note_post_rejects_oversized_note_tag(tmp_path):
     assert "note_tag is too long" in response["body"]
 
 
-def test_workspace_detail_chart_sits_above_volatility_in_both_alignment_branches(tmp_path):
-    """Codex follow-up to Fix #10: the non-aligned branch was previously rendering the
-    chart at the bottom, after volatility + suppressed exploratory. Both branches must
-    now place the chart between the scatter row and the volatility row.
+def test_workspace_detail_performance_sits_above_market_behaviour_in_both_alignment_branches(
+    tmp_path,
+):
+    """Consistent visual rhythm in BOTH alignment branches (ported from the old
+    chart-above-volatility test): the Performance section always precedes the
+    Market-behaviour section, and volatility always sits inside Market behaviour.
     """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -831,11 +881,19 @@ def test_workspace_detail_chart_sits_above_volatility_in_both_alignment_branches
 
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
 
+    def _assert_rhythm(body: str) -> None:
+        performance = body.find('id="performance"')
+        behaviour = body.find('id="market-behaviour"')
+        volatility = body.find("Volatility diagnostics")
+        assert performance >= 0
+        assert behaviour >= 0
+        assert volatility >= 0
+        assert performance < behaviour
+        # Volatility lives inside the market-behaviour section.
+        assert behaviour < volatility
+
     # Aligned case.
-    response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
-    body = response["body"]
-    assert body.find("Gold vs Stock vs Gold-Miner ETFs") < body.find("Volatility Diagnostics")
-    assert body.find("Gold vs Stock vs Gold-Miner ETFs") < body.find("Exploratory Horizon Ladder")
+    _assert_rhythm(_call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"])
 
     # Non-aligned case (foundation manifest's refresh != Tool A row's refresh).
     _write_latest_outputs(
@@ -845,10 +903,7 @@ def test_workspace_detail_chart_sits_above_volatility_in_both_alignment_branches
             | {"snapshot_refresh_run_id": "earlier-refresh", "source_run_id": "tool-a-run"}
         ],
     )
-    response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
-    body = response["body"]
-    # Chart must come before the volatility panel even when foundation is misaligned.
-    assert body.find("Gold vs Stock vs Gold-Miner ETFs") < body.find("Volatility Diagnostics")
+    _assert_rhythm(_call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"])
 
 
 def test_workspace_detail_surfaces_corrupt_structural_metrics_at_page_level(tmp_path):
@@ -1133,7 +1188,14 @@ def _write_latest_tool_c_output(paths) -> None:
     )
 
 
-def _write_latest_tool_d_output(paths) -> None:
+def _write_latest_tool_d_output(paths, *, current_schema: bool = False) -> None:
+    # current_schema=False reproduces the persisted pre-v2 artifact (legacy
+    # `aisc_margin_yield` only); True reproduces the post-rename schema.
+    fcf_fields = (
+        {"aisc_margin_yield_at_g": 0.12, "aisc_margin_yield_at_spot": 0.11, "tool_d_schema_version": 2}
+        if current_schema
+        else {"aisc_margin_yield": 0.12}
+    )
     context = RunContext.start(
         paths=paths,
         command="tool-d",
@@ -1158,7 +1220,7 @@ def _write_latest_tool_d_output(paths) -> None:
                     "leverage_stressed_at_g": 0.7,
                     "ev_ebitda_at_g": 4.5,
                     "margin_per_oz_at_g": 2200.0,
-                    "fcf_yield": 0.12,
+                    **fcf_fields,
                     "screening_verdict": "STRONG_CANDIDATE",
                     "tool_d_tags": "strong_headroom",
                     "snapshot_refresh_run_id": "refresh-run",
@@ -1597,9 +1659,8 @@ def _write_overlay_benchmark_history(paths, ticker: str, *, scale: float) -> Non
 
 
 def test_workspace_detail_warns_when_structural_metrics_file_is_missing(tmp_path):
-    """A missing structural-metrics file surfaces a page-level notice (the scatter /
-    up-down / window panels read those metrics). The price-overlay chart does NOT
-    depend on that file, so it still renders from foundation price history.
+    """A missing structural-metrics file surfaces a section-level notice, because the
+    beta panels below it read those metrics.
     """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -1612,19 +1673,15 @@ def test_workspace_detail_warns_when_structural_metrics_file_is_missing(tmp_path
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert "Structural metrics file is missing" in body
-    # The overlay chart is independent of the structural-metrics file: it still draws.
-    assert ">Gold vs Stock vs Gold-Miner ETFs</h3>" in body
-    # Prove it actually drew the gold + stock lines (not the empty state) by name.
-    assert body.count("<polyline points=") == 2
-    assert "&#9632; NEM" in body
-    assert "&#9632; Gold" in body
+    assert (
+        "Structural metrics file is missing, so the beta panels below cannot draw their "
+        "anchor metrics." in body
+    )
 
 
 def test_workspace_detail_warns_when_structural_metrics_source_run_id_mismatches(tmp_path):
-    """Provenance gate (moved from the old beta chart to the page level): a structural
-    metrics file from a DIFFERENT tool-a run than the published row must surface an
-    out-of-sync notice, because the scatter / up-down / window panels read those metrics.
+    """Provenance gate: a structural metrics file from a DIFFERENT tool-a run than the
+    published row must surface a notice ABOVE the beta panels it warns about.
     """
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
@@ -1638,182 +1695,17 @@ def test_workspace_detail_warns_when_structural_metrics_source_run_id_mismatches
     app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
     response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
     body = response["body"]
-    assert "Structural metrics file is out of sync with the published Gold Sensitivity row" in body
-    # The provenance notice must appear ABOVE the overlay chart, so a user can never read the
-    # chart as endorsed by a mismatched structural file (gate moved from chart to page level).
-    assert body.find("out of sync with the published Gold Sensitivity row") < body.find(
-        ">Gold vs Stock vs Gold-Miner ETFs</h3>"
+    warning = (
+        "The structural metrics file was produced by a different tool-a run than the "
+        "published row, so the beta panels below may not match it."
     )
-    # The price overlay is independent of structural-metrics provenance, so it still draws
-    # its two foundation-price lines even while the out-of-sync notice is shown above it.
-    assert body.count("<polyline points=") == 2
+    assert warning in body
+    # The notice must appear ABOVE the panel it warns about, so a user can never read the
+    # up/down beta panel as endorsed by a mismatched structural file.
+    assert body.find(warning) < body.find("Up vs Down Beta")
 
 
-def test_workspace_detail_renders_rebased_overlay_chart_when_aligned(tmp_path):
-    """Aligned foundation + price history → the rebased gold/stock/ETF overlay renders.
 
-    Foundation history (gold + NEM) gives two drawable lines even without a cached
-    GDX/GDXJ benchmark, so the chart draws and carries its indexed-to-100 caption.
-    """
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM"])
-    _write_latest_foundation_snapshot(paths)
-    _write_latest_outputs(paths)
-    # Match the source_run_id from _write_latest_outputs default ("tool-a-run").
-    _write_structural_history_file(paths, "NEM", source_run_id="tool-a-run")
-
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
-    response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
-    body = response["body"]
-    assert ">Gold vs Stock vs Gold-Miner ETFs</h3>" in body
-    assert "out of sync" not in body.lower()
-    # Two lines draw (gold + stock); the legend must name both so we know WHICH lines drew,
-    # and there must be exactly two legend chips (legend count tracks the drawn-line count).
-    assert body.count("<polyline points=") == 2
-    assert body.count('<span class="chart-legend-item legend-swatch-') == 2
-    assert "&#9632; NEM" in body
-    assert "&#9632; Gold" in body
-    # The caption is indexed-to-100 and names the active window's human label (12M -> "1Y").
-    assert "indexed to 100" in body
-    assert "1Y window" in body
-    # The y-axis must be anchored on the rebasing baseline (100) — the dashed baseline proves the
-    # indexed axis spans 100, i.e. the rebasing actually drove the chart scale.
-    assert "stroke-dasharray=\"3 3\"" in body
-    # No GDX/GDXJ cache here, so the caption must admit the benchmarks are absent (not imply them).
-    assert "benchmark history was unavailable" in body
-
-
-def test_workspace_detail_overlay_draws_all_four_lines_when_benchmarks_present(tmp_path):
-    """End-to-end benchmark-present path: foundation prices + cached GDX/GDXJ histories →
-    the overlay draws all four lines and the caption names the gold-miner ETFs honestly.
-    """
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM"])
-    _write_latest_foundation_snapshot(paths)
-    _write_latest_outputs(paths)
-    _write_structural_history_file(paths, "NEM", source_run_id="tool-a-run")
-    _write_overlay_benchmark_history(paths, "GDX", scale=30.0)
-    _write_overlay_benchmark_history(paths, "GDXJ", scale=45.0)
-
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
-    response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
-    body = response["body"]
-    assert ">Gold vs Stock vs Gold-Miner ETFs</h3>" in body
-    # Four lines: NEM + Gold + GDX + GDXJ, each labelled in the legend.
-    assert body.count("<polyline points=") == 4
-    for label in ("NEM", "Gold", "GDX", "GDXJ"):
-        assert f"&#9632; {label}" in body
-    # Caption names the ETFs honestly and does NOT claim they were unavailable.
-    assert "gold-miner ETFs (GDX / GDXJ)" in body
-    assert "benchmark history was unavailable" not in body
-
-
-def test_workspace_detail_chart_renders_without_suppression_when_score_withheld(tmp_path):
-    """When the Gold Sensitivity score is withheld, the page surfaces a withheld notice
-    at the page level, and the price overlay still renders honest prices WITHOUT any
-    watermark or suppression (prices are factual; only the scored beta is withheld).
-    """
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM"])
-    _write_latest_foundation_snapshot(paths)
-    _write_latest_outputs(
-        paths,
-        tool_a_rows=[
-            {
-                "ticker": "NEM",
-                "as_of_date": date(2026, 4, 17),
-                "anchor_window_id": "12M",
-                "structural_delta_core": 1.5,
-                "score_eligible": False,
-                "score_eligibility_reason": "UNACCEPTABLE_NORMALIZATION_STATUS",
-                "snapshot_refresh_run_id": "refresh-run",
-                "source_run_id": "tool-a-run",
-                "confidence_label": "WITHHELD",
-                "profile_label": "SCORE_WITHHELD",
-                "tool_a_summary_explanation": "Score withheld.",
-                "delta_explanation": "Withheld.",
-                "gamma_explanation": "Withheld.",
-                "asymmetry_explanation": "Withheld.",
-                "volatility_explanation": "—",
-                "confidence_explanation": "Withheld.",
-                "interaction_explanation": "Withheld.",
-                "normalization_issue_summary": "STALE_FX",
-                "fx_policy_max_staleness_days": 5,
-                "fx_policy_block_on_stale_fx": False,
-            }
-        ],
-    )
-    _write_structural_history_file(paths, "NEM", source_run_id="tool-a-run")
-
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
-    response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
-    body = response["body"]
-    # Withheld score is surfaced page-level; the overlay still renders honest prices.
-    assert "Gold Sensitivity score is withheld" in body
-    assert ">Gold vs Stock vs Gold-Miner ETFs</h3>" in body
-    # Prove the overlay actually drew (not the empty state) — the withheld score must not
-    # suppress the factual price chart.
-    assert body.count("<polyline points=") == 2
-
-
-def test_workspace_detail_overlay_renders_even_when_structural_rows_are_low_observation(tmp_path):
-    """The price overlay draws prices, not the scored betas, so it is NOT gated by
-    structural-window eligibility: a ticker whose only structural rows are LOW_OBSERVATION
-    still gets the overlay (from foundation price history), while the structural betas
-    remain governed separately by the window panels.
-    """
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM"])
-    _write_latest_foundation_snapshot(paths)
-    _write_latest_outputs(paths)
-    _write_structural_history_file(
-        paths, "NEM", source_run_id="tool-a-run", extra_window_status="LOW_OBSERVATION"
-    )
-
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
-    response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
-    body = response["body"]
-    # The overlay is not gated by structural eligibility: it draws exactly the two price
-    # lines (gold + stock) from foundation history, with no benchmarks accidentally appearing.
-    assert ">Gold vs Stock vs Gold-Miner ETFs</h3>" in body
-    assert body.count("<polyline points=") == 2
-
-
-def test_workspace_detail_overlay_renders_when_foundation_misaligned_but_metrics_aligned(tmp_path):
-    """When the foundation snapshot has moved ahead of the published row, the scatter /
-    up-down panels are suppressed, but the price overlay still renders (it draws prices
-    from the foundation history). The misalignment is surfaced by the page-level notice.
-    """
-    paths = build_test_paths(tmp_path)
-    paths.ensure_runtime_dirs()
-    app_config = _repo_app_config()
-    bootstrap_manual_screening_data(paths, tickers=["NEM"])
-    _write_latest_foundation_snapshot(paths)
-    _write_latest_outputs(
-        paths,
-        tool_a_rows=[
-            _make_tool_a_row("NEM", delta=1.5, up=1.6, down=1.4, score=80.0, rank=1)
-            | {"snapshot_refresh_run_id": "earlier-refresh", "source_run_id": "tool-a-run"}
-        ],
-    )
-    _write_structural_history_file(paths, "NEM", source_run_id="tool-a-run")
-
-    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
-    response = _call_wsgi_app(app, method="GET", path="/ticker/NEM")
-    body = response["body"]
-    assert ">Gold vs Stock vs Gold-Miner ETFs</h3>" in body
-    assert "<polyline points=" in body
-    # The aligned-Tool-A-but-misaligned-foundation message is the page-level alignment
-    # notice, not a chart-panel note.
-    assert "foundation snapshot has moved ahead" in body
 
 
 def test_workspace_detail_distinguishes_corrupt_structural_metrics_from_missing(tmp_path):
@@ -2151,6 +2043,45 @@ def test_workspace_tool_d_view_renders_corporate_resilience_page(tmp_path):
     assert 'aria-current="page" href="/tool-d"' in response["body"]
 
 
+_TOOL_D_LEGACY_FCF_WARNING = (
+    "This table was built before the FCF-yield fix (Tool D schema v1). "
+    "FCF Yield @ G shows 'pending rebuild' until the next data refresh."
+)
+
+
+def _render_tool_d_page(tmp_path, *, current_schema: bool) -> str:
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_latest_tool_d_output(paths, current_schema=current_schema)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(app, method="GET", path="/tool-d")
+    assert response["status"].startswith("200")
+    return str(response["body"])
+
+
+def test_workspace_tool_d_legacy_artifact_declares_pending_fcf_rebuild(tmp_path):
+    """A pre-v2 artifact must say so, never silently render the missing-value dash."""
+    body = _render_tool_d_page(tmp_path, current_schema=False)
+
+    assert _TOOL_D_LEGACY_FCF_WARNING in body
+    assert "notice-warning" in body or "warning" in body
+    assert "<td class=\"hint\">pending rebuild</td>" in body
+
+
+def test_workspace_tool_d_current_artifact_renders_fcf_without_warning(tmp_path):
+    """Control: a current-schema artifact renders the number and no warning."""
+    body = _render_tool_d_page(tmp_path, current_schema=True)
+
+    assert _TOOL_D_LEGACY_FCF_WARNING not in body
+    assert "pending rebuild" not in body
+    assert "12.0%" in body
+
+
 def test_workspace_tool_d_yahoo_source_recomputes_and_preserves_links(
     tmp_path,
     monkeypatch,
@@ -2414,6 +2345,30 @@ def test_workspace_tool_b_serve_layer_has_no_financial_arithmetic():
         assert forbidden not in source, forbidden
 
 
+def test_ticker_page_options_serve_layer_has_no_option_arithmetic():
+    """The M3d Options section renders backend-resolved columns only.
+
+    Canon: every new serve surface gets a static-scan guardrail (clone of the
+    Tool-D/Tool-B serve-arithmetic tests). The exhaustive token list lives with
+    the section's own tests; this is the repo-wide sweep's entry for it, so a
+    new serve surface can never be added without one.
+    """
+    source = Path("golden_vector/serve/ticker_page/options.py").read_text(encoding="utf-8")
+
+    # It reads the persisted ratio columns by name (display only).
+    assert "put_call_oi_ratio_total" in source
+    for forbidden in (
+        "put_oi_total /",
+        "/ call_oi_total",
+        "* OPTION_CONTRACT_MULTIPLIER",
+        "black_scholes",
+        "compute_scenario_bundle",
+        ".fillna(",
+        ".combine_first(",
+    ):
+        assert forbidden not in source, forbidden
+
+
 def test_metric_formula_serve_layer_has_no_ratio_recompute():
     """metric_formula.py renders pre-computed ratio results + component VALUES for the info
     buttons; it must never recompute a ratio in serve (a recompute could make the popover
@@ -2500,14 +2455,21 @@ def test_one_info_affordance_no_legacy_hover_remains():
         assert "th[title]" not in css, css_path
 
 
-def test_snapshot_ratio_cell_is_compact_and_shows_yahoo_divergence():
-    """The ticker-detail snapshot renders dual-source ratios (ev_ebitda) with a compact value (no
-    'x' suffix) plus the SAME '(Yahoo X)' divergence accent the Tool B overview shows."""
+def test_dual_source_ratio_cell_is_compact_and_shows_yahoo_divergence():
+    """The dual-source ratio treatment (compact value, no unit suffix, plus a
+    "(Yahoo X)" divergence accent) survives the M3b ticker-page redesign.
+
+    Its detail-page wrapper (`_snapshot_metric_value`) was DELETED with the old
+    "Latest Corporate Finance Snapshot" table — that table carried
+    `fundamental_check_summary`, `fundamental_check_rank` and
+    `screening_verdict`, which the locked requirements ban from the ticker page.
+    The behaviour itself has one surviving implementation, on the Tool B
+    overview, and this test now pins that one."""
     import pandas as pd
 
     from golden_vector.screening.pipeline import materialize_tool_b_finance_source
     from golden_vector.screening.schema import TOOL_B_OUTPUT_COLUMNS
-    from golden_vector.serve.detail_panels import _snapshot_metric_value
+    from golden_vector.serve.overview_tool_b import _comparison_numeric_td
 
     def materialized(row: dict[str, object], finance_source: str) -> dict[str, object]:
         full_row = {column: None for column in TOOL_B_OUTPUT_COLUMNS}
@@ -2517,54 +2479,45 @@ def test_snapshot_ratio_cell_is_compact_and_shows_yahoo_divergence():
             finance_source=finance_source,
         ).iloc[0].to_dict()
 
+    def cell_text(row: dict[str, object]) -> str:
+        """The displayed value only — the trailing help button is not the cell."""
+        html = _comparison_numeric_td(row, "ev_ebitda", decimals=1, rank_by="ev_ebitda")
+        inner = html[html.index(">") + 1 : html.rindex("</td>")]
+        return inner.split("<button")[0].strip()
+
     # Our View active, our-view 2.0 vs Yahoo 3.5, flagged as differing.
-    row = materialized(
-        {
-            "ev_ebitda": 2.0,
-            "ev_ebitda_our_view": 2.0,
-            "ev_ebitda_official": 3.5,
-            "ev_ebitda_differs": True,
-        },
-        "our",
+    cell = cell_text(
+        materialized(
+            {
+                "ev_ebitda": 2.0,
+                "ev_ebitda_our_view": 2.0,
+                "ev_ebitda_official": 3.5,
+                "ev_ebitda_differs": True,
+            },
+            "our",
+        )
     )
-    cell = _snapshot_metric_value("ev_ebitda", row, financials_source="our")
     assert cell.startswith("2.0 ")  # compact active value, no unit suffix
     assert "x" not in cell  # cell carries no 'x' (header/popover do)
     assert "source-alternate" in cell and "(Yahoo 3.5)" in cell
 
     # No divergence -> plain compact value, no accent.
-    assert _snapshot_metric_value(
-        "ev_ebitda",
-        materialized({"ev_ebitda": 2.0, "ev_ebitda_differs": False}, "our"),
-        financials_source="our",
-    ) == "2.0"
+    plain = cell_text(materialized({"ev_ebitda": 2.0, "ev_ebitda_differs": False}, "our"))
+    assert "source-alternate" not in plain and plain.startswith("2.0")
 
     # Yahoo source active (base materialized to the official value) -> alternate is Our View.
-    yahoo_row = materialized(
-        {
-            "ev_ebitda": 2.0,
-            "ev_ebitda_our_view": 2.0,
-            "ev_ebitda_official": 3.5,
-            "ev_ebitda_differs": True,
-        },
-        "yahoo",
+    ycell = cell_text(
+        materialized(
+            {
+                "ev_ebitda": 2.0,
+                "ev_ebitda_our_view": 2.0,
+                "ev_ebitda_official": 3.5,
+                "ev_ebitda_differs": True,
+            },
+            "yahoo",
+        )
     )
-    ycell = _snapshot_metric_value("ev_ebitda", yahoo_row, financials_source="yahoo")
     assert ycell.startswith("3.5 ") and "(Our View 2.0)" in ycell
-
-    yahoo_missing_row = materialized(
-        {
-            "ev_ebitda": 2.0,
-            "ev_ebitda_our_view": 2.0,
-            "ev_ebitda_official": None,
-            "ev_ebitda_differs": True,
-        },
-        "yahoo",
-    )
-    assert (
-        _snapshot_metric_value("ev_ebitda", yahoo_missing_row, financials_source="yahoo")
-        == '- <span class="source-alternate">(Our View 2.0)</span>'
-    )
 
 
 def test_workspace_candidate_finder_serve_layer_has_no_forked_tool_b_d_math():
@@ -2717,7 +2670,7 @@ def test_workspace_tool_b_view_renders_screening_parameters_form(tmp_path):
     assert '<details class="panel screening-params advanced-assumptions" open>' not in body
     # All ten inputs must be present on the page (gold in the dial panel).
     for param in [
-        "gold_price", "pe_target", "fcf_yield_target", "aisc_target",
+        "gold_price", "pe_target", "aisc_margin_yield_target", "aisc_target",
         "margin_target", "reserve_life_target", "leverage_target",
         "tier1_discount", "tier2_discount", "tier3_discount",
     ]:
@@ -2989,8 +2942,9 @@ def test_all_serve_modules_avoid_unsanctioned_analytics_tokens():
     while today's audited state stays green."""
 
     sanctioned: dict[str, set[str]] = {
-        # Bounded, measured non-canonical-window recompute (documented).
-        "detail_panels.py": {"np.polyfit(", ".std("},
+        # M3c deleted detail_panels.py's non-canonical-window volatility
+        # recompute (plan §9.3 / P2): the research series is a persisted
+        # artifact now, so the exception is GONE and the sweep enforces it.
         # Gold-dial scenario recompute is a sanctioned product tradeoff.
         "candidate_finder_data.py": {".fillna("},
     }
@@ -3077,3 +3031,274 @@ def test_overview_empty_states_drop_js_datatable_class(tmp_path):
         body = response["body"]
         assert f'id="{table_id}" class="empty-table"' in body, path
         assert f'id="{table_id}" class="js-datatable"' not in body, path
+
+
+# --------------------------- M3b: page order + POST re-render ---------------
+
+
+def _m3b_app(tmp_path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    return paths, create_workspace_app(
+        paths, app_config=app_config, tool_b_tickers=["NEM"]
+    )
+
+
+def test_ticker_page_sections_render_in_the_required_order(tmp_path):
+    """Requirements §2: performance -> corporate finance -> market behaviour ->
+    options -> compare -> inputs. Asserted by POSITION, so a re-ordered page
+    fails."""
+    _paths, app = _m3b_app(tmp_path)
+    body = _call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
+
+    positions = []
+    for anchor in (
+        'id="performance"',
+        'id="corporate-finance"',
+        'id="market-behaviour"',
+        'id="options"',
+        'id="compare"',
+        'id="inputs"',
+    ):
+        assert anchor in body, anchor
+        positions.append(body.index(anchor))
+    assert positions == sorted(positions), positions
+
+
+def test_ticker_page_nav_lists_exactly_the_six_redesigned_entries(tmp_path):
+    _paths, app = _m3b_app(tmp_path)
+    body = _call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
+    nav = body[body.index('<nav class="section-nav"') :]
+    nav = nav[: nav.index("</nav>")]
+
+    assert nav.count("section-nav-link") == 6
+    for fragment, label in (
+        ("performance", "Performance"),
+        ("corporate-finance", "Corporate finance"),
+        ("market-behaviour", "Market behaviour"),
+        ("options", "Options"),
+        ("compare", "Compare"),
+        ("inputs", "Inputs &amp; notes"),
+    ):
+        assert f'href="#{fragment}">{label}</a>' in nav, fragment
+    # the pre-redesign entries are gone
+    for stale in ("Gold Sensitivity</a>", "Charts</a>", "Reporting</a>", "Notes</a>"):
+        assert stale not in nav, stale
+
+
+#: Display strings the redesigned ticker page must NEVER contain (requirements
+#: §3 "Verdicts and scores"). The page shows statuses and measured values; every
+#: compiled score, verdict and cross-sectional rank belongs to the other pages.
+#: Swept at RENDER level over the WHOLE response, so a value hidden inside a
+#: closed disclosure ("Full research detail", the Lab) fails just as loudly.
+REMOVED_TICKER_PAGE_STRINGS: tuple[str, ...] = (
+    "fundamental_check_summary",
+    "fundamental_check_rank",
+    "screening_verdict",
+    "Fundamental Check Summary",
+    "Screening Verdict",
+    "STRONG_CANDIDATE",
+    "SCREEN_OUT",
+    "WATCHLIST",
+    # M3c: the market-behaviour composites went the same way.
+    "Gold Sensitivity Score",
+    # Stricter than the required "Confidence:" — the bare word is already
+    # absent everywhere, so nothing is gained by weakening it.
+    "Confidence",
+    "confidence score",
+    "tool_a_rank",
+    "screening verdict",
+    "fundamental check",
+    # M3f: the cross-sectional ranks are Finder/Tool-page language.
+    "quality rank",
+    "downside rank",
+    "upside rank",
+)
+
+
+@pytest.mark.parametrize("source", ["our", "yahoo"])
+def test_ticker_page_never_shows_a_compiled_verdict_or_score(tmp_path, source):
+    """Both finance sources, options section degraded (no option artifacts)."""
+    _paths, app = _m3b_app(tmp_path)
+    body = _call_wsgi_app(
+        app, method="GET", path=f"/ticker/NEM?fundamentals_source={source}"
+    )["body"]
+    # the sweep is only meaningful over a page that actually rendered
+    assert 'id="corporate-finance"' in body
+    assert 'id="market-behaviour"' in body
+    assert 'id="options"' in body
+    for banned in REMOVED_TICKER_PAGE_STRINGS:
+        assert banned not in body, f"{banned} ({source})"
+
+
+@pytest.mark.parametrize("source", ["our", "yahoo"])
+def test_ticker_page_sweep_holds_with_option_artifacts_published(tmp_path, source):
+    """The same sweep with a POPULATED options section — the degraded options
+    fixture above cannot prove anything about the contract tables."""
+    from tests.test_option_trading_data import _write_option_inputs
+
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+
+    body = _call_wsgi_app(
+        app, method="GET", path=f"/ticker/AEM?fundamentals_source={source}"
+    )["body"]
+    # the options section really is populated, not degraded to a notice
+    assert 'id="options"' in body
+    assert "Most liquid contracts" in body
+    for banned in REMOVED_TICKER_PAGE_STRINGS:
+        assert banned not in body, f"{banned} ({source}, options published)"
+
+
+def test_ticker_page_options_nav_entry_tracks_the_options_region():
+    """The Options entry is listed only when an options region is rendered."""
+    from golden_vector.serve.detail_page import _detail_section_nav
+
+    with_options = _detail_section_nav(
+        has_page_sections=True,
+        has_behaviour=True,
+        has_options=True,
+        has_compare=False,
+        has_manual=True,
+    )
+    without = _detail_section_nav(
+        has_page_sections=True,
+        has_behaviour=True,
+        has_options=False,
+        has_compare=False,
+        has_manual=True,
+    )
+    assert 'href="#options">Options</a>' in with_options
+    assert "Options" not in without
+    assert without.count("section-nav-link") == 4
+
+
+def test_ticker_page_compare_nav_entry_tracks_the_compare_region():
+    """M3e: the Compare entry is listed only when the section is rendered."""
+    from golden_vector.serve.detail_page import _detail_section_nav
+
+    with_compare = _detail_section_nav(
+        has_page_sections=True,
+        has_behaviour=True,
+        has_options=True,
+        has_compare=True,
+        has_manual=True,
+    )
+    without = _detail_section_nav(
+        has_page_sections=True,
+        has_behaviour=True,
+        has_options=True,
+        has_compare=False,
+        has_manual=True,
+    )
+    assert 'href="#compare">Compare</a>' in with_compare
+    assert "Compare" not in without
+    # page order: Compare sits after Options and before Inputs & notes
+    assert with_compare.index("#compare") > with_compare.index("#options")
+    assert with_compare.index("#compare") < with_compare.index("#inputs")
+
+
+def test_ticker_page_compare_serve_layer_has_no_score_arithmetic():
+    """The M3e Compare section renders backend-resolved percentiles only.
+
+    Canon: every new serve surface gets a static-scan guardrail (clone of the
+    Tool-D/Tool-B serve-arithmetic tests). The exhaustive scan (an AST sweep for
+    ANY arithmetic operator) lives with the section's own tests; this is the
+    repo-wide sweep's entry for it, so the surface can never exist without one.
+    """
+    source = Path("golden_vector/serve/ticker_page/compare.py").read_text(encoding="utf-8")
+
+    # It obeys the persisted eligibility verdicts by name (display only).
+    assert "rank_eligible" in source
+    for forbidden in (
+        "oriented_percentile",
+        "sort_values",
+        "rank(",
+        ".fillna(",
+        ".combine_first(",
+        "weight *",
+        "* pct",
+        "/ budget",
+    ):
+        assert forbidden not in source, forbidden
+
+
+#: A realistic comparison definition as score-builder.js writes it: the client
+#: uses encodeURIComponent, so ":" and "," arrive percent-encoded.
+_SB_STATE = "ev_ebitda%3A40%2Cmargin_pct%3A60"
+_SB_DECODED = "ev_ebitda:40,margin_pct:60"
+
+
+def test_score_builder_state_param_is_carried_by_the_page_not_stripped(tmp_path):
+    """M3e: ``sb=`` is CLIENT-owned state. The server has no query whitelist, so
+    the only requirement is that it never drops it — the forms' ``return_to``
+    must round-trip it, or saving an input would silently reset the comparison
+    the user just built."""
+    _paths, app = _m3b_app(tmp_path)
+
+    body = _call_wsgi_app(app, method="GET", path=f"/ticker/NEM?sb={_SB_STATE}")["body"]
+
+    assert f'value="/ticker/NEM?sb={_SB_STATE}"' in body
+
+
+def test_score_builder_state_param_survives_a_rejected_post(tmp_path):
+    """The 400 re-render rebuilds the view from ``return_to``; unknown params
+    pass through untouched."""
+    _paths, app = _m3b_app(tmp_path)
+
+    response = _call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/company",
+        body=f"production_oz=not-a-number&return_to=%2Fticker%2FNEM%3Fsb%3D{_SB_STATE}",
+    )
+
+    assert response["status"].startswith("400")
+    assert f'value="/ticker/NEM?sb={_SB_STATE}"' in response["body"]
+    assert 'id="compare"' in response["body"]
+
+
+def test_score_builder_state_param_survives_a_successful_save(tmp_path):
+    """The post-save redirect adds ``saved=`` and keeps every other param."""
+    _paths, app = _m3b_app(tmp_path)
+
+    response = _call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/company",
+        body=f"aisc_usd_per_oz=1200&return_to=%2Fticker%2FNEM%3Fsb%3D{_SB_STATE}",
+    )
+
+    assert response["status"].startswith("303")
+    location = str(response["headers"]["Location"])
+    assert "saved=company" in location
+    assert f"sb={_SB_STATE}" in location or f"sb={_SB_DECODED}" in location
+
+
+def test_rejected_post_re_renders_the_same_page_including_the_new_sections(tmp_path):
+    """A validation error must not silently drop Performance / Corporate finance
+    — the user would read the missing sections as data loss."""
+    _paths, app = _m3b_app(tmp_path)
+    response = _call_wsgi_app(
+        app,
+        method="POST",
+        path="/ticker/NEM/company",
+        body="production_oz=not-a-number&return_to=%2Fticker%2FNEM",
+    )
+    assert response["status"].startswith("400")
+    body = response["body"]
+    assert 'id="performance"' in body
+    assert 'id="corporate-finance"' in body
+    assert 'href="#corporate-finance">Corporate finance</a>' in body
+    assert 'id="gold-dial"' in body

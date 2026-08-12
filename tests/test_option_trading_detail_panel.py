@@ -1,25 +1,33 @@
+"""Contract-row rendering on the ticker page's Options section (M3d).
+
+This file used to test ``detail_panels._render_option_trading_panel`` and its
+gold-scenario sizing form. Both are deleted: the section moved to
+``serve/ticker_page/options.py`` and the sizing form was replaced by the
+share-price slider (Q40 — Victor rejected deriving the share price from a gold
+beta). What survives is the behaviour that was always about the CONTRACTS: the
+watch-tier note, the depth hover, the Yahoo chain link, and the provenance
+table. Those assertions are kept, retargeted at the new renderer.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
 from golden_vector.hedge.candidate_puts import OptionCandidate, OptionCandidateSlot
 from golden_vector.hedge.option_trading import (
-    OptionSizingRequest,
-    OptionSizingResult,
     OptionTradingDetailData,
     OptionTradingRow,
     OptionTradingSourceContext,
 )
-from golden_vector.serve.detail_panels import (
-    _render_option_sizing_calculator,
-    _render_option_trading_panel,
-)
+from golden_vector.serve.ticker_page import render_options_section
+from tests.test_ticker_page_options import app_config  # noqa: F401  (pytest fixture)
+from tests.test_ticker_page_options import page_artifacts, slots_frame
 
 
-def test_option_trading_detail_renders_watch_candidate_without_half_spread_column():
+def test_watch_candidate_renders_its_note_hover_and_chain_link(app_config):  # noqa: F811
     watch_candidate = OptionCandidate(
         ticker="AEM",
-        horizon_days=60,
+        horizon_days=90,
         expiration="2026-07-17",
         days_to_expiry=46,
         strike=160.0,
@@ -47,7 +55,7 @@ def test_option_trading_detail_renders_watch_candidate_without_half_spread_colum
     slot = OptionCandidateSlot(
         ticker="AEM",
         option_type="P",
-        horizon_days=60,
+        horizon_days=90,
         target_delta=-0.25,
         expiration="2026-07-17",
         days_to_expiry=46,
@@ -73,36 +81,33 @@ def test_option_trading_detail_renders_watch_candidate_without_half_spread_colum
             refresh_run_id="options-run",
             tool_a_refresh_run_ids=("tool-run",),
             tool_b_refresh_run_ids=("tool-run",),
-            context_warnings=(
-                "Refresh context is mixed: options snapshot uses options-run; "
-                "Tool A uses tool-run; Tool B uses tool-run. Scenario betas and "
-                "fundamentals may lag the option chains. Run python main.py "
-                "refresh to realign the full model outputs.",
-            ),
+            context_warnings=(),
             risk_free_rate=0.036,
         ),
     )
 
-    html = _render_option_trading_panel(detail)
+    html = render_options_section(
+        ticker="AEM",
+        detail=detail,
+        page_artifacts=page_artifacts(),
+        candidate_slots_frame=slots_frame(),
+        app_config=app_config,
+    )
     expiry_epoch = int(datetime(2026, 7, 17, tzinfo=timezone.utc).timestamp())
 
-    assert "Stock Price" in html
+    assert "Share price used" in html
     assert "175.00" in html
-    assert "Snapshot Date" in html
+    assert "Snapshot date" in html
     assert "2026-06-01" in html
-    assert "Cached Yahoo Finance data via yfinance" in html
     assert "Method" in html
-    assert "Refresh context is mixed" in html
-    assert "Last" in html
     assert "Mid" in html
     assert "1.88" in html
-    # OTM% column was dropped in the candidates redesign (redundant moneyness next
-    # to strike/delta); the watch note moved into the candidate-name hover.
+    # OTM% was dropped in the candidates redesign (redundant next to
+    # strike/delta); the watch note lives in the candidate-name hover.
     assert "OTM" not in html
     assert "Watch" in html
     assert "midpoint may be optimistic" in html
     assert "Put Directional" in html
-    assert "button-link" not in html
     assert "Half-spread Cost" not in html
     assert f"https://finance.yahoo.com/quote/AEM/options?date={expiry_epoch}" in html
 
@@ -126,35 +131,3 @@ def _row() -> OptionTradingRow:
         notes=(),
         current_stock_price=175.0,
     )
-
-
-def _sizing_detail() -> OptionTradingDetailData:
-    return OptionTradingDetailData(
-        ticker="AEM",
-        row=_row(),
-        put_candidates=(),
-        put_bundles=(),
-        sizing=OptionSizingResult(
-            request=OptionSizingRequest(),
-            contracts=0,
-            premium_spend=None,
-            leftover_cash=None,
-            bundle=None,
-        ),
-    )
-
-
-def test_sizing_form_carries_active_window_when_not_canonical():
-    html = _render_option_sizing_calculator(
-        _sizing_detail(), active_window="36M", canonical_anchor="12M"
-    )
-
-    assert '<input type="hidden" name="window" value="36m">' in html
-
-
-def test_sizing_form_omits_window_input_at_canonical_anchor():
-    html = _render_option_sizing_calculator(
-        _sizing_detail(), active_window="12M", canonical_anchor="12M"
-    )
-
-    assert 'name="window"' not in html

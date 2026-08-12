@@ -444,7 +444,7 @@ def test_candidate_finder_data_blanks_non_spot_tool_b_gold_fields_without_manife
 
     assert data.alignment.status in {"WARN", "UNKNOWN"}
     assert any("Corporate Finance criteria as missing" in item for item in data.alignment.messages)
-    for column in ("ev_ebitda", "forward_pe", "fcf_yield", "margin_pct"):
+    for column in ("ev_ebitda", "forward_pe", "aisc_margin_yield", "margin_pct"):
         assert data.frame[column].isna().all(), column
     assert data.frame["aisc_usd_per_oz"].notna().any()
     assert data.frame["leverage"].notna().any()
@@ -512,7 +512,7 @@ def test_candidate_finder_scenario_injects_in_memory_tool_b_and_tool_d_without_w
                     gold_price_basis=basis,
                     ev_ebitda=9.9,
                     forward_pe=18.0,
-                    fcf_yield=0.02,
+                    aisc_margin_yield=0.02,
                     margin_pct=0.42,
                     snapshot_refresh_run_id="fresh-foundation",
                     source_run_id="candidate-finder-scenario",
@@ -526,7 +526,7 @@ def test_candidate_finder_scenario_injects_in_memory_tool_b_and_tool_d_without_w
                     gold_price_basis=basis,
                     ev_ebitda=7.7,
                     forward_pe=16.0,
-                    fcf_yield=0.03,
+                    aisc_margin_yield=0.03,
                     margin_pct=0.44,
                     snapshot_refresh_run_id="fresh-foundation",
                     source_run_id="candidate-finder-scenario",
@@ -1188,7 +1188,7 @@ def _write_candidate_finder_inputs(
                     forward_net_income_musd=300.0,
                     forward_pe=8.0,
                     ev_ebitda=2.4,
-                    fcf_yield=0.18,
+                    aisc_margin_yield=0.18,
                     leverage=0.4,
                     fundamental_check_score=85.7143,
                     fundamental_check_rank=1,
@@ -1207,7 +1207,7 @@ def _write_candidate_finder_inputs(
                     forward_net_income_musd=260.0,
                     forward_pe=10.0,
                     ev_ebitda=3.5,
-                    fcf_yield=0.12,
+                    aisc_margin_yield=0.12,
                     leverage=0.2,
                     fundamental_check_score=71.4286,
                     fundamental_check_rank=2,
@@ -1304,7 +1304,7 @@ _PREVIOUSLY_COLLIDED_SOURCE_FIELDS = (
     "leverage",
     "ev_ebitda",
     "margin_pct",
-    "fcf_yield",
+    "aisc_margin_yield",
     "fundamental_check_score",
     "market_cap_musd",
 )
@@ -1322,7 +1322,7 @@ def _add_stale_option_duplicate_columns(paths) -> None:
         "market_cap_musd": -999.0,
         "forward_ebitda_musd": -999.0,
         "forward_revenue_musd": -999.0,
-        "fcf_yield": -999.0,
+        "aisc_margin_yield": -999.0,
         "fundamental_check_score": -999.0,
         "margin_pct": -999.0,
         "ev_ebitda": -999.0,

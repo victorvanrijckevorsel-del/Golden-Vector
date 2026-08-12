@@ -264,7 +264,7 @@ def _render_tool_b_overview_page(
             f"{_fmt_numeric_td(tb.get('forward_ebitda_musd'), decimals=0)}"
             f"{_fmt_numeric_td(tb.get('forward_pe'), decimals=2, extra=_overview_metric_icon('forward_pe', tb, rank_by=rank_by, provenance_lookup=provenance_lookup))}"
             f"{_comparison_numeric_td(tb, 'ev_ebitda', decimals=1, rank_by=rank_by, provenance_lookup=provenance_lookup)}"
-            f"{_fmt_numeric_td(tb.get('fcf_yield'), decimals=1, as_percent=True, extra=_overview_metric_icon('fcf_yield', tb, rank_by=rank_by, provenance_lookup=provenance_lookup))}"
+            f"{_fmt_numeric_td(tb.get('aisc_margin_yield'), decimals=1, as_percent=True, extra=_overview_metric_icon('aisc_margin_yield', tb, rank_by=rank_by, provenance_lookup=provenance_lookup))}"
             f"{_comparison_numeric_td(tb, 'leverage', decimals=2, rank_by=rank_by, provenance_lookup=provenance_lookup)}"
             f"{_fmt_numeric_td(tb.get('reserve_life_years'), decimals=1)}"
             f"<td>{_fmt_text(tb.get('financial_data_status'))}</td>"
@@ -418,7 +418,7 @@ def _render_tool_b_overview_page(
         + help_th("Forward EBITDA est.", key="tool_b_forward_ebitda", app_config=app_config, col_name="forward_ebitda", sort_numeric=True)
         + help_th("Forward P/E est.", key="tool_b_forward_pe", app_config=app_config, col_name="forward_pe", sort_numeric=True)
         + help_th("EV/EBITDA est.", key="tool_b_ev_ebitda", app_config=app_config, col_name="ev_ebitda", sort_numeric=True)
-        + help_th("FCF Yield est.", key="tool_b_fcf_yield", app_config=app_config, col_name="fcf_yield", sort_numeric=True)
+        + help_th("AISC Margin Yield", key="tool_b_aisc_margin_yield", app_config=app_config, col_name="aisc_margin_yield", sort_numeric=True)
         + help_th("Net Debt/EBITDA", key="tool_b_leverage", app_config=app_config, col_name="leverage", sort_numeric=True)
         + help_th("Reserve Life", key="tool_b_reserve_life", app_config=app_config, col_name="reserve_life", sort_numeric=True)
         + help_th("Financial Data", key="tool_b_financial_data_status", app_config=app_config, col_name="financial_data")
@@ -652,7 +652,7 @@ def _render_screening_params_form(
 
     pe_target = overrides.verdict.get("strong_candidate_forward_pe_max",
                                        sp.verdict_thresholds.strong_candidate_forward_pe_max)
-    fcf_yield_target = overrides.layer1.get("fcf_yield_min", sp.layer1_thresholds.fcf_yield_min)
+    aisc_margin_yield_target = overrides.layer1.get("aisc_margin_yield_min", sp.layer1_thresholds.aisc_margin_yield_min)
     aisc_target = overrides.layer1.get("aisc_max", sp.layer1_thresholds.aisc_max)
     margin_target = overrides.layer1.get("margin_min", sp.layer1_thresholds.margin_min)
     reserve_life_target = overrides.layer1.get("reserve_life_min", sp.layer1_thresholds.reserve_life_min)
@@ -689,9 +689,9 @@ def _render_screening_params_form(
         minimum="0.1",
     )
     fcf_input = _number_input_label(
-        "Minimum FCF yield (%)",
-        name="fcf_yield_target",
-        value=_as_percent_display(fcf_yield_target),
+        "Minimum AISC margin yield (%)",
+        name="aisc_margin_yield_target",
+        value=_as_percent_display(aisc_margin_yield_target),
         step="0.5",
         minimum="0",
     )
@@ -782,7 +782,7 @@ _OVERRIDE_PARAM_NAMES: tuple[tuple[str, str, str, bool], ...] = (
     # (overrides-attr, dict-key, url-param, is_percent)
     ("layer1", "aisc_max", "aisc_target", False),
     ("layer1", "margin_min", "margin_target", True),
-    ("layer1", "fcf_yield_min", "fcf_yield_target", True),
+    ("layer1", "aisc_margin_yield_min", "aisc_margin_yield_target", True),
     ("layer1", "reserve_life_min", "reserve_life_target", False),
     ("layer1", "leverage_max", "leverage_target", False),
     ("verdict", "strong_candidate_forward_pe_max", "pe_target", False),

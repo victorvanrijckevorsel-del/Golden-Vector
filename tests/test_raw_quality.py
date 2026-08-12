@@ -382,3 +382,43 @@ def test_raw_quality_warns_on_incomplete_market_snapshot_fields():
     assert shares_result.status == "WARN"
     assert registry.market_snapshot_targets[0].ticker in shares_result.message
     assert report.overall_status == "WARN"
+
+
+
+def test_fx_rate_validity_check_fails_loud_on_invalid_rates():
+    """C7: present-but-invalid FX rates are a FAIL, not silently dropped."""
+    import pandas as pd
+
+    from golden_vector.qa.raw_quality import _fx_rate_validity_check
+
+    frame = pd.DataFrame(
+        {
+            "base_currency": ["AUD"] * 4,
+            "date": ["2026-01-02", "2026-01-03", "2026-01-04", "2026-01-05"],
+            "fx_rate_to_usd": [0.65, 0.0, -1.0, float("inf")],
+        }
+    )
+
+    result = _fx_rate_validity_check(currency="AUD", frame=frame)
+
+    assert result.status == "FAIL"
+    assert "3 FX rate row(s)" in result.message
+
+
+def test_fx_rate_validity_check_passes_on_valid_and_null_rates():
+    """Null rates are ordinary missing data — not an invalid-rate failure."""
+    import pandas as pd
+
+    from golden_vector.qa.raw_quality import _fx_rate_validity_check
+
+    frame = pd.DataFrame(
+        {
+            "base_currency": ["AUD"] * 3,
+            "date": ["2026-01-02", "2026-01-03", "2026-01-04"],
+            "fx_rate_to_usd": [0.65, None, 0.66],
+        }
+    )
+
+    result = _fx_rate_validity_check(currency="AUD", frame=frame)
+
+    assert result.status == "PASS"

@@ -180,3 +180,82 @@ def test_normalize_equity_history_rejects_mixed_currency_frame():
 
     with pytest.raises(ValueError, match="exactly one currency"):
         normalize_equity_history_to_usd(frame=frame, fx_history=pd.DataFrame())
+
+
+
+@pytest.mark.parametrize(
+    "bad_rate",
+    [0.0, -1.3, float("nan"), float("inf"), float("-inf"), "corrupt"],
+    ids=["zero", "negative", "nan", "pos_inf", "neg_inf", "invalid_text"],
+)
+def test_invalid_fx_rate_never_yields_ok_equity_row(bad_rate):
+    """C7: an invalid rate must never convert a price into an OK USD row.
+
+    With no earlier valid rate to fall back on, the row is MISSING_FX and every
+    USD output is empty — never zero/negative/infinite with status OK.
+    """
+    frame = _equity_frame(ticker="AAR.AX", currency="AUD", date="2026-01-03")
+    fx = _fx_frame(currency="AUD", date="2026-01-03", rate=bad_rate)
+
+    normalized = normalize_equity_history_to_usd(frame=frame, fx_history=fx)
+
+    assert normalized.loc[0, "normalization_status"] != "OK"
+    assert pd.isna(normalized.loc[0, "return_basis_usd"]) or normalized.loc[0, "normalization_status"] != "OK"
+    assert normalized.loc[0, "normalization_status"] == "MISSING_FX"
+    assert pd.isna(normalized.loc[0, "fx_rate_to_usd"])
+
+
+def test_invalid_fx_rate_falls_back_to_prior_valid_rate_under_staleness_policy():
+    """C7: when a valid earlier rate exists, the invalid day resolves backward
+
+    like a missing day; the staleness policy governs whether that is OK.
+    """
+    frame = _equity_frame(ticker="AAR.AX", currency="AUD", date="2026-01-08")
+    fx = pd.concat(
+        [
+            _fx_frame(currency="AUD", date="2026-01-07", rate=0.65),
+            _fx_frame(currency="AUD", date="2026-01-08", rate=0.0),
+        ],
+        ignore_index=True,
+    )
+
+    normalized = normalize_equity_history_to_usd(frame=frame, fx_history=fx)
+
+    assert normalized.loc[0, "fx_rate_to_usd"] == 0.65
+    assert str(normalized.loc[0, "fx_source_date"]) == "2026-01-07"
+    assert normalized.loc[0, "normalization_status"] == "OK"  # 1 day stale <= policy
+
+
+def test_valid_gbp_rate_control_still_normalizes_ok():
+    """C7 control: the fix must not disturb ordinary valid GBP conversion."""
+    frame = _equity_frame(ticker="THX.L", currency="GBP", date="2026-01-03")
+    fx = _fx_frame(currency="GBP", date="2026-01-03", rate=1.27)
+
+    normalized = normalize_equity_history_to_usd(frame=frame, fx_history=fx)
+
+    assert normalized.loc[0, "normalization_status"] == "OK"
+    assert normalized.loc[0, "return_basis_usd"] == pytest.approx(9.5 * 1.27)
+
+
+def test_stale_but_valid_fx_rate_is_stale_not_invalid():
+    """C7: staleness and invalidity are different reasons and must stay distinct."""
+    frame = _equity_frame(ticker="AAR.AX", currency="AUD", date="2026-01-20")
+    fx = _fx_frame(currency="AUD", date="2026-01-03", rate=0.65)
+
+    normalized = normalize_equity_history_to_usd(
+        frame=frame, fx_history=fx, max_fx_staleness_days=5
+    )
+
+    assert normalized.loc[0, "normalization_status"] == "STALE_FX"
+
+
+def test_non_finite_local_price_never_yields_ok_equity_row():
+    """C7: an infinite feed price is as unusable as a missing one."""
+    frame = _equity_frame(ticker="AAR.AX", currency="AUD", date="2026-01-03")
+    frame.loc[0, "close_local"] = float("inf")
+    frame.loc[0, "adj_close_local"] = float("inf")
+    fx = _fx_frame(currency="AUD", date="2026-01-03", rate=0.65)
+
+    normalized = normalize_equity_history_to_usd(frame=frame, fx_history=fx)
+
+    assert normalized.loc[0, "normalization_status"] == "MISSING_RETURN_BASIS"
