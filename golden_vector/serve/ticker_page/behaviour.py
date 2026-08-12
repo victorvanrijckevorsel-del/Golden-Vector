@@ -146,6 +146,7 @@ def render_window_switcher(
     anchor: str | None = None,
     sizing_request: object | None = None,
     financials_source: str = "our",
+    app_config: AppConfig | None = None,
 ) -> str:
     """Beta-window tabs (6M / 1Y / 2Y / 3Y / 5Y; 12M renders as "1Y").
 
@@ -194,7 +195,10 @@ def render_window_switcher(
         )
     return (
         "<div class=\"window-switcher\" role=\"group\" aria-label=\"Beta window\">"
-        "<div class=\"window-tabs\">"
+        + help_icon(
+            "Beta window", key="ticker_beta_window_switcher", app_config=app_config
+        )
+        + "<div class=\"window-tabs\">"
         + "".join(tabs)
         + "</div>"
         + mismatch_note
@@ -899,7 +903,16 @@ def _build_lab_body(
                 cells.bucket_availability.get(str(cells.horizon), {}) or {}
             ).items()
         }
-    caveat = f"<p class=\"hint\">{escape(SURVIVOR_CAVEAT)}</p>"
+    caveat = (
+        "<p class=\"hint\">"
+        + escape(SURVIVOR_CAVEAT)
+        + help_icon(
+            "Survivor-only history",
+            key="ticker_survivor_caveat",
+            app_config=app_config,
+        )
+        + "</p>"
+    )
 
     if not cells.available:
         reason, tone, rebuild = lab_unavailable_reason(cells.error_status)
@@ -1108,7 +1121,13 @@ def render_structural_window_table(
         )
     return (
         "<section class=\"panel nested-panel\">"
-        "<h4>Fitted betas by window</h4>"
+        "<h4>Fitted betas by window"
+        + help_icon(
+            "Fitted betas by window",
+            key="ticker_fitted_betas_panel",
+            app_config=app_config,
+        )
+        + "</h4>"
         "<p class=\"hint\">Published fits for every selectable lookback: 6M / 1Y / 3Y are the "
         "scoring windows used elsewhere in the product; 2Y / 5Y are display-only longer "
         "lookbacks.</p>"
@@ -1129,17 +1148,77 @@ def render_structural_window_table(
     )
 
 
+def _window_weekly_sample(
+    weekly_rows: pd.DataFrame,
+    *,
+    tool_a_row: Mapping[str, Any] | None,
+    active_window: str,
+) -> tuple[pd.DataFrame, int | None]:
+    """The active window's trailing weekly rows — pure SELECTION, no maths.
+
+    ``N`` is the persisted ``weeks_{window}`` count on the Tool A row: the
+    artifact's own statement of how many weeks its fit for that window used, so
+    the dots on the chart are the sample the published line was fitted to.
+    Serve re-derives no window boundary and drops no observation of its own.
+
+    Returns ``(rows, weeks)``. ``weeks is None`` means no usable count is
+    published — the full series is drawn and the caption says exactly that.
+    """
+
+    if weekly_rows is None or weekly_rows.empty or not active_window:
+        return weekly_rows, None
+    source = tool_a_row if tool_a_row is not None else {}
+    weeks = _optional_float(source.get(f"weeks_{str(active_window).lower()}"))
+    if weeks is None or weeks <= 0 or "date" not in weekly_rows.columns:
+        return weekly_rows, None
+    ordered = weekly_rows.sort_values("date")
+    return ordered.tail(int(weeks)), int(weeks)
+
+
+def _published_window_fit(
+    structural_window_metrics: pd.DataFrame | None, window: str
+) -> tuple[float | None, float | None]:
+    """``(slope, intercept)`` as PUBLISHED for one window, else ``(None, None)``.
+
+    Both coefficients come from the published ``structural_window_metrics``
+    history — the only artifact carrying a per-window intercept (the Tool A row
+    publishes ``structural_delta_{window}`` but no alpha at any suffix).
+    Nothing is fitted, averaged or back-solved here: the newest published row
+    for the window wins, and a missing coefficient means no line at all rather
+    than a half-drawn one.
+    """
+
+    frame = structural_window_metrics
+    if frame is None or frame.empty or not window or "window_id" not in frame.columns:
+        return None, None
+    match = frame.loc[frame["window_id"].astype(str).str.upper().eq(str(window).upper())]
+    if match.empty:
+        return None, None
+    if "as_of_date" in match.columns:
+        match = match.sort_values("as_of_date")
+    newest = match.iloc[-1]
+    return (
+        _optional_float(newest.get("structural_delta")),
+        _optional_float(newest.get("intercept_alpha")),
+    )
+
+
 def render_weekly_scatter(
     weekly_rows: pd.DataFrame,
     *,
     ticker: str,
+    tool_a_row: Mapping[str, Any] | None = None,
+    active_window: str = "",
+    structural_window_metrics: pd.DataFrame | None = None,
     app_config: AppConfig | None = None,
 ) -> str:
-    """Weekly-return scatter from the published research series.
+    """Weekly-return scatter for the ACTIVE window, with its published fit line.
 
-    Every published weekly observation is drawn — the sample is the artifact's,
-    not a window slice re-derived here, and no line is fitted in the request
-    path. The per-window betas are in the table above.
+    Two published facts shape it and nothing else: the window's ``weeks_*``
+    count selects the trailing sample, and the window's published slope +
+    intercept draw the line. Serve fits nothing in the request path — when
+    either coefficient is absent the dots are drawn alone and the caption says
+    there is no published fit line for the window.
     """
 
     explain = help_icon(
@@ -1152,9 +1231,12 @@ def render_weekly_scatter(
             "<p class=\"hint\">No weekly research series is published for this ticker.</p>"
             "</section>"
         )
+    sample, weeks = _window_weekly_sample(
+        weekly_rows, tool_a_row=tool_a_row, active_window=active_window
+    )
     pairs = [
         (float(row["gold_return"]), float(row["stock_return"]))
-        for _, row in weekly_rows.iterrows()
+        for _, row in sample.iterrows()
         if _is_drawable(row.get("gold_return")) and _is_drawable(row.get("stock_return"))
     ]
     if not pairs:
@@ -1164,23 +1246,44 @@ def render_weekly_scatter(
             "<p class=\"hint\">No drawable weekly observations in the published series.</p>"
             "</section>"
         )
+    slope, intercept = _published_window_fit(structural_window_metrics, active_window)
+    has_line = slope is not None and intercept is not None
     svg = _build_scatter_svg(
         x_values=[x for x, _ in pairs],
         y_values=[y for _, y in pairs],
-        regression_beta=None,
-        regression_alpha=None,
+        regression_beta=slope if has_line else None,
+        regression_alpha=intercept if has_line else None,
     )
-    dates = pd.to_datetime(weekly_rows["date"], errors="coerce").dropna()
+    # Guarded to match ``_window_weekly_sample``: a series with no ``date`` is
+    # neither trimmed to the window nor given a period suffix, but it still draws.
+    dates = (
+        pd.to_datetime(sample["date"], errors="coerce").dropna()
+        if "date" in sample.columns
+        else pd.Series(dtype="datetime64[ns]")
+    )
     period = (
         f" · {_fmt_date(dates.min())} to {_fmt_date(dates.max())}" if not dates.empty else ""
+    )
+    win_label = WINDOW_LABELS.get(active_window, active_window) if active_window else ""
+    sample_clause = (
+        f" Trailing {weeks} weeks — the published sample size for the {win_label} window."
+        if weeks is not None
+        else " The full published series: no weeks count is published for this window."
+    )
+    line_clause = (
+        f" The line is the published {win_label} fit (slope "
+        f"{_fmt_number(slope, decimals=2)}, intercept {_fmt_number(intercept, decimals=4)}); "
+        "nothing is fitted in the page."
+        if has_line
+        else " No published fit line for this window."
     )
     return (
         "<section class=\"panel nested-panel\">"
         f"<h4>Weekly return scatter{explain}</h4>"
         f"<p class=\"hint\">Each dot is one published week: x = gold's weekly return, "
         f"y = {escape(ticker)}'s. Top-right = both rose, bottom-left = both fell. "
-        f"{len(pairs)} weekly observations{escape(period)}. No line is fitted here — the "
-        "measured betas per window are in the table above.</p>"
+        f"{len(pairs)} weekly observations{escape(period)}."
+        f"{escape(sample_clause)}{escape(line_clause)}</p>"
         f"{svg}"
         "</section>"
     )
@@ -1245,16 +1348,27 @@ def render_volatility_panel(
         + _metric_card(
             "Total volatility (annualized log vol)",
             _fmt_percent(tool_a_row.get("total_volatility_52w"), decimals=1),
+            help_key="tool_a_volatility",
+            app_config=app_config,
         )
         + _metric_card(
             "Residual volatility (annualized log vol)",
             _fmt_percent(tool_a_row.get("residual_volatility_52w"), decimals=1),
+            help_key="tool_a_residual_volatility",
+            app_config=app_config,
         )
         + _metric_card(
             "Downside volatility (annualized log vol)",
             _fmt_percent(tool_a_row.get("downside_volatility_52w"), decimals=1),
+            help_key="tool_a_downside_volatility",
+            app_config=app_config,
         )
-        + _metric_card("Volatility context", _fmt_text(tool_a_row.get("volatility_context")))
+        + _metric_card(
+            "Volatility context",
+            _fmt_text(tool_a_row.get("volatility_context")),
+            help_key="tool_a_volatility_context",
+            app_config=app_config,
+        )
         + "</div></section>"
     )
 
@@ -1312,7 +1426,7 @@ def render_horizon_ladder(
             + help_th(
                 "Status", key="exploratory_coverage_status", app_config=app_config
             )
-            + "<th scope=\"col\">Window</th>"
+            + help_th("Window", key="tool_a_structural_window", app_config=app_config)
             + "</tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table>",
             region_id="behaviour-horizon-ladder-region",
@@ -1432,6 +1546,7 @@ def _render_research_detail(
     data: TickerPageData | None,
     active_window: str,
     canonical_anchor: str,
+    structural_window_metrics: pd.DataFrame | None = None,
     app_config: AppConfig | None,
 ) -> str:
     """The closed "Full research detail" disclosure (plan §9.2, exhaustively)."""
@@ -1460,20 +1575,32 @@ def _render_research_detail(
         + _metric_card(
             f"Gold beta ({win_label})",
             _fmt_number(tool_a_row.get(f"structural_delta_{win}"), decimals=2),
+            help_key="tool_a_delta",
+            app_config=app_config,
         )
         + _metric_card(
             f"Down-minus-up beta ({win_label})",
             _fmt_number(tool_a_row.get(f"gamma_{win}"), decimals=2),
+            help_key="tool_a_gamma",
+            app_config=app_config,
         )
         + _metric_card(
             f"Asymmetry ({win_label})",
             _fmt_number(tool_a_row.get(f"asymmetry_ratio_{win}"), decimals=2),
+            help_key="tool_a_asymmetry",
+            app_config=app_config,
         )
         + _metric_card(
-            f"R² ({win_label})", _fmt_percent(tool_a_row.get(f"r_squared_{win}"), decimals=1)
+            f"R² ({win_label})",
+            _fmt_percent(tool_a_row.get(f"r_squared_{win}"), decimals=1),
+            help_key="tool_a_r_squared",
+            app_config=app_config,
         )
         + _metric_card(
-            f"Weeks ({win_label})", _fmt_number(tool_a_row.get(f"weeks_{win}"), decimals=0)
+            f"Weeks ({win_label})",
+            _fmt_number(tool_a_row.get(f"weeks_{win}"), decimals=0),
+            help_key="tool_a_window_weeks",
+            app_config=app_config,
         )
         + "</div>"
         f"<p class=\"hint\">These read-outs describe the active beta window ({escape(win_label)}) "
@@ -1488,21 +1615,32 @@ def _render_research_detail(
         + _metric_card(
             "Gold beta (cross-window)",
             _fmt_number(tool_a_row.get("structural_delta_core"), decimals=2),
+            help_key="tool_a_delta_blend",
+            app_config=app_config,
         )
         + _metric_card(
-            "Up beta (cross-window)", _fmt_number(tool_a_row.get("up_beta_core"), decimals=2)
+            "Up beta (cross-window)",
+            _fmt_number(tool_a_row.get("up_beta_core"), decimals=2),
+            help_key="tool_c_up_beta_blend",
+            app_config=app_config,
         )
         + _metric_card(
             "Down beta (cross-window)",
             _fmt_number(tool_a_row.get("down_beta_core"), decimals=2),
+            help_key="tool_c_down_beta_blend",
+            app_config=app_config,
         )
         + _metric_card(
             "Down-minus-up beta (cross-window)",
             _fmt_number(tool_a_row.get("structural_gamma_core"), decimals=2),
+            help_key="tool_a_gamma",
+            app_config=app_config,
         )
         + _metric_card(
             "Asymmetry (cross-window)",
             _fmt_number(tool_a_row.get("asymmetry_ratio_core"), decimals=2),
+            help_key="tool_a_asymmetry",
+            app_config=app_config,
         )
         + "</div>"
     )
@@ -1524,7 +1662,14 @@ def _render_research_detail(
             app_config=app_config,
         )
         + _kind_notice(weekly_state, kind_label="weekly return")
-        + render_weekly_scatter(weekly_rows, ticker=ticker, app_config=app_config)
+        + render_weekly_scatter(
+            weekly_rows,
+            ticker=ticker,
+            tool_a_row=tool_a_row,
+            active_window=active_window,
+            structural_window_metrics=structural_window_metrics,
+            app_config=app_config,
+        )
         + render_volatility_panel(
             tool_a_row, active_window=active_window, app_config=app_config
         )
@@ -1572,6 +1717,7 @@ def render_market_behaviour_section(
         anchor="option-trading" if option_lens_active else None,
         sizing_request=sizing_request,
         financials_source=finance_source,
+        app_config=app_config,
     )
     pieces: list[str] = [
         f'<section class="panel" id="{SECTION_ID}">',
@@ -1687,6 +1833,9 @@ def render_market_behaviour_section(
             data=data,
             active_window=active_window,
             canonical_anchor=canonical_anchor,
+            structural_window_metrics=getattr(
+                tool_a_detail, "structural_window_metrics", None
+            ),
             app_config=app_config,
         )
     )

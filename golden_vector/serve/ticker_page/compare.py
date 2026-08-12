@@ -337,6 +337,11 @@ def _metric_row_html(
     explain = help_icon(
         label, key=METRIC_HELP_KEYS.get(key), app_config=app_config
     )
+    direction_help = help_icon(
+        f"Which way is good for {label}",
+        key="ticker_compare_direction",
+        app_config=app_config,
+    )
     reason_html = ""
     if not available:
         reason_html = (
@@ -351,7 +356,7 @@ def _metric_row_html(
         f'<input type="checkbox" id="{activate_id}" data-role="activate"{disabled}>'
         '<button type="button" class="button-like" data-role="direction" '
         f'aria-pressed="{"true" if high_good else "false"}"{disabled}>'
-        f"{escape(direction_text)}</button>"
+        f"{escape(direction_text)}</button>{direction_help}"
         f'<input type="range" id="{weight_id}" data-role="weight" min="0" '
         f'max="{int(budget_points)}" step="1" value="0" disabled '
         f'aria-label="Weight for {escape(label, quote=True)}">'
@@ -391,7 +396,7 @@ def _category_group_html(
     )
 
 
-def _result_region_html() -> str:
+def _result_region_html(*, app_config: AppConfig | None = None) -> str:
     """Server-rendered opt-in state carrying every target the client fills.
 
     Only the elements the client explicitly ``show()``s are hidden here — the
@@ -399,6 +404,10 @@ def _result_region_html() -> str:
     ``appendChild`` and would stay invisible forever if this markup hid them.
     """
 
+    score_help = help_icon(
+        "Your score", key="ticker_compare_score", app_config=app_config
+    )
+    rank_help = help_icon("Your rank", key="ticker_compare_rank", app_config=app_config)
     return (
         f'<div id="{SCORE_BUILDER_RESULT_ID}" class="score-builder-result" '
         'role="group" aria-label="Your comparison">'
@@ -406,9 +415,9 @@ def _result_region_html() -> str:
         '<p class="hint" data-role="message" hidden></p>'
         '<p class="sb-subject">'
         '<span class="visually-hidden">Your score: </span>'
-        '<span class="sb-score" data-role="subject-score"></span>'
+        f'<span class="sb-score" data-role="subject-score"></span>{score_help}'
         '<span class="visually-hidden">Rank: </span>'
-        '<span class="sb-rank" data-role="subject-rank"></span>'
+        f'<span class="sb-rank" data-role="subject-rank"></span>{rank_help}'
         "</p>"
         '<p class="hint" data-role="subject-note" hidden></p>'
         '<ul class="sb-contributions" data-role="contributions" '
@@ -511,6 +520,30 @@ def render_compare_section(
             key="ticker_compare_missing",
             app_config=app_config,
         )
+        + " · "
+        + help_term(
+            "What carries the score",
+            key="ticker_compare_contributions",
+            app_config=app_config,
+        )
+        + " · "
+        + help_term(
+            "The ranked list",
+            key="ticker_compare_ranked_list",
+            app_config=app_config,
+        )
+        + " · "
+        + help_term(
+            "When a ranking is fragile",
+            key="ticker_compare_stability",
+            app_config=app_config,
+        )
+        + " · "
+        + help_term(
+            "Which way is good",
+            key="ticker_compare_direction",
+            app_config=app_config,
+        )
         + "</p>"
     )
 
@@ -532,7 +565,7 @@ def render_compare_section(
         'data-role="reset">Reset weights</button></p>'
         "</div>"
     )
-    pieces.append(_result_region_html())
+    pieces.append(_result_region_html(app_config=app_config))
     pieces.append(embed_json_payload(SCORE_BUILDER_PAYLOAD_ID, payload))
     pieces.append(f'<script src="{SCORE_BUILDER_SCRIPT_SRC}" defer></script>')
     pieces.append("</section>")

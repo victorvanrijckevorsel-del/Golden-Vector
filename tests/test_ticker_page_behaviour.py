@@ -285,7 +285,19 @@ def test_relative_record_reports_a_missing_metric_instead_of_inventing_one():
 
 @pytest.mark.parametrize(
     "banned",
-    ["Gold Sensitivity Score", "Confidence", "tool_a_rank", "screening verdict", "fundamental check"],
+    [
+        "Gold Sensitivity Score",
+        "Confidence",
+        "confidence score",
+        "tool_a_rank",
+        "screening verdict",
+        "fundamental check",
+        # M3f: the cross-sectional ranks are Finder/Tool-page language. This
+        # section renders the beta standings, so it is where they would leak.
+        "quality rank",
+        "downside rank",
+        "upside rank",
+    ],
 )
 def test_no_compiled_verdict_survives_anywhere_in_the_section(banned):
     """Requirements §3: no compiled score/verdict is displayed on this page.
@@ -642,6 +654,115 @@ def test_weekly_scatter_and_ladder_render_from_the_research_series():
     assert "Exploratory horizon ladder" in html
     assert "only 34 of 52 weeks present" in html  # the ladder's coverage reason
     assert "PARTIAL" in html
+
+
+# --- M3f: the window sample + the published fit line ------------------------
+
+
+def _five_weeks_research() -> pd.DataFrame:
+    return _research_frame(
+        *(_window_fit_row(window) for window in _WINDOWS),
+        _weekly_row("2026-07-17", 0.011, 0.006),
+        _weekly_row("2026-07-24", -0.007, -0.004),
+        _weekly_row("2026-07-31", 0.021, 0.014),
+        _weekly_row("2026-08-07", -0.018, -0.009),
+        _weekly_row("2026-08-14", 0.004, 0.002),
+        _horizon_row("12M"),
+    )
+
+
+def _structural_metrics(**overrides) -> pd.DataFrame:
+    rows = []
+    for window in _WINDOWS:
+        row: dict[str, object] = {
+            "ticker": "NEM",
+            "window_id": window,
+            "as_of_date": pd.Timestamp("2026-08-14"),
+            "structural_delta": 1.4,
+            "intercept_alpha": 0.0021,
+        }
+        row.update(overrides)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def test_scatter_draws_the_published_fit_line_and_the_window_sample():
+    """The line comes from the window's PUBLISHED slope + intercept, and the
+    dots are the trailing ``weeks_{window}`` rows the artifact published."""
+    html = _render(
+        tool_a_row=_tool_a_row(weeks_12m=2),
+        tool_a_detail=_detail_state(structural_window_metrics=_structural_metrics()),
+        data=_data(percentiles=_full_percentiles(), research=_five_weeks_research()),
+    )
+    assert 'class="chart-fit-line"' in html
+    assert "The line is the published 1Y fit (slope 1.40, intercept 0.0021)" in html
+    assert "nothing is fitted in the page" in html
+
+    # sample = the LAST 2 of 5 published weeks, sized by the persisted count
+    assert "2 weekly observations · 2026-08-07 to 2026-08-14" in html
+    assert "Trailing 2 weeks" in html
+    # ...and the trimmed-away weeks are genuinely gone from the period
+    assert "2026-07-17" not in html
+    assert "No published fit line" not in html
+
+
+def test_scatter_draws_no_line_when_the_intercept_is_not_published():
+    """A slope alone cannot place a line. Serve must not back-solve one — the
+    control is the identical fixture WITH an intercept, which does draw."""
+    html = _render(
+        tool_a_row=_tool_a_row(weeks_12m=2),
+        tool_a_detail=_detail_state(
+            structural_window_metrics=_structural_metrics(intercept_alpha=None)
+        ),
+        data=_data(percentiles=_full_percentiles(), research=_five_weeks_research()),
+    )
+    assert 'class="chart-fit-line"' not in html
+    assert "No published fit line for this window." in html
+    # the dots and the window sample are unaffected by the missing coefficient
+    assert "2 weekly observations · 2026-08-07 to 2026-08-14" in html
+
+
+def test_scatter_falls_back_to_the_full_series_without_a_published_weeks_count():
+    html = _render(
+        tool_a_row=_tool_a_row(weeks_12m=None),
+        tool_a_detail=_detail_state(structural_window_metrics=_structural_metrics()),
+        data=_data(percentiles=_full_percentiles(), research=_five_weeks_research()),
+    )
+    assert "5 weekly observations · 2026-07-17 to 2026-08-14" in html
+    assert "no weeks count is published for this window" in html
+    assert "Trailing" not in html
+    # the published line still draws — the two facts are independent
+    assert 'class="chart-fit-line"' in html
+
+
+def test_scatter_reads_the_fit_for_the_ACTIVE_window_not_the_first_one():
+    """Selection is by ``window_id``, so switching the window switches the
+    line. A 6M-only metrics frame must leave the 1Y view with no line."""
+    six_month_only = pd.DataFrame(
+        [
+            {
+                "ticker": "NEM",
+                "window_id": "6M",
+                "as_of_date": pd.Timestamp("2026-08-14"),
+                "structural_delta": 2.5,
+                "intercept_alpha": 0.009,
+            }
+        ]
+    )
+    data = _data(percentiles=_full_percentiles(), research=_five_weeks_research())
+    on_1y = _render(
+        tool_a_detail=_detail_state(structural_window_metrics=six_month_only),
+        data=data,
+    )
+    assert "No published fit line for this window." in on_1y
+    assert "slope 2.50" not in on_1y
+
+    on_6m = _render(
+        active_window="6M",
+        tool_a_detail=_detail_state(structural_window_metrics=six_month_only),
+        data=data,
+    )
+    assert "The line is the published 6M fit (slope 2.50, intercept 0.0090)" in on_6m
 
 
 def test_a_degraded_research_kind_renders_its_persisted_reason():

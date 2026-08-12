@@ -469,6 +469,32 @@ def _optional_int(value: Any) -> int | None:
     return int(round(numeric))
 
 
+#: Persisted precision for the two percentile columns (plan §12 rule 2). A
+#: percentile is read to a tenth on the page and never to fourteen decimals, so
+#: the extra digits only inflate the embedded compare payload.
+PERCENTILE_PERSIST_DECIMALS = 1
+
+
+def _rounded_percentile(value: Any) -> float | None:
+    """Round one persisted percentile to ``PERCENTILE_PERSIST_DECIMALS``.
+
+    Applied at the PERSIST boundary only — ``oriented_percentile`` itself is
+    untouched, so the ranking that produced the value is unchanged and ties are
+    still resolved by the documented average-tie policy before rounding sees
+    them. ``None``/NaN survive as ``None``: a missing percentile must never
+    become a number.
+    """
+
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        return None
+    return round(float(value), PERCENTILE_PERSIST_DECIMALS)
+
+
 def _optional_timestamp(value: Any) -> pd.Timestamp | None:
     if value is None:
         return None
@@ -736,6 +762,10 @@ def build_score_percentiles(
                 if not row["metric_available"] or not row["rank_eligible"]:
                     row["pct_high_good"] = None
                     row["pct_low_good"] = None
+                # The ONE persist-boundary rounding, after every assignment
+                # above (pool percentile, forced max-favourable pair, nulled).
+                row["pct_high_good"] = _rounded_percentile(row["pct_high_good"])
+                row["pct_low_good"] = _rounded_percentile(row["pct_low_good"])
                 row.pop("_in_pool")
                 row.pop("_forced_pct")
             rows.extend(metric_rows)

@@ -123,46 +123,89 @@ _HEADLINE_METRICS: tuple[str, ...] = (
     "leverage_stressed",
 )
 
-#: Persisted layer-1 FAIL code -> (sentence template, measured Tool B column,
-#: measured format, threshold accessor, threshold format).
+#: Persisted FAIL code -> (sentence template, measured Tool B column, measured
+#: format, ``config_group.attribute`` threshold path, threshold format).
 #: ``{value}`` and ``{threshold}`` are substituted with formatted strings.
-#: Codes with NO persisted column are simply not renderable — see the module
-#: docstring of ``tests/test_ticker_page_corporate.py`` and the lane notes.
+#: ONE registry for every failing check, whichever persisted column carried the
+#: code — the threshold path names its config group so the two groups
+#: (layer-1 screening limits, verdict cut-offs) never need a second table.
 _FAIL_SENTENCES: dict[str, tuple[str, str, str, str, str]] = {
     "AISC_FAIL": (
         "AISC {value} is above your {threshold} cap",
         "aisc_usd_per_oz",
         "usd_per_oz",
-        "aisc_max",
+        "layer1_thresholds.aisc_max",
         "usd_per_oz",
     ),
     "MARGIN_FAIL": (
         "Cash margin {value} is below your {threshold} floor",
         "margin_pct",
         "pct",
-        "margin_min",
+        "layer1_thresholds.margin_min",
         "pct",
     ),
     "AISC_MARGIN_YIELD_FAIL": (
         "AISC margin yield {value} is below your {threshold} floor",
         "aisc_margin_yield",
         "pct",
-        "aisc_margin_yield_min",
+        "layer1_thresholds.aisc_margin_yield_min",
         "pct",
     ),
     "RESERVE_LIFE_FAIL": (
         "Reserve life {value} is below your {threshold} floor",
         "reserve_life_years",
         "years",
-        "reserve_life_min",
+        "layer1_thresholds.reserve_life_min",
         "years",
     ),
     "LEVERAGE_FAIL": (
         "Net debt / EBITDA (LTM) {value} is above your {threshold} cap",
         "leverage",
         "ratio",
-        "leverage_max",
+        "layer1_thresholds.leverage_max",
         "ratio",
+    ),
+    # From the fundamental-check codes, not layer 1 (see
+    # ``_FUNDAMENTAL_ONLY_CODES``). ``forward_pe`` is already materialized for
+    # the active finance source before serve sees the row, so this is the same
+    # forward P/E the Valuation table and the headline card print.
+    "FORWARD_PE_FAIL": (
+        "Forward P/E {value} is above your {threshold} cut-off",
+        "forward_pe",
+        "ratio",
+        "verdict_thresholds.strong_candidate_forward_pe_max",
+        "ratio",
+    ),
+}
+
+#: Fundamental-check codes the layer-1 vocabulary does NOT already cover.
+#:
+#: The fundamental checks re-state most of layer 1 under identical code names
+#: (``AISC_FAIL`` … ``LEVERAGE_FAIL``), and ``DATA_COMPLETE_FAIL`` is the same
+#: "a required input is missing" concept that layer 1 already reports far more
+#: precisely through its ``MISSING_*`` codes. Rendering either group twice
+#: would print one failure as two, so only the genuinely NEW check is consumed
+#: here. ``tests/test_ticker_page_corporate.py`` locks this against the
+#: upstream vocabulary, so a new fundamental check cannot be added and then
+#: silently never render.
+_FUNDAMENTAL_ONLY_CODES: frozenset[str] = frozenset({"FORWARD_PE_FAIL"})
+
+#: Fundamental-code column for the active finance source. The screening
+#: pipeline deliberately leaves the plain column out of the Yahoo column map,
+#: so in Yahoo mode it still holds Our-View codes and the ``_official`` column
+#: is the only Yahoo-correct source. Either column may be absent entirely on an
+#: artifact built before the codes existed — then there is simply no sentence.
+_FUNDAMENTAL_CODE_COLUMN_BY_SOURCE: dict[str, str] = {
+    "yahoo": "fundamental_check_fail_codes_official",
+}
+_DEFAULT_FUNDAMENTAL_CODE_COLUMN = "fundamental_check_fail_codes"
+
+#: A ratio whose denominator is not positive is not a number that may be
+#: compared to a cut-off. The code still fired, so the check still failed —
+#: the line states the condition instead of inventing a multiple.
+_NON_POSITIVE_VALUE_SENTENCES: dict[str, str] = {
+    "FORWARD_PE_FAIL": (
+        "Forward P/E is not meaningful here (forward earnings are not positive)"
     ),
 }
 
@@ -422,38 +465,88 @@ def render_gold_dial_control(
 # ---------------------------------------------------------------------------
 
 
-def _threshold_text(app_config: AppConfig | None, attribute: str, unit: str) -> str:
+def _threshold_text(app_config: AppConfig | None, path: str, unit: str) -> str:
+    """Format one configured threshold addressed as ``config_group.attribute``.
+
+    Thresholds live in two groups under ``screening_params`` (the layer-1
+    screening limits and the verdict cut-offs). Addressing them by path keeps
+    ONE sentence registry instead of one registry per config group.
+    """
+
     if app_config is None:
         return "your configured threshold"
-    thresholds = app_config.screening_params.layer1_thresholds
-    raw = getattr(thresholds, attribute, None)
+    group_name, _, attribute = path.partition(".")
+    group = getattr(app_config.screening_params, group_name, None)
+    raw = getattr(group, attribute, None) if group is not None else None
     if raw is None:
         return "your configured threshold"
     return format_metric(float(raw), unit)
 
 
+def _persisted_codes(row: Mapping[str, Any], column: str) -> list[str]:
+    """The semicolon-joined codes in one persisted column, in artifact order.
+
+    An absent column, ``None``, an empty string and a NaN all mean the same
+    thing: nothing failed that this column can speak for. None of them is an
+    error, and none of them is a reason to guess.
+    """
+
+    raw = str(row.get(column) or "").strip()
+    if not raw or raw.lower() == "nan":
+        return []
+    return [part.strip() for part in raw.split(";") if part.strip()]
+
+
+def _fundamental_code_column(finance_source: str) -> str:
+    return _FUNDAMENTAL_CODE_COLUMN_BY_SOURCE.get(
+        str(finance_source).strip().lower(), _DEFAULT_FUNDAMENTAL_CODE_COLUMN
+    )
+
+
 def _failing_check_sentences(
-    tool_b_row: Mapping[str, Any], *, app_config: AppConfig | None
+    tool_b_row: Mapping[str, Any],
+    *,
+    finance_source: str,
+    app_config: AppConfig | None,
 ) -> list[str]:
     """One sentence per PERSISTED failing check.
 
-    Source of truth is ``layer1_fail_reasons`` (semicolon-joined, already
-    materialized for the active finance source upstream). Serve NEVER compares
-    a value to a threshold — it only prints the measured column the persisted
-    code names, beside the configured threshold that code was judged against.
+    Two persisted code columns feed the SAME registry: ``layer1_fail_reasons``
+    (already materialized for the active finance source upstream) and the
+    fundamental-check codes, which are NOT materialized and so are read from
+    the per-source column. The fundamental column contributes only the checks
+    layer 1 has no code for, so one failure is never printed as two.
+
+    Serve NEVER compares a value to a threshold — it prints the measured column
+    the persisted code names, beside the configured threshold that code was
+    judged against.
     """
 
-    raw = str(tool_b_row.get("layer1_fail_reasons") or "").strip()
-    if not raw or raw.lower() == "nan":
-        return []
+    codes = _persisted_codes(tool_b_row, "layer1_fail_reasons") + [
+        code
+        for code in _persisted_codes(
+            tool_b_row, _fundamental_code_column(finance_source)
+        )
+        if code in _FUNDAMENTAL_ONLY_CODES
+    ]
+
     sentences: list[str] = []
-    for code in [part.strip() for part in raw.split(";") if part.strip()]:
+    seen: set[str] = set()
+    for code in codes:
+        if code in seen:
+            continue
+        seen.add(code)
         if code in _FAIL_SENTENCES:
-            template, column, value_unit, attribute, threshold_unit = _FAIL_SENTENCES[code]
+            template, column, value_unit, path, threshold_unit = _FAIL_SENTENCES[code]
+            measured = _value(tool_b_row, column)
+            statement = _NON_POSITIVE_VALUE_SENTENCES.get(code)
+            if statement is not None and (measured is None or measured <= 0):
+                sentences.append(statement)
+                continue
             sentences.append(
                 template.format(
-                    value=format_metric(_value(tool_b_row, column), value_unit),
-                    threshold=_threshold_text(app_config, attribute, threshold_unit),
+                    value=format_metric(measured, value_unit),
+                    threshold=_threshold_text(app_config, path, threshold_unit),
                 )
             )
         elif code in _FAIL_STATEMENTS:
@@ -464,11 +557,14 @@ def _failing_check_sentences(
 def _render_failing_checks(
     tool_b_row: Mapping[str, Any],
     *,
+    finance_source: str,
     app_config: AppConfig | None,
     spot_gold_usd: float | None,
     spot_gold_date: str,
 ) -> str:
-    sentences = _failing_check_sentences(tool_b_row, app_config=app_config)
+    sentences = _failing_check_sentences(
+        tool_b_row, finance_source=finance_source, app_config=app_config
+    )
     if not sentences:
         return ""
     screening_gold = _value(tool_b_row, "gold_price_assumption")
@@ -482,9 +578,12 @@ def _render_failing_checks(
         basis_bits.append(
             "screening basis " + format_metric(screening_gold, "usd") + "/oz"
         )
+    explain = help_icon(
+        "Failing screening checks", key="ticker_cf_failing_checks", app_config=app_config
+    )
     body = (
         "<p><strong>These screening checks fail "
-        f"{escape(' · '.join(basis_bits))}:</strong></p><ul>"
+        f"{escape(' · '.join(basis_bits))}:</strong>{explain}</p><ul>"
         + "".join(f"<li>{escape(sentence)}.</li>" for sentence in sentences)
         + "</ul><p class=\"hint\">These sentences are fixed at spot gold and do not "
         "move with the dial.</p>"
@@ -572,12 +671,23 @@ def _fixed_row(
     )
 
 
-def _moving_table(rows_html: str, *, region_id: str, label: str, spot_header: str) -> str:
+def _moving_table(
+    rows_html: str,
+    *,
+    region_id: str,
+    label: str,
+    spot_header: str,
+    app_config: AppConfig | None = None,
+) -> str:
+    scenario_help = help_icon(
+        "At your scenario", key="ticker_cf_scenario_column", app_config=app_config
+    )
     table_html = (
         '<table class="compact-table"><thead><tr>'
         '<th scope="col">Metric</th>'
         f'<th scope="col">{escape(spot_header)}</th>'
-        '<th scope="col" class="scenario-head" data-scenario-head="1" hidden>At your scenario</th>'
+        '<th scope="col" class="scenario-head" data-scenario-head="1" hidden>'
+        f"At your scenario{scenario_help}</th>"
         '<th scope="col">Basis</th></tr></thead>'
         f"<tbody>{rows_html}</tbody></table>"
     )
@@ -634,23 +744,45 @@ def _earnings_group(gold_row: pd.Series | None, *, app_config: AppConfig | None,
         "aisc_margin_yield", gold_row, app_config=app_config, basis="moves with gold"
     )
     return disclosure(
-        escape("Earnings and cash at this gold price"),
+        escape("Earnings and cash at this gold price")
+        + help_icon(
+            "Earnings and cash at this gold price",
+            key="ticker_cf_earnings_group",
+            app_config=app_config,
+        ),
         _moving_table(
             rows,
             region_id="corporate-earnings",
             label="Earnings and cash at this gold price",
             spot_header=spot_header,
+            app_config=app_config,
         ),
     )
 
 
 def _valuation_group(gold_row: pd.Series | None, *, app_config: AppConfig | None, spot_header: str) -> str:
     fixed = (
-        _fixed_row("Market cap", _cell(gold_row, "market_cap_musd", "musd"), "market snapshot")
-        + _fixed_row(
-            "Enterprise value", _cell(gold_row, "enterprise_value_musd", "musd"), "market snapshot"
+        _fixed_row(
+            "Market cap",
+            _cell(gold_row, "market_cap_musd", "musd"),
+            "market snapshot",
+            help_key="tool_b_market_cap",
+            app_config=app_config,
         )
-        + _fixed_row("Share price", _cell(gold_row, "share_price_usd", "usd2"), "market snapshot")
+        + _fixed_row(
+            "Enterprise value",
+            _cell(gold_row, "enterprise_value_musd", "musd"),
+            "market snapshot",
+            help_key="tool_b_enterprise_value",
+            app_config=app_config,
+        )
+        + _fixed_row(
+            "Share price",
+            _cell(gold_row, "share_price_usd", "usd2"),
+            "market snapshot",
+            help_key="tool_b_share_price",
+            app_config=app_config,
+        )
     )
     moving = _ratio_metric_row(
         "ev_ebitda", gold_row, app_config=app_config, basis="moves with gold"
@@ -666,8 +798,13 @@ def _valuation_group(gold_row: pd.Series | None, *, app_config: AppConfig | None
         region_id="corporate-valuation-moving",
         label="Valuation multiples",
         spot_header=spot_header,
+        app_config=app_config,
     )
-    return disclosure(escape("Valuation"), body)
+    return disclosure(
+        escape("Valuation")
+        + help_icon("Valuation", key="ticker_cf_valuation_group", app_config=app_config),
+        body,
+    )
 
 
 def _balance_sheet_group(
@@ -677,12 +814,26 @@ def _balance_sheet_group(
     app_config: AppConfig | None,
 ) -> str:
     rows = (
-        _fixed_row("Net debt", _cell(gold_row, "net_debt_musd", "musd"), "balance sheet")
-        + _fixed_row(
-            "Interest expense", _cell(gold_row, "interest_expense_musd", "musd"), "per year"
+        _fixed_row(
+            "Net debt",
+            _cell(gold_row, "net_debt_musd", "musd"),
+            "balance sheet",
+            help_key="ticker_cf_net_debt",
+            app_config=app_config,
         )
         + _fixed_row(
-            "Trailing EBITDA", _cell(gold_row, "ebitda_ltm_musd", "musd"), _LTM_BASIS
+            "Interest expense",
+            _cell(gold_row, "interest_expense_musd", "musd"),
+            "per year",
+            help_key="ticker_cf_interest_expense",
+            app_config=app_config,
+        )
+        + _fixed_row(
+            "Trailing EBITDA",
+            _cell(gold_row, "ebitda_ltm_musd", "musd"),
+            _LTM_BASIS,
+            help_key="ticker_cf_ebitda_ltm",
+            app_config=app_config,
         )
         + _fixed_row(
             "Net debt / EBITDA (LTM)",
@@ -691,17 +842,42 @@ def _balance_sheet_group(
             help_key="ticker_cf_leverage_trailing",
             app_config=app_config,
         )
-        + _fixed_row("AISC", _cell(gold_row, "aisc_usd_per_oz", "usd_per_oz"), _OUR_VIEW_BASIS)
         + _fixed_row(
-            "Cash cost", _cell(gold_row, "cash_cost_usd_per_oz", "usd_per_oz"), _OUR_VIEW_BASIS
+            "AISC",
+            _cell(gold_row, "aisc_usd_per_oz", "usd_per_oz"),
+            _OUR_VIEW_BASIS,
+            help_key="tool_b_aisc",
+            app_config=app_config,
         )
-        + _fixed_row("Production", _cell(gold_row, "production_oz", "oz"), _OUR_VIEW_BASIS)
         + _fixed_row(
-            "Reserve life", _cell(tool_b_row, "reserve_life_years", "years"), _OUR_VIEW_BASIS
+            "Cash cost",
+            _cell(gold_row, "cash_cost_usd_per_oz", "usd_per_oz"),
+            _OUR_VIEW_BASIS,
+            help_key="ticker_cf_cash_cost",
+            app_config=app_config,
+        )
+        + _fixed_row(
+            "Production",
+            _cell(gold_row, "production_oz", "oz"),
+            _OUR_VIEW_BASIS,
+            help_key="ticker_cf_production",
+            app_config=app_config,
+        )
+        + _fixed_row(
+            "Reserve life",
+            _cell(tool_b_row, "reserve_life_years", "years"),
+            _OUR_VIEW_BASIS,
+            help_key="tool_b_reserve_life",
+            app_config=app_config,
         )
     )
     return disclosure(
-        escape("Balance sheet, cost and scale"),
+        escape("Balance sheet, cost and scale")
+        + help_icon(
+            "Balance sheet, cost and scale",
+            key="ticker_cf_balance_group",
+            app_config=app_config,
+        ),
         _fixed_table(
             rows, region_id="corporate-balance-sheet", label="Balance sheet, cost and scale"
         ),
@@ -732,36 +908,50 @@ def _resilience_group(
             "Operating breakeven gold",
             _cell(tool_d_row, "breaks_even_at_gold_usd", "usd_per_oz"),
             "below this each ounce loses money",
+            help_key="tool_d_breakeven",
+            app_config=app_config,
         )
         + _fixed_row(
             "Interest-cover gold",
             _cell(tool_d_row, "interest_cover_gold_usd", "usd_per_oz"),
             "below this earnings cannot cover interest",
+            help_key="tool_d_interest_cover",
+            app_config=app_config,
         )
         + _fixed_row(
             "Debt-stress gold",
             _cell(tool_d_row, "debt_stress_gold_usd", "usd_per_oz"),
             "below this leverage becomes distressed",
+            help_key="tool_d_debt_stress",
+            app_config=app_config,
         )
         + _fixed_row(
             "Survival distance",
             _cell(tool_d_row, "survival_distance_to_interest_cover_pct", "pct"),
             "how far gold can fall before interest cover breaks",
+            help_key="tool_d_survival_distance",
+            app_config=app_config,
         )
         + _fixed_row(
             "EBITDA fragility",
             _cell(tool_d_row, "fragility_ebitda_pct_per_10pct_gold", "pct"),
             "EBITDA move per 10% gold move",
+            help_key="tool_d_fragility",
+            app_config=app_config,
         )
         + _fixed_row(
             "Cost-curve position (percentile of your universe)",
             _cell(tool_d_row, "cost_curve_aisc_percentile", "percentile"),
             _OUR_VIEW_BASIS,
+            help_key="tool_d_cost_curve",
+            app_config=app_config,
         )
         + _fixed_row(
             "Resilience data status",
             escape(status or "n/a"),
             "Tool D as of " + (_text(tool_d_row, "as_of_date") or "n/a"),
+            help_key="tool_d_data_status",
+            app_config=app_config,
         )
     )
     explain = help_icon("Resilience", key="ticker_cf_resilience", app_config=app_config)
@@ -789,6 +979,8 @@ def _data_quality_group(
             "Financial data status",
             escape(_text(tool_b_row, "financial_data_status") or "n/a"),
             "Tool B",
+            help_key="ticker_cf_financial_data_status",
+            app_config=app_config,
         )
         + _fixed_row(
             "Tool B as of",
@@ -809,9 +1001,15 @@ def _data_quality_group(
             "Snapshot normalization",
             escape(_text(tool_b_row, "snapshot_normalization_status") or "n/a"),
             "currency normalization boundary",
+            help_key="ticker_cf_snapshot_normalization",
+            app_config=app_config,
         )
         + _fixed_row(
-            "FX staleness", _cell(tool_b_row, "fx_staleness_days", "days"), "market snapshot"
+            "FX staleness",
+            _cell(tool_b_row, "fx_staleness_days", "days"),
+            "market snapshot",
+            help_key="ticker_cf_fx_staleness",
+            app_config=app_config,
         )
         + _fixed_row(
             "Spot gold used",
@@ -916,6 +1114,7 @@ def render_corporate_finance_section(
     pieces.append(
         _render_failing_checks(
             tool_b_row,
+            finance_source=finance_source,
             app_config=app_config,
             spot_gold_usd=spot,
             spot_gold_date=spot_date,

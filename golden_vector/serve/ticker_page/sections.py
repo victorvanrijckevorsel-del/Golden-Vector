@@ -69,7 +69,11 @@ def render_performance_section(
 
     if performance_rows is None or performance_rows.empty:
         return (
-            '<section class="panel" id="performance"><h2>Performance</h2>'
+            '<section class="panel" id="performance"><h2>Performance'
+            + help_icon(
+                "Performance", key="ticker_performance_chart", app_config=None
+            )
+            + "</h2>"
             '<p class="hint">No performance data has been published for this ticker.</p>'
             "</section>"
         )
@@ -127,7 +131,9 @@ def render_performance_section(
 
     view_label = "Compare (indexed to 100)" if view == "rebased" else "Share price (USD)"
     return (
-        f'<section class="panel" id="performance"><h2>Performance — {escape(ticker)}</h2>'
+        f'<section class="panel" id="performance"><h2>Performance — {escape(ticker)}'
+        + help_icon("Performance", key="ticker_performance_chart", app_config=None)
+        + "</h2>"
         f'<p class="hint">{escape(view_label)} · horizon {escape(horizon)}'
         + (" · " + escape("; ".join(basis_bits)) if basis_bits else "")
         + "</p>"
@@ -322,7 +328,9 @@ def render_cost_downside_card(
             else "Peer standing unavailable."
         )
         pieces.append(
-            "<div class=\"cost-downside-aisc\"><h3>Current reported AISC</h3>"
+            "<div class=\"cost-downside-aisc\"><h3>Current reported AISC"
+            + help_icon("Current reported AISC", key="tool_b_aisc", app_config=None)
+            + "</h3>"
             f"<p><strong>{escape(aisc_text)}</strong> · {escape(' · '.join(bit for bit in source_bits if bit))}</p>"
             f"<p class=\"hint\">{escape(standing)}</p></div>"
         )
@@ -331,7 +339,9 @@ def render_cost_downside_card(
             str(aisc_row.get("metric_reason")) if aisc_row is not None else "no AISC row"
         )
         pieces.append(
-            "<div class=\"cost-downside-aisc\"><h3>Current reported AISC</h3>"
+            "<div class=\"cost-downside-aisc\"><h3>Current reported AISC"
+            + help_icon("Current reported AISC", key="tool_b_aisc", app_config=None)
+            + "</h3>"
             f"<p class=\"hint\">AISC is unavailable: {escape(reason)}</p></div>"
         )
 
@@ -352,7 +362,13 @@ def render_cost_downside_card(
             else "Peer standing unavailable."
         )
         pieces.append(
-            "<div class=\"cost-downside-record\"><h3>Historical large-fall record</h3>"
+            "<div class=\"cost-downside-record\"><h3>Historical large-fall record"
+            + help_icon(
+                "Historical large-fall record",
+                key="ticker_downside_hit_rate",
+                app_config=None,
+            )
+            + "</h3>"
             f"<p><strong>{_fmt_pct(rate)}</strong> — {escape(evidence)}</p>"
             f"<p class=\"hint\">Period {_fmt_date(period_start)} to {_fmt_date(period_end)}. "
             "A large fall is an ordinary weekly price return of −10% or worse during a week "
@@ -366,7 +382,13 @@ def render_cost_downside_card(
             else "no downside row"
         )
         pieces.append(
-            "<div class=\"cost-downside-record\"><h3>Historical large-fall record</h3>"
+            "<div class=\"cost-downside-record\"><h3>Historical large-fall record"
+            + help_icon(
+                "Historical large-fall record",
+                key="ticker_downside_hit_rate",
+                app_config=None,
+            )
+            + "</h3>"
             f"<p class=\"hint\">The downside record is unavailable: {escape(reason)}</p></div>"
         )
 
@@ -387,6 +409,9 @@ def _render_peer_disclosure(
     eligibility rule (those live in the model layer or nowhere).
     """
 
+    peer_help = help_icon(
+        "Peer relationship", key="ticker_peer_relationship", app_config=None
+    )
     pairs: list[tuple[str, float, float]] = []
     if (
         aisc_peers is not None
@@ -415,7 +440,7 @@ def _render_peer_disclosure(
 
     if not pairs:
         return (
-            '<details class="disclosure"><summary>Peer relationship</summary>'
+            f'<details class="disclosure"><summary>Peer relationship{peer_help}</summary>'
             '<p class="hint">No eligible paired producers to plot.</p></details>'
         )
 
@@ -441,7 +466,7 @@ def _render_peer_disclosure(
         regression_alpha=None,
     )
     return (
-        '<details class="disclosure"><summary>Peer relationship</summary>'
+        f'<details class="disclosure"><summary>Peer relationship{peer_help}</summary>'
         '<p class="hint">x = current reported AISC · y = historical large-fall rate · '
         "eligible paired producers only · no fitted line</p>"
         + scatter

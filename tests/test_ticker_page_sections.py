@@ -349,3 +349,74 @@ def test_gold_dial_js_guards_mirror_the_screening_layers():
     # reduced motion is honoured, and the live region is polite and single
     assert "prefers-reduced-motion: reduce" in source
     assert source.count('var STATUS_ID = "gold-dial-status"') == 1
+
+
+# ---------------------------------------------------------------------------
+# M3f: help-key integrity across the five ticker-page render modules
+# ---------------------------------------------------------------------------
+
+
+def _referenced_help_keys() -> dict[str, set[str]]:
+    """Every registry key the five render modules ask for, by module.
+
+    The negative lookbehind keeps ``metric_key=`` (a DATA lookup) out — only
+    ``key=`` / ``help_key=`` name a help entry.
+    """
+    import re
+
+    found: dict[str, set[str]] = {}
+    for module in sorted(Path("golden_vector/serve/ticker_page").glob("*.py")):
+        source = module.read_text(encoding="utf-8")
+        keys = set(
+            re.findall(r'(?<!\w)(?:help_key|key)\s*=\s*"([a-z0-9_]+)"', source)
+        )
+        if keys:
+            found[module.name] = keys
+    return found
+
+
+def test_every_help_key_the_ticker_page_asks_for_actually_exists():
+    """``help_icon`` returns "" for an unknown key — silently, with no error.
+
+    So a renamed or deleted registry entry does not fail anywhere: it just
+    deletes a "?" from the page. This is the test that makes that loud.
+    """
+    from golden_vector.serve.column_help import COLUMN_HELP
+
+    referenced = _referenced_help_keys()
+    assert referenced, "no help keys found — the scan itself is broken"
+
+    unknown = {
+        (module, key)
+        for module, keys in referenced.items()
+        for key in keys
+        if key not in COLUMN_HELP
+    }
+    assert not unknown, sorted(unknown)
+
+    # The indirection tables resolve too — they are the easiest to let rot.
+    from golden_vector.serve.ticker_page.compare import METRIC_HELP_KEYS
+    from golden_vector.serve.ticker_page.corporate import _METRIC_HELP_KEYS
+
+    for table_name, table in (
+        ("compare.METRIC_HELP_KEYS", METRIC_HELP_KEYS),
+        ("corporate._METRIC_HELP_KEYS", _METRIC_HELP_KEYS),
+    ):
+        missing = sorted(k for k in table.values() if k not in COLUMN_HELP)
+        assert not missing, f"{table_name}: {missing}"
+
+
+def test_help_entries_the_ticker_page_uses_are_not_empty():
+    """An entry with no ``meaning`` renders no icon at all — same silent failure
+    as a missing key, so it is held to the same standard."""
+    from golden_vector.serve.column_help import COLUMN_HELP
+
+    thin = []
+    for keys in _referenced_help_keys().values():
+        for key in keys:
+            entry = COLUMN_HELP.get(key)
+            if entry is None:
+                continue
+            if not str(getattr(entry, "meaning", "") or "").strip():
+                thin.append(key)
+    assert not thin, sorted(set(thin))

@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
@@ -18,6 +19,7 @@ from golden_vector.screening.manual_data import (
     load_manual_screening_data,
 )
 from golden_vector.screening.manual_store import add_stock_note
+from golden_vector.serve.option_trading_data import clear_option_trading_cache
 from golden_vector.serve.workspace import create_workspace_app
 from golden_vector.serve.workspace_state import _load_tool_a_detail
 from tests.helpers import build_test_paths, tool_b_output_row
@@ -3088,30 +3090,75 @@ def test_ticker_page_nav_lists_exactly_the_six_redesigned_entries(tmp_path):
         assert stale not in nav, stale
 
 
-def test_ticker_page_never_shows_a_compiled_verdict_or_score(tmp_path):
-    """Requirements §3 "Verdicts and scores": the composites stay on the other
-    pages; this page shows statuses and measured values only."""
+#: Display strings the redesigned ticker page must NEVER contain (requirements
+#: §3 "Verdicts and scores"). The page shows statuses and measured values; every
+#: compiled score, verdict and cross-sectional rank belongs to the other pages.
+#: Swept at RENDER level over the WHOLE response, so a value hidden inside a
+#: closed disclosure ("Full research detail", the Lab) fails just as loudly.
+REMOVED_TICKER_PAGE_STRINGS: tuple[str, ...] = (
+    "fundamental_check_summary",
+    "fundamental_check_rank",
+    "screening_verdict",
+    "Fundamental Check Summary",
+    "Screening Verdict",
+    "STRONG_CANDIDATE",
+    "SCREEN_OUT",
+    "WATCHLIST",
+    # M3c: the market-behaviour composites went the same way.
+    "Gold Sensitivity Score",
+    # Stricter than the required "Confidence:" — the bare word is already
+    # absent everywhere, so nothing is gained by weakening it.
+    "Confidence",
+    "confidence score",
+    "tool_a_rank",
+    "screening verdict",
+    "fundamental check",
+    # M3f: the cross-sectional ranks are Finder/Tool-page language.
+    "quality rank",
+    "downside rank",
+    "upside rank",
+)
+
+
+@pytest.mark.parametrize("source", ["our", "yahoo"])
+def test_ticker_page_never_shows_a_compiled_verdict_or_score(tmp_path, source):
+    """Both finance sources, options section degraded (no option artifacts)."""
     _paths, app = _m3b_app(tmp_path)
-    body = _call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
-    for banned in (
-        "fundamental_check_summary",
-        "fundamental_check_rank",
-        "screening_verdict",
-        "Fundamental Check Summary",
-        "Screening Verdict",
-        "STRONG_CANDIDATE",
-        "SCREEN_OUT",
-        "WATCHLIST",
-        # M3c: the market-behaviour composites went the same way, and the sweep
-        # runs at RENDER level so a value hidden inside a closed disclosure
-        # ("Full research detail", the Lab) fails just as loudly.
-        "Gold Sensitivity Score",
-        "Confidence",
-        "tool_a_rank",
-        "screening verdict",
-        "fundamental check",
-    ):
-        assert banned not in body, banned
+    body = _call_wsgi_app(
+        app, method="GET", path=f"/ticker/NEM?fundamentals_source={source}"
+    )["body"]
+    # the sweep is only meaningful over a page that actually rendered
+    assert 'id="corporate-finance"' in body
+    assert 'id="market-behaviour"' in body
+    assert 'id="options"' in body
+    for banned in REMOVED_TICKER_PAGE_STRINGS:
+        assert banned not in body, f"{banned} ({source})"
+
+
+@pytest.mark.parametrize("source", ["our", "yahoo"])
+def test_ticker_page_sweep_holds_with_option_artifacts_published(tmp_path, source):
+    """The same sweep with a POPULATED options section — the degraded options
+    fixture above cannot prove anything about the contract tables."""
+    from tests.test_option_trading_data import _write_option_inputs
+
+    clear_option_trading_cache()
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["AEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_option_inputs(paths, refresh_run_id="options-run", tool_refresh_run_id="tool-run")
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["AEM"])
+
+    body = _call_wsgi_app(
+        app, method="GET", path=f"/ticker/AEM?fundamentals_source={source}"
+    )["body"]
+    # the options section really is populated, not degraded to a notice
+    assert 'id="options"' in body
+    assert "Most liquid contracts" in body
+    for banned in REMOVED_TICKER_PAGE_STRINGS:
+        assert banned not in body, f"{banned} ({source}, options published)"
 
 
 def test_ticker_page_options_nav_entry_tracks_the_options_region():

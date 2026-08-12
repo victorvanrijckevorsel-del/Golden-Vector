@@ -374,7 +374,13 @@ def _render_market_context(
     signal_horizon = _signal_horizon(detail, app_config)
     body = [
         "<div class=\"options-market-context\">",
-        section_heading("Market context", level=3),
+        section_heading(
+            "Market context",
+            level=3,
+            help_html=help_icon(
+                "Market context", key="option_market_context", app_config=app_config
+            ),
+        ),
         _render_ratio_pair(history_row, skipped_day=skipped_day),
         _render_oi_trend(history_rows),
         _render_volume_cards(history_row),
@@ -414,9 +420,22 @@ def _render_ratio_pair(
 
     cards = (
         "<div class=\"metric-grid options-oi-cards\">"
-        f"{_metric_card('Put open interest', _fmt_number(puts, decimals=0))}"
-        f"{_metric_card('Call open interest', _fmt_number(calls, decimals=0))}"
-        f"{_metric_card('Total open interest', _fmt_number(total, decimals=0))}"
+        + _metric_card(
+            "Put open interest",
+            _fmt_number(puts, decimals=0),
+            help_key="option_open_interest",
+        )
+        + _metric_card(
+            "Call open interest",
+            _fmt_number(calls, decimals=0),
+            help_key="option_open_interest",
+        )
+        + _metric_card(
+            "Total open interest",
+            _fmt_number(total, decimals=0),
+            help_key="option_open_interest",
+        )
+        + 
         "</div>"
     )
 
@@ -612,9 +631,21 @@ def _render_volume_cards(history_row: Mapping[str, Any] | None) -> str:
         )
         + f"<p class=\"hint\">Contracts traded on {as_of}.</p>"
         + "<div class=\"metric-grid\">"
-        + _metric_card("Put volume", _fmt_number(history_row.get("put_volume"), decimals=0))
-        + _metric_card("Call volume", _fmt_number(history_row.get("call_volume"), decimals=0))
-        + _metric_card("Total volume", _fmt_number(history_row.get("total_volume"), decimals=0))
+        + _metric_card(
+            "Put volume",
+            _fmt_number(history_row.get("put_volume"), decimals=0),
+            help_key="option_contract_volume",
+        )
+        + _metric_card(
+            "Call volume",
+            _fmt_number(history_row.get("call_volume"), decimals=0),
+            help_key="option_contract_volume",
+        )
+        + _metric_card(
+            "Total volume",
+            _fmt_number(history_row.get("total_volume"), decimals=0),
+            help_key="option_contract_volume",
+        )
         + "</div></div>"
     )
 
@@ -1117,25 +1148,39 @@ def _render_sizing_tool(
         f"{escape(str(row['label']))}</option>"
         for row in contracts
     )
+    contract_help = help_icon(
+        "Contract", key="option_sizing_contract", app_config=app_config
+    )
+    budget_help = help_icon("Budget", key="option_sizing_budget", app_config=app_config)
+    price_help = help_icon(
+        "Share price at expiry", key="option_sizing_price", app_config=app_config
+    )
+    ladder_help = help_icon(
+        "Profit and loss at expiry", key="option_sizing_ladder", app_config=app_config
+    )
     body = (
         f"<div id=\"{SIZING_ROOT_ID}\" class=\"option-sizing\">"
         "<p class=\"hint\">Pick a contract, set a budget, then drag the share price. "
         "The share price is the input — nothing here is derived from a gold move.</p>"
         "<div class=\"option-sizing-controls\">"
         "<p class=\"field\"><label for=\"option-sizing-contract\">Contract</label>"
+        f"{contract_help}"
         "<select id=\"option-sizing-contract\" data-role=\"contract\">"
         f"{options_html}</select></p>"
         "<p class=\"field\"><label for=\"option-sizing-budget\">Budget</label>"
+        f"{budget_help}"
         "<input id=\"option-sizing-budget\" data-role=\"budget\" type=\"number\" "
         "min=\"0\" step=\"1\" inputmode=\"decimal\" "
         f"value=\"{escape(prefill_budget, quote=True)}\"></p>"
         "<p class=\"field\"><label for=\"option-sizing-price\">Share price at expiry</label>"
+        f"{price_help}"
         "<input id=\"option-sizing-price\" data-role=\"price\" type=\"range\">"
         "<output data-role=\"price-out\" for=\"option-sizing-price\"></output></p>"
         "<p class=\"field\"><button type=\"button\" data-role=\"reset\">Reset</button></p>"
         "</div>"
         "<div data-role=\"result\" class=\"option-sizing-result\">"
-        "<p data-role=\"contracts-line\"></p>"
+        f"<p data-role=\"contracts-line\"></p>"
+        f"<p class=\"hint sizing-ladder-head\">Profit and loss at expiry{ladder_help}</p>"
         "<table data-role=\"ladder\"></table>"
         f"<p class=\"hint\" data-role=\"footnote\">{escape(_INTRINSIC_ONLY_NOTE)}</p>"
         "</div>"
@@ -1213,7 +1258,7 @@ def _render_greeks_and_chain(
 ) -> str:
     body = (
         _render_greeks_table(candidate_slots_frame, ticker=ticker)
-        + _render_liquidity_summary(detail)
+        + _render_liquidity_summary(detail, app_config=app_config)
         + _render_context_table(detail, app_config=app_config)
         + _render_method_notes()
     )
@@ -1315,21 +1360,48 @@ def _greek_rows(frame: pd.DataFrame | None, *, ticker: str) -> list[dict[str, An
     )
 
 
-def _render_liquidity_summary(detail: OptionTradingDetailData | None) -> str:
+def _render_liquidity_summary(
+    detail: OptionTradingDetailData | None, *, app_config: AppConfig | None = None
+) -> str:
     if detail is None:
         return ""
     put_counts = slot_tier_counts(detail.put_slots)
     call_counts = slot_tier_counts(detail.call_slots)
     return (
         "<div class=\"options-liquidity-summary\">"
-        + section_heading("Liquidity across every window", level=4)
+        + section_heading(
+            "Liquidity across every window",
+            level=4,
+            help_html=help_icon(
+                "Liquidity across every window",
+                key="option_liquidity_windows",
+                app_config=app_config,
+            ),
+        )
         + "<div class=\"metric-grid\">"
-        + _metric_card("Put tradable", _fmt_number(put_counts["tradable"], decimals=0))
-        + _metric_card("Put watch", _fmt_number(put_counts["watch"], decimals=0))
-        + _metric_card("Put no-trade", _fmt_number(put_counts["no_trade"], decimals=0))
-        + _metric_card("Call tradable", _fmt_number(call_counts["tradable"], decimals=0))
-        + _metric_card("Call watch", _fmt_number(call_counts["watch"], decimals=0))
-        + _metric_card("Call no-trade", _fmt_number(call_counts["no_trade"], decimals=0))
+        + _metric_card(
+            "Put tradable", _fmt_number(put_counts["tradable"], decimals=0),
+            help_key="tradable_count",
+        )
+        + _metric_card(
+            "Put watch", _fmt_number(put_counts["watch"], decimals=0), help_key="watch_count"
+        )
+        + _metric_card(
+            "Put no-trade", _fmt_number(put_counts["no_trade"], decimals=0),
+            help_key="no_trade_count",
+        )
+        + _metric_card(
+            "Call tradable", _fmt_number(call_counts["tradable"], decimals=0),
+            help_key="tradable_count",
+        )
+        + _metric_card(
+            "Call watch", _fmt_number(call_counts["watch"], decimals=0),
+            help_key="watch_count",
+        )
+        + _metric_card(
+            "Call no-trade", _fmt_number(call_counts["no_trade"], decimals=0),
+            help_key="no_trade_count",
+        )
         + "</div></div>"
     )
 

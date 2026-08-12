@@ -481,6 +481,63 @@ def test_percentiles_tool_d_requires_ok_status(score_config):
     assert set(yahoo["metric_reason"]) == {"resilience is computed on Our View inputs"}
 
 
+def test_percentiles_are_persisted_rounded_to_one_decimal(score_config):
+    """Plan §12 rule 2: percentiles persist at 0.1, so the embedded compare
+    payload carries a tenth rather than a full float64 expansion.
+
+    ``margin_pct``/our is a THREE-peer pool (0.10 / 0.20 / 0.30), so the raw
+    percentiles are the repeating 33.333... and 66.666... — this test fails on
+    the unrounded producer and cannot pass by accident on a pool whose exact
+    percentiles happen to be whole numbers.
+    """
+
+    frame = _percentiles(score_config)
+    margin = frame[
+        (frame["metric_key"] == "margin_pct") & (frame["finance_source"] == "our")
+    ].set_index("ticker")
+    assert int(margin.loc["AAA", "eligible_peer_count"]) == 3
+
+    # Exact equality, not approx: the point of the change is the stored digits.
+    assert margin.loc["BBB", "pct_high_good"] == 33.3
+    assert margin.loc["CCC", "pct_high_good"] == 66.7
+    assert margin.loc["AAA", "pct_high_good"] == 100.0
+    # Both columns, both directions.
+    assert margin.loc["BBB", "pct_low_good"] == 100.0
+    assert margin.loc["CCC", "pct_low_good"] == 66.7
+    assert margin.loc["AAA", "pct_low_good"] == 33.3
+
+    # Every persisted percentile in the artifact is already at 0.1 — a leaked
+    # long float anywhere would break this.
+    for column in ("pct_high_good", "pct_low_good"):
+        present = frame[column].dropna().astype(float)
+        assert not present.empty
+        assert (present == present.round(1)).all()
+
+    # Nulls are preserved as nulls — rounding never invents a percentile.
+    ineligible = frame[~frame["rank_eligible"].astype(bool)]
+    assert not ineligible.empty
+    assert ineligible["pct_high_good"].isna().all()
+    assert ineligible["pct_low_good"].isna().all()
+
+
+def test_percentile_rounding_keeps_ties_tied(score_config):
+    """§7 average-tie policy survives the persist rounding.
+
+    AAA/BBB are a deliberate tie on ``down_beta_core``; rounding must land them
+    on the SAME stored tenth rather than splitting them into an accidental
+    order.
+    """
+
+    frame = _percentiles(score_config)
+    down = frame[
+        (frame["metric_key"] == "down_beta_core") & (frame["finance_source"] == "our")
+    ].set_index("ticker")
+    assert down.loc["AAA", "pct_high_good"] == down.loc["BBB", "pct_high_good"]
+    assert down.loc["AAA", "pct_low_good"] == down.loc["BBB", "pct_low_good"]
+    # A healthy control that is NOT part of the tie still sorts apart from it.
+    assert down.loc["CCC", "pct_high_good"] != down.loc["AAA", "pct_high_good"]
+
+
 # --------------------------------------------------------------------------
 # 3. performance series
 # --------------------------------------------------------------------------

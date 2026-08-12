@@ -2,17 +2,15 @@
 
 Everything here is fixture-driven — no test reads a real ``data/`` artifact.
 
-**Recorded contract gaps** (see the lane notes; neither is worked around by
-computing anything in serve):
+**Recorded contract gap** (see the lane notes; not worked around by computing
+anything in serve): there is no EV/EBITDA screening check at all (no threshold,
+no code, no column), so no EV/EBITDA sentence can exist.
 
-1. ``forward_pe`` has NO persisted FAIL code. ``screening/verdicts.py`` decides
-   it, ``compute_fundamental_checks`` discards the per-check dict, and the only
-   surviving trace is the substring ``"Forward P/E FAIL"`` inside
-   ``fundamental_check_summary`` — a composite string the locked requirements
-   ban from this page. The notice therefore renders the five persisted layer-1
-   codes and stays silent about forward P/E rather than re-deriving it.
-2. There is no EV/EBITDA screening check at all (no threshold, no code, no
-   column), so no EV/EBITDA sentence can exist.
+The forward-P/E gap is CLOSED. ``screening/verdicts.py`` now persists
+``fundamental_check_fail_codes`` (+ ``_official``), so ``FORWARD_PE_FAIL`` is a
+real machine-readable code and the notice renders it through the same registry
+as the layer-1 codes. The column is absent on artifacts built before that
+change, which must render silently rather than crash — locked below.
 """
 
 from __future__ import annotations
@@ -124,8 +122,13 @@ def _tool_b_row(**overrides) -> dict[str, object]:
         "aisc_margin_yield": 0.137465,
         "reserve_life_years": 22.0,
         "leverage": 0.042,
+        "forward_pe": 10.876869,
         "layer1_fail_reasons": None,
         "layer1_status": "PASS",
+        # Present-and-null is the modern artifact's healthy state; the
+        # absent-column case is built by popping these (older artifacts).
+        "fundamental_check_fail_codes": None,
+        "fundamental_check_fail_codes_official": None,
         "financial_data_status": "OK",
         "snapshot_as_of_date": "2026-08-11",
         "snapshot_normalization_status": "OK",
@@ -334,18 +337,179 @@ def test_healthy_control_row_renders_no_failing_check_notice():
     )
 
 
-def test_forward_pe_has_no_persisted_code_so_no_sentence_is_invented():
-    """Recorded contract gap: serve must NOT compare forward P/E to a threshold."""
+def test_forward_pe_is_not_judged_without_a_persisted_code():
+    """Serve must never compare forward P/E to a threshold on its own.
+
+    A row that carries the VALUE but no failing code gets no sentence — the
+    code is the only thing that may put a check on this page.
+    """
     html = _render(
         tool_b_row=_tool_b_row(
-            forward_pe=10.9, layer1_fail_reasons=None, layer1_status="PASS"
+            forward_pe=10.9,
+            layer1_fail_reasons=None,
+            fundamental_check_fail_codes=None,
+            layer1_status="PASS",
         )
     )
     assert "Forward P/E 10.9" not in html
-    assert "watchlist cut-off" not in html
+    assert "is above your" not in html
+    assert 'id="corporate-failing-checks"' not in html
     # the banned composite strings never appear either
     assert "fundamental_check_summary" not in html
     assert "screening_verdict" not in html
+
+
+# ---------------------------------------------------------------------------
+# M3f: the fundamental-check codes (forward P/E is the only NEW check)
+# ---------------------------------------------------------------------------
+
+
+def _forward_pe_cutoff() -> str:
+    """The configured cut-off, formatted exactly as the page formats a ratio."""
+    from golden_vector.serve.ticker_page.corporate import format_metric
+
+    return format_metric(
+        float(
+            _app_config().screening_params.verdict_thresholds.strong_candidate_forward_pe_max
+        ),
+        "ratio",
+    )
+
+
+def test_forward_pe_fail_code_names_the_value_and_the_configured_cutoff():
+    html = _render(
+        tool_b_row=_tool_b_row(
+            forward_pe=12.6,
+            fundamental_check_fail_codes="FORWARD_PE_FAIL",
+            layer1_fail_reasons=None,
+        )
+    )
+    assert f"Forward P/E 12.60× is above your {_forward_pe_cutoff()} cut-off." in html
+    # ...and it sits under the same "at spot gold" header as its siblings.
+    assert "These screening checks fail at spot gold" in html
+
+
+def test_forward_pe_sentence_reads_the_official_column_in_yahoo_mode():
+    """The Yahoo materialization does not map the plain codes column, so in
+    Yahoo mode ONLY ``_official`` may speak — the Our-View column must be
+    ignored, not merged."""
+    yahoo_data = _data(_gold_row(finance_source="yahoo"))
+    html = _render(
+        data=yahoo_data,
+        finance_source="yahoo",
+        tool_b_row=_tool_b_row(
+            forward_pe=12.6,
+            fundamental_check_fail_codes=None,
+            fundamental_check_fail_codes_official="FORWARD_PE_FAIL",
+            layer1_fail_reasons=None,
+        ),
+    )
+    assert f"Forward P/E 12.60× is above your {_forward_pe_cutoff()} cut-off." in html
+
+    # The control: Our-View says it fails, Yahoo says nothing -> no sentence.
+    quiet = _render(
+        data=yahoo_data,
+        finance_source="yahoo",
+        tool_b_row=_tool_b_row(
+            forward_pe=12.6,
+            fundamental_check_fail_codes="FORWARD_PE_FAIL",
+            fundamental_check_fail_codes_official=None,
+            layer1_fail_reasons=None,
+        ),
+    )
+    assert 'id="corporate-failing-checks"' not in quiet
+    assert "is above your" not in quiet
+
+
+def test_healthy_control_with_null_fundamental_codes_gets_no_sentence():
+    """An otherwise-identical row whose codes column is present but null."""
+    html = _render(
+        tool_b_row=_tool_b_row(
+            forward_pe=12.6,
+            fundamental_check_fail_codes=None,
+            layer1_fail_reasons=None,
+        )
+    )
+    assert 'id="corporate-failing-checks"' not in html
+    assert "is above your" not in html
+
+
+def test_absent_fundamental_codes_column_renders_without_a_sentence():
+    """Pre-existing artifacts have no such column at all — that is not an error
+    and must never be a guess."""
+    row = _tool_b_row(forward_pe=12.6, layer1_fail_reasons=None)
+    row.pop("fundamental_check_fail_codes", None)
+    row.pop("fundamental_check_fail_codes_official", None)
+    html = _render(tool_b_row=row)
+    assert 'id="corporate-failing-checks"' not in html
+    # the rest of the section still renders
+    assert 'id="corporate-headline"' in html
+    assert "Forward P/E" in html  # the card label, not a failing sentence
+    assert "is above your" not in html
+
+
+def test_forward_pe_sentence_states_the_condition_when_earnings_are_not_positive():
+    """A P/E built on non-positive earnings is not a multiple. The check still
+    failed, so the line stays — with no invented number."""
+    expected = "Forward P/E is not meaningful here (forward earnings are not positive)."
+    for value in (-4.2, 0.0):
+        html = _render(
+            tool_b_row=_tool_b_row(
+                forward_pe=value,
+                fundamental_check_fail_codes="FORWARD_PE_FAIL",
+                layer1_fail_reasons=None,
+            )
+        )
+        assert expected in html, value
+        assert "is above your" not in html, value
+
+    # ...and the same when the value is missing entirely.
+    missing = _tool_b_row(
+        fundamental_check_fail_codes="FORWARD_PE_FAIL", layer1_fail_reasons=None
+    )
+    missing.pop("forward_pe", None)
+    html = _render(tool_b_row=missing)
+    assert expected in html
+    assert "n/a is above" not in html
+
+
+def test_fundamental_codes_never_double_report_a_layer1_check():
+    """Both columns can name the same failure. It must be printed ONCE, by the
+    layer-1 sentence that owns it."""
+    html = _render(
+        tool_b_row=_tool_b_row(
+            layer1_fail_reasons="AISC_FAIL",
+            aisc_usd_per_oz=2100.0,
+            fundamental_check_fail_codes="AISC_FAIL;DATA_COMPLETE_FAIL;FORWARD_PE_FAIL",
+            forward_pe=12.6,
+            layer1_status="FAIL",
+        )
+    )
+    assert html.count("AISC $2,100/oz is above your") == 1
+    assert html.count("Forward P/E 12.60× is above your") == 1
+    # DATA_COMPLETE_FAIL restates layer 1's precise MISSING_* codes -> not shown.
+    assert "DATA_COMPLETE" not in html
+
+
+def test_every_upstream_fundamental_check_is_accounted_for():
+    """Guardrail: a NEW check added to ``screening/verdicts.py`` must either
+    gain a sentence here or be explicitly recorded as a layer-1 duplicate —
+    it can never be added upstream and then silently never render."""
+    from golden_vector.screening.verdicts import FUNDAMENTAL_CHECK_ORDER
+    from golden_vector.serve.ticker_page import corporate as C
+
+    #: Codes whose CONCEPT layer 1 already reports (identically named codes,
+    #: plus data-completeness, which layer 1 states per missing input).
+    layer1_duplicates = {"DATA_COMPLETE_FAIL"} | set(C._FAIL_SENTENCES)
+
+    for key in FUNDAMENTAL_CHECK_ORDER:
+        code = f"{key.upper()}_FAIL"
+        assert (
+            code in C._FUNDAMENTAL_ONLY_CODES or code in layer1_duplicates
+        ), f"unhandled fundamental check code: {code}"
+
+    # ...and the one code we DO consume really is new to this page.
+    assert C._FUNDAMENTAL_ONLY_CODES == {"FORWARD_PE_FAIL"}
 
 
 # ---------------------------------------------------------------------------
