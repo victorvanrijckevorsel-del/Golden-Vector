@@ -91,6 +91,7 @@ def command_bar(
     navigation_html: str = "",
     groups=(),
     label: str = "Company controls",
+    class_name: str = "",
 ) -> str:
     """Render the professional command-bar shell from resolved fragments.
 
@@ -103,6 +104,13 @@ def command_bar(
     _require_accessible_label(label, "command_bar")
     if not identity_html.strip():
         raise ValueError("command_bar requires identity_html")
+    extra_classes = " ".join(str(class_name).split())
+    if extra_classes and any(
+        not part.replace("-", "").replace("_", "").isalnum()
+        for part in extra_classes.split()
+    ):
+        raise ValueError("command_bar class_name must contain CSS class tokens")
+    classes = "command-bar" + (f" {extra_classes}" if extra_classes else "")
     navigation = (
         f'<div class="command-bar__navigation">{navigation_html}</div>' if navigation_html else ""
     )
@@ -114,7 +122,7 @@ def command_bar(
         for group_label, content_html in groups
     )
     return (
-        f'<div class="command-bar" role="region" aria-label="{escape(label)}">'
+        f'<div class="{classes}" role="region" aria-label="{escape(label)}">'
         f'<div class="command-bar__identity">{identity_html}</div>'
         f"{navigation}{group_markup}</div>"
     )

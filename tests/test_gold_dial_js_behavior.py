@@ -120,24 +120,31 @@ def _scenario_valuetext(gold: float, spot: float = FRACTIONAL_SPOT) -> str:
 def _basis_at_rest(spot: float) -> str:
     """The server-rendered ``#gold-dial-basis`` text (corporate.py mirror)."""
 
-    return f"spot {format_metric(spot, 'usd2')} as of 2026-08-11"
+    del spot
+    return "spot"
 
 
-def _card_basis_at_rest(spot: float) -> str:
-    """The server-rendered ``.metric-card-basis`` text (``_headline_cards``'s
-    ``spot_label``) — the line that would otherwise still say "spot" under a
-    scenario-only number."""
-
-    return f"fwd @ spot {format_metric(spot, 'usd')}/oz as of 2026-08-11"
+def _dial_basis_scenario(spot: float) -> str:
+    return f"scenario · baseline spot {format_metric(spot, 'usd2')}/oz"
 
 
-def _card_basis_scenario(gold: float, spot: float = FRACTIONAL_SPOT) -> str:
-    """What that same line must say while a scenario is active: the scenario
-    price the number was evaluated at, plus the baseline it moved from."""
+def _corporate_basis_at_rest(spot: float) -> str:
+    """The one section-level gold basis shared by all six headline cards."""
+
+    return f"Spot gold {format_metric(spot, 'usd2')}/oz as of 2026-08-11"
+
+
+def _corporate_basis_scenario(
+    gold: float,
+    spot: float = FRACTIONAL_SPOT,
+    *,
+    scenario_unit: str = "usd",
+) -> str:
+    """Scenario price plus the exact spot context it moved from."""
 
     return (
-        f"fwd @ scenario {format_metric(gold, 'usd')}/oz · baseline "
-        + _card_basis_at_rest(spot).removeprefix("fwd @ ")
+        f"Scenario {format_metric(gold, scenario_unit)}/oz · baseline "
+        + _corporate_basis_at_rest(spot).replace("Spot gold ", "spot ", 1)
     )
 
 
@@ -203,6 +210,7 @@ const input = new El("input", {
   "step": __STEP__
 });
 input.value = __VALUE__;
+input.disabled = true;  // the server ships an honest no-JavaScript spot control
 const output = new El("output");
 const reset = new El("button");
 reset.disabled = true;   // the server now renders it disabled at rest
@@ -222,22 +230,9 @@ const cardSpot = new El("p", {"data-headline-spot": "1"});
 cardSpot.textContent = __CARD_SPOT__;
 const scenarioHead = new El("th", {"data-scenario-head": "1", hidden: "hidden"});
 
-// All SIX headline cards, each with the basis line the server writes under its
-// number ("fwd @ spot $4,477/oz as of 2026-08-11"). Every one of them must move
-// to the scenario price while a scenario is active, and back afterwards.
-const cardBases = [];
-const cards = [];
-for (let cardIndex = 0; cardIndex < 6; cardIndex += 1) {
-  const cardBasis = new El("p", {"class": "hint metric-card-basis"});
-  cardBasis.textContent = __CARD_BASIS__;
-  const card = new El("div", {"data-metric-card": "metric" + cardIndex});
-  card.querySelector = function (selector) {
-    if (selector === ".metric-card-basis") { return cardBasis; }
-    throw new Error("unexpected selector: " + selector);
-  };
-  cardBases.push(cardBasis);
-  cards.push(card);
-}
+// One section-level basis replaces the six repeated per-card dates.
+const corporateBasis = new El("span");
+corporateBasis.textContent = __CORPORATE_BASIS__;
 
 const section = new El("section");
 section.querySelectorAll = function (selector) {
@@ -245,12 +240,9 @@ section.querySelectorAll = function (selector) {
   if (selector === '[data-metric][data-basis="scenario"]') { return [scenarioCell, cardScenario]; }
   if (selector === "[data-scenario-head]") { return [scenarioHead]; }
   if (selector === "[data-headline-spot]") { return [cardSpot]; }
-  if (selector === "[data-metric-card]") { return cards; }
   // An unmodelled selector must fail loudly rather than silently return nothing.
   throw new Error("unexpected selector: " + selector);
 };
-
-function cardBasisTexts() { return cardBases.map(function (node) { return node.textContent; }); }
 
 const NODES = {
   "gold-dial-payload": __PAYLOAD_NODE__,
@@ -259,6 +251,7 @@ const NODES = {
   "gold-dial-reset": reset,
   "gold-dial-status": status,
   "gold-dial-basis": basis,
+  "corporate-finance-gold-basis": corporateBasis,
   "corporate-finance": section
 };
 
@@ -304,6 +297,7 @@ def _run(
     valuetext: str | None = None,
     minimum: str = "2000",
     step: str = "1",
+    card_metric: str = CARD_METRIC,
 ) -> None:
     """Run the shipped module against the shim and assert node exits clean.
 
@@ -325,11 +319,13 @@ def _run(
             json.dumps(_valuetext_at_rest(spot) if valuetext is None else valuetext),
         )
         .replace("__BASIS__", json.dumps(_basis_at_rest(spot)))
-        .replace("__CARD_BASIS__", json.dumps(_card_basis_at_rest(spot)))
+        .replace(
+            "__CORPORATE_BASIS__", json.dumps(_corporate_basis_at_rest(spot))
+        )
         .replace("__PENDING__", json.dumps(PENDING_TEXT))
         .replace("__CARD_SPOT__", json.dumps(CARD_SPOT_TEXT))
         .replace("__LINE_METRIC__", LINE_METRIC)
-        .replace("__CARD_METRIC__", CARD_METRIC)
+        .replace("__CARD_METRIC__", card_metric)
         .replace("__REDUCED__", "true" if reduced_motion else "false")
         .replace("__BODY__", body)
     )
@@ -368,6 +364,7 @@ flush();
 assert.equal(status.textContent, "");
 
 assert.equal(section.attrs["data-scenario-active"], "0");
+assert.equal(input.disabled, false);
 assert.equal(reset.disabled, true);
 assert.equal(scenarioCell.hidden, true);
 assert.equal(scenarioCell.textContent, "");
@@ -387,10 +384,8 @@ assert.equal(
 );
 assert.equal(basis.textContent, {json.dumps(_basis_at_rest(spot))});
 
-// Every card's basis line is the server's own text, untouched at rest.
-cardBasisTexts().forEach(function (text) {{
-  assert.equal(text, {json.dumps(_card_basis_at_rest(spot))});
-}});
+// The single section-level basis is the server's own text, untouched at rest.
+assert.equal(corporateBasis.textContent, {json.dumps(_corporate_basis_at_rest(spot))});
 
 // The line-metric spot cell is evaluated at exact spot, not at the snapped position.
 assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, spot))});
@@ -468,16 +463,14 @@ assert.equal(output.textContent, "$4,200");
 assert.equal(input.attrs["aria-valuetext"], {json.dumps(_scenario_valuetext(4200, spot))});
 assert.equal(
   basis.textContent,
-  {json.dumps("scenario $4,200 · baseline " + _basis_at_rest(spot))}
+  {json.dumps(_dial_basis_scenario(spot))}
 );
 
-// ALL SIX card basis lines now say scenario — a card must never print a
-// scenario-only number under "fwd @ spot ...".
-assert.equal(cardBases.length, 6);
-cardBasisTexts().forEach(function (text) {{
-  assert.equal(text, {json.dumps(_card_basis_scenario(4200.0, spot))});
-}});
-assert.ok(!cardBasisTexts().some(function (text) {{ return text.indexOf("fwd @ spot") === 0; }}));
+// The one shared basis now states scenario and exact spot baseline.
+assert.equal(
+  corporateBasis.textContent,
+  {json.dumps(_corporate_basis_scenario(4200.0, spot))}
+);
 
 // A keyboard step fires input then change: same handler, still one announcement.
 input.value = "4201";
@@ -496,10 +489,10 @@ def test_fractional_step_keeps_the_scenario_price_exact_in_every_user_surface():
     scenario_gold = 4477.5
     scenario_text = format_metric(scenario_gold, "usd2")
     spot_text = format_metric(INTEGER_SPOT, "usd2")
-    rest_basis = _basis_at_rest(INTEGER_SPOT)
-    card_basis = (
-        f"fwd @ scenario {scenario_text}/oz · baseline "
-        + _card_basis_at_rest(INTEGER_SPOT).removeprefix("fwd @ ")
+    corporate_basis = _corporate_basis_scenario(
+        scenario_gold,
+        INTEGER_SPOT,
+        scenario_unit="usd2",
     )
     body = f"""
 slide("4477.5");
@@ -512,15 +505,13 @@ assert.equal(
 );
 assert.equal(
   basis.textContent,
-  {json.dumps(f"scenario {scenario_text} · baseline {rest_basis}")}
+  {json.dumps(_dial_basis_scenario(INTEGER_SPOT))}
 );
 assert.equal(
   status.textContent,
   {json.dumps(f"Scenario {scenario_text} per ounce. Corporate finance values updated.")}
 );
-cardBasisTexts().forEach(function (text) {{
-  assert.equal(text, {json.dumps(card_basis)});
-}});
+assert.equal(corporateBasis.textContent, {json.dumps(corporate_basis)});
 """
     _run(
         body,
@@ -540,10 +531,10 @@ def test_fractional_grid_origin_keeps_scenario_price_exact_with_integer_step():
     scenario_gold = 4478.5
     scenario_text = format_metric(scenario_gold, "usd2")
     spot_text = format_metric(FRACTIONAL_SPOT, "usd2")
-    rest_basis = _basis_at_rest(FRACTIONAL_SPOT)
-    card_basis = (
-        f"fwd @ scenario {scenario_text}/oz · baseline "
-        + _card_basis_at_rest(FRACTIONAL_SPOT).removeprefix("fwd @ ")
+    corporate_basis = _corporate_basis_scenario(
+        scenario_gold,
+        FRACTIONAL_SPOT,
+        scenario_unit="usd2",
     )
     body = f"""
 slide("4478.5");
@@ -556,15 +547,13 @@ assert.equal(
 );
 assert.equal(
   basis.textContent,
-  {json.dumps(f"scenario {scenario_text} · baseline {rest_basis}")}
+  {json.dumps(_dial_basis_scenario(FRACTIONAL_SPOT))}
 );
 assert.equal(
   status.textContent,
   {json.dumps(f"Scenario {scenario_text} per ounce. Corporate finance values updated.")}
 );
-cardBasisTexts().forEach(function (text) {{
-  assert.equal(text, {json.dumps(card_basis)});
-}});
+assert.equal(corporateBasis.textContent, {json.dumps(corporate_basis)});
 """
     _run(
         body,
@@ -576,21 +565,67 @@ cardBasisTexts().forEach(function (text) {{
     )
 
 
-def test_a_scenario_that_cannot_be_evaluated_renders_its_guard_not_a_blank():
-    """The stressed miner: forward EBITDA goes negative below break-even, so the
-    card must say why rather than show zero, blank or infinity."""
+@pytest.mark.parametrize(
+    ("metric", "scenario", "overrides", "expected"),
+    (
+        (
+            "margin_pct",
+            "0",
+            {},
+            "Not meaningful — gold price ≤ 0",
+        ),
+        (
+            "aisc_margin_yield",
+            "4200",
+            {"market_cap_musd": 0.0},
+            "Not meaningful — market cap ≤ 0",
+        ),
+        (
+            "ev_ebitda",
+            "2000",
+            {
+                "line_slope_forward_ebitda_musd": 1.0,
+                "line_intercept_forward_ebitda_musd": -5000.0,
+            },
+            "Not meaningful — EBITDA ≤ 0",
+        ),
+        (
+            "leverage_stressed",
+            "2000",
+            {
+                "line_slope_forward_ebitda_musd": 1.0,
+                "line_intercept_forward_ebitda_musd": -5000.0,
+            },
+            "Not meaningful — EBITDA ≤ 0",
+        ),
+        (
+            "forward_pe",
+            "2000",
+            {
+                "line_slope_forward_eps": 0.001,
+                "line_intercept_forward_eps": -3.0,
+            },
+            "Not meaningful — EPS ≤ 0",
+        ),
+    ),
+)
+def test_invalid_scenario_ratios_render_explicit_professional_guards(
+    metric: str,
+    scenario: str,
+    overrides: dict[str, float],
+    expected: str,
+):
+    """Every invalid ratio names the failed denominator, never zero or blank."""
 
-    payload = _payload(
-        line_slope_forward_ebitda_musd=1.0, line_intercept_forward_ebitda_musd=-5000.0
-    )
+    payload = _payload(**overrides)
     body = f"""
-slide("2000");
+slide({json.dumps(scenario)});
 assert.equal(cardScenario.hidden, false);
-assert.equal(cardScenario.textContent, {json.dumps(_expected(payload, CARD_METRIC, 2000.0))});
+assert.equal(cardScenario.textContent, {json.dumps(expected)});
 assert.equal(cardScenario.attrs["data-unavailable"], "1");
 assert.equal(cardSpot.hidden, true);
 """
-    _run(body, payload=payload)
+    _run(body, payload=payload, card_metric=metric, minimum="0")
 
 
 def test_reduced_motion_suppresses_the_update_flash():
@@ -612,13 +647,14 @@ def test_manual_return_to_the_baseline_clears_the_scenario_completely():
     body = f"""
 slide("4200");
 flush();
-assert.equal(cardBasisTexts()[0], {json.dumps(_card_basis_scenario(4200.0))});
+assert.equal(corporateBasis.textContent, {json.dumps(_corporate_basis_scenario(4200.0))});
 slide({json.dumps(FRACTIONAL_BASELINE)});
 
 // Byte-exact restoration: the server's wording is captured, never rebuilt.
-cardBasisTexts().forEach(function (text) {{
-  assert.equal(text, {json.dumps(_card_basis_at_rest(FRACTIONAL_SPOT))});
-}});
+assert.equal(
+  corporateBasis.textContent,
+  {json.dumps(_corporate_basis_at_rest(FRACTIONAL_SPOT))}
+);
 
 assert.equal(section.attrs["data-scenario-active"], "0");
 assert.equal(reset.disabled, true);
@@ -660,15 +696,16 @@ def test_reset_restores_the_saved_baseline_and_never_the_fractional_spot(
     body = f"""
 slide("4200");
 flush();
-assert.equal(cardBasisTexts()[0], {json.dumps(_card_basis_scenario(4200.0, spot))});
+assert.equal(
+  corporateBasis.textContent,
+  {json.dumps(_corporate_basis_scenario(4200.0, spot))}
+);
 reset.listeners.click();
 
 // The SAVED baseline: writing 4477.4 back would snap straight to a moved position.
 assert.equal(input.value, {json.dumps(baseline)});
 // Reset restores the server's card basis text byte-exact, exactly like a manual return.
-cardBasisTexts().forEach(function (text) {{
-  assert.equal(text, {json.dumps(_card_basis_at_rest(spot))});
-}});
+assert.equal(corporateBasis.textContent, {json.dumps(_corporate_basis_at_rest(spot))});
 assert.equal(section.attrs["data-scenario-active"], "0");
 assert.equal(reset.disabled, true);
 assert.equal(scenarioCell.hidden, true);
@@ -779,9 +816,10 @@ assert.equal(
   input.attrs["aria-valuetext"],
   {json.dumps(_valuetext_at_rest(FRACTIONAL_SPOT))}
 );
-cardBasisTexts().forEach(function (text) {{
-  assert.equal(text, {json.dumps(_card_basis_at_rest(FRACTIONAL_SPOT))});
-}});
+assert.equal(
+  corporateBasis.textContent,
+  {json.dumps(_corporate_basis_at_rest(FRACTIONAL_SPOT))}
+);
 """
     _run(
         body,
@@ -838,9 +876,7 @@ assert.equal(cardSpot.hidden, false);
 // Nothing announced, and the server's aria-valuetext + card basis lines stand.
 assert.equal(status.textContent, "");
 assert.equal(input.attrs["aria-valuetext"], {json.dumps(server_valuetext)});
-cardBasisTexts().forEach(function (text) {{
-  assert.equal(text, {json.dumps(_card_basis_at_rest(7000.0))});
-}});
+assert.equal(corporateBasis.textContent, {json.dumps(_corporate_basis_at_rest(7000.0))});
 """
     _run(
         body,

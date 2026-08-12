@@ -343,6 +343,104 @@ def test_coarse_pointer_help_target_expands_without_resizing_the_icon():
     assert not re.search(r"\.help-icon\s*\{[^}]*\b(?:width|height)\s*:", rules, re.S)
 
 
+def test_ticker_corporate_table_values_use_scoped_data_alignment():
+    body = _strip_css_comments((CSS_DIR / "tables.css").read_text(encoding="utf-8"))
+    match = re.search(
+        r'body\[data-page="ticker_detail"\] \.terminal-density '
+        r'#corporate-finance td\.spot-cell,\s*'
+        r'body\[data-page="ticker_detail"\] \.terminal-density '
+        r'#corporate-finance td\.scenario-cell\s*\{([^}]*)\}',
+        body,
+        re.S,
+    )
+    assert match is not None
+    declarations = match.group(1)
+    assert "font-family: var(--font-data)" in declarations
+    assert "font-variant-numeric: tabular-nums lining-nums" in declarations
+    assert "text-align: end" in declarations
+
+
+def test_terminal_density_numeric_cells_and_headers_share_data_alignment():
+    body = _strip_css_comments((CSS_DIR / "tables.css").read_text(encoding="utf-8"))
+    match = re.search(
+        r"\.terminal-density \.table-region \.numeric,\s*"
+        r"\.terminal-density \.table-region td\[data-order\]\s*\{([^}]*)\}",
+        body,
+        re.S,
+    )
+    assert match is not None
+    declarations = match.group(1)
+    assert "font-family: var(--font-data)" in declarations
+    assert "font-variant-numeric: tabular-nums lining-nums" in declarations
+    assert "text-align: end" in declarations
+
+
+def test_ticker_heading_density_does_not_override_data_card_label_token():
+    pages = _strip_css_comments((CSS_DIR / "pages.css").read_text(encoding="utf-8"))
+    components = _strip_css_comments(
+        (CSS_DIR / "components.css").read_text(encoding="utf-8")
+    )
+    assert re.search(r'body\[data-page="ticker_detail"\]\s+h3\s*\{', pages)
+    scoped_label = re.search(
+        r'body\[data-page="ticker_detail"\]\s+\.data-card__label\s*\{([^}]*)\}',
+        components,
+        re.S,
+    )
+    assert scoped_label is not None
+    assert "font-size: var(--data-label-size)" in scoped_label.group(1)
+
+
+def test_ticker_coarse_pointer_targets_are_page_scoped_and_touch_sized():
+    body = _strip_css_comments((CSS_DIR / "responsive.css").read_text(encoding="utf-8"))
+    coarse = re.search(r"@media\s*\(pointer:\s*coarse\)\s*\{(.*)\}\s*$", body, re.S)
+    assert coarse is not None
+    rules = coarse.group(1)
+    required = (
+        '.ticker-inputs input:not([type="hidden"]):not([type="checkbox"])',
+        ".ticker-inputs select",
+        ".ticker-inputs textarea",
+        ".ticker-inputs .btn",
+        ".ticker-inputs summary",
+        ".ticker-inputs .clear-toggle",
+        ".ticker-jump-form__input",
+        '.ticker-command-bar .gold-dial input[type="range"]',
+        ".section-nav--compact .section-nav-link",
+        ".disclosure > summary",
+        '.option-sizing select[data-role="contract"]',
+        '.option-sizing input[data-role="budget"]',
+        '.option-sizing input[data-role="price"]',
+        '.score-builder input[data-role="weight"]',
+    )
+    touch_rule = next(
+        (selector, declarations)
+        for selector, declarations in re.findall(r"([^{}]+)\{([^}]*)\}", rules)
+        if all(item in selector for item in required)
+    )
+    selector, declarations = touch_rule
+    arms = [arm.strip() for arm in selector.split(",") if arm.strip()]
+    assert all(arm.startswith('body[data-page="ticker_detail"] ') for arm in arms)
+    assert "min-height: var(--touch-target-min)" in declarations
+
+    activate = next(
+        (selector, declarations)
+        for selector, declarations in re.findall(r"([^{}]+)\{([^}]*)\}", rules)
+        if '.score-builder input[data-role="activate"]' in selector
+    )
+    activate_selector, activate_declarations = activate
+    assert activate_selector.strip().startswith('body[data-page="ticker_detail"] ')
+    assert "min-width: var(--touch-target-min)" in activate_declarations
+    assert "min-height: var(--touch-target-min)" in activate_declarations
+
+
+def test_performance_series_progressive_controls_stay_hidden_before_javascript():
+    body = _strip_css_comments((CSS_DIR / "pages.css").read_text(encoding="utf-8"))
+    assert re.search(
+        r"\.performance-series\[hidden\]\s*\{[^}]*display\s*:\s*none\s*;",
+        body,
+        re.S,
+    )
+
+
 def test_button_like_is_an_explicit_temporary_control_compatibility_mapping():
     body = _strip_css_comments((CSS_DIR / "components.css").read_text(encoding="utf-8"))
     rules = {

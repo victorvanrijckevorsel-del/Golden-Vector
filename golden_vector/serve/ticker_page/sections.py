@@ -8,20 +8,24 @@ no arithmetic, no fallback resolution, no eligibility decisions.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from html import escape
 from typing import Any
+from urllib.parse import quote
 
 import pandas as pd
 
 from golden_vector.app.ticker_page_state import TickerPageArtifactState
 from golden_vector.common.numeric import bool_or_false
 from golden_vector.common.strings import clean_string
-from golden_vector.contracts.config_models import AppConfig
+from golden_vector.contracts.config_models import AppConfig, TICKER_PAGE_CHART_HORIZONS
 from golden_vector.serve.charts import _build_multiline_overlay_svg, _build_scatter_svg
 from golden_vector.serve.column_help import help_icon
 from golden_vector.serve.format_helpers import id_token
+from golden_vector.serve.ui.components import segmented_control
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
+from golden_vector.serve.url_helpers import build_page_url
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +69,145 @@ _SERIES_KEYS = {label: key for key, label in _SERIES_LABELS.items()}
 #: sentence) is NOT a currency and must not be printed as one.
 _CURRENCY_CODE = re.compile(r"[A-Z]{3}")
 
+_PRICE_BASIS_LABELS = {
+    "return_basis_usd": "USD-normalized price (adjusted close where available)",
+    "adj_close_usd": "USD-normalized adjusted close",
+    "close_usd": "USD-normalized close",
+    "close": "gold close",
+    "adj_close_local": "local-currency adjusted close",
+    "close_local": "local-currency close",
+}
+
+
+def _price_basis_label(value: object) -> str | None:
+    """Readable provenance for the price view without leaking column names."""
+
+    basis = clean_string(value)
+    if basis is None:
+        return None
+    return _PRICE_BASIS_LABELS.get(basis, "price basis recorded in provenance")
+
+
+def _performance_basis_summary(rows: pd.DataFrame, *, view: str) -> str | None:
+    """Summarize every drawn series basis in reader language.
+
+    Compare can legitimately combine different source columns. Describing only
+    the first row would make the statement false for the other lines, so equal
+    bases are grouped and every distinct basis stays visible.
+    """
+
+    if rows.empty or "price_basis" not in rows.columns:
+        return None
+    groups: dict[str, list[str]] = {}
+    for series_key in _SERIES_LABELS:
+        series_rows = rows.loc[rows["series"].eq(series_key)]
+        if series_rows.empty:
+            continue
+        labels = {
+            label
+            for label in (
+                _price_basis_label(value)
+                for value in series_rows["price_basis"].dropna().unique()
+            )
+            if label
+        }
+        if not labels:
+            continue
+        label = next(iter(labels)) if len(labels) == 1 else "mixed recorded price bases"
+        groups.setdefault(label, []).append(_SERIES_LABELS[series_key])
+    if not groups:
+        return None
+    if view == "price" and len(groups) == 1:
+        return "basis: " + next(iter(groups))
+    return "series bases: " + "; ".join(
+        f"{'/'.join(series_names)} — {label}"
+        for label, series_names in groups.items()
+    )
+
+
+def _performance_horizons(app_config: AppConfig | None) -> tuple[str, ...]:
+    """Configured chart horizons, retaining their product-defined order."""
+
+    if app_config is not None:
+        return tuple(app_config.ticker_page.chart.horizons)
+    return tuple(
+        sorted(TICKER_PAGE_CHART_HORIZONS, key=lambda value: int(value.removesuffix("Y")))
+    )
+
+
+def _performance_controls(
+    *,
+    ticker: str,
+    horizon: str,
+    view: str,
+    app_config: AppConfig | None,
+    query_params: Mapping[str, str] | None,
+) -> str:
+    """Visible URL-backed View and Horizon controls preserving other state."""
+
+    horizons = _performance_horizons(app_config)
+    selected_horizon = horizon if horizon in horizons else horizons[0]
+    selected_view = view if view in {"rebased", "price"} else "rebased"
+    path = f"/ticker/{quote(str(ticker), safe='')}"
+    current = dict(query_params or {})
+    view_items = (
+        (
+            "Compare",
+            build_page_url(path, current, set_params={"chart_view": "rebased"}),
+            selected_view == "rebased",
+        ),
+        (
+            "Share price",
+            build_page_url(path, current, set_params={"chart_view": "price"}),
+            selected_view == "price",
+        ),
+    )
+    horizon_items = tuple(
+        (
+            configured_horizon,
+            build_page_url(path, current, set_params={"chart_h": configured_horizon}),
+            configured_horizon == selected_horizon,
+        )
+        for configured_horizon in horizons
+    )
+    return (
+        '<div class="performance-controls">'
+        '<div class="performance-controls__group">'
+        '<span class="performance-controls__label">View</span>'
+        + segmented_control(view_items, label="Performance view")
+        + "</div>"
+        '<div class="performance-controls__group">'
+        '<span class="performance-controls__label">Horizon</span>'
+        + segmented_control(horizon_items, label="Performance horizon")
+        + "</div></div>"
+    )
+
+
+def _series_visibility_controls(
+    series_by_label: Mapping[str, object], *, chart_id: str
+) -> str:
+    """Hidden-until-JS checkboxes for the actually drawn Compare lines."""
+
+    options: list[str] = []
+    for series_key, series_label in _SERIES_LABELS.items():
+        if series_label not in series_by_label:
+            continue
+        options.append(
+            '<label class="performance-series__option">'
+            '<input type="checkbox" checked '
+            f'data-performance-series-input="{escape(series_key, quote=True)}" '
+            f'aria-controls="{escape(chart_id, quote=True)}">'
+            f"{escape(series_label)}</label>"
+        )
+    if not options:
+        return ""
+    return (
+        '<fieldset class="performance-series" data-performance-series hidden>'
+        '<legend class="performance-series__legend">Series</legend>'
+        + "".join(options)
+        + "</fieldset>"
+    )
+
 
 def _price_currency(rows: pd.DataFrame) -> str | None:
     """The currency the drawn price rows explicitly declare, or ``None``.
@@ -96,6 +239,8 @@ def render_performance_section(
     view: str = "rebased",
     app_config: AppConfig | None = None,
     artifact_state: TickerPageArtifactState | None = None,
+    query_params: Mapping[str, str] | None = None,
+    currency_attribution_html: str = "",
 ) -> str:
     """The performance chart from the v2 artifact — actual dates, one shared
 
@@ -106,33 +251,50 @@ def render_performance_section(
     The chart carries the same accessible ``<details>`` data-table twin as every
     other chart on the page: one row per drawn date, built by the shared overlay
     builder from the values it plots — no second pass over the artifact.
+
+    ``currency_attribution_html`` is an already-rendered trusted subsection.
+    The composition slot keeps Currency Attribution visibly inside Performance
+    while its independent artifact renderer remains data-decoupled.
     """
+
+    controls_html = _performance_controls(
+        ticker=ticker,
+        horizon=horizon,
+        view=view,
+        app_config=app_config,
+        query_params=query_params,
+    )
+    heading_html = (
+        "<h2>Performance"
+        + help_icon(
+            "Performance", key="ticker_performance_chart", app_config=app_config
+        )
+        + "</h2>"
+    )
 
     if artifact_state is not None and artifact_state.status != "OK":
         reason = artifact_state.reason or "no reason recorded"
         return (
-            '<section class="panel" id="performance"><h2>Performance'
-            + help_icon(
-                "Performance", key="ticker_performance_chart", app_config=app_config
-            )
-            + "</h2>"
+            '<section class="panel performance-panel" id="performance">'
+            + heading_html
+            + controls_html
             + notice(
                 "degraded",
                 f"<p>Performance artifact state "
                 f"<strong>{escape(artifact_state.status)}</strong>: "
                 f"{escape(reason)}. Nothing is estimated to fill the gap.</p>",
             )
+            + currency_attribution_html
             + "</section>"
         )
     if performance_rows is None or performance_rows.empty:
         return (
-            '<section class="panel" id="performance"><h2>Performance'
-            + help_icon(
-                "Performance", key="ticker_performance_chart", app_config=app_config
-            )
-            + "</h2>"
-            '<p class="hint">No performance data has been published for this ticker.</p>'
-            "</section>"
+            '<section class="panel performance-panel" id="performance">'
+            + heading_html
+            + controls_html
+            + '<p class="hint">No performance data has been published for this ticker.</p>'
+            + currency_attribution_html
+            + "</section>"
         )
 
     horizon_rows = performance_rows.loc[performance_rows["horizon"].eq(horizon)]
@@ -145,9 +307,13 @@ def render_performance_section(
     ok_rows = view_rows.loc[view_rows["series_status"].eq("OK")]
 
     series_by_label: dict[str, tuple[list[pd.Timestamp], list[float | None]]] = {}
-    for series_name, group in ok_rows.groupby("series"):
+    present_series = {str(value) for value in ok_rows["series"].dropna().unique()}
+    ordered_series = [key for key in _SERIES_LABELS if key in present_series]
+    ordered_series.extend(sorted(present_series - set(ordered_series)))
+    for series_name in ordered_series:
+        group = ok_rows.loc[ok_rows["series"].eq(series_name)]
         ordered = group.sort_values("date")
-        label = _SERIES_LABELS.get(str(series_name), str(series_name).upper())
+        label = _SERIES_LABELS.get(series_name, series_name.upper())
         series_by_label[label] = (
             [pd.Timestamp(value) for value in ordered["date"]],
             [None if pd.isna(value) else float(value) for value in ordered["value"]],
@@ -171,9 +337,9 @@ def render_performance_section(
         common_end = first.get("common_end_date")
         if common_end is not None and not pd.isna(common_end):
             basis_bits.append(f"through {_fmt_date(common_end)}")
-        price_basis = first.get("price_basis")
-        if price_basis is not None and not pd.isna(price_basis):
-            basis_bits.append(f"basis: {escape(str(price_basis))}")
+        price_basis = _performance_basis_summary(ok_rows, view=view)
+        if price_basis:
+            basis_bits.append(price_basis)
     trim_notes = {
         str(reason)
         for reason in view_rows["trim_reason"].dropna().unique()
@@ -184,6 +350,10 @@ def render_performance_section(
     # price mode with the currency the artifact declares. Without an explicit
     # currency basis the chart is withheld rather than labelled with a guess.
     currency = _price_currency(ok_rows) if view == "price" else None
+    chart_id = (
+        f"performance-chart-{id_token(ticker)}-"
+        f"{id_token(horizon)}-{id_token(view)}"
+    )
     if series_by_label and view == "price" and currency is None:
         chart_html = notice(
             "degraded",
@@ -204,6 +374,15 @@ def render_performance_section(
         )
     else:
         chart_html = '<p class="hint">No drawable series in this window.</p>'
+    chart_html = (
+        f'<div class="performance-chart" id="{escape(chart_id, quote=True)}" '
+        f'data-performance-chart>{chart_html}</div>'
+    )
+    visibility_html = (
+        _series_visibility_controls(series_by_label, chart_id=chart_id)
+        if view == "rebased"
+        else ""
+    )
 
     if view == "rebased":
         view_label = "Compare (indexed to 100)"
@@ -215,17 +394,17 @@ def render_performance_section(
     else:
         view_label = "Share price"
     return (
-        f'<section class="panel" id="performance"><h2>Performance — {escape(ticker)}'
-        + help_icon(
-            "Performance", key="ticker_performance_chart", app_config=app_config
-        )
-        + "</h2>"
-        f'<p class="hint">{escape(view_label)} · horizon {escape(horizon)}'
+        '<section class="panel performance-panel" id="performance">'
+        + heading_html
+        + controls_html
+        + f'<p class="hint">{escape(view_label)} · horizon {escape(horizon)}'
         + (" · " + escape("; ".join(basis_bits)) if basis_bits else "")
         + "</p>"
+        + visibility_html
         + chart_html
         + "".join(notices)
         + "".join(f'<p class="hint">{escape(note)}</p>' for note in sorted(trim_notes))
+        + currency_attribution_html
         + "</section>"
     )
 
@@ -322,19 +501,20 @@ def render_currency_attribution_block(
     table_html = (
         '<table class="compact-table"><tbody>'
         f"<tr><th scope=\"row\">Local share return ({currency})</th>"
-        f"<td>{_fmt_pct(row.get('local_return'), signed=True)}</td></tr>"
+        f"<td class=\"numeric\">{_fmt_pct(row.get('local_return'), signed=True)}</td></tr>"
         f"<tr><th scope=\"row\">{currency}/USD rate return</th>"
-        f"<td>{_fmt_pct(row.get('fx_return'), signed=True)}</td></tr>"
+        f"<td class=\"numeric\">{_fmt_pct(row.get('fx_return'), signed=True)}</td></tr>"
         "<tr><th scope=\"row\">FX contribution to the USD return</th>"
-        f"<td>{escape(_fmt_pp(row.get('fx_contribution_pp')))}</td></tr>"
+        f"<td class=\"numeric\">{escape(_fmt_pp(row.get('fx_contribution_pp')))}</td></tr>"
         "<tr><th scope=\"row\">USD-investor return</th>"
-        f"<td>{_fmt_pct(row.get('usd_return'), signed=True)}</td></tr>"
+        f"<td class=\"numeric\">{_fmt_pct(row.get('usd_return'), signed=True)}</td></tr>"
         "</tbody></table>"
     )
+    price_basis = _price_basis_label(row.get("price_basis")) or "not recorded"
     period = (
         f"Exact period: {_fmt_date(row.get('start_date'))} to {_fmt_date(row.get('end_date'))} "
         f"(chart endpoints) · FX source {escape(clean_string(row.get('fx_source_symbol')) or 'n/a')} "
-        f"· price basis {escape(clean_string(row.get('price_basis')) or 'n/a')}"
+        f"· price basis {price_basis}"
     )
     return (
         '<div class="fx-attribution" id="currency-attribution">'
@@ -571,19 +751,19 @@ def _render_peer_disclosure(
             '<p class="hint">No eligible paired producers to plot.</p></details>'
         )
 
-    table_rows = "".join(
-        (
-            "<tr"
-            + (' class="is-selected"' if peer == str(ticker).upper() else "")
-            + f"><td>{escape(peer)}</td><td>${aisc_value:,.0f}/oz</td>"
-            + f"<td>{aisc_rate * 100:.1f}%</td></tr>"
+    table_row_parts: list[str] = []
+    for peer, aisc_value, aisc_rate in sorted(pairs):
+        row_class = ' class="is-selected"' if peer == str(ticker).upper() else ""
+        table_row_parts.append(
+            f"<tr{row_class}><td>{escape(peer)}</td>"
+            f'<td class="numeric">${aisc_value:,.0f}/oz</td>'
+            f'<td class="numeric">{aisc_rate * 100:.1f}%</td></tr>'
         )
-        for peer, aisc_value, aisc_rate in sorted(pairs)
-    )
+    table_rows = "".join(table_row_parts)
     table_html = (
         '<table class="compact-table"><thead><tr>'
-        "<th scope=\"col\">Ticker</th><th scope=\"col\">Reported AISC</th>"
-        "<th scope=\"col\">Large-fall rate</th></tr></thead>"
+        '<th scope="col">Ticker</th><th scope="col" class="numeric">Reported AISC</th>'
+        '<th scope="col" class="numeric">Large-fall rate</th></tr></thead>'
         f"<tbody>{table_rows}</tbody></table>"
     )
     scatter = _build_scatter_svg(

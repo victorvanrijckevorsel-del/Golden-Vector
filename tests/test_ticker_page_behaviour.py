@@ -253,6 +253,9 @@ def test_open_by_default_bars_and_rugs_render_from_the_published_window_fit():
     open_part = html.split("<details", 1)[0]
     assert "Up vs Down Beta" in open_part
     assert "Where its gold beta ranks vs the miner universe" in open_part
+    assert '<th scope="col">Ticker</th>' in html
+    assert '<th scope="col" class="numeric">Beta</th>' in html
+    assert '<td>AEM</td><td class="numeric">0.80</td>' in html
 
 
 def test_relative_record_states_the_exact_counted_evidence():
@@ -266,6 +269,16 @@ def test_relative_record_states_the_exact_counted_evidence():
     assert "Period 2019-01-04 to 2026-08-07" in html
     # thresholds come from config, never a hardcoded twin
     assert "A big down week is a weekly return of -10% or worse" in html
+
+
+def test_relative_record_marks_only_the_value_column_as_numeric():
+    html = _render()
+
+    assert '<th class="numeric" scope="col">Value</th>' in html
+    assert '<td class="numeric">58.0%</td>' in html
+    assert '<th scope="col">Measure</th>' in html
+    assert '<th scope="col">Evidence and basis</th>' in html
+    assert '<td class="numeric">Period 2019-01-04 to 2026-08-07' not in html
 
 
 def test_relative_record_reports_a_missing_metric_instead_of_inventing_one():
@@ -947,6 +960,32 @@ def test_structural_window_table_shows_betas_and_drops_the_score_inputs():
         assert f">{dropped}<" not in html
     assert "1.21" in html and "1.64" in html and "ELIGIBLE" in html
     assert "(Anchor, Active)" in html
+
+
+def test_structural_and_horizon_tables_mark_only_quantitative_columns_numeric():
+    structural = B.render_structural_window_table(
+        _research_frame(*(_window_fit_row(window) for window in _WINDOWS)),
+        active_window="12M",
+        canonical_anchor="12M",
+    )
+    for header in ("Up beta", "Down beta", "R^2", "Weeks"):
+        assert f'<th scope="col" data-sort-numeric>{header}' in structural
+    for value in ("1.21", "1.64", "51.0%", "52"):
+        assert f'<td class="numeric">{value}</td>' in structural
+    assert '<th scope="col">Window' in structural
+    assert '<th scope="col">Status' in structural
+    assert '<td>ELIGIBLE</td>' in structural
+
+    horizon = B.render_horizon_ladder(_research_frame(_horizon_row("12M")))
+    for header in ("Equity return", "Gold return", "Single-period ratio"):
+        assert f'<th scope="col" data-sort-numeric>{header}' in horizon
+    for value in ("18.0%", "9.0%", "2.00"):
+        assert f'<td class="numeric">{value}</td>' in horizon
+    assert '<th scope="col">Horizon' in horizon
+    assert '<th scope="col">Status' in horizon
+    assert '<th scope="col">Window' in horizon
+    assert '<td>PARTIAL <span class="hint">only 34 of 52 weeks present</span></td>' in horizon
+    assert '<td>2025-08-08 to 2026-08-07</td>' in horizon
 
 
 # ---------------------------------------------------------------------------

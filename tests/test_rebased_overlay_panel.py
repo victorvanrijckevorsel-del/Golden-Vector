@@ -81,11 +81,17 @@ def _price_series() -> dict[str, tuple[list, list]]:
 
 
 def test_overlay_chart_draws_every_supplied_series_with_a_baseline():
-    html = _build_multiline_overlay_svg(series_by_label=_full_series())
+    html = _build_multiline_overlay_svg(
+        series_by_label=_full_series(),
+        series_keys={"ABC": "stock", "Gold": "gold", "GDX": "gdx", "GDXJ": "gdxj"},
+    )
 
-    # One legend chip per line — including the ticker itself.
+    # One labelled line-pattern swatch per series — including the ticker itself.
     for label in ("ABC", "Gold", "GDX", "GDXJ"):
-        assert f"&#9632; {label}" in html
+        assert f">{label}</span>" in html
+    assert html.count('class="chart-legend-line"') == 4
+    for key in ("stock", "gold", "gdx", "gdxj"):
+        assert f'class="series-{key}" stroke-width="2"' in html
     # Four lines drawn, plus the dashed baseline at 100.
     assert html.count("<polyline") == 4
     assert "stroke-dasharray=\"3 3\"" in html
@@ -134,11 +140,15 @@ def test_overlay_chart_degrades_when_a_benchmark_is_missing():
     # Simulate GDXJ history being unavailable for this ticker.
     series.pop("GDXJ")
 
-    html = _build_multiline_overlay_svg(series_by_label=series)
+    html = _build_multiline_overlay_svg(
+        series_by_label=series,
+        series_keys={"ABC": "stock", "Gold": "gold", "GDX": "gdx", "GDXJ": "gdxj"},
+    )
 
     # Still renders: stock + gold + GDX = three drawable lines.
     assert html.count("<polyline") == 3
-    assert "&#9632; GDX" in html
+    assert ">GDX</span>" in html
+    assert 'class="series-gdx" stroke-width="2"' in html
     # GDXJ is now absent EVERYWHERE — no legend chip, nothing claiming it was drawn.
     assert "GDXJ" not in html
 
@@ -336,6 +346,17 @@ assert.ok(!tip.innerHTML.includes("onclick=\"alert"));
 assert.equal(tip.style.left, "102px");
 assert.equal(tip.style.top, "51px");
 
+// Performance visibility changes are read from the SVG at pointer time. A
+// hidden visual series must also leave the crosshair even on the same snapped
+// date; the complete accessible table is server HTML and is never involved.
+svg.setAttribute("data-hidden-series", "gold\" onclick=\"alert(1)");
+svg.listeners.pointermove({ clientX: 196, clientY: 95 });
+assert.ok(!tip.innerHTML.includes("&lt;img"));
+assert.equal(tip.innerHTML, "<strong>2024-01-02</strong>");
+svg.setAttribute("data-hidden-series", "");
+svg.listeners.pointermove({ clientX: 196, clientY: 95 });
+assert.ok(tip.innerHTML.includes("&lt;img src=x onerror=alert(1)&gt;"));
+
 const firstLeft = tip.style.left;
 tip.innerHTML = "SENTINEL";
 svg.listeners.pointermove({ clientX: 190, clientY: 90 });
@@ -394,8 +415,10 @@ def test_price_mode_labels_axis_crosshair_and_table_in_the_callers_currency():
     assert stock["2024-01-05"] == [pytest.approx(196.0, abs=40.0), 6.1, "USD 6.10"]
     assert stock["2024-02-09"][2] == "USD 7.05"
     # the table twin prints the SAME formatted value — units included, nothing truncated
-    assert "<td>USD 6.10</td>" in html
-    assert "<td>USD 7.05</td>" in html
+    assert '<td class="numeric">USD 6.10</td>' in html
+    assert '<td class="numeric">USD 7.05</td>' in html
+    assert '<th scope="col" class="numeric">Stock</th>' in html
+    assert '<th scope="row">2024-01-05</th>' in html
     assert _aria_label(html) == "Share price over time (USD)"
     assert _caption(html) == "Share price over time — USD per share"
     assert 'aria-label="Share price over time — chart data table"' in html
@@ -459,9 +482,9 @@ def test_sub_cent_price_mode_keeps_distinct_values_everywhere():
     assert stock["2024-01-05"][1:] == [0.001, "USD 0.0010"]
     assert stock["2024-01-12"][1:] == [0.0015, "USD 0.0015"]
     assert stock["2024-01-19"][1:] == [0.002, "USD 0.0020"]
-    assert "<td>USD 0.0010</td>" in html
-    assert "<td>USD 0.0015</td>" in html
-    assert "<td>USD 0.0020</td>" in html
+    assert '<td class="numeric">USD 0.0010</td>' in html
+    assert '<td class="numeric">USD 0.0015</td>' in html
+    assert '<td class="numeric">USD 0.0020</td>' in html
     price_axis = [label for label in _axis_labels(html) if label.startswith("USD ")]
     assert len(price_axis) == len(set(price_axis))
     assert all(re.fullmatch(r"USD \d+\.\d{4}", label) for label in price_axis)
@@ -498,7 +521,7 @@ def test_count_mode_labels_plain_counts_and_owns_its_zero_baseline():
     # the unit reaches the screen-reader label too — the axis is invisible there
     assert _aria_label(html) == "Open interest over time (contracts)"
     assert _caption(html) == "Open interest over time — contracts"
-    assert "<td>1,800</td>" in html
+    assert '<td class="numeric">1,800</td>' in html
     for wrong in ("Rebased price comparison", "indexed value", "%"):
         assert wrong not in html, wrong
 
@@ -558,7 +581,7 @@ def test_default_mode_is_still_the_indexed_comparison():
     assert _caption(html) == (
         "Rebased price comparison — indexed value (change vs the rebase start)"
     )
-    assert "<td>100.0 (0%)</td>" in html
+    assert '<td class="numeric">100.0 (0%)</td>' in html
     assert "stroke-dasharray=\"3 3\"" in html
     # ...including its narrower 48px gutter (price mode widens to 76 for "USD 6.20")
     assert _overlay_payload(html)["ticks"][0][1] == 48.0

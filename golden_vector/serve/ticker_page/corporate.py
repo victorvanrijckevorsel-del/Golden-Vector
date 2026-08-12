@@ -41,8 +41,13 @@ from golden_vector.screening.verdicts import FORWARD_PE_NON_POSITIVE_CODE
 from golden_vector.serve.column_help import help_icon
 from golden_vector.serve.embed import embed_json_payload
 from golden_vector.serve.ticker_page.data import TickerPageData
-from golden_vector.serve.ui.components import disclosure, section_heading
-from golden_vector.serve.ui.status import notice
+from golden_vector.serve.ui.components import (
+    basis_strip,
+    data_card,
+    disclosure,
+    section_heading,
+)
+from golden_vector.serve.ui.status import notice, status_strip
 from golden_vector.serve.ui.tables import table_region
 
 #: The one payload id shared by the server (embed) and gold-dial.js (read).
@@ -236,6 +241,23 @@ _FAIL_STATEMENTS: dict[str, str] = {
 
 _OUR_VIEW_BASIS = "Our View mining assumption"
 _LTM_BASIS = "last twelve months (LTM)"
+_CORPORATE_GOLD_BASIS_ID = "corporate-finance-gold-basis"
+
+_FINANCIAL_STATUS_REASONS: dict[str, str] = {
+    "STALE": "Yahoo fundamentals are stale",
+    "MISSING": "Yahoo fundamentals are missing",
+    "FINANCIALS_UNAVAILABLE": "Yahoo fundamentals are unavailable",
+    "CONTAMINATED": "Yahoo fundamentals failed the persisted quality checks",
+    "CURRENCY_BASIS_MISMATCH": "Yahoo fundamentals have a currency-basis mismatch",
+}
+
+_SNAPSHOT_STATUS_REASONS: dict[str, str] = {
+    "STALE_FX": "the market snapshot uses stale FX",
+    "MISSING_FX": "the market snapshot is missing required FX",
+    "MISSING_RETURN_BASIS": "the market snapshot has no usable return basis",
+    "INVALID_SHARE_PRICE": "the market snapshot has an invalid share price",
+    "MISSING_SHARES_OUTSTANDING": "the market snapshot is missing shares outstanding",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -256,10 +278,7 @@ def _value(row: Any, column: str) -> float | None:
             return None
     except (TypeError, ValueError):
         return None
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return None
+    return optional_finite_float(raw)
 
 
 def _spot_value(row: Any) -> float | None:
@@ -347,6 +366,68 @@ def format_metric(value: float | None, unit: str) -> str:
 
 def _cell(row: Any, column: str, unit: str) -> str:
     return escape(format_metric(_value(row, column), unit))
+
+
+def _finance_source_label(finance_source: str) -> str:
+    """Display name for the already-normalized source selected by the route."""
+
+    return "Yahoo Fundamentals" if finance_source == "yahoo" else "Our View"
+
+
+def _status_text(
+    status: str,
+    *,
+    reasons: Mapping[str, str],
+    missing_reason: str,
+) -> str:
+    """Format one persisted status without inventing a replacement state."""
+
+    normalized = str(status or "").strip().upper()
+    if not normalized:
+        return f"Not published — {missing_reason}"
+    if normalized == "OK":
+        return normalized
+    reason = reasons.get(normalized, "the persisted status is not OK")
+    return f"{normalized} — {reason}"
+
+
+def _corporate_status_strip(
+    tool_b_row: Mapping[str, Any],
+    *,
+    finance_source: str,
+) -> str:
+    """Show the persisted financial-feed and market/FX states in first view.
+
+    ``financial_data_status`` is specifically the Yahoo/official-fundamentals
+    roll-up, even on the base Our View Tool-B row.  The label therefore stays
+    Yahoo-specific in both modes; calling it an Our View failure would be a
+    source-attribution bug.
+    """
+
+    yahoo_selected = str(finance_source).strip().lower() == "yahoo"
+    financial_label = "Yahoo data" if yahoo_selected else "Yahoo reference"
+    financial = _status_text(
+        _text(tool_b_row, "financial_data_status"),
+        reasons=_FINANCIAL_STATUS_REASONS,
+        missing_reason="no Yahoo fundamentals status was published",
+    )
+    snapshot_status = _text(tool_b_row, "snapshot_normalization_status")
+    snapshot = _status_text(
+        snapshot_status,
+        reasons=_SNAPSHOT_STATUS_REASONS,
+        missing_reason="no market snapshot normalization status was published",
+    )
+    if snapshot_status.strip().upper() == "STALE_FX":
+        staleness_days = _value(tool_b_row, "fx_staleness_days")
+        if staleness_days is not None:
+            snapshot += f" ({format_metric(staleness_days, 'days')})"
+    return status_strip(
+        (
+            (financial_label, escape(financial)),
+            ("Market data / FX", escape(snapshot)),
+        ),
+        label="Corporate finance data status",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -547,6 +628,7 @@ def render_gold_dial_control(
     ticker: str,
     finance_source: str,
     app_config: AppConfig | None,
+    compact_label: bool = False,
 ) -> str:
     """The global control-bar dial (requirements §3, D-6).
 
@@ -557,7 +639,6 @@ def render_gold_dial_control(
 
     gold_row = data.gold_response_row(ticker, finance_source=finance_source)
     spot = _spot_value(gold_row)
-    spot_date = _text(gold_row, "spot_gold_date")
 
     if app_config is None:
         return (
@@ -576,22 +657,21 @@ def render_gold_dial_control(
     minimum = format_metric(float(dial_cfg.min_gold_usd), "usd")
     maximum = format_metric(float(dial_cfg.max_gold_usd), "usd")
     value_attr = _slider_value_attr(spot, dial_cfg)
-    # ONE predicate drives the whole disabled treatment: a control that cannot
-    # express a scenario is inert, says why, and points at its own explanation.
-    # ``scenario_enabled`` already subsumes "no artifact" and "no spot".
-    disabled_attr = "" if scenario_enabled else " disabled"
+    # Progressive enhancement: the no-JavaScript page is a complete, honest
+    # spot view, but its range cannot update any numbers. Ship it inert and let
+    # gold-dial.js enable it only after a valid payload is read and every event
+    # listener is attached. State A stays disabled permanently.
+    disabled_attr = " disabled"
     explain = help_icon(
         "Gold price scenario", key="ticker_gold_dial", app_config=app_config
     )
     # The EXACT spot, cents included — the control's own position is on the step
     # grid, so the basis text is the only place the true price is readable.
     spot_exact = format_metric(spot, "usd2")
-    spot_label = (
-        f"spot {spot_exact}"
-        + (f" as of {spot_date}" if spot_date else "")
-        if spot is not None
-        else "spot gold unavailable"
-    )
+    # The output immediately beside this label already carries the dominant
+    # exact number. Keep the visible basis short; the one dated price context
+    # lives in Corporate Finance's shared basis strip.
+    spot_label = "spot" if spot is not None else "spot gold unavailable"
     # Truthful at rest without JavaScript, and maintained by gold-dial.js
     # through every state (plan §4.3). A disabled dial says so in the value
     # text itself — a screen-reader user landing on the control should not
@@ -616,12 +696,22 @@ def render_gold_dial_control(
     describedby = (
         "gold-dial-spot" if scenario_enabled else "gold-dial-spot gold-dial-reason"
     )
+    label_html = (
+        f'<span class="gold-dial-help">{explain}</span>'
+        if compact_label
+        else (
+            '<label class="gold-dial-label" for="gold-dial-input">'
+            f"Gold price scenario{explain}</label>"
+        )
+    )
+    accessible_label = ' aria-label="Gold price scenario"' if compact_label else ""
     return (
         '<div class="gold-dial" id="gold-dial">'
-        f'<label class="gold-dial-label" for="gold-dial-input">Gold price scenario{explain}</label>'
+        f"{label_html}"
         '<input type="range" id="gold-dial-input" name="gold_dial"'
         f' min="{float(dial_cfg.min_gold_usd):g}" max="{float(dial_cfg.max_gold_usd):g}"'
         f' step="{float(dial_cfg.step_usd):g}" value="{escape(value_attr, quote=True)}"'
+        f"{accessible_label}"
         f' aria-valuetext="{escape(value_text, quote=True)}"'
         f' aria-describedby="{describedby}"{disabled_attr}>'
         '<output class="gold-dial-output" id="gold-dial-output" for="gold-dial-input">'
@@ -629,7 +719,7 @@ def render_gold_dial_control(
         # Rendered but disabled until a scenario exists to reset FROM (§4.3
         # state B) — disabled also takes it out of the tab order, and without
         # JavaScript there is never anything to reset.
-        '<button type="button" class="button-like" id="gold-dial-reset"'
+        '<button type="button" class="control control--quiet" id="gold-dial-reset"'
         " disabled>Reset to spot</button>"
         f'<span class="hint" id="gold-dial-spot">'
         f'<span id="gold-dial-basis">{escape(spot_label)}</span> · range '
@@ -735,7 +825,6 @@ def _render_failing_checks(
     *,
     app_config: AppConfig | None,
     spot_gold_usd: float | None,
-    spot_gold_date: str,
 ) -> str:
     sentences = _failing_check_sentences(tool_b_row, app_config=app_config)
     if not sentences:
@@ -743,10 +832,9 @@ def _render_failing_checks(
     screening_gold = _value(tool_b_row, "gold_price_assumption")
     basis_bits = ["at spot gold"]
     if spot_gold_usd is not None:
-        basis_bits.append(
-            format_metric(spot_gold_usd, "usd")
-            + (f"/oz as of {spot_gold_date}" if spot_gold_date else "/oz")
-        )
+        # The exact gold date lives once in the section-level basis strip. The
+        # notice only needs the at-spot price context that explains the check.
+        basis_bits.append(format_metric(spot_gold_usd, "usd") + "/oz")
     if screening_gold is not None:
         basis_bits.append(
             "screening basis " + format_metric(screening_gold, "usd") + "/oz"
@@ -773,16 +861,20 @@ def _render_failing_checks(
 # ---------------------------------------------------------------------------
 
 
-def _scenario_cell(metric: str, *, tag: str = "td") -> str:
+def _scenario_cell(
+    metric: str, *, tag: str = "td", scenario_enabled: bool = True
+) -> str:
     """The initially-hidden scenario cell gold-dial.js writes into."""
 
+    if not scenario_enabled:
+        return ""
     return (
         f'<{tag} class="scenario-cell" data-metric="{escape(metric)}" '
         f'data-basis="scenario" hidden></{tag}>'
     )
 
 
-def _spot_dial_cell(metric: str) -> str:
+def _spot_dial_cell(metric: str, *, scenario_enabled: bool) -> str:
     """Spot cell for a LINE metric.
 
     The gold-response contract persists spot display values for the six ratio
@@ -791,27 +883,42 @@ def _spot_dial_cell(metric: str) -> str:
     at a different price. Recomputing it here would be backend maths in serve.
     """
 
+    fallback = (
+        '<span class="dial-pending">needs the gold dial (JavaScript)</span>'
+        if scenario_enabled
+        else '<span class="dial-unavailable">Unavailable &mdash; see reason above</span>'
+    )
     return (
         f'<td class="spot-cell" data-metric="{escape(metric)}" data-basis="spot">'
-        '<span class="dial-pending">needs the gold dial (JavaScript)</span></td>'
+        f"{fallback}</td>"
     )
 
 
-def _line_metric_row(metric: str, *, app_config: AppConfig | None) -> str:
+def _line_metric_row(
+    metric: str,
+    *,
+    app_config: AppConfig | None,
+    scenario_enabled: bool,
+) -> str:
     label = _METRIC_LABELS[metric]
     return (
         '<tr class="moves-with-gold">'
         f'<th scope="row">{escape(label)}'
         f"{help_icon(label, key=_METRIC_HELP_KEYS[metric], app_config=app_config)}</th>"
-        + _spot_dial_cell(metric)
-        + _scenario_cell(metric)
+        + _spot_dial_cell(metric, scenario_enabled=scenario_enabled)
+        + _scenario_cell(metric, scenario_enabled=scenario_enabled)
         + '<td class="basis">moves with gold · evaluated from the persisted line</td>'
         "</tr>"
     )
 
 
 def _ratio_metric_row(
-    metric: str, gold_row: pd.Series | None, *, app_config: AppConfig | None, basis: str
+    metric: str,
+    gold_row: pd.Series | None,
+    *,
+    app_config: AppConfig | None,
+    basis: str,
+    scenario_enabled: bool,
 ) -> str:
     label = _METRIC_LABELS[metric]
     column = SPOT_DISPLAY_BY_METRIC[metric]
@@ -820,7 +927,7 @@ def _ratio_metric_row(
         f'<th scope="row">{escape(label)}'
         f"{help_icon(label, key=_METRIC_HELP_KEYS[metric], app_config=app_config)}</th>"
         f'<td class="spot-cell">{_cell(gold_row, column, METRIC_FORMATS[metric])}</td>'
-        + _scenario_cell(metric)
+        + _scenario_cell(metric, scenario_enabled=scenario_enabled)
         + f'<td class="basis">{escape(basis)}</td>'
         "</tr>"
     )
@@ -851,16 +958,22 @@ def _moving_table(
     label: str,
     spot_header: str,
     app_config: AppConfig | None = None,
+    scenario_enabled: bool,
 ) -> str:
     scenario_help = help_icon(
         "At your scenario", key="ticker_cf_scenario_column", app_config=app_config
+    )
+    scenario_header = (
+        '<th scope="col" class="scenario-head" data-scenario-head="1" hidden>'
+        f"At your scenario{scenario_help}</th>"
+        if scenario_enabled
+        else ""
     )
     table_html = (
         '<table class="compact-table"><thead><tr>'
         '<th scope="col">Metric</th>'
         f'<th scope="col">{escape(spot_header)}</th>'
-        '<th scope="col" class="scenario-head" data-scenario-head="1" hidden>'
-        f"At your scenario{scenario_help}</th>"
+        f"{scenario_header}"
         '<th scope="col">Basis</th></tr></thead>'
         f"<tbody>{rows_html}</tbody></table>"
     )
@@ -878,26 +991,50 @@ def _fixed_table(rows_html: str, *, region_id: str, label: str) -> str:
 
 
 def _headline_cards(
-    gold_row: pd.Series | None, *, app_config: AppConfig | None, spot_label: str
+    gold_row: pd.Series | None,
+    *,
+    app_config: AppConfig | None,
+    scenario_enabled: bool,
 ) -> str:
+    """Render six cards with one visible value and no repeated basis text."""
+
     cards: list[str] = []
     for metric in _HEADLINE_METRICS:
         label = _METRIC_LABELS[metric]
         column = SPOT_DISPLAY_BY_METRIC[metric]
-        cards.append(
-            f'<div class="metric-card" data-metric-card="{escape(metric)}">'
-            f'<p class="metric-card-label">{escape(label)}'
-            f"{help_icon(label, key=_METRIC_HELP_KEYS[metric], app_config=app_config)}</p>"
-            # data-headline-spot marks the ONE headline value gold-dial.js hides
-            # while a scenario is active, so a card never stacks two unlabelled
-            # numbers (plan §4.4). The expanded tables keep both, labelled.
-            f'<p class="metric-card-value spot-cell" data-headline-spot="1">'
-            f"{_cell(gold_row, column, METRIC_FORMATS[metric])}</p>"
-            + _scenario_cell(metric, tag="p")
-            + f'<p class="hint metric-card-basis">{escape(spot_label)}</p>'
-            "</div>"
+        spot_value = _value(gold_row, column)
+        value_html = (
+            '<span class="spot-cell" data-headline-spot="1">'
+            f"{escape(format_metric(spot_value, METRIC_FORMATS[metric]))}</span>"
+            + _scenario_cell(
+                metric,
+                tag="span",
+                scenario_enabled=scenario_enabled,
+            )
         )
-    return '<div class="metric-card-grid" id="corporate-headline">' + "".join(cards) + "</div>"
+        unavailable = spot_value is None
+        cards.append(
+            f'<div data-metric-card="{escape(metric)}">'
+            + data_card(
+                label,
+                value_html,
+                help_html=help_icon(
+                    label,
+                    key=_METRIC_HELP_KEYS[metric],
+                    app_config=app_config,
+                ),
+                state="warning" if unavailable else "",
+                state_label=(
+                    "No valid spot value was published" if unavailable else ""
+                ),
+            )
+            + "</div>"
+        )
+    return (
+        '<div class="corporate-data-card-grid" id="corporate-headline">'
+        + "".join(cards)
+        + "</div>"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -905,19 +1042,41 @@ def _headline_cards(
 # ---------------------------------------------------------------------------
 
 
-def _earnings_group(gold_row: pd.Series | None, *, app_config: AppConfig | None, spot_header: str) -> str:
+def _earnings_group(
+    gold_row: pd.Series | None,
+    *,
+    app_config: AppConfig | None,
+    spot_header: str,
+    scenario_enabled: bool,
+) -> str:
     rows = "".join(
-        _line_metric_row(metric, app_config=app_config)
+        _line_metric_row(
+            metric,
+            app_config=app_config,
+            scenario_enabled=scenario_enabled,
+        )
         for metric in GOLD_RESPONSE_LINE_METRICS
     )
     rows += _ratio_metric_row(
-        "margin_usd_per_oz", gold_row, app_config=app_config, basis="moves with gold"
+        "margin_usd_per_oz",
+        gold_row,
+        app_config=app_config,
+        basis="moves with gold",
+        scenario_enabled=scenario_enabled,
     )
     rows += _ratio_metric_row(
-        "margin_pct", gold_row, app_config=app_config, basis="moves with gold"
+        "margin_pct",
+        gold_row,
+        app_config=app_config,
+        basis="moves with gold",
+        scenario_enabled=scenario_enabled,
     )
     rows += _ratio_metric_row(
-        "aisc_margin_yield", gold_row, app_config=app_config, basis="moves with gold"
+        "aisc_margin_yield",
+        gold_row,
+        app_config=app_config,
+        basis="moves with gold",
+        scenario_enabled=scenario_enabled,
     )
     return disclosure(
         escape("Earnings and cash at this gold price")
@@ -932,11 +1091,18 @@ def _earnings_group(gold_row: pd.Series | None, *, app_config: AppConfig | None,
             label="Earnings and cash at this gold price",
             spot_header=spot_header,
             app_config=app_config,
+            scenario_enabled=scenario_enabled,
         ),
     )
 
 
-def _valuation_group(gold_row: pd.Series | None, *, app_config: AppConfig | None, spot_header: str) -> str:
+def _valuation_group(
+    gold_row: pd.Series | None,
+    *,
+    app_config: AppConfig | None,
+    spot_header: str,
+    scenario_enabled: bool,
+) -> str:
     fixed = (
         _fixed_row(
             "Market cap",
@@ -961,11 +1127,23 @@ def _valuation_group(gold_row: pd.Series | None, *, app_config: AppConfig | None
         )
     )
     moving = _ratio_metric_row(
-        "ev_ebitda", gold_row, app_config=app_config, basis="moves with gold"
+        "ev_ebitda",
+        gold_row,
+        app_config=app_config,
+        basis="moves with gold",
+        scenario_enabled=scenario_enabled,
     ) + _ratio_metric_row(
-        "forward_pe", gold_row, app_config=app_config, basis="moves with gold"
+        "forward_pe",
+        gold_row,
+        app_config=app_config,
+        basis="moves with gold",
+        scenario_enabled=scenario_enabled,
     ) + _ratio_metric_row(
-        "leverage_stressed", gold_row, app_config=app_config, basis="moves with gold"
+        "leverage_stressed",
+        gold_row,
+        app_config=app_config,
+        basis="moves with gold",
+        scenario_enabled=scenario_enabled,
     )
     body = _fixed_table(
         fixed, region_id="corporate-valuation-fixed", label="Valuation inputs"
@@ -975,6 +1153,7 @@ def _valuation_group(gold_row: pd.Series | None, *, app_config: AppConfig | None
         label="Valuation multiples",
         spot_header=spot_header,
         app_config=app_config,
+        scenario_enabled=scenario_enabled,
     )
     return disclosure(
         escape("Valuation")
@@ -1068,9 +1247,17 @@ def _resilience_group(
     app_config: AppConfig | None,
 ) -> str:
     title = "Resilience — at what gold price does this break?"
+    yahoo_source = str(finance_source).strip().lower() == "yahoo"
+    basis = (
+        "Yahoo financials · Our View mining assumptions"
+        if yahoo_source
+        else "Our View financials · Our View mining assumptions"
+    )
+    explain = help_icon("Resilience", key="ticker_cf_resilience", app_config=app_config)
     if not tool_d_row:
         return disclosure(
-            escape(title),
+            escape(title) + explain,
+            f'<p class="hint resilience-basis">{escape(basis)}</p>'
             '<p class="hint">'
             + escape(
                 unavailable_reason
@@ -1078,12 +1265,6 @@ def _resilience_group(
             )
             + "</p>",
         )
-    yahoo_source = str(finance_source).strip().lower() == "yahoo"
-    basis = (
-        "Yahoo financials · Our View mining assumptions"
-        if yahoo_source
-        else "Our View financials · Our View mining assumptions"
-    )
     status = _text(tool_d_row, "resilience_data_status")
     rows = (
         _fixed_row(
@@ -1136,10 +1317,22 @@ def _resilience_group(
             app_config=app_config,
         )
     )
-    explain = help_icon("Resilience", key="ticker_cf_resilience", app_config=app_config)
+    degraded = ""
+    if status and status != "OK":
+        degraded_reason = (
+            _text(tool_d_row, "tool_d_explanation")
+            or _text(tool_d_row, "missing_inputs")
+            or status
+        )
+        degraded = notice(
+            "degraded",
+            "<p>Resilience is unavailable for the selected financial source: "
+            f"{escape(degraded_reason)}.</p>",
+        )
     return disclosure(
         escape(title) + explain,
         f'<p class="hint resilience-basis">{escape(basis)}</p>'
+        + degraded
         + _fixed_table(rows, region_id="corporate-resilience", label="Resilience thresholds"),
     )
 
@@ -1156,7 +1349,7 @@ def _data_quality_group(
     rows = (
         _fixed_row(
             "Financials source",
-            escape("Yahoo Fundamentals" if finance_source == "yahoo" else "Our View"),
+            escape(_finance_source_label(finance_source)),
             "active source toggle",
         )
         + _fixed_row(
@@ -1259,11 +1452,12 @@ def render_corporate_finance_section(
         spot=spot,
         dial_cfg=app_config.ticker_page.dial if app_config is not None else None,
     )
-    spot_label = (
-        "fwd @ spot " + format_metric(spot, "usd") + "/oz"
+    gold_basis = (
+        "Spot gold " + format_metric(spot, "usd2") + "/oz"
         if spot is not None
-        else "spot gold unavailable"
-    ) + (f" as of {spot_date}" if spot_date else "")
+        else "Spot gold unavailable"
+    ) + (f" as of {spot_date}" if spot_date and spot is not None else "")
+    source_label = _finance_source_label(finance_source)
     spot_header = (
         "Reported (spot " + format_metric(spot, "usd") + ")"
         if spot is not None
@@ -1271,15 +1465,26 @@ def render_corporate_finance_section(
     )
 
     pieces: list[str] = [
-        '<section class="panel" id="corporate-finance">',
+        '<section class="panel" id="corporate-finance" data-scenario-active="0">',
         section_heading(
             "Corporate finance",
             help_html=help_icon(
                 "Corporate finance", key="ticker_cf_section", app_config=app_config
             ),
         ),
-        f'<p class="hint">{escape(spot_label)} · rows marked "moves with gold" follow '
-        "the dial; everything else is fixed.</p>",
+        basis_strip(
+            (
+                ("Financials", escape(source_label)),
+                (
+                    "Gold basis",
+                    f'<span id="{_CORPORATE_GOLD_BASIS_ID}">{escape(gold_basis)}</span>',
+                ),
+            ),
+            label="Corporate finance basis",
+        ),
+        _corporate_status_strip(tool_b_row, finance_source=finance_source),
+        '<p class="hint">Rows marked "moves with gold" follow the dial; '
+        "everything else is fixed.</p>",
     ]
 
     if data.gold_response.status != "OK":
@@ -1313,17 +1518,36 @@ def render_corporate_finance_section(
             )
         )
 
-    pieces.append(_headline_cards(gold_row, app_config=app_config, spot_label=spot_label))
+    pieces.append(
+        _headline_cards(
+            gold_row,
+            app_config=app_config,
+            scenario_enabled=scenario_enabled,
+        )
+    )
     pieces.append(
         _render_failing_checks(
             tool_b_row,
             app_config=app_config,
             spot_gold_usd=spot,
-            spot_gold_date=spot_date,
         )
     )
-    pieces.append(_earnings_group(gold_row, app_config=app_config, spot_header=spot_header))
-    pieces.append(_valuation_group(gold_row, app_config=app_config, spot_header=spot_header))
+    pieces.append(
+        _earnings_group(
+            gold_row,
+            app_config=app_config,
+            spot_header=spot_header,
+            scenario_enabled=scenario_enabled,
+        )
+    )
+    pieces.append(
+        _valuation_group(
+            gold_row,
+            app_config=app_config,
+            spot_header=spot_header,
+            scenario_enabled=scenario_enabled,
+        )
+    )
     pieces.append(_balance_sheet_group(gold_row, tool_b_row, app_config=app_config))
     pieces.append(
         _resilience_group(

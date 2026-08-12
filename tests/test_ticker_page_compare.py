@@ -665,7 +665,7 @@ def test_compare_sits_between_options_and_inputs(catalog, app_config):
 
 def test_nav_lists_compare_between_options_and_inputs(catalog, app_config):
     page = _page(catalog, app_config)
-    nav_start = page.index('<nav class="section-nav"')
+    nav_start = page.index('<nav class="section-nav section-nav--compact"')
     nav = page[nav_start : page.index("</nav>", nav_start)]
 
     assert '<a class="section-nav-link" href="#compare">Compare</a>' in nav

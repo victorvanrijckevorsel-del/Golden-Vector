@@ -72,6 +72,26 @@
   .command-bar__content {
     width: 100%;
   }
+  .ticker-jump-form,
+  .ticker-jump-form__input {
+    width: 100%;
+  }
+  .performance-controls__group {
+    flex: 1 1 12rem;
+  }
+  .performance-controls__group .segmented-control {
+    width: 100%;
+  }
+  .performance-controls__group .segmented-control__item {
+    flex: 1 1 auto;
+  }
+  .corporate-data-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .command-bar .gold-dial,
+  .command-bar .gold-dial input[type="range"] {
+    width: 100%;
+  }
 }
 @media (max-width: 29.9375rem) {
   main {
@@ -89,6 +109,9 @@
       var(--app-header-height-compact) + var(--anchor-scroll-gap)
     );
   }
+  .corporate-data-card-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .app-sidebar {
@@ -104,6 +127,29 @@
   .button-like,
   .segmented-control__item,
   .form-control {
+    min-height: var(--touch-target-min);
+  }
+  .performance-series__option {
+    min-height: var(--touch-target-min);
+  }
+  body[data-page="ticker_detail"] .ticker-inputs input:not([type="hidden"]):not([type="checkbox"]),
+  body[data-page="ticker_detail"] .ticker-inputs select,
+  body[data-page="ticker_detail"] .ticker-inputs textarea,
+  body[data-page="ticker_detail"] .ticker-inputs .btn,
+  body[data-page="ticker_detail"] .ticker-inputs summary,
+  body[data-page="ticker_detail"] .ticker-inputs .clear-toggle,
+  body[data-page="ticker_detail"] .ticker-jump-form__input,
+  body[data-page="ticker_detail"] .ticker-command-bar .gold-dial input[type="range"],
+  body[data-page="ticker_detail"] .section-nav--compact .section-nav-link,
+  body[data-page="ticker_detail"] .disclosure > summary,
+  body[data-page="ticker_detail"] .option-sizing select[data-role="contract"],
+  body[data-page="ticker_detail"] .option-sizing input[data-role="budget"],
+  body[data-page="ticker_detail"] .option-sizing input[data-role="price"],
+  body[data-page="ticker_detail"] .score-builder input[data-role="weight"] {
+    min-height: var(--touch-target-min);
+  }
+  body[data-page="ticker_detail"] .score-builder input[data-role="activate"] {
+    min-width: var(--touch-target-min);
     min-height: var(--touch-target-min);
   }
   .help-icon {

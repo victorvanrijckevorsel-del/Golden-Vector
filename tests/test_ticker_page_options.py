@@ -700,7 +700,9 @@ def test_three_open_interest_series_are_drawn_separately(app_config):
     polyline_keys = set(re.findall(r'<polyline[^>]+class="series-([^"]+)"', chart))
     assert set(expected_keys.values()) <= polyline_keys
     for label, key in expected_keys.items():
-        assert f'legend-swatch-{key}">&#9632; {label}</span>' in chart
+        assert f'class="chart-legend-item legend-swatch-{key}">' in chart
+        assert f'<line x1="1" y1="4" x2="27" y2="4" class="series-{key}"' in chart
+        assert f">{label}</span>" in chart
     assert len(set(expected_keys.values())) == len(expected_keys)
 
 
@@ -726,7 +728,39 @@ def test_oi_trend_is_labelled_as_counts_not_a_rebased_price_comparison(app_confi
     # second, duplicate-id twin of the same numbers).
     assert chart.count('id="options-oi-trend-table"') == 1
     assert chart.count("<summary>Chart data (table)</summary>") == 1
-    assert "<th>Capture</th>" in chart  # the capture-aware columns survive
+    assert '<th scope="col">Capture</th>' in chart  # the capture-aware columns survive
+
+
+def test_option_tables_mark_quantities_numeric_but_keep_context_textual(app_config):
+    html = render(app_config)
+
+    for header in ("Put OI", "Call OI", "Total OI"):
+        assert f'<th class="numeric" scope="col">{header}</th>' in html
+    assert '<td class="numeric">211,900</td>' in html
+    assert '<td>2026-08-11</td>' in html
+    assert '<th scope="col">Capture</th>' in html
+    assert '<th scope="col">Row status</th>' in html
+
+    for header in ("Strike", "Delta", "Bid / Ask", "Mid", "Spread", "Open interest", "Volume"):
+        assert f'<th scope="col" data-sort-numeric>{header}' in html
+    for value in ("12.00", "-0.28", "0.80 / 0.85", "0.82", "6.0%", "1,450", "63"):
+        assert f'<td class="numeric">{value}</td>' in html
+    assert '<th scope="col">Contract' in html
+    assert '<th scope="col">Expiry (DTE)' in html
+    assert '<th scope="col">Liquidity' in html
+    assert '<th scope="col">Chain' in html
+    assert '<td>2026-11-20 (100 DTE)</td>' in html
+
+    for header in ("Strike", "Gamma", "Vega", "Theta"):
+        assert f'<th class="numeric" scope="col">{header}' in html
+    for value in ("0.0812", "0.0231", "-0.0044"):
+        assert f'<td class="numeric">{value}</td>' in html
+    assert '<th scope="col">Contract</th><th scope="col">Expiry (DTE)</th>' in html
+
+    assert '<td class="numeric">12.34 <span class="hint">from the option trading row' in html
+    assert '<td class="numeric">4.10%</td>' in html
+    assert '<td>2026-08-11</td>' in html
+    assert '<td>options-run</td>' in html
 
 
 def _help_button(html: str, title: str) -> str:
@@ -949,7 +983,7 @@ def test_sizing_script_tag_appears_exactly_once(app_config):
     assert 'data-role="price"' in html
     assert 'data-role="result"' in html
     assert 'data-role="ladder"' in html
-    assert 'data-role="reset"' in html
+    assert '<button type="button" class="control" data-role="reset">Reset</button>' in html
     assert 'data-role="live"' in html
     # The ladder's heading lives INSIDE the table it labels, so the JS hiding
     # the table hides the label with it — never a heading over nothing.

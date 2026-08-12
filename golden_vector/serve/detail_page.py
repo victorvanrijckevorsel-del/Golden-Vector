@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from html import escape
 from typing import Mapping
 from urllib.parse import quote
 
-from golden_vector.contracts.config_models import AppConfig
+import pandas as pd
+
+from golden_vector.common.numeric import optional_finite_float
+from golden_vector.common.strings import clean_string, normalize_ticker
+from golden_vector.contracts.config_models import AppConfig, UniverseTicker
 from golden_vector.common.frames import latest_records_by_key
 from golden_vector.hedge.option_trading import OptionTradingDetailData
 from golden_vector.serve.detail_forms import (
     _render_company_form,
     _render_note_section,
     _render_reporting_form,
+    _render_inputs_workspace,
     _render_verification_section,
 )
 from golden_vector.app.paths import ProjectPaths
@@ -23,7 +29,7 @@ from golden_vector.serve.detail_panels import (
 from golden_vector.serve.option_trading_data import OptionPageArtifacts
 from golden_vector.serve.format_helpers import _frame_index_by_ticker, _ticker_rows
 from golden_vector.serve.page_shell import _page_shell
-from golden_vector.serve.ui.components import page_header, section_nav
+from golden_vector.serve.ui.components import command_bar, section_tabs, terminal_density
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ticker_page import (
     COMPARE_SECTION_ID,
@@ -85,7 +91,113 @@ def _detail_section_nav(
         anchors.append((COMPARE_SECTION_ID, "Compare"))
     if has_manual:
         anchors.append(("inputs", "Inputs & notes"))
-    return section_nav(anchors)
+    return section_tabs(anchors, label="Ticker sections")
+
+
+def _configured_company(app_config: AppConfig | None, ticker: str) -> UniverseTicker | None:
+    if app_config is None:
+        return None
+    normalized = normalize_ticker(ticker)
+    return next(
+        (
+            configured
+            for configured in app_config.universe.tickers
+            if configured.active and configured.ticker == normalized
+        ),
+        None,
+    )
+
+
+def _ticker_identity_html(ticker: str, configured: UniverseTicker | None) -> str:
+    symbol = normalize_ticker(ticker) or str(ticker).strip()
+    meta: list[str] = []
+    company = clean_string(configured.company) if configured is not None else None
+    if company:
+        meta.append(company)
+    if configured is not None and clean_string(configured.currency):
+        meta.append(f"{configured.currency} listing")
+    if configured is not None and configured.jurisdiction_tier is not None:
+        meta.append(f"Jurisdiction tier {configured.jurisdiction_tier}")
+    metadata = (
+        '<p class="ticker-identity__meta">' + " · ".join(escape(item) for item in meta) + "</p>"
+        if meta
+        else ""
+    )
+    return (
+        '<div class="ticker-identity">'
+        f'<h1 class="ticker-identity__symbol">{escape(symbol)}</h1>'
+        f"{metadata}</div>"
+    )
+
+
+def _ticker_quote_html(tool_b_row: Mapping[str, object]) -> str:
+    price = optional_finite_float(tool_b_row.get("share_price_usd"))
+    if price is None:
+        return ""
+    # The persisted field is explicitly USD-normalized. A configured listing
+    # currency (AUD/CAD/GBP) describes the security, not this number's unit.
+    prefix = "US$"
+    raw_date = tool_b_row.get("snapshot_as_of_date")
+    if clean_string(raw_date) is None:
+        raw_date = tool_b_row.get("as_of_date")
+    market_date = _command_date(raw_date)
+    date_html = (
+        f'<span class="ticker-quote__date">Market date {escape(market_date)}</span>'
+        if market_date
+        else ""
+    )
+    return (
+        '<p class="ticker-quote">'
+        f'<span class="ticker-quote__value">{escape(prefix)}{price:,.2f}</span>'
+        f"{date_html}</p>"
+    )
+
+
+def _command_date(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (date, datetime, pd.Timestamp)):
+        parsed = pd.Timestamp(value)
+    else:
+        parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return ""
+    return pd.Timestamp(parsed).strftime("%d %b %Y")
+
+
+def _ticker_jump_html(
+    allowed_tickers: list[str],
+    *,
+    financials_source: str,
+) -> str:
+    options = "".join(
+        f'<option value="{escape(value, quote=True)}">'
+        for value in sorted({normalize_ticker(item) for item in allowed_tickers} - {None})
+    )
+    hidden_source = (
+        '<input type="hidden" name="fundamentals_source" value="yahoo">'
+        if str(financials_source).strip().lower() == "yahoo"
+        else ""
+    )
+    return (
+        '<form class="ticker-jump-form" method="get" action="/ticker">'
+        '<label for="ticker-jump-input">Jump to ticker</label>'
+        '<input class="ticker-jump-form__input" id="ticker-jump-input" '
+        'name="ticker" list="ticker-jump-options" autocomplete="off" required>'
+        f'<datalist id="ticker-jump-options">{options}</datalist>{hidden_source}'
+        '<button type="submit" class="control">Go</button>'
+        "</form>"
+    )
+
+
+def _error_summary(error: str | None) -> str:
+    if not error:
+        return ""
+    return (
+        '<div id="inputs-error-summary" tabindex="-1" data-focus-on-load '
+        'class="notice notice-danger" role="alert">'
+        f"<p><strong>Your changes were not saved.</strong> {escape(error)}</p></div>"
+    )
 
 
 def render_detail_page(
@@ -177,9 +289,15 @@ def render_detail_page(
             else {}
         ),
     )
+    configured_company = _configured_company(app_config, ticker)
+    identity_html = _ticker_identity_html(ticker, configured_company)
+    identity_html += _ticker_quote_html(tool_b_row)
+    jump_html = _ticker_jump_html(
+        state.tool_b_tickers,
+        financials_source=financials_source,
+    )
     body = [
         f"<p class=\"back-link\"><a href=\"{escape(back_href, quote=True)}\">Back to workspace</a></p>",
-        page_header(ticker),
     ]
     # --- global control bar (requirements §3 / D-6) ------------------------
     # The gold dial, the financials-source switcher (moved here out of the old
@@ -188,35 +306,49 @@ def render_detail_page(
     # The beta-window switcher is NOT here any more: the beta window is a
     # market-behaviour concept, independent of the performance chart's horizon
     # (requirements §3), so it renders in that section's header instead.
-    controls: list[str] = []
+    command_groups: list[tuple[str, str]] = []
     if show_workspace_panels:
-        controls.append(
-            _render_financials_source_switcher(
+        command_groups.append(
+            (
+                "Financials source",
+                _render_financials_source_switcher(
                 ticker=ticker,
                 financials_source=financials_source,
-                query_params=query_params or {},
+                query_params=current_query,
                 fundamentals_provenance=fundamentals_provenance or {},
+                ),
             )
         )
         if ticker_page_data is not None:
-            controls.append(
-                render_gold_dial_control(
-                    ticker_page_data,
-                    ticker=ticker,
-                    finance_source=financials_source,
-                    app_config=app_config,
+            command_groups.append(
+                (
+                    "Gold price scenario",
+                    render_gold_dial_control(
+                        ticker_page_data,
+                        ticker=ticker,
+                        finance_source=financials_source,
+                        app_config=app_config,
+                        compact_label=True,
+                    ),
                 )
             )
     elif option_lens_active:
-        controls.append(
-            "<p class=\"hint\">Option vehicle page. This ticker is used for listed "
-            "option liquidity and scenarios, not as a Gold Sensitivity / Corporate Finance mining-company row.</p>"
+        command_groups.append(
+            (
+                "Page context",
+                "<p class=\"hint\">Option vehicle page. This ticker is used for listed "
+                "option liquidity and scenarios, not as a Gold Sensitivity / Corporate Finance mining-company row.</p>",
+            )
         )
-    if controls:
-        body.append(
-            "<div class=\"panel ticker-control-bar\" role=\"group\" "
-            "aria-label=\"Page controls\">" + "".join(controls) + "</div>"
+    body.append(
+        command_bar(
+            identity_html,
+            navigation_html=jump_html,
+            groups=command_groups,
+            label="Company controls",
+            class_name="ticker-command-bar",
         )
+    )
 
     # --- 4. Options (rendered here, appended in page order below) ----------
     # The section resolves its own availability first, and returns "" for
@@ -264,13 +396,19 @@ def render_detail_page(
     )
     if flash:
         body.append(notice("success", escape(flash)))
-    if error:
+    if error and not show_manual_sections:
         body.append(notice("danger", escape(error)))
     alignment = _detail_alignment(tool_a_row, state.foundation_manifest)
 
     # --- 1. Performance ----------------------------------------------------
     if has_page_sections:
         assert ticker_page_data is not None
+        currency_attribution_html = render_currency_attribution_block(
+            ticker_page_data.fx_attribution_rows(ticker),
+            ticker=ticker,
+            horizon=chart_horizon,
+            artifact_state=ticker_page_data.fx_attribution,
+        )
         body.append(
             render_performance_section(
                 ticker_page_data.performance_rows(ticker),
@@ -279,14 +417,8 @@ def render_detail_page(
                 view=chart_view,
                 app_config=app_config,
                 artifact_state=ticker_page_data.performance,
-            )
-        )
-        body.append(
-            render_currency_attribution_block(
-                ticker_page_data.fx_attribution_rows(ticker),
-                ticker=ticker,
-                horizon=chart_horizon,
-                artifact_state=ticker_page_data.fx_attribution,
+                query_params=current_query,
+                currency_attribution_html=currency_attribution_html,
             )
         )
         # --- 2. Corporate finance ------------------------------------------
@@ -339,41 +471,61 @@ def render_detail_page(
 
     # --- 6. Inputs and notes ----------------------------------------------
     if show_manual_sections:
-        body.append(
+        active_form = next(
+            (
+                section
+                for section in ("company", "reporting", "verification", "note")
+                if section in overrides_by_section
+            ),
+            "",
+        )
+        children = [
             _render_company_form(
                 ticker=ticker,
                 company_row=company_row,
                 verification_rows=verification_rows,
                 return_to=return_to,
                 raw_overrides=company_overrides or None,
-            )
-        )
-        body.append(
+                expanded=active_form == "company",
+            ),
             _render_reporting_form(
                 ticker=ticker,
                 reporting_row=reporting_row,
                 return_to=return_to,
                 raw_overrides=reporting_overrides or None,
-            )
-        )
-        body.append(
+                expanded=active_form == "reporting",
+            ),
             _render_verification_section(
                 ticker=ticker,
                 verification_rows=verification_rows,
                 return_to=return_to,
-            )
-        )
-        body.append(
+                expanded=active_form == "verification",
+                expanded_field=verification_field if active_form == "verification" else "",
+            ),
             _render_note_section(
                 ticker=ticker,
                 note_rows=note_rows,
                 return_to=return_to,
                 raw_overrides=note_overrides or None,
+                expanded=active_form == "note",
+            ),
+        ]
+        if error:
+            children.insert(0, _error_summary(error))
+        body.append(
+            _render_inputs_workspace(
+                "".join(children),
+                expanded=bool(error),
             )
         )
-    active_nav = "option_trading" if option_lens_active else "candidate_finder"
+    active_nav = "option_trading" if option_lens_active else ""
+    symbol = normalize_ticker(ticker) or str(ticker).strip()
+    company_name = clean_string(configured_company.company) if configured_company else None
+    header_label = f"{symbol} · {company_name}" if company_name else symbol
     return _page_shell(
         f"Golden Vector Workspace - {ticker}",
-        "".join(body),
+        terminal_density("".join(body)),
         active_nav=active_nav,
+        page_id="ticker_detail",
+        header_label=header_label,
     )

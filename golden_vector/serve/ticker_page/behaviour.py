@@ -602,12 +602,15 @@ def _record_row(
     )
     if row is None:
         return (
-            f"<tr>{header}<td>n/a</td>"
+            f"<tr>{header}<td class=\"numeric\">n/a</td>"
             "<td class=\"hint\">no published row for this metric</td></tr>"
         )
     if not bool_or_false(row.get("metric_available")):
         reason = clean_string(row.get("metric_reason")) or "not available"
-        return f"<tr>{header}<td>n/a</td><td class=\"hint\">{escape(reason)}</td></tr>"
+        return (
+            f"<tr>{header}<td class=\"numeric\">n/a</td>"
+            f"<td class=\"hint\">{escape(reason)}</td></tr>"
+        )
     value = _fmt_pct(row.get("raw_value"))
     evidence_bits: list[str] = []
     if evidence_nouns is not None:
@@ -623,7 +626,10 @@ def _record_row(
     if period_start is not None and not pd.isna(period_start):
         evidence_bits.append(format_evidence_period(row))
     evidence = " · ".join(bit for bit in evidence_bits if bit) or "no evidence published"
-    return f"<tr>{header}<td>{escape(value)}</td><td class=\"hint\">{escape(evidence)}</td></tr>"
+    return (
+        f"<tr>{header}<td class=\"numeric\">{escape(value)}</td>"
+        f"<td class=\"hint\">{escape(evidence)}</td></tr>"
+    )
 
 
 def render_relative_record(
@@ -673,7 +679,7 @@ def render_relative_record(
     )
     table_html = (
         "<table class=\"compact-table\"><thead><tr>"
-        "<th scope=\"col\">Measure</th><th scope=\"col\">Value</th>"
+        "<th scope=\"col\">Measure</th><th class=\"numeric\" scope=\"col\">Value</th>"
         "<th scope=\"col\">Evidence and basis</th>"
         "</tr></thead>"
         f"<tbody>{rows_html}</tbody></table>"
@@ -1124,10 +1130,10 @@ def render_structural_window_table(
         rows.append(
             f"<tr{row_class}>"
             f"<td>{escape(WINDOW_LABELS.get(window_id, window_id))}{marker_text}</td>"
-            f"<td>{_fmt_number(fit.get('up_beta'), decimals=2)}</td>"
-            f"<td>{_fmt_number(fit.get('down_beta'), decimals=2)}</td>"
-            f"<td>{_fmt_percent(fit.get('r_squared'), decimals=1)}</td>"
-            f"<td>{_fmt_number(fit.get('weeks'), decimals=0)}</td>"
+            f"<td class=\"numeric\">{_fmt_number(fit.get('up_beta'), decimals=2)}</td>"
+            f"<td class=\"numeric\">{_fmt_number(fit.get('down_beta'), decimals=2)}</td>"
+            f"<td class=\"numeric\">{_fmt_percent(fit.get('r_squared'), decimals=1)}</td>"
+            f"<td class=\"numeric\">{_fmt_number(fit.get('weeks'), decimals=0)}</td>"
             f"<td>{_fmt_text(fit.get('window_status'))}</td>"
             "</tr>"
         )
@@ -1146,10 +1152,18 @@ def render_structural_window_table(
         + table_region(
             "<table><thead><tr>"
             + help_th("Window", key="tool_a_structural_window", app_config=app_config)
-            + help_th("Up beta", key="tool_c_up_beta", app_config=app_config)
-            + help_th("Down beta", key="tool_c_down_beta", app_config=app_config)
-            + help_th("R^2", key="tool_a_r_squared", app_config=app_config)
-            + help_th("Weeks", key="tool_a_window_weeks", app_config=app_config)
+            + help_th(
+                "Up beta", key="tool_c_up_beta", app_config=app_config, sort_numeric=True
+            )
+            + help_th(
+                "Down beta", key="tool_c_down_beta", app_config=app_config, sort_numeric=True
+            )
+            + help_th(
+                "R^2", key="tool_a_r_squared", app_config=app_config, sort_numeric=True
+            )
+            + help_th(
+                "Weeks", key="tool_a_window_weeks", app_config=app_config, sort_numeric=True
+            )
             + help_th("Status", key="tool_a_window_status", app_config=app_config)
             + "</tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table>",
@@ -1426,9 +1440,9 @@ def render_horizon_ladder(
         rows.append(
             "<tr>"
             f"<td>{escape(window_label(clean_string(row.get('horizon_label')) or ''))}</td>"
-            f"<td>{_fmt_percent(row.get('horizon_return'), decimals=1)}</td>"
-            f"<td>{_fmt_percent(row.get('horizon_gold_return'), decimals=1)}</td>"
-            f"<td>{_fmt_number(row.get('horizon_gold_delta'), decimals=2)}</td>"
+            f"<td class=\"numeric\">{_fmt_percent(row.get('horizon_return'), decimals=1)}</td>"
+            f"<td class=\"numeric\">{_fmt_percent(row.get('horizon_gold_return'), decimals=1)}</td>"
+            f"<td class=\"numeric\">{_fmt_number(row.get('horizon_gold_delta'), decimals=2)}</td>"
             f"<td>{status_cell}</td>"
             f"<td>{_fmt_date(row.get('horizon_start_date'))} to "
             f"{_fmt_date(row.get('horizon_end_date'))}</td>"
@@ -1442,12 +1456,23 @@ def render_horizon_ladder(
         + table_region(
             "<table><thead><tr>"
             + help_th("Horizon", key="exploratory_horizon", app_config=app_config)
-            + help_th("Equity return", key="exploratory_equity_return", app_config=app_config)
-            + help_th("Gold return", key="exploratory_gold_return", app_config=app_config)
+            + help_th(
+                "Equity return",
+                key="exploratory_equity_return",
+                app_config=app_config,
+                sort_numeric=True,
+            )
+            + help_th(
+                "Gold return",
+                key="exploratory_gold_return",
+                app_config=app_config,
+                sort_numeric=True,
+            )
             + help_th(
                 "Single-period ratio",
                 key="exploratory_single_period_ratio",
                 app_config=app_config,
+                sort_numeric=True,
             )
             + help_th(
                 "Status", key="exploratory_coverage_status", app_config=app_config

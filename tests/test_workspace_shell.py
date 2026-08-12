@@ -150,6 +150,105 @@ def test_shell_asset_is_served_and_loaded(tmp_path):
     assert "application/javascript" in asset["headers"].get("Content-Type", "")
     page = call_wsgi_app(app, method="GET", path="/scorecard")
     assert '<script src="/static/workspace-shell.js" defer></script>' in page["body"]
+    assert '<script src="/static/performance-series.js" defer></script>' in page["body"]
+
+
+def test_workspace_shell_focuses_validation_error_summary():
+    script = r"""
+const assert = require("assert");
+const fs = require("fs");
+const vm = require("vm");
+
+const focusTarget = { focused: false, focus() { this.focused = true; } };
+const document = {
+  readyState: "complete",
+  activeElement: null,
+  addEventListener() {},
+  querySelector(selector) {
+    if (selector === "[data-focus-on-load]") return focusTarget;
+    return null;
+  },
+  querySelectorAll() { return []; },
+  getElementById() { return null; },
+};
+const window = {
+  addEventListener() {},
+  matchMedia() { return { addEventListener() {} }; },
+  requestAnimationFrame(callback) { callback(); },
+};
+vm.runInNewContext(
+  fs.readFileSync("golden_vector/serve/static/workspace-shell.js", "utf8"),
+  { document, window }
+);
+assert.equal(focusTarget.focused, true);
+"""
+    result = subprocess.run(
+        ["node", "-e", script], check=False, capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_workspace_shell_reveals_nested_hash_target_and_parent():
+    script = r"""
+const assert = require("assert");
+const fs = require("fs");
+const vm = require("vm");
+
+class El {
+  constructor(tagName, parentElement) {
+    this.tagName = tagName;
+    this.parentElement = parentElement || null;
+    this.attrs = {};
+  }
+  hasAttribute(name) { return name in this.attrs; }
+  setAttribute(name, value) { this.attrs[name] = String(value); }
+}
+const parent = new El("DETAILS");
+const child = new El("DETAILS", parent);
+const summary = { focused: false, focus() { this.focused = true; } };
+child.querySelector = (selector) => selector === "summary" ? summary : null;
+child.scrolled = false;
+child.scrollIntoView = () => { child.scrolled = true; };
+const listeners = {};
+const document = {
+  readyState: "complete",
+  activeElement: null,
+  addEventListener() {},
+  querySelector() { return null; },
+  querySelectorAll() { return []; },
+  getElementById(id) { return id === "reporting" ? child : null; },
+};
+const window = {
+  location: { hash: "#reporting" },
+  addEventListener(name, callback) { listeners[name] = callback; },
+  matchMedia() { return { addEventListener() {} }; },
+  requestAnimationFrame(callback) { callback(); },
+};
+vm.runInNewContext(
+  fs.readFileSync("golden_vector/serve/static/workspace-shell.js", "utf8"),
+  { document, window, decodeURIComponent }
+);
+assert.equal(child.hasAttribute("open"), true);
+assert.equal(parent.hasAttribute("open"), true);
+assert.equal(child.scrolled, true);
+assert.equal(summary.focused, true);
+assert.equal(typeof listeners.hashchange, "function");
+
+// Ordinary section targets may contain unrelated nested disclosures. They
+// scroll into view but must not focus a descendant <summary>.
+const nestedSummary = { focused: false, focus() { this.focused = true; } };
+const section = new El("SECTION");
+section.querySelector = () => nestedSummary;
+section.scrollIntoView = () => {};
+document.getElementById = (id) => id === "performance" ? section : null;
+window.location.hash = "#performance";
+listeners.hashchange();
+assert.equal(nestedSummary.focused, false);
+"""
+    result = subprocess.run(
+        ["node", "-e", script], check=False, capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_all_first_party_js_passes_node_check():

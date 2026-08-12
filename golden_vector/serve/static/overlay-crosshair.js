@@ -34,6 +34,15 @@
     return ticks[lo];
   }
 
+  function hiddenSeries(svg) {
+    var raw = svg.getAttribute("data-hidden-series") || "";
+    var hidden = {};
+    raw.split(",").forEach(function (key) {
+      if (key) hidden[key] = true;
+    });
+    return { raw: raw, keys: hidden };
+  }
+
   function setupChart(svg, tip, state) {
     var data;
     try {
@@ -67,11 +76,13 @@
     // Per-chart, not shared: two charts can sit on the same snapped date, and a
     // single shared value only stayed correct via the lastChart tiebreak below.
     var lastDate = null;
+    var lastVisibility = null;
 
     function hide() {
       layer.style.display = "none";
       tip.hidden = true;
       lastDate = null;
+      lastVisibility = null;
     }
     hide();
     state.hiders.push(hide);
@@ -97,15 +108,21 @@
       var nearest = nearestTick(data.ticks, sx);
       var date = nearest[0];
       var xpx = nearest[1];
+      var visibility = hiddenSeries(svg);
 
       layer.style.display = "";
       // The snapped date hasn't changed since the last pixel: only reposition, skip the rebuild
       // (and the innerHTML write) to avoid needless DOM churn while gliding within one column.
-      if (date === lastDate && tip.lastChart === svg) {
+      if (
+        date === lastDate &&
+        visibility.raw === lastVisibility &&
+        tip.lastChart === svg
+      ) {
         position(event);
         return;
       }
       lastDate = date;
+      lastVisibility = visibility.raw;
       tip.lastChart = svg;
 
       vline.setAttribute("x1", xpx);
@@ -113,6 +130,10 @@
 
       var rows = "<strong>" + esc(date) + "</strong>";
       data.series.forEach(function (s, idx) {
+        if (visibility.keys[s.series]) {
+          dots[idx].style.display = "none";
+          return;
+        }
         var pt = s.byDate[date];
         if (pt) {
           dots[idx].style.display = "";

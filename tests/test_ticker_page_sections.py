@@ -6,6 +6,7 @@ import json
 import re
 from html import unescape
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
 import pytest
@@ -112,6 +113,22 @@ def _performance_rows() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _healthy_four_series_performance_rows() -> pd.DataFrame:
+    """A happy-path Compare artifact with every supported visible series."""
+
+    rows = _performance_rows()
+    stock = rows.loc[
+        rows["series"].eq("stock") & rows["view"].eq("rebased")
+    ].copy()
+    healthy = [rows.loc[~rows["series"].isin(["gdx", "gdxj"])]]
+    for series, offset in (("gdx", 10.0), ("gdxj", 20.0)):
+        benchmark = stock.copy()
+        benchmark["series"] = series
+        benchmark["value"] = benchmark["value"] + offset
+        healthy.append(benchmark)
+    return pd.concat(healthy, ignore_index=True)
+
+
 def _metric_row(**overrides) -> pd.Series:
     row = {
         "ticker": "AAR.AX",
@@ -154,14 +171,159 @@ def _peers(metric_key: str, values: dict[str, float]) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
+def test_performance_controls_are_visible_url_backed_and_preserve_query_state():
+    html = render_performance_section(
+        _healthy_four_series_performance_rows(),
+        ticker="AAR.AX",
+        horizon="3Y",
+        view="price",
+        app_config=_app_config(),
+        query_params={
+            "fundamentals_source": "yahoo",
+            "lens": "option-trading",
+            "chart_h": "3Y",
+            "chart_view": "price",
+        },
+    )
+
+    assert '<span class="performance-controls__label">View</span>' in html
+    assert '<span class="performance-controls__label">Horizon</span>' in html
+    assert 'aria-label="Performance view"' in html
+    assert 'aria-label="Performance horizon"' in html
+    assert '>Compare</a>' in html
+    assert '>Share price</a>' in html
+    assert '>1Y</a>' in html and '>3Y</a>' in html and '>5Y</a>' in html
+    assert 'href="/ticker/AAR.AX?' in html
+
+    hrefs = [unescape(value) for value in re.findall(r'href="([^"]+)"', html)]
+    compare_href = next(value for value in hrefs if "chart_view=rebased" in value)
+    one_year_href = next(value for value in hrefs if "chart_h=1Y" in value)
+    for href in (compare_href, one_year_href):
+        query = parse_qs(urlsplit(href).query)
+        assert query["fundamentals_source"] == ["yahoo"]
+        assert query["lens"] == ["option-trading"]
+    assert parse_qs(urlsplit(compare_href).query)["chart_h"] == ["3Y"]
+    assert parse_qs(urlsplit(one_year_href).query)["chart_view"] == ["price"]
+
+    selected = re.findall(
+        r'<a class="segmented-control__item" href="[^"]+" aria-current="true">([^<]+)</a>',
+        html,
+    )
+    assert selected == ["Share price", "3Y"]
+
+
+def test_performance_controls_remain_available_when_artifact_is_degraded():
+    state = TickerPageArtifactState(
+        status="CORRUPT", reason="checksum mismatch", frame=pd.DataFrame()
+    )
+
+    html = render_performance_section(
+        pd.DataFrame(),
+        ticker="AAR.AX",
+        horizon="1Y",
+        app_config=_app_config(),
+        artifact_state=state,
+    )
+
+    assert 'class="performance-controls"' in html
+    assert '>Compare</a>' in html and '>Share price</a>' in html
+    assert "checksum mismatch" in html
+
+
+def test_compare_series_visibility_is_progressive_and_table_stays_complete():
+    html = render_performance_section(
+        _healthy_four_series_performance_rows(),
+        ticker="AAR.AX",
+        horizon="1Y",
+        view="rebased",
+    )
+
+    assert '<fieldset class="performance-series" data-performance-series hidden>' in html
+    chart_id = "performance-chart-aar-ax-1y-rebased"
+    assert f'id="{chart_id}" data-performance-chart' in html
+    for key, label in (("stock", "Stock"), ("gold", "Gold"), ("gdx", "GDX"), ("gdxj", "GDXJ")):
+        assert f'data-performance-series-input="{key}"' in html
+        assert f'aria-controls="{chart_id}"' in html
+        assert f'>{label}</label>' in html
+        assert f'class="series-{key}"' in html
+        assert f'<th scope="col" class="numeric">{label}</th>' in html
+    assert html.count('type="checkbox"') == 4
+    assert html.count(" checked") == 4
+    assert html.index("legend-swatch-stock") < html.index("legend-swatch-gold")
+    assert html.index("legend-swatch-gold") < html.index("legend-swatch-gdx")
+    assert html.index("legend-swatch-gdx") < html.index("legend-swatch-gdxj")
+
+
+def test_share_price_has_no_compare_series_visibility_controls():
+    html = render_performance_section(
+        _healthy_four_series_performance_rows(),
+        ticker="AAR.AX",
+        horizon="1Y",
+        view="price",
+    )
+
+    assert "data-performance-series" not in html
+    assert 'data-performance-chart' in html
+
+
+def test_currency_attribution_composes_inside_performance_section():
+    attribution = (
+        '<div class="fx-attribution" id="currency-attribution">FX sentinel</div>'
+    )
+
+    html = render_performance_section(
+        _performance_rows(),
+        ticker="AAR.AX",
+        horizon="1Y",
+        currency_attribution_html=attribution,
+    )
+
+    assert html.count(attribution) == 1
+    assert html.index(attribution) < html.rindex("</section>")
+
+
+@pytest.mark.parametrize(
+    ("rows", "state"),
+    (
+        (pd.DataFrame(), None),
+        (
+            pd.DataFrame(),
+            TickerPageArtifactState(
+                status="CORRUPT", reason="checksum mismatch", frame=pd.DataFrame()
+            ),
+        ),
+    ),
+)
+def test_currency_attribution_remains_inside_degraded_or_empty_performance(
+    rows, state
+):
+    attribution = (
+        '<div class="fx-attribution" id="currency-attribution">FX sentinel</div>'
+    )
+
+    html = render_performance_section(
+        rows,
+        ticker="AAR.AX",
+        horizon="1Y",
+        artifact_state=state,
+        currency_attribution_html=attribution,
+    )
+
+    assert html.count(attribution) == 1
+    assert html.index(attribution) < html.rindex("</section>")
+
+
 def test_performance_section_renders_series_basis_and_markers():
     html = render_performance_section(
         _performance_rows(), ticker="AAR.AX", horizon="1Y", view="rebased"
     )
-    assert "Performance — AAR.AX" in html
+    assert "<h2>Performance" in html
+    assert "Performance — AAR.AX" not in html
     assert "Compare (indexed to 100)" in html
     assert "indexed to 100 on 2026-01-05" in html
-    assert "basis: return_basis_usd" in html
+    assert "return_basis_usd" not in html
+    assert "series bases: Stock/Gold" in html
+    assert "USD-normalized price (adjusted close where available)" in html
     # a non-OK series renders a marker, never a silent absence
     assert "gdx last observation is 9 trading day(s) behind" in html.lower() or "GDX:" in html
 
@@ -223,11 +385,11 @@ def test_performance_chart_has_an_accessible_data_table_twin():
     for index, date in enumerate(dates):
         value = 100.0 + index
         label = "0%" if index == 0 else f"+{index}%"
-        assert f"<td>{value:.1f} ({label})</td>" in html, date
+        assert f'<td class="numeric">{value:.1f} ({label})</td>' in html, date
     # both drawn series get a column; the omitted one is not invented
-    assert "<th scope=\"col\">Stock</th>" in html
-    assert "<th scope=\"col\">Gold</th>" in html
-    assert "<th scope=\"col\">GDX</th>" not in html
+    assert '<th scope="col" class="numeric">Stock</th>' in html
+    assert '<th scope="col" class="numeric">Gold</th>' in html
+    assert '<th scope="col" class="numeric">GDX</th>' not in html
 
 
 def test_performance_section_price_view_shows_stock_alone():
@@ -235,7 +397,35 @@ def test_performance_section_price_view_shows_stock_alone():
         _performance_rows(), ticker="AAR.AX", horizon="1Y", view="price"
     )
     assert "Share price (USD)" in html
+    assert "basis: USD-normalized price (adjusted close where available)" in html
+    assert "return_basis_usd" not in html
     assert "Gold" not in html.split("chart-axis")[0] or "Stock" in html
+
+
+def test_performance_compare_discloses_every_distinct_drawn_series_basis():
+    rows = _healthy_four_series_performance_rows()
+    basis_by_series = {
+        "stock": "return_basis_usd",
+        "gold": "close_usd",
+        "gdx": "adj_close_local",
+        "gdxj": "close_local",
+    }
+    for series, basis in basis_by_series.items():
+        rows.loc[
+            rows["series"].eq(series) & rows["view"].eq("rebased"),
+            "price_basis",
+        ] = basis
+
+    html = render_performance_section(
+        rows, ticker="AAR.AX", horizon="1Y", view="rebased"
+    )
+
+    assert "Stock — USD-normalized price (adjusted close where available)" in html
+    assert "Gold — USD-normalized close" in html
+    assert "GDX — local-currency adjusted close" in html
+    assert "GDXJ — local-currency close" in html
+    for token in basis_by_series.values():
+        assert token not in html
 
 
 def test_performance_price_view_hides_compare_benchmark_notices():
@@ -294,7 +484,7 @@ def test_performance_price_view_is_currency_true_end_to_end():
     assert 'aria-label="Share price over time — chart data table"' in chart
     for index, date in enumerate(pd.bdate_range("2026-01-05", periods=5)):
         assert f"<th scope=\"row\">{date.date()}</th>" in chart
-        assert f"<td>USD {50.0 + index:.2f}</td>" in chart
+        assert f'<td class="numeric">USD {50.0 + index:.2f}</td>' in chart
     # nothing in the chart claims an index or a percent change
     for wrong in ("indexed", "Rebased", "rebase", "%"):
         assert wrong not in chart, wrong
@@ -388,7 +578,7 @@ def test_performance_rebased_view_keeps_the_indexed_chart_contract():
         "<caption>Rebased price comparison — indexed value "
         "(change vs the rebase start)</caption>"
     ) in html
-    assert "<td>100.0 (0%)</td>" in html
+    assert '<td class="numeric">100.0 (0%)</td>' in html
 
 
 # ---------------------------------------------------------------------------
@@ -406,8 +596,13 @@ def test_currency_attribution_offset_headline_and_components():
     assert "+8.4%" in html
     assert "USD-investor return" in html
     assert "-1.1%" in html
+    assert html.count('<td class="numeric">') == 4
+    assert '<th scope="row">Local share return (AUD)</th>' in html
     assert "AUDUSD=X" in html
     assert "2025-08-08 to 2026-08-07" in html
+    assert "price basis USD-normalized price (adjusted close where available)" in html
+    assert "return_basis_usd" not in html
+    assert "adj_close_" not in html
     # the rejected device must never appear
     assert "$100" not in html
 
@@ -505,6 +700,11 @@ def test_cost_downside_card_shows_exact_evidence_and_caveat():
     assert "<details" in html and "Peer relationship" in html
     assert "no fitted line" in html
     assert "does not establish" in html  # the required caveat
+    assert '<th scope="col">Ticker</th>' in html
+    assert '<th scope="col" class="numeric">Reported AISC</th>' in html
+    assert '<th scope="col" class="numeric">Large-fall rate</th>' in html
+    assert '<td>AAR.AX</td><td class="numeric">$1,419/oz</td>' in html
+    assert '<td class="numeric">5.3%</td>' in html
     # no composite score and no causal wording
     assert "score" not in html.lower() or "no combined score" in html.lower()
 
@@ -619,7 +819,11 @@ def test_gold_dial_js_guards_mirror_the_screening_layers():
     diff them against screening/layer1.py and layer2.py."""
     source = Path("golden_vector/serve/static/gold-dial.js").read_text(encoding="utf-8")
     assert "screening/layer1.py" in source and "screening/layer2.py" in source
-    for reason in ("EBITDA ≤ 0 here", "EPS ≤ 0 here", "market cap ≤ 0 here"):
+    for reason in (
+        "Not meaningful — EBITDA ≤ 0",
+        "Not meaningful — EPS ≤ 0",
+        "Not meaningful — market cap ≤ 0",
+    ):
         assert reason in source, reason
     # no network, no third-party libraries, no shared mutable state
     for forbidden in ("fetch(", "XMLHttpRequest", "import ", "require(", "localStorage"):

@@ -6,7 +6,16 @@
   margin: 0 0 8px 0;
 }
 .chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   margin-right: 14px;
+}
+.chart-legend-line {
+  flex: 0 0 1.75rem;
+  width: 1.75rem;
+  height: 0.5rem;
+  overflow: visible;
 }
 /* Universe-rug hover: a faint highlight on the tick naming the miner. */
 .rug-tick:hover {
@@ -47,6 +56,17 @@
 }
 svg.overlay-chart {
   cursor: crosshair;
+}
+.performance-chart .chart-legend {
+  margin-bottom: var(--density-gap-compact);
+}
+.performance-chart svg.overlay-chart {
+  max-height: 26rem;
+}
+.performance-chart polyline.series-stock,
+.performance-chart path.series-stock {
+  stroke-width: 2.4;
+  opacity: 1;
 }
 .overlay-cursor-line {
   stroke: var(--muted);

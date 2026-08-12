@@ -97,6 +97,15 @@ def test_command_bar_omits_empty_navigation_slot():
     assert "command-bar__group" not in html
 
 
+def test_command_bar_accepts_only_safe_optional_class_tokens():
+    html = components.command_bar(
+        "<strong>NEM</strong>", class_name="ticker-command-bar compact_bar"
+    )
+    assert 'class="command-bar ticker-command-bar compact_bar"' in html
+    with pytest.raises(ValueError, match="CSS class tokens"):
+        components.command_bar("<strong>NEM</strong>", class_name='bad" onclick="x')
+
+
 def test_command_bar_requires_identity_and_an_accessible_label():
     with pytest.raises(ValueError, match="requires identity_html"):
         components.command_bar("", label="Company controls")

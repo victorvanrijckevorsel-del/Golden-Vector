@@ -352,7 +352,7 @@ def _metric_row_html(
         f"{explain}</span>"
         f'<span class="sb-metric-basis">{escape(unit_label)} · {escape(str(spec.basis))}</span>'
         f'<input type="checkbox" id="{activate_id}" data-role="activate"{disabled}>'
-        '<button type="button" class="button-like" data-role="direction" '
+        '<button type="button" class="control" data-role="direction" '
         f'aria-pressed="{"true" if high_good else "false"}"{disabled}>'
         f"{escape(direction_text)}</button>{direction_help}"
         f'<input type="range" id="{weight_id}" data-role="weight" min="0" '
@@ -559,7 +559,7 @@ def render_compare_section(
     pieces.append(
         f'<div id="{SCORE_BUILDER_ROOT_ID}" class="score-builder">'
         f'<div class="score-builder-controls">{groups}</div>'
-        '<p class="sb-actions"><button type="button" class="button-like" '
+        '<p class="sb-actions"><button type="button" class="control" '
         'data-role="reset">Reset weights</button></p>'
         "</div>"
     )

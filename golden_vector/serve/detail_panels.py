@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from html import escape
 from typing import Any, Mapping
 from urllib.parse import quote
 
@@ -11,6 +10,7 @@ import pandas as pd
 from golden_vector.serve.fundamentals_provenance import (
     ticker_provenance_icon,
 )
+from golden_vector.serve.ui.components import segmented_control
 from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.workspace_state import (
     DETAIL_ALIGNMENT_ALIGNED,
@@ -65,8 +65,6 @@ def _render_financials_source_switcher(
         query_params,
         set_params={"fundamentals_source": "yahoo"},
     )
-    our_class = "button-like active" if source == "our" else "button-like"
-    yahoo_class = "button-like active" if source == "yahoo" else "button-like"
     hint = (
         "<p class=\"hint\">Yahoo Fundamentals changes dual-source financial "
         "fields and derived checks; mining assumptions remain Our View.</p>"
@@ -75,13 +73,15 @@ def _render_financials_source_switcher(
     )
     icon = ticker_provenance_icon(ticker, fundamentals_provenance) if source == "yahoo" else ""
     return (
-        "<div class=\"overview-filters-actions source-switcher\">"
-        f"<span class=\"hint\">Financials source</span>"
-        f"<a class=\"{our_class}\" href=\"{escape(our_href, quote=True)}\">Our View</a>"
-        f"<a class=\"{yahoo_class}\" href=\"{escape(yahoo_href, quote=True)}\">Yahoo Fundamentals</a>"
-        f"{icon}"
-        "</div>"
-        f"{hint}"
+        segmented_control(
+            (
+                ("Our View", our_href, source == "our"),
+                ("Yahoo Fundamentals", yahoo_href, source == "yahoo"),
+            ),
+            label="Financials source",
+        )
+        + icon
+        + hint
     )
 
 

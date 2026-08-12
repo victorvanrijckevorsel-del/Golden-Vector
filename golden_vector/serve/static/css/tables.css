@@ -81,13 +81,22 @@ table select {
 .terminal-density .table-region td {
   padding: var(--density-table-padding-block) var(--density-table-padding-inline);
 }
-.terminal-density .table-region td.numeric,
+.terminal-density .table-region .numeric,
 .terminal-density .table-region td[data-order] {
   font-family: var(--font-data);
   font-variant-numeric: tabular-nums lining-nums;
   text-align: end;
 }
 .terminal-density .table-region th[data-sort-numeric] {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums lining-nums;
+  text-align: end;
+}
+/* Corporate finance uses semantic spot/scenario classes rather than generic
+   sortable-table metadata. Keep its comparable value columns on the same
+   data grid without changing tables outside the ticker-density pilot. */
+body[data-page="ticker_detail"] .terminal-density #corporate-finance td.spot-cell,
+body[data-page="ticker_detail"] .terminal-density #corporate-finance td.scenario-cell {
   font-family: var(--font-data);
   font-variant-numeric: tabular-nums lining-nums;
   text-align: end;

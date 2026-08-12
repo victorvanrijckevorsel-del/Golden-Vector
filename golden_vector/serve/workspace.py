@@ -6,7 +6,7 @@ import ipaddress
 import logging
 from dataclasses import replace
 from typing import Any, Callable, Iterable
-from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from wsgiref.simple_server import make_server
 
 from golden_vector.serve.screening_overrides import (
@@ -16,6 +16,7 @@ from golden_vector.serve.screening_overrides import (
 )
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
+from golden_vector.common.strings import normalize_ticker
 from golden_vector.screening.manual_data import (
     REQUIRED_MANUAL_FIELDS,
 )
@@ -511,6 +512,26 @@ def create_workspace_app(
             if method == "GET" and path == "/candidate-finder":
                 query = parse_qs(str(environ.get("QUERY_STRING", "")))
                 return _candidate_finder_response(query, "/candidate-finder")
+
+            if method == "GET" and path == "/ticker":
+                query = parse_qs(str(environ.get("QUERY_STRING", "")))
+                requested = normalize_ticker((query.get("ticker") or [""])[0])
+                if requested is None or requested not in allowed_tickers:
+                    shown = requested or "That ticker"
+                    return _html_response(
+                        start_response,
+                        _render_error_page(
+                            f"{shown} is not an active Corporate Finance ticker."
+                        ),
+                        status="404 Not Found",
+                    )
+                source = normalize_finance_source(
+                    (query.get("fundamentals_source") or ["our"])[0]
+                )
+                destination = f"/ticker/{quote(requested, safe='')}"
+                if source == "yahoo":
+                    destination += "?fundamentals_source=yahoo"
+                return _redirect_response(start_response, destination)
 
             if path.startswith("/ticker/"):
                 ticker, action = _parse_ticker_route(path)

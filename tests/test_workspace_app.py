@@ -3281,7 +3281,7 @@ def test_ticker_page_sections_render_in_the_required_order(tmp_path):
 def test_ticker_page_nav_lists_exactly_the_six_redesigned_entries(tmp_path):
     _paths, app = _m3b_app(tmp_path)
     body = _call_wsgi_app(app, method="GET", path="/ticker/NEM")["body"]
-    nav = body[body.index('<nav class="section-nav"') :]
+    nav = body[body.index('<nav class="section-nav section-nav--compact"') :]
     nav = nav[: nav.index("</nav>")]
 
     assert nav.count("section-nav-link") == 6

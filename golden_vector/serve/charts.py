@@ -237,13 +237,15 @@ def _build_beta_strip_svg(
     # Text equivalent of the rug tooltips: one row per tick, exactly the ticker + beta the
     # hover <title> / rug-tooltip.js shows (same f-string as the tick label above).
     rows = "".join(
-        f"<tr><td>{escape(mark.ticker)}</td><td>{escape(f'{mark.beta:,.2f}')}</td></tr>"
+        f'<tr><td>{escape(mark.ticker)}</td><td class="numeric">'
+        f"{escape(f'{mark.beta:,.2f}')}</td></tr>"
         for mark in universe_marks
     )
     table_html = (
         "<table>"
         f"<caption>{escape(axis_label)} — every miner in the universe</caption>"
-        "<thead><tr><th scope=\"col\">Ticker</th><th scope=\"col\">Beta</th></tr></thead>"
+        '<thead><tr><th scope="col">Ticker</th>'
+        '<th scope="col" class="numeric">Beta</th></tr></thead>'
         f"<tbody>{rows}</tbody></table>"
     )
     return svg + _chart_data_disclosure(
@@ -629,7 +631,10 @@ def _build_multiline_overlay_svg(
                 )
         legend_parts.append(
             f"<span class=\"chart-legend-item legend-swatch-{series_key}\">"
-            f"&#9632; {escape(label)}</span>"
+            f'<svg class="chart-legend-line" viewBox="0 0 28 8" '
+            f'aria-hidden="true" focusable="false"><line x1="1" y1="4" '
+            f'x2="27" y2="4" class="series-{series_key}" stroke-width="2" /></svg>'
+            f"{escape(label)}</span>"
         )
     legend_html = "<p class=\"chart-legend\">" + " ".join(legend_parts) + "</p>"
 
@@ -727,7 +732,8 @@ def _build_multiline_overlay_svg(
     # value alone ("USD 51.00", "12,345"). No new arithmetic; every date is listed.
     series_entries = overlay_data["series"]
     header_cells = "".join(
-        f"<th scope=\"col\">{escape(str(entry['label']))}</th>" for entry in series_entries
+        f"<th scope=\"col\" class=\"numeric\">{escape(str(entry['label']))}</th>"
+        for entry in series_entries
     )
     body_rows = ""
     for date_key, _x in overlay_data["ticks"]:
@@ -735,11 +741,14 @@ def _build_multiline_overlay_svg(
         for entry in series_entries:
             point = entry["byDate"].get(date_key)
             if not point:
-                cells += "<td>—</td>"
+                cells += '<td class="numeric">—</td>'
             elif display.table_shows_value:
-                cells += f"<td>{escape(f'{point[1]:.1f}')} ({escape(str(point[2]))})</td>"
+                cells += (
+                    '<td class="numeric">'
+                    f"{escape(f'{point[1]:.1f}')} ({escape(str(point[2]))})</td>"
+                )
             else:
-                cells += f"<td>{escape(str(point[2]))}</td>"
+                cells += f'<td class="numeric">{escape(str(point[2]))}</td>'
         body_rows += f"<tr><th scope=\"row\">{escape(date_key)}</th>{cells}</tr>"
     caption = f"{chart_title} — {display.unit_clause.format(unit=unit or '')}"
     table_html = (

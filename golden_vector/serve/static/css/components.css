@@ -286,6 +286,10 @@
   border-radius: var(--terminal-density-radius);
 }
 .command-bar__identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--density-gap-compact) var(--density-gap-standard);
   flex: 1 1 18rem;
   min-width: 0;
 }
@@ -379,6 +383,11 @@
   letter-spacing: 0.06em;
   line-height: 1.25;
   text-transform: uppercase;
+}
+/* The ticker pilot tightens generic h3 headings in pages.css. Preserve the
+   shared card-label token with a more specific component-owned rule. */
+body[data-page="ticker_detail"] .data-card__label {
+  font-size: var(--data-label-size);
 }
 .data-card__value {
   margin: 0;

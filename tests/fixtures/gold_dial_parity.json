@@ -256,8 +256,8 @@
             "value": 0.020672339
           },
           "ev_ebitda": {
-            "formatted": "EBITDA \u2264 0 here",
-            "reason": "EBITDA \u2264 0 here",
+            "formatted": "Not meaningful \u2014 EBITDA \u2264 0",
+            "reason": "Not meaningful \u2014 EBITDA \u2264 0",
             "value": null
           },
           "forward_ebitda_musd": {
@@ -276,8 +276,8 @@
             "value": 1284.48
           },
           "forward_pe": {
-            "formatted": "EPS \u2264 0 here",
-            "reason": "EPS \u2264 0 here",
+            "formatted": "Not meaningful \u2014 EPS \u2264 0",
+            "reason": "Not meaningful \u2014 EPS \u2264 0",
             "value": null
           },
           "forward_revenue_musd": {
@@ -286,8 +286,8 @@
             "value": 11800.0
           },
           "leverage_stressed": {
-            "formatted": "EBITDA \u2264 0 here",
-            "reason": "EBITDA \u2264 0 here",
+            "formatted": "Not meaningful \u2014 EBITDA \u2264 0",
+            "reason": "Not meaningful \u2014 EBITDA \u2264 0",
             "value": null
           },
           "margin_pct": {
@@ -313,8 +313,8 @@
             "value": 0.115936577
           },
           "ev_ebitda": {
-            "formatted": "EBITDA \u2264 0 here",
-            "reason": "EBITDA \u2264 0 here",
+            "formatted": "Not meaningful \u2014 EBITDA \u2264 0",
+            "reason": "Not meaningful \u2014 EBITDA \u2264 0",
             "value": null
           },
           "forward_ebitda_musd": {
@@ -343,8 +343,8 @@
             "value": 23600.0
           },
           "leverage_stressed": {
-            "formatted": "EBITDA \u2264 0 here",
-            "reason": "EBITDA \u2264 0 here",
+            "formatted": "Not meaningful \u2014 EBITDA \u2264 0",
+            "reason": "Not meaningful \u2014 EBITDA \u2264 0",
             "value": null
           },
           "margin_pct": {

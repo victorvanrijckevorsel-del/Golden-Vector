@@ -248,6 +248,9 @@ def test_headline_cards_render_the_persisted_spot_values_verbatim():
     assert "10.88×" in html  # spot_forward_pe
     assert "0.03×" in html  # spot_leverage_stressed
     assert 'id="corporate-headline"' in html
+    assert html.count('<article class="data-card') == 6
+    assert "metric-card-label" not in html
+    assert "metric-card-value" not in html
     for metric in (
         "margin_usd_per_oz",
         "margin_pct",
@@ -257,6 +260,71 @@ def test_headline_cards_render_the_persisted_spot_values_verbatim():
         "leverage_stressed",
     ):
         assert f'data-metric-card="{metric}"' in html
+
+
+def test_corporate_finance_uses_one_shared_basis_strip_not_six_card_dates():
+    html = _render()
+
+    assert '<section class="panel" id="corporate-finance" data-scenario-active="0">' in html
+    assert html.count('class="basis-strip"') == 1
+    assert '<span class="basis-strip__value">Our View</span>' in html
+    assert 'id="corporate-finance-gold-basis"' in html
+    assert "Spot gold $4,452.00/oz as of 2026-08-11" in html
+    assert html[: html.index("<details")].count("2026-08-11") == 1
+
+    headline_start = html.index('id="corporate-headline"')
+    headline = html[headline_start : html.index("<details", headline_start)]
+    assert "2026-08-11" not in headline
+    assert "fwd @ spot" not in headline
+
+
+def test_yahoo_basis_strip_names_the_selected_source_without_fallback():
+    html = _render(
+        data=_data(_gold_row(finance_source="yahoo")),
+        finance_source="yahoo",
+        tool_d_row=_tool_d_row(finance_source="yahoo"),
+    )
+
+    assert '<span class="basis-strip__value">Yahoo Fundamentals</span>' in html
+    assert "Yahoo financials · Our View mining assumptions" in html
+
+
+def test_first_view_status_keeps_the_yahoo_rollup_source_correct_in_both_modes():
+    stale = _tool_b_row(financial_data_status="STALE")
+
+    our_html = _render(tool_b_row=stale)
+    assert 'aria-label="Corporate finance data status"' in our_html
+    assert '<span class="status-item-label">Yahoo reference</span>' in our_html
+    assert "STALE — Yahoo fundamentals are stale" in our_html
+    assert "Our View data</span>" not in our_html
+
+    yahoo_html = _render(
+        data=_data(_gold_row(finance_source="yahoo")),
+        finance_source="yahoo",
+        tool_b_row=stale,
+        tool_d_row=_tool_d_row(finance_source="yahoo"),
+    )
+    assert '<span class="status-item-label">Yahoo data</span>' in yahoo_html
+    assert "STALE — Yahoo fundamentals are stale" in yahoo_html
+
+
+def test_first_view_status_explains_persisted_fx_degradation_plainly():
+    html = _render(
+        tool_b_row=_tool_b_row(
+            snapshot_normalization_status="STALE_FX",
+            fx_staleness_days=8,
+        )
+    )
+
+    assert '<span class="status-item-label">Market data / FX</span>' in html
+    assert "STALE_FX — the market snapshot uses stale FX (8 days)" in html
+
+
+def test_missing_headline_value_carries_a_visible_reason():
+    html = _render(data=_data(_gold_row(spot_forward_pe=None)))
+
+    assert html.count("data-card--warning") == 1
+    assert html.count("No valid spot value was published") == 1
 
 
 def test_every_scenario_cell_is_hidden_by_default_and_carries_its_metric():
@@ -293,6 +361,22 @@ def test_line_metric_spot_cells_are_dial_evaluated_and_say_so():
     assert ">$0m<" not in html
 
 
+def test_state_a_line_cells_do_not_claim_javascript_can_supply_the_value():
+    reason = "the source-specific response pack is unavailable"
+    html = _render(
+        data=_data(
+            _gold_row(
+                gold_response_status="DEGRADED_INPUTS",
+                gold_response_reason=reason,
+            )
+        )
+    )
+
+    assert "Unavailable &mdash; see reason above" in html
+    assert "needs the gold dial (JavaScript)" not in html
+    assert reason in html
+
+
 # ---------------------------------------------------------------------------
 # failing-checks notice — persisted codes only, fixed at spot (D-4)
 # ---------------------------------------------------------------------------
@@ -308,7 +392,7 @@ def test_failing_check_sentence_names_the_measured_value_and_your_threshold():
     )
     assert "AISC margin yield 12.6% is below your 15.0% floor." in html
     assert "These screening checks fail at spot gold" in html
-    assert "$4,452/oz as of 2026-08-11" in html
+    assert "$4,452/oz" in html
     assert "screening basis $4,452/oz" in html
     assert "do not move with the dial" in html
 
@@ -628,6 +712,24 @@ def test_resilience_renders_selected_yahoo_row_with_hybrid_basis():
     assert "$1,251/oz" not in html
 
 
+def test_resilience_yahoo_degradation_stays_source_specific_and_explained():
+    reason = "Yahoo interest expense is missing"
+    html = _render(
+        data=_data(_gold_row(finance_source="yahoo")),
+        finance_source="yahoo",
+        tool_d_row=_tool_d_row(
+            finance_source="yahoo",
+            resilience_data_status="INSUFFICIENT_INTEREST_DATA",
+            tool_d_explanation=reason,
+        ),
+    )
+
+    assert "Yahoo financials · Our View mining assumptions" in html
+    assert "Resilience is unavailable for the selected financial source" in html
+    assert reason in html
+    assert "resilience is computed on Our View inputs" not in html
+
+
 def test_resilience_missing_legacy_yahoo_row_shows_contract_rebuild_reason():
     html = _render(
         data=_data(_gold_row(finance_source="yahoo")),
@@ -682,6 +784,8 @@ def test_degraded_gold_response_row_disables_the_dial_with_its_persisted_reason(
     assert payload["scenario_reason"] == reason
     assert payload["gold_response_status"] == "DEGRADED_NONLINEAR"
     assert payload["gold_response_reason"] == reason
+    assert 'data-basis="scenario"' not in html
+    assert 'data-scenario-head="1"' not in html
 
     control = render_gold_dial_control(
         data, ticker="NEM", finance_source="our", app_config=_app_config()
@@ -757,11 +861,29 @@ def test_dial_control_takes_its_range_from_config_and_defaults_to_spot():
     assert f'max="{dial.max_gold_usd:g}"' in control
     assert f'step="{dial.step_usd:g}"' in control
     assert 'value="4452"' in control  # the artifact's spot, not a config scenario
+    assert 'aria-describedby="gold-dial-spot" disabled>' in control
     assert "$4,000" not in control  # never Tool B's configured default scenario
     assert '<output class="gold-dial-output"' in control
     assert 'id="gold-dial-reset"' in control
+    assert 'class="control control--quiet" id="gold-dial-reset"' in control
+    assert "button-like" not in control
     assert 'aria-live="polite"' in control
-    assert "spot $4,452.00 as of 2026-08-11" in control
+    assert '<span id="gold-dial-basis">spot</span> · range ' in control
+    assert "2026-08-11" not in control
+
+
+def test_compact_dial_fragment_uses_the_command_bar_label_without_duplication():
+    control = render_gold_dial_control(
+        _data(),
+        ticker="NEM",
+        finance_source="our",
+        app_config=_app_config(),
+        compact_label=True,
+    )
+
+    assert '<label class="gold-dial-label"' not in control
+    assert 'aria-label="Gold price scenario"' in control
+    assert 'class="gold-dial-help"' in control
 
 
 def test_slider_value_is_step_aligned_while_the_payload_keeps_exact_spot():
@@ -780,7 +902,8 @@ def test_slider_value_is_step_aligned_while_the_payload_keeps_exact_spot():
     assert 'value="4477"' in control  # the position the control can actually hold
     assert 'value="4477.4"' not in control
     # ...while every human-readable basis keeps the true price, cents and all
-    assert "spot $4,477.40 as of 2026-08-11" in control
+    assert '<span id="gold-dial-basis">spot</span> · range ' in control
+    assert "2026-08-11" not in control
     assert 'aria-valuetext="$4,477.40 per ounce, spot"' in control
     assert ">$4,477.40</output>" in control
     # Nothing to reset FROM at rest: rendered, disabled, out of the tab order.
@@ -816,7 +939,8 @@ def test_a_spot_outside_the_configured_range_disables_the_dial_with_a_reason():
         assert 'id="gold-dial-reason"' in control, spot
         assert f'aria-valuetext="{exact} per ounce, spot — scenario unavailable"' in control, spot
         assert f'value="{bound:g}"' in control, spot
-        assert f"spot {exact} as of" in control, spot
+        assert f">{exact}</output>" in control, spot
+        assert "2026-08-11" not in control, spot
         payload = _payload(_render(data=data))
         assert payload["spot_gold_usd"] == spot
         # artifact availability is NOT what failed here
@@ -829,6 +953,8 @@ def test_a_spot_outside_the_configured_range_disables_the_dial_with_a_reason():
         assert "The gold dial cannot run a scenario for NEM" in section
         assert "The values below are unaffected and stay at spot." in section
         assert "Spot values below are the published ones" not in section
+        assert 'data-basis="scenario"' not in section
+        assert 'data-scenario-head="1"' not in section
 
     # a spot exactly ON a bound is inside the range and keeps the dial live
     data = _data(_gold_row(spot_gold_usd=float(dial.max_gold_usd)))
@@ -889,8 +1015,8 @@ def test_headline_cards_carry_one_spot_value_and_one_hidden_scenario_slot():
         "forward_pe",
         "leverage_stressed",
     ):
-        assert f'data-metric="{metric}" data-basis="scenario" hidden></p>' in html, metric
-    assert html.count('<p class="metric-card-value spot-cell" data-headline-spot="1">') == 6
+        assert f'data-metric="{metric}" data-basis="scenario" hidden></span>' in html, metric
+    assert html.count('class="spot-cell" data-headline-spot="1"') == 6
     # the marker exists ONLY on the cards — expanded tables keep both columns
     assert html.count("data-headline-spot") == 6
 
@@ -981,29 +1107,43 @@ def mirror_evaluate(payload: dict, metric: str, gold: float):
         margin, reason = mirror_evaluate(payload, "margin_usd_per_oz", gold)
         if margin is None:
             return None, reason
-        return _mirror_ratio(margin, gold, "gold price ≤ 0 here")
+        return _mirror_ratio(margin, gold, "Not meaningful — gold price ≤ 0")
     if metric == "aisc_margin_yield":
         value, reason = mirror_evaluate(payload, "aisc_margin_est_musd", gold)
         if value is None:
             return None, reason
-        return _mirror_ratio(value, constants.get("market_cap_musd"), "market cap ≤ 0 here")
+        return _mirror_ratio(
+            value,
+            constants.get("market_cap_musd"),
+            "Not meaningful — market cap ≤ 0",
+        )
     if metric == "ev_ebitda":
         ebitda, reason = mirror_evaluate(payload, "forward_ebitda_musd", gold)
         if ebitda is None:
             return None, reason
         return _mirror_ratio(
-            constants.get("enterprise_value_musd"), ebitda, "EBITDA ≤ 0 here"
+            constants.get("enterprise_value_musd"),
+            ebitda,
+            "Not meaningful — EBITDA ≤ 0",
         )
     if metric == "forward_pe":
         eps, reason = mirror_evaluate(payload, "forward_eps", gold)
         if eps is None:
             return None, reason
-        return _mirror_ratio(constants.get("share_price_usd"), eps, "EPS ≤ 0 here")
+        return _mirror_ratio(
+            constants.get("share_price_usd"),
+            eps,
+            "Not meaningful — EPS ≤ 0",
+        )
     if metric == "leverage_stressed":
         ebitda, reason = mirror_evaluate(payload, "forward_ebitda_musd", gold)
         if ebitda is None:
             return None, reason
-        return _mirror_ratio(constants.get("net_debt_musd"), ebitda, "EBITDA ≤ 0 here")
+        return _mirror_ratio(
+            constants.get("net_debt_musd"),
+            ebitda,
+            "Not meaningful — EBITDA ≤ 0",
+        )
     raise AssertionError(f"unknown metric {metric}")
 
 
@@ -1079,9 +1219,9 @@ def test_ratio_guards_mirror_layer1_and_layer2_exactly():
     payload = _payload(_render(data=_data(_stressed_gold_row())))
 
     for metric, reason in (
-        ("ev_ebitda", "EBITDA ≤ 0 here"),
-        ("leverage_stressed", "EBITDA ≤ 0 here"),
-        ("forward_pe", "EPS ≤ 0 here"),
+        ("ev_ebitda", "Not meaningful — EBITDA ≤ 0"),
+        ("leverage_stressed", "Not meaningful — EBITDA ≤ 0"),
+        ("forward_pe", "Not meaningful — EPS ≤ 0"),
     ):
         value, got = mirror_evaluate(payload, metric, 2000.0)
         assert value is None and got == reason, metric
@@ -1092,7 +1232,7 @@ def test_ratio_guards_mirror_layer1_and_layer2_exactly():
     # market cap ≤ 0 excludes the yield rather than dividing by it
     zero_cap = _payload(_render(data=_data(_gold_row(market_cap_musd=0.0))))
     value, reason = mirror_evaluate(zero_cap, "aisc_margin_yield", 4452.0)
-    assert value is None and reason == "market cap ≤ 0 here"
+    assert value is None and reason == "Not meaningful — market cap ≤ 0"
 
 
 def test_spot_evaluation_reproduces_the_persisted_spot_display_values():

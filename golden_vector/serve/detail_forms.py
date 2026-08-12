@@ -51,6 +51,7 @@ def _render_company_form(
     verification_rows: list[dict[str, Any]] | None = None,
     return_to: str | None = None,
     raw_overrides: dict[str, str] | None = None,
+    expanded: bool = False,
 ) -> str:
     # Rejected-POST echo (deep-review H1): raw submitted strings render
     # VERBATIM — they must never pass through _format_form_value, which
@@ -128,9 +129,7 @@ def _render_company_form(
         "To clear a value, tick the <em>Clear on save</em> checkbox under that field. "
         "(The CLI <code>--clear-fields</code> path remains available for batch use.)</p>"
     )
-    return (
-        "<section id=\"inputs\" class=\"panel\">"
-        "<h2>Company Inputs</h2>"
+    body = (
         f"<p><strong>Last Updated:</strong> {updated_at}</p>"
         f"<p class=\"tool-b-readiness\">"
         f"<strong>Corporate Finance readiness:</strong> {present_count}/{total_fields} fields populated · "
@@ -144,7 +143,12 @@ def _render_company_form(
         f"{''.join(fields_html)}"
         "<div class=\"form-actions\"><button type=\"submit\" class=\"btn btn-primary\">Save Company Inputs</button></div>"
         "</form>"
-        "</section>"
+    )
+    return _workspace_child_disclosure(
+        "company-inputs",
+        "Company Inputs",
+        body,
+        expanded=expanded,
     )
 
 
@@ -154,6 +158,7 @@ def _render_reporting_form(
     reporting_row: dict[str, Any],
     return_to: str | None = None,
     raw_overrides: dict[str, str] | None = None,
+    expanded: bool = False,
 ) -> str:
     # Rejected-POST echo (deep-review H1): raw submitted strings render
     # verbatim, never through _format_form_value.
@@ -178,16 +183,19 @@ def _render_reporting_form(
         "</label>"
     )
     updated_at = _fmt_text(reporting_row.get("updated_at_utc"))
-    return (
-        "<section id=\"reporting\" class=\"panel\">"
-        "<h2>Reporting Calendar</h2>"
+    body = (
         f"<p><strong>Last Updated:</strong> {updated_at}</p>"
         f"<form method=\"post\" action=\"/ticker/{escape(ticker)}/reporting\" class=\"form-grid\">"
         f"{_return_to_input(return_to)}"
         f"{''.join(fields_html)}"
         "<div class=\"form-actions\"><button type=\"submit\" class=\"btn btn-primary\">Save Reporting Calendar</button></div>"
         "</form>"
-        "</section>"
+    )
+    return _workspace_child_disclosure(
+        "reporting",
+        "Reporting Calendar",
+        body,
+        expanded=expanded,
     )
 
 
@@ -196,6 +204,8 @@ def _render_verification_section(
     ticker: str,
     verification_rows: list[dict[str, Any]],
     return_to: str | None = None,
+    expanded: bool = False,
+    expanded_field: str = "",
 ) -> str:
     """Editable source-verification section.
 
@@ -262,12 +272,13 @@ def _render_verification_section(
             if updated and updated != "-"
             else ""
         )
+        field_open = " open" if field_name == expanded_field else ""
         rows_html.append(
             "<tr>"
             f"<td>{escape(label)}<br><span class=\"hint\">{escape(field_name)}</span></td>"
             f"<td>{status}</td>"
             f"<td>"
-            f"<details class=\"verification-edit\">"
+            f"<details class=\"verification-edit\"{field_open}>"
             f"<summary>Edit{updated_summary}</summary>"
             f"<form method=\"post\" action=\"/ticker/{escape(ticker)}/verification\" class=\"verification-form\">"
             f"{_return_to_input(return_to)}"
@@ -293,9 +304,7 @@ def _render_verification_section(
         "<p class=\"hint\">One row per required Corporate Finance field. Blank Source Date / URL / Notes are left unchanged on save. "
         "To clear an existing value, tick the <em>Clear</em> checkbox under that field before saving.</p>"
     )
-    return (
-        "<section id=\"verification\" class=\"panel\">"
-        "<h2>Source Verification</h2>"
+    body = (
         f"{hint}"
         + table_region(
             "<table class=\"verification-table\">"
@@ -306,7 +315,12 @@ def _render_verification_section(
             region_id="detail-verification-table-region",
             label="Source verification",
         )
-        + "</section>"
+    )
+    return _workspace_child_disclosure(
+        "verification",
+        "Source Verification",
+        body,
+        expanded=expanded,
     )
 
 
@@ -316,6 +330,7 @@ def _render_note_section(
     note_rows: list[dict[str, Any]],
     return_to: str | None = None,
     raw_overrides: dict[str, str] | None = None,
+    expanded: bool = False,
 ) -> str:
     # Rejected-POST echo (deep-review M6): a rejected note save must not
     # discard the typed note — prefill the add-note form verbatim.
@@ -368,9 +383,7 @@ def _render_note_section(
             region_id="detail-notes-table-region",
             label="Stock notes",
         )
-    return (
-        "<section id=\"notes\" class=\"panel\">"
-        "<h2>Stock Notes</h2>"
+    body = (
         f"{summary}"
         f"{note_table}"
         f"<form method=\"post\" action=\"/ticker/{escape(ticker)}/note\" class=\"note-form\">"
@@ -390,7 +403,51 @@ def _render_note_section(
         + "</select></label>"
         "<div class=\"form-actions\"><button type=\"submit\" class=\"btn btn-primary\">Add Note</button></div>"
         "</form>"
-        "</section>"
+    )
+    return _workspace_child_disclosure(
+        "notes",
+        "Stock Notes",
+        body,
+        expanded=expanded,
+    )
+
+
+def _render_inputs_workspace(children_html: str, *, expanded: bool = False) -> str:
+    """Wrap the four manual areas in one closed-by-default workspace.
+
+    The parent keeps the historical ``#inputs`` anchor. Validation re-renders
+    opt in to ``open`` while ordinary GETs remain compact.
+    """
+
+    open_attr = " open" if expanded else ""
+    return (
+        f'<details id="inputs" class="disclosure ticker-inputs"{open_attr}>'
+        '<summary><span class="ticker-inputs__summary-copy">'
+        '<span class="ticker-inputs__title" role="heading" '
+        'aria-level="2">Your inputs and notes</span>'
+        '<span class="hint">Company data, reporting, verification and research notes</span>'
+        '</span>'
+        "</summary>"
+        f'<div class="disclosure-body ticker-inputs__body">{children_html}</div>'
+        "</details>"
+    )
+
+
+def _workspace_child_disclosure(
+    element_id: str,
+    title: str,
+    body_html: str,
+    *,
+    expanded: bool,
+) -> str:
+    open_attr = " open" if expanded else ""
+    return (
+        f'<details id="{escape(element_id, quote=True)}" '
+        f'class="disclosure ticker-inputs__section"{open_attr}>'
+        '<summary><span class="ticker-inputs__section-title" role="heading" '
+        f'aria-level="3">{escape(title)}</span></summary>'
+        f'<div class="disclosure-body">{body_html}</div>'
+        "</details>"
     )
 
 

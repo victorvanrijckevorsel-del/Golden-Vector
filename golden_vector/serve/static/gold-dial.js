@@ -40,6 +40,7 @@
   var RESET_ID = "gold-dial-reset";
   var STATUS_ID = "gold-dial-status";
   var BASIS_ID = "gold-dial-basis";
+  var CORPORATE_BASIS_ID = "corporate-finance-gold-basis";
   var SECTION_ID = "corporate-finance";
 
   var ANNOUNCE_DELAY_MS = 300;
@@ -121,7 +122,7 @@
         return margin;
       }
       /* layer1.py: margin_pct needs gold_price_assumption > 0. */
-      return ratio(margin.value, gold, "gold price ≤ 0 here");
+      return ratio(margin.value, gold, "Not meaningful — gold price ≤ 0");
     }
     if (metric === "aisc_margin_yield") {
       /* layer1.py: market_cap_musd must be strictly positive. */
@@ -132,7 +133,7 @@
       return ratio(
         aiscMargin.value,
         constant(payload, "market_cap_musd"),
-        "market cap ≤ 0 here"
+        "Not meaningful — market cap ≤ 0"
       );
     }
     if (metric === "ev_ebitda") {
@@ -144,7 +145,7 @@
       return ratio(
         constant(payload, "enterprise_value_musd"),
         ebitda.value,
-        "EBITDA ≤ 0 here"
+        "Not meaningful — EBITDA ≤ 0"
       );
     }
     if (metric === "forward_pe") {
@@ -153,7 +154,11 @@
       if (eps.value === null) {
         return eps;
       }
-      return ratio(constant(payload, "share_price_usd"), eps.value, "EPS ≤ 0 here");
+      return ratio(
+        constant(payload, "share_price_usd"),
+        eps.value,
+        "Not meaningful — EPS ≤ 0"
+      );
     }
     if (metric === "leverage_stressed") {
       /* Tool D's leverage_stressed_at_g: net debt over FORWARD EBITDA. */
@@ -164,7 +169,7 @@
       return ratio(
         constant(payload, "net_debt_musd"),
         stressedEbitda.value,
-        "EBITDA ≤ 0 here"
+        "Not meaningful — EBITDA ≤ 0"
       );
     }
     return miss("unknown metric");
@@ -296,22 +301,8 @@
      * card never stacks two unlabelled numbers (plan §4.4). */
     var headlineSpotCells = section.querySelectorAll("[data-headline-spot]");
     var basis = document.getElementById(BASIS_ID);
+    var corporateBasis = document.getElementById(CORPORATE_BASIS_ID);
     var announceTimer = null;
-
-    /* Every headline card states the price its number is measured at ("fwd @
-     * spot $4,477/oz as of 2026-08-11"). While a scenario is active that line
-     * would otherwise sit under a scenario-only number and still say "spot", so
-     * each card's basis is captured at boot and rewritten with the scenario
-     * price + the baseline it moved from. The captured text is restored
-     * byte-exact on return, so the server's wording is never re-invented here. */
-    var cardBases = [];
-    var cardNodes = section.querySelectorAll("[data-metric-card]");
-    for (var cardIndex = 0; cardIndex < cardNodes.length; cardIndex += 1) {
-      var cardBasis = cardNodes[cardIndex].querySelector(".metric-card-basis");
-      if (cardBasis) {
-        cardBases.push({ node: cardBasis, original: cardBasis.textContent });
-      }
-    }
 
     /* State B (plan §4.3). A range control snaps its value onto its own step
      * grid before this line runs, so the CLEAN STATE is that browser-normalized
@@ -329,6 +320,7 @@
      * price does not. Spot cells are still evaluated at `spot` itself. */
     var spotText = formatMetric(spot, "usd2");
     var basisAtRest = basis ? basis.textContent : "";
+    var corporateBasisAtRest = corporateBasis ? corporateBasis.textContent : "";
     var configuredStep = Number(input.getAttribute("step"));
     var configuredMinimum = Number(input.getAttribute("min"));
     var scenarioPriceUnit =
@@ -415,23 +407,22 @@
       for (index = 0; index < scenarioHeads.length; index += 1) {
         setHidden(scenarioHeads[index], !moved);
       }
-      for (index = 0; index < cardBases.length; index += 1) {
-        cardBases[index].node.textContent = moved
-          ? "fwd @ scenario " +
-            formatScenarioPrice(gold) +
-            "/oz · baseline " +
-            cardBases[index].original.replace(/^fwd @ /, "")
-          : cardBases[index].original;
-      }
-
       section.setAttribute("data-scenario-active", moved ? "1" : "0");
       if (output) {
         output.textContent = moved ? formatScenarioPrice(gold) : spotText;
       }
       if (basis) {
         basis.textContent = moved
-          ? "scenario " + formatScenarioPrice(gold) + " · baseline " + basisAtRest
+          ? "scenario · baseline spot " + spotText + "/oz"
           : basisAtRest;
+      }
+      if (corporateBasis) {
+        corporateBasis.textContent = moved
+          ? "Scenario " +
+            formatScenarioPrice(gold) +
+            "/oz · baseline " +
+            corporateBasisAtRest.replace(/^Spot gold /, "spot ")
+          : corporateBasisAtRest;
       }
       input.setAttribute(
         "aria-valuetext",
@@ -499,6 +490,12 @@
         input.focus();
       });
     }
+
+    /* Progressive enhancement: the server intentionally ships the range
+     * disabled because without this module it cannot update any values. Only a
+     * validated, scenario-capable payload reaches this line, and all listeners
+     * are attached before the control becomes interactive. */
+    input.disabled = false;
 
     paintSpotCells();
     render(false, baselineGold); /* boot: clean state, and nothing announced */

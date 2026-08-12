@@ -40,8 +40,44 @@
 
   function init() {
     syncRegionFocusability();
+    function revealHashTarget() {
+      if (!window.location || !window.location.hash || !document.getElementById) return;
+      var raw = window.location.hash.slice(1);
+      if (!raw) return;
+      var targetId;
+      try {
+        targetId = decodeURIComponent(raw);
+      } catch (_error) {
+        return;
+      }
+      var target = document.getElementById(targetId);
+      if (!target) return;
+      var current = target;
+      while (current) {
+        if (
+          current.tagName &&
+          current.tagName.toLowerCase() === "details" &&
+          !current.hasAttribute("open")
+        ) {
+          current.setAttribute("open", "");
+        }
+        current = current.parentElement;
+      }
+      if (target.scrollIntoView) target.scrollIntoView({ block: "start" });
+      var isDetails =
+        target.tagName && target.tagName.toLowerCase() === "details";
+      var summary = isDetails && target.querySelector ? target.querySelector("summary") : null;
+      if (summary && summary.focus) summary.focus();
+    }
+    revealHashTarget();
+    // Validation re-renders mark the summary as the one-time focus target.
+    // The server opens the relevant disclosures first, so focusing here gives
+    // keyboard and screen-reader users the error before the echoed fields.
+    var focusTarget = document.querySelector("[data-focus-on-load]");
+    if (focusTarget && focusTarget.focus) focusTarget.focus();
     if (window.addEventListener) {
       window.addEventListener("resize", queueRegionSync);
+      window.addEventListener("hashchange", revealHashTarget);
     }
     // A .table-region inside a closed <details> measures 0 and would keep a
     // stale tab stop forever; <details> "toggle" does not bubble, so listen in

@@ -604,7 +604,7 @@ def _oi_trend_table(history_rows: list[dict[str, Any]]) -> str:
     for row in history_rows:
         if _capture_is_complete(row):
             cells = "".join(
-                f"<td>{_fmt_number(row.get(column), decimals=0)}</td>"
+                f"<td class=\"numeric\">{_fmt_number(row.get(column), decimals=0)}</td>"
                 for _, column in _TREND_SERIES
             )
         else:
@@ -621,8 +621,10 @@ def _oi_trend_table(history_rows: list[dict[str, Any]]) -> str:
         "<table>"
         "<caption>Open interest over time — contracts by day</caption>"
         "<thead><tr>"
-        "<th>Date</th><th>Put OI</th><th>Call OI</th><th>Total OI</th>"
-        "<th>Capture</th><th>Row status</th>"
+        "<th scope=\"col\">Date</th><th class=\"numeric\" scope=\"col\">Put OI</th>"
+        "<th class=\"numeric\" scope=\"col\">Call OI</th>"
+        "<th class=\"numeric\" scope=\"col\">Total OI</th>"
+        "<th scope=\"col\">Capture</th><th scope=\"col\">Row status</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
     )
@@ -831,14 +833,14 @@ def _render_side_table(
         + table_region(
             "<table><thead><tr>"
             + help_th("Contract", key="option_candidate_label")
-            + help_th("Strike", key="option_strike")
+            + help_th("Strike", key="option_strike", sort_numeric=True)
             + help_th("Expiry (DTE)", key="option_expiry_dte")
-            + help_th("Delta", key="option_candidate_delta")
-            + help_th("Bid / Ask", key="option_bid_ask")
-            + help_th("Mid", key="option_mid_price")
-            + help_th("Spread", key="option_rel_spread")
-            + help_th("Open interest", key="option_open_interest")
-            + help_th("Volume", key="option_contract_volume")
+            + help_th("Delta", key="option_candidate_delta", sort_numeric=True)
+            + help_th("Bid / Ask", key="option_bid_ask", sort_numeric=True)
+            + help_th("Mid", key="option_mid_price", sort_numeric=True)
+            + help_th("Spread", key="option_rel_spread", sort_numeric=True)
+            + help_th("Open interest", key="option_open_interest", sort_numeric=True)
+            + help_th("Volume", key="option_contract_volume", sort_numeric=True)
             + help_th("Liquidity", key="option_candidate_status", app_config=app_config)
             + help_th("Chain", key="option_actions")
             + "</tr></thead>"
@@ -861,9 +863,11 @@ def _render_contract_row(slot: OptionCandidateSlot, *, ticker: str) -> str:
         return (
             "<tr class=\"options-row-empty\">"
             f"<td>{label_html}</td>"
-            "<td>-</td>"
+            "<td class=\"numeric\">-</td>"
             f"<td>{_fmt_text(slot.expiration)}{_dte_suffix(slot.days_to_expiry)}</td>"
-            "<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>"
+            "<td class=\"numeric\">-</td><td class=\"numeric\">-</td>"
+            "<td class=\"numeric\">-</td><td class=\"numeric\">-</td>"
+            "<td class=\"numeric\">-</td><td class=\"numeric\">-</td>"
             f"<td>{_tier_badge(slot)}</td>"
             f"<td>{chain_link}</td>"
             "</tr>"
@@ -881,15 +885,15 @@ def _render_contract_row(slot: OptionCandidateSlot, *, ticker: str) -> str:
     return (
         "<tr>"
         f"<td>{label_html}{reason_row}</td>"
-        f"<td>{_fmt_number(candidate.strike, decimals=2)}</td>"
+        f"<td class=\"numeric\">{_fmt_number(candidate.strike, decimals=2)}</td>"
         f"<td>{_fmt_text(candidate.expiration)}{_dte_suffix(candidate.days_to_expiry)}</td>"
-        f"<td>{_fmt_number(candidate.delta, decimals=2)}</td>"
-        f"<td>{_fmt_number(candidate.bid, decimals=2)} / "
+        f"<td class=\"numeric\">{_fmt_number(candidate.delta, decimals=2)}</td>"
+        f"<td class=\"numeric\">{_fmt_number(candidate.bid, decimals=2)} / "
         f"{_fmt_number(candidate.ask, decimals=2)}</td>"
-        f"<td>{_fmt_number(candidate.mid, decimals=2)}</td>"
-        f"<td>{_fmt_percent(candidate.rel_spread, decimals=1)}</td>"
-        f"<td>{_fmt_number(candidate.open_interest, decimals=0)}</td>"
-        f"<td>{_fmt_number(candidate.volume, decimals=0)}</td>"
+        f"<td class=\"numeric\">{_fmt_number(candidate.mid, decimals=2)}</td>"
+        f"<td class=\"numeric\">{_fmt_percent(candidate.rel_spread, decimals=1)}</td>"
+        f"<td class=\"numeric\">{_fmt_number(candidate.open_interest, decimals=0)}</td>"
+        f"<td class=\"numeric\">{_fmt_number(candidate.volume, decimals=0)}</td>"
         f"<td>{_tier_badge(slot)}</td>"
         f"<td>{chain_link}</td>"
         "</tr>"
@@ -1186,7 +1190,8 @@ def _render_sizing_tool(
         f"{price_help}"
         "<input id=\"option-sizing-price\" data-role=\"price\" type=\"range\">"
         "<output data-role=\"price-out\" for=\"option-sizing-price\"></output></p>"
-        "<p class=\"field\"><button type=\"button\" data-role=\"reset\">Reset</button></p>"
+        "<p class=\"field\"><button type=\"button\" class=\"control\" "
+        "data-role=\"reset\">Reset</button></p>"
         "</div>"
         "<div data-role=\"result\" class=\"option-sizing-result\">"
         "<p data-role=\"contracts-line\"></p>"
@@ -1317,9 +1322,9 @@ def _render_greeks_table(frame: pd.DataFrame | None, *, ticker: str) -> str:
         f"<td>{escape(_greek_row_label(row))}</td>"
         f"<td>{_fmt_text(row.get('candidate_expiration'))}"
         f"{_dte_suffix(row.get('candidate_days_to_expiry'))}</td>"
-        f"<td>{_fmt_number(row.get('candidate_strike'), decimals=2)}</td>"
+        f"<td class=\"numeric\">{_fmt_number(row.get('candidate_strike'), decimals=2)}</td>"
         + "".join(
-            f"<td>{_fmt_number(row.get(column), decimals=4)}</td>"
+            f"<td class=\"numeric\">{_fmt_number(row.get(column), decimals=4)}</td>"
             for column, _, _ in _GREEK_COLUMNS
         )
         + "</tr>"
@@ -1330,9 +1335,11 @@ def _render_greeks_table(frame: pd.DataFrame | None, *, ticker: str) -> str:
         + heading
         + table_region(
             "<table><thead><tr>"
-            "<th>Contract</th><th>Expiry (DTE)</th><th>Strike</th>"
+            "<th scope=\"col\">Contract</th><th scope=\"col\">Expiry (DTE)</th>"
+            "<th class=\"numeric\" scope=\"col\">Strike</th>"
             + "".join(
-                f"<th>{escape(label)} <span class=\"unit-label\">({escape(unit)})</span></th>"
+                f"<th class=\"numeric\" scope=\"col\">{escape(label)} "
+                f"<span class=\"unit-label\">({escape(unit)})</span></th>"
                 for _, label, unit in _GREEK_COLUMNS
             )
             + "</tr></thead>"
@@ -1448,7 +1455,7 @@ def _render_context_table(
     rows = (
         "<tr>"
         + help_th("Share price used", key="option_stock_price")
-        + f"<td>{_fmt_number(price, decimals=2)}"
+        + f"<td class=\"numeric\">{_fmt_number(price, decimals=2)}"
         + (
             f" <span class=\"hint\">from the {escape(price_basis)}</span>"
             if price_basis
@@ -1463,7 +1470,8 @@ def _render_context_table(
         + f"<td>{_fmt_text(getattr(context, 'source', None))}</td></tr>"
         "<tr>"
         + help_th("Risk-free rate", key="option_risk_free_rate", app_config=app_config)
-        + f"<td>{_fmt_percent(getattr(context, 'risk_free_rate', None), decimals=2)}</td></tr>"
+        + f"<td class=\"numeric\">"
+        f"{_fmt_percent(getattr(context, 'risk_free_rate', None), decimals=2)}</td></tr>"
         "<tr>"
         + help_th("Refresh run", key="option_refresh_run")
         + f"<td>{_fmt_text(getattr(context, 'refresh_run_id', None))}</td></tr>"
