@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import re
+from html import unescape
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from golden_vector.app.config import load_app_config
 from golden_vector.app.paths import ProjectPaths
@@ -232,6 +236,84 @@ def test_performance_section_price_view_shows_stock_alone():
     )
     assert "Share price (USD)" in html
     assert "Gold" not in html.split("chart-axis")[0] or "Stock" in html
+
+
+def test_performance_price_view_is_currency_true_end_to_end():
+    """The share-price view draws currency levels, so every user-facing string
+    from the hint down to the accessible cell must say currency — and none of
+    them may repeat the Compare view's indexed-to-100 language."""
+    html = render_performance_section(
+        _performance_rows(), ticker="AAR.AX", horizon="1Y", view="price"
+    )
+
+    chart = html[html.index("<svg") : html.index("</details>")]
+    # hint + chart identity
+    assert "Share price (USD)" in html
+    assert 'aria-label="Share price over time (USD)"' in chart
+    # axis labels are the fixture's own price levels (50.0 .. 54.0), in USD
+    assert 'class="chart-label">USD 50.00</text>' in chart
+    assert 'class="chart-label">USD 54.00</text>' in chart
+    # the crosshair reads pre-formatted strings from the embed — currency included,
+    # so the pointer tooltip cannot disagree with the axis or the table
+    overlay = json.loads(unescape(re.search(r'data-overlay="([^"]+)"', chart).group(1)))
+    stock = overlay["series"][0]
+    assert stock["label"] == "Stock"
+    assert stock["byDate"]["2026-01-05"] == [pytest.approx(212.0, abs=40.0), 50.0, "USD 50.00"]
+    assert overlay["base"] is None  # no base-100 anchor on a currency chart
+    # accessible twin: caption states the unit, cells carry it, every date listed
+    assert "<caption>Share price over time — USD per share</caption>" in chart
+    assert 'aria-label="Share price over time — chart data table"' in chart
+    for index, date in enumerate(pd.bdate_range("2026-01-05", periods=5)):
+        assert f"<th scope=\"row\">{date.date()}</th>" in chart
+        assert f"<td>USD {50.0 + index:.2f}</td>" in chart
+    # nothing in the chart claims an index or a percent change
+    for wrong in ("indexed", "Rebased", "rebase", "%"):
+        assert wrong not in chart, wrong
+
+
+def test_performance_price_view_degrades_when_the_artifact_states_no_currency():
+    """Currency comes from the artifact's ``currency_basis``, never from the
+    ticker. Without a usable one the chart is withheld and the gap is stated —
+    an unlabelled price axis would be an invented unit."""
+    rows = _performance_rows()
+    rows.loc[rows["view"].eq("price"), "currency_basis"] = pd.NA
+
+    html = render_performance_section(rows, ticker="AAR.AX", horizon="1Y", view="price")
+
+    assert "does not state a currency basis" in html
+    assert "Share price (currency basis unavailable)" in html
+    assert "Share price (USD)" not in html
+    assert "<svg" not in html  # no chart drawn with a guessed unit
+    # ...and the control: the same artifact still renders the Compare view
+    compare = render_performance_section(
+        rows, ticker="AAR.AX", horizon="1Y", view="rebased"
+    )
+    assert "<svg" in compare
+    assert "does not state a currency basis" not in compare
+
+
+def test_performance_price_view_rejects_a_non_currency_basis_value():
+    rows = _performance_rows()
+    rows.loc[rows["view"].eq("price"), "currency_basis"] = "INDEX_100"
+
+    html = render_performance_section(rows, ticker="AAR.AX", horizon="1Y", view="price")
+
+    assert "does not state a currency basis" in html
+    assert "INDEX_100" not in html
+
+
+def test_performance_rebased_view_keeps_the_indexed_chart_contract():
+    """Back-compat control for the display-mode work: Compare is untouched."""
+    html = render_performance_section(
+        _performance_rows(), ticker="AAR.AX", horizon="1Y", view="rebased"
+    )
+
+    assert 'aria-label="Rebased price comparison"' in html
+    assert (
+        "<caption>Rebased price comparison — indexed value "
+        "(change vs the rebase start)</caption>"
+    ) in html
+    assert "<td>100.0 (0%)</td>" in html
 
 
 # ---------------------------------------------------------------------------

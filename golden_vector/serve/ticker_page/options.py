@@ -555,15 +555,21 @@ def _render_oi_trend(history_rows: list[dict[str, Any]]) -> str:
         series_by_label[label] = (dates, values)
 
     table_id = "options-oi-trend-table"
+    # Counts, not rebased prices: the chart's count mode labels the axis, the
+    # crosshair and the caption in contracts. No ``data_table_id`` here — this
+    # chart's text equivalent is the richer capture-aware table below, and asking
+    # the builder for a second one duplicated both the numbers and the region id.
     svg = _build_multiline_overlay_svg(
         series_by_label=series_by_label,
         base=0.0,
-        data_table_id=table_id,
+        mode="count",
+        unit="contracts",
+        title="Open interest over time",
     )
     twin = _chart_data_disclosure(
         table_html=_oi_trend_table(history_rows),
         region_id=table_id,
-        label="Open interest by day",
+        label="Open interest over time — chart data table",
     )
     gap_note = ""
     if incomplete:
@@ -608,7 +614,9 @@ def _oi_trend_table(history_rows: list[dict[str, Any]]) -> str:
             "</tr>"
         )
     return (
-        "<table><thead><tr>"
+        "<table>"
+        "<caption>Open interest over time — contracts by day</caption>"
+        "<thead><tr>"
         "<th>Date</th><th>Put OI</th><th>Call OI</th><th>Total OI</th>"
         "<th>Capture</th><th>Row status</th>"
         "</tr></thead>"
