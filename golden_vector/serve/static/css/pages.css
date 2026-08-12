@@ -104,64 +104,8 @@
 .candidate-ranking-table {
   margin-bottom: 18px;
 }
-/* Option Trading */
-.option-sizing-calculator {
-  margin-top: 16px;
-}
-.option-signal-card {
-  margin: 14px 0;
-}
-.option-signal-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
-  gap: 10px;
-  margin-top: 10px;
-}
-.option-signal-lane {
-  border: 1px solid var(--line);
-  background: var(--surface-cream);
-  border-radius: 8px;
-  padding: 10px 12px;
-  min-height: 92px;
-}
-.option-signal-lane h4 {
-  margin: 0 0 6px;
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-.option-signal-lane p {
-  margin: 0 0 6px;
-}
-.option-side-candidates {
-  margin-top: 16px;
-}
-.option-side-candidates h4 {
-  margin: 0 0 8px;
-}
-.option-sizing-form {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
-  gap: 10px;
-  align-items: end;
-  margin: 12px 0;
-}
-.option-sizing-form label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 0.9rem;
-}
-.option-sizing-form .radio-label {
-  flex-direction: row;
-  align-items: center;
-  min-height: 42px;
-}
-.option-sizing-form input[type="radio"] {
-  margin: 0 4px 0 0;
-}
-.option-sizing-form button {
-  align-self: end;
-}
+/* Option Trading — the M3d rebuild renders serve/ticker_page/options.py; the
+   old panel's selectors were deleted with their markup (design-token sweep). */
 .option-sizing-result {
   margin-top: 12px;
 }
@@ -172,18 +116,6 @@
   border-radius: 4px;
 }
 .yahoo-chain-icon:hover { background: var(--verdict-partial-bg); }
-.option-chain-detail {
-  margin-top: 18px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-}
-.option-chain-detail > summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--muted);
-  padding: 4px 0;
-}
-.option-chain-detail[open] > summary { margin-bottom: 8px; }
 /* Portfolio */
 .correlation-heatmap th,
 .correlation-heatmap td {
@@ -276,7 +208,7 @@
   gap: 10px;
   margin: 10px 0 14px;
 }
-.metric-card-label { margin: 0; font-size: 0.82rem; color: var(--ink-soft, #5a6472); }
+.metric-card-label { margin: 0; font-size: 0.82rem; color: var(--ink-soft); }
 .metric-card-value { margin: 4px 0 0; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
 .metric-card-basis { margin: 4px 0 0; }
 .scenario-cell { font-variant-numeric: tabular-nums; }
@@ -284,10 +216,10 @@ p.scenario-cell { margin: 2px 0 0; font-weight: 600; }
 .scenario-cell[data-unavailable], td[data-unavailable] { font-style: italic; opacity: 0.85; }
 .spot-cell { font-variant-numeric: tabular-nums; }
 .dial-pending { font-style: italic; opacity: 0.8; }
-td.basis, .basis { font-size: 0.78rem; color: var(--ink-soft, #5a6472); }
+td.basis, .basis { font-size: 0.78rem; color: var(--ink-soft); }
 .is-updated { animation: gv-cell-flash 400ms ease-out; }
 @keyframes gv-cell-flash {
-  from { background: var(--accent-soft, rgba(214, 168, 74, 0.35)); }
+  from { background: var(--accent-soft); }
   to { background: transparent; }
 }
 @media (prefers-reduced-motion: reduce) {

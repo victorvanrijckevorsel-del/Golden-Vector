@@ -37,6 +37,7 @@
   --panel: var(--color-surface-1);
   --ink: var(--color-text-primary);
   --ink-strong: var(--color-text-primary);
+  --ink-soft: var(--color-text-secondary);
   --muted: var(--color-text-secondary);
   --text-soft: var(--color-text-secondary);
   --text-brown: var(--color-text-secondary);
