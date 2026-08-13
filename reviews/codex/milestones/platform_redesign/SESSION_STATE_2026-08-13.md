@@ -55,17 +55,27 @@ on purpose, never stage it.
    ```
    venv/Scripts/python.exe main.py market-hours-refresh
    ```
-3. **Scheduled tasks are still not installed.** Agent-spawned UAC elevation
-   silently no-ops on this machine (Defender suspected); the script is proved
-   correct — an unelevated dry run fails only with "Access is denied". Victor
-   must run, in an elevated terminal:
-   ```
-   powershell -NoProfile -ExecutionPolicy Bypass -File "<scratchpad>\install_tasks.ps1"
-   ```
-   The scratchpad path dies with the session — if it is gone, the installer is
-   `main.py install-scheduled-refresh-tasks --apply` plus a `schtasks /Create`
-   for `scripts/backup_data.ps1` at 23:30 as SYSTEM. **Until this is installed
-   there is no automatic refresh and no nightly backup.**
+3. ~~Scheduled tasks are not installed.~~ **DONE 2026-08-13 14:54.** All four
+   registered as hidden SYSTEM tasks, and the superseded visible-console
+   "Market Refresh 1600/1930" pair was removed:
+   - Golden Vector Data Refresh - First Open
+   - Golden Vector Data Refresh - US Post Close
+   - Golden Vector Data Refresh - Retry Heartbeat
+   - Golden Vector Data Backup (nightly 23:30)
+
+   It had failed all session for a real reason that only became visible once
+   elevation worked: the task XML carried
+   `<LogonType>ServiceAccount</LogonType>`, which is a TASK_LOGON_TYPE constant
+   in the COM API but **not** a value in the Task Scheduler XML schema, so
+   `schtasks /Create /XML` rejected the whole file — "(52,35):LogonType:
+   ServiceAccount". Fixed in `windows_scheduled_refresh.py`; the test that had
+   *asserted* the broken form now asserts its absence.
+
+   Note for the future: an unelevated `schtasks` failing with "Access is denied"
+   proves nothing about the XML — it checks permissions before it parses. And a
+   normal shell cannot see these tasks at all: `schtasks /Query /TN "Golden
+   Vector Data Refresh - First Open"` answers "Access is denied" (they exist,
+   hidden and SYSTEM-owned) rather than "cannot find".
 4. **400 fixture files pollute the data store.**
    `data/intermediate/status/model_states/model_state_r000000…r000399.json`, all
    stamped 2026-01-01, left by an out-of-repo perf measurement. Because the
