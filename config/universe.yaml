@@ -63,6 +63,18 @@ tickers:
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
+  - ticker: AMRQ.L
+    company: Amaroq Ltd.
+    exchange: LSE
+    currency: GBP
+    # Added 2026-08-13 (Victor). Greenland producer (Nalunaq). His list said
+    # AMRQ.TO, but Yahoo has no Toronto line — only this London listing, which
+    # quotes in PENCE and reports in CAD. Tier 2 pending Victor's call:
+    # Greenland is stable but is not the Australia/Canada tier-1 case.
+    jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
   - ticker: ARIS.TO
     company: Aris Mining Corporation
     exchange: TSX
@@ -72,6 +84,15 @@ tickers:
     # ticker). Yahoo Finance only serves the canonical TSX symbol ARIS.TO,
     # so that's what we use here. Import scripts map ARMN -> ARIS.TO when
     # ingesting the friend's Excel.
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: ARTG.V
+    company: Artemis Gold Inc.
+    exchange: TSXV
+    currency: CAD
+    # Added 2026-08-13 (Victor). Blackwater, British Columbia.
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -96,6 +117,15 @@ tickers:
     exchange: US
     currency: USD
     jurisdiction_tier: 2
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: BC8.AX
+    company: Black Cat Syndicate Limited
+    exchange: ASX
+    currency: AUD
+    # Added 2026-08-13 (Victor). Kalgoorlie / Paulsens, Western Australia.
+    jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
@@ -186,6 +216,16 @@ tickers:
     active: true
     tool_a_enabled: true
     tool_b_enabled: true
+  - ticker: DSV.TO
+    company: Discovery Mining Ltd.
+    exchange: TSX
+    currency: CAD
+    # Added 2026-08-13 (Victor). Porcupine complex, Ontario. Quotes in CAD and
+    # reports in USD — routine here (84 of 122 rows already differ).
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
   - ticker: EDV.L
     company: Endeavour Mining plc
     exchange: LSE
@@ -254,6 +294,15 @@ tickers:
     company: Greatland Resources
     exchange: LSE
     currency: GBP
+    jurisdiction_tier: 1
+    active: true
+    tool_a_enabled: true
+    tool_b_enabled: true
+  - ticker: GMD.AX
+    company: Genesis Minerals Limited
+    exchange: ASX
+    currency: AUD
+    # Added 2026-08-13 (Victor). Leonora / Gwalia, Western Australia.
     jurisdiction_tier: 1
     active: true
     tool_a_enabled: true
