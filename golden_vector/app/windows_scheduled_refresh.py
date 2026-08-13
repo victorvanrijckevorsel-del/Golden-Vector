@@ -372,6 +372,12 @@ def _task_xml(
 ) -> str:
     arguments = subprocess.list2cmdline([str(main_py), "scheduled-refresh", "--trigger", trigger])
     wake = "true" if wake_to_run else "false"
+    # The Principal carries NO LogonType element. "ServiceAccount" is a
+    # TASK_LOGON_TYPE constant in the COM API but not a value in the Task
+    # Scheduler XML schema, so an elevated `schtasks /Create /XML` refused the
+    # whole registration with "(52,35):LogonType:ServiceAccount ... incorrectly
+    # formatted or out of range" (2026-08-13). Windows infers the service logon
+    # from the S-1-5-18 SID and omits the element in its own exports.
     return f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -383,7 +389,6 @@ def _task_xml(
   <Principals>
     <Principal id="System">
       <UserId>S-1-5-18</UserId>
-      <LogonType>ServiceAccount</LogonType>
       <RunLevel>HighestAvailable</RunLevel>
     </Principal>
   </Principals>

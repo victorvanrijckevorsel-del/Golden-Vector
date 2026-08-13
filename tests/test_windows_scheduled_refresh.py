@@ -32,7 +32,15 @@ def test_windows_tasks_are_hidden_system_pythonw_tasks_with_expected_triggers(tm
     for task in tasks:
         root = ElementTree.fromstring(task.xml)
         assert "<UserId>S-1-5-18</UserId>" in task.xml
-        assert "<LogonType>ServiceAccount</LogonType>" in task.xml
+        # This assertion used to require <LogonType>ServiceAccount</LogonType>,
+        # which pinned XML that Windows REFUSES: "ServiceAccount" is a
+        # TASK_LOGON_TYPE constant in the COM API but not a value in the Task
+        # Scheduler XML schema, so a real elevated `schtasks /Create /XML`
+        # failed the whole registration with
+        # "(52,35):LogonType:ServiceAccount ... incorrectly formatted or out of
+        # range" (2026-08-13). The service logon is inferred from the SID.
+        assert "<LogonType>" not in task.xml
+        assert "<RunLevel>HighestAvailable</RunLevel>" in task.xml
         assert "<Hidden>true</Hidden>" in task.xml
         assert "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>" in task.xml
         assert "<StartWhenAvailable>true</StartWhenAvailable>" in task.xml
