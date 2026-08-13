@@ -86,3 +86,67 @@ Evidence: `gold_marking/corporate_finance_gold_marking_cards.png` (cards) and
 `..._expanded.png` (all groups open — diamonds on the eleven dial-driven rows,
 none on Market cap, Enterprise value, Share price, the balance sheet, resilience
 or data-quality rows).
+
+---
+
+# Follow-up: the same bug class, found systematically (2026-08-13, later)
+
+Victor's reaction to the fix was that the two still do not look alike. Since
+"nobody compared against the mock" was the root cause, an independent audit
+compared mock v3 against the live page section by section. It found the gold
+marking was one instance of a pattern: **the requirements captured what the page
+says and lost how the page looks**, and the build implemented the requirements.
+
+## Measured
+
+| | mock | live |
+| --- | --- | --- |
+| whole page height | 4,152px | 8,137px |
+| table row height | 26px | 39px |
+| table header | 9px uppercase, dim, transparent | 15px sentence-case on a filled band |
+| disclosure summary | 36px bordered card, gold marker, preview hint | 25px bold text, default triangle, no hint |
+
+## Two defects fixed immediately
+
+1. **`visually-hidden` was emitted four times and defined nowhere.** Screen-reader-only
+   labels ("Your score: ", "Rank: ") and *two* `role="status"` live regions — in the
+   score builder and the options section — rendered as visible body text. That is
+   what made the score result read "Your score: 52.8 Rank: #30 of 57 ranked". The
+   standard utility now lives in `base.css`; verified in-browser at 1×1px.
+2. **The guardrail that would have caught all of it.**
+   `test_no_dead_first_party_selectors` checks CSS→markup and its docstring records
+   the reverse direction (GV-RD-FINAL-008) as **not** covered. That reverse direction
+   is precisely this bug class: `moves-with-gold` shipped with no rule painting it.
+   `test_every_emitted_class_is_painted_or_a_declared_known_gap` now closes it, built
+   as a **ratchet** — a new unstyled class fails, and painting a known gap without
+   deleting its register entry also fails, so the list can only shrink. It found
+   **52 emitted classes with no CSS rule**, of which 32 are the score builder.
+
+## Not a defect (verified before touching it)
+
+The audit's second-ranked finding — headline cards hide the spot value once the
+dial moves, against requirements §3 "show BOTH values" — is **sanctioned**. The
+final plan §2.3 records the override explicitly: "One active headline value per
+card… Victor's duplicate-number feedback". Left as built.
+
+## Awaiting Victor's scope decision
+
+The remaining mock-fidelity work is one coherent pass, not a list of patches:
+the score builder's stylesheet (it has none — browser-default fieldsets, blue
+sliders, no contribution bars, unscrolled 61-row list), table density, disclosure
+cards with preview hints, section header badges (including "gold explains 62%",
+now buried in a fold), group headers, and per-section lede sentences. Ranked
+detail and file/line targets are in the audit; the register in
+`KNOWN_UNSTYLED_CLASSES` is the machine-checkable half of the same backlog.
+
+## Also found: benchmark fixtures in the production data store
+
+`data/intermediate/status/model_states/` holds 400 synthetic manifests
+(`model_state_r000000…r000399.json`, all stamped 2026-01-01) left by an
+out-of-repo performance measurement — the "1.8s at 400 retained files" figure in
+`latest_successful_refresh.py`. Because today's current pointer is `incomplete`
+(the options build was correctly blocked pre-market), the reader falls back to
+scanning retained manifests and picks the newest *complete* one — a fixture. The
+app header therefore reads **"Updated Dec 31, 7:00 PM ET · data may be stale"**
+on every page. The code is right; the store is polluted. Deleting under `data/`
+is Victor's alone (incident 2026-08-13), so this is reported, not actioned.

@@ -73,6 +73,22 @@ input, textarea, select {
 .hint {
   color: var(--muted);
 }
+/* Screen-reader-only text. This class was emitted in four places with NO rule
+   defining it anywhere, so every "Your score: " / "Rank: " label and both
+   role="status" live regions rendered as visible page text (found by the
+   mock-vs-live audit, 2026-08-13). Kept readable to assistive tech: removed
+   from the visual flow rather than display:none. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 /* Long-content hardening (plan phase 6): long run ids, error strings, and
    labels wrap instead of widening their containers. break-word only splits
    when a value would otherwise overflow. */

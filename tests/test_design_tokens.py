@@ -513,6 +513,112 @@ def test_global_action_and_sidebar_defaults_use_rollout_primitives():
     assert "grid-template-columns: var(--sidebar-width) minmax(0, 1fr)" in shell
 
 
+#: The OPPOSITE drift from dead CSS: a class the serve layer emits that no
+#: first-party CSS rule paints. Both of 2026-08-13's findings were this bug —
+#: `moves-with-gold` shipped with no rule (the mock's gold marking was lost in
+#: the build and no review caught it), and the whole score builder renders as
+#: browser defaults. Full inventory:
+#: `reviews/codex/milestones/platform_redesign/gold_marking_gap_2026-08-13.md`.
+#:
+#: This is a RATCHET, checked in both directions: a NEW unstyled class fails,
+#: and styling one without deleting its entry here fails too, so the register
+#: can only shrink. Entries are grouped by why they are still here.
+KNOWN_UNSTYLED_CLASSES = {
+    # Score builder: no stylesheet at all — the mock's two gold-headed columns,
+    # weight sliders, diverging contribution bars and scrollable ranked list all
+    # render as browser defaults. Awaiting Victor's scope decision on the
+    # mock-fidelity pass; tracked as one block, not fixed piecemeal.
+    "sb-actions", "sb-bar", "sb-bar-track", "sb-basis", "sb-contribution",
+    "sb-contribution-label", "sb-contribution-value", "sb-contributions",
+    "sb-group", "sb-legend", "sb-metric", "sb-metric-basis", "sb-metric-name",
+    "sb-metrics", "sb-note", "sb-rank", "sb-ranked", "sb-score",
+    "sb-stability", "sb-subject", "sb-tied", "sb-ticker", "sb-unavailable",
+    "sb-weight-points", "score-builder-controls", "score-builder-result",
+    "is-subject", "is-unranked",
+    # Same pass: table density, disclosure hints and panel treatments the mock
+    # specified and the build did not carry over.
+    "compact-table", "dial-unavailable", "gold-dial-help", "resilience-basis",
+    "scenario-head", "candidate-beta-window-panel", "candidate-builder-panel",
+    "candidate-gold-scenario-panel", "candidate-top-list-card",
+    "fx-attribution", "performance-panel", "ticker-inputs__body",
+    "ticker-inputs__section-title", "ticker-inputs__title", "cell-sub",
+    "reference-row", "is-selected", "sz-row-label", "is-at-price",
+    "is-break-even",
+    # Behavioural hooks read by JS/media queries, never painted by design.
+    "reduced-motion", "dark",
+    # Semantic hook whose visual is carried by a child: the gold diamond lives
+    # in a .gold-linked-marker span inside the row. Asserted by
+    # test_ticker_page_corporate.py, so it is load-bearing despite having no
+    # rule of its own.
+    "moves-with-gold",
+}
+
+
+def _emitted_classes() -> dict[str, set[str]]:
+    """class name -> the first-party files that emit it."""
+
+    emitted: dict[str, set[str]] = {}
+
+    def record(name: str, source: str) -> None:
+        emitted.setdefault(name, set()).add(source)
+
+    for module in sorted(SERVE_DIR.rglob("*.py")):
+        source = module.read_text(encoding="utf-8", errors="ignore")
+        # Only literal class attributes: an f-string with a {placeholder} is
+        # composed at runtime and belongs to the dynamic allow-list instead.
+        for value in re.findall(r'class="([^"{}]+)"', source):
+            for name in value.split():
+                record(name, module.name)
+    for script in sorted(STATIC_DIR.glob("*.js")):
+        source = script.read_text(encoding="utf-8", errors="ignore")
+        for value in re.findall(r'className\s*=\s*"([^"]+)"', source):
+            for name in value.split():
+                record(name, script.name)
+        for value in re.findall(r'classList\.add\(\s*"([^"]+)"', source):
+            record(value, script.name)
+    return emitted
+
+
+def _styled_classes() -> set[str]:
+    styled: set[str] = set()
+    for path in _first_party_css_files():
+        body = _strip_css_comments(path.read_text(encoding="utf-8"))
+        for selector, _ in re.findall(r"([^{}]+)\{([^}]*)\}", body):
+            if selector.strip().startswith("@"):
+                continue
+            styled.update(re.findall(r"\.([A-Za-z][A-Za-z0-9_-]*)", selector))
+    return styled
+
+
+def test_every_emitted_class_is_painted_or_a_declared_known_gap():
+    """GV-RD-FINAL-008, the direction the dead-CSS guard deliberately omits.
+
+    Markup that ships a class nothing paints is invisible debt: it looks
+    implemented in the template and renders as nothing. `moves-with-gold` cost
+    the approved mock's entire gold-marking rule that way, and `visually-hidden`
+    put screen-reader-only labels and two live regions on screen as body text.
+    """
+
+    emitted = _emitted_classes()
+    styled = _styled_classes()
+    unstyled = {name for name in emitted if name not in styled}
+
+    new_drift = sorted(unstyled - KNOWN_UNSTYLED_CLASSES)
+    assert not new_drift, (
+        "emitted classes with no CSS owner (paint them, or add them to "
+        "KNOWN_UNSTYLED_CLASSES with a reason): "
+        + ", ".join(f"{name} ({', '.join(sorted(emitted[name]))})" for name in new_drift)
+    )
+
+    # Ratchet: once a known gap is painted, its entry must go, or the register
+    # rots into a permanent excuse list.
+    now_styled = sorted(KNOWN_UNSTYLED_CLASSES - unstyled)
+    assert not now_styled, (
+        "these now have CSS — delete them from KNOWN_UNSTYLED_CLASSES: "
+        + ", ".join(now_styled)
+    )
+
+
 def test_no_dead_first_party_selectors():
     """One direction only: every simple class selector in first-party CSS must
     appear as a whole token in the serve layer (Python or first-party JS) or be
