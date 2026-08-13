@@ -86,9 +86,18 @@ on purpose, never stage it.
    ```
    Remove-Item "C:\Users\Emanuel\code\Golden-Vector\data\intermediate\status\model_states\model_state_r*.json"
    ```
-5. **Open decision from Victor — mock-fidelity pass.** Ticker-page-only,
-   platform-wide for the shared primitives (recommended), or score-builder-only.
-   Detail in `gold_marking_gap_2026-08-13.md`.
+5. ~~Open decision from Victor — mock-fidelity pass.~~ **CLOSED 2026-08-13 by
+   Victor: DROPPED. Do not do it, do not re-propose it.** His words: "i'm tired
+   of doing this. Dont do it anymore". This covers the whole remaining
+   mock-fidelity backlog — score-builder stylesheet, table density, disclosure
+   cards, section header badges, group headers, per-section ledes.
+
+   The page is functionally correct and passes its tests; it simply does not
+   match mock v3's density. That is now an accepted permanent difference, not a
+   defect and not a deferred task. `KNOWN_UNSTYLED_CLASSES` stays as a ratchet
+   guard so nothing gets *worse*, but its 52 entries are no longer a backlog to
+   burn down. Any future agent reading `gold_marking_gap_2026-08-13.md` should
+   treat its "Awaiting Victor's scope decision" section as answered: **no.**
 6. **Open decision from Victor — mining inputs for the five new tickers.**
    Tool B/D and their corporate-finance sections stay INCOMPLETE until
    production, AISC, cash cost, royalty rate, sustaining capex and reserve life

@@ -129,7 +129,16 @@ dial moves, against requirements §3 "show BOTH values" — is **sanctioned**. T
 final plan §2.3 records the override explicitly: "One active headline value per
 card… Victor's duplicate-number feedback". Left as built.
 
-## Awaiting Victor's scope decision
+## ANSWERED 2026-08-13: NO. This work is dropped.
+
+Victor's decision, verbatim: *"i'm tired of doing this. Dont do it anymore"*.
+The mock-fidelity pass described below is **cancelled in full** — not deferred,
+not reduced to a smaller scope. The live page's density difference from mock v3
+is an accepted permanent difference. Do not re-propose this work; do not open it
+as a finding in a future review. The section below is kept only as a record of
+what was measured.
+
+## ~~Awaiting Victor's scope decision~~ (superseded — see above)
 
 The remaining mock-fidelity work is one coherent pass, not a list of patches:
 the score builder's stylesheet (it has none — browser-default fieldsets, blue
