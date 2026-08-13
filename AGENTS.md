@@ -177,3 +177,12 @@ You are an implementation agent. You build features, write code, and review code
 - Skip data quality checks to rush analytics
 - Mix currencies without explicit conversion
 - Ask for permission on routine file creation/editing — just do the work
+- **NEVER run `git clean` (any flags, any scope) and NEVER recursively delete anything under
+  `data/`.** `data/` is git-ignored but it is the PRODUCTION DATA STORE, not disposable build
+  output: it holds perishable point-in-time market captures and the Lab's append-only research
+  history, which are unrecoverable once deleted (SSD TRIM zeroes deleted blocks within minutes —
+  proven 2026-08-13). On 2026-08-13 00:42 a data-scoped clean-style deletion during an overnight
+  agent session destroyed two months of option-chain history and the Lab vintage store
+  (`reviews/codex/milestones/platform_redesign/incident_data_loss_2026-08-13.md`). If the tree
+  seems cluttered, list what you would remove and STOP; deletion of data is exclusively Victor's,
+  by hand. This mirrors the worker git-ban of 2026-08-11 and is absolute.

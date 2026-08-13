@@ -719,7 +719,46 @@ def test_tool_d_plain_yahoo_route_does_not_call_scenario_compute(tmp_path, monke
     body = response["body"]
     assert "yahoo-source-boom" not in body
     assert "Showing Our View data instead" not in body
-    assert 'value="yahoo" selected>Yahoo Fundamentals</option>' in body
+    assert 'aria-current="true">Yahoo Fundamentals</a>' in body
+    assert '<select name="fundamentals_source">' not in body
+
+
+def test_tool_d_missing_source_uses_contract_reason_and_shared_degraded_state(
+    tmp_path,
+    monkeypatch,
+):
+    import golden_vector.serve.overview_tool_d as overview_tool_d
+    from golden_vector.contracts.tool_d import (
+        ToolDSourceSelection,
+        YAHOO_TOOL_D_REBUILD_REQUIRED_REASON,
+    )
+    from tests.helpers import call_wsgi_app
+    from tests.test_redesign_routes import _full_app
+
+    _paths, app = _full_app(tmp_path)
+    monkeypatch.setattr(
+        overview_tool_d,
+        "select_tool_d_source_rows",
+        lambda *_args, **_kwargs: ToolDSourceSelection(
+            frame=pd.DataFrame(),
+            reason=YAHOO_TOOL_D_REBUILD_REQUIRED_REASON,
+        ),
+    )
+
+    response = call_wsgi_app(
+        app,
+        method="GET",
+        path="/tool-d?fundamentals_source=yahoo",
+    )
+
+    assert response["status"].startswith("200")
+    body = response["body"]
+    assert YAHOO_TOOL_D_REBUILD_REQUIRED_REASON in body
+    assert "notice-degraded" in body
+    assert 'class="empty-state"' in body
+    assert "Flip analysis is unavailable." in body
+    assert "No names flip under the selected stress." not in body
+    assert "Showing Our View data instead" not in body
 
 
 def test_yahoo_scenario_error_states_requested_gold_price_was_not_applied():
@@ -763,7 +802,7 @@ def test_tool_d_route_yahoo_scenario_failure_names_requested_gold_price(
     assert "NOT applied" in body
     assert "persisted selected-source spot run" in body
     assert "Showing Our View data instead" not in body
-    assert 'value="yahoo" selected>Yahoo Fundamentals</option>' in body
+    assert 'aria-current="true">Yahoo Fundamentals</a>' in body
 
 
 def test_tool_d_invalid_gold_does_not_trigger_yahoo_scenario_compute(
@@ -816,6 +855,10 @@ def test_tool_d_flip_panel_excludes_degraded_rows(tmp_path, monkeypatch):
                 "ticker": "DEGRADEDCO",
                 "resilience_flip_flags": "flips to margin negative",
                 "resilience_data_status": "INSUFFICIENT",
+                "tool_d_explanation": (
+                    "Not scored because the survival inputs are incomplete."
+                ),
+                "missing_inputs": "interest_expense_musd;net_debt_musd",
                 "tool_d_quality_rank": None,
                 "spot_gold_usd": 2400.0,
                 "gold_price_used": 1800.0,
@@ -836,6 +879,9 @@ def test_tool_d_flip_panel_excludes_degraded_rows(tmp_path, monkeypatch):
     assert "DEGRADEDCO" not in flip_panel
     # The degraded row still appears in the full table, just not the headline.
     assert "DEGRADEDCO" in response["body"]
+    assert "Resilience is unavailable for the selected financial source" in response["body"]
+    assert "Not scored because the survival inputs are incomplete." in response["body"]
+    assert "interest_expense_musd;net_debt_musd" in response["body"]
 
 
 def test_tool_d_degraded_rows_cannot_move_healthy_components_scores_or_ranks():

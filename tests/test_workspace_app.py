@@ -1977,6 +1977,13 @@ def test_workspace_tool_a_view_renders_only_tool_a_columns(tmp_path):
     # Tool B-specific columns must NOT bleed in
     assert "Corporate Finance Score" not in response["body"]
     assert "Verdict" not in response["body"]
+    assert '<div class="terminal-density">' in response["body"]
+    assert 'role="group" aria-label="Beta window"' in response["body"]
+    assert 'aria-current="true">1Y</a>' in response["body"]
+    assert 'class="form-control"' in response["body"]
+    assert 'class="control control--primary"' in response["body"]
+    assert '<table id="tool-a-table" class="js-datatable">' in response["body"]
+    assert "button-like" not in response["body"]
     # Nav must mark this tab active
     assert 'aria-current="page" href="/tool-a"' in response["body"]
 
@@ -2000,6 +2007,13 @@ def test_workspace_tool_b_view_renders_only_tool_b_columns(tmp_path):
     assert "Forward P/E est." in response["body"]
     assert "EV/EBITDA est." in response["body"]
     assert "Net Debt/EBITDA" in response["body"]
+    assert '<div class="terminal-density">' in response["body"]
+    assert 'role="group" aria-label="Financials source"' in response["body"]
+    assert '<span class="toolbar__label">Financials source</span>' in response["body"]
+    assert 'aria-current="true">Our View</a>' in response["body"]
+    assert 'class="form-control"' in response["body"]
+    assert 'class="control control--primary"' in response["body"]
+    assert "button-like" not in response["body"]
     # Target-price scenarios are intentionally gone.
     assert "Peer P/E Target" not in response["body"]
     assert "Peak P/E Target" not in response["body"]
@@ -2031,6 +2045,13 @@ def test_workspace_tool_c_view_renders_gold_downside_page(tmp_path):
     assert "Downside Score" in response["body"]
     assert "Downside Rank" not in response["body"]
     assert 'aria-current="page" href="/tool-c"' in response["body"]
+    assert '<div class="terminal-density">' in response["body"]
+    assert 'role="group" aria-label="Beta window"' in response["body"]
+    assert 'aria-current="true">1Y</a>' in response["body"]
+    assert 'class="form-control"' in response["body"]
+    assert 'class="control control--primary"' in response["body"]
+    assert '<table id="tool-c-table" class="js-datatable">' in response["body"]
+    assert "button-like" not in response["body"]
     # Phase 3: shared beta-window selector + a Gold-link trust column on Gold Downside.
     assert "window-switcher" in response["body"]
     assert "window=2Y" in response["body"] and "window=5Y" in response["body"]
@@ -2045,6 +2066,35 @@ def test_workspace_tool_c_view_renders_gold_downside_page(tmp_path):
     response_2y = _call_wsgi_app(app, method="GET", path="/tool-c?window=2Y")
     assert 'name="window" value="2Y"' in response_2y["body"]
     assert "1.75" in response_2y["body"]  # 2Y windowed down beta
+
+
+@pytest.mark.parametrize("path", ("/tool-a", "/tool-c"))
+def test_structural_window_links_preserve_route_query_state(tmp_path, path):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _repo_app_config()
+    bootstrap_manual_screening_data(paths, tickers=["NEM"])
+    _write_latest_foundation_snapshot(paths)
+    _write_latest_outputs(paths)
+    _write_latest_tool_c_output(paths)
+
+    app = create_workspace_app(paths, app_config=app_config, tool_b_tickers=["NEM"])
+    response = _call_wsgi_app(
+        app,
+        method="GET",
+        path=f"{path}?window=12M&search=NEM&sort=rank&lens=research",
+    )
+
+    assert response["status"].startswith("200")
+    assert (
+        f'href="{path}?window=6M&amp;search=NEM&amp;sort=rank&amp;lens=research"'
+        in response["body"]
+    )
+    assert (
+        f'href="{path}?window=12M&amp;search=NEM&amp;sort=rank&amp;lens=research" '
+        'aria-current="true"'
+        in response["body"]
+    )
 
 
 def test_workspace_tool_c_view_degrades_gracefully_for_old_artifact(tmp_path):
@@ -2118,6 +2168,13 @@ def test_workspace_tool_d_view_renders_corporate_resilience_page(tmp_path):
     assert "Interest-Cover Line" in response["body"]
     assert "Breakeven Gold" in response["body"]
     assert "Financials source" in response["body"]
+    assert '<div class="terminal-density">' in response["body"]
+    assert 'role="group" aria-label="Financials source"' in response["body"]
+    assert '<span class="toolbar__label">Financials source</span>' in response["body"]
+    assert 'aria-current="true">Our View</a>' in response["body"]
+    assert 'class="form-control"' in response["body"]
+    assert 'class="control control--primary"' in response["body"]
+    assert "button-like" not in response["body"]
     assert "/tool-d?gold_price=3400.00" in response["body"]
     assert 'aria-current="page" href="/tool-d"' in response["body"]
 
@@ -2366,7 +2423,8 @@ def test_workspace_tool_d_yahoo_source_reads_persisted_rows_and_preserves_links(
     assert "Scenario recomputed" not in response["body"]
     assert '<td data-order="1234.0">1,234</td>' in response["body"]  # Yahoo sentinel
     assert '<td data-order="2345.0">2,345</td>' not in response["body"]
-    assert 'value="yahoo" selected>Yahoo Fundamentals</option>' in response["body"]
+    assert 'aria-current="true">Yahoo Fundamentals</a>' in response["body"]
+    assert '<select name="fundamentals_source">' not in response["body"]
     assert 'name="gold_price" type="number" min="1" step="1" value=""' in response["body"]
     assert "/tool-d?gold_price=3400.00&amp;fundamentals_source=yahoo" in response["body"]
     assert "/ticker/NEM?fundamentals_source=yahoo" in response["body"]
@@ -2402,7 +2460,12 @@ def test_workspace_tool_d_yahoo_scenario_failure_keeps_source_and_spot_row(
     assert response["status"].startswith("200")
     assert "Could not compute Yahoo Fundamentals stress scenario" in response["body"]
     assert "was NOT applied" in response["body"]
-    assert 'value="yahoo" selected>Yahoo Fundamentals</option>' in response["body"]
+    assert 'aria-current="true">Yahoo Fundamentals</a>' in response["body"]
+    assert 'href="/tool-d?gold_price=3000">Our View</a>' in response["body"]
+    assert (
+        'href="/tool-d?gold_price=3000&amp;fundamentals_source=yahoo" '
+        'aria-current="true">Yahoo Fundamentals</a>'
+    ) in response["body"]
     assert '<td data-order="1234.0">1,234</td>' in response["body"]
     assert '<td data-order="2345.0">2,345</td>' not in response["body"]
 
@@ -2619,6 +2682,42 @@ def test_ticker_page_options_serve_layer_has_no_option_arithmetic():
         "compute_scenario_bundle",
         ".fillna(",
         ".combine_first(",
+    ):
+        assert forbidden not in source, forbidden
+
+
+def test_option_data_freshness_serve_layer_is_wording_and_provenance_only():
+    """option_data_freshness.py words persisted provenance; it never classifies.
+
+    Canon: every new serve surface gets a static-scan guardrail (clone of the
+    Tool-D/Tool-B serve-arithmetic tests). This module is allowed exactly one
+    non-formatting job -- showing the WORSE of the row's stamped age and the
+    carried generation's age, because a skipped build leaves the row columns
+    frozen. Everything that decides HOW OLD a snapshot is must stay in the one
+    shared classifier: no second trading-day calendar, no second staleness
+    threshold, no frame-level coalesce.
+    """
+    source = Path("golden_vector/serve/option_data_freshness.py").read_text(encoding="utf-8")
+
+    # It delegates the actual classification to the ONE shared helper.
+    assert "classify_us_trading_day_freshness" in source
+    for forbidden in (
+        # A forked trading-day calendar would let this module disagree with the
+        # artifact builder about the same snapshot.
+        "is_us_equity_trading_day",
+        "us_equity_market_holidays",
+        "timedelta(",
+        "weekday()",
+        # A second staleness threshold (the whole point of the one authority).
+        "OPTION_STALENESS_WARNING_TRADING_DAYS",
+        ">= 3",
+        "< 3",
+        # No frame work, no coalesce, no analytics.
+        "import pandas",
+        ".fillna(",
+        ".combine_first(",
+        "np.",
+        "black_scholes",
     ):
         assert forbidden not in source, forbidden
 
@@ -2881,7 +2980,13 @@ def test_workspace_tool_b_market_ours_controls_render_from_backend_columns(tmp_p
     assert response["status"].startswith("200")
     body = response["body"]
     assert "Differences only" in body
-    assert 'value="yahoo" selected>Yahoo Fundamentals</option>' in body
+    assert 'aria-current="true">Yahoo Fundamentals</a>' in body
+    assert '<select name="fundamentals_source">' not in body
+    assert 'href="/tool-b?differences_only=1">Our View</a>' in body
+    assert (
+        'href="/tool-b?differences_only=1&amp;fundamentals_source=yahoo" '
+        'aria-current="true">Yahoo Fundamentals</a>'
+    ) in body
     # Compact one-line divergence: active (Yahoo) value reads inline, the differing Our View
     # value is a short accent parenthetical — not the old 3-line stacked cell.
     assert "(Our View 2.4)" in body
@@ -2920,8 +3025,14 @@ def test_workspace_tool_b_view_renders_screening_parameters_form(tmp_path):
     # advanced panel (gold dial M1).
     assert "Gold price" in body
     assert "Advanced screening assumptions" in body
-    assert '<details class="panel screening-params advanced-assumptions">' in body
-    assert '<details class="panel screening-params advanced-assumptions" open>' not in body
+    assert (
+        '<details class="disclosure panel screening-params advanced-assumptions">'
+        in body
+    )
+    assert (
+        '<details class="disclosure panel screening-params advanced-assumptions" open>'
+        not in body
+    )
     # All ten inputs must be present on the page (gold in the dial panel).
     for param in [
         "gold_price", "pe_target", "aisc_margin_yield_target", "aisc_target",
@@ -3026,6 +3137,10 @@ def test_workspace_tool_b_view_filter_form_carries_active_overrides_as_hidden_in
     # Active overrides must appear as hidden inputs inside the filter form.
     assert '<input type="hidden" name="gold_price" value="4500"' in filter_form
     assert '<input type="hidden" name="aisc_target" value="1600"' in filter_form
+    assert (
+        'href="/tool-b?gold_price=4500&amp;aisc_target=1600&amp;'
+        'fundamentals_source=yahoo"'
+    ) in body
 
 
 def test_workspace_tool_b_view_with_override_shows_scenario_banner(tmp_path):
@@ -3266,10 +3381,9 @@ def test_model_state_banner_tone_is_danger_only_for_unreadable_manifest():
     assert "notice-danger" not in readable
 
 
-def test_overview_empty_states_drop_js_datatable_class(tmp_path):
-    """A colspan-only empty row does not match the explicit column model that
-    workspace-tables.js hands DataTables; keeping js-datatable raises a blocking
-    alert and kills every later table on the page. Same rule as Candidate Finder."""
+def test_overview_empty_states_never_activate_datatables(tmp_path):
+    """Migrated overview pages use the shared empty-state primitive and never
+    hand a fake colspan-only row to DataTables."""
     from tests.helpers import call_wsgi_app
     from tests.test_redesign_routes import _full_app
 
@@ -3283,7 +3397,7 @@ def test_overview_empty_states_drop_js_datatable_class(tmp_path):
         response = call_wsgi_app(app, method="GET", path=path)
         assert response["status"].startswith("200"), path
         body = response["body"]
-        assert f'id="{table_id}" class="empty-table"' in body, path
+        assert 'class="empty-state"' in body, path
         assert f'id="{table_id}" class="js-datatable"' not in body, path
 
 

@@ -32,7 +32,6 @@ from golden_vector.app.model_state import (
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.contracts.option_artifacts import (
-    ACTIVE_OPTION_SCHEMA_VERSION,
     CHAIN_HISTORY_COLUMNS,
     CHAIN_HISTORY_SCHEMA_COLUMN,
     CHAIN_HISTORY_SCHEMA_VERSION,
@@ -664,6 +663,16 @@ _PAGE_REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
         CHAIN_HISTORY_SCHEMA_COLUMN,
     ),
 }
+_V4_AVAILABILITY_COLUMNS: tuple[str, ...] = (
+    "ticker",
+    "availability_status",
+    "expirations_enumerated",
+    "fetch_status",
+    "fetch_message",
+    "provider",
+    "capture_date",
+    "schema_version",
+)
 _AVAILABILITY_STATUSES = frozenset(
     {
         AVAILABILITY_LISTED,
@@ -788,9 +797,16 @@ def _read_option_page_artifacts(paths: ProjectPaths) -> OptionPageArtifacts:
             frame = read_required_parquet(
                 path,
                 label=f"Option artifact {name}",
-                required_columns=_PAGE_REQUIRED_COLUMNS[name],
+                required_columns=_page_required_columns(
+                    name=name,
+                    generation_version=generation_version,
+                ),
             )
-            _validate_option_page_artifact(frame, name=name)
+            _validate_option_page_artifact(
+                frame,
+                name=name,
+                generation_version=generation_version,
+            )
         except (OptionArtifactIntegrityError, ParquetSchemaError, OSError, ValueError) as exc:
             return _degraded(
                 OPTION_PAGE_UNREADABLE,
@@ -810,7 +826,22 @@ def _read_option_page_artifacts(paths: ProjectPaths) -> OptionPageArtifacts:
     )
 
 
-def _validate_option_page_artifact(frame: pd.DataFrame, *, name: str) -> None:
+def _page_required_columns(
+    *,
+    name: str,
+    generation_version: int | None,
+) -> tuple[str, ...]:
+    if name == "option_availability" and generation_version == 4:
+        return (*_V4_AVAILABILITY_COLUMNS, OPTION_AVAILABILITY_SCHEMA_COLUMN)
+    return _PAGE_REQUIRED_COLUMNS[name]
+
+
+def _validate_option_page_artifact(
+    frame: pd.DataFrame,
+    *,
+    name: str,
+    generation_version: int | None,
+) -> None:
     """Validate the page-only v4 contract before any row can affect the UI.
 
     In particular, ``NONE_LISTED`` is allowed to hide the Options section, so a
@@ -819,12 +850,13 @@ def _validate_option_page_artifact(frame: pd.DataFrame, *, name: str) -> None:
     """
 
     _require_supported_option_schema(frame, name=name)
-    _require_exact_version(
-        frame,
-        column="schema_version",
-        expected=ACTIVE_OPTION_SCHEMA_VERSION,
-        name=name,
-    )
+    if generation_version is not None:
+        _require_exact_version(
+            frame,
+            column="schema_version",
+            expected=generation_version,
+            name=name,
+        )
 
     tickers = frame["ticker"].map(normalize_ticker)
     if tickers.isna().any():
@@ -834,7 +866,7 @@ def _validate_option_page_artifact(frame: pd.DataFrame, *, name: str) -> None:
         _require_exact_version(
             frame,
             column=OPTION_AVAILABILITY_SCHEMA_COLUMN,
-            expected=OPTION_AVAILABILITY_SCHEMA_VERSION,
+            expected=(1 if generation_version == 4 else OPTION_AVAILABILITY_SCHEMA_VERSION),
             name=name,
         )
         if tickers.duplicated(keep=False).any():

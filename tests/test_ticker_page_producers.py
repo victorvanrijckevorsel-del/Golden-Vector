@@ -21,9 +21,11 @@ from golden_vector.app.ticker_page_state import (
 from golden_vector.contracts.ticker_page import (
     TICKER_PAGE_SCHEMA_VERSIONS,
     GOLD_RESPONSE_COLUMNS,
+    GOLD_RESPONSE_LINE_METRICS,
     PERCENTILES_COLUMNS,
     PERFORMANCE_COLUMNS,
     RESEARCH_SERIES_COLUMNS,
+    empty_artifact_frame,
 )
 from golden_vector.contracts.tool_d import (
     TOOL_D_OUTPUT_COLUMNS,
@@ -32,6 +34,7 @@ from golden_vector.contracts.tool_d import (
 from golden_vector.ingestion.persist_ticker_page import persist_ticker_page_artifacts
 from golden_vector.model.gold_lines import GoldLine, evaluate
 from golden_vector.model.ticker_page import (
+    build_downside_context,
     build_fx_attribution_series,
     build_gold_response_pack,
     build_performance_series,
@@ -205,6 +208,10 @@ def test_pack_spot_values_match_the_spot_run_and_use_true_spot(pack_inputs):
     ).set_index("ticker")
 
     for ticker in TICKERS:
+        for metric in GOLD_RESPONSE_LINE_METRICS:
+            assert our.loc[ticker, f"spot_{metric}"] == pytest.approx(
+                float(spot_run.loc[ticker, metric])
+            )
         assert our.loc[ticker, "spot_margin_usd_per_oz"] == pytest.approx(
             float(spot_run.loc[ticker, "cash_margin_usd_per_oz"])
         )
@@ -437,6 +444,72 @@ def test_percentiles_schema_and_source_coverage(score_config):
     assert down.loc[("AAA", "our"), "pct_low_good"] == pytest.approx(
         down.loc[("AAA", "yahoo"), "pct_low_good"]
     )
+
+
+def test_downside_context_persists_stock_gdx_peer_and_recent_story():
+    tool_c = pd.DataFrame(
+        [
+            {
+                "ticker": "AAA",
+                "score_eligible": True,
+                "downside_compare_n": 20,
+                "downside_compare_stock_hit_count": 6,
+                "downside_compare_stock_hit_rate": 0.30,
+                "downside_compare_stock_median_return": -0.16,
+                "downside_compare_stock_worst_return": -0.28,
+                "downside_compare_gdx_hit_count": 3,
+                "downside_compare_gdx_hit_rate": 0.15,
+                "downside_compare_gdx_median_return": -0.12,
+                "downside_compare_gdx_worst_return": -0.20,
+                "downside_recent_n": 10,
+                "downside_recent_stock_hit_count": 1,
+                "downside_recent_stock_hit_rate": 0.10,
+                "downside_recent_stock_median_return": -0.13,
+                "downside_recent_stock_worst_return": -0.13,
+                "downside_recent_gdx_hit_count": 1,
+                "downside_recent_gdx_hit_rate": 0.10,
+                "downside_recent_gdx_median_return": -0.11,
+                "downside_recent_gdx_worst_return": -0.11,
+            },
+            {
+                "ticker": "BBB",
+                "score_eligible": True,
+                "downside_compare_stock_hit_rate": 0.10,
+                "downside_compare_stock_median_return": -0.12,
+                "downside_compare_stock_worst_return": -0.20,
+                "downside_recent_stock_hit_rate": 0.20,
+                "downside_recent_stock_median_return": -0.18,
+                "downside_recent_stock_worst_return": -0.25,
+            },
+            {
+                "ticker": "CCC",
+                "score_eligible": False,
+                "downside_compare_stock_hit_rate": 0.99,
+                "downside_compare_stock_median_return": -0.49,
+            },
+        ]
+    )
+
+    frame = build_downside_context(
+        tool_c_latest=tool_c,
+        configured_universe=["AAA", "BBB", "CCC"],
+        recent_years=2,
+    )
+
+    aaa = frame[frame["ticker"].eq("AAA")].set_index(["scope", "subject"])
+    assert set(aaa.index) == {
+        ("full_history", "stock"),
+        ("full_history", "gdx"),
+        ("full_history", "peer_median"),
+        ("recent", "stock"),
+        ("recent", "gdx"),
+        ("recent", "peer_median"),
+    }
+    assert aaa.loc[("full_history", "peer_median"), "hit_rate"] == pytest.approx(0.10)
+    assert aaa.loc[("full_history", "stock"), "frequency_vs_gdx_delta"] == pytest.approx(0.15)
+    assert aaa.loc[("recent", "stock"), "frequency_vs_full_delta"] == pytest.approx(-0.20)
+    assert "more often than GDX" in aaa.loc[("full_history", "stock"), "comparison_summary"]
+    assert "less often" in aaa.loc[("recent", "stock"), "trend_summary"]
 
 
 def test_percentiles_ties_na_and_ineligibility(score_config):
@@ -930,6 +1003,7 @@ def test_persist_writes_run_stamped_and_latest_artifacts_readable_by_the_real_re
         gold_response=gold_response,
         percentiles=percentiles,
         fx_attribution=fx_attribution,
+        downside_context=empty_artifact_frame("downside_context"),
         performance=performance,
         research_series=research,
         diagnostics=diagnostics,

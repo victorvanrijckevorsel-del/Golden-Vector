@@ -167,35 +167,8 @@ def test_data_card_new_contract_escapes_label_and_keeps_resolved_slots():
     assert "metric-card" not in html
 
 
-def test_data_card_explicit_label_html_and_legacy_bytes():
-    legacy = components.data_card(
-        "",
-        "<strong>12.6%</strong>",
-        label_html='FCF yield <button class="help-icon">i</button>',
-        legacy=True,
-    )
-    assert legacy == (
-        '<article class="panel metric-card">'
-        '<h3>FCF yield <button class="help-icon">i</button></h3>'
-        "<p><strong>12.6%</strong></p>"
-        "</article>"
-    )
-
-
-def test_shared_metric_card_wrapper_preserves_legacy_bytes():
-    from golden_vector.serve.format_helpers import _metric_card
-
-    assert _metric_card("Revenue", "<strong>$26.1bn</strong>") == (
-        '<article class="panel metric-card">'
-        "<h3>Revenue</h3><p><strong>$26.1bn</strong></p>"
-        "</article>"
-    )
-
-
 def test_data_card_rejects_ambiguous_or_unsafe_options():
-    with pytest.raises(ValueError, match="label or label_html"):
-        components.data_card("Label", "1", label_html="<em>Label</em>")
-    with pytest.raises(ValueError, match="requires label or label_html"):
+    with pytest.raises(ValueError, match="requires a label"):
         components.data_card("", "1")
     with pytest.raises(ValueError, match="unknown data-card state"):
         components.data_card("Label", "1", state='warning" onclick="x')
@@ -205,8 +178,6 @@ def test_data_card_rejects_ambiguous_or_unsafe_options():
         components.data_card("Label", "1", state_label="Warning")
     with pytest.raises(ValueError, match="unknown data-card state"):
         components.data_card("Label", "1", state="sparkly")
-    with pytest.raises(ValueError, match="does not support"):
-        components.data_card("Label", "1", basis_html="Basis", legacy=True)
 
 
 def test_basis_strip_escapes_labels_and_preserves_resolved_values():
@@ -239,10 +210,15 @@ def test_terminal_density_is_an_opt_in_bounded_wrapper():
 
 
 def test_toolbar_role_group_and_escaped_label():
-    html = components.toolbar("<button>Go</button>", label='Scenario "controls"')
+    html = components.toolbar(
+        "<button>Go</button>",
+        label='Scenario "controls"',
+        visible_label="Financials source",
+    )
     assert 'role="group"' in html
     assert 'aria-label="Scenario &quot;controls&quot;"' in html
     assert "<button>Go</button>" in html
+    assert '<span class="toolbar__label">Financials source</span>' in html
 
 
 def test_empty_state_escapes_title_and_keeps_body():

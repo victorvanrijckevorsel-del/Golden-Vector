@@ -29,7 +29,13 @@ from golden_vector.serve.format_helpers import (
 )
 from golden_vector.serve.overview_helpers import _collect_filter_options, _render_filter_bar
 from golden_vector.serve.page_shell import _page_shell
-from golden_vector.serve.ui.components import disclosure, empty_state, page_header
+from golden_vector.serve.ui.components import (
+    disclosure,
+    empty_state,
+    page_header,
+    segmented_control,
+    terminal_density,
+)
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.option_signal_render import (
@@ -37,6 +43,16 @@ from golden_vector.serve.option_signal_render import (
     option_signal_skew_hover,
     render_option_signal_badge,
 )
+from golden_vector.serve.option_data_freshness import (
+    OptionGenerationFreshness,
+    OptionRowFreshness,
+    format_collected_at_et,
+    format_source_date,
+    option_generation_freshness_from_manifest,
+    resolve_option_row_freshness,
+    stored_snapshot_warning,
+)
+from golden_vector.contracts.config_models import OPTION_STALENESS_WARNING_TRADING_DAYS
 
 
 def _display_horizons(app_config: AppConfig | None) -> tuple[int, ...]:
@@ -57,34 +73,37 @@ def _resolve_selected_horizon(option_horizon: str | None, display_horizons: tupl
 
 
 def _render_horizon_selector(selected_horizon: str, display_horizons: tuple[int, ...]) -> str:
-    """A GET form to pick which horizon the Put/Call status columns reflect.
+    """URL-backed controls for the horizon the Put/Call status columns reflect.
 
     Most-liquid (per side) is the default. Only the status columns follow the
     selection; the Signal / Skew / IV / Cost columns stay on the global signal horizon.
     """
 
-    options = [(MOST_LIQUID_HORIZON, "Most liquid (per side)")]
+    options = [(MOST_LIQUID_HORIZON, "Most liquid")]
     options.extend((str(horizon), f"{horizon}d") for horizon in display_horizons)
-    rendered = "".join(
-        f"<option value=\"{escape(value)}\"{' selected' if value == selected_horizon else ''}>"
-        f"{escape(label)}</option>"
+    items = [
+        (
+            label,
+            (
+                "/option-trading"
+                if value == MOST_LIQUID_HORIZON
+                else f"/option-trading?option_horizon={quote(value, safe='')}"
+            ),
+            value == selected_horizon,
+        )
         for value, label in options
-    )
+    ]
     if selected_horizon == MOST_LIQUID_HORIZON:
         caption = "Showing candidate status at: each name's most-liquid window (per side)."
     else:
         caption = f"Showing candidate status at: {selected_horizon}d (Put/Call columns only)."
     return (
         "<section class=\"panel\">"
-        "<form method=\"get\" action=\"/option-trading\" class=\"overview-filters-form\">"
-        "<label><span>Candidate horizon</span>"
-        f"<select name=\"option_horizon\">{rendered}</select></label>"
-        "<div class=\"overview-filters-actions\">"
-        f"<span class=\"hint\">{escape(caption)}</span>"
-        "<button type=\"submit\" class=\"btn btn-primary\">Apply</button>"
-        "</div>"
-        "</form>"
-        "</section>"
+        "<div class=\"toolbar\" role=\"group\" aria-label=\"Candidate horizon\">"
+        + segmented_control(items, label="Candidate horizon")
+        + f"<span class=\"hint\">{escape(caption)}</span>"
+        + "</div>"
+        + "</section>"
     )
 
 
@@ -99,20 +118,20 @@ def _render_option_trading_overview_page(
 ) -> str:
     display_horizons = _display_horizons(app_config)
     selected_horizon = _resolve_selected_horizon(option_horizon, display_horizons)
-    snapshot_date = (
-        overview.source_context.as_of_date
-        if overview.source_context is not None
-        else None
-    )
-    snapshot_note = (
-        f"Cached options snapshot: {escape(snapshot_date)}; screening only - live prices may differ."
-        if snapshot_date
-        else "Cached options snapshot unavailable; screening only - live prices may differ."
-    )
+    # The per-ticker staleness columns are stamped when the option artifacts are
+    # BUILT. A carried generation never rebuilds them, so on their own they would
+    # keep claiming a current snapshot for the whole outage. Age the generation
+    # once (shared classifier) and let every row/banner below read the worse of
+    # the two -- the same resolution the ticker page's Options section uses.
+    generation = option_generation_freshness_from_manifest(model_state_manifest)
     body = [
         page_header(
             "Option Trading",
-            lead_html=f"<p class=\"hint\">{snapshot_note}</p>",
+            lead_html=(
+                '<p class="hint">Latest available option data is shown per ticker. '
+                "Stored snapshots remain visible; collected times are ET. Screening "
+                "only — live prices may differ.</p>"
+            ),
         ),
         (
             notice(
@@ -139,6 +158,20 @@ def _render_option_trading_overview_page(
             "<p class=\"hint\">Risk-free rate was missing from the options manifest; "
             "scenario values use a 0% rate fallback.</p>"
         )
+    stale_rows = [
+        row
+        for row in overview.rows
+        if _row_freshness(row, generation=generation).stale
+    ]
+    if stale_rows:
+        body.append(
+            notice(
+                "warning",
+                f"{len(stale_rows)} ticker(s) use option snapshots at least "
+                f"{OPTION_STALENESS_WARNING_TRADING_DAYS} US trading days old; "
+                "the table identifies them.",
+            )
+        )
     body.append(
         _render_liquidity_measurements(
             overview.liquidity_measurements,
@@ -158,7 +191,7 @@ def _render_option_trading_overview_page(
         )
         return _page_shell(
             "Option Trading - Golden Vector Workspace",
-            "".join(body),
+            terminal_density("".join(body)),
             active_nav="option_trading",
         )
 
@@ -194,9 +227,9 @@ def _render_option_trading_overview_page(
     rows_html = "".join(
         _render_row(
             row,
-            snapshot_date=snapshot_date,
             signal=signals.get(row.ticker),
             selected_horizon=selected_horizon,
+            generation=generation,
         )
         for row in overview.rows
     )
@@ -239,7 +272,7 @@ def _render_option_trading_overview_page(
         + help_th("Put Status", key="option_candidate_status", app_config=app_config, col_name="put_status")
         + help_th("Call Status", key="option_candidate_status", app_config=app_config, col_name="call_status")
         + help_th(
-            "Option Snapshot Date",
+            "Latest Available",
             key="option_snapshot_date",
             app_config=app_config,
             col_name="snapshot",
@@ -253,7 +286,7 @@ def _render_option_trading_overview_page(
     ))
     return _page_shell(
         "Option Trading - Golden Vector Workspace",
-        "".join(body),
+        terminal_density("".join(body)),
         active_nav="option_trading",
     )
 
@@ -403,9 +436,9 @@ def _status_cell(status: str, expiry: str | None) -> str:
 def _render_row(
     row: OptionTradingRow,
     *,
-    snapshot_date: str | None,
     signal: dict[str, object] | None,
     selected_horizon: str = MOST_LIQUID_HORIZON,
+    generation: OptionGenerationFreshness = OptionGenerationFreshness(False),
 ) -> str:
     detail_href = f"/ticker/{quote(row.ticker, safe='')}?lens=option-trading#option-trading"
     per_horizon = _parse_per_horizon(row)
@@ -430,9 +463,48 @@ def _render_row(
         f"{_fmt_numeric_td(row.iv_percentile_cross_sectional, decimals=1)}"
         + _status_cell(put_status, put_expiry)
         + _status_cell(call_status, call_expiry)
-        + f"<td>{_fmt_text(snapshot_date)}</td>"
+        + _latest_available_cell(row, generation=generation)
         + collapsible_text_td(list(row.notes))
         + "</tr>"
+    )
+
+
+def _row_freshness(
+    row: OptionTradingRow,
+    *,
+    generation: OptionGenerationFreshness,
+) -> OptionRowFreshness:
+    return resolve_option_row_freshness(
+        trading_days=row.display_staleness_trading_days,
+        status=row.display_freshness_status,
+        carried_forward=bool(row.carried_forward),
+        generation=generation,
+    )
+
+
+def _latest_available_cell(
+    row: OptionTradingRow,
+    *,
+    generation: OptionGenerationFreshness = OptionGenerationFreshness(False),
+) -> str:
+    freshness = _row_freshness(row, generation=generation)
+    source = format_source_date(row.source_as_of_date)
+    collected = format_collected_at_et(row.captured_at_utc)
+    # "Current snapshot" would be a lie under a carried generation: the row was
+    # stamped by the LAST build that ran, not by this one.
+    details = ["Stored snapshot" if freshness.carried_forward else "Current snapshot"]
+    if source:
+        details.append(source)
+    if collected:
+        details.append(f"collected {collected}")
+    warning = stored_snapshot_warning(freshness)
+    warning_html = (
+        f'<strong class="cell-sub">{escape(warning)}</strong>' if warning else ""
+    )
+    return (
+        '<td><span>Latest available</span>'
+        f'<span class="hint cell-sub">{escape(" · ".join(details))}</span>'
+        f"{warning_html}</td>"
     )
 
 

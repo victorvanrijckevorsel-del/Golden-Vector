@@ -1548,9 +1548,9 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     ),
     "ticker_cf_section": ColumnHelp(
         meaning=(
-            "Everything held on the business, grouped by the question it answers. Rows "
-            "marked \"moves with gold\" follow the dial; the rest are facts that do not "
-            "depend on the gold price."
+            "Everything held on the business, grouped by the question it answers. "
+            "Cards with a gold edge and rows marked with a gold diamond follow the "
+            "dial; the rest are facts that do not depend on the gold price."
         ),
         calculation=(
             "Spot values are published by the backend at TRUE spot gold (not a rounded "

@@ -3,6 +3,11 @@ from __future__ import annotations
 from datetime import date, datetime, time, timezone
 
 from golden_vector.app.market_hours_refresh import (
+    OPTION_FRESHNESS_LATEST,
+    OPTION_FRESHNESS_STALE,
+    OPTION_FRESHNESS_STORED,
+    classify_us_trading_day_freshness,
+    count_completed_us_market_close_slots,
     is_us_equity_trading_day,
     market_hours_refresh_decision,
     parse_local_task_times,
@@ -37,6 +42,35 @@ def test_market_hours_refresh_decision_uses_eastern_time_and_dst():
     assert "inside market hours" in inside.reason
     assert not after_close.should_run
     assert "outside" in after_close.reason
+
+
+def test_completed_close_slots_do_not_count_current_day_before_5pm_et():
+    friday_close = datetime(2026, 8, 7, 21, 0, tzinfo=timezone.utc)
+
+    assert count_completed_us_market_close_slots(
+        friday_close,
+        through=datetime(2026, 8, 11, 20, 59, tzinfo=timezone.utc),
+    ) == 1  # Monday only
+    assert count_completed_us_market_close_slots(
+        friday_close,
+        through=datetime(2026, 8, 11, 21, 0, tzinfo=timezone.utc),
+    ) == 2  # Monday + Tuesday
+
+
+def test_option_snapshot_freshness_counts_only_us_trading_days():
+    latest = classify_us_trading_day_freshness(
+        "2026-08-07", through_date=date(2026, 8, 9)
+    )
+    stored = classify_us_trading_day_freshness(
+        "2026-08-07", through_date=date(2026, 8, 11)
+    )
+    stale = classify_us_trading_day_freshness(
+        "2026-08-07", through_date=date(2026, 8, 12)
+    )
+
+    assert (latest.trading_days, latest.status) == (0, OPTION_FRESHNESS_LATEST)
+    assert (stored.trading_days, stored.status) == (2, OPTION_FRESHNESS_STORED)
+    assert (stale.trading_days, stale.status) == (3, OPTION_FRESHNESS_STALE)
 
 
 def test_windows_task_scheduler_commands_call_guard_command(tmp_path):

@@ -318,6 +318,7 @@ def test_stage_builds_persists_and_stamps_all_five_artifacts(stage_env):
         paths.latest_ticker_page_performance_path,
         paths.latest_ticker_page_research_series_path,
         paths.latest_ticker_page_fx_attribution_path,
+        paths.latest_ticker_page_downside_context_path,
     ):
         assert alias.exists(), alias
 
@@ -331,6 +332,7 @@ def test_stage_builds_persists_and_stamps_all_five_artifacts(stage_env):
         "performance",
         "research_series",
         "fx_attribution",
+        "downside_context",
         "persist",
     }
     for entry in summary["timings"].values():
@@ -346,6 +348,7 @@ def test_stage_builds_persists_and_stamps_all_five_artifacts(stage_env):
             "performance",
             "research_series",
             "fx_attribution",
+            "downside_context",
         )
     )
 
@@ -847,7 +850,7 @@ def test_a_different_schema_version_reads_stale_and_names_both_versions(stage_en
     state = load_gold_response(paths)
     assert state.status == STATUS_STALE
     assert "99" in (state.reason or "")
-    assert "1" in (state.reason or "")
+    assert "2" in (state.reason or "")
     assert state.frame.empty
     assert load_score_percentiles(paths).status == STATUS_OK  # healthy control
 

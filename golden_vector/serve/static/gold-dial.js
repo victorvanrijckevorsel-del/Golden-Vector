@@ -21,8 +21,8 @@
  *     thing: `enabled` false means no artifact exists, so no price can be
  *     evaluated and the line cells show the reason; `scenario_enabled` false
  *     with `enabled` true means the published values are good AT SPOT but the
- *     slider must not move, so the spot cells are painted and the control is
- *     left inert (redesign plan §4.3 State A).
+ *     slider must not move, so the server-rendered persisted spot cells stay
+ *     visible and the control is left inert (redesign plan §4.3 State A).
  *   - The clean state is the browser-normalized slider position captured at
  *     boot — never the exact fractional spot, which a stepped control cannot
  *     hold. No scenario, and no live-region announcement, without a genuine
@@ -338,16 +338,9 @@
       if (reset) {
         reset.disabled = true;
       }
-      /* The dial is off for this ticker, so the line cells can never be filled.
-       * Replace the server's no-JavaScript fallback with the REASON — telling a
-       * user with working JavaScript that they need JavaScript is a lie, and a
-       * blank cell hides the degraded state entirely. */
-      var pending = section.querySelectorAll('[data-metric][data-basis="spot"]');
-      var reason = payload.disabled_reason || "not published for this ticker";
-      for (var pendingIndex = 0; pendingIndex < pending.length; pendingIndex += 1) {
-        pending[pendingIndex].textContent = reason;
-        pending[pendingIndex].setAttribute("data-unavailable", "1");
-      }
+      /* The server already rendered the persisted spot value or its honest
+       * unavailable state. JavaScript owns scenario cells only and must never
+       * replace that source-of-truth spot content. */
       return;
     }
 
@@ -355,7 +348,6 @@
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    var spotCells = section.querySelectorAll('[data-metric][data-basis="spot"]');
     var scenarioCells = section.querySelectorAll('[data-metric][data-basis="scenario"]');
     var scenarioHeads = section.querySelectorAll("[data-scenario-head]");
     /* The single headline value per card, hidden while a scenario is shown so a
@@ -430,19 +422,6 @@
       announceTimer = window.setTimeout(function () {
         status.textContent = message;
       }, ANNOUNCE_DELAY_MS);
-    }
-
-    /* Spot cells never move: they are evaluated once, at exact spot. */
-    function paintSpotCells() {
-      for (var index = 0; index < spotCells.length; index += 1) {
-        writeCell(
-          spotCells[index],
-          payload,
-          spotCells[index].getAttribute("data-metric"),
-          spot,
-          true
-        );
-      }
     }
 
     function render(moved, gold) {
@@ -522,14 +501,11 @@
     }
 
     /* Artifact fine, scenario withheld (plan §4.3 State A — spot outside the
-     * configured dial range). The published lines were verified AT TRUE SPOT,
-     * so the five line cells are evaluated and shown: blanking five trustworthy
-     * values because the slider cannot reach their price would destroy data the
-     * artifact stands behind. The control itself is inert — no listeners, no
-     * announcement, and the server's own aria-valuetext (which already says
-     * "scenario unavailable") is left exactly as rendered. */
+     * configured dial range). The server already rendered the five persisted
+     * true-spot values. Leave them untouched and keep the control inert: no
+     * listeners, no announcement, and the server's own aria-valuetext (which
+     * already says "scenario unavailable") stays exactly as rendered. */
     if (payload.scenario_enabled !== true) {
-      paintSpotCells();
       input.disabled = true;
       if (reset) {
         reset.disabled = true;
@@ -558,7 +534,6 @@
      * are attached before the control becomes interactive. */
     input.disabled = false;
 
-    paintSpotCells();
     render(false, baselineGold); /* boot: clean state, and nothing announced */
   }
 

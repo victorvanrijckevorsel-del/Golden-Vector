@@ -16,7 +16,10 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from golden_vector.common.files import atomic_write_text as _atomic_write_text
+from golden_vector.common.datetimes import parse_iso_datetime
+from golden_vector.common.files import release_exclusive_file_lock
 from golden_vector.common.files import repo_relative as _repo_relative
+from golden_vector.common.files import try_acquire_exclusive_file_lock
 from golden_vector.app.paths import ProjectPaths
 
 REFRESH_STATUS_IDLE = "idle"
@@ -125,7 +128,14 @@ def read_option_refresh_status(
         # decision and its wording, and a second probe could disagree.
         alive = exists(status.process_id)
         if not alive:
-            recovered = OptionRefreshStatus(
+            # Reported ONLY, never persisted. This read path runs outside the
+            # .acquire.lock sidecar, so writing here could clobber a RUNNING
+            # record that _start_options_refresh_locked had just written under
+            # the lock -- and the reader that saw "failed" would then start a
+            # second concurrent refresh over the same artifacts. Both start
+            # paths re-read under the sidecar and overwrite a dead record
+            # normally, so nothing is lost by leaving the file alone.
+            return OptionRefreshStatus(
                 status=REFRESH_STATUS_FAILED,
                 job_id=status.job_id,
                 process_id=status.process_id,
@@ -137,13 +147,6 @@ def read_option_refresh_status(
                 stage_detail=status.stage_detail,
                 error_summary="Refresh process is no longer running.",
             )
-            try:
-                write_option_refresh_status(paths, recovered)
-            except OSError:
-                # Persisting the recovery is an optimization; a transient
-                # write collision must not fail the page render.
-                pass
-            return recovered
         if _running_past_ceiling(status):
             # The PID is genuinely alive, so the lock MUST stay RUNNING: marking
             # it FAILED would re-enable the button and start a second concurrent
@@ -164,12 +167,9 @@ REFRESH_RUNTIME_CEILING_SECONDS = 2 * 60 * 60  # a real refresh takes ~3 min
 def _running_past_ceiling(status: OptionRefreshStatus) -> bool:
     if not status.started_at:
         return False
-    try:
-        started = datetime.fromisoformat(str(status.started_at))
-    except ValueError:
+    started = parse_iso_datetime(status.started_at)
+    if started is None:
         return False
-    if started.tzinfo is None:
-        started = started.replace(tzinfo=timezone.utc)
     elapsed = (datetime.now(timezone.utc) - started).total_seconds()
     return elapsed > REFRESH_RUNTIME_CEILING_SECONDS
 
@@ -198,34 +198,12 @@ def _acquire_exclusive_sidecar(paths: ProjectPaths) -> int | None:
     """
 
     sidecar = option_refresh_status_path(paths).with_suffix(".acquire.lock")
-    sidecar.parent.mkdir(parents=True, exist_ok=True)
-    for _ in range(2):
-        try:
-            return os.open(str(sidecar), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            try:
-                age = time.time() - sidecar.stat().st_mtime
-            except OSError:
-                continue  # vanished between open and stat; retry
-            if age > 60:
-                try:
-                    sidecar.unlink()
-                except OSError:
-                    return None
-                continue
-            return None
-    return None
+    return try_acquire_exclusive_file_lock(sidecar)
 
 
 def _release_exclusive_sidecar(paths: ProjectPaths, handle: int) -> None:
     sidecar = option_refresh_status_path(paths).with_suffix(".acquire.lock")
-    try:
-        os.close(handle)
-    finally:
-        try:
-            sidecar.unlink()
-        except OSError:
-            pass
+    release_exclusive_file_lock(sidecar, handle)
 
 
 def acquire_refresh_lock(
@@ -460,7 +438,8 @@ def render_option_refresh_control(
         "<section class=\"option-refresh-control\">"
         f"<form method=\"post\" action=\"{_html_attr(action)}\" class=\"inline-form\">"
         f"<input type=\"hidden\" name=\"return_to\" value=\"{_html_attr(return_to)}\">"
-        f"<button type=\"submit\"{disabled}>Refresh all model data</button>"
+        f'<button type="submit" class="control control--primary"{disabled}>'
+        "Refresh all model data</button>"
         "</form>"
         f"<p class=\"hint\">{_html_text(status_text)}</p>"
         "</section>"

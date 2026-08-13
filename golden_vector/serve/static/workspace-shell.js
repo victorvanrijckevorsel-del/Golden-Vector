@@ -4,8 +4,40 @@
 // in normal flow and this script never needs to run. While open, the drawer is
 // a modal dialog (GV-RD-CX-005): dialog semantics, inert background, a visible
 // close control, focus containment, and focus restoration on close.
-// Presentation-only: no routing, storage, fetch, or analytics.
+// Presentation-only: no routing, storage, or analytics. The small header data
+// status reads one display-ready persisted-state endpoint.
 (function () {
+  function initDataStatus() {
+    var target = document.querySelector("[data-data-status-endpoint]");
+    if (!target || typeof window.fetch !== "function") return;
+    var endpoint = target.getAttribute("data-data-status-endpoint");
+    if (!endpoint) return;
+
+    function refresh() {
+      window.fetch(endpoint, {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      }).then(function (response) {
+        if (!response.ok) throw new Error("Data status request failed");
+        return response.json();
+      }).then(function (payload) {
+        if (!payload || typeof payload.text !== "string") {
+          throw new Error("Data status response was incomplete");
+        }
+        target.textContent = payload.text;
+        target.setAttribute("data-tone", payload.tone || "warning");
+      }).catch(function () {
+        target.textContent = "Data status unavailable";
+        target.setAttribute("data-tone", "warning");
+      });
+    }
+
+    refresh();
+    if (typeof window.setInterval === "function") {
+      window.setInterval(refresh, 60000);
+    }
+  }
+
   // Table regions keep a keyboard tab stop only while they actually overflow
   // (GV-RD-P34-1): the server-rendered tabindex="0" is the no-JS-safe default;
   // with JS running, redundant stops are removed and restored on layout change.
@@ -39,6 +71,7 @@
   }
 
   function init() {
+    initDataStatus();
     syncRegionFocusability();
     function revealHashTarget() {
       if (!window.location || !window.location.hash || !document.getElementById) return;

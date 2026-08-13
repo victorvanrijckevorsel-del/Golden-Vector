@@ -77,7 +77,12 @@ def load_options_chains(
         ticker = normalize_ticker(item.get("ticker"))
         if not ticker:
             continue
-        snapshot_path = paths.resolve_repo_relative(str(item.get("snapshot_path", "")))
+        snapshot_relative = str(item.get("snapshot_path") or "").strip()
+        if not snapshot_relative:
+            # Explicit v2 unavailable entry: the failed current attempt had no
+            # verified prior ticker bundle to serve.
+            continue
+        snapshot_path = paths.resolve_repo_relative(snapshot_relative)
         expected_sha256 = str(item.get("sha256") or "").strip()
         if expected_sha256:
             actual_sha256 = sha256_file(snapshot_path)
@@ -108,14 +113,39 @@ def load_options_features(
         # explicit ERROR marker and has no feature row -- skip it rather than fail.
         if str(item.get("feature_status") or "OK").strip().upper() == "ERROR":
             continue
-        feature_path = paths.options_features_dir / f"{safe_options_file_name(ticker)}.parquet"
+        source_refresh_run_id = str(
+            item.get("source_refresh_run_id") or refresh_run_id
+        ).strip()
+        is_v2 = int(manifest.get("manifest_version") or 1) >= 2
+        if not source_refresh_run_id or (
+            is_v2 and not str(item.get("snapshot_path") or "").strip()
+        ):
+            continue
+        feature_path = _feature_snapshot_path(
+            paths=paths,
+            item=item,
+            ticker=ticker,
+            is_v2=is_v2,
+        )
+        if is_v2:
+            expected_feature_sha = str(item.get("feature_sha256") or "").strip()
+            if not expected_feature_sha:
+                raise ValueError(
+                    f"Options manifest v2 has no feature_sha256 for {ticker}."
+                )
+            actual_feature_sha = sha256_file(feature_path)
+            if actual_feature_sha != expected_feature_sha:
+                raise ValueError(
+                    f"Options feature snapshot for {ticker} has sha256 "
+                    f"{actual_feature_sha}; expected {expected_feature_sha}."
+                )
         frame = read_required_parquet(
             feature_path,
             label=f"Options feature snapshot for {ticker}",
             required_columns=OPTIONS_FEATURE_REQUIRED_COLUMNS,
         )
-        if "run_id" in frame.columns and refresh_run_id:
-            matching = frame[frame["run_id"].astype(str) == refresh_run_id]
+        if "run_id" in frame.columns and source_refresh_run_id:
+            matching = frame[frame["run_id"].astype(str) == source_refresh_run_id]
             if matching.empty:
                 # The manifest says this ticker is part of the current run, but its
                 # (mutable) feature file carries no row for refresh_run_id -- the file
@@ -123,17 +153,52 @@ def load_options_features(
                 # from the current candidate/signal universe.
                 raise ValueError(
                     f"Options feature snapshot for {ticker} has no row for refresh run "
-                    f"{refresh_run_id}; the feature file is stale or was not rebuilt "
+                    f"{source_refresh_run_id}; the feature file is stale or was not rebuilt "
                     f"this run. Re-run the options phase."
                 )
-            rows.append(matching.iloc[-1])
+            rows.append(_stamp_effective_source(matching.iloc[-1], item=item, manifest=manifest))
             continue
-        rows.append(frame.iloc[-1])
+        rows.append(_stamp_effective_source(frame.iloc[-1], item=item, manifest=manifest))
     if not rows:
         return pd.DataFrame()
     result = pd.DataFrame(rows).reset_index(drop=True)
     if "ticker" in result.columns:
         result["ticker"] = result["ticker"].map(normalize_ticker)
+    return result
+
+
+def _feature_snapshot_path(
+    *,
+    paths: ProjectPaths,
+    item: dict[str, Any],
+    ticker: str,
+    is_v2: bool,
+) -> Path:
+    if is_v2:
+        relative = str(item.get("feature_path") or "").strip()
+        if not relative:
+            raise ValueError(f"Options manifest v2 has no feature_path for {ticker}.")
+        return paths.resolve_repo_relative(relative)
+    return paths.options_features_dir / f"{safe_options_file_name(ticker)}.parquet"
+
+
+def _stamp_effective_source(
+    row: pd.Series,
+    *,
+    item: dict[str, Any],
+    manifest: dict[str, Any],
+) -> pd.Series:
+    result = row.copy()
+    result["source_refresh_run_id"] = str(
+        item.get("source_refresh_run_id") or manifest.get("refresh_run_id") or ""
+    )
+    result["source_as_of_date"] = str(
+        item.get("source_as_of_date") or manifest.get("as_of_date") or ""
+    )
+    result["captured_at_utc"] = item.get("captured_at_utc")
+    result["carried_forward"] = bool(item.get("carried_forward", False))
+    result["attempt_status"] = str(item.get("attempt_status") or "SUCCESS").upper()
+    result["attempt_message"] = item.get("attempt_message")
     return result
 
 

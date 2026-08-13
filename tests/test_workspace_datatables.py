@@ -363,7 +363,7 @@ def test_tool_a_overview_window_param_switches_window(tmp_path):
     _, app = _workspace_fixture(tmp_path)
     body = _response_body(app, "/tool-a?window=3y")
     assert 'name="window" value="3Y"' in body  # query resolved to the 3Y window
-    assert 'class="window-tab active"' in body  # a tab is marked active
+    assert 'aria-current="true">3Y</a>' in body  # shared control marks one item active
 
 
 def test_tool_b_view_filter_bar_lists_only_values_present_in_data(tmp_path):

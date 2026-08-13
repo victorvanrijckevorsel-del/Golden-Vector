@@ -9,6 +9,7 @@
 import pandas as pd
 import pytest
 
+from golden_vector.common.files import sha256_file
 from golden_vector.hedge.option_artifact_sources import load_options_features
 from golden_vector.ingestion.persist_options import safe_options_file_name
 from tests.helpers import build_test_paths
@@ -70,3 +71,51 @@ def test_load_options_features_fails_loud_on_missing_required_column(tmp_path):
 
     with pytest.raises(Exception, match="optionability_tier"):
         load_options_features(paths=paths, manifest=manifest)
+
+
+def test_load_options_features_selects_each_tickers_own_source_run(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_feature(paths, "AEM", "old-aem-run")
+    _write_feature(paths, "GDX", "current-run")
+    aem_feature = paths.options_features_dir / "AEM.parquet"
+    gdx_feature = paths.options_features_dir / "GDX.parquet"
+    manifest = {
+        "manifest_version": 2,
+        "refresh_run_id": "current-run",
+        "as_of_date": "2026-06-01",
+        "snapshots": [
+            {
+                "ticker": "AEM",
+                "feature_status": "OK",
+                "snapshot_path": "placeholder",
+                "feature_path": aem_feature.relative_to(paths.repo_root).as_posix(),
+                "feature_sha256": sha256_file(aem_feature),
+                "source_refresh_run_id": "old-aem-run",
+                "source_as_of_date": "2026-05-29",
+                "captured_at_utc": "2026-05-29T20:00:00Z",
+                "carried_forward": True,
+                "attempt_status": "ERROR",
+                "attempt_message": "vendor timeout",
+            },
+            {
+                "ticker": "GDX",
+                "feature_status": "OK",
+                "snapshot_path": "placeholder",
+                "feature_path": gdx_feature.relative_to(paths.repo_root).as_posix(),
+                "feature_sha256": sha256_file(gdx_feature),
+                "source_refresh_run_id": "current-run",
+                "source_as_of_date": "2026-06-01",
+                "captured_at_utc": "2026-06-01T20:00:00Z",
+                "carried_forward": False,
+                "attempt_status": "SUCCESS",
+            },
+        ],
+    }
+
+    features = load_options_features(paths=paths, manifest=manifest).set_index("ticker")
+
+    assert features.loc["AEM", "run_id"] == "old-aem-run"
+    assert features.loc["AEM", "source_as_of_date"] == "2026-05-29"
+    assert bool(features.loc["AEM", "carried_forward"]) is True
+    assert features.loc["GDX", "run_id"] == "current-run"
+    assert bool(features.loc["GDX", "carried_forward"]) is False

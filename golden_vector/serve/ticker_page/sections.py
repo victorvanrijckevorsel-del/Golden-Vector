@@ -197,7 +197,11 @@ def _series_visibility_controls(
             '<input type="checkbox" checked '
             f'data-performance-series-input="{escape(series_key, quote=True)}" '
             f'aria-controls="{escape(chart_id, quote=True)}">'
-            f"{escape(series_label)}</label>"
+            f'<svg class="chart-legend-line legend-swatch-{escape(series_key, quote=True)}" '
+            f'viewBox="0 0 28 8" '
+            f'aria-hidden="true" focusable="false"><line x1="1" y1="4" '
+            f'x2="27" y2="4" class="series-{escape(series_key, quote=True)}" '
+            f'stroke-width="2" /></svg>{escape(series_label)}</label>'
         )
     if not options:
         return ""
@@ -387,6 +391,7 @@ def render_performance_section(
             mode="price" if view == "price" else "indexed",
             unit=currency,
             basis_note=series_basis,
+            show_legend=view != "rebased",
         )
     else:
         chart_html = '<p class="hint">No drawable series in this window.</p>'
@@ -591,6 +596,8 @@ def render_cost_downside_card(
     downside_row: pd.Series | None,
     aisc_peers: pd.DataFrame,
     downside_peers: pd.DataFrame,
+    downside_context: pd.DataFrame | None = None,
+    downside_context_state: TickerPageArtifactState | None = None,
     app_config: AppConfig | None = None,
 ) -> str:
     """The open 'Cost position and downside record' card (Market Behaviour).
@@ -664,12 +671,6 @@ def render_cost_downside_card(
             hit_noun="large falls",
             window_noun="qualifying weak-gold weeks",
         )
-        low_good_pct = downside_row.get("pct_low_good")
-        standing = (
-            f"A lower large-fall rate than {float(low_good_pct):.0f}% of eligible producers."
-            if low_good_pct is not None and not pd.isna(low_good_pct)
-            else "Peer standing unavailable."
-        )
         pieces.append(
             "<div class=\"cost-downside-record\"><h3>Historical large-fall record"
             + help_icon(
@@ -682,7 +683,7 @@ def render_cost_downside_card(
             f"<p class=\"hint\">Period {_fmt_date(period_start)} to {_fmt_date(period_end)}. "
             "Qualifying weeks are gold's rolling weakest 20%; the explainer above "
             "states the configured large-fall cut-off.</p>"
-            f"<p class=\"hint\">{escape(standing)}</p></div>"
+            "</div>"
         )
     else:
         reason = (
@@ -701,6 +702,14 @@ def render_cost_downside_card(
             f"<p class=\"hint\">The downside record is unavailable: {escape(reason)}</p></div>"
         )
 
+    context_html = _render_downside_context(
+        downside_context,
+        ticker=ticker,
+        artifact_state=downside_context_state,
+    )
+    if context_html:
+        pieces.append(context_html)
+
     # -- peer relationship disclosure -----------------------------------------
     pieces.append(
         _render_peer_disclosure(
@@ -713,6 +722,173 @@ def render_cost_downside_card(
     pieces.append(f'<p class="hint">{escape(_DOWNSIDE_CAVEAT)}</p>')
     pieces.append("</section>")
     return "".join(pieces)
+
+
+def _render_downside_context(
+    frame: pd.DataFrame | None,
+    *,
+    ticker: str,
+    artifact_state: TickerPageArtifactState | None = None,
+) -> str:
+    """Format the persisted frequency/severity comparison; no serve arithmetic."""
+
+    if artifact_state is not None and artifact_state.status != "OK":
+        reason = artifact_state.reason or "no reason recorded"
+        return (
+            '<div class="cost-downside-context">'
+            '<h3>What the record means</h3>'
+            + notice(
+                "degraded",
+                "<p>Downside-comparison artifact state <strong>"
+                f"{escape(artifact_state.status)}</strong>: {escape(reason)}. "
+                "The GDX, eligible-miner, and recent-history comparisons are "
+                "unavailable; nothing is estimated to fill the gap.</p>",
+            )
+            + "</div>"
+        )
+    if frame is None or frame.empty:
+        if artifact_state is not None:
+            return _missing_downside_context_notice(ticker)
+        return ""
+    indexed = {
+        (clean_string(row.get("scope")), clean_string(row.get("subject"))): row
+        for row in frame.to_dict(orient="records")
+    }
+    full_stock = indexed.get(("full_history", "stock"))
+    if full_stock is None:
+        if artifact_state is not None:
+            return _missing_downside_context_notice(ticker)
+        return ""
+    rows: list[str] = []
+    for scope, label in (("full_history", "Full history"), ("recent", "Recent 2 years")):
+        stock = indexed.get((scope, "stock"), {})
+        gdx = indexed.get((scope, "gdx"), {})
+        peer = indexed.get((scope, "peer_median"), {})
+        status = clean_string(stock.get("context_status")) or "MISSING"
+        if status != "OK":
+            reason = clean_string(stock.get("context_reason")) or "Evidence unavailable."
+            rows.append(
+                f'<section class="downside-comparison"><h4>{escape(label)}</h4>'
+                f'<p class="hint">{escape(reason)}</p></section>'
+            )
+            continue
+        rows.append(
+            '<section class="downside-comparison">'
+            f'<h4>{escape(label)}</h4>'
+            '<div class="downside-comparison__grid">'
+            + _downside_measure(
+                "Large-fall frequency",
+                stock,
+                gdx,
+                peer,
+                field="hit_rate",
+                formatter=_fmt_pct,
+            )
+            + _downside_measure(
+                "Typical loss when a large fall occurred",
+                stock,
+                gdx,
+                peer,
+                field="median_hit_return",
+                formatter=_fmt_pct,
+            )
+            + "</div>"
+            + _downside_trend_copy(stock, scope=scope)
+            + "</section>"
+        )
+    return (
+        '<div class="cost-downside-context">'
+        '<h3>What the record means</h3>'
+        '<p class="hint">Frequency says how often a weekly fall beyond the configured cut-off occurred in '
+        "weak-gold weeks. Severity says the median loss on those fall weeks; the "
+        "worst result remains available as context.</p>"
+        '<p class="hint">Eligible-miner medians use each miner\'s own available record, '
+        "so unlike GDX they are not restricted to this stock's exact qualifying weeks. "
+        "The count beside each median is the persisted number of miners with that measure.</p>"
+        + "".join(rows)
+        + "</div>"
+    )
+
+
+def _missing_downside_context_notice(ticker: str) -> str:
+    return (
+        '<div class="cost-downside-context">'
+        '<h3>What the record means</h3>'
+        + notice(
+            "degraded",
+            "<p>No persisted downside comparison was published for "
+            f"<strong>{escape(str(ticker))}</strong> in the current artifact. "
+            "The GDX, eligible-miner, and recent-history comparisons are "
+            "unavailable; nothing is estimated to fill the gap.</p>",
+        )
+        + "</div>"
+    )
+
+
+def _downside_measure(
+    label: str,
+    stock: Mapping[str, object],
+    gdx: Mapping[str, object],
+    peer: Mapping[str, object],
+    *,
+    field: str,
+    formatter: Any,
+) -> str:
+    values = (
+        ("Stock", stock.get(field)),
+        ("GDX", gdx.get(field)),
+        (_peer_median_label(peer, field=field), peer.get(field)),
+    )
+    # Ordinary share-price returns cannot fall below -100%. Using that full
+    # truthful domain prevents an unusually severe historical week from being
+    # visually clipped at an arbitrary -50% display limit.
+    bounds = ("0", "1") if field == "hit_rate" else ("-1", "0")
+    bars = "".join(
+        '<div class="downside-comparison__bar">'
+        f'<span>{escape(name)}</span><strong>{escape(formatter(value))}</strong>'
+        + (
+            f'<meter min="{bounds[0]}" max="{bounds[1]}" '
+            f'value="{float(value):.8g}">{escape(formatter(value))}</meter>'
+            if value is not None and not pd.isna(value)
+            else '<span class="hint">No evidence</span>'
+        )
+        + "</div>"
+        for name, value in values
+    )
+    return f'<div class="data-card"><h5 class="data-card__label">{escape(label)}</h5>{bars}</div>'
+
+
+def _peer_median_label(peer: Mapping[str, object], *, field: str) -> str:
+    count_field = (
+        "frequency_peer_count" if field == "hit_rate" else "severity_peer_count"
+    )
+    count = peer.get(count_field)
+    if count is None or pd.isna(count):
+        basis = "own records · count unavailable"
+    else:
+        peer_count = int(count)
+        if peer_count == 1:
+            basis = "1 miner · own record"
+        else:
+            basis = f"{peer_count} miners · own records"
+    return f"Eligible-miner median ({basis})"
+
+
+def _downside_trend_copy(stock: Mapping[str, object], *, scope: str) -> str:
+    comparison = clean_string(stock.get("comparison_summary"))
+    trend = clean_string(stock.get("trend_summary")) if scope == "recent" else None
+    copy = "".join(
+        f'<p class="hint">{escape(text)}</p>' for text in (comparison, trend) if text
+    )
+    if scope != "recent":
+        worst = stock.get("worst_hit_return")
+        worst_copy = (
+            f'<p class="hint">Worst observed large fall: {_fmt_pct(worst)}.</p>'
+            if worst is not None and not pd.isna(worst)
+            else ""
+        )
+        return copy + worst_copy
+    return copy
 
 
 def _render_peer_disclosure(

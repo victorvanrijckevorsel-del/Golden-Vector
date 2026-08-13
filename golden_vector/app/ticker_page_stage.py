@@ -49,6 +49,7 @@ from golden_vector.features.returns import compute_horizon_returns_for_ticker
 from golden_vector.ingestion.persist_ticker_page import persist_ticker_page_artifacts
 from golden_vector.model.structural import build_structural_weekly_series
 from golden_vector.model.ticker_page import (
+    build_downside_context,
     build_fx_attribution_series,
     build_gold_response_pack,
     build_performance_series,
@@ -390,6 +391,20 @@ def run_ticker_page_stage(
         timings, "percentiles", started_at, rows_built=len(percentiles.index)
     )
 
+    # --- substep 3: descriptive downside context -------------------------
+    started_at = perf_counter()
+    downside_context = build_downside_context(
+        tool_c_latest=tool_c_latest,
+        configured_universe=universe,
+        recent_years=app_config.tool_c.downside_recent_years,
+    )
+    record_step_timing(
+        timings,
+        "downside_context",
+        started_at,
+        rows_built=len(downside_context.index),
+    )
+
     # --- substep 3: performance series (per ticker) -----------------------
     started_at = perf_counter()
     performance_frames: list[pd.DataFrame] = []
@@ -569,6 +584,7 @@ def run_ticker_page_stage(
         percentiles=percentiles,
         performance=performance,
         fx_attribution=fx_attribution,
+        downside_context=downside_context,
         research_series=research_series,
         diagnostics=diagnostics,
         source_run_id=run_context.run_id,
@@ -582,6 +598,7 @@ def run_ticker_page_stage(
         + len(performance.index)
         + len(research_series.index)
         + len(fx_attribution.index)
+        + len(downside_context.index)
     )
     record_step_timing(
         timings,
@@ -604,6 +621,7 @@ def run_ticker_page_stage(
             "performance": int(len(performance.index)),
             "research_series": int(len(research_series.index)),
             "fx_attribution": int(len(fx_attribution.index)),
+            "downside_context": int(len(downside_context.index)),
             "linearity_diagnostics": int(len(diagnostics.index)),
         },
         "timings": timings,

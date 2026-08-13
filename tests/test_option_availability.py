@@ -180,3 +180,34 @@ def test_lowercase_feature_status_error_still_routes_to_fetch_failed():
     assert frame.loc["LOUD", "fetch_status"] == "ERROR"
     assert frame.loc["PADDED", "availability_status"] == "FETCH_FAILED"
     assert frame.loc["CTRL", "availability_status"] == "NONE_LISTED"
+
+
+def test_carried_listed_snapshot_keeps_source_state_and_exposes_failed_attempt():
+    frame = build_option_availability(
+        universe_tickers=["AEM"],
+        snapshot_records=[
+            {
+                "ticker": "AEM",
+                "options_available": True,
+                "row_count": 1200,
+                "feature_status": "OK",
+                "source_refresh_run_id": "prior-run",
+                "source_as_of_date": "2026-08-07",
+                "captured_at_utc": "2026-08-07T20:00:00Z",
+                "carried_forward": True,
+                "attempt_status": "ERROR",
+                "attempt_message": "vendor timeout",
+            }
+        ],
+        capture_date="2026-08-12",
+    ).iloc[0]
+
+    assert frame["availability_status"] == "LISTED"
+    assert frame["fetch_status"] == "SUCCESS"
+    assert frame["source_refresh_run_id"] == "prior-run"
+    assert frame["source_as_of_date"] == "2026-08-07"
+    assert bool(frame["carried_forward"]) is True
+    assert frame["attempt_status"] == "ERROR"
+    assert frame["attempt_message"] == "vendor timeout"
+    assert frame["display_staleness_trading_days"] == 3
+    assert frame["display_freshness_status"] == "STALE"

@@ -15,7 +15,7 @@ from golden_vector.serve.candidate_finder_data import (
 )
 from golden_vector.serve.candidate_finder_page import _preset_href, render_candidate_finder_page
 from golden_vector.serve.workspace import create_workspace_app
-from tests.helpers import build_test_paths
+from tests.helpers import build_test_paths, source_date_n_trading_days_old
 
 
 def test_candidate_finder_page_renders_default_bull_screen():
@@ -24,10 +24,23 @@ def test_candidate_finder_page_renders_default_bull_screen():
     html = render_candidate_finder_page(data)
 
     assert "Candidate Finder" in html
-    assert '<a class="candidate-preset is-active" href="/candidate-finder?preset=bull">Bull</a>' in html
-    assert '<a class="candidate-preset" href="/candidate-finder?preset=bear">Bear</a>' in html
+    assert (
+        '<a class="control" href="/candidate-finder?preset=bull" '
+        'aria-current="true">Bull</a>' in html
+    )
+    assert '<a class="control" href="/candidate-finder?preset=bear">Bear</a>' in html
     assert "Cheap, financially solid names to own if gold rises" in html
-    assert "candidate-preset is-active" in html
+    assert 'class="terminal-density"' in html
+    assert html.count('class="data-card"') == 5
+    assert 'class="panel metric-card"' not in html
+    assert 'class="segmented-control" role="group" aria-label="Financials source"' in html
+    assert '<span class="toolbar__label">Financials source</span>' in html
+    assert '>Our View</a>' in html
+    assert '>Yahoo Fundamentals</a>' in html
+    assert 'class="form-control"' in html
+    assert 'class="control control--primary"' in html
+    assert 'class="candidate-preset' not in html
+    assert 'class="btn ' not in html
     assert "Universe" in html
     assert "All stocks" in html
     assert "Screen Builder" in html
@@ -39,15 +52,16 @@ def test_candidate_finder_page_renders_default_bull_screen():
     assert "Options" in html
     assert "Corporate Resilience" in html
     assert "Advanced Composites" in html
-    assert 'class="candidate-criteria-group" open' in html
+    assert 'class="disclosure candidate-criteria-group" open' in html
     assert "View 1: Top Rows By Criterion" in html
     assert "View 2: Fit Ranking" in html
     assert "Eligible Ranking" in html
     assert "Low-Coverage Rows" in html
     assert "js-datatable candidate-ranking-table" in html
     assert 'data-col-name="score" data-sort-numeric' in html
-    assert 'data-col-name="criterion_up_beta" data-sort-numeric' in html
+    assert 'data-col-name="criterion_up_beta" data-sort-numeric' not in html
     assert 'data-col-name="criterion_down_beta" data-sort-numeric' not in html
+    assert 'data-help-title="Percentile"' not in html
     assert "weighted-average percentile across the criteria you chose" in html
     assert "Model build state needs attention" in html
     assert 'aria-label="Use AISC margin yield"' in html
@@ -59,6 +73,24 @@ def test_candidate_finder_page_renders_default_bull_screen():
     assert "/ticker/AEM?lens=option-trading#option-trading" in html
     assert "recommend" not in html.lower()
     assert "should buy" not in html.lower()
+
+
+def test_candidate_finder_hides_ranking_percentiles_but_keeps_iv_percentile_metric():
+    data = _candidate_finder_data()
+
+    html = render_candidate_finder_page(
+        data,
+        query={"custom": ["1"], "criteria": ["iv_percentile"]},
+        app_config=_repo_app_config(),
+    )
+
+    # "IV percentile" is the financial metric the user selected, so its raw
+    # value and explainer remain. The redundant ranking-percentile columns do not.
+    assert "<h3>IV percentile</h3>" in html
+    assert "Option price level vs peers." in html
+    assert '<td class="numeric">30.00</td>' in html
+    assert 'data-col-name="criterion_iv_percentile"' not in html
+    assert 'data-help-title="Percentile"' not in html
 
 
 def test_candidate_finder_page_custom_query_preserves_side_direction_and_weight():
@@ -81,7 +113,49 @@ def test_candidate_finder_page_custom_query_preserves_side_direction_and_weight(
     assert '<option value="low_good" selected>Low values fit</option>' in html
     assert 'name="weight_up_beta" min="0" max="10" step="0.25" value="2"' in html
     assert "Invalid direction" not in html
-    assert "candidate-preset is-active" not in html
+    assert 'href="/candidate-finder?preset=bull" aria-current="true"' not in html
+    assert 'href="/candidate-finder?preset=bear" aria-current="true"' not in html
+
+
+def test_candidate_finder_source_links_preserve_custom_screen_query_state():
+    data = _candidate_finder_data()
+
+    html = render_candidate_finder_page(
+        data,
+        query={
+            "custom": ["1"],
+            "criteria": ["up_beta", "aisc"],
+            "direction_up_beta": ["low_good"],
+            "gold_price": ["3500"],
+        },
+    )
+
+    base_query = (
+        "custom=1&amp;criteria=up_beta&amp;criteria=aisc&amp;"
+        "direction_up_beta=low_good&amp;gold_price=3500"
+    )
+    assert (
+        f'href="/candidate-finder?{base_query}" aria-current="true">Our View</a>'
+        in html
+    )
+    assert (
+        f'href="/candidate-finder?{base_query}&amp;fundamentals_source=yahoo">'
+        "Yahoo Fundamentals</a>" in html
+    )
+    assert '<select name="fundamentals_source">' not in html
+
+
+def test_candidate_finder_empty_results_use_shared_empty_states_not_tables():
+    data = _candidate_finder_data()
+    empty_data = replace(data, frame=data.frame.iloc[0:0].copy())
+
+    html = render_candidate_finder_page(empty_data)
+
+    assert 'class="empty-state"' in html
+    assert "No qualifying rows found." in html
+    assert "No rows in this ranking group." in html
+    assert "js-datatable candidate-ranking-table" not in html
+    assert "No rows found.</td>" not in html
 
 
 def test_candidate_finder_builder_preserves_gold_price_scenario():
@@ -244,8 +318,8 @@ def test_candidate_finder_page_preserves_yahoo_fundamentals_source():
     )
 
     assert (
-        '<option value="yahoo" selected>Yahoo Fundamentals</option>'
-        in html
+        'href="/candidate-finder?gold_price=4000&amp;fundamentals_source=yahoo" '
+        'aria-current="true">Yahoo Fundamentals</a>' in html
     )
     assert "Yahoo Fundamentals recalculates finance-dependent ranking" in html
     assert "/candidate-finder?preset=bull&amp;gold_price=4000&amp;fundamentals_source=yahoo" in html
@@ -286,11 +360,14 @@ def test_candidate_finder_page_bear_screen_has_direction_neutral_copy():
 
     html = render_candidate_finder_page(data, query={"preset": ["bear"]})
 
-    assert '<a class="candidate-preset is-active" href="/candidate-finder?preset=bear">Bear</a>' in html
+    assert (
+        '<a class="control" href="/candidate-finder?preset=bear" '
+        'aria-current="true">Bear</a>' in html
+    )
     assert "Fragile names likely to fall hardest if gold falls." in html
     assert "Debt load vs earnings. High values rank higher." in html
     assert "Lower debt burden. High values rank higher." not in html
-    assert 'data-col-name="criterion_down_beta" data-sort-numeric' in html
+    assert 'data-col-name="criterion_down_beta" data-sort-numeric' not in html
     assert 'data-col-name="criterion_up_beta" data-sort-numeric' not in html
 
 
@@ -299,8 +376,11 @@ def test_candidate_finder_page_invalid_preset_falls_back_to_default():
 
     html = render_candidate_finder_page(data, query={"preset": ["banana"]})
 
-    assert '<a class="candidate-preset is-active" href="/candidate-finder?preset=bull">Bull</a>' in html
-    assert 'is-active" href="/candidate-finder?preset=bear"' not in html
+    assert (
+        '<a class="control" href="/candidate-finder?preset=bull" '
+        'aria-current="true">Bull</a>' in html
+    )
+    assert 'href="/candidate-finder?preset=bear" aria-current="true"' not in html
     assert "Pick at least one criterion" not in html
     assert "Unknown preset ignored" not in html
 
@@ -319,7 +399,8 @@ def test_candidate_finder_page_maps_retired_preset_urls(legacy_preset, active_pr
     html = render_candidate_finder_page(data, query={"preset": [legacy_preset]})
 
     assert (
-        f'<a class="candidate-preset is-active" href="/candidate-finder?preset={active_preset}">'
+        f'<a class="control" href="/candidate-finder?preset={active_preset}" '
+        'aria-current="true">'
         in html
     )
 
@@ -548,3 +629,132 @@ def test_candidate_finder_page_ignores_unknown_saved_token():
     html = render_candidate_finder_page(_candidate_finder_data(), query={"saved": ["bogus"]})
 
     assert "notice notice-success" not in html
+
+
+def test_candidate_finder_options_copy_counts_stored_and_stale_tickers():
+    from golden_vector.serve.candidate_finder_page import _render_options_latest_available
+
+    html = _render_options_latest_available(
+        pd.DataFrame(
+            [
+                {
+                    "ticker": "AEM",
+                    "options_source_as_of_date": "2026-08-07",
+                    "options_captured_at_utc": "2026-08-07T20:00:00Z",
+                    "options_carried_forward": True,
+                    "options_staleness_trading_days": 3,
+                    "options_freshness_status": "STALE",
+                },
+                {
+                    "ticker": "GDX",
+                    "options_source_as_of_date": "2026-08-12",
+                    "options_captured_at_utc": "2026-08-12T20:00:00Z",
+                    "options_carried_forward": False,
+                    "options_staleness_trading_days": 0,
+                    "options_freshness_status": "LATEST",
+                },
+            ]
+        )
+    )
+
+    assert "latest available snapshot" in html
+    assert "1 stored ticker snapshot(s)" in html
+    assert "Latest collection: Aug 12, 4:00 PM ET" in html
+    assert "1 option snapshot(s) are at least 3 US trading days old" in html
+
+
+# ---------------------------------------------------------------------------
+# generation carry: the Finder reads the same frozen per-ticker columns
+# ---------------------------------------------------------------------------
+
+
+def _finder_options_note(rows, manifest):
+    from golden_vector.serve.candidate_finder_page import _render_options_latest_available
+    from golden_vector.serve.option_data_freshness import (
+        option_generation_freshness_from_manifest,
+    )
+
+    return _render_options_latest_available(
+        pd.DataFrame(rows),
+        generation=option_generation_freshness_from_manifest(manifest),
+    )
+
+
+def _carried_generation_manifest(as_of_date: str) -> dict[str, object]:
+    return {
+        "state": "complete",
+        "freshness_domains": {
+            "option_artifacts": {
+                "status": "CARRIED_FORWARD",
+                "as_of_date": as_of_date,
+                "reason": "The options provider failed for every ticker in this refresh.",
+            }
+        },
+    }
+
+
+def _fresh_looking_finder_rows(as_of_date: str) -> list[dict]:
+    """Rows exactly as a skipped option build leaves them: stamped current.
+
+    ``options_carried_forward`` is False and the display columns say LATEST
+    because the LAST build that ran stamped them on the day it ran.
+    """
+
+    return [
+        {
+            "ticker": ticker,
+            "options_source_as_of_date": as_of_date,
+            "options_captured_at_utc": f"{as_of_date}T20:00:00Z",
+            "options_carried_forward": False,
+            "options_staleness_trading_days": 0,
+            "options_freshness_status": "LATEST",
+        }
+        for ticker in ("AEM", "NEM")
+    ]
+
+
+def test_finder_counts_a_carried_generation_as_stored_and_warns_when_stale():
+    """Regression: the Finder read the frozen per-ticker columns only.
+
+    Through a full vendor outage it therefore reported "0 stored ticker
+    snapshot(s)" and never fired the stale warning, while the ticker page and
+    Option Trading overview both did -- the same numbers disagreeing by screen.
+    """
+
+    as_of = source_date_n_trading_days_old(3)
+    html = _finder_options_note(
+        _fresh_looking_finder_rows(as_of), _carried_generation_manifest(as_of)
+    )
+
+    assert "2 stored ticker snapshot(s) remain visible" in html
+    assert "2 option snapshot(s) are at least 3 US trading days old" in html
+
+
+def test_a_one_day_old_carried_generation_counts_stored_without_the_warning():
+    """The healthy control: same rows, one trading day of carry."""
+
+    as_of = source_date_n_trading_days_old(1)
+    html = _finder_options_note(
+        _fresh_looking_finder_rows(as_of), _carried_generation_manifest(as_of)
+    )
+
+    assert "2 stored ticker snapshot(s) remain visible" in html
+    assert "US trading days old" not in html
+
+
+def test_a_current_generation_leaves_the_finder_counts_alone():
+    """The other control: nothing carried, so the rows' own verdicts stand."""
+
+    as_of = source_date_n_trading_days_old(0)
+    html = _finder_options_note(
+        _fresh_looking_finder_rows(as_of),
+        {
+            "state": "complete",
+            "freshness_domains": {
+                "option_artifacts": {"status": "OK", "as_of_date": as_of}
+            },
+        },
+    )
+
+    assert "0 stored ticker snapshot(s) remain visible" in html
+    assert "US trading days old" not in html

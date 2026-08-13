@@ -140,6 +140,31 @@ _HEADLINE_METRICS: tuple[str, ...] = (
     "leverage_stressed",
 )
 
+#: The words that declare a figure follows the gold dial. The visual marking
+#: (gold edge, diamond) is DERIVED from this basis text rather than maintained
+#: beside it, so a row can never wear the marker while its Basis column says
+#: the value is fixed.
+GOLD_BASIS = "moves with gold"
+
+#: Decorative: the Basis column already states the same fact in words, so the
+#: diamond is hidden from assistive technology instead of repeating it.
+_GOLD_MARKER_HTML = (
+    '<span class="gold-linked-marker" aria-hidden="true">&#9670;</span>'
+)
+
+
+def _is_gold_basis(basis: str) -> bool:
+    return basis.startswith(GOLD_BASIS)
+
+
+def _gold_row_attrs(basis: str) -> str:
+    return ' class="moves-with-gold"' if _is_gold_basis(basis) else ""
+
+
+def _gold_marker(basis: str) -> str:
+    return _GOLD_MARKER_HTML if _is_gold_basis(basis) else ""
+
+
 #: Persisted FAIL code -> (sentence template, measured Tool B column, measured
 #: format, ``config_group.attribute`` threshold path, threshold format).
 #: ``{value}`` and ``{threshold}`` are substituted with formatted strings.
@@ -904,7 +929,7 @@ def _scenario_cell(
     )
 
 
-def _spot_dial_cell(metric: str, *, scenario_enabled: bool) -> str:
+def _spot_dial_cell(metric: str, gold_row: pd.Series | None) -> str:
     """Spot cell for a LINE metric.
 
     The gold-response contract persists spot display values for the six ratio
@@ -913,9 +938,10 @@ def _spot_dial_cell(metric: str, *, scenario_enabled: bool) -> str:
     at a different price. Recomputing it here would be backend maths in serve.
     """
 
+    value = _value(gold_row, f"spot_{metric}") if gold_row is not None else None
     fallback = (
-        '<span class="dial-pending">needs the gold dial (JavaScript)</span>'
-        if scenario_enabled
+        format_metric(value, METRIC_FORMATS[metric])
+        if value is not None
         else '<span class="dial-unavailable">Unavailable &mdash; see reason above</span>'
     )
     return (
@@ -926,18 +952,20 @@ def _spot_dial_cell(metric: str, *, scenario_enabled: bool) -> str:
 
 def _line_metric_row(
     metric: str,
+    gold_row: pd.Series | None,
     *,
     app_config: AppConfig | None,
     scenario_enabled: bool,
 ) -> str:
     label = _METRIC_LABELS[metric]
+    basis = f"{GOLD_BASIS} · evaluated from the persisted line"
     return (
-        '<tr class="moves-with-gold">'
-        f'<th scope="row">{escape(label)}'
+        f"<tr{_gold_row_attrs(basis)}>"
+        f'<th scope="row">{_gold_marker(basis)}{escape(label)}'
         f"{help_icon(label, key=_METRIC_HELP_KEYS[metric], app_config=app_config)}</th>"
-        + _spot_dial_cell(metric, scenario_enabled=scenario_enabled)
+        + _spot_dial_cell(metric, gold_row)
         + _scenario_cell(metric, scenario_enabled=scenario_enabled)
-        + '<td class="basis">moves with gold · evaluated from the persisted line</td>'
+        + f'<td class="basis">{escape(basis)}</td>'
         "</tr>"
     )
 
@@ -953,8 +981,8 @@ def _ratio_metric_row(
     label = _METRIC_LABELS[metric]
     column = SPOT_DISPLAY_BY_METRIC[metric]
     return (
-        '<tr class="moves-with-gold">'
-        f'<th scope="row">{escape(label)}'
+        f"<tr{_gold_row_attrs(basis)}>"
+        f'<th scope="row">{_gold_marker(basis)}{escape(label)}'
         f"{help_icon(label, key=_METRIC_HELP_KEYS[metric], app_config=app_config)}</th>"
         f'<td class="spot-cell">{_cell(gold_row, column, METRIC_FORMATS[metric])}</td>'
         + _scenario_cell(metric, scenario_enabled=scenario_enabled)
@@ -1057,6 +1085,8 @@ def _headline_cards(
                 state_label=(
                     "No valid spot value was published" if unavailable else ""
                 ),
+                # Every headline card is one of the six dial-driven ratios.
+                gold_linked=True,
             )
             + "</div>"
         )
@@ -1082,6 +1112,7 @@ def _earnings_group(
     rows = "".join(
         _line_metric_row(
             metric,
+            gold_row,
             app_config=app_config,
             scenario_enabled=scenario_enabled,
         )
@@ -1091,21 +1122,21 @@ def _earnings_group(
         "margin_usd_per_oz",
         gold_row,
         app_config=app_config,
-        basis="moves with gold",
+        basis=GOLD_BASIS,
         scenario_enabled=scenario_enabled,
     )
     rows += _ratio_metric_row(
         "margin_pct",
         gold_row,
         app_config=app_config,
-        basis="moves with gold",
+        basis=GOLD_BASIS,
         scenario_enabled=scenario_enabled,
     )
     rows += _ratio_metric_row(
         "aisc_margin_yield",
         gold_row,
         app_config=app_config,
-        basis="moves with gold",
+        basis=GOLD_BASIS,
         scenario_enabled=scenario_enabled,
     )
     return disclosure(
@@ -1160,19 +1191,19 @@ def _valuation_group(
         "ev_ebitda",
         gold_row,
         app_config=app_config,
-        basis="moves with gold",
+        basis=GOLD_BASIS,
         scenario_enabled=scenario_enabled,
     ) + _ratio_metric_row(
         "forward_pe",
         gold_row,
         app_config=app_config,
-        basis="moves with gold",
+        basis=GOLD_BASIS,
         scenario_enabled=scenario_enabled,
     ) + _ratio_metric_row(
         "leverage_stressed",
         gold_row,
         app_config=app_config,
-        basis="moves with gold",
+        basis=GOLD_BASIS,
         scenario_enabled=scenario_enabled,
     )
     body = _fixed_table(
@@ -1636,8 +1667,11 @@ def render_corporate_finance_section(
             label="Corporate finance basis",
         ),
         _corporate_status_strip(tool_b_row, finance_source=finance_source),
-        '<p class="hint">Rows marked "moves with gold" follow the dial; '
-        "everything else is fixed.</p>",
+        # The diamond is the legend's subject, so here it is NOT aria-hidden:
+        # the words carry the meaning and the symbol is shown as itself.
+        '<p class="hint">Rows marked with a gold diamond '
+        '(<span class="gold-linked-marker">&#9670;</span>) and cards with a gold '
+        "edge move with the gold dial; everything else is fixed.</p>",
     ]
 
     if data.gold_response.status != "OK":

@@ -14,7 +14,7 @@ from typing import Any, Protocol
 import pandas as pd
 
 from golden_vector.common.parquet import write_parquet_atomic
-from golden_vector.common.numeric import optional_int
+from golden_vector.common.numeric import bool_or_false, optional_int
 from golden_vector.common.strings import clean_string, normalize_ticker, ordinal_percentile
 from golden_vector.contracts.config_models import (
     SIGNAL_AREA_DTE_MAX as _SIGNAL_AREA_DTE_MAX,
@@ -141,7 +141,9 @@ def build_option_signal_artifacts(
             manifest=manifest,
         )
         summary_rows.append(row)
-        if row.get("data_quality_label") == "OK":
+        if row.get("data_quality_label") == "OK" and not bool_or_false(
+            feature.get("carried_forward", False)
+        ):
             current_history_rows.extend(
                 _history_rows(
                     row=row,
@@ -157,6 +159,12 @@ def build_option_signal_artifacts(
     )
     history_points = _history_points_frame(next_history)
     publish_blockers = _publish_blockers(summary, app_config=app_config)
+    if _manifest_has_full_vendor_outage(manifest):
+        publish_blockers.insert(
+            0,
+            "The options provider failed for every ticker in this refresh; "
+            "keeping the previous complete option artifact generation.",
+        )
     return OptionSignalArtifacts(
         summary=summary,
         skew_curve_points=_skew_curve_points_frame(
@@ -346,6 +354,7 @@ def _summary_row(
         prior_metrics_by_contract=prior_metrics_by_contract,
         app_config=app_config,
         direction_candidate=direction_candidate,
+        carried_forward=bool_or_false(feature.get("carried_forward")),
     )
     direction_label = _confirmed_direction_label(
         direction_candidate,
@@ -369,7 +378,12 @@ def _summary_row(
     row: dict[str, Any] = {
         "ticker": ticker,
         "benchmark_symbol": benchmark_symbol,
-        "as_of_date": str(manifest.get("as_of_date") or ""),
+        "as_of_date": str(
+            feature.get("source_as_of_date")
+            or feature.get("as_of_date")
+            or manifest.get("as_of_date")
+            or ""
+        ),
         "signal_horizon_days": signal_horizon,
         "headline": _headline(
             ticker=ticker,
@@ -426,7 +440,12 @@ def _summary_row(
         "oi_change_call": activity["oi_change_call"],
         "volume_to_oi_put": activity["volume_to_oi_put"],
         "volume_to_oi_call": activity["volume_to_oi_call"],
-        "quote_snapshot_run_id": str(manifest.get("refresh_run_id") or ""),
+        "quote_snapshot_run_id": str(
+            feature.get("source_refresh_run_id")
+            or feature.get("run_id")
+            or manifest.get("refresh_run_id")
+            or ""
+        ),
         "option_vehicle_type": str(feature.get("option_vehicle_type") or "single_stock"),
     }
     for horizon in display_horizons:
@@ -708,6 +727,7 @@ def _activity_metrics(
     prior_metrics_by_contract: dict[tuple[str, str, str, float], dict[str, float]],
     app_config: AppConfig,
     direction_candidate: str,
+    carried_forward: bool = False,
 ) -> dict[str, Any]:
     put_volume, put_oi = _side_volume_oi(metrics, "P")
     call_volume, call_oi = _side_volume_oi(metrics, "C")
@@ -718,12 +738,14 @@ def _activity_metrics(
         option_type="P",
         metrics=metrics,
         prior_metrics_by_contract=prior_metrics_by_contract,
+        carried_forward=carried_forward,
     )
     oi_change_call, call_valid = _side_oi_change(
         ticker=ticker,
         option_type="C",
         metrics=metrics,
         prior_metrics_by_contract=prior_metrics_by_contract,
+        carried_forward=carried_forward,
     )
     # This lane reads VOLUME relative to open interest (a "volume pulse"), not an
     # actual open-interest build. High volume can be closing trades or churn, so it
@@ -789,7 +811,13 @@ def _side_oi_change(
     option_type: str,
     metrics: tuple[OptionContractMetrics, ...],
     prior_metrics_by_contract: dict[tuple[str, str, str, float], dict[str, float]],
+    carried_forward: bool = False,
 ) -> tuple[float | None, bool]:
+    # A carried ticker re-publishes the SAME chain the prior artifact was built
+    # from, so differencing it yields a manufactured "no movement" (0.0, valid)
+    # that overwrites the last real reading. Degrade this one lane instead.
+    if carried_forward:
+        return None, False
     if not prior_metrics_by_contract:
         return None, False
     change = 0.0
@@ -1148,6 +1176,15 @@ def _publish_blockers(summary: pd.DataFrame, *, app_config: AppConfig) -> list[s
         + "; ".join(details)
         + "); keeping the previous complete model state."
     ]
+
+
+def _manifest_has_full_vendor_outage(manifest: dict[str, Any]) -> bool:
+    """Keep a fully carried raw capture from being advertised as fresh signals."""
+
+    summary = manifest.get("summary")
+    return isinstance(summary, dict) and str(
+        summary.get("options_vendor_outage_status") or ""
+    ).strip().upper() == "FULL_OUTAGE"
 
 
 def _prior_metrics_by_contract(

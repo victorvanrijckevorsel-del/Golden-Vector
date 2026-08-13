@@ -20,6 +20,7 @@ from golden_vector.app.ticker_page_state import (
     STATUS_CORRUPT,
     TickerPageArtifactState,
     load_fx_attribution,
+    load_downside_context,
     load_gold_response,
     load_performance_series,
     load_research_series,
@@ -36,12 +37,18 @@ class TickerPageData:
     performance: TickerPageArtifactState
     research_series: TickerPageArtifactState
     fx_attribution: TickerPageArtifactState
+    downside_context: TickerPageArtifactState | None = None
 
     def performance_rows(self, ticker: str) -> pd.DataFrame:
         return _ticker_rows(self.performance.frame, ticker)
 
     def fx_attribution_rows(self, ticker: str) -> pd.DataFrame:
         return _ticker_rows(self.fx_attribution.frame, ticker)
+
+    def downside_context_rows(self, ticker: str) -> pd.DataFrame:
+        if self.downside_context is None:
+            return pd.DataFrame()
+        return _ticker_rows(self.downside_context.frame, ticker)
 
     def gold_response_row(
         self, ticker: str, *, finance_source: str
@@ -170,6 +177,7 @@ def load_ticker_page_data(paths: ProjectPaths) -> TickerPageData:
         performance=load_performance_series(paths),
         research_series=load_research_series(paths),
         fx_attribution=load_fx_attribution(paths),
+        downside_context=load_downside_context(paths),
     )
     states = (
         loaded.gold_response,
@@ -177,6 +185,7 @@ def load_ticker_page_data(paths: ProjectPaths) -> TickerPageData:
         loaded.performance,
         loaded.research_series,
         loaded.fx_attribution,
+        *(() if loaded.downside_context is None else (loaded.downside_context,)),
     )
     # An OSError can be transient while the manifest pointer stat remains the
     # same. Do not turn that one failed read into a permanent process-level

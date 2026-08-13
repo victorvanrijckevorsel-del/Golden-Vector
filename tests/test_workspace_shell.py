@@ -572,9 +572,8 @@ def test_control_selectors_meet_contrast_with_their_actual_tokens():
         # (.segmented-control CSS was dead and deleted in Phase 7).
         ("window tab (inactive)", *pair(comp, ".window-tab", ".window-tabs")),
         ("window tab (active)", *pair(comp, ".window-tab.active")),
-        ("benchmark toggle (active)", *pair(comp, ".benchmark-toggle.active")),
-        ("candidate preset (inactive)", *pair(pages, ".candidate-preset")),
-        ("candidate preset (active)", *pair(pages, ".candidate-preset.is-active")),
+        ("segmented choice (inactive)", *pair(comp, ".segmented-control__item", ".segmented-control")),
+        ("segmented choice (active)", *pair(comp, '.segmented-control__item[aria-current="true"]')),
         ("win-rate label on fill", *pair(pages, ".winrate-label", ".winrate-fill")),
         ("win-rate label on empty track", *pair(pages, ".winrate-label", ".winrate-bar")),
     ]
@@ -674,6 +673,21 @@ def test_focused_selection_includes_redesign_suites():
     spec.loader.exec_module(module)
     required = {
         "tests/test_design_tokens.py",
+        "tests/test_gold_dial_js_behavior.py",
+        "tests/test_ticker_page_behaviour.py",
+        "tests/test_ticker_page_command_workspace.py",
+        "tests/test_ticker_page_compare.py",
+        "tests/test_ticker_page_contracts.py",
+        "tests/test_ticker_page_corporate.py",
+        "tests/test_ticker_page_data_cache.py",
+        "tests/test_ticker_page_fx_attribution.py",
+        "tests/test_ticker_page_js_parity.py",
+        "tests/test_ticker_page_options.py",
+        "tests/test_ticker_page_producers.py",
+        "tests/test_ticker_page_sections.py",
+        "tests/test_ticker_page_stage.py",
+        "tests/test_tool_d.py",
+        "tests/test_tool_d_contract.py",
         "tests/test_workspace_shell.py",
         "tests/test_redesign_routes.py",
         "tests/test_workspace_app.py",

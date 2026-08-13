@@ -124,7 +124,6 @@
 }
 @media (pointer: coarse) {
   .control,
-  .button-like,
   .segmented-control__item,
   .form-control {
     min-height: var(--touch-target-min);

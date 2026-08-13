@@ -674,17 +674,20 @@ def test_unavailable_manifest_yields_calm_empty_frames_not_schema_error(tmp_path
     assert _read_option_artifact_frames(paths) is None
 
 
-def test_v3_generation_carries_forward_and_serves_under_v4_code(tmp_path):
-    """Legacy reader window (plan §6.4): a v3 generation stays fully usable."""
+def test_v4_generation_carries_forward_and_serves_under_v5_code(tmp_path):
+    """The one-version reader window keeps a complete v4 generation usable."""
 
-    from golden_vector.contracts.option_artifacts import OPTION_TRADING_READ_SET
+    from golden_vector.contracts.option_artifacts import (
+        OPTION_TRADING_READ_SET,
+        option_artifact_names_for_version,
+    )
     from golden_vector.serve.option_trading_data import _read_option_artifact_frames
 
     paths = build_test_paths(tmp_path)
     _publish_good_manifest(
         paths,
-        schema_version=3,
-        artifact_names=OPTION_TRADING_READ_SET,
+        schema_version=4,
+        artifact_names=option_artifact_names_for_version(4),
     )
     _write_day2_core(paths, refresh_run_id="refresh-B")
 
@@ -693,10 +696,7 @@ def test_v3_generation_carries_forward_and_serves_under_v4_code(tmp_path):
     domain = payload["freshness_domains"]["option_artifacts"]
     assert domain["status"] == "CARRIED_FORWARD"
     assert domain["source_run_id"] == DAY1_SOURCE_RUN_ID
-    # The v4-only artifacts are NOT demanded from a v3 generation.
-    for name in ("option_chain_history_daily", "option_availability"):
-        assert payload["artifacts"][name].get("usable") is not True
-    for name in OPTION_TRADING_READ_SET:
+    for name in option_artifact_names_for_version(4):
         assert payload["artifacts"][name]["usable"] is True
 
     frames = _read_option_artifact_frames(paths)

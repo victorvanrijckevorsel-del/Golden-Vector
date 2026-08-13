@@ -10,6 +10,7 @@ from golden_vector.serve.option_refresh import (
     REFRESH_JOB_ID_ENV,
     OptionRefreshStartResult,
     OptionRefreshStatus,
+    acquire_refresh_lock,
     complete_options_refresh,
     option_refresh_status_path,
     read_option_refresh_status,
@@ -32,7 +33,14 @@ def test_option_refresh_status_defaults_idle(tmp_path):
     assert not status.is_running
 
 
-def test_option_refresh_status_recovers_stale_running_process(tmp_path):
+def test_option_refresh_status_recovers_stale_running_process_without_writing(tmp_path):
+    """The read path REPORTS the dead process; it must not rewrite the record.
+
+    That write happened outside the .acquire.lock sidecar, so it could clobber a
+    RUNNING record another process had just written under the lock -- and the
+    reader that saw "failed" would then launch a second concurrent refresh.
+    """
+
     paths = build_test_paths(tmp_path)
     paths.ensure_runtime_dirs()
     write_option_refresh_status(
@@ -51,7 +59,39 @@ def test_option_refresh_status_recovers_stale_running_process(tmp_path):
 
     assert status.status == "failed"
     assert status.error_summary == "Refresh process is no longer running."
-    assert persisted["status"] == "failed"
+    assert persisted["status"] == "running"
+    assert persisted["job_id"] == "job-1"
+
+
+def test_a_locked_start_still_replaces_a_dead_running_record(tmp_path):
+    """Nothing is lost by not persisting: the start path rewrites it under the lock."""
+
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    write_option_refresh_status(
+        paths,
+        OptionRefreshStatus(
+            status="running",
+            job_id="job-dead",
+            process_id=12345,
+            started_at=datetime.now(timezone.utc).isoformat(),
+            command=("python", "main.py", "refresh"),
+        ),
+    )
+
+    result = acquire_refresh_lock(
+        paths,
+        command=("python", "main.py", "refresh"),
+        process_id=4242,
+        process_exists=lambda _pid: _pid == 4242,
+    )
+    persisted = json.loads(option_refresh_status_path(paths).read_text(encoding="utf-8"))
+
+    assert result.started is True
+    assert result.already_running is False
+    assert persisted["status"] == "running"
+    assert persisted["job_id"] != "job-dead"
+    assert persisted["process_id"] == 4242
 
 
 def test_option_refresh_status_handles_corrupt_json(tmp_path):
@@ -371,7 +411,10 @@ def test_main_overview_shows_disabled_refresh_control(tmp_path):
     assert response["status"].startswith("200")
     assert "action=\"/refresh\"" in response["body"]
     assert "Refresh all model data" in response["body"]
-    assert "<button type=\"submit\" disabled>" in response["body"]
+    assert (
+        '<button type="submit" class="control control--primary" disabled>'
+        in response["body"]
+    )
     assert "Full model refresh running since " in response["body"]
 
 

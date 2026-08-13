@@ -14,7 +14,7 @@ import pandas as pd
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.app.replay_manifest import update_manifest_with_options
 from golden_vector.app.run_context import RunContext
-from golden_vector.common.numeric import int_or_zero, optional_float
+from golden_vector.common.numeric import bool_or_false, int_or_zero, optional_float
 from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.features.options import (
@@ -41,9 +41,14 @@ from golden_vector.ingestion.fetch_risk_free_rate import fetch_risk_free_rate
 from golden_vector.ingestion.persist_options import (
     OptionsSnapshotRecord,
     build_options_snapshot_frame,
+    persist_options_feature_snapshot,
     persist_options_snapshot_frame,
     safe_options_file_name,
     write_latest_options_manifest,
+)
+from golden_vector.ingestion.options_carry_forward import (
+    PreviousOptionsTickerBundle,
+    load_previous_options_ticker_bundles,
 )
 from golden_vector.ingestion.yahoo_client import YahooClient
 
@@ -122,6 +127,7 @@ def run_options_ingestion_phase(
         OPTIONS_STATUS_EMPTY: 0,
         OPTIONS_STATUS_ERROR: 0,
     }
+    previous_bundles = load_previous_options_ticker_bundles(paths)
 
     fetch_results = _fetch_option_targets(
         targets=targets,
@@ -142,6 +148,17 @@ def run_options_ingestion_phase(
                 target.yahoo_symbol,
                 result.message,
             )
+            status_counts[OPTIONS_STATUS_ERROR] += 1
+            snapshot_records.append(
+                _record_failed_ticker_attempt(
+                    paths=paths,
+                    run_context=run_context,
+                    ticker=target.ticker,
+                    previous=previous_bundles.get(target.ticker),
+                    attempt_message=result.message,
+                )
+            )
+            continue
         # Persist the raw snapshot first. If snapshot persistence itself fails there
         # is genuinely nothing to record, so emit an error event and move on.
         try:
@@ -152,6 +169,9 @@ def run_options_ingestion_phase(
                 run_id=run_context.run_id,
                 options_available=result.options_available,
                 message=result.message,
+                captured_at_utc=run_context.started_at_utc,
+                attempt_status=result.status,
+                attempt_message=result.message,
             )
             record = persist_options_snapshot_frame(
                 paths=paths,
@@ -160,6 +180,11 @@ def run_options_ingestion_phase(
                 snapshot=snapshot_frame,
                 options_available=result.options_available,
                 message=result.message,
+                source_refresh_run_id=run_context.run_id,
+                source_as_of_date=as_of_date.isoformat(),
+                captured_at_utc=run_context.started_at_utc,
+                attempt_status=result.status,
+                attempt_message=result.message,
             )
             # Carry the fetch's numeric expiration evidence into the manifest so
             # availability readers never have to parse the message prose.
@@ -181,6 +206,15 @@ def run_options_ingestion_phase(
                 }
             )
             LOGGER.warning("Options snapshot persistence failed for %s: %s", target.ticker, exc)
+            snapshot_records.append(
+                _record_failed_ticker_attempt(
+                    paths=paths,
+                    run_context=run_context,
+                    ticker=target.ticker,
+                    previous=previous_bundles.get(target.ticker),
+                    attempt_message=f"Snapshot persistence failed: {exc}",
+                )
+            )
             continue
 
         # Feature computation is a separate stage. If it fails, the raw snapshot is
@@ -206,6 +240,16 @@ def run_options_ingestion_phase(
             )
             feature_row["option_vehicle_type"] = target.vehicle_type
             feature_row["options_source_symbol"] = target.yahoo_symbol
+            feature_row.update(
+                {
+                    "source_refresh_run_id": run_context.run_id,
+                    "source_as_of_date": as_of_date.isoformat(),
+                    "captured_at_utc": run_context.started_at_utc,
+                    "carried_forward": False,
+                    "attempt_status": result.status,
+                    "attempt_message": result.message,
+                }
+            )
         except Exception as exc:  # noqa: BLE001 - per-ticker best effort by design.
             status_counts[OPTIONS_STATUS_ERROR] = (
                 status_counts.get(OPTIONS_STATUS_ERROR, 0) + 1
@@ -220,13 +264,87 @@ def run_options_ingestion_phase(
                 }
             )
             LOGGER.warning("Options feature computation failed for %s: %s", target.ticker, exc)
-            snapshot_records.append(replace(record, feature_status=OPTIONS_STATUS_ERROR))
+            snapshot_records.append(
+                _record_failed_ticker_attempt(
+                    paths=paths,
+                    run_context=run_context,
+                    ticker=target.ticker,
+                    previous=previous_bundles.get(target.ticker),
+                    attempt_message=f"Feature computation failed: {exc}",
+                )
+            )
             continue
 
         status_counts[result.status] = status_counts.get(result.status, 0) + 1
         snapshot_records.append(record)
         feature_rows.append(feature_row)
 
+    option_collection_stats = _summarize_option_collection_events(collection_events)
+    vendor_outage_status = _options_vendor_outage_status(
+        target_count=len(targets),
+        error_count=status_counts.get(OPTIONS_STATUS_ERROR, 0),
+    )
+    feature_paths: list[Path] = []
+    feature_row_count = 0
+    # Even when every current vendor request fails, publish a truthful options
+    # generation instead of failing the entire multi-dataset refresh. Verified
+    # prior ticker bundles remain available; tickers without one are explicit
+    # unavailable records. The effective cohort is still re-ranked because a
+    # corrupt/missing prior bundle can make it smaller than the old generation.
+    feature_frame = _effective_feature_frame(
+        current_features=pd.DataFrame(feature_rows),
+        snapshot_records=snapshot_records,
+        previous_bundles=previous_bundles,
+    )
+    feature_frame, snapshot_records, feature_persist_failures = (
+        _persist_current_feature_snapshots(
+            paths=paths,
+            run_context=run_context,
+            feature_frame=feature_frame,
+            snapshot_records=snapshot_records,
+            previous_bundles=previous_bundles,
+            iv_column=(
+                f"atm_iv_{app_config.hedge_readiness.option_signal_horizon_days}d"
+            ),
+        )
+    )
+    for ticker, message in feature_persist_failures.items():
+        attempted = next(
+            (
+                row
+                for row in feature_rows
+                if str(row.get("ticker") or "").strip().upper() == ticker
+            ),
+            {},
+        )
+        # A ticker already carried because its fetch/feature attempt failed has
+        # already contributed one ERROR. Only a newly failed current row changes
+        # the attempt counts here.
+        if not attempted:
+            continue
+        status_counts[OPTIONS_STATUS_ERROR] += 1
+        attempted_status = str(attempted.get("attempt_status") or "").upper()
+        if attempted_status in status_counts and status_counts[attempted_status] > 0:
+            status_counts[attempted_status] -= 1
+        collection_events.append(
+            {
+                "ticker": ticker,
+                "status": OPTIONS_STATUS_ERROR,
+                "message": message,
+            }
+        )
+    feature_row_count = len(feature_frame.index)
+    history_feature_frame = feature_frame[
+        ~feature_frame.get(
+            "carried_forward",
+            pd.Series(False, index=feature_frame.index),
+        ).map(bool_or_false)
+    ]
+    feature_paths = _append_feature_rows(
+        paths=paths,
+        run_context=run_context,
+        feature_rows=history_feature_frame.to_dict(orient="records"),
+    )
     option_collection_stats = _summarize_option_collection_events(collection_events)
     vendor_outage_status = _options_vendor_outage_status(
         target_count=len(targets),
@@ -241,23 +359,6 @@ def run_options_ingestion_phase(
         risk_free_message=risk_free_message,
         benchmark_statuses=benchmark_statuses,
     )
-    feature_paths: list[Path] = []
-    feature_row_count = 0
-    if status != "FAIL":
-        feature_frame = pd.DataFrame(feature_rows)
-        if not feature_frame.empty:
-            feature_frame["iv_percentile_cross_sectional"] = rank_options_iv_cross_section(
-                feature_frame,
-                iv_column=(
-                    f"atm_iv_{app_config.hedge_readiness.option_signal_horizon_days}d"
-                ),
-            )
-        feature_row_count = len(feature_frame.index)
-        feature_paths = _append_feature_rows(
-            paths=paths,
-            run_context=run_context,
-            feature_rows=feature_frame.to_dict(orient="records"),
-        )
     summary: dict[str, Any] = {
         "options_phase_status": status,
         "options_phase_requested": True,
@@ -268,6 +369,12 @@ def run_options_ingestion_phase(
         "options_success_count": status_counts.get(OPTIONS_STATUS_SUCCESS, 0),
         "options_empty_count": status_counts.get(OPTIONS_STATUS_EMPTY, 0),
         "options_error_count": status_counts.get(OPTIONS_STATUS_ERROR, 0),
+        "options_carried_forward_count": sum(
+            1 for record in snapshot_records if record.carried_forward
+        ),
+        "options_unavailable_count": sum(
+            1 for record in snapshot_records if record.snapshot_path is None
+        ),
         "options_vendor_outage_status": vendor_outage_status,
         "options_feature_row_count": feature_row_count,
         "options_feature_file_count": len(feature_paths),
@@ -280,20 +387,19 @@ def run_options_ingestion_phase(
         "options_collection_stats": option_collection_stats,
     }
     manifest_path = None
-    if status != "FAIL":
-        manifest_path = write_latest_options_manifest(
-            paths=paths,
-            run_context=run_context,
-            as_of_date=as_of_date,
-            snapshot_records=snapshot_records,
-            risk_free_rate=risk_free_rate,
-            benchmark_snapshot_paths=benchmark_paths,
-            summary=summary,
-        )
-        update_manifest_with_options(
-            run_context.run_dir,
-            options_manifest_path=manifest_path,
-        )
+    manifest_path = write_latest_options_manifest(
+        paths=paths,
+        run_context=run_context,
+        as_of_date=as_of_date,
+        snapshot_records=snapshot_records,
+        risk_free_rate=risk_free_rate,
+        benchmark_snapshot_paths=benchmark_paths,
+        summary=summary,
+    )
+    update_manifest_with_options(
+        run_context.run_dir,
+        options_manifest_path=manifest_path,
+    )
     run_context.write_json("options_phase_summary.json", summary)
     return OptionsPhaseResult(status=status, summary=summary, manifest_path=manifest_path)
 
@@ -414,6 +520,91 @@ def _expiration_count_available(result: OptionsChainResult) -> int | None:
         return None
 
 
+def _record_failed_ticker_attempt(
+    *,
+    paths: ProjectPaths,
+    run_context: RunContext,
+    ticker: str,
+    previous: PreviousOptionsTickerBundle | None,
+    attempt_message: str | None,
+) -> OptionsSnapshotRecord:
+    """Publish one coherent prior ticker bundle, or an honest unavailable row."""
+
+    if previous is None:
+        return OptionsSnapshotRecord(
+            ticker=ticker,
+            options_available=False,
+            row_count=0,
+            snapshot_path=None,
+            sha256=None,
+            message=None,
+            feature_status=OPTIONS_STATUS_ERROR,
+            source_refresh_run_id=None,
+            source_as_of_date=None,
+            captured_at_utc=None,
+            carried_forward=False,
+            attempt_status=OPTIONS_STATUS_ERROR,
+            attempt_message=attempt_message,
+        )
+
+    entry = previous.manifest_entry
+    snapshot = previous.snapshot.copy()
+    snapshot["source_refresh_run_id"] = previous.source_refresh_run_id
+    snapshot["source_as_of_date"] = previous.source_as_of_date
+    snapshot["captured_at_utc"] = previous.captured_at_utc
+    snapshot["carried_forward"] = True
+    snapshot["attempt_status"] = OPTIONS_STATUS_ERROR
+    snapshot["attempt_message"] = attempt_message
+    try:
+        record = persist_options_snapshot_frame(
+            paths=paths,
+            run_context=run_context,
+            ticker=ticker,
+            snapshot=snapshot,
+            options_available=bool(entry.get("options_available")),
+            message=str(entry.get("message")) if entry.get("message") is not None else None,
+            source_refresh_run_id=previous.source_refresh_run_id,
+            source_as_of_date=previous.source_as_of_date,
+            captured_at_utc=previous.captured_at_utc,
+            carried_forward=True,
+            attempt_status=OPTIONS_STATUS_ERROR,
+            attempt_message=attempt_message,
+        )
+        feature_path, feature_sha256 = persist_options_feature_snapshot(
+            paths=paths,
+            run_context=run_context,
+            ticker=ticker,
+            feature=previous.feature,
+        )
+    except Exception as exc:  # noqa: BLE001 - failed carry remains honestly unavailable.
+        LOGGER.warning("Prior options snapshot carry failed for %s: %s", ticker, exc)
+        return OptionsSnapshotRecord(
+            ticker=ticker,
+            options_available=False,
+            row_count=0,
+            snapshot_path=None,
+            sha256=None,
+            message=None,
+            feature_status=OPTIONS_STATUS_ERROR,
+            attempt_status=OPTIONS_STATUS_ERROR,
+            attempt_message=f"{attempt_message or 'Ticker attempt failed'}; carry failed: {exc}",
+        )
+    return replace(
+        record,
+        feature_path=feature_path,
+        feature_sha256=feature_sha256,
+        feature_status=str(entry.get("feature_status") or "OK").strip().upper(),
+        expiration_count_available=_optional_int(entry.get("expiration_count_available")),
+    )
+
+
+def _optional_int(value: object) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _price_history_for_target(
     *,
     target: _OptionFetchTarget,
@@ -490,6 +681,174 @@ def _compute_feature_row(
     row["options_fetch_message"] = options_result.message
     row["underlying_price"] = underlying_price if underlying_price > 0 else None
     return row
+
+
+def _persist_current_feature_snapshots(
+    *,
+    paths: ProjectPaths,
+    run_context: RunContext,
+    feature_frame: pd.DataFrame,
+    snapshot_records: list[OptionsSnapshotRecord],
+    previous_bundles: dict[str, PreviousOptionsTickerBundle],
+    iv_column: str,
+) -> tuple[pd.DataFrame, list[OptionsSnapshotRecord], dict[str, str]]:
+    """Persist one consistently ranked effective feature cohort.
+
+    The cohort includes both fresh and carried rows.  A cross-sectional
+    percentile only has meaning relative to the generation displayed beside
+    it, so a carried row keeps its verified source features/provenance but is
+    re-ranked against the current effective cohort.  Carried rows are still
+    excluded from mutable history by the caller.
+    """
+
+    remaining = feature_frame.copy()
+    records = list(snapshot_records)
+    failures: dict[str, str] = {}
+    while not remaining.empty:
+        remaining = remaining.copy()
+        remaining["iv_percentile_cross_sectional"] = rank_options_iv_cross_section(
+            remaining,
+            iv_column=iv_column,
+        )
+        failed_this_pass: set[str] = set()
+        for _, row in remaining.iterrows():
+            ticker = str(row.get("ticker") or "").strip().upper()
+            if not ticker:
+                continue
+            try:
+                feature_path, feature_sha256 = persist_options_feature_snapshot(
+                    paths=paths,
+                    run_context=run_context,
+                    ticker=ticker,
+                    feature=pd.DataFrame([row.to_dict()]),
+                )
+            except Exception as exc:  # noqa: BLE001 - ticker-level recovery boundary.
+                message = f"Feature snapshot persistence failed: {exc}"
+                failures[ticker] = message
+                failed_this_pass.add(ticker)
+                current = next((item for item in records if item.ticker == ticker), None)
+                if current is None:
+                    raise ValueError(
+                        f"Options snapshot record missing for feature ticker {ticker}."
+                    )
+                replacement = (
+                    _unavailable_ticker_record(ticker=ticker, attempt_message=message)
+                    if current.carried_forward
+                    else _record_failed_ticker_attempt(
+                        paths=paths,
+                        run_context=run_context,
+                        ticker=ticker,
+                        previous=previous_bundles.get(ticker),
+                        attempt_message=message,
+                    )
+                )
+                records = _replace_snapshot_record(
+                    records,
+                    replacement,
+                )
+                LOGGER.warning("Options feature snapshot persistence failed for %s: %s", ticker, exc)
+                continue
+            current = next((item for item in records if item.ticker == ticker), None)
+            if current is None:
+                raise ValueError(f"Options snapshot record missing for feature ticker {ticker}.")
+            records = _replace_snapshot_record(
+                records,
+                replace(
+                    current,
+                    feature_path=feature_path,
+                    feature_sha256=feature_sha256,
+                ),
+            )
+        if not failed_this_pass:
+            return remaining.reset_index(drop=True), records, failures
+        remaining = _effective_feature_frame(
+            current_features=remaining[
+                ~remaining["ticker"].astype(str).str.upper().isin(failed_this_pass)
+            ].reset_index(drop=True),
+            snapshot_records=records,
+            previous_bundles=previous_bundles,
+        )
+    return remaining, records, failures
+
+
+def _effective_feature_frame(
+    *,
+    current_features: pd.DataFrame,
+    snapshot_records: list[OptionsSnapshotRecord],
+    previous_bundles: dict[str, PreviousOptionsTickerBundle],
+) -> pd.DataFrame:
+    """Combine fresh rows with verified carried rows for this generation."""
+
+    rows_by_ticker: dict[str, dict[str, Any]] = {}
+    if not current_features.empty and "ticker" in current_features.columns:
+        for row in current_features.to_dict(orient="records"):
+            ticker = str(row.get("ticker") or "").strip().upper()
+            if ticker:
+                rows_by_ticker[ticker] = row
+
+    for record in snapshot_records:
+        ticker = record.ticker.strip().upper()
+        if record.snapshot_path is None or record.feature_status == OPTIONS_STATUS_ERROR:
+            rows_by_ticker.pop(ticker, None)
+            continue
+        if not record.carried_forward:
+            continue
+        previous = previous_bundles.get(ticker)
+        if previous is None:
+            rows_by_ticker.pop(ticker, None)
+            continue
+        row = dict(previous.feature_row)
+        row.update(
+            {
+                "ticker": ticker,
+                "source_refresh_run_id": record.source_refresh_run_id,
+                "source_as_of_date": record.source_as_of_date,
+                "captured_at_utc": record.captured_at_utc,
+                "carried_forward": True,
+                "attempt_status": record.attempt_status,
+                "attempt_message": record.attempt_message,
+            }
+        )
+        rows_by_ticker[ticker] = row
+
+    if not rows_by_ticker:
+        return pd.DataFrame()
+    return pd.DataFrame(
+        [rows_by_ticker[ticker] for ticker in sorted(rows_by_ticker)]
+    ).reset_index(drop=True)
+
+
+def _unavailable_ticker_record(
+    *,
+    ticker: str,
+    attempt_message: str,
+) -> OptionsSnapshotRecord:
+    """Return an honest unavailable row after an effective bundle cannot persist."""
+
+    return OptionsSnapshotRecord(
+        ticker=ticker,
+        options_available=False,
+        row_count=0,
+        snapshot_path=None,
+        sha256=None,
+        message=None,
+        feature_status=OPTIONS_STATUS_ERROR,
+        source_refresh_run_id=None,
+        source_as_of_date=None,
+        captured_at_utc=None,
+        carried_forward=False,
+        attempt_status=OPTIONS_STATUS_ERROR,
+        attempt_message=attempt_message,
+    )
+
+
+def _replace_snapshot_record(
+    records: list[OptionsSnapshotRecord],
+    replacement: OptionsSnapshotRecord,
+) -> list[OptionsSnapshotRecord]:
+    result = [record for record in records if record.ticker != replacement.ticker]
+    result.append(replacement)
+    return result
 
 
 def _append_feature_rows(
@@ -585,8 +944,12 @@ def _phase_status(
     risk_free_message: str | None,
     benchmark_statuses: list[BenchmarkFetchStatus],
 ) -> str:
+    # Options are one dataset inside a broader refresh. A total provider outage
+    # is operationally important, but it must not discard equities,
+    # fundamentals, or other data that refreshed successfully. Per-ticker
+    # records make the options result honestly carried or unavailable.
     if vendor_outage_status == "FULL_OUTAGE":
-        return "FAIL"
+        return "WARN"
     if (
         error_count
         or expiration_error_count

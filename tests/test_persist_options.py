@@ -52,6 +52,11 @@ def test_persist_options_snapshot_writes_run_local_parquet(tmp_path):
     assert snapshot.loc[0, "ticker"] == "AEM"
     assert snapshot.loc[0, "as_of_date"] == "2026-05-29"
     assert snapshot.loc[0, "run_id"] == context.run_id
+    assert snapshot.loc[0, "source_refresh_run_id"] == context.run_id
+    assert snapshot.loc[0, "source_as_of_date"] == "2026-05-29"
+    assert snapshot.loc[0, "captured_at_utc"] == context.started_at_utc
+    assert bool(snapshot.loc[0, "carried_forward"]) is False
+    assert snapshot.loc[0, "attempt_status"] == "SUCCESS"
     assert bool(snapshot.loc[0, "options_available"]) is True
     assert record.snapshot_path.relative_to(paths.repo_root).as_posix() in context.artifacts
 
@@ -126,6 +131,7 @@ def test_write_latest_options_manifest_points_at_run_snapshots(tmp_path):
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest_path == paths.latest_options_manifest_path
     assert payload["refresh_run_id"] == context.run_id
+    assert payload["manifest_version"] == 2
     assert payload["as_of_date"] == "2026-05-29"
     assert payload["options_snapshot_dir"] == f"data/runs/{context.run_id}/snapshots/options"
     assert payload["risk_free_rate"] == 0.043
@@ -135,6 +141,11 @@ def test_write_latest_options_manifest_points_at_run_snapshots(tmp_path):
     assert payload["snapshots"][0]["snapshot_path"] == (
         f"data/runs/{context.run_id}/snapshots/options/AEM.parquet"
     )
+    assert payload["snapshots"][0]["source_refresh_run_id"] == context.run_id
+    assert payload["snapshots"][0]["source_as_of_date"] == "2026-05-29"
+    assert payload["snapshots"][0]["captured_at_utc"] == context.started_at_utc
+    assert payload["snapshots"][0]["carried_forward"] is False
+    assert payload["snapshots"][0]["attempt_status"] == "SUCCESS"
     assert manifest_path.relative_to(paths.repo_root).as_posix() in context.artifacts
 
 

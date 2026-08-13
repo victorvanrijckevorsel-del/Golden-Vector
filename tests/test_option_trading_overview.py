@@ -15,7 +15,7 @@ from golden_vector.serve.overview_option_trading import (
     _resolve_selected_horizon,
     _selected_side,
 )
-from tests.helpers import build_test_paths
+from tests.helpers import build_test_paths, source_date_n_trading_days_old
 
 
 def test_option_trading_overview_renders_structured_rows_and_filters():
@@ -37,8 +37,13 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
                     call_status="tradable",
                     pnl_put_at_context=1.25,
                     pnl_call_at_context=2.50,
-                    notes=("candidate ok",),
-                    current_stock_price=174.96,
+                        notes=("candidate ok",),
+                        current_stock_price=174.96,
+                        source_as_of_date="2026-05-27",
+                        captured_at_utc="2026-05-27T20:00:00Z",
+                        carried_forward=True,
+                        display_staleness_trading_days=3,
+                        display_freshness_status="STALE",
                 ),
             ),
             source_context=OptionTradingSourceContext(
@@ -83,7 +88,15 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
     )
 
     assert "Option Trading" in html
-    assert "Cached options snapshot: 2026-06-01; screening only" in html
+    assert '<div class="terminal-density">' in html
+    assert '<select name="option_horizon">' not in html
+    assert 'class="btn btn-primary"' not in html
+    assert "Latest available option data is shown per ticker" in html
+    assert "Latest available" in html
+    assert "Stored snapshot" in html
+    assert "May 27, 2026" in html
+    assert "collected May 27, 4:00 PM ET" in html
+    assert "3 US trading days old" in html
     assert "Refresh context is mixed" in html
     assert "Run python main.py refresh" in html
     assert "Method" in html
@@ -100,8 +113,8 @@ def test_option_trading_overview_renders_structured_rows_and_filters():
     assert "data-filter-column=\"call_status\"" in html
     assert "data-filter-column=\"optionability\"" not in html
     assert "Tradable candidate" in html
-    assert "Snapshot Date" in html
-    assert "2026-06-01" in html
+    assert "Latest Available" in html
+    assert "May 27, 2026" in html
     assert "Cached Liquidity Check" in html
     assert "Benchmark ETFs" in html
     assert "Single-stock miners" in html
@@ -129,6 +142,7 @@ def test_option_trading_overview_renders_empty_state():
     assert "No options snapshot exists yet." in html
     assert "python main.py update-data" in html
     assert "option-trading-table" not in html
+    assert '<div class="terminal-density">' in html
 
 
 def test_option_trading_overview_discloses_risk_free_rate_fallback():
@@ -232,9 +246,15 @@ def test_selected_side_reads_persisted_map_not_recomputed():
 
 def test_horizon_selector_lists_configured_horizons():
     html = _render_horizon_selector("230", (90, 180, 230, 550))
-    assert 'value="most_liquid"' in html
-    assert 'value="230" selected' in html
-    assert ">90d</option>" in html and ">550d</option>" in html
+    assert 'class="segmented-control"' in html
+    assert 'href="/option-trading"' in html
+    assert (
+        'href="/option-trading?option_horizon=230" aria-current="true">230d</a>'
+        in html
+    )
+    assert ">90d</a>" in html and ">550d</a>" in html
+    assert "<select" not in html
+    assert "<button" not in html
 
 
 def test_overview_horizon_selector_changes_only_status_columns(tmp_path):
@@ -267,7 +287,7 @@ def test_overview_horizon_selector_changes_only_status_columns(tmp_path):
 
     default_html = _render_option_trading_overview_page(overview, app_config=app_config)
     # Default selection + the most-liquid expiry are shown; the per-horizon expiry is not.
-    assert 'value="most_liquid" selected' in default_html
+    assert 'href="/option-trading" aria-current="true">Most liquid</a>' in default_html
     assert "ML-PUT-EXP" in default_html
     assert "EXP-H" not in default_html
 
@@ -276,6 +296,120 @@ def test_overview_horizon_selector_changes_only_status_columns(tmp_path):
     )
     # The selected horizon's stamped put expiry now shows; the signal columns are
     # untouched by the selector (still rendered, horizon-agnostic).
-    assert f'value="{horizon}" selected' in horizon_html
+    assert (
+        f'href="/option-trading?option_horizon={horizon}" '
+        f'aria-current="true">{horizon}d</a>' in horizon_html
+    )
     assert "EXP-H" in horizon_html
     assert "Skew vs Benchmark" in horizon_html and "IV %ile" in horizon_html
+
+
+# ---------------------------------------------------------------------------
+# generation carry: the row columns are frozen, the generation is not
+# ---------------------------------------------------------------------------
+
+
+#: The row cell exactly -- the page lead also contains the words "stored
+#: snapshots", so a bare substring match would not prove which one rendered.
+_STORED_CELL = '<span class="hint cell-sub">Stored snapshot'
+_CURRENT_CELL = '<span class="hint cell-sub">Current snapshot'
+
+
+def _carried_generation_manifest(as_of_date: str) -> dict[str, object]:
+    """A published manifest whose option domain is a carried-forward snapshot."""
+
+    return {
+        "state": "complete",
+        "freshness_domains": {
+            "option_artifacts": {
+                "status": "CARRIED_FORWARD",
+                "as_of_date": as_of_date,
+                "reason": "The options provider failed for every ticker in this refresh.",
+            }
+        },
+    }
+
+
+def _fresh_looking_row(as_of_date: str) -> OptionTradingRow:
+    """A row exactly as a skipped build leaves it: stamped current, and wrong.
+
+    ``carried_forward`` is False and the display columns say LATEST because the
+    LAST build that ran stamped them on the day it ran. Nothing rebuilt them.
+    """
+
+    return OptionTradingRow(
+        ticker="AEM",
+        structural_delta_core=1.3,
+        down_beta_core=1.4,
+        up_beta_core=1.1,
+        confidence_label="HIGH",
+        confidence_score=0.9,
+        iv_percentile_cross_sectional=40.0,
+        iv_skew_signal=0.08,
+        iv_rv_ratio_signal=1.25,
+        optionability_tier="directly_hedgeable",
+        put_status="tradable",
+        call_status="tradable",
+        pnl_put_at_context=1.25,
+        pnl_call_at_context=2.50,
+        notes=("candidate ok",),
+        current_stock_price=174.96,
+        source_as_of_date=as_of_date,
+        captured_at_utc=f"{as_of_date}T20:00:00Z",
+        carried_forward=False,
+        display_staleness_trading_days=0,
+        display_freshness_status="LATEST",
+    )
+
+
+def test_carried_generation_relabels_rows_and_fires_the_stale_banner():
+    """Regression: rows claimed "Current snapshot" through a full vendor outage.
+
+    The row's own columns are frozen at LATEST, so both the label and the
+    >=3-trading-day banner have to read the generation's age instead.
+    """
+
+    as_of = source_date_n_trading_days_old(3)
+    html = _render_option_trading_overview_page(
+        OptionTradingOverviewData(rows=(_fresh_looking_row(as_of),)),
+        model_state_manifest=_carried_generation_manifest(as_of),
+    )
+
+    assert _STORED_CELL in html
+    assert _CURRENT_CELL not in html
+    assert "1 ticker(s) use option snapshots at least 3 US trading days old" in html
+    assert "3 US trading days old" in html
+
+
+def test_a_one_day_old_carried_generation_labels_stored_without_the_banner():
+    """The healthy control: same frozen-column row, one trading day of carry."""
+
+    as_of = source_date_n_trading_days_old(1)
+    html = _render_option_trading_overview_page(
+        OptionTradingOverviewData(rows=(_fresh_looking_row(as_of),)),
+        model_state_manifest=_carried_generation_manifest(as_of),
+    )
+
+    assert _STORED_CELL in html
+    assert _CURRENT_CELL not in html
+    assert "ticker(s) use option snapshots at least" not in html
+    assert "US trading days old" not in html
+
+
+def test_a_current_generation_still_labels_rows_current():
+    """The other control: nothing carried, so the row's own verdict stands."""
+
+    as_of = source_date_n_trading_days_old(0)
+    html = _render_option_trading_overview_page(
+        OptionTradingOverviewData(rows=(_fresh_looking_row(as_of),)),
+        model_state_manifest={
+            "state": "complete",
+            "freshness_domains": {
+                "option_artifacts": {"status": "OK", "as_of_date": as_of}
+            },
+        },
+    )
+
+    assert _CURRENT_CELL in html
+    assert _STORED_CELL not in html
+    assert "US trading days old" not in html

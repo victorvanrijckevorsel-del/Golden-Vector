@@ -597,6 +597,16 @@ def _options_source_assets(
                 "sha256": expected_sha256,
             }
         )
+        feature_path = str(snapshot.get("feature_path") or "").strip()
+        feature_sha256 = str(snapshot.get("feature_sha256") or "").strip()
+        if feature_path and feature_sha256:
+            assets.append(
+                {
+                    "name": f"options-feature:{ticker}.parquet",
+                    "original_path": feature_path,
+                    "sha256": feature_sha256,
+                }
+            )
 
     benchmark_paths = options_manifest.get("benchmark_snapshot_paths", [])
     for index, raw_path_obj in enumerate(benchmark_paths, start=1):

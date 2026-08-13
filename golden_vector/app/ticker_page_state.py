@@ -25,6 +25,8 @@ from golden_vector.app.model_state import load_current_model_state_manifest
 from golden_vector.app.paths import ProjectPaths
 from golden_vector.common.files import sha256_file
 from golden_vector.contracts.ticker_page import (
+    DOWNSIDE_CONTEXT_COLUMNS,
+    DOWNSIDE_CONTEXT_KEY_COLUMNS,
     GOLD_RESPONSE_COLUMNS,
     GOLD_RESPONSE_KEY_COLUMNS,
     PERCENTILES_COLUMNS,
@@ -217,6 +219,14 @@ def _load_artifact(
             frame=empty_artifact_frame(artifact),
         )
 
+    # Read the version before applying the current shape. A legitimate artifact
+    # from an older contract necessarily lacks columns added by the new one; if
+    # shape validation ran first, that expected migration state would be
+    # misreported as corruption instead of a stale generation that needs rebuild.
+    version_state = _schema_version_state(frame, name=name, artifact=artifact, columns=columns)
+    if version_state is not None:
+        return version_state
+
     violations = validate_frame_schema(
         frame,
         columns=columns,
@@ -241,11 +251,6 @@ def _load_artifact(
             frame=empty_artifact_frame(artifact),
         )
 
-    version_state = _schema_version_state(
-        frame, name=name, artifact=artifact, columns=columns
-    )
-    if version_state is not None:
-        return version_state
     return TickerPageArtifactState(status=STATUS_OK, reason=None, frame=frame)
 
 
@@ -316,6 +321,17 @@ def load_score_percentiles(paths: ProjectPaths) -> TickerPageArtifactState:
         columns=PERCENTILES_COLUMNS,
         key_columns=PERCENTILES_KEY_COLUMNS,
         artifact="percentiles",
+    )
+
+
+def load_downside_context(paths: ProjectPaths) -> TickerPageArtifactState:
+    return _load_artifact(
+        paths,
+        paths.latest_ticker_page_downside_context_path,
+        name="ticker_page_downside_context",
+        columns=DOWNSIDE_CONTEXT_COLUMNS,
+        key_columns=DOWNSIDE_CONTEXT_KEY_COLUMNS,
+        artifact="downside_context",
     )
 
 

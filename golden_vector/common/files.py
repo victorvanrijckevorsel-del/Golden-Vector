@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import shutil
 import time
@@ -88,6 +89,49 @@ def atomic_write_file(path: Path, writer: Callable[[Path], None]) -> Path:
     finally:
         _cleanup_tmp_path(tmp_path)
     return path
+
+
+def try_acquire_exclusive_file_lock(
+    path: Path,
+    *,
+    stale_after_seconds: float = 60.0,
+) -> int | None:
+    """Try to create a short-lived cross-process lock file.
+
+    The returned OS handle keeps ownership explicit. Call
+    :func:`release_exclusive_file_lock` in a ``finally`` block. A lock older
+    than ``stale_after_seconds`` is treated as a crashed process leftover and
+    removed once before retrying.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            return os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                age = time.time() - path.stat().st_mtime
+            except OSError:
+                continue
+            if age <= stale_after_seconds:
+                return None
+            try:
+                path.unlink()
+            except OSError:
+                return None
+    return None
+
+
+def release_exclusive_file_lock(path: Path, handle: int) -> None:
+    """Release a handle returned by :func:`try_acquire_exclusive_file_lock`."""
+
+    try:
+        os.close(handle)
+    finally:
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 def atomic_write_many(

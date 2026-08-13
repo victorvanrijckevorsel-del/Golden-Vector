@@ -249,6 +249,9 @@ def test_compare_series_visibility_is_progressive_and_table_stays_complete():
         assert f'<th scope="col" class="numeric">{label}</th>' in html
     assert html.count('type="checkbox"') == 4
     assert html.count(" checked") == 4
+    # The control IS the legend; there is no second detached chart legend.
+    assert html.count('class="chart-legend-item') == 0
+    assert html.count('class="chart-legend-line legend-swatch-') == 4
     assert html.index("legend-swatch-stock") < html.index("legend-swatch-gold")
     assert html.index("legend-swatch-gold") < html.index("legend-swatch-gdx")
     assert html.index("legend-swatch-gdx") < html.index("legend-swatch-gdxj")
@@ -764,6 +767,114 @@ def test_cost_downside_card_missing_sides_render_reasons_not_conclusions():
     assert "No eligible paired producers to plot." in html
 
 
+def test_cost_downside_card_explains_persisted_frequency_severity_and_recent_trend():
+    context = pd.DataFrame(
+        [
+            {
+                "scope": scope,
+                "subject": subject,
+                "context_status": "OK",
+                "hit_rate": rate,
+                "median_hit_return": severity,
+                "worst_hit_return": -0.28 if subject == "stock" else -0.20,
+                "frequency_peer_count": 11 if subject == "peer_median" else None,
+                "severity_peer_count": 9 if subject == "peer_median" else None,
+                "comparison_summary": (
+                    "Large falls happened more often than GDX and the eligible-miner median; "
+                    "the typical loss was harder than GDX and the eligible-miner median."
+                    if subject == "stock"
+                    else None
+                ),
+                "trend_summary": (
+                    "Recently, large falls happened less often than across full history; "
+                    "the typical loss was milder."
+                    if scope == "recent" and subject == "stock"
+                    else None
+                ),
+            }
+            for scope, values in (
+                ("full_history", (("stock", 0.30, -0.16), ("gdx", 0.15, -0.12), ("peer_median", 0.10, -0.11))),
+                ("recent", (("stock", 0.10, -0.13), ("gdx", 0.10, -0.11), ("peer_median", 0.20, -0.18))),
+            )
+            for subject, rate, severity in values
+        ]
+    )
+    html = render_cost_downside_card(
+        ticker="AAA",
+        aisc_row=_metric_row(),
+        downside_row=_metric_row(
+            metric_key="downside_hit_rate",
+            eligible_observation_count=20,
+            hit_count=6,
+        ),
+        aisc_peers=pd.DataFrame(),
+        downside_peers=pd.DataFrame(),
+        downside_context=context,
+        app_config=_app_config(),
+    )
+
+    assert "What the record means" in html
+    assert "Full history" in html and "Recent 2 years" in html
+    assert "Large-fall frequency" in html
+    assert "Typical loss when a large fall occurred" in html
+    assert "more often than GDX" in html
+    assert "Recently, large falls happened less often" in html
+    assert '<meter min="0" max="1" value="0.3">30.0%</meter>' in html
+    assert "Eligible-miner medians use each miner's own available record" in html
+    assert "Eligible-miner median (11 miners · own records)" in html
+    assert "Eligible-miner median (9 miners · own records)" in html
+
+
+@pytest.mark.parametrize("status", ["MISSING", "STALE", "CORRUPT"])
+def test_cost_downside_card_preserves_downside_artifact_failure(status):
+    reason = f"{status.lower()} downside context"
+    state = TickerPageArtifactState(
+        status=status,
+        reason=reason,
+        frame=pd.DataFrame(),
+    )
+
+    html = render_cost_downside_card(
+        ticker="AAA",
+        aisc_row=_metric_row(),
+        downside_row=_metric_row(metric_key="downside_hit_rate"),
+        aisc_peers=pd.DataFrame(),
+        downside_peers=pd.DataFrame(),
+        downside_context=state.frame,
+        downside_context_state=state,
+        app_config=_app_config(),
+    )
+
+    assert f"artifact state <strong>{status}</strong>" in html
+    assert reason in html
+    assert "nothing is estimated to fill the gap" in html
+
+
+def test_cost_downside_card_reports_ok_artifact_without_requested_ticker():
+    state = TickerPageArtifactState(
+        status="OK",
+        reason=None,
+        frame=pd.DataFrame(
+            [{"ticker": "BBB", "scope": "full_history", "subject": "stock"}]
+        ),
+    )
+
+    html = render_cost_downside_card(
+        ticker="AAA",
+        aisc_row=_metric_row(),
+        downside_row=_metric_row(metric_key="downside_hit_rate"),
+        aisc_peers=pd.DataFrame(),
+        downside_peers=pd.DataFrame(),
+        downside_context=state.frame.loc[state.frame["ticker"].eq("AAA")],
+        downside_context_state=state,
+        app_config=_app_config(),
+    )
+
+    assert "No persisted downside comparison was published for" in html
+    assert "<strong>AAA</strong>" in html
+    assert "nothing is estimated to fill the gap" in html
+
+
 # ---------------------------------------------------------------------------
 # guardrail: the new serve package computes nothing
 # ---------------------------------------------------------------------------
@@ -841,9 +952,21 @@ def test_gold_dial_js_guards_mirror_the_screening_layers():
     # the dial position is ephemeral by design — it must never touch the URL
     for forbidden in ("history.pushState", "history.replaceState", "location.search"):
         assert forbidden not in source, forbidden
-    # a disabled dial replaces the no-JavaScript fallback with the real reason
-    assert "payload.disabled_reason" in source
-    assert 'setAttribute("data-unavailable", "1")' in source
+    # Since the spot_* line-metric columns were promoted into the gold-response
+    # contract, the SERVER renders every spot cell (value or its honest
+    # unavailable state) and the disabled branch must return without rewriting
+    # them — JS owns scenario cells only. The old reason-replacement mechanism
+    # (payload.disabled_reason -> cell text + data-unavailable) is deliberately
+    # gone; its reappearance would mean serve stopped being the source of truth.
+    assert "payload.enabled !== true" in source
+    assert "payload.disabled_reason" not in source
+    # Scoped to the disabled branch on purpose: the SCENARIO cells legitimately
+    # keep their own data-unavailable marker (writeCell), because those cells
+    # are JS-owned. A blanket ban would forbid that too and pass only by
+    # breaking the scenario rendering this module exists to do.
+    disabled_branch = source.split("if (payload.enabled !== true")[1].split("return;")[0]
+    for forbidden in ("textContent", "setAttribute", "removeAttribute", "innerHTML"):
+        assert forbidden not in disabled_branch, forbidden
     # reduced motion is honoured, and the live region is polite and single
     assert "prefers-reduced-motion: reduce" in source
     assert source.count('var STATUS_ID = "gold-dial-status"') == 1

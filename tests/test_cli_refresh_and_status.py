@@ -422,6 +422,7 @@ def test_refresh_command_chains_update_then_tool_a_then_tool_b(tmp_path, monkeyp
     assert paths.latest_model_state_manifest_path.exists()
     model_state = json.loads(paths.latest_model_state_manifest_path.read_text(encoding="utf-8"))
     assert "-refresh-" in model_state["parent_refresh_id"]
+    assert model_state["full_refresh_completed_at_utc"]
     assert "tool_a" in model_state["artifacts"]
     assert "option_candidate_slots" in model_state["artifacts"]
     assert model_state["stage_timings"]["update_data"]["exit_code"] == 0
@@ -833,6 +834,65 @@ def test_refresh_command_skips_tool_b_when_flag_passed(tmp_path, monkeypatch, ca
     assert paths.latest_model_state_manifest_path.exists()
 
 
+#: The last COMPLETE refresh's clock. A partial publish must inherit it verbatim.
+PRIOR_FULL_REFRESH_AT = "2026-08-01T20:00:00Z"
+
+
+def test_a_partial_publish_never_advances_the_full_refresh_clock(tmp_path):
+    """The manifest-builder invariant, independent of the refresh orchestrator.
+
+    ``full_refresh_completed_at_utc`` is what every freshness read keys off. A
+    publisher that skipped Tool B/C/D did not refresh that data, so stamping
+    ``now`` would let a partial run masquerade as fresh market data. Asserted
+    directly here because the --skip-tool-b path was only ever saved by its
+    manifest coming out ``incomplete`` -- a side effect, not the guarantee.
+    """
+
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    write_current_model_state_manifest(
+        paths=paths,
+        config_hash="hash",
+        parent_refresh_id="parent-refresh-old",
+        full_refresh_completed_at_utc=PRIOR_FULL_REFRESH_AT,
+    )
+
+    inherited = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="hash",
+        parent_refresh_id="parent-refresh-new",
+    )
+    advanced = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="hash",
+        parent_refresh_id="parent-refresh-newer",
+        full_refresh_completed_at_utc="2026-08-12T20:00:00Z",
+    )
+
+    # Omitting the field inherits; only an explicit value from the full refresh
+    # orchestrator may move it forward.
+    assert inherited["full_refresh_completed_at_utc"] == PRIOR_FULL_REFRESH_AT
+    assert inherited["parent_refresh_id"] == "parent-refresh-new"
+    assert advanced["full_refresh_completed_at_utc"] == "2026-08-12T20:00:00Z"
+
+
+def test_the_skip_tool_b_publish_omits_the_full_refresh_timestamp():
+    """The --skip-tool-b branch must not pass a fresh timestamp at all.
+
+    A source-level check because the runtime assertion below can only observe
+    the inherited value, which would look identical if the branch happened to
+    run within the same second as the prior publish.
+    """
+
+    from pathlib import Path as _Path
+
+    source = _Path("golden_vector/cli.py").read_text(encoding="utf-8")
+    skip_branch = source.split("tool-b/tool-c/tool-d SKIPPED (--skip-tool-b)")[1]
+    publish_call = skip_branch.split("write_current_model_state_manifest(")[1].split(")")[0]
+
+    assert "full_refresh_completed_at_utc" not in publish_call
+
+
 def test_refresh_skip_tool_b_publishes_partial_manifest_for_new_tool_a(
     tmp_path,
     monkeypatch,
@@ -853,6 +913,7 @@ def test_refresh_skip_tool_b_publishes_partial_manifest_for_new_tool_a(
         paths=paths,
         config_hash="hash",
         parent_refresh_id="parent-refresh-old",
+        full_refresh_completed_at_utc=PRIOR_FULL_REFRESH_AT,
     )
 
     def fake_foundation(_paths, *, command_name="update-data"):
@@ -889,6 +950,9 @@ def test_refresh_skip_tool_b_publishes_partial_manifest_for_new_tool_a(
     assert exit_code == 0
     assert current_manifest != previous_manifest
     assert current_manifest["parent_refresh_id"] != "parent-refresh-old"
+    # INVARIANT: a partial refresh never advances the full-refresh clock.
+    assert current_manifest["full_refresh_completed_at_utc"] == PRIOR_FULL_REFRESH_AT
+    # Second, independent line of defence: the manifest is also incomplete.
     assert current_manifest["state"] == "incomplete"
     assert current_manifest["stage_timings"]["tool_a"]["steps"]["output_assembly"][
         "rows_built"

@@ -23,7 +23,7 @@ from golden_vector.lab.conditional_dial import BUCKET_SHORT_LABELS
 from golden_vector.serve.column_help import help_term
 from golden_vector.serve.lab_curve_data import LabCurveData
 from golden_vector.serve.page_shell import _page_shell
-from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.components import page_header, segmented_control, terminal_density
 from golden_vector.serve.ui.status import notice
 
 _CONTEXT_CLASS = "series-strip"
@@ -307,7 +307,11 @@ def _render_lab_curve_page(curve: LabCurveData) -> str:
             curve.error_status, scenario_bucket=curve.scenario_bucket
         )
         body.append(notice(tone, f"{escape(reason)}{rebuild}"))
-        return _page_shell(title, "".join(body), active_nav="lab")
+        return _page_shell(
+            title,
+            terminal_density("".join(body)),
+            active_nav="lab",
+        )
 
     body.append(_render_controls(curve))
     body.append(_render_profile(curve))  # hero: behaviour across all gold scenarios
@@ -318,7 +322,11 @@ def _render_lab_curve_page(curve: LabCurveData) -> str:
     body.append(_render_chart_a(curve))  # the week-by-week dots, collapsed
     body.append(_render_chart_b(curve))
     body.append(_render_glossary(curve))
-    return _page_shell(title, "".join(body), active_nav="lab")
+    return _page_shell(
+        title,
+        terminal_density("".join(body)),
+        active_nav="lab",
+    )
 
 
 def _cell_field(curve: LabCurveData, name: str) -> Any:
@@ -364,21 +372,20 @@ def _render_controls(curve: LabCurveData) -> str:
             f"&horizon={int(curve.horizon)}&benchmark={quote(benchmark, safe='')}"
         )
 
-    toggle = []
-    for benchmark in ("GDX", "GDXJ"):
-        if benchmark == curve.benchmark:
-            toggle.append(f"<span class=\"benchmark-toggle active\">{benchmark}</span>")
-        else:
-            toggle.append(
-                f"<a class=\"benchmark-toggle\" href=\"{escape(href(benchmark), quote=True)}\">{benchmark}</a>"
-            )
+    benchmark_control = segmented_control(
+        [
+            (benchmark, href(benchmark), benchmark == curve.benchmark)
+            for benchmark in ("GDX", "GDXJ")
+        ],
+        label="Benchmark",
+    )
     blurb = _BENCHMARK_BLURB.get(curve.benchmark, "")
     return (
         "<section class=\"panel lab-curve-controls\">"
         f"<p><strong>Scenario:</strong> {escape(curve.scenario_label)} &nbsp;·&nbsp; "
         f"<strong>Look-ahead:</strong> {int(curve.horizon)} weeks</p>"
-        f"<p><strong>Benchmark:</strong> {' '.join(toggle)} "
-        f"<span class=\"hint\">{escape(blurb)}</span></p>"
+        "<div class=\"lab-control-row\"><strong>Benchmark</strong>"
+        f"<div>{benchmark_control}<p class=\"hint\">{escape(blurb)}</p></div></div>"
         "</section>"
     )
 

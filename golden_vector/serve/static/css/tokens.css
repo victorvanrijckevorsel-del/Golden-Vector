@@ -168,6 +168,7 @@
      into them through the Phase 3 primitives or .terminal-density. */
   --content-max-width: 77.5rem;
   --ticker-content-max-width: 92rem;
+  --sidebar-width: 15rem;
   --density-gap-compact: 0.5rem;
   --density-gap-standard: 0.75rem;
   --density-panel-padding-block: 0.875rem;

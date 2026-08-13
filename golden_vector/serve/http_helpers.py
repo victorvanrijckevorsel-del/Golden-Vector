@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 from html import escape
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -83,6 +84,24 @@ def _html_response(
         [
             ("Content-Type", "text/html; charset=utf-8"),
             ("Content-Length", str(len(payload))),
+        ],
+    )
+    return [payload]
+
+
+def _json_response(
+    start_response: Callable[..., Any],
+    body: dict[str, Any],
+    *,
+    status: str = "200 OK",
+) -> Iterable[bytes]:
+    payload = json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    start_response(
+        status,
+        [
+            ("Content-Type", "application/json; charset=utf-8"),
+            ("Content-Length", str(len(payload))),
+            ("Cache-Control", "no-store"),
         ],
     )
     return [payload]

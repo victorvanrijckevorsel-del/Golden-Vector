@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 
 import pandas as pd
 
+from golden_vector.app.market_hours_refresh import classify_us_trading_day_freshness
 from golden_vector.common.strings import normalize_ticker_series
 from golden_vector.contracts.config_models import OptionHistoryQualityConfig
 from golden_vector.contracts.option_artifacts import (
@@ -24,7 +25,7 @@ from golden_vector.hedge.candidate_puts import (
     OptionCandidate,
     OptionCandidateSlot,
 )
-from golden_vector.common.numeric import optional_int as as_int
+from golden_vector.common.numeric import bool_or_false, optional_int as as_int
 from golden_vector.hedge._helpers import as_float
 from golden_vector.hedge.option_artifact_builder import OptionArtifactBuildResult
 from golden_vector.hedge.option_availability import has_usable_option_slots
@@ -185,6 +186,7 @@ def build_option_artifact_frames(
     return {
         name: _stamp_frame(
             frame,
+            artifact_name=name,
             manifest=manifest,
             source_run_id=source_run_id,
             parent_refresh_id=parent_refresh_id,
@@ -308,6 +310,21 @@ def overview_rows_from_frame(frame: pd.DataFrame) -> tuple[OptionTradingRow, ...
                 ),
                 per_horizon_status_json=_optional_str(
                     record.get("per_horizon_status_json")
+                ),
+                source_refresh_run_id=_optional_str(
+                    record.get("source_refresh_run_id")
+                ),
+                source_as_of_date=_optional_str(record.get("source_as_of_date"))
+                or _optional_str(record.get("options_as_of_date")),
+                captured_at_utc=_optional_str(record.get("captured_at_utc")),
+                carried_forward=bool_or_false(record.get("carried_forward")),
+                attempt_status=_optional_str(record.get("attempt_status")),
+                attempt_message=_optional_str(record.get("attempt_message")),
+                display_staleness_trading_days=_optional_int(
+                    record.get("display_staleness_trading_days")
+                ),
+                display_freshness_status=_optional_str(
+                    record.get("display_freshness_status")
                 ),
             )
         )
@@ -697,6 +714,9 @@ def _chain_history_frame(
     if options_features is not None and not options_features.empty:
         if "ticker" in options_features.columns:
             frame = options_features.copy()
+            if "carried_forward" in frame.columns:
+                carried = frame["carried_forward"].fillna(False).astype(bool)
+                frame = frame.loc[~carried].copy()
             frame["ticker"] = normalize_ticker_series(frame["ticker"])
             for ticker, group in frame.groupby("ticker", dropna=True):
                 cleaned = _optional_str(ticker)
@@ -769,6 +789,7 @@ def _preserve_own_schema_version(frame: pd.DataFrame, *, column: str) -> pd.Data
 def _stamp_frame(
     frame: pd.DataFrame,
     *,
+    artifact_name: str,
     manifest: dict[str, Any],
     source_run_id: str,
     parent_refresh_id: str | None,
@@ -792,6 +813,11 @@ def _stamp_frame(
     # artifact itself rather than reconstructed from mutable latest inputs.
     result["built_from_tool_a_refresh_id"] = str(tool_a_refresh_id or "")
     result["built_from_tool_b_refresh_id"] = str(tool_b_refresh_id or "")
+    result = _stamp_ticker_source_provenance(
+        result,
+        artifact_name=artifact_name,
+        manifest=manifest,
+    )
     result.attrs["schema_version"] = ACTIVE_OPTION_SCHEMA_VERSION
     result.attrs["snapshot_refresh_run_id"] = str(manifest.get("refresh_run_id") or "")
     result.attrs["source_run_id"] = source_run_id
@@ -800,6 +826,125 @@ def _stamp_frame(
     result.attrs["built_from_tool_a_refresh_id"] = str(tool_a_refresh_id or "")
     result.attrs["built_from_tool_b_refresh_id"] = str(tool_b_refresh_id or "")
     return result
+
+
+_TICKER_SOURCE_COLUMNS: tuple[str, ...] = (
+    "source_refresh_run_id",
+    "source_as_of_date",
+    "captured_at_utc",
+    "carried_forward",
+    "attempt_status",
+    "attempt_message",
+    "display_staleness_trading_days",
+    "display_freshness_status",
+)
+
+
+def _stamp_ticker_source_provenance(
+    frame: pd.DataFrame,
+    *,
+    artifact_name: str,
+    manifest: dict[str, Any],
+) -> pd.DataFrame:
+    if "ticker" not in frame.columns:
+        return frame
+    result = frame.copy()
+    if artifact_name in {"option_chain_history_daily", "option_signal_history_points"}:
+        source_run_column = (
+            "capture_run_id"
+            if artifact_name == "option_chain_history_daily"
+            else "quote_snapshot_run_id"
+        )
+        source_runs = (
+            result[source_run_column]
+            if source_run_column in result.columns
+            else pd.Series([None] * len(result.index), index=result.index)
+        )
+        source_dates = (
+            result["as_of_date"]
+            if "as_of_date" in result.columns
+            else pd.Series([None] * len(result.index), index=result.index)
+        )
+        result["source_refresh_run_id"] = source_runs
+        result["source_as_of_date"] = source_dates
+        result["captured_at_utc"] = None
+        result["carried_forward"] = False
+        result["attempt_status"] = "SUCCESS"
+        result["attempt_message"] = None
+        _stamp_freshness_columns(result, source_dates, manifest=manifest)
+        result["options_as_of_date"] = source_dates
+        return result
+
+    source_by_ticker = _manifest_source_by_ticker(manifest)
+    normalized = normalize_ticker_series(result["ticker"])
+    for column in _TICKER_SOURCE_COLUMNS:
+        if column in {"display_staleness_trading_days", "display_freshness_status"}:
+            continue
+        result[column] = [
+            source_by_ticker.get(ticker, {}).get(column)
+            if ticker is not None
+            else None
+            for ticker in normalized
+        ]
+    source_dates = result["source_as_of_date"]
+    _stamp_freshness_columns(result, source_dates, manifest=manifest)
+    result["options_as_of_date"] = source_dates
+    return result
+
+
+def _manifest_source_by_ticker(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    source_by_ticker: dict[str, dict[str, Any]] = {}
+    global_run = str(manifest.get("refresh_run_id") or "")
+    global_date = str(manifest.get("as_of_date") or "")
+    is_v2 = int(manifest.get("manifest_version") or 1) >= 2
+    for item in manifest.get("snapshots") or []:
+        if not isinstance(item, dict):
+            continue
+        ticker_series = normalize_ticker_series(pd.Series([item.get("ticker")]))
+        ticker = ticker_series.iloc[0]
+        if ticker is None:
+            continue
+        source_by_ticker[str(ticker)] = {
+            "source_refresh_run_id": (
+                item.get("source_refresh_run_id")
+                if is_v2
+                else item.get("source_refresh_run_id") or global_run
+            ),
+            "source_as_of_date": (
+                item.get("source_as_of_date")
+                if is_v2
+                else item.get("source_as_of_date") or global_date
+            ),
+            "captured_at_utc": item.get("captured_at_utc"),
+            "carried_forward": bool(item.get("carried_forward", False)),
+            "attempt_status": str(item.get("attempt_status") or "SUCCESS").upper(),
+            "attempt_message": item.get("attempt_message"),
+        }
+    return source_by_ticker
+
+
+def _stamp_freshness_columns(
+    frame: pd.DataFrame,
+    source_dates: pd.Series,
+    *,
+    manifest: dict[str, Any],
+) -> None:
+    through_date = _date_value(manifest.get("as_of_date"))
+    freshness = [
+        classify_us_trading_day_freshness(value, through_date=through_date)
+        for value in source_dates
+    ]
+    frame["display_staleness_trading_days"] = [item.trading_days for item in freshness]
+    frame["display_freshness_status"] = [item.status for item in freshness]
+
+
+def _date_value(value: object):
+    from datetime import date
+
+    try:
+        return date.fromisoformat(str(value or "").strip()[:10])
+    except ValueError:
+        return None
 
 
 def _empty_option_signal_artifacts() -> OptionSignalArtifacts:

@@ -45,6 +45,12 @@ depth behind a disclosure.
 - Drives every gold-dependent figure in Corporate finance.
 - **Show BOTH values: reported at spot AND at the scenario** — not a % delta alone.
 - **Clean by default (Q43):** the scenario column appears only once the dial moves.
+- **Gold marks what the dial moves (mock v3 rule — omitted from this document until
+  2026-08-13, and therefore silently dropped by the build; see
+  `milestones/platform_redesign/gold_marking_gap_2026-08-13.md`).** Dial-driven cards carry a
+  gold inline-start edge, dial-driven table rows carry a gold `◆`, and scenario values are
+  rendered in the gold accent. Fixed figures carry none of it. The marker is derived from the
+  row's Basis text so the symbol and the words can never disagree.
 - **Precomputed grid** — see §5 (a live recompute is 3.2–6.5 s; unusable).
 - P/E and EV/EBITDA **invert** (rise as gold falls: earnings shrink, price doesn't). Must be
   explained in their "?" text or users misread them.

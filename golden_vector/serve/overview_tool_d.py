@@ -15,6 +15,7 @@ from golden_vector.app.model_state import (
     resolve_current_foundation_manifest_path,
 )
 from golden_vector.app.paths import ProjectPaths
+from golden_vector.common.strings import clean_string
 from golden_vector.contracts.config_models import AppConfig
 from golden_vector.contracts.tool_d import select_tool_d_source_rows
 from golden_vector.fundamentals.artifacts import load_official_fundamentals
@@ -43,7 +44,15 @@ from golden_vector.serve.overview_helpers import (
 )
 from golden_vector.serve.column_help import help_th
 from golden_vector.serve.page_shell import _page_shell
-from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.components import (
+    disclosure,
+    empty_state,
+    page_header,
+    section_heading,
+    segmented_control,
+    terminal_density,
+    toolbar,
+)
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.url_helpers import build_page_url
@@ -127,8 +136,11 @@ def _render_tool_d_overview_page(
             else:
                 scenario_errors.append(f"Could not compute stress scenario: {exc}")
 
-    if frame.empty and persisted_selection.reason and requested_gold is None:
-        scenario_errors.append(persisted_selection.reason)
+    selection_reason = (
+        persisted_selection.reason
+        if frame.empty and persisted_selection.reason and requested_gold is None
+        else None
+    )
 
     search_term = str(search or "").strip().upper()
     if not frame.empty and search_term and "ticker" in frame.columns:
@@ -177,6 +189,11 @@ def _render_tool_d_overview_page(
         body.append(notice("success", escape(flash)))
     for scenario_error in scenario_errors:
         body.append(notice("danger", escape(scenario_error)))
+    if selection_reason:
+        # Use the contract-owned exact-source reason verbatim, matching the
+        # ticker resilience disclosure instead of inventing a page-specific
+        # schema/fallback explanation.
+        body.append(notice("degraded", escape(selection_reason)))
     if scenario_message:
         body.append(notice("info", escape(scenario_message)))
     if not state.tool_d_alias_present:
@@ -203,6 +220,18 @@ def _render_tool_d_overview_page(
             app_config=app_config,
             finance_source=finance_source,
             fundamentals_provenance=fundamentals_provenance,
+            unavailable_reason=(
+                (
+                    selection_reason
+                    or (
+                        "Corporate Resilience output is missing."
+                        if not state.tool_d_alias_present
+                        else None
+                    )
+                )
+                if frame.empty
+                else None
+            ),
         )
     )
     # Truthful legacy state: a pre-v2 Tool D artifact has only the old `aisc_margin_yield`
@@ -226,7 +255,7 @@ def _render_tool_d_overview_page(
     )
     return _page_shell(
         "Corporate Resilience - Golden Vector Workspace",
-        "".join(body),
+        terminal_density("".join(body)),
         active_nav="tool_d",
     )
 
@@ -308,12 +337,12 @@ def _render_scenario_form(
                 finance_source=finance_source,
             )
             active_class = (
-                " active"
+                ' aria-current="true"'
                 if active_gold is not None and abs(float(active_gold) - value) < 0.01
                 else ""
             )
             links.append(
-                f"<a class=\"button-like{active_class}\" href=\"{escape(href)}\">{escape(label)}</a>"
+                f"<a class=\"control\" href=\"{escape(href)}\"{active_class}>{escape(label)}</a>"
             )
     custom_value = "" if requested_gold is None else f"{requested_gold:.0f}"
     reset_params = {}
@@ -322,21 +351,31 @@ def _render_scenario_form(
     if finance_source == "yahoo":
         reset_params["fundamentals_source"] = "yahoo"
     reset_link = "/tool-d" + (f"?{urlencode(reset_params)}" if reset_params else "")
-    yahoo_selected = " selected" if finance_source == "yahoo" else ""
-    our_selected = " selected" if finance_source != "yahoo" else ""
+    source_hidden = (
+        '<input type="hidden" name="fundamentals_source" value="yahoo">'
+        if finance_source == "yahoo"
+        else ""
+    )
     return (
         "<section class=\"panel\">"
-        "<form method=\"get\" action=\"/tool-d\" class=\"overview-filters-form\">"
-        f"<label><span>Search ticker</span><input name=\"search\" type=\"text\" value=\"{escape(search)}\" placeholder=\"NEM\"></label>"
-        f"<label><span>Custom gold price</span><input name=\"gold_price\" type=\"number\" min=\"1\" step=\"1\" value=\"{escape(custom_value)}\"></label>"
-        "<label><span>Financials source</span><select name=\"fundamentals_source\">"
-        f"<option value=\"our\"{our_selected}>Our View</option>"
-        f"<option value=\"yahoo\"{yahoo_selected}>Yahoo Fundamentals</option>"
-        "</select></label>"
+        + section_heading("Stress scenario")
+        + toolbar(
+            _render_source_control(
+                search=search,
+                requested_gold=requested_gold,
+                finance_source=finance_source,
+            ),
+            label="Financials source",
+            visible_label="Financials source",
+        )
+        + "<form method=\"get\" action=\"/tool-d\" class=\"overview-filters-form\">"
+        f"{source_hidden}"
+        f"<label><span>Search ticker</span><input class=\"form-control\" name=\"search\" type=\"text\" value=\"{escape(search)}\" placeholder=\"NEM\"></label>"
+        f"<label><span>Custom gold price</span><input class=\"form-control\" name=\"gold_price\" type=\"number\" min=\"1\" step=\"1\" value=\"{escape(custom_value)}\"></label>"
         "<div class=\"overview-filters-actions\">"
         f"{''.join(links)}"
-        "<button type=\"submit\" class=\"btn btn-primary\">Apply</button>"
-        f"<a class=\"hint\" href=\"{escape(reset_link)}\">Reset gold price to spot</a>"
+        "<button type=\"submit\" class=\"control control--primary\">Apply</button>"
+        f"<a class=\"control control--quiet\" href=\"{escape(reset_link)}\">Reset gold price to spot</a>"
         "</div>"
         "</form>"
         "<p class=\"hint\">Formulas: breakeven = AISC (reported AISC already includes sustaining capital); "
@@ -346,18 +385,67 @@ def _render_scenario_form(
     )
 
 
+def _render_source_control(
+    *,
+    search: str,
+    requested_gold: float | None,
+    finance_source: str,
+) -> str:
+    params: dict[str, str] = {}
+    if search:
+        params["search"] = search
+    if requested_gold is not None:
+        params["gold_price"] = f"{requested_gold:g}"
+    our_href = build_page_url(
+        "/tool-d",
+        params,
+        set_params={"fundamentals_source": None},
+    )
+    yahoo_href = build_page_url(
+        "/tool-d",
+        params,
+        set_params={"fundamentals_source": "yahoo"},
+    )
+    return segmented_control(
+        (
+            ("Our View", our_href, finance_source != "yahoo"),
+            ("Yahoo Fundamentals", yahoo_href, finance_source == "yahoo"),
+        ),
+        label="Financials source",
+    )
+
+
 def _render_flip_section(
     frame,
     *,
     app_config: AppConfig | None = None,
     finance_source: str,
     fundamentals_provenance: dict[tuple[str, str], str],
+    unavailable_reason: str | None = None,
 ) -> str:
+    if unavailable_reason:
+        return (
+            "<section class=\"panel\">"
+            + section_heading("Who Flips Under This Stress")
+            + empty_state(
+                "Flip analysis is unavailable.",
+                body_html=f'<p class="hint">{escape(unavailable_reason)}</p>',
+            )
+            + "</section>"
+        )
     if frame.empty:
         return (
-            "<section class=\"panel\"><h2>Who Flips Under This Stress</h2>"
-            "<p class=\"hint\">No names flip from fine at spot into margin-negative, thin-margin, "
-            "or over-levered status under the selected gold price.</p></section>"
+            "<section class=\"panel\">"
+            + section_heading("Who Flips Under This Stress")
+            + empty_state(
+                "No names flip under the selected stress.",
+                body_html=(
+                    "<p class=\"hint\">No names flip from fine at spot into "
+                    "margin-negative, thin-margin, or over-levered status under "
+                    "the selected gold price.</p>"
+                ),
+            )
+            + "</section>"
         )
     rows: list[str] = []
     for row in frame.to_dict(orient="records"):
@@ -378,14 +466,30 @@ def _render_flip_section(
             "</tr>"
         )
     return (
-        "<section class=\"panel\"><h2>Who Flips Under This Stress</h2>"
+        "<section class=\"panel\">"
+        + section_heading("Who Flips Under This Stress")
         + table_region(
         "<table class=\"compact-table\"><thead><tr>"
         + help_th("Ticker", key="ticker_symbol", app_config=app_config)
         + help_th("Flip", key="tool_d_resilience_flip", app_config=app_config)
-        + help_th("Interest-Cover Line", key="tool_d_interest_cover", app_config=app_config)
-        + help_th("Leverage @ G", key="tool_d_leverage", app_config=app_config)
-        + help_th("Headroom @ G", key="tool_d_headroom", app_config=app_config)
+        + help_th(
+            "Interest-Cover Line",
+            key="tool_d_interest_cover",
+            app_config=app_config,
+            sort_numeric=True,
+        )
+        + help_th(
+            "Leverage @ G",
+            key="tool_d_leverage",
+            app_config=app_config,
+            sort_numeric=True,
+        )
+        + help_th(
+            "Headroom @ G",
+            key="tool_d_headroom",
+            app_config=app_config,
+            sort_numeric=True,
+        )
         + "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>",
         region_id="tool-d-flip-table-region",
@@ -393,6 +497,26 @@ def _render_flip_section(
         )
         + "</section>"
     )
+
+
+def _render_resilience_status_cell(row: dict[str, object]) -> str:
+    status = clean_string(row.get("resilience_data_status")) or ""
+    if not status:
+        return "<td>-</td>"
+    if status == "OK":
+        return f"<td>{escape(status)}</td>"
+    reason = clean_string(row.get("tool_d_explanation")) or status
+    missing = clean_string(row.get("missing_inputs")) or ""
+    missing_html = (
+        f"<p>Missing inputs: {escape(missing)}.</p>"
+        if missing
+        else ""
+    )
+    detail = (
+        "<p>Resilience is unavailable for the selected financial source: "
+        f"{escape(reason)}</p>{missing_html}"
+    )
+    return "<td>" + disclosure(escape(status), detail) + "</td>"
 
 
 def _render_table(
@@ -403,6 +527,14 @@ def _render_table(
     fundamentals_provenance: dict[tuple[str, str], str],
     legacy_fcf_schema: bool = False,
 ) -> str:
+    if frame.empty:
+        return empty_state(
+            "No Corporate Resilience rows found.",
+            body_html=(
+                "<p class=\"hint\">Change the search or financials source, "
+                "or refresh the persisted Corporate Resilience data.</p>"
+            ),
+        )
     rows_html: list[str] = []
     for row in frame.to_dict(orient="records"):
         ticker = str(row.get("ticker") or "")
@@ -426,7 +558,7 @@ def _render_table(
             f"{_fmt_numeric_td(row.get('leverage_stressed_at_g'), decimals=2)}"
             f"<td class=\"tool-d-ladder\">{_fmt_text(row.get('survival_order_ladder'))}</td>"
             f"<td>{_fmt_text(row.get('tool_d_tags'))}</td>"
-            f"<td>{_fmt_text(row.get('resilience_data_status'))}</td>"
+            f"{_render_resilience_status_cell(row)}"
             f"{_fmt_numeric_td(row.get('survival_distance_component'), decimals=1)}"
             f"{_fmt_numeric_td(row.get('cost_curve_resilience_component'), decimals=1)}"
             f"{_fmt_numeric_td(row.get('fragility_resilience_component'), decimals=1)}"
@@ -439,15 +571,8 @@ def _render_table(
             )
             + "</tr>"
         )
-    # Empty state: the colspan row does not match the explicit column model that
-    # workspace-tables.js hands DataTables, so drop js-datatable when there are no
-    # data rows (same pattern as candidate_finder_page.py).
-    table_class = "js-datatable" if rows_html else "empty-table"
-    if not rows_html:
-        rows_html.append("<tr><td colspan=\"19\" class=\"hint\">No Corporate Resilience rows found.</td></tr>")
-
     return table_region(
-        f"<table id=\"tool-d-table\" class=\"{table_class}\">"
+        "<table id=\"tool-d-table\" class=\"js-datatable\">"
         "<thead><tr>"
         "<th scope=\"col\" data-col-name=\"ticker\">Ticker</th>"
         + help_th("Resilience Score", key="tool_d_quality_rank", app_config=app_config, col_name="quality_rank", sort_numeric=True, panel=True)

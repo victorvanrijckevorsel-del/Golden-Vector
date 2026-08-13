@@ -398,6 +398,11 @@ def test_drilldown_profile_renders_across_scenarios_with_gaps() -> None:
     html = _render_lab_curve_page(curve)
     assert "lab-profile" in html and "winrate-bar" in html
     assert "usable down scenario" in html  # coverage basis line, not "whole spectrum"
+    assert '<div class="terminal-density">' in html
+    assert 'class="segmented-control"' in html
+    assert 'aria-label="Benchmark"' in html
+    assert html.count('aria-current="true"') == 1
+    assert "benchmark-toggle" not in html
 
 
 def test_profile_and_winrate_share_the_same_raw_basis() -> None:

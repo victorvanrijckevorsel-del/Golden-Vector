@@ -42,6 +42,7 @@ from golden_vector.serve.option_trading_data import (
 )
 from golden_vector.serve.ticker_page import SIZING_PAYLOAD_ID, render_options_section
 from golden_vector.serve.workspace_state import WorkspaceState
+from tests.helpers import source_date_n_trading_days_old
 
 
 TICKER = "AEM"
@@ -347,6 +348,35 @@ def test_none_listed_for_one_ticker_does_not_hide_the_control(app_config):
     assert 'id="options"' in control
 
 
+def test_carried_none_listed_stays_visible_as_older_evidence(app_config):
+    artifacts = page_artifacts(
+        status=AVAILABILITY_NONE_LISTED,
+        freshness_status="CARRIED_FORWARD",
+        as_of_date="2026-08-11",
+    )
+    availability = artifacts.availability.copy()
+    availability.loc[availability["ticker"] == TICKER, "source_as_of_date"] = (
+        "2026-08-11"
+    )
+    availability.loc[availability["ticker"] == TICKER, "carried_forward"] = True
+    availability.loc[availability["ticker"] == TICKER, "attempt_status"] = "ERROR"
+    availability.loc[availability["ticker"] == TICKER, "attempt_message"] = (
+        "Yahoo options request timed out"
+    )
+
+    html = render(
+        app_config,
+        page_artifacts=replace(artifacts, availability=availability),
+    )
+
+    assert html != ""
+    assert 'id="options"' in html
+    assert "most recent verified stored snapshot" in html
+    assert "older evidence" in html
+    assert "Yahoo options request timed out" in html
+    assert "Options data: Latest available stored snapshot" not in html
+
+
 def test_nullable_availability_status_degrades_instead_of_crashing_or_hiding(app_config):
     artifacts = page_artifacts()
     availability = artifacts.availability.copy()
@@ -365,10 +395,12 @@ def test_current_coherent_data_renders_full_section_with_as_of_date(app_config):
     html = render(app_config)
 
     assert 'id="options"' in html
-    assert "Option data as of 2026-08-11" in html
+    assert "Options data: Latest available as of Aug 11, 2026" in html
     assert "Market context" in html
     assert "Most liquid contracts" in html
     assert "carried forward" not in html.lower()
+    assert 'class="data-card"' in html
+    assert 'class="panel metric-card"' not in html
 
 
 def test_carried_forward_generation_labels_itself(app_config):
@@ -377,7 +409,7 @@ def test_carried_forward_generation_labels_itself(app_config):
         page_artifacts=page_artifacts(freshness_status="CARRIED_FORWARD"),
     )
 
-    assert "Carried forward from 2026-08-11" in html
+    assert "Options data: Latest available stored snapshot from Aug 11, 2026" in html
     assert "Market context" in html
     assert 'id="options"' in html
 
@@ -525,12 +557,116 @@ def test_carried_forward_without_a_date_still_warns_and_locks_sizing(app_config)
         page_artifacts=page_artifacts(freshness_status="CARRIED_FORWARD", as_of_date=None),
     )
 
-    assert "Carried forward from an earlier snapshot" in html
+    assert "Options data: Latest available stored snapshot" in html
     payload = _payload(html)
     assert payload["contracts"][0]["quote_ok"] is False
     assert payload["contracts"][0]["quote_reason"] == (
         "quote stale (carried forward from an earlier snapshot)"
     )
+
+
+def test_per_ticker_stored_snapshot_shows_et_time_warns_and_locks_sizing(app_config):
+    artifacts = page_artifacts(freshness_status="OK", as_of_date="2026-08-12")
+    availability = artifacts.availability.copy()
+    subject = availability["ticker"] == TICKER
+    availability.loc[subject, "source_as_of_date"] = "2026-08-07"
+    availability.loc[subject, "captured_at_utc"] = "2026-08-07T20:00:00Z"
+    availability.loc[subject, "carried_forward"] = True
+    availability.loc[subject, "attempt_status"] = "ERROR"
+    availability.loc[subject, "attempt_message"] = "vendor timeout"
+    availability.loc[subject, "display_staleness_trading_days"] = 3
+    availability.loc[subject, "display_freshness_status"] = "STALE"
+
+    html = render(
+        app_config,
+        page_artifacts=replace(artifacts, availability=availability),
+    )
+
+    assert "Latest available stored snapshot from Aug 7, 2026" in html
+    assert "collected Aug 7, 4:00 PM ET" in html
+    assert "3 US trading days old" in html
+    payload = _payload(html)
+    assert payload["contracts"][0]["quote_ok"] is False
+    assert payload["contracts"][0]["quote_reason"] == (
+        "quote stale (carried forward from 2026-08-07)"
+    )
+
+
+def _carried_generation_artifacts(*, trading_days_old: int) -> OptionPageArtifacts:
+    """The artifact set a FULL vendor outage leaves behind.
+
+    The build was skipped, so the previous generation's availability rows are
+    served untouched: their ``display_*`` columns still carry the verdict from
+    the day they were STAMPED (0 trading days / LATEST) no matter how long the
+    outage runs. Only the model-state manifest knows the generation is a carry
+    and how old its snapshot is.
+    """
+
+    as_of = source_date_n_trading_days_old(trading_days_old)
+    artifacts = page_artifacts(freshness_status="CARRIED_FORWARD", as_of_date=as_of)
+    availability = artifacts.availability.copy()
+    for column, value in (
+        ("source_as_of_date", as_of),
+        ("captured_at_utc", f"{as_of}T20:00:00Z"),
+        ("carried_forward", False),
+        ("attempt_status", "SUCCESS"),
+        ("attempt_message", None),
+        ("display_staleness_trading_days", 0),
+        ("display_freshness_status", "LATEST"),
+    ):
+        availability[column] = value
+    return replace(artifacts, availability=availability)
+
+
+def test_a_carried_generation_ages_past_the_warning_even_with_frozen_row_columns(app_config):
+    """The 3-trading-day warning must fire off the GENERATION age.
+
+    Regression: the per-ticker staleness columns are build-time output, and a
+    full-outage carry never rebuilds them. Reading them alone let a week-old
+    chain render as "LATEST", so the warning could never fire at all.
+    """
+
+    html = render(
+        app_config,
+        page_artifacts=_carried_generation_artifacts(trading_days_old=3),
+    )
+
+    assert "3 US trading days old" in html
+    assert "The latest refresh could not replace it" in html
+    assert "Options data: Latest available stored snapshot" in html
+
+
+def test_a_one_day_old_carried_generation_does_not_warn(app_config):
+    """The healthy control: the same frozen-column shape one trading day old.
+
+    Without this the test above would pass on any fixture that always warns.
+    """
+
+    html = render(
+        app_config,
+        page_artifacts=_carried_generation_artifacts(trading_days_old=1),
+    )
+
+    assert "US trading days old" not in html
+    assert "The latest refresh could not replace it" not in html
+    # Still honestly labelled as a stored snapshot -- only the WARNING is absent.
+    assert "Options data: Latest available stored snapshot" in html
+
+
+def test_a_stale_row_still_warns_when_the_generation_is_current(app_config):
+    """The generation age widens the row's verdict; it never replaces it."""
+
+    artifacts = page_artifacts(
+        freshness_status="OK", as_of_date=source_date_n_trading_days_old(0)
+    )
+    availability = artifacts.availability.copy()
+    subject = availability["ticker"] == TICKER
+    availability.loc[subject, "display_staleness_trading_days"] = 4
+    availability.loc[subject, "display_freshness_status"] = "STALE"
+
+    html = render(app_config, page_artifacts=replace(artifacts, availability=availability))
+
+    assert "4 US trading days old" in html
 
 
 def test_a_non_finite_persisted_number_does_not_take_the_page_down(app_config):
@@ -771,8 +907,8 @@ def _help_button(html: str, title: str) -> str:
     return html[start : html.index("</button>", start)]
 
 
-def test_metric_cards_render_their_explainer_icons_and_config_thresholds(app_config):
-    """``_metric_card(help_key=...)`` must reach the page, and each card must
+def test_data_cards_render_their_explainer_icons_and_config_thresholds(app_config):
+    """The modern card helper must reach the page, and each card must
     carry the config so the registry can state its thresholds. Proving the key
     exists in COLUMN_HELP proves neither: a dropped branch deletes the icon, and
     a dropped ``app_config`` silently deletes the numbers inside it.

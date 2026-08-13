@@ -493,6 +493,7 @@ def _build_multiline_overlay_svg(
     unit: str | None = None,
     title: str | None = None,
     basis_note: str = "",
+    show_legend: bool = True,
 ) -> str:
     """SVG line chart of several persisted series sharing one y-axis.
 
@@ -748,7 +749,7 @@ def _build_multiline_overlay_svg(
     if not data_table_id:
         if basis_note:
             raise ValueError("basis_note requires data_table_id: there is nowhere to render it")
-        return legend_html + svg
+        return (legend_html if show_legend else "") + svg
     # Text equivalent of the crosshair: one row per snapped date, one column per series, each cell
     # rendered from the SAME overlay_data payload the JS reads — including the SAME pre-formatted
     # level string, never a second rounding of the raw value. Indexed cells keep the index level
@@ -782,7 +783,7 @@ def _build_multiline_overlay_svg(
         f"<tbody>{body_rows}</tbody></table>"
     )
     return (
-        legend_html
+        (legend_html if show_legend else "")
         + svg
         + _chart_data_disclosure(
             table_html=table_html,

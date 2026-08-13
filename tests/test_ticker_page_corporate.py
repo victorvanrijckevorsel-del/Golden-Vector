@@ -78,6 +78,11 @@ def _gold_row(**overrides) -> dict[str, object]:
         "ebitda_ltm_musd": 11850.0,
         "spot_gold_usd": 4452.0,
         "spot_gold_date": "2026-08-11",
+        "spot_forward_revenue_musd": 26266.8,
+        "spot_forward_ebitda_musd": 18517.0,
+        "spot_forward_net_income_musd": 11387.0,
+        "spot_forward_eps": 10.81,
+        "spot_aisc_margin_est_musd": 17027.4,
         "spot_margin_usd_per_oz": 2886.0,
         "spot_margin_pct": 0.648248,
         "spot_aisc_margin_yield": 0.137465,
@@ -88,7 +93,7 @@ def _gold_row(**overrides) -> dict[str, object]:
         "gold_response_status": "OK",
         "gold_response_reason": None,
         "linearity_max_residual": 0.01,
-        "schema_version": 1,
+        "schema_version": 2,
         "source_run_id": "run-1",
         "snapshot_refresh_run_id": "run-1",
         "parent_refresh_id": "run-1",
@@ -340,6 +345,60 @@ def test_missing_headline_value_carries_a_visible_reason():
     assert html.count("No valid spot value was published") == 1
 
 
+def test_gold_driven_cards_and_rows_are_marked_and_fixed_rows_are_not():
+    """The mock's defining rule: gold marks "this moves with the dial".
+
+    Rendered with a healthy row, so the marking is proved against a page that
+    also contains fixed rows — the control. A page where nothing were marked,
+    or everything were, would fail here.
+    """
+    html = _render()
+
+    # Every headline card is a dial-driven ratio, so all six carry the edge.
+    assert html.count("data-card--gold-linked") == 6
+    # Eleven dial-driven table rows: five persisted lines + six ratios.
+    assert html.count('<tr class="moves-with-gold">') == 11
+    assert html.count('class="gold-linked-marker"') == 11 + 1  # + the legend
+    # The control: fixed rows (balance sheet, cost and scale) carry neither.
+    fixed_start = html.index('id="corporate-balance-sheet"')
+    fixed = html[fixed_start : html.index("</table>", fixed_start)]
+    assert "moves-with-gold" not in fixed
+    assert "gold-linked-marker" not in fixed
+    assert '<tr><th scope="row">' in fixed
+    # The legend names the symbol it is explaining.
+    assert "Rows marked with a gold diamond" in html
+
+
+def test_the_marker_is_derived_from_the_basis_so_the_two_cannot_disagree():
+    """A row wearing the diamond while its Basis column says the value is fixed
+    is exactly the twin-drift bug the derivation exists to prevent."""
+    from golden_vector.serve.ticker_page.corporate import (
+        GOLD_BASIS,
+        _gold_marker,
+        _gold_row_attrs,
+    )
+
+    assert _gold_marker(GOLD_BASIS) != ""
+    assert _gold_row_attrs(GOLD_BASIS) == ' class="moves-with-gold"'
+    assert _gold_marker(f"{GOLD_BASIS} · evaluated from the persisted line") != ""
+    for fixed_basis in ("fixed", "reported", "as reported · not gold-driven"):
+        assert _gold_marker(fixed_basis) == "", fixed_basis
+        assert _gold_row_attrs(fixed_basis) == "", fixed_basis
+
+
+def test_a_degraded_card_keeps_its_warning_edge_over_the_gold_marking():
+    """Both classes apply; the cascade decides. Condition beats nature."""
+    html = _render(data=_data(_gold_row(spot_forward_pe=None)))
+    assert 'class="data-card data-card--gold-linked data-card--warning"' in html
+
+    components = Path("golden_vector/serve/static/css/components.css").read_text(
+        encoding="utf-8"
+    )
+    assert components.index(".data-card--gold-linked") < components.index(
+        ".data-card--warning"
+    ), "state modifiers must be declared after the gold marking to win the edge"
+
+
 def test_every_scenario_cell_is_hidden_by_default_and_carries_its_metric():
     html = _render()
     for metric in (
@@ -363,14 +422,13 @@ def test_every_scenario_cell_is_hidden_by_default_and_carries_its_metric():
     assert 'data-basis="scenario" hidden></td>' in html
 
 
-def test_line_metric_spot_cells_are_dial_evaluated_and_say_so():
-    """The gold-response contract persists spot display values for the six ratio
-
-    metrics only, so a LINE metric's spot cell is evaluated client-side at
-    g = spot. It must never be blank and never a fake zero."""
+def test_line_metric_spot_cells_are_server_complete_from_persisted_values():
+    """No-JS spot cells read the v2 persisted values, never client arithmetic."""
     html = _render()
     assert 'data-metric="forward_revenue_musd" data-basis="spot"' in html
-    assert "needs the gold dial (JavaScript)" in html
+    assert 'data-basis="spot">$26,267m</td>' in html
+    assert 'data-basis="spot">$10.81</td>' in html
+    assert "needs the gold dial (JavaScript)" not in html
     assert ">$0m<" not in html
 
 
@@ -385,7 +443,7 @@ def test_state_a_line_cells_do_not_claim_javascript_can_supply_the_value():
         )
     )
 
-    assert "Unavailable &mdash; see reason above" in html
+    assert "$26,267m" in html
     assert "needs the gold dial (JavaScript)" not in html
     assert reason in html
 

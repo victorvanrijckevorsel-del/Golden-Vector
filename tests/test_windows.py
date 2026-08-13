@@ -48,32 +48,73 @@ def test_window_is_reliable_treats_ELIGIBLE_as_usable():
     strong_eligible = {"r_squared": 0.54, "status": "ELIGIBLE", "weeks": 52}
     assert window_is_reliable(strong_eligible, thresholds=_BANDS) is True
     # weak fit stays muted even when ELIGIBLE
-    assert window_is_reliable({"r_squared": 0.12, "status": "ELIGIBLE", "weeks": 52}, thresholds=_BANDS) is False
+    assert (
+        window_is_reliable(
+            {"r_squared": 0.12, "status": "ELIGIBLE", "weeks": 52}, thresholds=_BANDS
+        )
+        is False
+    )
     # a thin sample is muted via its status (the model routes it to LOW_OBSERVATION) — this
     # is the canonical degraded-data signal, NOT a hardcoded serve week floor.
-    assert window_is_reliable({"r_squared": 0.54, "status": "LOW_OBSERVATION", "weeks": 8}, thresholds=_BANDS) is False
-    assert window_is_reliable({"r_squared": 0.54, "status": "INELIGIBLE", "weeks": 52}, thresholds=_BANDS) is False
+    assert (
+        window_is_reliable(
+            {"r_squared": 0.54, "status": "LOW_OBSERVATION", "weeks": 8}, thresholds=_BANDS
+        )
+        is False
+    )
+    assert (
+        window_is_reliable(
+            {"r_squared": 0.54, "status": "INELIGIBLE", "weeks": 52}, thresholds=_BANDS
+        )
+        is False
+    )
     # plain OK / explicit empty still count as usable (defensive legacy blank status),
     # but a missing/null status is degraded, not silently treated as trustworthy.
-    assert window_is_reliable({"r_squared": 0.54, "status": "OK", "weeks": 52}, thresholds=_BANDS) is True
-    assert window_is_reliable({"r_squared": 0.54, "status": "", "weeks": 52}, thresholds=_BANDS) is True
-    assert window_is_reliable({"r_squared": 0.54, "status": None, "weeks": 52}, thresholds=_BANDS) is False
-    assert window_is_reliable({"r_squared": 0.54, "status": pd.NA, "weeks": 52}, thresholds=_BANDS) is False
+    assert (
+        window_is_reliable({"r_squared": 0.54, "status": "OK", "weeks": 52}, thresholds=_BANDS)
+        is True
+    )
+    assert (
+        window_is_reliable({"r_squared": 0.54, "status": "", "weeks": 52}, thresholds=_BANDS)
+        is True
+    )
+    assert (
+        window_is_reliable({"r_squared": 0.54, "status": None, "weeks": 52}, thresholds=_BANDS)
+        is False
+    )
+    assert (
+        window_is_reliable({"r_squared": 0.54, "status": pd.NA, "weeks": 52}, thresholds=_BANDS)
+        is False
+    )
     assert window_is_reliable({"r_squared": 0.54, "weeks": 52}, thresholds=_BANDS) is False
 
 
 def test_window_metrics_reads_the_selected_window_columns():
     row = {
-        "up_beta_12m": 0.69, "down_beta_12m": 0.66, "structural_delta_12m": 1.2,
-        "gamma_12m": -0.03, "asymmetry_ratio_12m": 1.04, "r_squared_12m": 0.54,
-        "weeks_12m": 52, "window_status_12m": "ELIGIBLE",
-        "up_beta_3y": 1.14, "down_beta_3y": 0.81,
+        "up_beta_12m": 0.69,
+        "down_beta_12m": 0.66,
+        "structural_delta_12m": 1.2,
+        "gamma_12m": -0.03,
+        "asymmetry_ratio_12m": 1.04,
+        "r_squared_12m": 0.54,
+        "weeks_12m": 52,
+        "window_status_12m": "ELIGIBLE",
+        "up_beta_3y": 1.14,
+        "down_beta_3y": 0.81,
         # display-only windows
-        "up_beta_2y": 1.31, "down_beta_2y": 1.02, "structural_delta_2y": 1.6,
-        "gamma_2y": 0.05, "asymmetry_ratio_2y": 1.28, "r_squared_2y": 0.41,
-        "weeks_2y": 104, "window_status_2y": "ELIGIBLE",
-        "up_beta_5y": 1.45, "down_beta_5y": 1.10, "r_squared_5y": 0.33,
-        "weeks_5y": 143, "window_status_5y": "LOW_OBSERVATION",
+        "up_beta_2y": 1.31,
+        "down_beta_2y": 1.02,
+        "structural_delta_2y": 1.6,
+        "gamma_2y": 0.05,
+        "asymmetry_ratio_2y": 1.28,
+        "r_squared_2y": 0.41,
+        "weeks_2y": 104,
+        "window_status_2y": "ELIGIBLE",
+        "up_beta_5y": 1.45,
+        "down_beta_5y": 1.10,
+        "r_squared_5y": 0.33,
+        "weeks_5y": 143,
+        "window_status_5y": "LOW_OBSERVATION",
     }
     m = window_metrics(row, "12M")
     assert m["up_beta"] == 0.69 and m["down_beta"] == 0.66 and m["r_squared"] == 0.54
@@ -85,7 +126,9 @@ def test_window_metrics_reads_the_selected_window_columns():
     assert m2y["up_beta"] == 1.31 and m2y["down_beta"] == 1.02 and m2y["r_squared"] == 0.41
     assert m2y["weeks"] == 104 and m2y["status"] == "ELIGIBLE"
     m5y = window_metrics(row, "5Y")
-    assert m5y["up_beta"] == 1.45 and m5y["down_beta"] == 1.10 and m5y["status"] == "LOW_OBSERVATION"
+    assert (
+        m5y["up_beta"] == 1.45 and m5y["down_beta"] == 1.10 and m5y["status"] == "LOW_OBSERVATION"
+    )
     # a thin 5Y window (LOW_OBSERVATION) is muted even with a moderate fit; a healthy
     # control (2Y ELIGIBLE, moderate fit) stays reliable.
     assert window_is_reliable(m5y, thresholds=_BANDS) is False
@@ -106,9 +149,31 @@ def test_render_window_selector_offers_all_five_windows_with_1y_label():
         assert f"window={window}" in html
     assert ">1Y</a>" in html  # 12M renders as 1Y
     assert ">2Y</a>" in html and ">5Y</a>" in html
-    # the active window carries the 'active' class; the search term is preserved
-    assert "window-tab active" in html and "window=2Y" in html
+    # The shared segmented control owns selected state; the search term is preserved.
+    assert 'role="group" aria-label="Beta window"' in html
+    assert 'aria-current="true">2Y</a>' in html
     assert "search=GOLD" in html
+
+
+def test_render_window_selector_preserves_every_unrelated_query_parameter():
+    html = render_window_selector(
+        "12M",
+        target="/tool-c",
+        current_query={
+            "window": "12M",
+            "search": "GOLD NEM",
+            "sort": "downside",
+            "lens": "research",
+        },
+    )
+
+    assert (
+        'href="/tool-c?window=6M&amp;search=GOLD+NEM&amp;sort=downside&amp;lens=research"' in html
+    )
+    assert (
+        'href="/tool-c?window=12M&amp;search=GOLD+NEM&amp;sort=downside&amp;lens=research" '
+        'aria-current="true"' in html
+    )
 
 
 def test_r2_bands_come_from_config_not_literals():

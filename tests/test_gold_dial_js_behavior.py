@@ -58,14 +58,15 @@ SOURCE_STATE_CASES = (
     pytest.param("yahoo", 4321.6, "4322", 4200.0, id="yahoo"),
 )
 
-#: One line metric (client-evaluated at spot) and one card metric.
+#: One persisted line metric (client-evaluated only for scenarios) and one card metric.
 LINE_METRIC = "forward_revenue_musd"
 CARD_METRIC = "ev_ebitda"
 
-#: The server's no-JavaScript fallback for a line-metric spot cell.
-PENDING_TEXT = "needs the gold dial (JavaScript)"
-#: What ``_spot_dial_cell`` ships instead once no scenario is possible: promising
-#: a dial that cannot run would be the lie, so the cell states its own state.
+#: The server's v2 persisted true-spot value for a line-metric spot cell. It is
+#: intentionally different from slope * FRACTIONAL_SPOT, proving JavaScript does
+#: not overwrite the producer's actual spot evaluation with its fitted line.
+SERVER_SPOT_TEXT = "$26,267m"
+#: What ``_spot_dial_cell`` ships when the artifact has no usable row.
 UNAVAILABLE_TEXT = "Unavailable — see reason above"
 #: The server's persisted headline value for the card under test.
 CARD_SPOT_TEXT = "6.72×"
@@ -202,7 +203,9 @@ class El {
 }
 """
 
-_SHIM = _DOM_PRELUDE + r"""
+_SHIM = (
+    _DOM_PRELUDE
+    + r"""
 var doc;
 const timers = new Map();
 let nextTimer = 1;
@@ -306,6 +309,7 @@ vm.runInNewContext(
 
 __BODY__
 """
+)
 
 
 def _run(
@@ -327,10 +331,10 @@ def _run(
     the live-dial one, and the scenario-unavailable case passes the server's
     own "— scenario unavailable" text so it can be proven untouched.
 
-    The fixture's markup follows the payload: ``scenario_enabled`` drives both
-    whether scenario nodes exist at all and which no-JavaScript fallback the
-    line cell was shipped with, exactly as ``render_corporate_finance_section``
-    does — the shim never offers the module a node the server would not emit.
+    The fixture's markup follows the payload: ``scenario_enabled`` controls
+    whether scenario nodes exist, while ``enabled`` controls whether the server
+    can publish a persisted spot value. The shim never offers the module a node
+    or initial value the server would not emit.
     """
 
     assert DIAL_JS.exists(), f"{DIAL_JS} is missing"
@@ -348,12 +352,10 @@ def _run(
             json.dumps(_valuetext_at_rest(spot) if valuetext is None else valuetext),
         )
         .replace("__BASIS__", json.dumps(_basis_at_rest(spot)))
-        .replace(
-            "__CORPORATE_BASIS__", json.dumps(_corporate_basis_at_rest(spot))
-        )
+        .replace("__CORPORATE_BASIS__", json.dumps(_corporate_basis_at_rest(spot)))
         .replace(
             "__PENDING__",
-            json.dumps(PENDING_TEXT if scenario_enabled else UNAVAILABLE_TEXT),
+            json.dumps(SERVER_SPOT_TEXT if resolved.get("enabled") else UNAVAILABLE_TEXT),
         )
         .replace("__CARD_SPOT__", json.dumps(CARD_SPOT_TEXT))
         .replace("__LINE_METRIC__", LINE_METRIC)
@@ -406,12 +408,14 @@ _FORMAT_PROBE_VALUES: tuple[float, ...] = (
     0.375,
 )
 
-#: The probe shim: the SHIPPED module, booted over one spot cell per case, so
+#: The probe shim: the SHIPPED module, booted over one scenario cell per case, so
 #: the strings compared below come out of the real ``formatMetric`` through the
 #: real paint path. ``slope`` 0 makes each cell's evaluated value exactly its
 #: ``intercept``, which is how a fixed value is fed to a formatter that is only
 #: reachable from inside the module's closure.
-_FORMAT_PROBE_SHIM = _DOM_PRELUDE + r"""
+_FORMAT_PROBE_SHIM = (
+    _DOM_PRELUDE
+    + r"""
 var doc;
 
 const CASES = __CASES__;
@@ -423,13 +427,16 @@ const input = new El("input", {"min": "2000", "step": "1"});
 input.value = "4000";
 
 const cells = CASES.map(function (metric) {
-  return new El("td", {"data-metric": metric, "data-basis": "spot"});
+  return new El("td", {
+    "data-metric": metric,
+    "data-basis": "scenario",
+    "hidden": "hidden"
+  });
 });
 
 const section = new El("section");
 section.querySelectorAll = function (selector) {
-  if (selector === '[data-metric][data-basis="spot"]') { return cells; }
-  if (selector === '[data-metric][data-basis="scenario"]') { return []; }
+  if (selector === '[data-metric][data-basis="scenario"]') { return cells; }
   if (selector === "[data-scenario-head]") { return []; }
   if (selector === "[data-headline-spot]") { return []; }
   throw new Error("unexpected selector: " + selector);
@@ -460,8 +467,14 @@ vm.runInNewContext(
   {document: doc, window: win, console}
 );
 
+// Trigger the sanctioned scenario path. Spot cells are intentionally no longer
+// a formatting probe because JavaScript must preserve their persisted content.
+input.value = "4001";
+input.listeners.input();
+
 console.log(JSON.stringify(cells.map(function (cell) { return cell.textContent; })));
 """
+)
 
 
 def _js_metric_format_units() -> tuple[str, ...]:
@@ -591,9 +604,10 @@ assert.equal(basis.textContent, {json.dumps(_basis_at_rest(spot))});
 // The single section-level basis is the server's own text, untouched at rest.
 assert.equal(corporateBasis.textContent, {json.dumps(_corporate_basis_at_rest(spot))});
 
-// The line-metric spot cell is evaluated at exact spot, not at the snapped position.
-assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, spot))});
-assert.notEqual(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, float(baseline)))});
+// The persisted true-spot cell survives boot byte-for-byte. The fitted line is
+// deliberately non-collinear here, so client evaluation would change the value.
+assert.equal(spotCell.textContent, {json.dumps(SERVER_SPOT_TEXT)});
+assert.notEqual(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, spot))});
 assert.equal(reducedMotionQuery, "(prefers-reduced-motion: reduce)");
 """
     _run(body, payload=payload, value=baseline, spot=spot)
@@ -660,7 +674,7 @@ assert.equal(cardScenario.textContent, {json.dumps(_expected(payload, CARD_METRI
 assert.equal(scenarioHead.hidden, false);
 assert.equal(scenarioCell.hidden, false);
 assert.equal(scenarioCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, 4200.0))});
-assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, spot))});
+assert.equal(spotCell.textContent, {json.dumps(SERVER_SPOT_TEXT)});
 assert.equal(scenarioCell.classes["is-updated"], true);
 
 assert.equal(output.textContent, "$4,200");
@@ -874,7 +888,7 @@ assert.equal(
   {json.dumps(format_metric(FRACTIONAL_SPOT, "usd2") + " per ounce, spot")}
 );
 assert.equal(basis.textContent, {json.dumps(_basis_at_rest(FRACTIONAL_SPOT))});
-assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, FRACTIONAL_SPOT))});
+assert.equal(spotCell.textContent, {json.dumps(SERVER_SPOT_TEXT)});
 
 // A user action DID happen, so this one is announced.
 flush();
@@ -961,7 +975,7 @@ assert.equal(
   input.attrs["aria-valuetext"],
   {json.dumps(format_metric(INTEGER_SPOT, "usd2") + " per ounce, spot")}
 );
-assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, INTEGER_SPOT))});
+assert.equal(spotCell.textContent, {json.dumps(SERVER_SPOT_TEXT)});
 
 slide("4300");
 flush();
@@ -984,7 +998,7 @@ assert.equal(
 
 def test_a_missing_payload_leaves_the_server_rendered_page_untouched():
     body = f"""
-assert.equal(spotCell.textContent, {json.dumps(PENDING_TEXT)});
+assert.equal(spotCell.textContent, {json.dumps(SERVER_SPOT_TEXT)});
 assert.equal(cardSpot.hidden, false);
 assert.equal(cardSpot.textContent, {json.dumps(CARD_SPOT_TEXT)});
 assert.equal(scenarioCell.hidden, true);
@@ -999,10 +1013,8 @@ assert.equal(input.listeners.input, undefined);
     _run(body, with_payload=False)
 
 
-def test_a_disabled_dial_replaces_the_no_javascript_fallback_with_the_reason():
-    """ARTIFACT unavailable (``enabled`` False): no price can be evaluated at
-    all, so the no-JavaScript fallback becomes the real reason rather than a
-    blank or a lie about needing JavaScript."""
+def test_a_disabled_dial_preserves_the_server_unavailable_state():
+    """ARTIFACT unavailable: JavaScript does not rewrite the server spot cell."""
 
     reason = "linearity residual 41.2 exceeded tolerance at $6,000"
     body = f"""
@@ -1013,9 +1025,8 @@ assert.equal(scenarioHeads.length, 0);
 
 assert.equal(input.disabled, true);
 assert.equal(reset.disabled, true);
-assert.equal(spotCell.textContent, {json.dumps(reason)});
-assert.notEqual(spotCell.textContent, {json.dumps(UNAVAILABLE_TEXT)});
-assert.equal(spotCell.attrs["data-unavailable"], "1");
+assert.equal(spotCell.textContent, {json.dumps(UNAVAILABLE_TEXT)});
+assert.equal(spotCell.attrs["data-unavailable"], undefined);
 assert.equal(cardSpot.hidden, false);
 assert.equal(status.textContent, "");
 assert.equal(input.listeners.input, undefined);
@@ -1043,14 +1054,12 @@ def test_a_spot_outside_the_range_keeps_its_true_spot_values_and_an_inert_contro
     """SCENARIO unavailable, artifact FINE (``enabled`` True,
     ``scenario_enabled`` False — spot outside the configured dial range).
 
-    The published lines were verified at true spot, so the five line cells must
-    show their evaluated values; overwriting them with the reason would destroy
-    five numbers the artifact stands behind. The control is inert instead: no
+    The five actual Tool-B spot values were persisted by v2, so JavaScript must
+    preserve them rather than replace them with either a fitted-line value or
+    the reason. The control is inert instead: no
     listeners, no scenario, no announcement, and the server's own strings stay."""
 
-    reason = (
-        "spot gold $7,000.00 is outside the configured dial range $2,000–$6,000"
-    )
+    reason = "spot gold $7,000.00 is outside the configured dial range $2,000–$6,000"
     payload = _payload(spot=7000.0, scenario_enabled=False, scenario_reason=reason)
     server_valuetext = format_metric(7000.0, "usd2") + " per ounce, spot — scenario unavailable"
     body = f"""
@@ -1059,9 +1068,10 @@ def test_a_spot_outside_the_range_keeps_its_true_spot_values_and_an_inert_contro
 assert.equal(scenarioCells.length, 0);
 assert.equal(scenarioHeads.length, 0);
 
-// The five line cells carry EVALUATED values at true spot — never the reason,
-// never the shipped fallback, never a blank.
-assert.equal(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, 7000.0))});
+// The five line cells retain the server's persisted true-spot values — never
+// the reason, never a fresh client calculation, never a blank.
+assert.equal(spotCell.textContent, {json.dumps(SERVER_SPOT_TEXT)});
+assert.notEqual(spotCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, 7000.0))});
 assert.notEqual(spotCell.textContent, {json.dumps(reason)});
 assert.notEqual(spotCell.textContent, {json.dumps(UNAVAILABLE_TEXT)});
 assert.notEqual(spotCell.textContent, "");

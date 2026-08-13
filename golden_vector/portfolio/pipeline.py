@@ -371,12 +371,26 @@ def build_portfolio_artifacts(
         # reads every artifact from disk, so this keeps portfolio pointers fresh
         # without recalculating Tool A/B/C/D or touching live market data.
         manifest = load_current_model_state_manifest(paths) or {}
-        manifest_config = manifest.get("config") if isinstance(manifest.get("config"), dict) else {}
+        manifest_config = (
+            manifest.get("config")
+            if isinstance(manifest.get("config"), dict)
+            else {}
+        )
         resolved_config_hash = config_hash or str(manifest_config.get("config_hash") or "")
+        prior_full_refresh_at = str(
+            manifest.get("full_refresh_completed_at_utc")
+            or manifest.get("generated_at_utc")
+            or ""
+        ).strip()
         write_current_model_state_manifest(
             paths=paths,
             config_hash=resolved_config_hash or None,
-            parent_refresh_id=parent_refresh_id or str(manifest.get("parent_refresh_id") or "") or None,
+            parent_refresh_id=(
+                str(manifest.get("parent_refresh_id") or "")
+                or parent_refresh_id
+                or None
+            ),
+            full_refresh_completed_at_utc=prior_full_refresh_at or None,
         )
     summary_status = str(summary.iloc[0]["portfolio_status"]) if not summary.empty else "EMPTY"
     return PortfolioBuildResult(

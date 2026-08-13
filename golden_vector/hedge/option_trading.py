@@ -7,6 +7,7 @@ from typing import Literal
 
 import pandas as pd
 
+from golden_vector.common.numeric import bool_or_false
 from golden_vector.common.options import OPTION_CONTRACT_MULTIPLIER
 from golden_vector.hedge._helpers import (
     as_float,
@@ -108,6 +109,14 @@ class OptionTradingRow:
     # horizon's Put/Call status + expiry without recomputing in serve. Shape:
     # {"P": {"230": {"status","expiration","dte"}, ...}, "C": {...}}.
     per_horizon_status_json: str | None = None
+    source_refresh_run_id: str | None = None
+    source_as_of_date: str | None = None
+    captured_at_utc: str | None = None
+    carried_forward: bool = False
+    attempt_status: str | None = None
+    attempt_message: str | None = None
+    display_staleness_trading_days: int | None = None
+    display_freshness_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -513,6 +522,13 @@ def _build_row(
         option_vehicle_type=option_vehicle_type,
         signal_horizon_days=int(signal_horizon_days),
         context_horizon_days=int(preferred_horizon_days),
+        source_refresh_run_id=row_string(feature, "source_refresh_run_id"),
+        source_as_of_date=row_string(feature, "source_as_of_date")
+        or row_string(feature, "as_of_date"),
+        captured_at_utc=row_string(feature, "captured_at_utc"),
+        carried_forward=bool_or_false(feature.get("carried_forward")),
+        attempt_status=row_string(feature, "attempt_status"),
+        attempt_message=row_string(feature, "attempt_message"),
     )
 
 

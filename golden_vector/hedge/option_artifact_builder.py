@@ -149,7 +149,6 @@ def scan_option_chains_for_artifacts(
     feature_by_ticker = rows_by_ticker_series(features, strip=True)
     tool_b_by_ticker = rows_by_ticker_series(tool_b, strip=True)
     settings = settings_from_config(app_config.hedge_readiness)
-    as_of_date = _manifest_as_of_date(manifest)
     scans: dict[str, OptionChainScan] = {}
     for ticker, feature in feature_by_ticker.items():
         chain = chains.get(ticker, pd.DataFrame())
@@ -166,7 +165,12 @@ def scan_option_chains_for_artifacts(
             underlying_price=price,
             risk_free_rate=risk_free_rate,
             settings=settings,
-            as_of_date=as_of_date,
+            as_of_date=_ticker_as_of_date(
+                ticker=ticker,
+                feature=feature,
+                chain=chain,
+                manifest=manifest,
+            ),
         )
     return scans
 
@@ -185,7 +189,6 @@ def build_option_candidate_slots(
 ) -> dict[str, list[OptionCandidateSlot]]:
     feature_by_ticker = rows_by_ticker_series(features, strip=True)
     tool_b_by_ticker = rows_by_ticker_series(tool_b, strip=True)
-    as_of_date = _manifest_as_of_date(manifest)
     liquidity_settings = settings_from_config(app_config.hedge_readiness)
     slots_by_ticker: dict[str, list[OptionCandidateSlot]] = {}
     for ticker, feature in feature_by_ticker.items():
@@ -234,7 +237,12 @@ def build_option_candidate_slots(
                 risk_free_rate=risk_free_rate,
                 target_horizons_days=tuple(app_config.hedge_readiness.display_horizons_days),
                 settings=liquidity_settings,
-                as_of_date=as_of_date,
+                as_of_date=_ticker_as_of_date(
+                    ticker=ticker,
+                    feature=feature,
+                    chain=chain,
+                    manifest=manifest,
+                ),
             )
     return slots_by_ticker
 
@@ -267,7 +275,6 @@ def build_option_liquidity_measurements(
         for ticker in app_config.hedge_readiness.benchmark_tickers
     }
     settings = settings_from_config(app_config.hedge_readiness)
-    as_of_date = _manifest_as_of_date(manifest)
     grouped: dict[str, list[OptionContractMetrics]] = {
         "Benchmark ETFs": [],
         "Single-stock miners": [],
@@ -296,7 +303,12 @@ def build_option_liquidity_measurements(
                 underlying_price=price,
                 risk_free_rate=risk_free_rate,
                 settings=settings,
-                as_of_date=as_of_date,
+                as_of_date=_ticker_as_of_date(
+                    ticker=ticker,
+                    feature=feature,
+                    chain=chain,
+                    manifest=manifest,
+                ),
             )
         metrics = [
             metric
@@ -368,7 +380,6 @@ def scan_option_contract_metrics(
     feature_by_ticker = rows_by_ticker_series(features, strip=True)
     tool_b_by_ticker = rows_by_ticker_series(tool_b, strip=True)
     settings = settings_from_config(app_config.hedge_readiness)
-    as_of_date = _manifest_as_of_date(manifest)
     metrics: list[OptionContractMetrics] = []
     for ticker, chain in chains.items():
         feature = feature_by_ticker.get(ticker)
@@ -389,7 +400,12 @@ def scan_option_contract_metrics(
                 underlying_price=price,
                 risk_free_rate=risk_free_rate,
                 settings=settings,
-                as_of_date=as_of_date,
+                as_of_date=_ticker_as_of_date(
+                    ticker=ticker,
+                    feature=feature,
+                    chain=chain,
+                    manifest=manifest,
+                ),
             )
         metrics.extend(scan.metrics)
     return tuple(metrics)
@@ -500,3 +516,39 @@ def _manifest_as_of_date(manifest: dict[str, Any]) -> date | None:
         return date.fromisoformat(str(manifest.get("as_of_date")))
     except (TypeError, ValueError):
         return None
+
+
+def _ticker_as_of_date(
+    *,
+    ticker: str,
+    feature: pd.Series,
+    chain: pd.DataFrame,
+    manifest: dict[str, Any],
+) -> date | None:
+    """Resolve the effective ticker source date used for every DTE calculation."""
+
+    candidates: list[object] = [
+        feature.get("source_as_of_date"),
+        feature.get("as_of_date"),
+    ]
+    for column in ("source_as_of_date", "as_of_date"):
+        if column in chain.columns:
+            values = chain[column].dropna()
+            if not values.empty:
+                candidates.append(values.iloc[0])
+    normalized = str(ticker or "").strip().upper()
+    for item in manifest.get("snapshots") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("ticker") or "").strip().upper() != normalized:
+            continue
+        candidates.extend((item.get("source_as_of_date"), manifest.get("as_of_date")))
+        break
+    else:
+        candidates.append(manifest.get("as_of_date"))
+    for value in candidates:
+        try:
+            return date.fromisoformat(str(value).strip()[:10])
+        except ValueError:
+            continue
+    return None

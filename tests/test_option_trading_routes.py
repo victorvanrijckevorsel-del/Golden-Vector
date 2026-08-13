@@ -42,7 +42,8 @@ def test_workspace_option_trading_route_renders_native_tab(tmp_path):
     assert "/hedge-readiness/latest.md" not in response["body"]
     assert "Directly hedgeable" not in response["body"]
     assert "Tradable candidate" in response["body"]
-    assert "Snapshot Date" in response["body"]
+    # The provenance column was renamed "Snapshot Date" -> "Latest Available".
+    assert "Latest Available" in response["body"]
     assert "Put P&amp;L/share @ Gold -10% (60d)" not in response["body"]
     assert "markdown-report" not in response["body"]
 

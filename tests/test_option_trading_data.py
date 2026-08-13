@@ -739,6 +739,52 @@ def test_option_artifact_build_reuses_precomputed_chain_scans(tmp_path, monkeypa
     )
 
 
+def test_chain_builder_uses_each_tickers_effective_source_date(tmp_path, monkeypatch):
+    app_config = load_app_config(build_test_paths(tmp_path)).app
+    seen: dict[str, date | None] = {}
+
+    def capture_scan(*, ticker, as_of_date, **_kwargs):
+        seen[ticker] = as_of_date
+        return object()
+
+    monkeypatch.setattr(
+        "golden_vector.hedge.option_artifact_builder.scan_option_chain",
+        capture_scan,
+    )
+    features = pd.DataFrame(
+        [
+            {
+                "ticker": "AEM",
+                "underlying_price": 50.0,
+                "source_as_of_date": "2026-05-29",
+            },
+            {
+                "ticker": "GDX",
+                "underlying_price": 40.0,
+                "source_as_of_date": "2026-06-01",
+            },
+        ]
+    )
+    chains = {
+        "AEM": pd.DataFrame([{"ticker": "AEM", "underlying_price": 50.0}]),
+        "GDX": pd.DataFrame([{"ticker": "GDX", "underlying_price": 40.0}]),
+    }
+
+    scan_option_chains_for_artifacts(
+        app_config=app_config,
+        features=features,
+        tool_b=pd.DataFrame(),
+        chains=chains,
+        risk_free_rate=0.04,
+        manifest={"as_of_date": "2026-06-01"},
+    )
+
+    assert seen == {
+        "AEM": date(2026, 5, 29),
+        "GDX": date(2026, 6, 1),
+    }
+
+
 def test_option_artifact_build_fails_loud_on_stale_feature_rows(tmp_path):
     clear_option_trading_cache()
     paths = build_test_paths(tmp_path)
@@ -1293,7 +1339,7 @@ def test_schema_column_disagreeing_with_parquet_file_metadata_is_rejected():
     _require_supported_option_schema(no_metadata, name="option_trading_overview")
 
 
-def _valid_page_availability() -> pd.DataFrame:
+def _valid_page_availability(*, generation_version: int = 4) -> pd.DataFrame:
     row = dict.fromkeys(OPTION_AVAILABILITY_COLUMNS)
     row.update(
         {
@@ -1304,14 +1350,16 @@ def _valid_page_availability() -> pd.DataFrame:
             "fetch_message": "",
             "provider": "yahoo",
             "capture_date": "2026-08-12",
-            "schema_version": 4,
-            OPTION_AVAILABILITY_SCHEMA_COLUMN: OPTION_AVAILABILITY_SCHEMA_VERSION,
+            "schema_version": generation_version,
+            OPTION_AVAILABILITY_SCHEMA_COLUMN: (
+                1 if generation_version == 4 else OPTION_AVAILABILITY_SCHEMA_VERSION
+            ),
         }
     )
     return pd.DataFrame([row])
 
 
-def _valid_page_chain_history() -> pd.DataFrame:
+def _valid_page_chain_history(*, generation_version: int = 4) -> pd.DataFrame:
     row = dict.fromkeys(CHAIN_HISTORY_COLUMNS)
     row.update(
         {
@@ -1319,14 +1367,19 @@ def _valid_page_chain_history() -> pd.DataFrame:
             "as_of_date": "2026-08-12",
             "capture_quality": "COMPLETE",
             "row_status": "observed",
-            "schema_version": 4,
+            "schema_version": generation_version,
             CHAIN_HISTORY_SCHEMA_COLUMN: CHAIN_HISTORY_SCHEMA_VERSION,
         }
     )
     return pd.DataFrame([row])
 
 
-def _patch_page_artifact_reader(monkeypatch, frames: dict[str, pd.DataFrame]) -> None:
+def _patch_page_artifact_reader(
+    monkeypatch,
+    frames: dict[str, pd.DataFrame],
+    *,
+    generation_version: int = 4,
+) -> None:
     from pathlib import Path
 
     from golden_vector.common.parquet import ParquetSchemaError
@@ -1338,7 +1391,11 @@ def _patch_page_artifact_reader(monkeypatch, frames: dict[str, pd.DataFrame]) ->
         lambda _paths: {"artifacts": {"option_candidate_slots": {}}},
     )
     monkeypatch.setattr(module, "summarize_option_freshness", lambda _state: None)
-    monkeypatch.setattr(module, "_generation_option_schema_version", lambda *_args: 4)
+    monkeypatch.setattr(
+        module,
+        "_generation_option_schema_version",
+        lambda *_args: generation_version,
+    )
     monkeypatch.setattr(
         module, "resolve_current_model_artifact_path", lambda _paths, name: Path(name)
     )
@@ -1411,6 +1468,33 @@ def test_option_page_reader_accepts_the_complete_v4_contract(tmp_path, monkeypat
     assert result.state == OPTION_PAGE_OK
     assert len(result.availability.index) == 1
     assert len(result.chain_history.index) == 1
+
+
+def test_option_page_reader_accepts_v5_per_ticker_provenance(tmp_path, monkeypatch):
+    availability = _valid_page_availability(generation_version=5)
+    availability.loc[0, "source_refresh_run_id"] = "source-run"
+    availability.loc[0, "source_as_of_date"] = "2026-08-11"
+    availability.loc[0, "captured_at_utc"] = "2026-08-11T20:00:00Z"
+    availability.loc[0, "carried_forward"] = True
+    availability.loc[0, "attempt_status"] = "ERROR"
+    availability.loc[0, "attempt_message"] = "vendor timeout"
+    availability.loc[0, "display_staleness_trading_days"] = 1
+    availability.loc[0, "display_freshness_status"] = "STORED"
+    _patch_page_artifact_reader(
+        monkeypatch,
+        {
+            "option_availability": availability,
+            "option_chain_history_daily": _valid_page_chain_history(
+                generation_version=5
+            ),
+        },
+        generation_version=5,
+    )
+
+    result = _read_option_page_artifacts(build_test_paths(tmp_path))
+
+    assert result.state == OPTION_PAGE_OK
+    assert bool(result.availability.loc[0, "carried_forward"]) is True
 
 
 def test_option_page_cache_does_not_pin_a_transient_unreadable_result(

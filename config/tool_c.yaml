@@ -1,5 +1,6 @@
-version: 1
+version: 2
 min_events: 8
+downside_recent_years: 2
 regime_rolling_weeks: 156
 regime_min_weeks: 52
 downside_hit_rate_threshold_pct: -10.0

@@ -77,42 +77,6 @@ def _fmt_note_tag(value: Any) -> str:
     return f"<span class=\"badge note-tag\">{text}</span>"
 
 
-def _metric_card(
-    title: str,
-    value: str,
-    *,
-    help_text: str | None = None,
-    help_key: str | None = None,
-    app_config: Any = None,
-) -> str:
-    """The one shared metric-card renderer (plan section 10.2).
-
-    Two ways to opt into the standard click-to-explain icon next to the title:
-    ``help_key`` reads the shared ``COLUMN_HELP`` registry (preferred — one copy
-    of the wording, and thresholds resolve from config), ``help_text`` passes
-    free text for the few cards with no registry entry. Both import lazily so
-    this formatting module stays import-light for callers that never use help.
-    """
-    if help_key:
-        from golden_vector.serve.column_help import help_icon
-
-        heading = escape(title) + help_icon(title, key=help_key, app_config=app_config)
-    elif help_text:
-        from golden_vector.serve.column_help import help_term
-
-        heading = help_term(title, text=help_text)
-    else:
-        heading = escape(title)
-    from golden_vector.serve.ui.components import data_card
-
-    return data_card(
-        "",
-        value,
-        label_html=heading,
-        legacy=True,
-    )
-
-
 def _frame_index_by_ticker(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
     if frame.empty or "ticker" not in frame.columns:
         return {}

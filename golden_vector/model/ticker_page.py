@@ -21,11 +21,14 @@ import pandas as pd
 from golden_vector.common.eligibility import is_score_eligible, ok_normalized_rows
 from golden_vector.common.numeric import optional_float
 from golden_vector.contracts.ticker_page import (
+    DOWNSIDE_CONTEXT_COLUMNS,
+    DOWNSIDE_CONTEXT_KEY_COLUMNS,
     FINANCE_SOURCES,
     GOLD_RESPONSE_COLUMNS,
     GOLD_RESPONSE_CONSTANT_COLUMNS,
     GOLD_RESPONSE_KEY_COLUMNS,
     GOLD_RESPONSE_LINE_METRICS,
+    GOLD_RESPONSE_SPOT_LINE_COLUMNS,
     PERCENTILES_COLUMNS,
     PERCENTILES_KEY_COLUMNS,
     PERFORMANCE_COLUMNS,
@@ -57,6 +60,7 @@ from golden_vector.screening.pipeline import compute_tool_b_in_memory
 
 __all__ = [
     "build_fx_attribution_series",
+    "build_downside_context",
     "build_gold_response_pack",
     "build_performance_series",
     "build_research_series",
@@ -230,6 +234,7 @@ def build_gold_response_pack(
                 **{f"line_intercept_{m}": None for m in GOLD_RESPONSE_LINE_METRICS},
                 **{column: None for column in GOLD_RESPONSE_CONSTANT_COLUMNS},
                 **{column: None for column in _SPOT_DISPLAY_SOURCE_COLUMNS},
+                **{column: None for column in GOLD_RESPONSE_SPOT_LINE_COLUMNS},
                 "spot_leverage_stressed": None,
                 # Label every number with its basis: `cash_margin_usd_per_oz` is
                 # gold - AISC (screening/layer1.py), NOT gold - cash cost, and the
@@ -261,6 +266,8 @@ def build_gold_response_pack(
                 base[column] = optional_float(spot_row.get(column))
             for display_column, source_column in _SPOT_DISPLAY_SOURCE_COLUMNS.items():
                 base[display_column] = optional_float(spot_row.get(source_column))
+            for metric in GOLD_RESPONSE_LINE_METRICS:
+                base[f"spot_{metric}"] = optional_float(spot_row.get(metric))
             base["spot_leverage_stressed"] = _guarded_ratio(
                 optional_float(spot_row.get("net_debt_musd")),
                 optional_float(spot_row.get("forward_ebitda_musd")),
@@ -795,7 +802,307 @@ def build_score_percentiles(
 
 
 # ---------------------------------------------------------------------------
-# Builder 3 — performance series
+# Builder 3 — descriptive downside context (not a scoring input)
+# ---------------------------------------------------------------------------
+
+
+def build_downside_context(
+    *,
+    tool_c_latest: pd.DataFrame,
+    configured_universe: list[str] | tuple[str, ...],
+    recent_years: int,
+) -> pd.DataFrame:
+    """Build persisted stock/GDX/peer comparisons for full and recent history."""
+
+    if recent_years <= 0:
+        raise ValueError("recent_years must be positive")
+    records = _indexed(tool_c_latest)
+    universe = sorted(
+        {str(value).strip().upper() for value in configured_universe if str(value).strip()}
+        | set(records)
+    )
+    rows: list[dict[str, Any]] = []
+    scopes = (
+        ("full_history", "downside_compare", None),
+        ("recent", "downside_recent", recent_years),
+    )
+    for ticker in universe:
+        record = records.get(ticker, {})
+        ticker_rows: list[dict[str, Any]] = []
+        for scope, prefix, window_years in scopes:
+            ticker_rows.extend(
+                _downside_context_rows(
+                    ticker=ticker,
+                    scope=scope,
+                    prefix=prefix,
+                    window_years=window_years,
+                    record=record,
+                    records=records,
+                )
+            )
+        _stamp_downside_deltas(ticker_rows)
+        rows.extend(ticker_rows)
+    return _validated(
+        rows,
+        columns=DOWNSIDE_CONTEXT_COLUMNS,
+        key_columns=DOWNSIDE_CONTEXT_KEY_COLUMNS,
+        name="ticker_page_downside_context",
+        artifact="downside_context",
+    )
+
+
+def _downside_context_rows(
+    *,
+    ticker: str,
+    scope: str,
+    prefix: str,
+    window_years: int | None,
+    record: dict[str, Any],
+    records: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    n = _optional_int_value(record.get(f"{prefix}_n"))
+    period_start = _optional_timestamp(record.get(f"{prefix}_period_start"))
+    period_end = _optional_timestamp(record.get(f"{prefix}_period_end"))
+    rows: list[dict[str, Any]] = []
+    for subject in ("stock", "gdx"):
+        rate = optional_float(record.get(f"{prefix}_{subject}_hit_rate"))
+        hit_count = _optional_int_value(record.get(f"{prefix}_{subject}_hit_count"))
+        median_return = optional_float(
+            record.get(f"{prefix}_{subject}_median_return")
+        )
+        worst_return = optional_float(record.get(f"{prefix}_{subject}_worst_return"))
+        status, reason = _downside_context_status(
+            rate=rate,
+            qualifying_count=n,
+            subject=subject,
+        )
+        rows.append(
+            {
+                "ticker": ticker,
+                "scope": scope,
+                "subject": subject,
+                "window_years": window_years,
+                "qualifying_week_count": n,
+                "hit_count": hit_count,
+                "hit_rate": rate,
+                "median_hit_return": median_return,
+                "worst_hit_return": worst_return,
+                "period_start": period_start,
+                "period_end": period_end,
+                "frequency_peer_count": None,
+                "severity_peer_count": None,
+                "frequency_vs_gdx_delta": None,
+                "frequency_vs_peer_delta": None,
+                "severity_vs_gdx_delta": None,
+                "severity_vs_peer_delta": None,
+                "frequency_vs_full_delta": None,
+                "severity_vs_full_delta": None,
+                "comparison_summary": None,
+                "trend_summary": None,
+                "context_status": status,
+                "context_reason": reason,
+                **_null_provenance(),
+            }
+        )
+
+    peer_records = [
+        peer
+        for peer_ticker, peer in records.items()
+        if peer_ticker != ticker and is_score_eligible(peer.get("score_eligible"))
+    ]
+    peer_rates = _finite_values(
+        peer.get(f"{prefix}_stock_hit_rate") for peer in peer_records
+    )
+    peer_medians = _finite_values(
+        peer.get(f"{prefix}_stock_median_return") for peer in peer_records
+    )
+    peer_worsts = _finite_values(
+        peer.get(f"{prefix}_stock_worst_return") for peer in peer_records
+    )
+    peer_rate = _median_or_none(peer_rates)
+    peer_median = _median_or_none(peer_medians)
+    peer_worst = _median_or_none(peer_worsts)
+    peer_status = "OK" if peer_rate is not None else "MISSING"
+    peer_reason = (
+        None
+        if peer_rate is not None
+        else "No other eligible miners have enough evidence for this period."
+    )
+    rows.append(
+        {
+            "ticker": ticker,
+            "scope": scope,
+            "subject": "peer_median",
+            "window_years": window_years,
+            "qualifying_week_count": None,
+            "hit_count": None,
+            "hit_rate": peer_rate,
+            "median_hit_return": peer_median,
+            "worst_hit_return": peer_worst,
+            "period_start": None,
+            "period_end": None,
+            "frequency_peer_count": len(peer_rates),
+            "severity_peer_count": len(peer_medians),
+            "frequency_vs_gdx_delta": None,
+            "frequency_vs_peer_delta": None,
+            "severity_vs_gdx_delta": None,
+            "severity_vs_peer_delta": None,
+            "frequency_vs_full_delta": None,
+            "severity_vs_full_delta": None,
+            "comparison_summary": None,
+            "trend_summary": None,
+            "context_status": peer_status,
+            "context_reason": peer_reason,
+            **_null_provenance(),
+        }
+    )
+    return rows
+
+
+def _stamp_downside_deltas(rows: list[dict[str, Any]]) -> None:
+    indexed = {(row["scope"], row["subject"]): row for row in rows}
+    for scope in ("full_history", "recent"):
+        stock = indexed[(scope, "stock")]
+        gdx = indexed[(scope, "gdx")]
+        peer = indexed[(scope, "peer_median")]
+        stock["frequency_vs_gdx_delta"] = _difference(
+            stock.get("hit_rate"), gdx.get("hit_rate")
+        )
+        stock["frequency_vs_peer_delta"] = _difference(
+            stock.get("hit_rate"), peer.get("hit_rate")
+        )
+        stock["severity_vs_gdx_delta"] = _difference(
+            stock.get("median_hit_return"), gdx.get("median_hit_return")
+        )
+        stock["severity_vs_peer_delta"] = _difference(
+            stock.get("median_hit_return"), peer.get("median_hit_return")
+        )
+        stock["comparison_summary"] = _downside_comparison_summary(stock)
+    recent = indexed[("recent", "stock")]
+    full = indexed[("full_history", "stock")]
+    recent["frequency_vs_full_delta"] = _difference(
+        recent.get("hit_rate"), full.get("hit_rate")
+    )
+    recent["severity_vs_full_delta"] = _difference(
+        recent.get("median_hit_return"), full.get("median_hit_return")
+    )
+    recent["trend_summary"] = _downside_trend_summary(recent)
+
+
+def _difference(left: Any, right: Any) -> float | None:
+    left_value = optional_float(left)
+    right_value = optional_float(right)
+    if left_value is None or right_value is None:
+        return None
+    return float(left_value - right_value)
+
+
+def _downside_comparison_summary(stock: dict[str, Any]) -> str | None:
+    frequency_gdx = optional_float(stock.get("frequency_vs_gdx_delta"))
+    frequency_peer = optional_float(stock.get("frequency_vs_peer_delta"))
+    severity_gdx = optional_float(stock.get("severity_vs_gdx_delta"))
+    severity_peer = optional_float(stock.get("severity_vs_peer_delta"))
+    if frequency_gdx is None or frequency_peer is None:
+        return None
+    frequency = _relative_phrase(
+        frequency_gdx,
+        frequency_peer,
+        better_when_positive=False,
+        better_word="less often",
+        worse_word="more often",
+    )
+    if severity_gdx is None or severity_peer is None:
+        return f"Large falls happened {frequency}."
+    severity = _relative_phrase(
+        severity_gdx,
+        severity_peer,
+        better_when_positive=True,
+        better_word="milder",
+        worse_word="harder",
+    )
+    return f"Large falls happened {frequency}; the typical loss was {severity}."
+
+
+def _downside_trend_summary(stock: dict[str, Any]) -> str | None:
+    frequency = optional_float(stock.get("frequency_vs_full_delta"))
+    severity = optional_float(stock.get("severity_vs_full_delta"))
+    if frequency is None:
+        return None
+    frequency_phrase = "about as often"
+    if frequency > 0.005:
+        frequency_phrase = "more often"
+    elif frequency < -0.005:
+        frequency_phrase = "less often"
+    if severity is None:
+        return f"Recently, large falls happened {frequency_phrase} than across full history."
+    severity_phrase = "about as hard"
+    if severity > 0.005:
+        severity_phrase = "milder"
+    elif severity < -0.005:
+        severity_phrase = "harder"
+    return (
+        f"Recently, large falls happened {frequency_phrase} than across full history; "
+        f"the typical loss was {severity_phrase}."
+    )
+
+
+def _relative_phrase(
+    left: float,
+    right: float,
+    *,
+    better_when_positive: bool,
+    better_word: str,
+    worse_word: str,
+) -> str:
+    def one(value: float) -> str:
+        if abs(value) <= 0.005:
+            return "about the same as"
+        better = value > 0 if better_when_positive else value < 0
+        return better_word if better else worse_word
+
+    left_phrase = one(left)
+    right_phrase = one(right)
+    if left_phrase == right_phrase:
+        return f"{left_phrase} than GDX and the eligible-miner median"
+    return f"{left_phrase} than GDX and {right_phrase} than the eligible-miner median"
+
+
+def _downside_context_status(
+    *, rate: float | None, qualifying_count: int | None, subject: str
+) -> tuple[str, str | None]:
+    if rate is not None:
+        if rate == 0:
+            return (
+                "OK",
+                "No qualifying large falls; conditional severity is unavailable.",
+            )
+        return ("OK", None)
+    if qualifying_count:
+        return (
+            "THIN_EVIDENCE",
+            f"Only {qualifying_count} aligned weak-gold weeks; more evidence is needed.",
+        )
+    label = "stock" if subject == "stock" else "GDX"
+    return ("MISSING", f"No aligned weak-gold observations are available for {label}.")
+
+
+def _finite_values(values: Any) -> list[float]:
+    return [number for value in values if (number := optional_float(value)) is not None]
+
+
+def _median_or_none(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return float(pd.Series(values, dtype="float64").median())
+
+
+def _optional_int_value(value: Any) -> int | None:
+    number = optional_float(value)
+    return None if number is None else int(number)
+
+
+# ---------------------------------------------------------------------------
+# Builder 4 — performance series
 # ---------------------------------------------------------------------------
 
 

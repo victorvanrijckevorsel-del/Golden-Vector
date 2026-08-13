@@ -163,36 +163,26 @@ def data_card(
     label: str,
     value_html: str,
     *,
-    label_html: str = "",
     help_html: str = "",
     basis_html: str = "",
     state: str = "",
     state_label: str = "",
-    legacy: bool = False,
+    gold_linked: bool = False,
 ) -> str:
     """Render one data card from already-resolved display fragments.
 
-    ``label`` is escaped plain text. ``label_html`` is the explicit trusted-HTML
-    alternative used by the legacy ``_metric_card`` compatibility wrapper when
-    its heading already includes help markup. ``value_html``, ``help_html``, and
-    ``basis_html`` are likewise trusted, pre-escaped fragments.
+    ``label`` is escaped plain text. ``value_html``, ``help_html``, and
+    ``basis_html`` are trusted, pre-escaped display fragments.
 
-    ``legacy=True`` deliberately emits the old bytes and rejects new-only slots,
-    keeping unmigrated callers visually and structurally unchanged.
+    ``gold_linked`` marks a figure that moves with the gold dial. It is a
+    property of the metric, not a judgement about its value, so it composes
+    with ``state`` rather than competing for the same slot; the CSS lets a
+    state colour win the shared edge when a card is also degraded.
     """
-    if label.strip() and label_html.strip():
-        raise ValueError("data_card accepts label or label_html, not both")
-    if not label.strip() and not label_html.strip():
-        raise ValueError("data_card requires label or label_html")
-    heading = label_html if label_html else escape(label)
-    if legacy:
-        if basis_html or state or state_label:
-            raise ValueError("legacy data_card does not support basis or state")
-        return (
-            '<article class="panel metric-card">'
-            f"<h3>{heading}{help_html}</h3><p>{value_html}</p>"
-            "</article>"
-        )
+    if not label.strip():
+        raise ValueError("data_card requires a label")
+    heading = escape(label)
+    gold_class = " data-card--gold-linked" if gold_linked else ""
     state_class = ""
     if state:
         if state not in _DATA_CARD_STATES:
@@ -209,7 +199,7 @@ def data_card(
         else ""
     )
     return (
-        f'<article class="data-card{state_class}">'
+        f'<article class="data-card{gold_class}{state_class}">'
         f'<h3 class="data-card__label">{heading}{help_html}</h3>'
         f'<p class="data-card__value">{value_html}</p>'
         f"{state_markup}{basis}</article>"
@@ -240,11 +230,21 @@ def terminal_density(content_html: str) -> str:
     return f'<div class="terminal-density">{content_html}</div>'
 
 
-def toolbar(content_html: str, *, label: str) -> str:
+def toolbar(
+    content_html: str,
+    *,
+    label: str,
+    visible_label: str = "",
+) -> str:
     """Action/scenario toolbar shell grouping related controls."""
+    visible = (
+        f'<span class="toolbar__label">{escape(visible_label)}</span>'
+        if visible_label
+        else ""
+    )
     return (
         f"<div class=\"toolbar\" role=\"group\" aria-label=\"{escape(label)}\">"
-        f"{content_html}</div>"
+        f"{visible}{content_html}</div>"
     )
 
 

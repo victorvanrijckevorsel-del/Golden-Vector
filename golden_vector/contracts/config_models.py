@@ -51,6 +51,13 @@ SIGNAL_AREA_DTE_MAX = 150
 # explicit core horizons or names missing a LEAPS quote degrade to "thin".
 LONG_DATED_TARGET_THRESHOLD_DAYS = 250
 
+# The ONE authority for "this option snapshot is stale enough to warn about",
+# counted in US trading days. Only the shared classifier
+# (app.market_hours_refresh.classify_us_trading_day_freshness) may compare
+# against it; every screen keys off the STALE status the classifier emits, so
+# the number can never be restated (and drift) at a render site.
+OPTION_STALENESS_WARNING_TRADING_DAYS = 3
+
 
 class StrictConfigModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -623,8 +630,9 @@ class HedgeReadinessConfig(StrictConfigModel):
 
 
 class ToolCConfig(StrictConfigModel):
-    version: int = 1
+    version: int = 2
     min_events: int = 8
+    downside_recent_years: int = 2
     regime_rolling_weeks: int = 156
     regime_min_weeks: int = 52
     downside_hit_rate_threshold_pct: float = -10.0
@@ -655,6 +663,7 @@ class ToolCConfig(StrictConfigModel):
 
     @field_validator(
         "min_events",
+        "downside_recent_years",
         "regime_rolling_weeks",
         "regime_min_weeks",
     )

@@ -111,6 +111,9 @@ def test_lab_page_renders_ranked_rows_caveat_and_gdxj(tmp_path) -> None:
     # GDXJ comparison column + horizon selector present.
     assert "P(beat GDXJ)" in html
     assert "26w" in html or "Look-ahead" in html
+    assert '<div class="terminal-density">' in html
+    assert html.count('class="form-control"') == 2
+    assert 'class="control control--primary">Apply</button>' in html
     # Ticker links to the drill-down carrying scenario + horizon + benchmark
     # (& is HTML-escaped to &amp; in the rendered attribute).
     assert "/lab/dial/WIN?scenario=gold_down&amp;horizon=13&amp;benchmark=GDX" in html
@@ -440,15 +443,13 @@ def test_overview_unavailable_state_to_tone_mapping(status, expected_tone):
     assert other not in html
 
 
-def test_lab_dial_table_drops_js_datatable_when_no_rows(tmp_path) -> None:
-    """A colspan-only empty row does not match the explicit column model that
-    workspace-tables.js hands DataTables, so the class must be dropped."""
+def test_lab_dial_empty_result_uses_the_shared_empty_state(tmp_path) -> None:
     paths = _write_artifacts(tmp_path)
     data = load_dial_cells(paths, horizon=13, bucket="gold_down")  # type: ignore[arg-type]
     empty = replace(data, rows=[])
 
     html = _render_lab_overview_page(empty, selected_bucket="gold_down")
 
-    assert 'id="lab-dial-table" class="empty-table"' in html
-    assert 'id="lab-dial-table" class="js-datatable"' not in html
+    assert 'id="lab-dial-table"' not in html
+    assert 'class="empty-state"' in html
     assert "No rows for this scenario." in html

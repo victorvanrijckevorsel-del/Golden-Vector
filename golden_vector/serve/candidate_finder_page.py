@@ -6,8 +6,12 @@ from collections.abc import Mapping, Sequence
 from html import escape
 from urllib.parse import quote, urlencode
 
+import pandas as pd
+
+from golden_vector.common.numeric import bool_or_false, optional_int
 from golden_vector.common.windows import ALL_WINDOWS, SCORING_WINDOWS, WINDOW_LABELS
 from golden_vector.contracts.config_models import (
+    OPTION_STALENESS_WARNING_TRADING_DAYS,
     AppConfig,
     CandidateFinderConfig,
     CandidateFinderCriterion,
@@ -26,7 +30,6 @@ from golden_vector.serve.column_help import help_term, help_th
 from golden_vector.serve.format_helpers import (
     _fmt_number,
     _fmt_numeric_td,
-    _metric_card,
 )
 from golden_vector.serve.fundamentals_provenance import ticker_provenance_icon
 from golden_vector.serve.http_helpers import _flash_message
@@ -39,8 +42,23 @@ from golden_vector.serve.option_refresh import (
     OptionRefreshStatus,
     render_option_refresh_control,
 )
+from golden_vector.serve.option_data_freshness import (
+    OptionGenerationFreshness,
+    format_collected_at_et,
+    option_generation_freshness_from_manifest,
+    resolve_option_row_freshness,
+)
 from golden_vector.serve.page_shell import _page_shell
-from golden_vector.serve.ui.components import page_header, section_heading
+from golden_vector.serve.ui.components import (
+    data_card,
+    disclosure,
+    empty_state,
+    page_header,
+    section_heading,
+    segmented_control,
+    terminal_density,
+    toolbar,
+)
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.url_helpers import build_page_url
@@ -54,9 +72,9 @@ _PRESET_ALIASES = {
 
 # Each Candidate Finder criterion maps to the SAME rich column-help entry that explains the
 # metric everywhere else (detail / Tool B / Tool C / Tool D / Option pages). This lets the
-# "Value" info button on the top-list cards and the criterion columns in the Fit Ranking table
-# describe the actual metric (meaning + formula + units/sign) instead of a generic "raw value"
-# line. Criteria with no rich entry fall back to their config description (help_th text=).
+# "Value" info button on the top-list cards describes the actual metric (meaning + formula +
+# units/sign) instead of a generic "raw value" line. Criteria with no rich entry fall back to
+# their config description (help_th text=).
 _CRITERION_HELP_KEYS: dict[str, str] = {
     "down_beta": "tool_c_down_beta",
     "up_beta": "tool_c_up_beta",
@@ -157,6 +175,12 @@ def render_candidate_finder_page(
             refresh_notice,
             render_model_state_banner(data.model_state_manifest),
             render_option_freshness_box(data.model_state_manifest, only_when_stale=True),
+            _render_options_latest_available(
+                data.frame,
+                generation=option_generation_freshness_from_manifest(
+                    data.model_state_manifest
+                ),
+            ),
             render_option_refresh_control(
                 refresh_status or OptionRefreshStatus(),
                 return_to=base_path,
@@ -185,9 +209,66 @@ def render_candidate_finder_page(
     )
     return _page_shell(
         "Candidate Finder - Golden Vector Workspace",
-        body,
+        terminal_density(body),
         active_nav="candidate_finder",
     )
+
+
+def _render_options_latest_available(
+    frame: pd.DataFrame,
+    *,
+    generation: OptionGenerationFreshness = OptionGenerationFreshness(False),
+) -> str:
+    """Compact per-ticker provenance note for option-based Finder criteria.
+
+    The ``options_*`` columns are the per-ticker artifact columns renamed by
+    ``candidate_finder_data``, so they carry the same build-time freeze the
+    ticker page and Option Trading overview correct for: a full-outage carry
+    never rebuilds them. Both counts therefore resolve through the ONE shared
+    helper, which ORs the generation's age in. No second classifier, no second
+    threshold -- the STALE verdict decides, the number lives in config.
+    """
+
+    if frame.empty or "options_source_as_of_date" not in frame.columns:
+        return (
+            '<p class="hint">Options criteria use the latest available data per ticker. '
+            "A ticker stays unavailable when no verified snapshot exists.</p>"
+        )
+    source_rows = frame[frame["options_source_as_of_date"].notna()]
+    resolved = [
+        resolve_option_row_freshness(
+            trading_days=optional_int(row.get("options_staleness_trading_days")),
+            status=row.get("options_freshness_status"),
+            carried_forward=bool_or_false(row.get("options_carried_forward")),
+            generation=generation,
+        )
+        for row in source_rows.to_dict(orient="records")
+    ]
+    stored_count = sum(1 for item in resolved if item.carried_forward)
+    captured = None
+    if "options_captured_at_utc" in source_rows.columns:
+        values = sorted(
+            str(value).strip()
+            for value in source_rows["options_captured_at_utc"].dropna()
+            if str(value).strip()
+        )
+        captured = format_collected_at_et(values[-1]) if values else None
+    detail = f" Latest collection: {captured}." if captured else ""
+    parts = [
+        '<p class="hint">Options criteria use each ticker’s latest available '
+        f"snapshot; {stored_count} stored ticker snapshot(s) remain visible."
+        f"{escape(detail)}</p>"
+    ]
+    stale_count = sum(1 for item in resolved if item.stale)
+    if stale_count:
+        parts.append(
+            notice(
+                "warning",
+                f"{stale_count} option snapshot(s) are at least "
+                f"{OPTION_STALENESS_WARNING_TRADING_DAYS} US trading days old.",
+            )
+        )
+    return "".join(parts)
 
 
 def _screen_spec_from_query(
@@ -244,18 +325,16 @@ def _render_preset_bar(
             preset_id=preset.id,
             query=query,
         )
-        active = " is-active" if preset.id == active_preset_id else ""
+        current = (
+            ' aria-current="true"' if preset.id == active_preset_id else ""
+        )
         links.append(
             (
-                f"<a class=\"candidate-preset{active}\" href=\"{escape(href, quote=True)}\">"
+                f"<a class=\"control\" href=\"{escape(href, quote=True)}\"{current}>"
                 f"{escape(preset.label)}</a>"
             )
         )
-    return (
-        "<div class=\"candidate-preset-bar\" aria-label=\"Candidate Finder presets\">"
-        + "".join(links)
-        + "</div>"
-    )
+    return toolbar("".join(links), label="Candidate Finder presets")
 
 
 def _preset_href(
@@ -290,11 +369,47 @@ def _render_gold_scenario_control(
         if data.scenario_requested_gold_price is None
         else f"{float(data.scenario_requested_gold_price):.0f}"
     )
-    hidden = _hidden_query_inputs(query, exclude={"gold_price", "fundamentals_source"})
-    reset_query = _query_without(query, {"gold_price"})
+    hidden = _hidden_query_inputs(
+        query,
+        exclude={"gold_price", "fundamentals_source"},
+    )
+    if data.fundamentals_source == "yahoo":
+        hidden += (
+            '\n<input type="hidden" name="fundamentals_source" value="yahoo">'
+        )
+    reset_query = _query_without(query, {"gold_price", "fundamentals_source"})
+    if data.fundamentals_source == "yahoo":
+        reset_query = "&".join(
+            part
+            for part in (
+                reset_query,
+                urlencode({"fundamentals_source": "yahoo"}),
+            )
+            if part
+        )
     reset_href = base_path + (f"?{reset_query}" if reset_query else "")
-    yahoo_selected = " selected" if data.fundamentals_source == "yahoo" else ""
-    our_selected = " selected" if data.fundamentals_source != "yahoo" else ""
+    source_query = _query_without(query, {"fundamentals_source"})
+    our_source_href = base_path + (f"?{source_query}" if source_query else "")
+    yahoo_source_query = "&".join(
+        part
+        for part in (
+            source_query,
+            urlencode({"fundamentals_source": "yahoo"}),
+        )
+        if part
+    )
+    yahoo_source_href = f"{base_path}?{yahoo_source_query}"
+    source_control = segmented_control(
+        (
+            ("Our View", our_source_href, data.fundamentals_source != "yahoo"),
+            (
+                "Yahoo Fundamentals",
+                yahoo_source_href,
+                data.fundamentals_source == "yahoo",
+            ),
+        ),
+        label="Financials source",
+    )
     if data.scenario_active and data.scenario_requested_gold_price is None:
         status = (
             "Yahoo Fundamentals recalculates finance-dependent ranking at spot gold. "
@@ -313,22 +428,17 @@ def _render_gold_scenario_control(
         status = "Current screen uses the persisted model run."
     return f"""
 <section class="panel candidate-gold-scenario-panel">
+  {section_heading("Ranking basis")}
+  {toolbar(source_control, label="Financials source", visible_label="Financials source")}
   <form method="get" action="{escape(base_path, quote=True)}" class="candidate-finder-form">
     {hidden}
     <div class="candidate-form-row">
       <label>
         Gold price for ranking
-        <input type="number" name="gold_price" min="1" step="1" value="{escape(current_value)}">
+        <input class="form-control" type="number" name="gold_price" min="1" step="1" value="{escape(current_value)}">
       </label>
-      <label>
-        Financials source
-        <select name="fundamentals_source">
-          <option value="our"{our_selected}>Our View</option>
-          <option value="yahoo"{yahoo_selected}>Yahoo Fundamentals</option>
-        </select>
-      </label>
-      <button type="submit">Apply Gold Scenario</button>
-      <a href="{escape(reset_href, quote=True)}">Reset gold price to spot</a>
+      <button type="submit" class="control control--primary">Apply Gold Scenario</button>
+      <a class="control control--quiet" href="{escape(reset_href, quote=True)}">Reset gold price to spot</a>
     </div>
     <p class="hint">{escape(status)}</p>
   </form>
@@ -372,14 +482,15 @@ def _render_beta_window_control(
         )
     return f"""
 <section class="panel candidate-beta-window-panel">
+  {section_heading("Gold sensitivity horizon")}
   <form method="get" action="{escape(base_path, quote=True)}" class="candidate-finder-form">
     {hidden}
     <div class="candidate-form-row">
       <label>
         Gold beta horizon
-        <select name="beta_window">{''.join(options)}</select>
+        <select class="form-control" name="beta_window">{''.join(options)}</select>
       </label>
-      <button type="submit">Apply Horizon</button>
+      <button type="submit" class="control control--primary">Apply Horizon</button>
     </div>
     <p class="hint">{basis}</p>
   </form>
@@ -395,7 +506,7 @@ def _render_active_preset_description(
         return ""
     for preset in data.criteria_config.presets:
         if preset.id == active_preset_id and preset.description:
-            return f"<p class=\"hint candidate-preset-description\">{escape(preset.description)}</p>"
+            return f'<p class="hint">{escape(preset.description)}</p>'
     return ""
 
 
@@ -420,11 +531,11 @@ def _render_summary_cards(screen: CandidateFinderScreen) -> str:
     selected = len(screen.ranking.selected_criteria)
     cards = "\n".join(
         (
-            _metric_card("Universe", _side_label(screen.options_side)),
-            _metric_card("Selected Criteria", str(selected)),
-            _metric_card("Eligible Rows", str(eligible)),
-            _metric_card("Low Coverage Rows", str(low_coverage)),
-            _metric_card("Per-Criterion List Size", str(screen.top_n)),
+            data_card("Universe", escape(_side_label(screen.options_side))),
+            data_card("Selected Criteria", str(selected)),
+            data_card("Eligible Rows", str(eligible)),
+            data_card("Low Coverage Rows", str(low_coverage)),
+            data_card("Per-Criterion List Size", str(screen.top_n)),
         )
     )
     return f"<div class=\"metric-grid candidate-summary-grid\">{cards}</div>"
@@ -482,7 +593,7 @@ def _render_builder(
     heading = section_heading(
         "Screen Builder",
         actions_html=(
-            f"<a class=\"btn btn-tertiary\" href=\"{escape(base_path, quote=True)}\">Reset</a>"
+            f"<a class=\"control control--quiet\" href=\"{escape(base_path, quote=True)}\">Reset</a>"
         ),
     )
     return f"""
@@ -495,13 +606,13 @@ def _render_builder(
     <div class="candidate-form-row">
       <label>
         Universe
-        <select name="options_side">{options}</select>
+        <select class="form-control" name="options_side">{options}</select>
       </label>
       <label>
         Top rows per criterion
-        <input type="number" name="top_n" min="1" max="25" step="1" value="{screen.top_n}">
+        <input class="form-control" type="number" name="top_n" min="1" max="25" step="1" value="{screen.top_n}">
       </label>
-      <button type="submit" class="btn btn-primary">Apply Screen</button>
+      <button type="submit" class="control control--primary">Apply Screen</button>
     </div>
     <div class="candidate-criteria-groups">{groups}</div>
   </form>
@@ -531,7 +642,6 @@ def _render_builder_group(
     group_index: int,
 ) -> str:
     selected_count = sum(1 for criterion in criteria if criterion.id in selected_by_id)
-    open_attr = " open" if selected_count else ""
     summary_meta = (
         f"{selected_count}/{len(criteria)} selected"
         if selected_count
@@ -560,15 +670,16 @@ def _render_builder_group(
         region_id=f"candidate-builder-criteria-table-region-{group_index}",
         label=f"{group_label} screen criteria",
     )
-    return f"""
-<details class="candidate-criteria-group"{open_attr}>
-  <summary>
-    <span>{escape(group_label)}</span>
-    <span class="hint">{escape(summary_meta)}</span>
-  </summary>
-  {region}
-</details>
-"""
+    summary_html = (
+        f"<span>{escape(group_label)}</span>"
+        f"<span class=\"hint\">{escape(summary_meta)}</span>"
+    )
+    return disclosure(
+        summary_html,
+        region,
+        expanded=bool(selected_count),
+        class_name="candidate-criteria-group",
+    )
 
 
 def _render_builder_row(
@@ -592,12 +703,12 @@ def _render_builder_row(
   <td><input type="checkbox" name="criteria" value="{criterion_id}" aria-label="{checkbox_label}"{" checked" if checked else ""}></td>
   <td>{help_term(criterion.label, text=label_help)}</td>
   <td>
-    <select name="{direction_name}">
+    <select class="form-control" name="{direction_name}">
       {_option_tag("high_good", "High values fit", direction == "high_good")}
       {_option_tag("low_good", "Low values fit", direction == "low_good")}
     </select>
   </td>
-  <td><input type="number" name="{weight_name}" min="0" max="10" step="0.25" value="{_fmt_weight(weight)}"></td>
+  <td><input class="form-control" type="number" name="{weight_name}" min="0" max="10" step="0.25" value="{_fmt_weight(weight)}"></td>
   <td>{escape(criterion.description)}</td>
 </tr>
 """
@@ -623,7 +734,7 @@ def _render_top_lists(
     )
     return f"""
 <section class="candidate-view-section">
-  <h2>View 1: Top Rows By Criterion</h2>
+  {section_heading("View 1: Top Rows By Criterion")}
   <div class="candidate-top-list-grid">{cards}</div>
 </section>
 """
@@ -642,31 +753,35 @@ def _render_top_list_card(
 <tr>
   <td>{_ticker_link(row.ticker, fundamentals_source=fundamentals_source, fundamentals_provenance=fundamentals_provenance)}</td>
   <td class="numeric">{_fmt_criterion_value(criterion, row.raw_value)}</td>
-  <td class="numeric">{_fmt_number(row.percentile, decimals=1)}</td>
 </tr>
 """
         for row in rows
     )
-    if not body:
-        body = "<tr><td colspan=\"3\">No rows found.</td></tr>"
     direction = "High" if criterion.direction == "high_good" else "Low"
-    table = (
-        "<table><thead>"
-        f"<tr>{help_th('Ticker', key='ticker_symbol')}"
-        f"{help_th('Value', key=_criterion_help_key(criterion), text=criterion.description, app_config=app_config)}"
-        f"{help_th('Percentile', key='candidate_finder_top_list_percentile')}</tr>"
-        f"</thead><tbody>{body}</tbody></table>"
+    content = empty_state(
+        "No qualifying rows found.",
+        body_html=(
+            "<p class=\"hint\">This criterion has no usable values in the "
+            "selected universe.</p>"
+        ),
     )
-    region = table_region(
-        table,
-        region_id=f"top-list-{criterion.id}-region",
-        label=f"{criterion.label} top rows",
-    )
+    if body:
+        table = (
+            "<table><thead>"
+            f"<tr>{help_th('Ticker', key='ticker_symbol')}"
+            f"{help_th('Value', key=_criterion_help_key(criterion), text=criterion.description, app_config=app_config, sort_numeric=True)}</tr>"
+            f"</thead><tbody>{body}</tbody></table>"
+        )
+        content = table_region(
+            table,
+            region_id=f"top-list-{criterion.id}-region",
+            label=f"{criterion.label} top rows",
+        )
     return f"""
 <article class="nested-panel candidate-top-list-card">
   <h3>{escape(criterion.label)}</h3>
   <p class="hint">{escape(criterion.description)} {direction} values rank higher. Weight {_fmt_weight(criterion.weight)}.</p>
-  {region}
+  {content}
 </article>
 """
 
@@ -682,9 +797,9 @@ def _render_ranking_tables(
     low_coverage = [row for row in screen.ranking.rows if not _is_ranked(row)]
     return f"""
 <section class="candidate-view-section">
-  <h2>View 2: Fit Ranking</h2>
-  {_render_score_table("Eligible Ranking", eligible, screen.ranking.selected_criteria, "candidate-eligible-ranking", app_config=app_config, fundamentals_source=fundamentals_source, fundamentals_provenance=fundamentals_provenance)}
-  {_render_score_table("Low-Coverage Rows", low_coverage, screen.ranking.selected_criteria, "candidate-low-coverage-ranking", app_config=app_config, fundamentals_source=fundamentals_source, fundamentals_provenance=fundamentals_provenance)}
+  {section_heading("View 2: Fit Ranking")}
+  {_render_score_table("Eligible Ranking", eligible, "candidate-eligible-ranking", app_config=app_config, fundamentals_source=fundamentals_source, fundamentals_provenance=fundamentals_provenance)}
+  {_render_score_table("Low-Coverage Rows", low_coverage, "candidate-low-coverage-ranking", app_config=app_config, fundamentals_source=fundamentals_source, fundamentals_provenance=fundamentals_provenance)}
 </section>
 """
 
@@ -692,34 +807,14 @@ def _render_ranking_tables(
 def _render_score_table(
     title: str,
     rows: Sequence[CandidateScore],
-    criteria: Sequence[ResolvedCriterion],
     table_id: str,
     *,
     app_config: AppConfig | None = None,
     fundamentals_source: str,
     fundamentals_provenance: dict[tuple[str, str], str],
 ) -> str:
-    # Each criterion column explains its own metric (rich registry help), not a generic
-    # "percentile" line; falls back to the criterion's config description if unmapped.
-    criterion_headers = "".join(
-        help_th(
-            criterion.label,
-            key=_criterion_help_key(criterion),
-            text=criterion.description,
-            app_config=app_config,
-            col_name=f"criterion_{criterion.id}",
-            sort_numeric=True,
-        )
-        for criterion in criteria
-    )
     body_rows: list[str] = []
     for row in rows:
-        criterion_cells = "".join(
-            (
-                _fmt_numeric_td(row.percentiles.get(criterion.id), decimals=1)
-            )
-            for criterion in criteria
-        )
         body_rows.append(
             f"""
 <tr>
@@ -727,29 +822,32 @@ def _render_score_table(
   {_fmt_numeric_td(row.score, decimals=2)}
   {_coverage_td(row)}
   {_fmt_numeric_td(row.top_n_tally, decimals=0)}
-  {criterion_cells}
   <td>{escape(_coverage_status(row))}</td>
 </tr>
 """
         )
     if not body_rows:
-        colspan = 5 + len(criteria)
-        body = f"<tr><td colspan=\"{colspan}\">No rows found.</td></tr>"
-    else:
-        body = "\n".join(body_rows)
-    table_class = (
-        "js-datatable candidate-ranking-table"
-        if body_rows
-        else "candidate-ranking-table"
-    )
-    table = f"""<table id="{escape(table_id, quote=True)}" class="{table_class}">
+        no_rows = empty_state(
+            "No rows in this ranking group.",
+            body_html=(
+                '<p class="hint">Change the universe or criteria to review '
+                "a different screen.</p>"
+            ),
+        )
+        return f"""
+<section class="nested-panel candidate-ranking-panel">
+  <h3>{escape(title)}</h3>
+  {no_rows}
+</section>
+"""
+    body = "\n".join(body_rows)
+    table = f"""<table id="{escape(table_id, quote=True)}" class="js-datatable candidate-ranking-table">
       <thead>
         <tr>
           {help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")}
           {help_th("Fit Score", key="candidate_finder_fit_score", app_config=app_config, col_name="score", sort_numeric=True)}
           {help_th("Coverage", key="candidate_finder_coverage", app_config=app_config, col_name="coverage", sort_numeric=True)}
           {help_th("Top-N Hits", key="candidate_finder_top_n_hits", app_config=app_config, col_name="top_n_hits", sort_numeric=True)}
-          {criterion_headers}
           {help_th("Status", key="candidate_finder_status", app_config=app_config, col_name="status")}
         </tr>
       </thead>

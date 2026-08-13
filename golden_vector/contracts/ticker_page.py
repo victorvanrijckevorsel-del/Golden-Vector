@@ -11,7 +11,9 @@ from typing import Literal
 import pandas as pd
 
 TICKER_PAGE_SCHEMA_VERSIONS: dict[str, int] = {
-    "gold_response": 1,
+    # v2 persists the five line-metric values at true spot so the server page
+    # is complete and truthful without JavaScript.
+    "gold_response": 2,
     "percentiles": 1,
     # v2 (C4): actual observation dates (no invented W-FRI labels), one shared
     # anchor rebased to exactly 100, pre-anchor rebased points removed, and the
@@ -24,6 +26,10 @@ TICKER_PAGE_SCHEMA_VERSIONS: dict[str, int] = {
     # Feature A: professional currency attribution, one row per configured
     # ticker and chart horizon (USD listings carry explicit N/A rows).
     "fx_attribution": 1,
+    # Descriptive (not scoring) stock/GDX/peer downside context, with full and
+    # configured-recent scopes. Values are computed in Tool C and aggregated in
+    # the ticker-page producer; serve code only formats them.
+    "downside_context": 1,
 }
 
 # Provenance columns carried by every ticker-page artifact (§5.6 "Common columns").
@@ -123,6 +129,9 @@ GOLD_RESPONSE_SPOT_DISPLAY_COLUMNS: tuple[str, ...] = (
     "spot_forward_pe",
     "spot_leverage_stressed",
 )
+GOLD_RESPONSE_SPOT_LINE_COLUMNS: tuple[str, ...] = tuple(
+    f"spot_{metric}" for metric in GOLD_RESPONSE_LINE_METRICS
+)
 
 #: Cost basis the persisted spot margin columns are computed against. The pack
 #: ships BOTH ``aisc_usd_per_oz`` and ``cash_cost_usd_per_oz`` as constants, so a
@@ -140,6 +149,7 @@ GOLD_RESPONSE_COLUMNS: tuple[str, ...] = (
     *GOLD_RESPONSE_CONSTANT_COLUMNS,
     "spot_gold_usd",
     "spot_gold_date",
+    *GOLD_RESPONSE_SPOT_LINE_COLUMNS,
     *GOLD_RESPONSE_SPOT_DISPLAY_COLUMNS,
     "spot_margin_basis",
     "gold_response_status",
@@ -173,6 +183,41 @@ PERCENTILES_COLUMNS: tuple[str, ...] = (
     "source_period_end",
     "source_verification_status",
     "source_verification_date",
+    *TICKER_PAGE_PROVENANCE_COLUMNS,
+)
+
+# --- downside context ------------------------------------------------------
+
+DOWNSIDE_CONTEXT_KEY_COLUMNS: tuple[str, ...] = ("ticker", "scope", "subject")
+DOWNSIDE_CONTEXT_SCOPES: tuple[str, ...] = ("full_history", "recent")
+DOWNSIDE_CONTEXT_SUBJECTS: tuple[str, ...] = ("stock", "gdx", "peer_median")
+DOWNSIDE_CONTEXT_STATUSES: tuple[str, ...] = (
+    "OK",
+    "THIN_EVIDENCE",
+    "MISSING",
+)
+DOWNSIDE_CONTEXT_COLUMNS: tuple[str, ...] = (
+    *DOWNSIDE_CONTEXT_KEY_COLUMNS,
+    "window_years",
+    "qualifying_week_count",
+    "hit_count",
+    "hit_rate",
+    "median_hit_return",
+    "worst_hit_return",
+    "period_start",
+    "period_end",
+    "frequency_peer_count",
+    "severity_peer_count",
+    "frequency_vs_gdx_delta",
+    "frequency_vs_peer_delta",
+    "severity_vs_gdx_delta",
+    "severity_vs_peer_delta",
+    "frequency_vs_full_delta",
+    "severity_vs_full_delta",
+    "comparison_summary",
+    "trend_summary",
+    "context_status",
+    "context_reason",
     *TICKER_PAGE_PROVENANCE_COLUMNS,
 )
 
@@ -327,6 +372,7 @@ GOLD_RESPONSE_DTYPES: dict[str, str] = {
     **{column: "float64" for column in GOLD_RESPONSE_CONSTANT_COLUMNS},
     "spot_gold_usd": "float64",
     "spot_gold_date": "string",
+    **{column: "float64" for column in GOLD_RESPONSE_SPOT_LINE_COLUMNS},
     **{column: "float64" for column in GOLD_RESPONSE_SPOT_DISPLAY_COLUMNS},
     "spot_margin_basis": "string",
     "gold_response_status": "string",
@@ -358,6 +404,33 @@ PERCENTILES_DTYPES: dict[str, str] = {
     "source_period_end": "datetime64[ns]",
     "source_verification_status": "string",
     "source_verification_date": "string",
+    **_PROVENANCE_DTYPES,
+}
+
+DOWNSIDE_CONTEXT_DTYPES: dict[str, str] = {
+    "ticker": "string",
+    "scope": "string",
+    "subject": "string",
+    "window_years": "Int64",
+    "qualifying_week_count": "Int64",
+    "hit_count": "Int64",
+    "hit_rate": "float64",
+    "median_hit_return": "float64",
+    "worst_hit_return": "float64",
+    "period_start": "datetime64[ns]",
+    "period_end": "datetime64[ns]",
+    "frequency_peer_count": "Int64",
+    "severity_peer_count": "Int64",
+    "frequency_vs_gdx_delta": "float64",
+    "frequency_vs_peer_delta": "float64",
+    "severity_vs_gdx_delta": "float64",
+    "severity_vs_peer_delta": "float64",
+    "frequency_vs_full_delta": "float64",
+    "severity_vs_full_delta": "float64",
+    "comparison_summary": "string",
+    "trend_summary": "string",
+    "context_status": "string",
+    "context_reason": "string",
     **_PROVENANCE_DTYPES,
 }
 
@@ -445,6 +518,7 @@ EXPECTED_DTYPES: dict[str, dict[str, str]] = {
     "performance": PERFORMANCE_DTYPES,
     "fx_attribution": FX_ATTRIBUTION_DTYPES,
     "research_series": RESEARCH_SERIES_DTYPES,
+    "downside_context": DOWNSIDE_CONTEXT_DTYPES,
 }
 
 #: Contract column tuple per artifact (same keys as EXPECTED_DTYPES).
@@ -454,6 +528,7 @@ ARTIFACT_COLUMNS: dict[str, tuple[str, ...]] = {
     "performance": PERFORMANCE_COLUMNS,
     "fx_attribution": FX_ATTRIBUTION_COLUMNS,
     "research_series": RESEARCH_SERIES_COLUMNS,
+    "downside_context": DOWNSIDE_CONTEXT_COLUMNS,
 }
 
 

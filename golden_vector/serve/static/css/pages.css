@@ -1,7 +1,7 @@
 /* Page-specific modifiers (kept deliberately small). */
 /* Ticker profile reference implementation (platform redesign Phase 4). The
-   wider canvas and tighter rhythm are explicitly page-scoped; other routes
-   retain the 1240px main width and their existing density until Phase 5. */
+   wider canvas and tighter rhythm remain explicitly page-scoped; the shared
+   platform width is now owned by --content-max-width. */
 body[data-page="ticker_detail"] main {
   max-width: var(--ticker-content-max-width);
 }
@@ -228,30 +228,6 @@ body[data-page="ticker_detail"] h3 {
 /* Tool D Failure-Ladder cell: keep survival lines on one row. */
 .tool-d-ladder { white-space: nowrap; font-size: 0.82rem; }
 /* Candidate Finder */
-.candidate-preset-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 12px 0 16px;
-}
-.candidate-preset {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 12px;
-  background: var(--paper);
-  color: var(--ink);
-  text-decoration: none;
-  font-weight: 600;
-  font-size: 0.92rem;
-}
-.candidate-preset:hover {
-  background: var(--accent-soft);
-}
-.candidate-preset.is-active {
-  background: var(--accent);
-  color: var(--panel);
-  border-color: var(--accent);
-}
 .candidate-finder-form {
   display: grid;
   gap: 14px;
@@ -346,6 +322,29 @@ body[data-page="ticker_detail"] h3 {
 .lab-curve-chart[open] > summary { margin-bottom: 8px; }
 .lab-winrate { padding-top: 6px; }
 .lab-winrate p { margin: 0 0 8px; }
+.lab-controls {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 16px;
+}
+.lab-controls-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.lab-control-row {
+  display: grid;
+  grid-template-columns: minmax(110px, max-content) minmax(0, 1fr);
+  align-items: start;
+  gap: 8px 12px;
+}
+.lab-control-row > strong {
+  padding-top: 7px;
+}
+@media (max-width: 680px) {
+  .lab-control-row { grid-template-columns: 1fr; }
+  .lab-control-row > strong { padding-top: 0; }
+}
 .winrate-bar {
   position: relative;
   height: 26px;
@@ -396,6 +395,22 @@ body[data-page="ticker_detail"] h3 {
   gap: 8px;
 }
 .gold-dial-label { font-weight: 600; }
+/* The /tool-b and /tool-d gold-price forms (chips + custom price + actions):
+   without wrap the preset row forces ~600px and the whole page scrolls
+   sideways at phone widths (release browser gate, 2026-08-13). */
+.gold-dial-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+.gold-dial-form .overview-filters-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
 .gold-dial input[type="range"] { min-width: 200px; }
 .gold-dial-output { font-variant-numeric: tabular-nums; font-weight: 600; }
 .gold-dial input[type="range"]:disabled { opacity: 0.5; }
@@ -403,11 +418,23 @@ body[data-page="ticker_detail"] h3 {
 #gold-dial-status { flex-basis: 100%; margin: 0; }
 
 /* --- ticker page: corporate finance scenario cells ---------------------- */
-.scenario-cell { font-variant-numeric: tabular-nums; }
+/* Scenario values carry the gold accent: on this page gold means "this number
+   came from where you put the dial", which is exactly what a scenario value is. */
+.scenario-cell { color: var(--accent); font-variant-numeric: tabular-nums; }
 p.scenario-cell { margin: 2px 0 0; font-weight: 600; }
-.scenario-cell[data-unavailable], td[data-unavailable] { font-style: italic; opacity: 0.85; }
+.scenario-cell[data-unavailable], td[data-unavailable] {
+  color: var(--text-dim);
+  font-style: italic;
+  opacity: 0.85;
+}
+/* The decorative diamond marking a gold-driven card or row. */
+.gold-linked-marker {
+  margin-inline-end: 0.4em;
+  color: var(--accent);
+  font-size: 0.7em;
+  vertical-align: 0.12em;
+}
 .spot-cell { font-variant-numeric: tabular-nums; }
-.dial-pending { font-style: italic; opacity: 0.8; }
 td.basis, .basis { font-size: 0.78rem; color: var(--ink-soft); }
 .is-updated { animation: gv-cell-flash 400ms ease-out; }
 @keyframes gv-cell-flash {
@@ -416,4 +443,39 @@ td.basis, .basis { font-size: 0.78rem; color: var(--ink-soft); }
 }
 @media (prefers-reduced-motion: reduce) {
   .is-updated { animation: none; }
+}
+.cost-downside-context {
+  display: grid;
+  gap: var(--density-gap-standard);
+  margin-top: calc(var(--density-gap-standard) * 1.5);
+}
+
+.downside-comparison {
+  display: grid;
+  gap: var(--density-gap-compact);
+}
+
+.downside-comparison__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--density-gap-standard);
+}
+
+.downside-comparison__bar {
+  display: grid;
+  grid-template-columns: minmax(7rem, 1fr) auto;
+  gap: calc(var(--density-gap-compact) / 2) var(--density-gap-compact);
+  align-items: center;
+}
+
+.downside-comparison__bar meter {
+  grid-column: 1 / -1;
+  inline-size: 100%;
+  accent-color: var(--accent);
+}
+
+@media (max-width: 40rem) {
+  .downside-comparison__grid {
+    grid-template-columns: 1fr;
+  }
 }

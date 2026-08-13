@@ -13,7 +13,12 @@ from typing import Any
 
 from golden_vector.serve.column_help import help_term
 from golden_vector.serve.page_shell import _page_shell
-from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.components import (
+    empty_state,
+    page_header,
+    section_heading,
+    terminal_density,
+)
 from golden_vector.serve.ui.status import notice
 
 
@@ -77,7 +82,7 @@ def _render_scorecard_page(data) -> str:
         ))
         return _page_shell(
             "Evidence Scorecard - Golden Vector Workspace",
-            "".join(body),
+            terminal_density("".join(body)),
             active_nav="scorecard",
         )
 
@@ -105,21 +110,27 @@ def _render_scorecard_page(data) -> str:
     for caveat in meta.get("caveats", []):
         body.append(notice("warning", escape(str(caveat))))
 
-    body.append("<h2>Tested today (backtest)</h2>")
-    for row in data.backtest_rows:
-        body.append(_render_backtest_card(row))
+    body.append(section_heading("Tested today (backtest)"))
+    if data.backtest_rows:
+        for row in data.backtest_rows:
+            body.append(_render_backtest_card(row))
+    else:
+        body.append(empty_state("No backtest claims are published."))
 
-    body.append("<h2>Accruing (forward-only - first verdicts ~2031)</h2>")
+    body.append(section_heading("Accruing (forward-only - first verdicts ~2031)"))
     body.append(
         "<p class=\"hint\">Options and fundamentals can only be tested on data "
         "captured going forward; the recorder is accumulating it now.</p>"
     )
-    for row in data.accruing_rows:
-        body.append(_render_accruing_card(row))
+    if data.accruing_rows:
+        for row in data.accruing_rows:
+            body.append(_render_accruing_card(row))
+    else:
+        body.append(empty_state("No forward-only claims are accruing."))
 
     return _page_shell(
         "Evidence Scorecard - Golden Vector Workspace",
-        "".join(body),
+        terminal_density("".join(body)),
         active_nav="scorecard",
     )
 
@@ -177,20 +188,20 @@ def _render_backtest_card(row: dict[str, Any]) -> str:
         ),
     )
     return (
-        "<section class=\"panel scorecard-card\">"
+        "<article class=\"panel scorecard-card\">"
         f"<div class=\"scorecard-verdict {cls}\">{escape(verdict)}</div>"
         f"<div class=\"scorecard-claim\">{escape(str(row.get('claim') or ''))}</div>"
         f"<div class=\"hint\">{stats} · {diag}</div>"
         f"{baseline_html}"
-        "</section>"
+        "</article>"
     )
 
 
 def _render_accruing_card(row: dict[str, Any]) -> str:
     return (
-        "<section class=\"panel scorecard-card\">"
+        "<article class=\"panel scorecard-card\">"
         f"<div class=\"scorecard-verdict verdict-accruing\">{escape(_verdict_text(row.get('verdict')))}</div>"
         f"<div class=\"scorecard-claim\">{escape(str(row.get('claim') or ''))}</div>"
         f"<div class=\"hint\">{escape(str(row.get('caveat') or ''))}</div>"
-        "</section>"
+        "</article>"
     )

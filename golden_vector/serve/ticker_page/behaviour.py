@@ -51,7 +51,6 @@ from golden_vector.serve.format_helpers import (
     _fmt_number,
     _fmt_percent,
     _fmt_text,
-    _metric_card,
     _optional_float,
     id_token as _id_token,
 )
@@ -61,8 +60,10 @@ from golden_vector.serve.lab_curve_data import (
     load_ticker_curve,
 )
 from golden_vector.serve.lab_curve_page import (
+    _render_behaviour,
     _render_chart_a,
     _render_distribution,
+    _render_headline,
     _render_profile,
     lab_unavailable_reason,
 )
@@ -74,9 +75,29 @@ from golden_vector.serve.ticker_page.sections import (
     format_hit_evidence,
     render_cost_downside_card,
 )
-from golden_vector.serve.ui.components import disclosure, section_heading
+from golden_vector.serve.ui.components import (
+    data_card,
+    disclosure,
+    section_heading,
+    segmented_control,
+)
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
+
+
+def _behaviour_data_card(
+    title: str,
+    value_html: str,
+    *,
+    help_key: str | None = None,
+    app_config: AppConfig | None = None,
+) -> str:
+    """Render a Market Behaviour value through the shared modern card."""
+
+    help_html = (
+        help_icon(title, key=help_key, app_config=app_config) if help_key else ""
+    )
+    return data_card(title, value_html, help_html=help_html)
 from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.serve.windows import (
     SCORING_WINDOWS,
@@ -884,50 +905,49 @@ def _lab_controls(
         )
         return f"{base}?{query}{LAB_ANCHOR}"
 
-    horizon_links = "".join(
-        (
-            f"<a class=\"lab-control{' active' if weeks == request.horizon else ''}\" "
-            f"href=\"{escape(href(lab_h=str(weeks)), quote=True)}\""
-            + (" aria-current=\"true\"" if weeks == request.horizon else "")
-            + f">{weeks}w"
-            + (" <span class=\"hint\">default</span>" if weeks == default_horizon else "")
-            + "</a>"
-        )
-        for weeks in LAB_HORIZON_WEEKS
-    )
-    benchmark_links = "".join(
-        (
-            f"<a class=\"lab-control{' active' if name == request.benchmark else ''}\" "
-            f"href=\"{escape(href(lab_b=name), quote=True)}\""
-            + (" aria-current=\"true\"" if name == request.benchmark else "")
-            + f">{escape(name)}</a>"
-        )
-        for name in LAB_BENCHMARKS
-    )
-    scenario_links = "".join(
-        (
-            f"<a class=\"lab-control{' active' if bucket == request.bucket else ''}\" "
-            f"href=\"{escape(href(lab_s=bucket), quote=True)}\""
-            + (" aria-current=\"true\"" if bucket == request.bucket else "")
-            + f">{escape(label)}"
-            + (
-                f" <span class=\"hint\">({int(availability.get(bucket, 0))} miners)</span>"
-                if availability
-                else ""
+    horizon_control = segmented_control(
+        [
+            (
+                f"{weeks}w" + (" (default)" if weeks == default_horizon else ""),
+                href(lab_h=str(weeks)),
+                weeks == request.horizon,
             )
-            + "</a>"
-        )
-        for bucket, label in BUCKET_LABELS.items()
+            for weeks in LAB_HORIZON_WEEKS
+        ],
+        label="Lab look-ahead",
+    )
+    benchmark_control = segmented_control(
+        [
+            (name, href(lab_b=name), name == request.benchmark)
+            for name in LAB_BENCHMARKS
+        ],
+        label="Lab benchmark",
+    )
+    scenario_control = segmented_control(
+        [
+            (
+                label
+                + (
+                    f" ({int(availability.get(bucket, 0))} miners)"
+                    if availability
+                    else ""
+                ),
+                href(lab_s=bucket),
+                bucket == request.bucket,
+            )
+            for bucket, label in BUCKET_LABELS.items()
+        ],
+        label="Lab gold scenario",
     )
     controls_help = help_icon(
         "Lab history controls", key="ticker_lab_controls", app_config=app_config
     )
     return (
-        "<div class=\"lab-controls\" role=\"group\" aria-label=\"Lab history controls\">"
-        f"<p class=\"lab-controls-head\"><strong>Controls</strong>{controls_help}</p>"
-        f"<p><strong>Look-ahead:</strong> {horizon_links}</p>"
-        f"<p><strong>Benchmark:</strong> {benchmark_links}</p>"
-        f"<p><strong>Gold scenario:</strong> {scenario_links}</p>"
+        "<div class=\"lab-controls\" role=\"region\" aria-label=\"Lab history controls\">"
+        f"<div class=\"lab-controls-head\"><strong>Controls</strong>{controls_help}</div>"
+        f"<div class=\"lab-control-row\"><strong>Look-ahead</strong>{horizon_control}</div>"
+        f"<div class=\"lab-control-row\"><strong>Benchmark</strong>{benchmark_control}</div>"
+        f"<div class=\"lab-control-row\"><strong>Gold scenario</strong>{scenario_control}</div>"
         "</div>"
     )
 
@@ -1014,7 +1034,9 @@ def _build_lab_body(
 
     episodes_period = f"Episodes since {scatter_from_year}"
     charts = horizon_note + (
-        _render_profile(
+        _render_headline(curve)
+        + _render_behaviour(curve)
+        + _render_profile(
             curve,
             uncertainty=True,
             heading_level=4,
@@ -1423,25 +1445,25 @@ def render_volatility_panel(
         f"<h4>Volatility diagnostics ({escape(win_label)}){explain}</h4>"
         "<p class=\"hint\">Published 52-week values for the canonical window.</p>"
         "<div class=\"metric-grid\">"
-        + _metric_card(
+        + _behaviour_data_card(
             "Total volatility (annualized log vol)",
             _fmt_percent(tool_a_row.get("total_volatility_52w"), decimals=1),
             help_key="tool_a_volatility",
             app_config=app_config,
         )
-        + _metric_card(
+        + _behaviour_data_card(
             "Residual volatility (annualized log vol)",
             _fmt_percent(tool_a_row.get("residual_volatility_52w"), decimals=1),
             help_key="tool_a_residual_volatility",
             app_config=app_config,
         )
-        + _metric_card(
+        + _behaviour_data_card(
             "Downside volatility (annualized log vol)",
             _fmt_percent(tool_a_row.get("downside_volatility_52w"), decimals=1),
             help_key="tool_a_downside_volatility",
             app_config=app_config,
         )
-        + _metric_card(
+        + _behaviour_data_card(
             "Volatility context",
             _fmt_text(tool_a_row.get("volatility_context")),
             help_key="tool_a_volatility_context",
@@ -1662,32 +1684,32 @@ def _render_research_detail(
     active_grid = (
         f"<h4>Active window: {escape(win_label)}</h4>"
         "<div class=\"metric-grid\">"
-        + _metric_card("As of", _fmt_text(tool_a_row.get("as_of_date")))
-        + _metric_card(
+        + _behaviour_data_card("As of", _fmt_text(tool_a_row.get("as_of_date")))
+        + _behaviour_data_card(
             f"Gold beta ({win_label})",
             _fmt_number(tool_a_row.get(f"structural_delta_{win}"), decimals=2),
             help_key="tool_a_delta",
             app_config=app_config,
         )
-        + _metric_card(
+        + _behaviour_data_card(
             f"Down-minus-up beta ({win_label})",
             _fmt_number(tool_a_row.get(f"gamma_{win}"), decimals=2),
             help_key="tool_a_gamma",
             app_config=app_config,
         )
-        + _metric_card(
+        + _behaviour_data_card(
             f"Asymmetry ({win_label})",
             _fmt_number(tool_a_row.get(f"asymmetry_ratio_{win}"), decimals=2),
             help_key="tool_a_asymmetry",
             app_config=app_config,
         )
-        + _metric_card(
+        + _behaviour_data_card(
             f"R² ({win_label})",
             _fmt_percent(tool_a_row.get(f"r_squared_{win}"), decimals=1),
             help_key="tool_a_r_squared",
             app_config=app_config,
         )
-        + _metric_card(
+        + _behaviour_data_card(
             f"Weeks ({win_label})",
             _fmt_number(tool_a_row.get(f"weeks_{win}"), decimals=0),
             help_key="tool_a_window_weeks",
@@ -1703,31 +1725,31 @@ def _render_research_detail(
         "cross-window values the Candidate Finder and Portfolio tools show. They do not change "
         "with the beta-window switcher.</p>"
         "<div class=\"metric-grid\">"
-        + _metric_card(
+        + _behaviour_data_card(
             "Gold beta (cross-window)",
             _fmt_number(tool_a_row.get("structural_delta_core"), decimals=2),
             help_key="tool_a_delta_blend",
             app_config=app_config,
         )
-        + _metric_card(
+        + _behaviour_data_card(
             "Up beta (cross-window)",
             _fmt_number(tool_a_row.get("up_beta_core"), decimals=2),
             help_key="tool_c_up_beta_blend",
             app_config=app_config,
         )
-        + _metric_card(
+        + _behaviour_data_card(
             "Down beta (cross-window)",
             _fmt_number(tool_a_row.get("down_beta_core"), decimals=2),
             help_key="tool_c_down_beta_blend",
             app_config=app_config,
         )
-        + _metric_card(
+        + _behaviour_data_card(
             "Down-minus-up beta (cross-window)",
             _fmt_number(tool_a_row.get("structural_gamma_core"), decimals=2),
             help_key="tool_a_gamma",
             app_config=app_config,
         )
-        + _metric_card(
+        + _behaviour_data_card(
             "Asymmetry (cross-window)",
             _fmt_number(tool_a_row.get("asymmetry_ratio_core"), decimals=2),
             help_key="tool_a_asymmetry",
@@ -1905,6 +1927,8 @@ def render_market_behaviour_section(
                 downside_peers=data.metric_peers(
                     metric_key="downside_hit_rate", finance_source=finance_source
                 ),
+                downside_context=data.downside_context_rows(ticker),
+                downside_context_state=data.downside_context,
                 app_config=app_config,
             )
         )

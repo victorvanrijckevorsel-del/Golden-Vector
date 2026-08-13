@@ -556,13 +556,12 @@ def render_detail_page(
             )
         )
     active_nav = "option_trading" if option_lens_active else ""
-    symbol = normalize_ticker(ticker) or str(ticker).strip()
-    company_name = clean_string(configured_company.company) if configured_company else None
-    header_label = f"{symbol} · {company_name}" if company_name else symbol
     return _page_shell(
         f"Golden Vector Workspace - {ticker}",
         terminal_density("".join(body)),
         active_nav=active_nav,
         page_id="ticker_detail",
-        header_label=header_label,
+        # The command bar owns company identity. A generic shell label avoids
+        # repeating ticker/company as a competing second page title.
+        header_label="Ticker research",
     )

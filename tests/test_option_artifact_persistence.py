@@ -570,7 +570,7 @@ def test_greek_columns_are_dormant_additive_only():
 
 
 def test_versioned_artifact_name_sets_and_active_resolution():
-    """Plan §6.4: versioned name sets, ACTIVE is v4, read-set stays the v3 ten."""
+    """v5 adds per-ticker provenance while v4 remains the reader window."""
 
     from golden_vector.contracts.option_artifacts import (
         ACTIVE_OPTION_SCHEMA_VERSION,
@@ -579,28 +579,20 @@ def test_versioned_artifact_name_sets_and_active_resolution():
         option_artifact_names_for_version,
     )
 
-    v3 = OPTION_ARTIFACT_SETS[3]
     v4 = OPTION_ARTIFACT_SETS[4]
-    assert set(v4) > set(v3)
-    assert set(v4) - set(v3) == {"option_chain_history_daily", "option_availability"}
-    assert len(v3) == 10
+    v5 = OPTION_ARTIFACT_SETS[5]
+    assert v5 == v4
+    assert len(OPTION_TRADING_READ_SET) == 10
 
-    # The publisher writes v4; the runtime name tuple is the v4 twelve.
-    assert ACTIVE_OPTION_SCHEMA_VERSION == 4 == OPTION_ARTIFACT_SCHEMA_VERSION
-    assert OPTION_ARTIFACT_NAMES == v4
-    assert len(v4) == 12
-    assert option_artifact_names_for_version(ACTIVE_OPTION_SCHEMA_VERSION) == v4
-    assert option_artifact_names_for_version(3) == v3
+    # The publisher writes v5; the runtime name tuple remains the twelve-name set.
+    assert ACTIVE_OPTION_SCHEMA_VERSION == 5 == OPTION_ARTIFACT_SCHEMA_VERSION
+    assert OPTION_ARTIFACT_NAMES == v5
+    assert len(v5) == 12
+    assert option_artifact_names_for_version(ACTIVE_OPTION_SCHEMA_VERSION) == v5
+    assert option_artifact_names_for_version(4) == v4
 
-    # Superset tolerance (rollback matrix): every legacy version's set is a
-    # subset of the active version's, so v3 code reading a v4 generation still
-    # finds every name it asks for.
-    assert set(option_artifact_names_for_version(3)) <= set(
-        option_artifact_names_for_version(4)
-    )
-
-    # The overview loader's reads exclude the two page-only v4 artifacts.
-    assert OPTION_TRADING_READ_SET == v3
+    # The overview loader still excludes the two page-only artifacts.
+    assert set(OPTION_TRADING_READ_SET) < set(v5)
 
     with pytest.raises(ValueError):
         option_artifact_names_for_version(99)
@@ -740,6 +732,68 @@ def test_chain_history_first_v4_run_then_merges_forward():
     assert set(day_two["chain_history_schema_version"]) == {1}
 
 
+def test_carried_snapshot_does_not_invent_a_new_history_day():
+    day_one = _v4_frames(
+        options_features=_capture_features(as_of_date="2026-06-01", run_id="run-1"),
+    )["option_chain_history_daily"]
+    carried = _capture_features(as_of_date="2026-06-01", run_id="run-1")
+    carried["carried_forward"] = True
+    carried["source_as_of_date"] = "2026-06-01"
+
+    next_history = _v4_frames(
+        options_features=carried,
+        previous_chain_history=day_one,
+        source_run_id="20260602T000000Z-option-artifacts",
+    )["option_chain_history_daily"]
+
+    assert set(zip(next_history["ticker"], next_history["as_of_date"])) == {
+        ("AEM", "2026-06-01")
+    }
+    assert set(next_history["capture_run_id"]) == {"run-1"}
+
+
+def test_every_ticker_derived_row_carries_effective_source_provenance():
+    features = _capture_features(as_of_date="2026-05-29", run_id="old-run")
+    frames = _v4_frames(
+        options_features=features,
+        universe_tickers=("AEM",),
+        snapshots=[
+            {
+                "ticker": "AEM",
+                "options_available": True,
+                "row_count": 12,
+                "source_refresh_run_id": "old-run",
+                "source_as_of_date": "2026-05-29",
+                "captured_at_utc": "2026-05-29T20:00:00Z",
+                "carried_forward": True,
+                "attempt_status": "ERROR",
+                "attempt_message": "vendor timeout",
+            }
+        ],
+    )
+    required = {
+        "source_refresh_run_id",
+        "source_as_of_date",
+        "captured_at_utc",
+        "carried_forward",
+        "attempt_status",
+        "attempt_message",
+        "display_staleness_trading_days",
+        "display_freshness_status",
+    }
+
+    for name, frame in frames.items():
+        if frame.empty or "ticker" not in frame.columns:
+            continue
+        assert required <= set(frame.columns), name
+        if name not in {"option_chain_history_daily", "option_signal_history_points"}:
+            aem = frame[frame["ticker"] == "AEM"]
+            if not aem.empty:
+                assert set(aem["source_refresh_run_id"]) == {"old-run"}, name
+                assert set(aem["source_as_of_date"]) == {"2026-05-29"}, name
+                assert set(aem["carried_forward"]) == {True}, name
+
+
 def test_option_availability_is_universe_complete():
     """Every universe ticker gets a row; an absent one is UNKNOWN, never NONE_LISTED."""
 
@@ -766,4 +820,4 @@ def test_option_availability_is_universe_complete():
         "GHOST": "UNKNOWN",
     }
     assert set(availability["schema_version"]) == {OPTION_ARTIFACT_SCHEMA_VERSION}
-    assert set(availability["availability_schema_version"]) == {1}
+    assert set(availability["availability_schema_version"]) == {2}

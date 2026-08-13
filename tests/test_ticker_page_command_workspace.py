@@ -41,7 +41,8 @@ def test_ticker_command_bar_uses_configured_identity_quote_and_neutral_shell(tmp
     assert "US$" not in body
     assert "Market date 22 Apr 2026" in body
     assert 'aria-current="page"' not in body
-    assert '<span class="app-header-title">NEM · Newmont Corporation</span>' in body
+    assert '<span class="app-header-title">Ticker research</span>' in body
+    assert body.count("Newmont Corporation") == 1
 
 
 def test_usd_normalized_quote_is_never_mislabeled_as_listing_currency():

@@ -800,10 +800,21 @@ def _candidate_finder_tool_d_projection(frame: pd.DataFrame) -> pd.DataFrame:
     }
     return frame.loc[:, [column for column in frame.columns if column in keep]].copy()
 _OPTIONS_RENAMES = {
-    "as_of_date": "options_as_of_date",
+    # v5 already carries the effective source in options_as_of_date. Keep the
+    # feature row's legacy field separately so rename() cannot create duplicate
+    # column labels.
+    "as_of_date": "options_feature_as_of_date",
     "run_id": "options_run_id",
     "options_fetch_status": "options_fetch_status",
     "options_fetch_message": "options_fetch_message",
+    "source_refresh_run_id": "options_source_refresh_run_id",
+    "source_as_of_date": "options_source_as_of_date",
+    "captured_at_utc": "options_captured_at_utc",
+    "carried_forward": "options_carried_forward",
+    "attempt_status": "options_attempt_status",
+    "attempt_message": "options_attempt_message",
+    "display_staleness_trading_days": "options_staleness_trading_days",
+    "display_freshness_status": "options_freshness_status",
 }
 _MANUAL_RENAMES = {
     "created_at_utc": "manual_created_at_utc",

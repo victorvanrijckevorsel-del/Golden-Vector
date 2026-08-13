@@ -134,6 +134,33 @@ def test_option_signal_stale_single_name_marks_row_but_does_not_block_publish(tm
     assert artifacts.publish_blockers == ()
 
 
+def test_full_vendor_outage_blocks_republishing_carried_rows_as_fresh(tmp_path):
+    app_config = load_app_config(build_test_paths(tmp_path)).app
+    artifacts = build_option_signal_artifacts(
+        app_config=app_config,
+        options_features=pd.DataFrame(
+            [
+                _feature("AEM", skew_60=0.08, skew_90=0.07),
+                _feature("GDX", skew_60=0.03, skew_90=0.02, vehicle="benchmark_etf"),
+                _feature("GDXJ", skew_60=0.04, skew_90=0.03, vehicle="benchmark_etf"),
+            ]
+        ),
+        contract_metrics=(
+            *_metrics("AEM", bid=1.0, ask=1.2),
+            *_metrics("GDX", bid=1.0, ask=1.2),
+            *_metrics("GDXJ", bid=1.0, ask=1.2),
+        ),
+        manifest={
+            "refresh_run_id": "options-run",
+            "as_of_date": "2026-06-08",
+            "summary": {"options_vendor_outage_status": "FULL_OUTAGE"},
+        },
+    )
+
+    assert artifacts.publish_blockers
+    assert "failed for every ticker" in artifacts.publish_blockers[0]
+
+
 def test_option_signal_first_run_marks_oi_change_invalid(tmp_path):
     app_config = load_app_config(build_test_paths(tmp_path)).app
     artifacts = build_option_signal_artifacts(
@@ -158,6 +185,70 @@ def test_option_signal_first_run_marks_oi_change_invalid(tmp_path):
     assert not bool(row["oi_change_valid"])
     assert pd.isna(row["oi_change_put"])
     assert pd.isna(row["oi_change_call"])
+
+
+def test_carried_ticker_publishes_no_open_interest_change(tmp_path):
+    """A carried ticker re-serves the chain its prior artifact was built from.
+
+    Differencing it against that artifact yields exactly zero and calls itself
+    valid -- a manufactured "no positioning movement" that overwrites the last
+    real reading. It must degrade to invalid instead. The control (a fresh
+    ticker differenced against the same prior frame) proves the lane still
+    publishes when the chain really is new.
+    """
+
+    app_config = load_app_config(build_test_paths(tmp_path)).app
+    prior = pd.DataFrame(
+        [
+            {
+                "ticker": ticker,
+                "option_type": option_type,
+                "expiration": expiration,
+                "strike": strike,
+                # AEM's prior equals its current OI (it IS the same chain);
+                # NEM moved by +40 per matched contract.
+                "open_interest": 100 if ticker == "AEM" else 60,
+            }
+            for ticker in ("AEM", "NEM")
+            for option_type, expiration, strike in (
+                ("P", "2026-08-21", 95),
+                ("C", "2026-08-21", 105),
+                ("P", "2026-09-18", 90),
+                ("C", "2026-09-18", 110),
+            )
+        ]
+    )
+    artifacts = build_option_signal_artifacts(
+        app_config=app_config,
+        options_features=pd.DataFrame(
+            [
+                _feature("AEM", skew_60=0.08, skew_90=0.07, carried_forward=True),
+                _feature("NEM", skew_60=0.08, skew_90=0.07),
+                _feature("GDX", skew_60=0.03, skew_90=0.02, vehicle="benchmark_etf"),
+                _feature("GDXJ", skew_60=0.04, skew_90=0.03, vehicle="benchmark_etf"),
+            ]
+        ),
+        contract_metrics=(
+            *_metrics("AEM", bid=1.0, ask=1.2),
+            *_metrics("NEM", bid=1.0, ask=1.2),
+            *_metrics("GDX", bid=1.0, ask=1.2),
+            *_metrics("GDXJ", bid=1.0, ask=1.2),
+        ),
+        manifest={"refresh_run_id": "options-run", "as_of_date": "2026-06-08"},
+        prior_contract_metrics=prior,
+    )
+
+    summary = artifacts.summary.set_index("ticker")
+
+    carried = summary.loc["AEM"]
+    assert not bool(carried["oi_change_valid"])
+    assert pd.isna(carried["oi_change_put"])
+    assert pd.isna(carried["oi_change_call"])
+
+    control = summary.loc["NEM"]
+    assert bool(control["oi_change_valid"])
+    assert control["oi_change_put"] == 80.0
+    assert control["oi_change_call"] == 80.0
 
 
 def test_option_signal_upside_read_requires_call_volume_pulse(tmp_path):
@@ -354,6 +445,7 @@ def _feature(
     skew_90: float,
     vehicle: str = "single_stock",
     atm_iv_60: float = 0.35,
+    carried_forward: bool = False,
 ) -> dict[str, object]:
     return {
         "ticker": ticker,
@@ -361,6 +453,7 @@ def _feature(
         "run_id": "options-run",
         "optionability_tier": "directly_hedgeable",
         "option_vehicle_type": vehicle,
+        "carried_forward": carried_forward,
         "iv_skew_90d": skew_60,
         "iv_skew_180d": skew_90,
         "iv_skew_230d": skew_90,

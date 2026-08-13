@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from html import escape
 from typing import Any
+from urllib.parse import quote
 
 from golden_vector.serve.format_helpers import _fmt_numeric_td, collapsible_text_td
 from golden_vector.serve.model_state_banner import render_model_state_banner
@@ -13,9 +15,10 @@ from golden_vector.serve.overview_helpers import (
 )
 from golden_vector.serve.column_help import help_th
 from golden_vector.serve.page_shell import _page_shell
-from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.components import empty_state, page_header, terminal_density
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
+from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.contracts.config_models import ConfidenceThresholds
 from golden_vector.serve.windows import (
     WINDOW_LABELS,
@@ -37,6 +40,7 @@ def _render_tool_c_overview_page(
     search: str = "",
     window: str = "",
     app_config: Any = None,
+    current_query: Mapping[str, str] | None = None,
 ) -> str:
     """Render the persisted Tool C symmetric gold-downside rankings.
 
@@ -70,10 +74,14 @@ def _render_tool_c_overview_page(
         # window's gold-link is weak/thin). The rank columns stay on the *_core scores.
         m = window_metrics(row, active_window)
         reliable = window_is_reliable(m, thresholds=bands)
-        ticker_href = f"/ticker/{escape(ticker)}?window={window_suffix(active_window)}"
+        ticker_href = build_page_url(
+            f"/ticker/{quote(ticker, safe='')}",
+            {},
+            set_params={"window": window_suffix(active_window)},
+        )
         rows_html.append(
             "<tr>"
-            f"<td><a href=\"{ticker_href}\">{escape(ticker)}</a></td>"
+            f'<td><a href="{escape(ticker_href, quote=True)}">{escape(ticker)}</a></td>'
             f"{_fmt_numeric_td(row.get('tool_c_downside_rank'), decimals=1)}"
             f"{_fmt_numeric_td(row.get('tool_c_upside_rank'), decimals=1)}"
             + win_num_td(m["down_beta"], reliable=reliable)
@@ -85,66 +93,142 @@ def _render_tool_c_overview_page(
             + collapsible_text_td(row.get("tool_c_upside_tags"))
             + "</tr>"
         )
-    # Empty state: the colspan row does not match the explicit column model that
-    # workspace-tables.js hands DataTables, so drop js-datatable when there are no
-    # data rows (same pattern as candidate_finder_page.py).
-    table_class = "js-datatable" if rows_html else "empty-table"
-    if not rows_html:
-        rows_html.append("<tr><td colspan=\"10\" class=\"hint\">No Gold Downside rows found.</td></tr>")
-
-    body = [page_header(
-        "Gold Downside",
-        lead_html=(
-            "<p>Ranks symmetric gold-downside and gold-upside behavior "
-            "from persisted outputs.</p>"
-        ),
-    )]
+    body = [
+        page_header(
+            "Gold Downside",
+            lead_html=(
+                "<p>Ranks symmetric gold-downside and gold-upside behavior "
+                "from persisted outputs.</p>"
+            ),
+        )
+    ]
     if flash:
         body.append(notice("success", escape(flash)))
     if not state.tool_c_alias_present:
-        body.append(notice(
-            "warning",
-            "Gold Downside output is missing. "
-            "Run <code>python main.py tool-c</code> after a refresh.",
-        ))
+        body.append(
+            notice(
+                "warning",
+                "Gold Downside output is missing. "
+                "Run <code>python main.py tool-c</code> after a refresh.",
+            )
+        )
     body.append(render_model_state_banner(state.model_state_manifest))
     body.append(_render_provenance_warnings(state))
     body.append(_render_refresh_summary(state.foundation_manifest))
-    body.append(render_window_selector(active_window, search=search, target="/tool-c"))
     body.append(
-        "<section class=\"panel\">"
-        "<form method=\"get\" action=\"/tool-c\" class=\"overview-filters-form\">"
-        f"<input type=\"hidden\" name=\"window\" value=\"{escape(active_window)}\">"
-        f"<label><span>Search ticker</span><input name=\"search\" type=\"text\" value=\"{escape(search)}\" placeholder=\"NEM\"></label>"
-        "<div class=\"overview-filters-actions\">"
-        f"<span class=\"hint\">{len(frame.index)} rows shown · {escape(WINDOW_LABELS[active_window])} beta window.</span>"
-        "<button type=\"submit\" class=\"btn btn-primary\">Apply</button>"
-        f"<a class=\"btn btn-tertiary\" href=\"/tool-c?window={escape(active_window)}\">Reset</a>"
+        render_window_selector(
+            active_window,
+            search=search,
+            target="/tool-c",
+            current_query=current_query,
+        )
+    )
+    reset_href = build_page_url(
+        "/tool-c",
+        dict(current_query or {}),
+        set_params={"search": None, "window": active_window},
+    )
+    body.append(
+        '<section class="panel">'
+        '<form method="get" action="/tool-c" class="overview-filters-form">'
+        f'<input type="hidden" name="window" value="{escape(active_window)}">'
+        f'<label><span>Search ticker</span><input class="form-control" name="search" type="text" value="{escape(search)}" placeholder="NEM"></label>'
+        '<div class="overview-filters-actions">'
+        f'<span class="hint">{len(frame.index)} rows shown · {escape(WINDOW_LABELS[active_window])} beta window.</span>'
+        '<button type="submit" class="control control--primary">Apply</button>'
+        f'<a class="control control--quiet" href="{escape(reset_href, quote=True)}">Reset</a>'
         "</div>"
         "</form>"
         "</section>"
     )
-    body.append(table_region(
-        f"<table id=\"tool-c-table\" class=\"{table_class}\">"
-        "<thead><tr>"
-        + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
-        + help_th("Downside Score", key="tool_c_downside_rank", app_config=app_config, col_name="downside_rank", sort_numeric=True)
-        + help_th("Upside Score", key="tool_c_upside_rank", app_config=app_config, col_name="upside_rank", sort_numeric=True)
-        + help_th("Down Beta", key="tool_c_down_beta", app_config=app_config, col_name="down_beta", sort_numeric=True)
-        + help_th("Up Beta", key="tool_c_up_beta", app_config=app_config, col_name="up_beta", sort_numeric=True)
-        + help_th("Gold-link", key="tool_a_gold_link", app_config=app_config, col_name="gold_link", sort_numeric=True)
-        + help_th("Down Hit Rate", key="tool_c_down_hit_rate", app_config=app_config, col_name="down_hit", sort_numeric=True)
-        + help_th("Up Hit Rate", key="tool_c_up_hit_rate", app_config=app_config, col_name="up_hit", sort_numeric=True)
-        + help_th("Down Tags", key="tool_c_downside_tags", app_config=app_config, col_name="down_tags")
-        + help_th("Up Tags", key="tool_c_upside_tags", app_config=app_config, col_name="up_tags")
-        + "</tr></thead>"
-        f"<tbody>{''.join(rows_html)}</tbody>"
-        "</table>",
-        region_id="tool-c-table-region",
-        label="Gold Downside comparison",
-    ))
+    if rows_html:
+        body.append(
+            table_region(
+                '<table id="tool-c-table" class="js-datatable">'
+                "<thead><tr>"
+                + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
+                + help_th(
+                    "Downside Score",
+                    key="tool_c_downside_rank",
+                    app_config=app_config,
+                    col_name="downside_rank",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Upside Score",
+                    key="tool_c_upside_rank",
+                    app_config=app_config,
+                    col_name="upside_rank",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Down Beta",
+                    key="tool_c_down_beta",
+                    app_config=app_config,
+                    col_name="down_beta",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Up Beta",
+                    key="tool_c_up_beta",
+                    app_config=app_config,
+                    col_name="up_beta",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Gold-link",
+                    key="tool_a_gold_link",
+                    app_config=app_config,
+                    col_name="gold_link",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Down Hit Rate",
+                    key="tool_c_down_hit_rate",
+                    app_config=app_config,
+                    col_name="down_hit",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Up Hit Rate",
+                    key="tool_c_up_hit_rate",
+                    app_config=app_config,
+                    col_name="up_hit",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Down Tags",
+                    key="tool_c_downside_tags",
+                    app_config=app_config,
+                    col_name="down_tags",
+                )
+                + help_th(
+                    "Up Tags", key="tool_c_upside_tags", app_config=app_config, col_name="up_tags"
+                )
+                + "</tr></thead>"
+                f"<tbody>{''.join(rows_html)}</tbody>"
+                "</table>",
+                region_id="tool-c-table-region",
+                label="Gold Downside comparison",
+            )
+        )
+    else:
+        empty_title = (
+            "No Gold Downside rows are available."
+            if state.latest_tool_c.empty
+            else "No tickers match this search."
+        )
+        body.append(
+            empty_state(
+                empty_title,
+                body_html=(
+                    '<p class="hint">Change the ticker search or reset it '
+                    "to show the full persisted view.</p>"
+                ),
+            )
+        )
     return _page_shell(
         "Gold Downside - Golden Vector Workspace",
-        "".join(body),
+        terminal_density("".join(body)),
         active_nav="tool_c",
     )

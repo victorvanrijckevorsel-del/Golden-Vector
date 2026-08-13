@@ -36,7 +36,7 @@ import pandas as pd
 
 #: The ONE contract multiplier, shared with every backend option consumer — the
 #: sizing payload must not carry a second hardcoded 100.
-from golden_vector.common.numeric import optional_finite_float
+from golden_vector.common.numeric import bool_or_false, optional_finite_float, optional_int
 from golden_vector.common.options import OPTION_CONTRACT_MULTIPLIER
 from golden_vector.common.strings import clean_string
 from golden_vector.contracts.config_models import AppConfig, TickerPageSizingConfig
@@ -59,7 +59,6 @@ from golden_vector.serve.format_helpers import (
     _fmt_number,
     _fmt_percent,
     _fmt_text,
-    _metric_card,
     _optional_float,
     _ticker_rows,
     format_dte_suffix as _dte_suffix,
@@ -70,12 +69,19 @@ from golden_vector.serve.option_signal_charts import (
     _render_skew_curve_chart,
 )
 from golden_vector.serve.option_signal_render import signal_horizon_from_row
+from golden_vector.serve.option_data_freshness import (
+    OptionRowFreshness,
+    latest_available_label,
+    option_generation_freshness,
+    resolve_option_row_freshness,
+    stored_snapshot_warning,
+)
 from golden_vector.serve.option_trading_data import (
     OPTION_PAGE_OK,
     OPTION_PAGE_UNAVAILABLE_PRE_V4,
     OptionPageArtifacts,
 )
-from golden_vector.serve.ui.components import disclosure, section_heading
+from golden_vector.serve.ui.components import data_card, disclosure, section_heading
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.url_helpers import build_page_url
@@ -96,7 +102,6 @@ MODE_ABSENT = "absent"
 MODE_FULL = "full"
 MODE_DEGRADED = "degraded"
 
-_FRESHNESS_CARRIED_FORWARD = "CARRIED_FORWARD"
 _FRESHNESS_MISALIGNED = "MISALIGNED"
 
 _PRE_V4_REASON = "awaiting first v4 refresh"
@@ -108,6 +113,20 @@ _INTRINSIC_ONLY_NOTE = (
     "Value at expiry is intrinsic value only — no time value is assumed, so selling "
     "before expiry would normally be worth more than these rows show."
 )
+
+
+def _options_data_card(
+    title: str,
+    value_html: str,
+    *,
+    help_key: str,
+    app_config: AppConfig | None = None,
+) -> str:
+    return data_card(
+        title,
+        value_html,
+        help_html=help_icon(title, key=help_key, app_config=app_config),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -126,10 +145,24 @@ class OptionsAvailability:
     #: True whenever the generation was carried forward, WITH OR WITHOUT a date.
     carried_forward: bool = False
     carried_forward_from: str | None = None
+    captured_at_utc: str | None = None
+    #: The row's stamped provenance, already widened by the age of the carried
+    #: generation (a full-outage carry leaves the row columns frozen at LATEST).
+    freshness: OptionRowFreshness = OptionRowFreshness()
+    attempt_status: str | None = None
+    attempt_message: str | None = None
 
     @property
     def absent(self) -> bool:
         return self.mode == MODE_ABSENT
+
+    @property
+    def staleness_trading_days(self) -> int | None:
+        return self.freshness.trading_days
+
+    @property
+    def freshness_status(self) -> str | None:
+        return self.freshness.status
 
 
 def resolve_options_availability(
@@ -164,9 +197,30 @@ def resolve_options_availability(
             reason=page_artifacts.reason or "the option artifacts could not be read",
         )
 
-    status = _availability_status_for(page_artifacts.availability, ticker)
-    as_of = page_artifacts.freshness_as_of_date
+    row = _availability_row_for(page_artifacts.availability, ticker)
+    status = _availability_status_from_row(row)
+    as_of = clean_string(row.get("source_as_of_date")) if row else None
+    as_of = as_of or page_artifacts.freshness_as_of_date
     freshness = str(page_artifacts.freshness_status or "").strip().upper()
+    ticker_carried = bool_or_false(row.get("carried_forward")) if row else False
+    captured_at = clean_string(row.get("captured_at_utc")) if row else None
+    # A carried generation never rebuilds the per-ticker staleness columns, so
+    # the row alone would claim LATEST for the whole length of the outage. Age
+    # the generation once through the shared classifier and show the worse of
+    # the two — this is what makes the stale warning fire at all.
+    row_freshness = resolve_option_row_freshness(
+        trading_days=optional_int(row.get("display_staleness_trading_days")) if row else None,
+        status=clean_string(row.get("display_freshness_status")) if row else None,
+        carried_forward=ticker_carried,
+        generation=option_generation_freshness(
+            freshness_status=freshness,
+            as_of_date=page_artifacts.freshness_as_of_date,
+        ),
+    )
+    # ONE resolution of "is this a stored snapshot", shared with the warning.
+    carried_forward = row_freshness.carried_forward
+    attempt_status = clean_string(row.get("attempt_status")) if row else None
+    attempt_message = clean_string(row.get("attempt_message")) if row else None
 
     # ORDER MATTERS. A misaligned generation is by definition NOT current, so
     # its NONE_LISTED row is not the "current artifact says so" the matrix
@@ -182,9 +236,39 @@ def resolve_options_availability(
                 or "the option artifacts reference a different refresh than the current model run"
             ),
             as_of_date=as_of,
+            captured_at_utc=captured_at,
+        )
+    if status == AVAILABILITY_NONE_LISTED and not carried_forward:
+        return OptionsAvailability(
+            mode=MODE_ABSENT,
+            status=status,
+            as_of_date=as_of,
+            captured_at_utc=captured_at,
+            freshness=row_freshness,
         )
     if status == AVAILABILITY_NONE_LISTED:
-        return OptionsAvailability(mode=MODE_ABSENT, status=status, as_of_date=as_of)
+        source_note = f" from {as_of}" if as_of else ""
+        attempt_note = (
+            f" The latest attempt failed: {attempt_message}"
+            if attempt_message
+            else " The latest attempt failed before this could be confirmed again"
+        )
+        return OptionsAvailability(
+            mode=MODE_DEGRADED,
+            status=status,
+            reason=(
+                "the most recent verified stored snapshot"
+                f"{source_note} found no listed options, but that is older evidence."
+                f"{attempt_note}"
+            ),
+            as_of_date=as_of,
+            carried_forward=True,
+            carried_forward_from=as_of,
+            captured_at_utc=captured_at,
+            freshness=row_freshness,
+            attempt_status=attempt_status,
+            attempt_message=attempt_message,
+        )
     if status == AVAILABILITY_FETCH_FAILED:
         return OptionsAvailability(
             mode=MODE_DEGRADED,
@@ -195,6 +279,9 @@ def resolve_options_availability(
                 "listed options."
             ),
             as_of_date=as_of,
+            captured_at_utc=captured_at,
+            attempt_status=attempt_status,
+            attempt_message=attempt_message,
         )
     if status == AVAILABILITY_UNKNOWN:
         return OptionsAvailability(
@@ -205,6 +292,9 @@ def resolve_options_availability(
                 "availability is unknown"
             ),
             as_of_date=as_of,
+            captured_at_utc=captured_at,
+            attempt_status=attempt_status,
+            attempt_message=attempt_message,
         )
     return OptionsAvailability(
         mode=MODE_FULL,
@@ -213,16 +303,24 @@ def resolve_options_availability(
         # Keyed on the STATUS, never on the date: a carried-forward manifest is
         # allowed to omit as_of_date, and treating "no date" as "not stale"
         # would quietly re-enable position sizing on yesterday's asks.
-        carried_forward=freshness == _FRESHNESS_CARRIED_FORWARD,
-        carried_forward_from=as_of if freshness == _FRESHNESS_CARRIED_FORWARD else None,
+        carried_forward=carried_forward,
+        carried_forward_from=as_of if carried_forward else None,
+        captured_at_utc=captured_at,
+        freshness=row_freshness,
+        attempt_status=attempt_status,
+        attempt_message=attempt_message,
     )
 
 
-def _availability_status_for(frame: pd.DataFrame, ticker: str) -> str:
+def _availability_row_for(frame: pd.DataFrame, ticker: str) -> dict[str, Any] | None:
     rows = _rows_for(frame, ticker)
-    if not rows or "availability_status" not in rows[0]:
+    return rows[0] if rows else None
+
+
+def _availability_status_from_row(row: Mapping[str, Any] | None) -> str:
+    if not row or "availability_status" not in row:
         return AVAILABILITY_UNKNOWN
-    status = (clean_string(rows[0].get("availability_status")) or "").upper()
+    status = (clean_string(row.get("availability_status")) or "").upper()
     return status or AVAILABILITY_UNKNOWN
 
 
@@ -334,25 +432,17 @@ def _render_availability_banner(availability: OptionsAvailability) -> str:
             "file can never be mistaken for an absence of contracts."
         )
         return notice("warning", body)
-    parts: list[str] = []
-    if availability.carried_forward:
-        origin = (
-            f"Carried forward from {escape(availability.carried_forward_from)}"
-            if availability.carried_forward_from
-            else "Carried forward from an earlier snapshot"
-        )
-        parts.append(
-            notice(
-                "warning",
-                f"{origin} — the latest refresh could not publish fresh option "
-                "quotes, so every number below is that snapshot's, not today's.",
-            )
-        )
-    elif availability.as_of_date:
-        parts.append(
-            "<p class=\"hint\">Option data as of "
-            f"{escape(availability.as_of_date)}. Screening only — live prices differ.</p>"
-        )
+    label = latest_available_label(
+        source_as_of_date=availability.as_of_date,
+        captured_at_utc=availability.captured_at_utc,
+        carried_forward=availability.carried_forward,
+    )
+    parts: list[str] = [
+        f'<p class="hint">{escape(label)} Screening only — live prices differ.</p>'
+    ]
+    warning = stored_snapshot_warning(availability.freshness)
+    if warning:
+        parts.append(notice("warning", warning))
     if availability.status == AVAILABILITY_FILTERED_WINDOW_EMPTY:
         parts.append(
             "<p class=\"hint\">This ticker has listed options, but none of them fell "
@@ -419,17 +509,17 @@ def _render_ratio_pair(history_row: Mapping[str, Any] | None) -> str:
 
     cards = (
         "<div class=\"metric-grid options-oi-cards\">"
-        + _metric_card(
+        + _options_data_card(
             "Put open interest",
             _fmt_number(puts, decimals=0),
             help_key="option_open_interest",
         )
-        + _metric_card(
+        + _options_data_card(
             "Call open interest",
             _fmt_number(calls, decimals=0),
             help_key="option_open_interest",
         )
-        + _metric_card(
+        + _options_data_card(
             "Total open interest",
             _fmt_number(total, decimals=0),
             help_key="option_open_interest",
@@ -643,17 +733,17 @@ def _render_volume_cards(history_row: Mapping[str, Any] | None) -> str:
         )
         + f"<p class=\"hint\">Contracts traded on {as_of}.</p>"
         + "<div class=\"metric-grid\">"
-        + _metric_card(
+        + _options_data_card(
             "Put volume",
             _fmt_number(history_row.get("put_volume"), decimals=0),
             help_key="option_contract_volume",
         )
-        + _metric_card(
+        + _options_data_card(
             "Call volume",
             _fmt_number(history_row.get("call_volume"), decimals=0),
             help_key="option_contract_volume",
         )
-        + _metric_card(
+        + _options_data_card(
             "Total volume",
             _fmt_number(history_row.get("total_volume"), decimals=0),
             help_key="option_contract_volume",
@@ -1401,32 +1491,32 @@ def _render_liquidity_summary(
             ),
         )
         + "<div class=\"metric-grid\">"
-        + _metric_card(
+        + _options_data_card(
             "Put tradable", _fmt_number(put_counts["tradable"], decimals=0),
             help_key="tradable_count",
             app_config=app_config,
         )
-        + _metric_card(
+        + _options_data_card(
             "Put watch", _fmt_number(put_counts["watch"], decimals=0),
             help_key="watch_count",
             app_config=app_config,
         )
-        + _metric_card(
+        + _options_data_card(
             "Put no-trade", _fmt_number(put_counts["no_trade"], decimals=0),
             help_key="no_trade_count",
             app_config=app_config,
         )
-        + _metric_card(
+        + _options_data_card(
             "Call tradable", _fmt_number(call_counts["tradable"], decimals=0),
             help_key="tradable_count",
             app_config=app_config,
         )
-        + _metric_card(
+        + _options_data_card(
             "Call watch", _fmt_number(call_counts["watch"], decimals=0),
             help_key="watch_count",
             app_config=app_config,
         )
-        + _metric_card(
+        + _options_data_card(
             "Call no-trade", _fmt_number(call_counts["no_trade"], decimals=0),
             help_key="no_trade_count",
             app_config=app_config,

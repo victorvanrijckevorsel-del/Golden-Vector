@@ -174,6 +174,9 @@ def _data(
     research: pd.DataFrame | None = None,
     research_status: str = "OK",
     research_reason: str | None = None,
+    downside_context: pd.DataFrame | None = None,
+    downside_status: str | None = None,
+    downside_reason: str | None = None,
 ) -> TickerPageData:
     blank = TickerPageArtifactState(status="OK", reason=None, frame=pd.DataFrame())
     return TickerPageData(
@@ -190,6 +193,19 @@ def _data(
             frame=research if research is not None else pd.DataFrame(),
         ),
         fx_attribution=blank,
+        downside_context=(
+            TickerPageArtifactState(
+                status=downside_status,
+                reason=downside_reason,
+                frame=(
+                    downside_context
+                    if downside_context is not None
+                    else pd.DataFrame()
+                ),
+            )
+            if downside_status is not None
+            else None
+        ),
     )
 
 
@@ -362,6 +378,39 @@ def test_relative_record_accepts_nullable_metric_flag_and_reason():
     html = _render(data=_data(percentiles=frame, research=_full_research()))
 
     assert "not available" in html
+
+
+def test_market_behaviour_threads_downside_artifact_state_into_the_card():
+    reason = "downside context belongs to an older model generation"
+    html = _render(
+        data=_data(
+            percentiles=_full_percentiles(),
+            research=_full_research(),
+            downside_status="STALE",
+            downside_reason=reason,
+        )
+    )
+
+    assert "Downside-comparison artifact state <strong>STALE</strong>" in html
+    assert reason in html
+    assert "nothing is estimated to fill the gap" in html
+
+
+def test_market_behaviour_reports_ok_downside_artifact_without_this_ticker():
+    html = _render(
+        data=_data(
+            percentiles=_full_percentiles(),
+            research=_full_research(),
+            downside_status="OK",
+            downside_context=pd.DataFrame(
+                [{"ticker": "AEM", "scope": "full_history", "subject": "stock"}]
+            ),
+        )
+    )
+
+    assert "No persisted downside comparison was published for" in html
+    assert "<strong>NEM</strong>" in html
+    assert "nothing is estimated to fill the gap" in html
 
 
 @pytest.mark.parametrize(
@@ -614,12 +663,122 @@ def test_lab_defaults_are_config_driven_and_eight_weeks_is_marked_default(
     html = _render(paths=lab_paths, app_config=config)
     for weeks in (4, 8, 13, 26):
         assert f"lab_h={weeks}" in html
-        assert f">{weeks}w" in html
-    assert '>8w <span class="hint">default</span></a>' in html
+        assert f">{weeks}w" in html or f">{weeks}w (default)" in html
+    assert 'aria-current="true">8w (default)</a>' in html
+    assert html.count('class="segmented-control"') == 3
+    assert html.count('class="segmented-control__item"') == 11
+    assert 'aria-label="Lab look-ahead"' in html
+    assert 'aria-label="Lab benchmark"' in html
+    assert 'aria-label="Lab gold scenario"' in html
     for param in ("lab_b=GDX", "lab_s=gold_down"):
         assert param in html
     # the controls group carries its registered explainer (no orphan entry)
     assert html.count('data-help-title="Lab history controls"') == 1
+
+
+def test_lab_controls_preserve_the_rest_of_the_ticker_view_query(monkeypatch, lab_paths):
+    _stub_lab(monkeypatch, cells=_lab_cells(), curve=_lab_curve(horizon=13))
+    query = {
+        "lens": "option-trading",
+        "chart_view": "price",
+        "chart_h": "5Y",
+        "tw": "45",
+        "window": "6m",
+        "fundamentals_source": "yahoo",
+        "side": "put",
+        "budget": "1250",
+        "lab_h": "13",
+        "lab_b": "GDXJ",
+        "lab_s": "gold_up",
+        "saved": "manual-data",
+    }
+    request = B.parse_lab_request(query, app_config=_app_config())
+
+    html = _render(
+        paths=lab_paths,
+        app_config=_app_config(),
+        lab_request=request,
+        query_params=query,
+    )
+
+    hrefs = [
+        unescape(match)
+        for match in re.findall(
+            r'<a class="segmented-control__item" href="([^"]+)"', html
+        )
+    ]
+    assert len(hrefs) == 11  # 4 look-aheads + 2 benchmarks + 5 scenarios
+    for href in hrefs:
+        parsed = urlsplit(href)
+        params = parse_qs(parsed.query)
+        for key in (
+            "lens",
+            "chart_view",
+            "chart_h",
+            "tw",
+            "window",
+            "fundamentals_source",
+            "side",
+            "budget",
+        ):
+            assert params.get(key) == [query[key]], f"Lab control dropped {key}"
+        assert set(("lab_h", "lab_b", "lab_s")).issubset(params)
+        assert "saved" not in params
+        assert parsed.fragment == "market-behaviour"
+
+
+def test_ticker_lab_leads_with_persisted_interpretation_and_recent_episode_trend(
+    monkeypatch, lab_paths
+):
+    curve = _lab_curve(
+        behavior_status=None,
+        capture_horizon=13,
+        capture={
+            "archetype": "CONVEX",
+            "capture_status": "OK",
+            "down_capture_mean": 0.5,
+            "up_capture_mean": 2.0,
+            "convexity": 1.5,
+            "down_effective_n": 7.0,
+            "up_effective_n": 12.0,
+        },
+        peer_down={
+            "peer_status": "OK",
+            "peer_percentile_median": 70.0,
+            "top_quartile_rate": 0.4,
+            "peer_effective_n": 6.2,
+        },
+        peer_up={
+            "peer_status": "OK",
+            "peer_percentile_median": 55.0,
+            "top_quartile_rate": 0.2,
+            "peer_effective_n": 30.0,
+        },
+        behavior_trend={
+            "trend_status": "OK",
+            "trend_label": "DETERIORATING",
+            "recent_p_beat_raw": 0.2,
+            "older_p_beat_raw": 0.8,
+            "recent_anchor_n": 8,
+            "older_anchor_n": 9,
+            "mde_80pct_pp": 40.0,
+            "trend_q_value": 0.05,
+            "trend_fdr_family_size": 12,
+            "alpha_trend_label": "ALPHA_DETERIORATING",
+        },
+    )
+    _stub_lab(monkeypatch, cells=_lab_cells(), curve=curve)
+
+    html = _render(paths=lab_paths)
+
+    headline = "of the highlighted scenario weeks beat GDX"
+    assert headline in html
+    assert "Capture vs gold (13-week)" in html
+    assert "When gold fell: typically better than <strong>70%</strong> of miners" in html
+    assert "recent 20% of 8 vs older 80% of 9 independent episodes" in html
+    assert "Recent vs older split on independent episodes" in html
+    assert html.index(headline) < html.index("Capture vs gold")
+    assert "last 2 years" not in html.lower()
 
 
 def test_an_invalid_lab_param_defaults_with_a_visible_note(monkeypatch, lab_paths):
@@ -1054,9 +1213,7 @@ def test_volatility_renders_the_published_fields_on_the_canonical_window():
 
 
 def test_volatility_cards_each_carry_their_explainer_icon():
-    """``_metric_card(help_key=...)`` must actually render the icon: proving the
-    key exists in the registry proves nothing about the button reaching the
-    page."""
+    """Modern data cards must retain each registry-backed explainer icon."""
     html = B.render_volatility_panel(
         _tool_a_row(), active_window="12M", app_config=_app_config()
     )
@@ -1067,6 +1224,8 @@ def test_volatility_cards_each_carry_their_explainer_icon():
         "Volatility context",
     ):
         assert html.count(f'data-help-title="{title}"') == 1, title
+    assert html.count('class="data-card"') == 4
+    assert 'class="panel metric-card"' not in html
 
 
 def test_volatility_is_never_estimated_for_a_non_canonical_window():

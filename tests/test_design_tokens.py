@@ -278,9 +278,9 @@ PHASE3_SELECTOR_OWNERS = {
         "data-card__state",
         "basis-strip", "basis-strip__item", "basis-strip__label",
         "basis-strip__value", "section-nav--compact", "control",
-        "control--primary", "control--danger", "control--quiet", "button-like",
+        "control--primary", "control--danger", "control--quiet",
         "data-card--positive", "data-card--negative", "data-card--warning",
-        "data-card--neutral", "terminal-density",
+        "data-card--neutral", "data-card--gold-linked", "terminal-density",
     },
     "forms.css": {"form-control"},
 }
@@ -476,7 +476,7 @@ def test_performance_series_progressive_controls_stay_hidden_before_javascript()
     )
 
 
-def test_button_like_is_an_explicit_temporary_control_compatibility_mapping():
+def test_control_is_the_only_compact_action_primitive_after_rollout():
     body = _strip_css_comments((CSS_DIR / "components.css").read_text(encoding="utf-8"))
     rules = {
         " ".join(selector.split()): declarations
@@ -485,22 +485,32 @@ def test_button_like_is_an_explicit_temporary_control_compatibility_mapping():
     base_mapping = next(
         declarations
         for selector, declarations in rules.items()
-        if selector == ".control, .button-like"
+        if selector == ".control"
     )
     assert "min-height: var(--density-control-height)" in base_mapping
     assert "border: 1px solid var(--line)" in base_mapping
     assert ".control[aria-current=\"true\"]" in body
-    assert ".button-like.active" in body
+    assert ".button-like" not in body
 
 
-def test_global_main_width_is_unchanged_during_the_opt_in_pilot():
+def test_global_main_width_uses_the_reviewed_content_token_after_rollout():
     body = _strip_css_comments((CSS_DIR / "base.css").read_text(encoding="utf-8"))
     main_rule = next(
         rule for selector, rule in re.findall(r"([^{}]+)\{([^}]*)\}", body)
         if selector.strip() == "main"
     )
-    assert re.search(r"max-width\s*:\s*1240px\s*;", main_rule)
-    assert "var(--content-max-width)" not in main_rule
+    assert "max-width: var(--content-max-width)" in main_rule
+    assert not re.search(r"max-width\s*:\s*1240px\s*;", main_rule)
+
+
+def test_global_action_and_sidebar_defaults_use_rollout_primitives():
+    base = _strip_css_comments((CSS_DIR / "base.css").read_text(encoding="utf-8"))
+    shell = _strip_css_comments((CSS_DIR / "shell.css").read_text(encoding="utf-8"))
+    tokens = _strip_css_comments((CSS_DIR / "tokens.css").read_text(encoding="utf-8"))
+
+    assert not re.search(r"(^|})\s*button\s*\{", base)
+    assert "--sidebar-width: 15rem" in tokens
+    assert "grid-template-columns: var(--sidebar-width) minmax(0, 1fr)" in shell
 
 
 def test_no_dead_first_party_selectors():

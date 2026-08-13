@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from html import escape
 from typing import Any
+from urllib.parse import quote
 
 from golden_vector.serve.column_help import help_th, help_value
 from golden_vector.serve.format_helpers import (
@@ -20,9 +22,10 @@ from golden_vector.serve.overview_helpers import (
     note_counts_by_ticker,
 )
 from golden_vector.serve.page_shell import _page_shell
-from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.components import empty_state, page_header, terminal_density
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
+from golden_vector.serve.url_helpers import build_page_url
 from golden_vector.contracts.config_models import ConfidenceThresholds
 from golden_vector.serve.windows import (
     WINDOW_LABELS,
@@ -55,19 +58,19 @@ def _benchmark_reference_rows(benchmark_df: Any, active_window: str) -> str:
             continue
         ticker = str(r.get("benchmark_ticker") or "")
         rows.append(
-            "<tr class=\"reference-row\">"
-            f"<td>{escape(ticker)} <span class=\"hint\">· benchmark</span></td>"
+            '<tr class="reference-row">'
+            f'<td>{escape(ticker)} <span class="hint">· benchmark</span></td>'
             + win_num_td(up, reliable=True)
             + win_num_td(down, reliable=True)
-            + "<td class=\"hint\">—</td>"  # gold-link (n/a for the benchmark itself)
-            + "<td class=\"hint\">—</td>"  # delta
-            + "<td class=\"hint\">—</td>"  # gamma
-            + "<td class=\"hint\">—</td>"  # asymmetry
+            + '<td class="hint">—</td>'  # gold-link (n/a for the benchmark itself)
+            + '<td class="hint">—</td>'  # delta
+            + '<td class="hint">—</td>'  # gamma
+            + '<td class="hint">—</td>'  # asymmetry
             + f"<td>{escape(str(r.get('confidence_label') or '—'))}</td>"
-            + "<td class=\"hint\">ETF</td>"  # profile
-            + "<td class=\"hint\">—</td>"  # volatility
-            + "<td class=\"hint\">—</td>"  # rank (benchmarks are not ranked)
-            + "<td class=\"hint\">—</td>"  # notes
+            + '<td class="hint">ETF</td>'  # profile
+            + '<td class="hint">—</td>'  # volatility
+            + '<td class="hint">—</td>'  # rank (benchmarks are not ranked)
+            + '<td class="hint">—</td>'  # notes
             + "</tr>"
         )
     if rows:
@@ -77,8 +80,8 @@ def _benchmark_reference_rows(benchmark_df: Any, active_window: str) -> str:
     # than silently dropping the whole reference footer (an empty footer reads as a bug).
     label = WINDOW_LABELS.get(active_window, active_window)
     return (
-        "<tfoot><tr class=\"reference-row\">"
-        f"<td colspan=\"12\" class=\"hint\">GDX / GDXJ benchmark · n/a for the "
+        '<tfoot><tr class="reference-row">'
+        f'<td colspan="12" class="hint">GDX / GDXJ benchmark · n/a for the '
         f"{escape(label)} window yet</td></tr></tfoot>"
     )
 
@@ -90,6 +93,7 @@ def _render_tool_a_overview_page(
     search: str = "",
     window: str = "",
     app_config: Any = None,
+    current_query: Mapping[str, str] | None = None,
 ) -> str:
     """Gold Sensitivity overview: which miners react strongly/weakly to gold, up vs down.
 
@@ -108,15 +112,21 @@ def _render_tool_a_overview_page(
         if search_term and search_term not in ticker:
             continue
         tool_a_row = tool_a_index.get(ticker, {})
-        derived.append({
-            "ticker": ticker,
-            "tool_a_row": tool_a_row,
-            "tool_a_rank": _optional_float(tool_a_row.get("tool_a_rank")),
-            "note_count": int(note_counts.get(ticker, 0)),
-        })
-    derived.sort(key=lambda r: (0 if r["tool_a_rank"] is not None else 1,
-                                 r["tool_a_rank"] if r["tool_a_rank"] is not None else 0.0,
-                                 r["ticker"]))
+        derived.append(
+            {
+                "ticker": ticker,
+                "tool_a_row": tool_a_row,
+                "tool_a_rank": _optional_float(tool_a_row.get("tool_a_rank")),
+                "note_count": int(note_counts.get(ticker, 0)),
+            }
+        )
+    derived.sort(
+        key=lambda r: (
+            0 if r["tool_a_rank"] is not None else 1,
+            r["tool_a_rank"] if r["tool_a_rank"] is not None else 0.0,
+            r["ticker"],
+        )
+    )
 
     # Gold-link bands live once, in config (deep-review F3); the defaults
     # mirror config so a config-less test render behaves identically.
@@ -133,10 +143,14 @@ def _render_tool_a_overview_page(
         # Carry the active window through to the detail page so the selection isn't lost on
         # click-through (the detail page honours scoring windows and falls back gracefully
         # for the display-only 2Y/5Y). Reuse the shared suffix helper — no inline .lower().
-        ticker_href = f"/ticker/{escape(row['ticker'])}?window={window_suffix(active_window)}"
+        ticker_href = build_page_url(
+            f"/ticker/{quote(row['ticker'], safe='')}",
+            {},
+            set_params={"window": window_suffix(active_window)},
+        )
         rows_html.append(
             "<tr>"
-            f"<td><a href=\"{ticker_href}\">{escape(row['ticker'])}</a></td>"
+            f'<td><a href="{escape(ticker_href, quote=True)}">{escape(row["ticker"])}</a></td>'
             + win_num_td(m["up_beta"], reliable=reliable)
             + win_num_td(m["down_beta"], reliable=reliable)
             + gold_link_td(m["r_squared"], thresholds=bands)
@@ -150,13 +164,6 @@ def _render_tool_a_overview_page(
             + _fmt_numeric_td(row["note_count"], decimals=0)
             + "</tr>"
         )
-    # Empty state: the colspan row does not match the explicit column model that
-    # workspace-tables.js hands DataTables, so drop js-datatable when there are no
-    # data rows (same pattern as candidate_finder_page.py).
-    table_class = "js-datatable" if rows_html else "empty-table"
-    if not rows_html:
-        rows_html.append("<tr><td colspan=\"12\" class=\"hint\">No tickers match.</td></tr>")
-
     filter_options = _collect_filter_options(
         [r["tool_a_row"] for r in derived],
         [
@@ -166,63 +173,159 @@ def _render_tool_a_overview_page(
         ],
     )
 
-    body = [page_header(
-        "Gold Sensitivity",
-        lead_html=(
-        "<p>Which miners react strongly or weakly to the gold price — split by direction "
-        "(up vs down). The beta columns (up/down beta, delta, gamma, asymmetry, gold-link) "
-        "follow the window selector below; <strong>Confidence, Profile and Rank are computed "
-        "across the scoring windows (6M / 1Y / 3Y) and do not change with the selector</strong> "
-        "(low-confidence names are held out of the rank). <strong>Gold-link</strong> shows how "
-        "much of each stock's movement gold actually explains in the chosen window — a "
-        "'weak'/'none' beta barely tracks gold, so treat it with caution. Click a ticker for "
-        "the full breakdown and the gold / stock / ETF overlay.</p>"
-        ),
-    )]
+    body = [
+        page_header(
+            "Gold Sensitivity",
+            lead_html=(
+                "<p>Which miners react strongly or weakly to the gold price — split by direction "
+                "(up vs down). The beta columns (up/down beta, delta, gamma, asymmetry, gold-link) "
+                "follow the window selector below; <strong>Confidence, Profile and Rank are computed "
+                "across the scoring windows (6M / 1Y / 3Y) and do not change with the selector</strong> "
+                "(low-confidence names are held out of the rank). <strong>Gold-link</strong> shows how "
+                "much of each stock's movement gold actually explains in the chosen window — a "
+                "'weak'/'none' beta barely tracks gold, so treat it with caution. Click a ticker for "
+                "the full breakdown and the gold / stock / ETF overlay.</p>"
+            ),
+        )
+    ]
     if flash:
         body.append(notice("success", escape(flash)))
     body.append(render_model_state_banner(state.model_state_manifest))
     body.append(_render_provenance_warnings(state))
     body.append(_render_refresh_summary(state.foundation_manifest))
-    body.append(render_window_selector(active_window, search=search))
     body.append(
-        "<section class=\"panel\">"
-        "<form method=\"get\" action=\"/tool-a\" class=\"overview-filters-form\">"
-        f"<input type=\"hidden\" name=\"window\" value=\"{escape(active_window)}\">"
-        f"<label><span>Search ticker</span><input name=\"search\" type=\"text\" value=\"{escape(search)}\" placeholder=\"NEM\"></label>"
-        "<div class=\"overview-filters-actions\">"
-        f"<span class=\"hint\">{len(derived)} tickers shown · {escape(WINDOW_LABELS[active_window])} beta window.</span>"
-        "<button type=\"submit\" class=\"btn btn-primary\">Apply</button>"
-        f"<a class=\"btn btn-tertiary\" href=\"/tool-a?window={escape(active_window)}\">Reset</a>"
+        render_window_selector(
+            active_window,
+            search=search,
+            current_query=current_query,
+        )
+    )
+    reset_href = build_page_url(
+        "/tool-a",
+        dict(current_query or {}),
+        set_params={"search": None, "window": active_window},
+    )
+    body.append(
+        '<section class="panel">'
+        '<form method="get" action="/tool-a" class="overview-filters-form">'
+        f'<input type="hidden" name="window" value="{escape(active_window)}">'
+        f'<label><span>Search ticker</span><input class="form-control" name="search" type="text" value="{escape(search)}" placeholder="NEM"></label>'
+        '<div class="overview-filters-actions">'
+        f'<span class="hint">{len(derived)} tickers shown · {escape(WINDOW_LABELS[active_window])} beta window.</span>'
+        '<button type="submit" class="control control--primary">Apply</button>'
+        f'<a class="control control--quiet" href="{escape(reset_href, quote=True)}">Reset</a>'
         "</div>"
         "</form>"
         "</section>"
     )
-    body.append(_render_filter_bar(
-        target_table_id="tool-a-table",
-        options=filter_options,
-        column_labels={"profile": "Profile", "confidence": "Confidence", "volatility": "Volatility"},
-    ))
-    body.append(table_region(
-        f"<table id=\"tool-a-table\" class=\"{table_class}\">"
-        "<thead><tr>"
-        + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
-        + help_th("Up-β", key="tool_a_up_beta", app_config=app_config, col_name="up_beta", sort_numeric=True)
-        + help_th("Down-β", key="tool_a_down_beta", app_config=app_config, col_name="down_beta", sort_numeric=True)
-        + help_th("Gold-link", key="tool_a_gold_link", app_config=app_config, col_name="gold_link", sort_numeric=True)
-        + help_th("Δ Core", key="tool_a_delta", app_config=app_config, col_name="delta", sort_numeric=True)
-        + help_th("Gamma", key="tool_a_gamma", app_config=app_config, col_name="gamma", sort_numeric=True)
-        + help_th("Asymmetry", key="tool_a_asymmetry", app_config=app_config, col_name="asymmetry", sort_numeric=True)
-        + help_th("Confidence", key="tool_a_confidence", app_config=app_config, col_name="confidence")
-        + help_th("Profile", key="tool_a_profile", app_config=app_config, col_name="profile")
-        + help_th("Volatility", key="tool_a_volatility", app_config=app_config, col_name="volatility")
-        + help_th("Rank", key="tool_a_rank", app_config=app_config, col_name="rank", sort_numeric=True)
-        + help_th("Notes", key="user_notes_count", app_config=app_config, col_name="notes", sort_numeric=True)
-        + "</tr></thead>"
-        f"<tbody>{''.join(rows_html)}</tbody>"
-        + _benchmark_reference_rows(state.latest_benchmark_betas, active_window)
-        + "</table>",
-        region_id="tool-a-table-region",
-        label="Gold Sensitivity comparison",
-    ))
-    return _page_shell("Gold Sensitivity - Golden Vector Workspace", "".join(body), active_nav="tool_a")
+    if rows_html:
+        body.append(
+            _render_filter_bar(
+                target_table_id="tool-a-table",
+                options=filter_options,
+                column_labels={
+                    "profile": "Profile",
+                    "confidence": "Confidence",
+                    "volatility": "Volatility",
+                },
+            )
+        )
+        body.append(
+            table_region(
+                '<table id="tool-a-table" class="js-datatable">'
+                "<thead><tr>"
+                + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
+                + help_th(
+                    "Up-β",
+                    key="tool_a_up_beta",
+                    app_config=app_config,
+                    col_name="up_beta",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Down-β",
+                    key="tool_a_down_beta",
+                    app_config=app_config,
+                    col_name="down_beta",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Gold-link",
+                    key="tool_a_gold_link",
+                    app_config=app_config,
+                    col_name="gold_link",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Δ Core",
+                    key="tool_a_delta",
+                    app_config=app_config,
+                    col_name="delta",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Gamma",
+                    key="tool_a_gamma",
+                    app_config=app_config,
+                    col_name="gamma",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Asymmetry",
+                    key="tool_a_asymmetry",
+                    app_config=app_config,
+                    col_name="asymmetry",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Confidence",
+                    key="tool_a_confidence",
+                    app_config=app_config,
+                    col_name="confidence",
+                )
+                + help_th(
+                    "Profile", key="tool_a_profile", app_config=app_config, col_name="profile"
+                )
+                + help_th(
+                    "Volatility",
+                    key="tool_a_volatility",
+                    app_config=app_config,
+                    col_name="volatility",
+                )
+                + help_th(
+                    "Rank",
+                    key="tool_a_rank",
+                    app_config=app_config,
+                    col_name="rank",
+                    sort_numeric=True,
+                )
+                + help_th(
+                    "Notes",
+                    key="user_notes_count",
+                    app_config=app_config,
+                    col_name="notes",
+                    sort_numeric=True,
+                )
+                + "</tr></thead>"
+                f"<tbody>{''.join(rows_html)}</tbody>"
+                + _benchmark_reference_rows(state.latest_benchmark_betas, active_window)
+                + "</table>",
+                region_id="tool-a-table-region",
+                label="Gold Sensitivity comparison",
+            )
+        )
+    else:
+        body.append(
+            empty_state(
+                "No tickers match this search.",
+                body_html=(
+                    '<p class="hint">Change the ticker search or reset it '
+                    "to show the full persisted view.</p>"
+                ),
+            )
+        )
+    return _page_shell(
+        "Gold Sensitivity - Golden Vector Workspace",
+        terminal_density("".join(body)),
+        active_nav="tool_a",
+    )

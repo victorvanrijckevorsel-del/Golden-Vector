@@ -140,6 +140,10 @@ def test_scorecard_page_renders_verdicts_and_caveats(tmp_path):
     assert "Leak check passed" in html
     assert "evidence, not proof" in html
     assert ">Scorecard</a>" in html  # nav tab
+    assert '<div class="terminal-density">' in html
+    assert '<div class="section-heading"><h2>Tested today (backtest)</h2>' in html
+    assert '<article class="panel scorecard-card">' in html
+    assert '<section class="panel scorecard-card">' not in html
 
 
 def test_scorecard_reader_resolves_run_stamped_via_meta_not_torn_latest(tmp_path):
@@ -392,6 +396,18 @@ def test_scorecard_unavailable_state_to_tone_mapping():
         other = "notice-danger" if expected == "notice-warning" else "notice-warning"
         assert expected in html, status
         assert other not in html, status
+        assert '<div class="terminal-density">' in html, status
+
+
+def test_scorecard_available_without_rows_has_honest_empty_states():
+    from golden_vector.serve.overview_scorecard import _render_scorecard_page
+    from golden_vector.serve.scorecard_data import ScorecardData
+
+    html = _render_scorecard_page(ScorecardData(available=True))
+
+    assert "No backtest claims are published." in html
+    assert "No forward-only claims are accruing." in html
+    assert html.count('class="empty-state"') == 2
 
 
 def test_scorecard_missing_share_renders_dash_not_zero_percent():

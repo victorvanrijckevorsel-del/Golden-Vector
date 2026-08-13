@@ -1,6 +1,7 @@
 import math
 
 import pandas as pd
+import pytest
 
 from golden_vector.features.relative_behavior import (
     RELATIVE_BEHAVIOR_COLUMNS,
@@ -219,3 +220,54 @@ def test_upside_hit_threshold_is_exact_ordinary_ten_percent_rally():
     )
 
     assert metrics.loc[0, "upside_hit_rate_10pct"] == 2 / 3
+
+
+def test_downside_context_primitives_are_aligned_and_recent_is_separate():
+    weeks = pd.date_range("2023-01-06", periods=6, freq="52W-FRI")
+    weekly_returns = pd.DataFrame(
+        {
+            "ticker": ["AAA"] * 6,
+            "week_period": [str(pd.Period(day, freq="W-FRI")) for day in weeks],
+            "stock_log_ret": [
+                math.log1p(-0.20),
+                math.log1p(-0.05),
+                math.log1p(-0.12),
+                math.log1p(-0.08),
+                math.log1p(-0.15),
+                math.log1p(-0.18),
+            ],
+            "gold_log_ret": [-0.05] * 6,
+            "gdx_log_ret": [
+                math.log1p(-0.11),
+                math.log1p(-0.04),
+                math.log1p(-0.08),
+                math.log1p(-0.12),
+                math.log1p(-0.09),
+                math.log1p(-0.13),
+            ],
+        }
+    )
+    regimes = pd.DataFrame(
+        {
+            "week_period": weekly_returns["week_period"],
+            "gold_log_ret": weekly_returns["gold_log_ret"],
+            "gold_worst20_event": [True] * 6,
+        }
+    )
+
+    row = compute_relative_behavior_metrics(
+        weekly_returns=weekly_returns,
+        gold_regimes=regimes,
+        min_events=2,
+        downside_recent_years=2,
+    ).iloc[0]
+
+    assert row["downside_compare_n"] == 6
+    assert row["downside_compare_stock_hit_count"] == 4
+    assert row["downside_compare_gdx_hit_count"] == 3
+    assert row["downside_compare_stock_hit_rate"] == 4 / 6
+    assert row["downside_compare_stock_median_return"] == pytest.approx(-0.165)
+    assert row["downside_compare_stock_worst_return"] == pytest.approx(-0.20)
+    assert row["downside_recent_n"] == 3
+    assert row["downside_recent_stock_hit_count"] == 2
+    assert row["downside_recent_stock_hit_rate"] == pytest.approx(2 / 3)

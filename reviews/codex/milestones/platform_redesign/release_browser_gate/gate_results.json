@@ -1,0 +1,281 @@
+[
+ {
+  "slug": "ticker_NEM",
+  "path": "/ticker/NEM",
+  "widths": {
+   "1440": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {
+     "performance_controls": true,
+     "corporate": true,
+     "behaviour": true,
+     "options_or_absent": true,
+     "freshness_status": true
+    },
+    "console_errors": []
+   },
+   "1024": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {
+     "performance_controls": true,
+     "corporate": true,
+     "behaviour": true,
+     "options_or_absent": true,
+     "freshness_status": true
+    },
+    "console_errors": []
+   },
+   "390": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {
+     "performance_controls": true,
+     "corporate": true,
+     "behaviour": true,
+     "options_or_absent": true,
+     "freshness_status": true
+    },
+    "console_errors": []
+   }
+  },
+  "console_errors": []
+ },
+ {
+  "slug": "ticker_NEM_yahoo",
+  "path": "/ticker/NEM?fundamentals_source=yahoo",
+  "widths": {
+   "1440": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {
+     "yahoo_selected": true,
+     "resilience_hybrid_basis": true
+    },
+    "console_errors": []
+   },
+   "1024": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {
+     "yahoo_selected": true,
+     "resilience_hybrid_basis": true
+    },
+    "console_errors": []
+   },
+   "390": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {
+     "yahoo_selected": true,
+     "resilience_hybrid_basis": true
+    },
+    "console_errors": []
+   }
+  },
+  "console_errors": []
+ },
+ {
+  "slug": "candidate_finder",
+  "path": "/candidate-finder",
+  "widths": {
+   "1440": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "1024": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "390": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   }
+  },
+  "console_errors": []
+ },
+ {
+  "slug": "tool_b",
+  "path": "/tool-b",
+  "widths": {
+   "1440": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "1024": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "390": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   }
+  },
+  "console_errors": []
+ },
+ {
+  "slug": "tool_d",
+  "path": "/tool-d",
+  "widths": {
+   "1440": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "1024": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "390": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   }
+  },
+  "console_errors": []
+ },
+ {
+  "slug": "option_trading",
+  "path": "/option-trading",
+  "widths": {
+   "1440": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "1024": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "390": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   }
+  },
+  "console_errors": []
+ },
+ {
+  "slug": "portfolio",
+  "path": "/portfolio",
+  "widths": {
+   "1440": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "1024": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "390": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   }
+  },
+  "console_errors": []
+ },
+ {
+  "slug": "lab",
+  "path": "/lab",
+  "widths": {
+   "1440": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "1024": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "390": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   }
+  },
+  "console_errors": []
+ },
+ {
+  "slug": "scorecard",
+  "path": "/scorecard",
+  "widths": {
+   "1440": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "1024": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   },
+   "390": {
+    "status": 200,
+    "h_overflow_px": 0,
+    "focus_moves": true,
+    "probes": {},
+    "console_errors": []
+   }
+  },
+  "console_errors": []
+ }
+]

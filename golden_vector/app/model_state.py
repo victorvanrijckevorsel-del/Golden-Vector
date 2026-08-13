@@ -52,7 +52,7 @@ CURRENT_FOUNDATION_UNAVAILABLE_MESSAGE = (
     "Current model-state manifest does not expose a usable immutable foundation artifact."
 )
 
-# The four ticker-page artifacts, keyed by manifest name -> file prefix in
+# The ticker-page artifacts, keyed by manifest name -> file prefix in
 # ``paths.output_ticker_page_dir`` (plan §5.4). Names carry the ``ticker_page_``
 # prefix so the manifest namespace stays unambiguous; the on-disk prefix stays
 # the short one the producer writes.
@@ -139,15 +139,22 @@ def write_current_model_state_manifest(
     paths: ProjectPaths,
     config_hash: str | None,
     parent_refresh_id: str | None = None,
+    full_refresh_completed_at_utc: str | None = None,
     stage_timings: dict[str, Any] | None = None,
     option_publish_block: OptionPublishBlock | None = None,
 ) -> dict[str, Any]:
-    """Build and atomically publish the current model-state manifest."""
+    """Build and atomically publish the current model-state manifest.
+
+    Only the refresh orchestrator supplies ``full_refresh_completed_at_utc``.
+    Other publishers omit it and inherit the prior refresh timestamp/identity,
+    so rebuilding one derived domain cannot masquerade as new market data.
+    """
 
     payload = build_current_model_state_manifest(
         paths=paths,
         config_hash=config_hash,
         parent_refresh_id=parent_refresh_id,
+        full_refresh_completed_at_utc=full_refresh_completed_at_utc,
         stage_timings=stage_timings,
         option_publish_block=option_publish_block,
     )
@@ -293,6 +300,7 @@ def build_current_model_state_manifest(
     paths: ProjectPaths,
     config_hash: str | None,
     parent_refresh_id: str | None = None,
+    full_refresh_completed_at_utc: str | None = None,
     stage_timings: dict[str, Any] | None = None,
     option_publish_block: OptionPublishBlock | None = None,
 ) -> dict[str, Any]:
@@ -305,10 +313,23 @@ def build_current_model_state_manifest(
     set verifies.
     """
 
-    generated_at = _utc_now_iso()
-
     previous_manifest = load_current_model_state_manifest(paths)
-    artifacts = _artifact_map(paths, artifact_stamp=parent_refresh_id)
+    generated_at = _utc_now_iso()
+    resolved_parent_refresh_id = _clean_string(parent_refresh_id) or _clean_string(
+        (previous_manifest or {}).get("parent_refresh_id")
+    )
+    if full_refresh_completed_at_utc is not None:
+        resolved_full_refresh_at = _clean_string(full_refresh_completed_at_utc)
+    elif previous_manifest is not None:
+        # Older manifests predate the dedicated field, so their publication
+        # time is the only truthful migration source for the prior refresh.
+        resolved_full_refresh_at = _clean_string(
+            previous_manifest.get("full_refresh_completed_at_utc")
+        ) or _clean_string(previous_manifest.get("generated_at_utc"))
+    else:
+        resolved_full_refresh_at = None
+
+    artifacts = _artifact_map(paths, artifact_stamp=resolved_parent_refresh_id)
     if option_publish_block is None:
         option_publish_block = _inherited_option_publish_block(
             previous_manifest=previous_manifest,
@@ -380,7 +401,11 @@ def build_current_model_state_manifest(
         "manifest_version": MODEL_STATE_MANIFEST_VERSION,
         "manifest_readable": True,
         "generated_at_utc": generated_at,
-        "parent_refresh_id": parent_refresh_id,
+        # Publication time and full-data-refresh time deliberately differ.
+        # A portfolio-only rebuild republishes the atomic pointer but must keep
+        # the timestamp of the full refresh whose market data it still uses.
+        "full_refresh_completed_at_utc": resolved_full_refresh_at,
+        "parent_refresh_id": resolved_parent_refresh_id,
         "build_kind": "full_model",
         "state": state,
         "publish": {
@@ -660,6 +685,7 @@ def _ticker_page_latest_path(paths: ProjectPaths, name: str) -> Path:
         "ticker_page_performance": paths.latest_ticker_page_performance_path,
         "ticker_page_research_series": paths.latest_ticker_page_research_series_path,
         "ticker_page_fx_attribution": paths.latest_ticker_page_fx_attribution_path,
+        "ticker_page_downside_context": paths.latest_ticker_page_downside_context_path,
     }[name]
 
 

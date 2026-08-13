@@ -1,4 +1,4 @@
-"""Persist the five ticker-page artifacts (plan §5, §5.6 + Feature A).
+"""Persist the versioned ticker-page artifacts (plan §5, §5.6 + Feature A).
 
 Follows the Tool C persistence pattern: one immutable run-stamped file per
 artifact, one run-stamped ``_latest`` file, and one mutable ``_latest`` alias,
@@ -24,6 +24,7 @@ TICKER_PAGE_ARTIFACT_PREFIXES: tuple[str, ...] = (
     "performance",
     "research_series",
     "fx_attribution",
+    "downside_context",
 )
 
 LINEARITY_DIAGNOSTICS_FILE_NAME = "ticker_page_linearity_diagnostics.parquet"
@@ -60,6 +61,7 @@ def persist_ticker_page_artifacts(
     performance: pd.DataFrame,
     research_series: pd.DataFrame,
     fx_attribution: pd.DataFrame,
+    downside_context: pd.DataFrame,
     diagnostics: pd.DataFrame | None = None,
     source_run_id: str,
     snapshot_refresh_run_id: str,
@@ -74,6 +76,7 @@ def persist_ticker_page_artifacts(
         "performance": performance,
         "research_series": research_series,
         "fx_attribution": fx_attribution,
+        "downside_context": downside_context,
     }
     output_dir = paths.output_ticker_page_dir
     output_dir.mkdir(parents=True, exist_ok=True)

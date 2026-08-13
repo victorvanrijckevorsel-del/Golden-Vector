@@ -34,12 +34,14 @@ from golden_vector.serve.http_helpers import (
     _download_file_response,
     _flash_message,
     _html_response,
+    _json_response,
     _no_content_response,
     _read_form_data,
     _redirect_response,
     _render_error_page,
     _serve_static_file,
 )
+from golden_vector.serve.data_status import build_data_status
 from golden_vector.serve.detail_panels import (
     _canonical_anchor_window,
     _resolve_active_window,
@@ -122,13 +124,21 @@ from golden_vector.screening.manual_store import (
 LOGGER = logging.getLogger(__name__)
 
 
-def _first_query_values(query: dict[str, list[str]]) -> dict[str, str]:
+def _first_query_values(
+    query: dict[str, list[str]],
+    *,
+    preserve_all: bool = False,
+) -> dict[str, str]:
     result: dict[str, str] = {}
     for key, values in query.items():
         if not values or values[0] is None:
             continue
         value = str(values[0])
-        if str(key) == "lens" and value.strip().lower() != DETAIL_OPTION_TRADING_LENS_ID:
+        if (
+            not preserve_all
+            and str(key) == "lens"
+            and value.strip().lower() != DETAIL_OPTION_TRADING_LENS_ID
+        ):
             continue
         result[str(key)] = value
     return result
@@ -170,6 +180,9 @@ def create_workspace_app(
         try:
             if method == "GET" and path.startswith("/static/"):
                 return _serve_static_file(path, start_response)
+
+            if method == "GET" and path == "/api/data-status":
+                return _json_response(start_response, build_data_status(paths).to_payload())
 
             if method == "GET" and path == "/favicon.ico":
                 return _no_content_response(start_response)
@@ -358,6 +371,7 @@ def create_workspace_app(
                         search=query.get("search", [""])[0],
                         window=query.get("window", [""])[0],
                         app_config=app_config,
+                        current_query=_first_query_values(query, preserve_all=True),
                     ),
                 )
 
@@ -414,6 +428,7 @@ def create_workspace_app(
                         search=query.get("search", [""])[0],
                         window=query.get("window", [""])[0],
                         app_config=app_config,
+                        current_query=_first_query_values(query, preserve_all=True),
                     ),
                 )
 

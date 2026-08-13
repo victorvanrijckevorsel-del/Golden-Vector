@@ -236,6 +236,56 @@ def test_portfolio_pipeline_groups_lots_and_computes_local_pnl(tmp_path):
     assert data.summary.iloc[0]["total_value_usd"] == pytest.approx(180.0)
 
 
+def test_portfolio_republish_preserves_full_refresh_time_and_parent_identity(
+    tmp_path,
+    monkeypatch,
+):
+    paths = build_test_paths(tmp_path)
+    paths.ensure_runtime_dirs()
+    app_config = _portfolio_config()
+    _write_foundation_snapshot(
+        paths,
+        app_config,
+        ticker="NEM",
+        price=60.0,
+        currency="USD",
+    )
+    paths.latest_model_state_manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_readable": True,
+                "state": "complete",
+                "generated_at_utc": "2026-08-11T20:00:00Z",
+                "full_refresh_completed_at_utc": "2026-08-11T19:59:00Z",
+                "parent_refresh_id": "parent-refresh-A",
+                "config": {"config_hash": "config-A"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    published: dict[str, object] = {}
+
+    def fake_publish(**kwargs):
+        published.update(kwargs)
+        return {}
+
+    monkeypatch.setattr(
+        "golden_vector.portfolio.pipeline.write_current_model_state_manifest",
+        fake_publish,
+    )
+
+    build_portfolio_artifacts(
+        paths=paths,
+        app_config=app_config,
+        parent_refresh_id="must-not-replace-market-refresh-identity",
+        use_model_state_artifacts=False,
+    )
+
+    assert published["parent_refresh_id"] == "parent-refresh-A"
+    assert published["full_refresh_completed_at_utc"] == "2026-08-11T19:59:00Z"
+    assert published["config_hash"] == "config-A"
+
+
 def test_load_portfolio_data_backfills_missing_display_window_benchmark_betas(tmp_path):
     """Codex P2 regression: a pre-Phase-2 benchmark artifact (only 6M/12M/3Y per-window
     betas, no 2Y/5Y) must keep /portfolio usable. The reader treats the display-only 2Y/5Y
@@ -1172,6 +1222,16 @@ def test_portfolio_pipeline_writes_m4_artifacts_and_reconciliation_csv(tmp_path)
     assert "Show all 1 paired exposures" in page["body"]
     assert "Corporate resilience coverage" in page["body"]
     assert "Market value of today" in page["body"]
+    assert '<div class="terminal-density">' in page["body"]
+    assert (
+        '<nav class="section-nav section-nav--compact" '
+        'aria-label="Portfolio sections">'
+    ) in page["body"]
+    assert page["body"].count('<article class="data-card">') == 8
+    assert "metric-card" not in page["body"]
+    assert 'data-sort-numeric' in page["body"]
+    assert 'class="form-control"' in page["body"]
+    assert 'class="control control--primary"' in page["body"]
     assert download["status"].startswith("200")
     assert "canonical_value_usd" in download["body"]
     assert "alias_only" not in download["body"]
@@ -1198,6 +1258,9 @@ def test_portfolio_empty_book_builds_artifacts_and_renders_clean_empty_state(tmp
     assert data.positions.empty
     assert page["status"].startswith("200")
     assert "Add your first position below" in page["body"]
+    assert '<div class="terminal-density">' in page["body"]
+    assert 'class="empty-state"' in page["body"]
+    assert 'class="form-control"' in page["body"]
     assert download["status"].startswith("200")
     assert "schema_version" in download["body"]
 

@@ -16,7 +16,9 @@ from golden_vector.app.ticker_page_state import (
     STATUS_MISSING,
     STATUS_OK,
     STATUS_PENDING_FIRST_PUBLISH,
+    STATUS_STALE,
     load_gold_response,
+    load_downside_context,
     load_fx_attribution,
     load_performance_series,
     load_research_series,
@@ -28,14 +30,16 @@ from golden_vector.contracts.config_models import (
     TickerPageConfig,
 )
 from golden_vector.contracts.ticker_page import (
+    DOWNSIDE_CONTEXT_COLUMNS,
     GOLD_RESPONSE_COLUMNS,
     GOLD_RESPONSE_KEY_COLUMNS,
+    GOLD_RESPONSE_SPOT_LINE_COLUMNS,
+    FX_ATTRIBUTION_COLUMNS,
     PERCENTILES_COLUMNS,
     PERCENTILES_KEY_COLUMNS,
     PERFORMANCE_COLUMNS,
     PERFORMANCE_KEY_COLUMNS,
     RESEARCH_SERIES_COLUMNS,
-    FX_ATTRIBUTION_COLUMNS,
     TICKER_PAGE_SCHEMA_VERSIONS,
     validate_frame_schema,
 )
@@ -218,9 +222,7 @@ def test_healthy_control_payload_validates() -> None:
             id="unknown_lab_horizon",
         ),
         pytest.param(
-            _config_payload(
-                score_builder=_score_builder(min_active_metric_coverage=1.5)
-            ),
+            _config_payload(score_builder=_score_builder(min_active_metric_coverage=1.5)),
             "min_active_metric_coverage",
             id="coverage_above_one",
         ),
@@ -234,7 +236,9 @@ def test_healthy_control_payload_validates() -> None:
                 score_builder=_score_builder(
                     metrics=[
                         _metric(),
-                        _metric(key="odd", source_tool="tool_a", category="trading", unit="furlongs"),
+                        _metric(
+                            key="odd", source_tool="tool_a", category="trading", unit="furlongs"
+                        ),
                     ]
                 )
             ),
@@ -365,6 +369,13 @@ LOADERS = {
         {"ticker": "AEM", "horizon": "1Y"},
         "horizon",
     ),
+    "downside_context": (
+        load_downside_context,
+        "latest_ticker_page_downside_context_path",
+        DOWNSIDE_CONTEXT_COLUMNS,
+        {"ticker": "AEM", "scope": "full_history", "subject": "stock"},
+        "subject",
+    ),
 }
 
 
@@ -435,9 +446,7 @@ def _publish(paths, name: str, path_attr: str, frame: pd.DataFrame) -> None:
 
 
 @pytest.mark.parametrize("name", sorted(LOADERS))
-def test_loader_reports_pending_first_publish_on_an_alias_no_manifest_names(
-    tmp_path, name
-) -> None:
+def test_loader_reports_pending_first_publish_on_an_alias_no_manifest_names(tmp_path, name) -> None:
     """A standalone build writes the alias but no refresh published it: the
     loader must say PENDING_FIRST_PUBLISH, never OK."""
 
@@ -465,6 +474,25 @@ def test_loader_reports_ok_on_healthy_frame(tmp_path, name) -> None:
     assert len(state.frame) == 1
 
 
+def test_v1_gold_response_reads_stale_before_v2_shape_validation(tmp_path) -> None:
+    """A real v1 frame lacks v2 spot columns by design; it needs rebuild, not repair."""
+
+    loader, path_attr, columns, keys, _ = LOADERS["gold_response"]
+    paths = build_test_paths(tmp_path / "repo_gold_response_v1")
+    row = _row(columns, **_identity("gold_response", **keys))
+    row["schema_version"] = 1
+    frame = pd.DataFrame([row]).drop(columns=list(GOLD_RESPONSE_SPOT_LINE_COLUMNS))
+    _publish(paths, "gold_response", path_attr, frame)
+
+    state = loader(paths)
+
+    assert state.status == STATUS_STALE
+    assert "schema_version 1" in (state.reason or "")
+    assert "schema_version 2" in (state.reason or "")
+    assert "missing columns" not in (state.reason or "")
+    assert state.frame.empty
+
+
 @pytest.mark.parametrize("name", sorted(LOADERS))
 def test_loader_reports_corrupt_when_key_column_missing(tmp_path, name) -> None:
     loader, path_attr, columns, keys, dropped_key = LOADERS[name]
@@ -486,7 +514,10 @@ def test_loader_reports_corrupt_on_unreadable_file(tmp_path) -> None:
     loader, path_attr, columns, keys, _ = LOADERS["gold_response"]
     paths = build_test_paths(tmp_path / "repo_corrupt")
     _publish(
-        paths, "gold_response", path_attr, pd.DataFrame([_row(columns, **_identity("gold_response", **keys))])
+        paths,
+        "gold_response",
+        path_attr,
+        pd.DataFrame([_row(columns, **_identity("gold_response", **keys))]),
     )
     assert loader(paths).status == STATUS_OK  # healthy control before corruption
 

@@ -52,7 +52,15 @@ from golden_vector.serve.overview_helpers import (
 from golden_vector.serve.model_state_banner import render_model_state_banner
 from golden_vector.serve.column_help import help_th
 from golden_vector.serve.page_shell import _page_shell
-from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.components import (
+    disclosure,
+    empty_state,
+    page_header,
+    section_heading,
+    segmented_control,
+    terminal_density,
+    toolbar,
+)
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
 from golden_vector.serve.screening_overrides import ScreeningOverrides, apply_overrides
@@ -274,15 +282,6 @@ def _render_tool_b_overview_page(
             f"{_checks_detail_cell(tb)}"
             "</tr>"
         )
-    # Empty state: the colspan row does not match the explicit column model that
-    # workspace-tables.js hands DataTables, so drop js-datatable when there are no
-    # data rows (same pattern as candidate_finder_page.py).
-    table_class = "js-datatable" if rows_html else "empty-table"
-    if not rows_html:
-        rows_html.append(
-            "<tr><td colspan=\"21\" class=\"hint\">No tickers match.</td></tr>"
-        )
-
     # Filter-bar options derived from the rendered rows.
     filter_options = _collect_filter_options(
         [r["tool_b_row"] for r in derived],
@@ -309,6 +308,18 @@ def _render_tool_b_overview_page(
             ),
         )
     ]
+    body.append(
+        toolbar(
+            _render_source_control(
+                overrides=overrides,
+                search=search,
+                rank_by=rank_by,
+                differences_only=differences_only,
+            ),
+            label="Financials source",
+            visible_label="Financials source",
+        )
+    )
     if flash:
         body.append(notice("success", escape(flash)))
     if override_error:
@@ -388,22 +399,23 @@ def _render_tool_b_overview_page(
         "<form method=\"get\" action=\"/tool-b\" class=\"overview-filters-form\">"
         f"{hidden_overrides}"
         f"{search_input}"
-        f"{_render_rank_controls(rank_by=rank_by, differences_only=differences_only)}"
+        f"{_render_differences_control(differences_only=differences_only)}"
         "<div class=\"overview-filters-actions\">"
         f"<span class=\"hint\">{len(derived)} tickers shown.</span>"
-        "<button type=\"submit\" class=\"btn btn-primary\">Apply</button>"
-        "<a class=\"btn btn-tertiary\" href=\"/tool-b\">Reset</a>"
+        "<button type=\"submit\" class=\"control control--primary\">Apply</button>"
+        "<a class=\"control control--quiet\" href=\"/tool-b\">Reset</a>"
         "</div>"
         "</form>"
         "</section>"
     )
-    body.append(_render_filter_bar(
-        target_table_id="tool-b-table",
-        options=filter_options,
-        column_labels={"verdict": "Verdict", "layer1": "Layer 1"},
-    ))
-    body.append(table_region(
-        f"<table id=\"tool-b-table\" class=\"{table_class}\">"
+    if rows_html:
+        body.append(_render_filter_bar(
+            target_table_id="tool-b-table",
+            options=filter_options,
+            column_labels={"verdict": "Verdict", "layer1": "Layer 1"},
+        ))
+        body.append(table_region(
+        "<table id=\"tool-b-table\" class=\"js-datatable\">"
         "<thead><tr>"
         + help_th("Ticker", key="ticker_symbol", app_config=app_config, col_name="ticker")
         + help_th("Verdict", key="tool_b_verdict", app_config=app_config, col_name="verdict")
@@ -431,8 +443,27 @@ def _render_tool_b_overview_page(
         "</table>",
         region_id="tool-b-table-region",
         label="Corporate Finance comparison",
-    ))
-    return _page_shell("Corporate Finance - Golden Vector Workspace", "".join(body), active_nav="tool_b")
+        ))
+    else:
+        empty_title = (
+            "No Corporate Finance rows are available."
+            if tool_b_frame.empty
+            else "No tickers match these filters."
+        )
+        body.append(
+            empty_state(
+                empty_title,
+                body_html=(
+                    "<p class=\"hint\">Change the search or source, or reset "
+                    "the filters to show the full persisted view.</p>"
+                ),
+            )
+        )
+    return _page_shell(
+        "Corporate Finance - Golden Vector Workspace",
+        terminal_density("".join(body)),
+        active_nav="tool_b",
+    )
 
 
 @dataclass(frozen=True)
@@ -588,22 +619,22 @@ def _render_gold_dial(
     if spot_gold is not None:
         dated = f" (close {spot_gold_date})" if spot_gold_date else ""
         spot_active = (
-            " active"
+            ' aria-current="true"'
             if active_gold is not None and abs(active_gold - spot_gold) <= 0.01
             else ""
         )
         links.append(
-            f"<a class=\"button-like{spot_active}\" href=\"{escape(_href(None))}\">"
+            f"<a class=\"control\" href=\"{escape(_href(None))}\"{spot_active}>"
             f"Spot ${spot_gold:,.0f}{escape(dated)}</a>"
         )
     for scenario in app_config.screening_params.gold_price_scenarios:
         preset_active = (
-            " active"
+            ' aria-current="true"'
             if active_gold is not None and abs(active_gold - float(scenario)) <= 0.01
             else ""
         )
         links.append(
-            f"<a class=\"button-like{preset_active}\" href=\"{escape(_href(float(scenario)))}\">"
+            f"<a class=\"control\" href=\"{escape(_href(float(scenario)))}\"{preset_active}>"
             f"${scenario:,.0f}</a>"
         )
 
@@ -614,15 +645,15 @@ def _render_gold_dial(
     )
     return (
         "<section class=\"panel gold-dial\">"
-        "<h2>Gold price</h2>"
-        "<form method=\"get\" action=\"/tool-b\" class=\"gold-dial-form\">"
+        + section_heading("Gold price")
+        + "<form method=\"get\" action=\"/tool-b\" class=\"gold-dial-form\">"
         f"{carried_hidden}"
         f"<label><span>Custom gold price ($/oz)</span>"
-        f"<input name=\"gold_price\" type=\"number\" min=\"1\" step=\"1\" value=\"{escape(custom_value)}\"></label>"
+        f"<input class=\"form-control\" name=\"gold_price\" type=\"number\" min=\"1\" step=\"1\" value=\"{escape(custom_value)}\"></label>"
         "<div class=\"overview-filters-actions\">"
         f"{''.join(links)}"
-        "<button type=\"submit\">Apply</button>"
-        f"<a class=\"hint\" href=\"{escape(_href(None))}\">Reset to spot</a>"
+        "<button type=\"submit\" class=\"control control--primary\">Apply</button>"
+        f"<a class=\"control control--quiet\" href=\"{escape(_href(None))}\">Reset to spot</a>"
         "</div>"
         "</form>"
         "<p class=\"hint\">Moving the dial recomputes and re-ranks the whole table live. "
@@ -680,7 +711,6 @@ def _render_screening_params_form(
         rank_by=rank_by,
         differences_only=differences_only,
     )
-    open_attr = " open" if overrides.has_non_gold() else ""
     pe_input = _number_input_label(
         "Strong P/E cutoff (<)",
         name="pe_target",
@@ -748,9 +778,7 @@ def _render_screening_params_form(
         maximum="100",
     )
 
-    return (
-        f"<details class=\"panel screening-params advanced-assumptions\"{open_attr}>"
-        "<summary><h2>Advanced screening assumptions</h2></summary>"
+    form_html = (
         "<form method=\"get\" action=\"/tool-b\" class=\"screening-params-form\">"
         f"{search_hidden}"
         f"{gold_hidden}"
@@ -767,11 +795,16 @@ def _render_screening_params_form(
         f"{tier3_input}"
         "</div>"
         "<div class=\"screening-params-actions\">"
-        "<button type=\"submit\">Apply assumptions</button>"
-        "<a class=\"hint\" href=\"/tool-b\">Reset all</a>"
+        "<button type=\"submit\" class=\"control control--primary\">Apply assumptions</button>"
+        "<a class=\"control control--quiet\" href=\"/tool-b\">Reset all</a>"
         "</div>"
         "</form>"
-        "</details>"
+    )
+    return disclosure(
+        "Advanced screening assumptions",
+        form_html,
+        expanded=overrides.has_non_gold(),
+        class_name="panel screening-params advanced-assumptions",
     )
 
 
@@ -868,7 +901,7 @@ def _text_input_label(
     )
     return (
         f"<label><span>{escape(label)}</span>"
-        f"<input name=\"{escape(name)}\" type=\"text\" "
+        f"<input class=\"form-control\" name=\"{escape(name)}\" type=\"text\" "
         f"value=\"{escape(value)}\"{placeholder_attr}></label>"
     )
 
@@ -885,22 +918,46 @@ def _number_input_label(
     max_attr = f" max=\"{escape(maximum)}\"" if maximum is not None else ""
     return (
         f"<label><span>{escape(label)}</span>"
-        f"<input name=\"{escape(name)}\" type=\"number\" "
+        f"<input class=\"form-control\" name=\"{escape(name)}\" type=\"number\" "
         f"step=\"{escape(step)}\" min=\"{escape(minimum)}\"{max_attr} "
         f"value=\"{escape(value)}\"></label>"
     )
 
 
-def _render_rank_controls(*, rank_by: str, differences_only: bool) -> str:
-    official_selected = " selected" if rank_by == "official" else ""
-    our_selected = " selected" if rank_by != "official" else ""
+def _render_source_control(
+    *,
+    overrides: ScreeningOverrides,
+    search: str,
+    rank_by: str,
+    differences_only: bool,
+) -> str:
+    params = _override_query_params(overrides)
+    if search:
+        params["search"] = search
+    if differences_only:
+        params["differences_only"] = "1"
+    our_href = build_page_url(
+        "/tool-b",
+        params,
+        set_params={"fundamentals_source": None, "rank_by": None},
+    )
+    yahoo_href = build_page_url(
+        "/tool-b",
+        params,
+        set_params={"fundamentals_source": "yahoo", "rank_by": None},
+    )
+    return segmented_control(
+        (
+            ("Our View", our_href, rank_by != "official"),
+            ("Yahoo Fundamentals", yahoo_href, rank_by == "official"),
+        ),
+        label="Financials source",
+    )
+
+
+def _render_differences_control(*, differences_only: bool) -> str:
     checked = " checked" if differences_only else ""
     return (
-        "<label><span>Financials source</span>"
-        "<select name=\"fundamentals_source\">"
-        f"<option value=\"our\"{our_selected}>Our View</option>"
-        f"<option value=\"yahoo\"{official_selected}>Yahoo Fundamentals</option>"
-        "</select></label>"
         "<label class=\"checkbox-label\">"
         f"<input type=\"checkbox\" name=\"differences_only\" value=\"1\"{checked}>"
         "<span>Differences only</span>"

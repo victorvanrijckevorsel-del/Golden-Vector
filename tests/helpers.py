@@ -272,3 +272,29 @@ def tool_b_output_row(
         "aisc_margin_yield_our_view": aisc_margin_yield,
         "aisc_margin_yield_official": aisc_margin_yield,
     }
+
+
+def source_date_n_trading_days_old(n: int) -> str:
+    """A source date with exactly ``n`` US trading days after it, through today.
+
+    Freshness fixtures must not be pinned to a literal date: the shared
+    classifier ages a snapshot against the CURRENT US trading calendar, so a
+    hardcoded "2026-08-11" silently drifts into (or out of) the stale band as
+    real time passes. Counted here independently of the classifier so the test
+    is a real oracle rather than a restatement of the code under test.
+    """
+
+    from datetime import datetime, timedelta, timezone
+
+    from golden_vector.app.market_hours_refresh import (
+        US_MARKET_TIMEZONE,
+        is_us_equity_trading_day,
+    )
+
+    day = datetime.now(timezone.utc).astimezone(US_MARKET_TIMEZONE).date()
+    counted = 0
+    while counted < n:
+        if is_us_equity_trading_day(day):
+            counted += 1
+        day -= timedelta(days=1)
+    return day.isoformat()

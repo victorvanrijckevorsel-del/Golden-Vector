@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timezone
 from pathlib import Path
 from time import perf_counter
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence, cast
 from uuid import uuid4
 
 import pandas as pd
@@ -37,6 +37,20 @@ from golden_vector.app.market_hours_refresh import (
     parse_market_time,
     windows_task_scheduler_commands,
 )
+from golden_vector.app.scheduled_refresh import (
+    ACTION_RETRY_EXHAUSTED,
+    ScheduledRefreshStateError,
+    ScheduledRefreshTrigger,
+    coordinate_scheduled_refresh,
+)
+from golden_vector.app.windows_scheduled_refresh import (
+    DEFAULT_TASK_NAME as DEFAULT_SCHEDULED_REFRESH_TASK_NAME,
+    WindowsScheduledTaskInstallError,
+    build_windows_scheduled_refresh_tasks,
+    install_windows_scheduled_refresh_tasks,
+    pythonw_path,
+    remove_legacy_windows_refresh_tasks,
+)
 from golden_vector.app.logging import configure_logging
 from golden_vector.app.model_state import (
     OptionPublishBlock,
@@ -60,7 +74,7 @@ from golden_vector.app.replay_manifest import (
     verify_manifest,
 )
 from golden_vector.app.run_pruning import PruneReport, prune_runs
-from golden_vector.app.run_context import RunContext, to_jsonable
+from golden_vector.app.run_context import RunContext, to_jsonable, utc_now_iso
 from golden_vector.app.ticker_page_stage import (
     TickerPageGenerationMismatchError,
     assert_tool_generation_aligned,
@@ -340,6 +354,38 @@ def build_parser() -> argparse.ArgumentParser:
         "--apply",
         action="store_true",
         help="Actually run schtasks. Without this flag, only print the commands.",
+    )
+
+    scheduled_refresh_parser = subparsers.add_parser(
+        "scheduled-refresh",
+        help=(
+            "Portable unattended-refresh coordinator. Reconciles durable state, "
+            "checks whether data is already current, and starts a background refresh only when due."
+        ),
+    )
+    scheduled_refresh_parser.add_argument(
+        "--trigger",
+        required=True,
+        choices=("first-open", "post-close", "retry"),
+        help="Why the operating-system or cloud scheduler invoked the coordinator.",
+    )
+
+    unattended_schedule_parser = subparsers.add_parser(
+        "install-scheduled-refresh-tasks",
+        help=(
+            "Print or install hidden Windows tasks for first-open and US post-close refreshes. "
+            "Defaults to dry-run output."
+        ),
+    )
+    unattended_schedule_parser.add_argument(
+        "--task-name",
+        default=DEFAULT_SCHEDULED_REFRESH_TASK_NAME,
+        help="Windows Task Scheduler task-name prefix.",
+    )
+    unattended_schedule_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually install the XML tasks. Without this flag, only show the plan.",
     )
 
     subparsers.add_parser(
@@ -744,6 +790,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             paths,
             task_name=args.task_name,
             local_times=args.times,
+            apply=args.apply,
+        )
+
+    if args.command == "scheduled-refresh":
+        return run_scheduled_refresh(paths, trigger=args.trigger)
+
+    if args.command == "install-scheduled-refresh-tasks":
+        return run_install_scheduled_refresh_tasks(
+            paths,
+            task_name=args.task_name,
             apply=args.apply,
         )
 
@@ -3735,6 +3791,130 @@ def run_install_market_hours_refresh_task(
     return 0
 
 
+def run_scheduled_refresh(
+    paths: ProjectPaths,
+    *,
+    trigger: str,
+    now: datetime | None = None,
+) -> int:
+    try:
+        decision = coordinate_scheduled_refresh(
+            paths,
+            trigger=cast(ScheduledRefreshTrigger, trigger),
+            now=now,
+        )
+    except (ScheduledRefreshStateError, OSError, ValueError) as exc:
+        print(f"Scheduled refresh ERROR - {exc}")
+        return 1
+    print(f"Scheduled refresh {decision.action.upper()} - {decision.reason}")
+    return 1 if decision.action == ACTION_RETRY_EXHAUSTED else 0
+
+
+def run_install_scheduled_refresh_tasks(
+    paths: ProjectPaths,
+    *,
+    task_name: str,
+    apply: bool = False,
+    _command_runner: Callable[..., Any] | None = None,
+    _probe_runner: Callable[..., Any] | None = None,
+) -> int:
+    main_py = (paths.repo_root / "main.py").resolve()
+    working_directory = paths.repo_root.resolve()
+    tasks = build_windows_scheduled_refresh_tasks(
+        python_executable=sys.executable,
+        main_py=main_py,
+        repo_root=working_directory,
+        task_name=task_name,
+    )
+    # The ONE resolution, shared with the task XML builder. Printing it is not
+    # cosmetic: an elevated shell resolves sys.executable to the SYSTEM python,
+    # and the installer would then register three tasks that can never import
+    # the project. Silent, daily, invisible failure.
+    pythonw = pythonw_path(sys.executable)
+    print("Windows Task Scheduler plan:")
+    for task in tasks:
+        wake = "wake enabled" if task.wake_to_run else "no wake needed"
+        print(f"  {task.name}: {task.trigger_summary}; {wake}.")
+    print("Resolved task command:")
+    print(f"  interpreter:       {pythonw}")
+    print(f"  script:            {main_py}")
+    print(f"  working directory: {working_directory}")
+    print(
+        "All scheduled tasks run as SYSTEM, stay hidden, use pythonw.exe, ignore overlapping "
+        "starts, and let the portable coordinator check trading days and data newness."
+    )
+    if not apply:
+        print("Dry run only. Re-run with --apply from an elevated terminal to install them.")
+        return 0
+    if not pythonw.is_file():
+        print(f"Cannot install scheduled tasks: pythonw.exe was not found at {pythonw}.")
+        return 1
+    problem = _interpreter_cannot_import_project(
+        pythonw,
+        working_directory=working_directory,
+        runner=_probe_runner or subprocess.run,
+    )
+    if problem:
+        print(f"Cannot install scheduled tasks: {problem}")
+        print(
+            "Re-run this command with the project's own interpreter, for example: "
+            f"{working_directory / 'venv' / 'Scripts' / 'python.exe'} main.py "
+            "install-scheduled-refresh-tasks --apply"
+        )
+        return 1
+    runner = _command_runner or subprocess.run
+    # Create first, remove the superseded tasks only once all three exist: the
+    # old order deleted the legacy tasks and then failed half way through,
+    # leaving the machine with no working schedule at all.
+    try:
+        install_windows_scheduled_refresh_tasks(tasks, command_runner=runner)
+    except WindowsScheduledTaskInstallError as exc:
+        print(f"Cannot install scheduled tasks: {exc}")
+        print("The superseded visible-console tasks were left in place.")
+        return 1
+    remove_legacy_windows_refresh_tasks(command_runner=runner)
+    print(
+        "Hidden Windows scheduled-refresh tasks installed; superseded default "
+        "visible-console tasks were removed if present."
+    )
+    return 0
+
+
+def _interpreter_cannot_import_project(
+    pythonw: Path,
+    *,
+    working_directory: Path,
+    runner: Callable[..., Any],
+) -> str | None:
+    """Return why the resolved interpreter cannot run the project, or None.
+
+    Probed through the ``python.exe`` sibling: ``pythonw.exe`` swallows output
+    and would report success no matter what. It is the same environment, so the
+    import verdict is identical.
+    """
+
+    probe = pythonw.with_name("python.exe")
+    if not probe.is_file():
+        probe = pythonw
+    try:
+        completed = runner(
+            [str(probe), "-c", "import golden_vector"],
+            cwd=str(working_directory),
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        return f"{probe} could not be started ({exc})."
+    if getattr(completed, "returncode", 1) == 0:
+        return None
+    detail = str(getattr(completed, "stderr", "") or "").strip().splitlines()
+    reason = detail[-1] if detail else "no error output"
+    return (
+        f"{probe} cannot import the Golden Vector project from "
+        f"{working_directory} ({reason}). The tasks would run and fail silently."
+    )
+
+
 def run_refresh(
     paths: ProjectPaths,
     *,
@@ -3930,6 +4110,11 @@ def _run_refresh_unlocked(
                 return fault_exit
         print()
         print(f"== Step {total_steps}/{total_steps}: tool-b/tool-c/tool-d SKIPPED (--skip-tool-b) ==")
+        # A partial refresh must NOT advance the full-refresh clock: Tool B/C/D
+        # were skipped, so the published state is not a complete refresh of the
+        # market data every freshness read keys off. Omitting the field inherits
+        # the prior timestamp. Its manifest also comes out incomplete today, but
+        # that is a second-order effect -- this is the load-bearing guarantee.
         model_state = write_current_model_state_manifest(
             paths=paths,
             config_hash=loaded_config_for_refresh.config_hash,
@@ -4114,6 +4299,7 @@ def _run_refresh_unlocked(
             paths=paths,
             config_hash=loaded_config_for_refresh.config_hash,
             parent_refresh_id=parent_refresh_id,
+            full_refresh_completed_at_utc=utc_now_iso(),
             stage_timings=stage_timings,
             option_publish_block=option_publish_block,
         )

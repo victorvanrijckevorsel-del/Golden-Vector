@@ -152,6 +152,11 @@ Compact canon. Full rationale + war stories live in `soul.md` and `ARCHITECTURE_
 - Direct feature commits to `main` (always work on `dev-vic`, merge via the workflow above)
 - Skip data quality checks to rush analytics
 - Mix currencies without explicit conversion
+- **NEVER run `git clean` (any flags, any scope) and NEVER recursively delete anything under
+  `data/`** — it is the production data store with unrecoverable perishable history (SSD TRIM;
+  incident 2026-08-13, two months of option-chain + Lab vintage history lost). Deleting data is
+  exclusively Victor's, by hand. Every subagent brief must carry this ban alongside the existing
+  worker git-ban.
 
 ## Session start behavior
 At the start of each new Claude session, confirm:

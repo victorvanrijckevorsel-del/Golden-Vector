@@ -26,6 +26,7 @@ from golden_vector.contracts.option_artifacts import (
 )
 from golden_vector.common.parquet import write_parquet_atomic
 from golden_vector.contracts.ticker_page import (
+    DOWNSIDE_CONTEXT_COLUMNS,
     FX_ATTRIBUTION_COLUMNS,
     GOLD_RESPONSE_COLUMNS,
     PERCENTILES_COLUMNS,
@@ -60,6 +61,7 @@ def test_model_state_manifest_records_complete_aligned_build(tmp_path):
     assert payload["state"] == "complete"
     assert payload["manifest_readable"] is True
     assert payload["parent_refresh_id"] is None
+    assert payload["full_refresh_completed_at_utc"] is None
     assert payload["publish"]["atomic_pointer"] is True
     assert payload["publish"]["latest_aliases_authoritative"] is False
     snapshot_path = paths.repo_root / payload["publish"]["retention_snapshot_path"]
@@ -86,6 +88,26 @@ def test_model_state_manifest_records_complete_aligned_build(tmp_path):
     for name in TICKER_PAGE_ARTIFACT_NAMES:
         assert payload["artifacts"][name]["required_for_complete"] is True
         assert payload["artifacts"][name]["immutable"] is True
+
+
+def test_non_refresh_republish_preserves_refresh_time_and_parent_identity(tmp_path):
+    paths = build_test_paths(tmp_path)
+    _write_foundation_and_options_manifests(paths, refresh_run_id="refresh-A")
+    _write_tool_outputs(paths, refresh_run_id="refresh-A")
+    write_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+        parent_refresh_id="parent-refresh-A",
+        full_refresh_completed_at_utc="2026-08-11T20:00:00Z",
+    )
+
+    republished = write_current_model_state_manifest(
+        paths=paths,
+        config_hash="config-hash",
+    )
+
+    assert republished["parent_refresh_id"] == "parent-refresh-A"
+    assert republished["full_refresh_completed_at_utc"] == "2026-08-11T20:00:00Z"
 
 
 def test_model_state_manifest_requires_the_ticker_page_artifacts(tmp_path):
@@ -842,6 +864,11 @@ TICKER_PAGE_ARTIFACT_SPECS = {
         "latest_ticker_page_fx_attribution_path",
         FX_ATTRIBUTION_COLUMNS,
         {"ticker": "NEM", "horizon": "1Y"},
+    ),
+    "downside_context": (
+        "latest_ticker_page_downside_context_path",
+        DOWNSIDE_CONTEXT_COLUMNS,
+        {"ticker": "NEM", "scope": "full_history", "subject": "stock"},
     ),
 }
 

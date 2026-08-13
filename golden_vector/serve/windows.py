@@ -13,12 +13,12 @@ windows; 2Y/5Y are DISPLAY-ONLY longer lookbacks (never part of the score/rank).
 
 from __future__ import annotations
 
-from html import escape
+from collections.abc import Mapping
 from typing import Any
-from urllib.parse import quote
 
 from golden_vector.common.numeric import is_missing
 from golden_vector.contracts.config_models import ConfidenceThresholds
+
 # Window topology comes from the ONE registry (golden_vector/common/windows.py). This module
 # re-exports the names serve surfaces already import from here, and keeps the serve-only
 # render helpers (selector, cells, reliability) below.
@@ -32,6 +32,8 @@ from golden_vector.common.windows import (
     window_suffix,
 )
 from golden_vector.serve.format_helpers import _MISSING_SORT_SENTINEL, _optional_float
+from golden_vector.serve.ui.components import segmented_control
+from golden_vector.serve.url_helpers import build_page_url
 
 __all__ = [
     "STRUCTURAL_WINDOWS",
@@ -65,9 +67,7 @@ def window_metrics(row: dict[str, Any], window_id: str) -> dict[str, Any]:
     }
 
 
-def r2_band(
-    r_squared: float | None, *, thresholds: "ConfidenceThresholds"
-) -> tuple[str, bool]:
+def r2_band(r_squared: float | None, *, thresholds: "ConfidenceThresholds") -> tuple[str, bool]:
     """How much of the stock's moves gold explains in this window → (label, reliable).
 
     Bands come from config (deep-review F3 — the literals here used to twin,
@@ -92,9 +92,7 @@ def r2_band(
 _USABLE_WINDOW_STATUSES = ("", "OK", "ELIGIBLE")
 
 
-def window_is_reliable(
-    metrics: dict[str, Any], *, thresholds: "ConfidenceThresholds"
-) -> bool:
+def window_is_reliable(metrics: dict[str, Any], *, thresholds: "ConfidenceThresholds") -> bool:
     """A window's betas are trustworthy only when the window status is usable
     (ELIGIBLE/OK) and the fit is at least moderate.
 
@@ -121,16 +119,16 @@ def win_num_td(value: float | None, *, reliable: bool, decimals: int = 2) -> str
     if value is None or value != value:
         # One missing-value sort convention product-wide (deep-review M3): the
         # shared sentinel sorts missing rows last, matching every other table.
-        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\"><span class=\"hint\">—</span></td>"
+        return f'<td data-order="{_MISSING_SORT_SENTINEL}"><span class="hint">—</span></td>'
     txt = f"{value:.{decimals}f}"
     if reliable:
-        return f"<td data-order=\"{value:.4f}\">{txt}</td>"
+        return f'<td data-order="{value:.4f}">{txt}</td>'
     # Degraded evidence is EXCLUDED from ordering, not just muted (deep-review
     # M4, per the exclusion canon): the number stays visible but sorts with the
     # missing rows so a weak-gold-link name can't interleave with trusted ones.
     return (
-        f"<td data-order=\"{_MISSING_SORT_SENTINEL}\">"
-        f"<span class=\"hint\" title=\"weak gold-link — treat with caution\">{txt}</span></td>"
+        f'<td data-order="{_MISSING_SORT_SENTINEL}">'
+        f'<span class="hint" title="weak gold-link — treat with caution">{txt}</span></td>'
     )
 
 
@@ -139,30 +137,40 @@ def gold_link_td(r_squared: float | None, *, thresholds: "ConfidenceThresholds")
     Sortable by R² via ``data-order``; weak/none is muted. Shared by the A and C overviews."""
     band, fit_ok = r2_band(r_squared, thresholds=thresholds)
     if r_squared is None:
-        return f"<td data-order=\"{_MISSING_SORT_SENTINEL}\"><span class=\"hint\">—</span></td>"
+        return f'<td data-order="{_MISSING_SORT_SENTINEL}"><span class="hint">—</span></td>'
     inner = f"{band} · {r_squared * 100:.0f}%"
-    body = inner if fit_ok else f"<span class=\"hint\">{inner}</span>"
-    return f"<td data-order=\"{r_squared:.4f}\">{body}</td>"
+    body = inner if fit_ok else f'<span class="hint">{inner}</span>'
+    return f'<td data-order="{r_squared:.4f}">{body}</td>'
 
 
-def render_window_selector(active: str, *, search: str = "", target: str = "/tool-a") -> str:
-    """The beta-window toggle for an overview page — navigates to ``?window=<id>`` (the
-    toggle IS the 'is it changing?' mechanism). Reuses the existing ``.window-switcher`` /
-    ``.window-tabs`` / ``.window-tab`` CSS from the detail page (no new styles)."""
-    tabs: list[str] = []
-    for window in STRUCTURAL_WINDOWS:
-        cls = "window-tab active" if window == active else "window-tab"
-        parts = [f"window={window}"]
-        if search:
-            parts.append(f"search={quote(search, safe='')}")
-        href = f"{target}?{'&'.join(parts)}"
-        tabs.append(
-            f"<a class=\"{cls}\" href=\"{escape(href, quote=True)}\">{escape(WINDOW_LABELS[window])}</a>"
+def render_window_selector(
+    active: str,
+    *,
+    search: str = "",
+    target: str = "/tool-a",
+    current_query: Mapping[str, str] | None = None,
+) -> str:
+    """Render the overview beta-window selector without losing page state.
+
+    ``search`` remains as a compatibility argument for direct callers. Route
+    renderers pass ``current_query`` so changing the window preserves every
+    unrelated query parameter through the shared URL builder.
+    """
+    query = dict(current_query or {})
+    if search and "search" not in query:
+        query["search"] = search
+    choices = tuple(
+        (
+            WINDOW_LABELS[window],
+            build_page_url(target, query, set_params={"window": window}),
+            window == active,
         )
+        for window in STRUCTURAL_WINDOWS
+    )
     return (
-        "<section class=\"panel window-switcher\">"
-        "<div class=\"window-tabs\">" + "".join(tabs) + "</div>"
-        "<p class=\"hint\">Beta window — how far back the gold beta is measured. Toggle to see how a "
+        '<section class="panel window-switcher">'
+        + segmented_control(choices, label="Beta window")
+        + '<p class="hint">Beta window — how far back the gold beta is measured. Toggle to see how a '
         "miner's gold sensitivity has changed over different lookbacks.</p>"
         "</section>"
     )

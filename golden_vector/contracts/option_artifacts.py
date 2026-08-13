@@ -11,15 +11,15 @@ from golden_vector.common.files import safe_file_fragment
 # (iv_skew_signal, pnl_*_at_context, signal_horizon_days), candidate_finder
 # inputs gain benchmark-relative skew_residual_signal, and signal history
 # moved to long form. Pre-v3 artifacts fail loud / refuse carry-forward.
-LEGACY_OPTION_SCHEMA_VERSION = 3
+LEGACY_OPTION_SCHEMA_VERSION = 4
 
 # Versioned artifact-name sets (plan §6.4). A single global name set cannot
 # express "v3 still valid while v4 adds artifacts", so validation resolves the
 # name set by a generation's OWN stamped schema_version.
-# v4 adds option_chain_history_daily + option_availability; the publisher writes
-# v4 today, while a v3 generation already on disk stays fully valid and
+# v5 adds per-ticker latest-valid provenance; the publisher writes v5 today,
+# while a v4 generation already on disk stays fully valid and
 # carry-forwardable (legacy reader window).
-ACTIVE_OPTION_SCHEMA_VERSION = 4
+ACTIVE_OPTION_SCHEMA_VERSION = 5
 
 # Back-compat alias: "the version the publisher stamps right now".
 OPTION_ARTIFACT_SCHEMA_VERSION = ACTIVE_OPTION_SCHEMA_VERSION
@@ -43,19 +43,21 @@ _V4_OPTION_ARTIFACT_NAMES: tuple[str, ...] = (
     "option_availability",
 )
 
+_V5_OPTION_ARTIFACT_NAMES: tuple[str, ...] = _V4_OPTION_ARTIFACT_NAMES
+
 OPTION_ARTIFACT_SETS: dict[int, tuple[str, ...]] = {
-    3: _V3_OPTION_ARTIFACT_NAMES,
     4: _V4_OPTION_ARTIFACT_NAMES,
+    5: _V5_OPTION_ARTIFACT_NAMES,
 }
 
-# The Option Trading overview loader's reads. The two v4 additions are page-side
+# The Option Trading overview loader's reads. The two page-only additions are
 # only (dedicated readers), so they are deliberately EXCLUDED — closing the
 # loader-inventory gap in plan §6.4/P11.
 OPTION_TRADING_READ_SET: tuple[str, ...] = _V3_OPTION_ARTIFACT_NAMES
 
 # Generations a reader may still serve (rollback matrix): the active version
 # plus every legacy version whose name set is a subset of it.
-SUPPORTED_OPTION_SCHEMA_VERSIONS: tuple[int, ...] = (3, 4)
+SUPPORTED_OPTION_SCHEMA_VERSIONS: tuple[int, ...] = (4, 5)
 
 
 def normalized_option_schema_version(value: object) -> int | None:
@@ -97,7 +99,7 @@ OPTION_ARTIFACT_PREFIXES: dict[str, str] = {
     name: name for name in OPTION_ARTIFACT_NAMES
 }
 
-# --- v4 page-only artifact schemas -----------------------------------------
+# --- page-only artifact schemas --------------------------------------------
 # Own version column for the chain-history artifact, independent of the option
 # artifact-set version above (plan §6.1/§6.2).
 CHAIN_HISTORY_SCHEMA_VERSION = 1
@@ -131,7 +133,7 @@ CHAIN_HISTORY_COLUMNS: tuple[str, ...] = (
     "schema_version",
 )
 
-OPTION_AVAILABILITY_SCHEMA_VERSION = 1
+OPTION_AVAILABILITY_SCHEMA_VERSION = 2
 OPTION_AVAILABILITY_SCHEMA_COLUMN = "availability_schema_version"
 
 OPTION_AVAILABILITY_COLUMNS: tuple[str, ...] = (
@@ -142,6 +144,14 @@ OPTION_AVAILABILITY_COLUMNS: tuple[str, ...] = (
     "fetch_message",
     "provider",
     "capture_date",
+    "source_refresh_run_id",
+    "source_as_of_date",
+    "captured_at_utc",
+    "carried_forward",
+    "attempt_status",
+    "attempt_message",
+    "display_staleness_trading_days",
+    "display_freshness_status",
     "schema_version",
 )
 

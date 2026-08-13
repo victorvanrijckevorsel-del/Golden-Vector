@@ -123,6 +123,7 @@ def _page_shell(
       <header class="app-header">
         <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="app-sidebar">Menu</button>
         <span class="app-header-title">{escape(resolved_header_label)}</span>
+        <span class="app-data-status" data-data-status-endpoint="/api/data-status" data-tone="loading" aria-live="polite" aria-atomic="true">Checking data…</span>
       </header>
       <main id="main-content" tabindex="-1">{body}</main>
     </div>

@@ -21,7 +21,12 @@ from golden_vector.serve.format_helpers import (
 )
 from golden_vector.serve.lab_curve_data import LabCellsData
 from golden_vector.serve.page_shell import _page_shell
-from golden_vector.serve.ui.components import page_header
+from golden_vector.serve.ui.components import (
+    empty_state,
+    page_header,
+    section_heading,
+    terminal_density,
+)
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.ui.tables import table_region
 
@@ -78,7 +83,9 @@ def _render_lab_overview_page(
         )
         body.append(notice(tone, msg))
         return _page_shell(
-            "Lab - Golden Vector Workspace", "".join(body), active_nav="lab"
+            "Lab - Golden Vector Workspace",
+            terminal_density("".join(body)),
+            active_nav="lab",
         )
 
     horizon = int(data.horizon)
@@ -120,35 +127,43 @@ def _render_lab_overview_page(
         )
 
     rows_html = [_render_dial_row(row, selected_bucket=selected_bucket, horizon=horizon) for row in data.rows]
-    # Empty state: the colspan row does not match the explicit column model that
-    # workspace-tables.js hands DataTables, so drop js-datatable when there are no
-    # data rows (same pattern as candidate_finder_page.py).
-    dial_table_class = "js-datatable" if rows_html else "empty-table"
     if not rows_html:
-        rows_html.append(
-            "<tr><td colspan=\"10\" class=\"hint\">No rows for this scenario.</td></tr>"
+        body.append(
+            '<section class="panel">'
+            + section_heading("Gold scenario analog ranking")
+            + empty_state(
+                "No rows for this scenario.",
+                body_html=(
+                    '<p class="hint">Choose another gold scenario or look-ahead '
+                    "window to inspect the available historical evidence.</p>"
+                ),
+            )
+            + "</section>"
         )
-    body.append(table_region(
-        f"<table id=\"lab-dial-table\" class=\"{dial_table_class}\">"
-        "<thead><tr>"
-        + help_th("Rank", key="lab_rank", col_name="rank", sort_numeric=True)
-        + help_th("Ticker", key="ticker_symbol", col_name="ticker")
-        + help_th("P(beat GDX), shrunk", key="lab_p_beat_shrunk", col_name="p_beat", sort_numeric=True)
-        + help_th("P(beat GDX), raw", key="lab_p_beat_raw", col_name="p_beat_raw", sort_numeric=True)
-        + help_th("P(beat GDXJ), shrunk", key="lab_p_beat_gdxj", col_name="p_beat_gdxj", sort_numeric=True)
-        + help_th("95% range (GDX)", key="lab_wilson", col_name="wilson")
-        + help_th("Median alpha vs GDX", key="lab_median_alpha", col_name="median_alpha", sort_numeric=True)
-        + help_th("Alpha 10–90% (GDX)", key="lab_alpha_range", col_name="alpha_range")
-        + help_th("Weeks (effective)", key="lab_episodes", col_name="episodes", sort_numeric=True)
-        + help_th("History", key="lab_history", col_name="history")
-        + "</tr></thead>"
-        f"<tbody>{''.join(rows_html)}</tbody>"
-        "</table>",
-        region_id="lab-dial-table-region",
-        label="Gold scenario analog ranking",
-    ))
+    else:
+        body.append(table_region(
+            "<table id=\"lab-dial-table\" class=\"js-datatable\">"
+            "<thead><tr>"
+            + help_th("Rank", key="lab_rank", col_name="rank", sort_numeric=True)
+            + help_th("Ticker", key="ticker_symbol", col_name="ticker")
+            + help_th("P(beat GDX), shrunk", key="lab_p_beat_shrunk", col_name="p_beat", sort_numeric=True)
+            + help_th("P(beat GDX), raw", key="lab_p_beat_raw", col_name="p_beat_raw", sort_numeric=True)
+            + help_th("P(beat GDXJ), shrunk", key="lab_p_beat_gdxj", col_name="p_beat_gdxj", sort_numeric=True)
+            + help_th("95% range (GDX)", key="lab_wilson", col_name="wilson")
+            + help_th("Median alpha vs GDX", key="lab_median_alpha", col_name="median_alpha", sort_numeric=True)
+            + help_th("Alpha 10–90% (GDX)", key="lab_alpha_range", col_name="alpha_range")
+            + help_th("Weeks (effective)", key="lab_episodes", col_name="episodes", sort_numeric=True)
+            + help_th("History", key="lab_history", col_name="history")
+            + "</tr></thead>"
+            f"<tbody>{''.join(rows_html)}</tbody>"
+            "</table>",
+            region_id="lab-dial-table-region",
+            label="Gold scenario analog ranking",
+        ))
     return _page_shell(
-        "Lab - Golden Vector Workspace", "".join(body), active_nav="lab"
+        "Lab - Golden Vector Workspace",
+        terminal_density("".join(body)),
+        active_nav="lab",
     )
 
 
@@ -177,12 +192,12 @@ def _render_filters(data: LabCellsData, *, selected_bucket: str, horizon: int) -
         "<section class=\"panel\">"
         "<form method=\"get\" action=\"/lab\" class=\"overview-filters-form\">"
         f"<label><span>{horizon_help}</span>"
-        f"<select name=\"horizon\">{''.join(horizon_options)}</select></label>"
+        f"<select class=\"form-control\" name=\"horizon\">{''.join(horizon_options)}</select></label>"
         f"<label><span>Gold scenario</span>"
-        f"<select name=\"bucket\">{''.join(bucket_options)}</select></label>"
+        f"<select class=\"form-control\" name=\"bucket\">{''.join(bucket_options)}</select></label>"
         "<div class=\"overview-filters-actions\">"
         f"<span class=\"hint\">{len(data.rows)} tickers.</span>"
-        "<button type=\"submit\" class=\"btn btn-primary\">Apply</button>"
+        "<button type=\"submit\" class=\"control control--primary\">Apply</button>"
         "</div>"
         "</form>"
         "</section>"

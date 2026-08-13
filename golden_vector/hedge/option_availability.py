@@ -6,6 +6,7 @@ from typing import Any
 
 import pandas as pd
 
+from golden_vector.app.market_hours_refresh import classify_us_trading_day_freshness
 from golden_vector.common.numeric import optional_int
 from golden_vector.common.strings import clean_string, normalize_ticker
 from golden_vector.contracts.option_artifacts import (
@@ -74,7 +75,13 @@ def build_option_availability(
         if not ticker:
             continue
         record = by_ticker.get(ticker)
-        rows.append(_availability_row(ticker=ticker, record=record))
+        rows.append(
+            _availability_row(
+                ticker=ticker,
+                record=record,
+                capture_date=capture_date,
+            )
+        )
 
     frame = pd.DataFrame(rows, columns=[
         column for column in OPTION_AVAILABILITY_COLUMNS
@@ -86,7 +93,12 @@ def build_option_availability(
     return frame.loc[:, list(OPTION_AVAILABILITY_COLUMNS)].reset_index(drop=True)
 
 
-def _availability_row(*, ticker: str, record: dict[str, Any] | None) -> dict[str, Any]:
+def _availability_row(
+    *,
+    ticker: str,
+    record: dict[str, Any] | None,
+    capture_date: str,
+) -> dict[str, Any]:
     if record is None:
         # A universe ticker the options stage never touched: not evidence of
         # absence.
@@ -96,6 +108,7 @@ def _availability_row(*, ticker: str, record: dict[str, Any] | None) -> dict[str
             "expirations_enumerated": None,
             "fetch_status": FETCH_STATUS_ABSENT,
             "fetch_message": "No options manifest entry for this ticker.",
+            **_provenance_fields(record=None, capture_date=capture_date),
             }
 
     message = clean_string(record.get("message"))
@@ -148,4 +161,42 @@ def _availability_row(*, ticker: str, record: dict[str, Any] | None) -> dict[str
         "expirations_enumerated": expirations,
         "fetch_status": fetch_status,
         "fetch_message": message,
+        **_provenance_fields(record=record, capture_date=capture_date),
     }
+
+
+def _provenance_fields(
+    *,
+    record: dict[str, Any] | None,
+    capture_date: str,
+) -> dict[str, Any]:
+    item = record or {}
+    source_date = clean_string(item.get("source_as_of_date"))
+    # v1 manifests represented a fresh source implicitly through capture_date.
+    if source_date is None and record is not None and item.get("snapshot_path"):
+        source_date = clean_string(capture_date)
+    freshness = classify_us_trading_day_freshness(
+        source_date,
+        through_date=_date_or_none(capture_date),
+    )
+    return {
+        "source_refresh_run_id": clean_string(item.get("source_refresh_run_id")),
+        "source_as_of_date": source_date,
+        "captured_at_utc": clean_string(item.get("captured_at_utc")),
+        "carried_forward": bool(item.get("carried_forward", False)),
+        "attempt_status": (
+            clean_string(item.get("attempt_status")) or FETCH_STATUS_ABSENT
+        ).upper(),
+        "attempt_message": clean_string(item.get("attempt_message")),
+        "display_staleness_trading_days": freshness.trading_days,
+        "display_freshness_status": freshness.status,
+    }
+
+
+def _date_or_none(value: object):
+    from datetime import date
+
+    try:
+        return date.fromisoformat(str(value or "").strip()[:10])
+    except ValueError:
+        return None
