@@ -98,12 +98,23 @@ on purpose, never stage it.
    guard so nothing gets *worse*, but its 52 entries are no longer a backlog to
    burn down. Any future agent reading `gold_marking_gap_2026-08-13.md` should
    treat its "Awaiting Victor's scope decision" section as answered: **no.**
-6. **Open decision from Victor — mining inputs for the five new tickers.**
-   Tool B/D and their corporate-finance sections stay INCOMPLETE until
-   production, AISC, cash cost, royalty rate, sustaining capex and reserve life
-   are entered. Yahoo does not carry these. Options: Victor supplies them, or
-   they are researched with sources recorded, or the names stay
-   gold-behaviour-only. **Do not invent them.**
+6. ~~Open decision from Victor — mining inputs for the five new tickers.~~
+   **CLOSED 2026-08-13: all five ABANDONED**, on Victor's rule "Abandon any
+   names that requires to make something comlicated". They stay
+   gold-behaviour-only — Tool A ranks them, Tool B/D report INCOMPLETE, and that
+   INCOMPLETE state is now **intentional, not a defect**. Do not enter partial
+   figures; do not raise it as a review finding.
+
+   Full research record and per-name reasoning:
+   `new_miners_manual_inputs_2026-08-13.md`. Headline: the store has **no
+   currency column** and four of the five report in AUD or CAD, so entering them
+   would mean an ad-hoc FX conversion — banned by hard rule #1. BC8.AX has never
+   disclosed AISC at all. DSV.TO is the only USD-native one and the only
+   plausible future candidate.
+
+   Note the correction recorded there: the eleven required fields are *all*
+   required (`REQUIRED_MANUAL_FIELDS` = operational ∪ financial), not the six
+   this file originally listed — so "enter what we can find" buys nothing.
 
 ## To bring the platform back up
 
