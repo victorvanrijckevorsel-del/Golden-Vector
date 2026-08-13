@@ -47,11 +47,14 @@ on purpose, never stage it.
 2. **Options have never captured inside US market hours since the data loss.**
    The 10:34 and 13:00 builds were correctly BLOCKED by the benchmark quality
    gate (`GDX=SPARSE; GDXJ=LOW_LIQUIDITY`) because they ran pre-market. Nothing
-   is broken. Run **after 14:30 London / 09:30 New York**:
+   is broken. `market-hours-refresh` carries its own guard and **SKIPS outside
+   10:00–15:45 New York** — deliberately, so the unsettled first half-hour after
+   the open never becomes a signal. A 14:32 London attempt was refused with
+   "09:36 ET is outside 10:00-15:45 ET". So run it **between 15:00 and 20:45
+   London**:
    ```
    venv/Scripts/python.exe main.py market-hours-refresh
    ```
-   The background job that would have done this at 14:32 died with the restart.
 3. **Scheduled tasks are still not installed.** Agent-spawned UAC elevation
    silently no-ops on this machine (Defender suspected); the script is proved
    correct — an unelevated dry run fails only with "Access is denied". Victor
