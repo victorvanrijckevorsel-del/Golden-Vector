@@ -815,12 +815,21 @@ def test_cost_downside_card_explains_persisted_frequency_severity_and_recent_tre
 
     assert "What the record means" in html
     assert "Full history" in html and "Recent 2 years" in html
-    assert "Large-fall frequency" in html
-    assert "Typical loss when a large fall occurred" in html
+    assert "How often a large fall happened" in html
+    assert "Typical loss when one did" in html
     assert "more often than GDX" in html
     assert "Recently, large falls happened less often" in html
-    assert '<meter min="0" max="1" value="0.3">30.0%</meter>' in html
-    assert "Eligible-miner medians use each miner's own available record" in html
+    # Both periods land in ONE chart per measure, so a changing behaviour is a
+    # visible difference between two groups rather than two blocks apart.
+    assert html.count("<svg") >= 2
+    assert "30.0%" in html and "10.0%" in html  # stock frequency, both periods
+    assert "-16.0%" in html and "-13.0%" in html  # stock severity, both periods
+    # <meter> is never used again here: `accent-color` does not reach its vendor
+    # pseudo-elements, so every bar painted the browser's default GREEN —
+    # including "fell harder than the ETF", where green states the opposite.
+    assert "<meter" not in html
+    # The two peer medians rest on DIFFERENT miner counts; showing one basis and
+    # silently reusing it for the other would mislabel the severity comparison.
     assert "Eligible-miner median (11 miners · own records)" in html
     assert "Eligible-miner median (9 miners · own records)" in html
 

@@ -23,6 +23,39 @@ from html import escape
 from typing import Callable
 
 from golden_vector.contracts.config_models import AppConfig
+from golden_vector.features.gold_regime import (
+    GOLD_QUINTILE_QUANTILE,
+    GOLD_TAIL_QUANTILE,
+)
+
+#: Percentage forms of the gold-event quantiles, read from the one place that
+#: defines them (``features/gold_regime``) so this prose cannot drift from the
+#: code that selects the weeks.
+_QUINTILE_PCT = f"{GOLD_QUINTILE_QUANTILE * 100:.0f}%"
+_TAIL_PCT = f"{GOLD_TAIL_QUANTILE * 100:.0f}%"
+
+#: Why "strength" and "weakness" do not add up to 100%. They are conditional
+#: rates over two DIFFERENT sets of weeks, so treating them as two halves of one
+#: pie is the single most likely misreading of the relative-record table.
+_REL_PAIR_DETAIL = (
+    "Strength and weakness are measured over two different sets of weeks — "
+    f"gold's strongest {_QUINTILE_PCT} and its weakest {_QUINTILE_PCT} — so they "
+    "are NOT two halves of one total and will not add up to 100%. Each is a "
+    "conditional rate: 'when gold did X, how often did this share do Y?' The "
+    "weeks are picked from gold's own rolling distribution, so the bar moves "
+    "with gold's regime rather than sitting at a fixed return."
+)
+
+#: The tails are the share's OWN return, selected by gold's weeks. Two ways to
+#: misread them: as a difference against GDX (they are not), and as the share's
+#: own best/worst weeks (they are not that either).
+_TAIL_BASIS_DETAIL = (
+    f"The weeks are gold's most extreme {_TAIL_PCT} — chosen by what GOLD did, "
+    "not by what this share did, so these are not the share's own best or worst "
+    "weeks. The value is the share's plain weekly return over those weeks, not a "
+    "difference against GDX, so it is not comparable with the strength and "
+    "weakness rates above it."
+)
 
 
 @dataclass(frozen=True)
@@ -303,6 +336,38 @@ def _hit_rate_thresholds(config: AppConfig) -> str:
         f"A 'hit' is a week the stock moved more than {abs(pct):g}% in the "
         "measured direction."
     )
+
+
+#: ONE explanation for the big-move hit rates, shared by the Gold Downside table
+#: and the ticker page. The same persisted metric was carrying two separate help
+#: entries under two different column names, so a reader who learned what the
+#: number meant on one page met it as something else on the other. Both keys now
+#: point at these objects; there is no second copy to drift.
+_HIT_RATE_DOWN_HELP = ColumnHelp(
+    meaning=(
+        "In gold's WEAKEST weeks only, the share of those weeks in which this "
+        "share also had a big down week of its own."
+    ),
+    calculation=(
+        "Hits ÷ gold's weak weeks. Both counts are published as evidence. The "
+        "weeks are selected by what gold did, not by the calendar."
+    ),
+    thresholds=_hit_rate_thresholds,
+    direction="Lower is better — it held up when gold dropped.",
+)
+
+_HIT_RATE_UP_HELP = ColumnHelp(
+    meaning=(
+        "In gold's STRONGEST weeks only, the share of those weeks in which this "
+        "share also had a big up week of its own."
+    ),
+    calculation=(
+        "Hits ÷ gold's strong weeks. Both counts are published as evidence. The "
+        "weeks are selected by what gold did, not by the calendar."
+    ),
+    thresholds=_hit_rate_thresholds,
+    direction="Higher is better — it participated when gold rose.",
+)
 
 
 def _debt_stress_thresholds(config: AppConfig) -> str:
@@ -1453,16 +1518,9 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
         ),
         direction="Higher = more gold-sensitive than the benchmark/peers for that window.",
     ),
-    "tool_c_down_hit_rate": ColumnHelp(
-        meaning="Share of big gold-down weeks where the stock also fell sharply.",
-        thresholds=_hit_rate_thresholds,
-        direction="Lower is better — it held up when gold dropped.",
-    ),
-    "tool_c_up_hit_rate": ColumnHelp(
-        meaning="Share of big gold-up weeks where the stock also rose sharply.",
-        thresholds=_hit_rate_thresholds,
-        direction="Higher is better — it participated when gold rose.",
-    ),
+    # Same objects the ticker page uses — one metric, one explanation.
+    "tool_c_down_hit_rate": _HIT_RATE_DOWN_HELP,
+    "tool_c_up_hit_rate": _HIT_RATE_UP_HELP,
     # ---- Tool B: Corporate Finance ----
     "tool_b_score": ColumnHelp(
         meaning="Percent of the corporate-finance quality checks this name passed.",
@@ -1793,57 +1851,80 @@ COLUMN_HELP: dict[str, ColumnHelp] = {
     ),
     "ticker_relative_record": ColumnHelp(
         meaning=(
-            "The counted record against GDX: how often this share was stronger or "
-            "weaker, how often the big weekly moves landed, and what the tails averaged."
+            "What this share actually did during gold's own extreme weeks — how "
+            "often it beat or lagged GDX, how often it made a big move of its "
+            "own, and what it averaged in the deepest weeks."
         ),
         calculation=(
-            "Shares of qualifying weeks over the Tool C window, each published with its "
-            "own hit count and observation count. No ranking, no composite."
+            "Every figure is conditional on gold, never on the calendar: the weeks "
+            "are selected from gold's rolling distribution, then this share is "
+            "measured over them. Counts are published per metric. No ranking, no "
+            "composite."
+        ),
+        details=(
+            "Read the table by its groups, not top to bottom. Rows in the same "
+            "group share the same set of weeks and the same denominator, so they "
+            "can be compared with each other. Rows in different groups cannot — "
+            "they answer different questions over different weeks. In particular "
+            "the two GDX rates are conditional rates over separate week sets and "
+            "do not add up to 100%, and the tail averages are this share's own "
+            "return rather than a margin over GDX."
         ),
     ),
     "ticker_rel_strength_vs_gdx": ColumnHelp(
-        meaning="Share of weeks this stock outperformed GDX over the Tool C window.",
-        calculation="Weeks outperforming GDX ÷ eligible weeks in the window.",
-        direction="Higher is stronger relative performance.",
+        meaning=(
+            "In gold's STRONGEST weeks only, the share of those weeks in which "
+            "this stock beat GDX."
+        ),
+        calculation=(
+            "Weeks beating GDX ÷ gold's strong weeks. Not all weeks — only the "
+            "weeks where gold itself was in the top slice of its own rolling "
+            "distribution."
+        ),
+        direction="Higher means it led the ETF more often when gold ran.",
+        details=_REL_PAIR_DETAIL,
     ),
     "ticker_rel_weakness_vs_gdx": ColumnHelp(
-        meaning="Share of weeks this stock underperformed GDX over the Tool C window.",
-        calculation="Weeks underperforming GDX ÷ eligible weeks in the window.",
-        direction="Lower is better — it lagged the ETF less often.",
-    ),
-    "ticker_upside_hit_rate": ColumnHelp(
         meaning=(
-            "How often this share posted a big UP week during qualifying strong-gold "
-            "weeks."
+            "In gold's WEAKEST weeks only, the share of those weeks in which "
+            "this stock lagged GDX."
         ),
-        calculation="Hits ÷ qualifying weeks, with both counts shown as the evidence.",
-        thresholds=lambda config: (
-            f"A big up week is a weekly return of "
-            f"{config.tool_c.upside_hit_rate_threshold_pct:+.0f}% or better."
+        calculation=(
+            "Weeks lagging GDX ÷ gold's weak weeks. Not all weeks — only the "
+            "weeks where gold itself was in the bottom slice of its own rolling "
+            "distribution."
         ),
-        direction="Higher means it captured more of gold's strong weeks.",
+        direction="Lower is better — it lagged the ETF less often when gold fell.",
+        details=_REL_PAIR_DETAIL,
     ),
-    "ticker_downside_hit_rate": ColumnHelp(
-        meaning=(
-            "How often this share posted a big DOWN week during qualifying weak-gold "
-            "weeks."
-        ),
-        calculation="Hits ÷ qualifying weeks, with both counts shown as the evidence.",
-        thresholds=lambda config: (
-            f"A big down week is a weekly return of "
-            f"{config.tool_c.downside_hit_rate_threshold_pct:.0f}% or worse."
-        ),
-        direction="Lower is better — fewer violent falls in weak-gold weeks.",
-    ),
+    # Same objects the Gold Downside table uses — one metric, one explanation.
+    "ticker_upside_hit_rate": _HIT_RATE_UP_HELP,
+    "ticker_downside_hit_rate": _HIT_RATE_DOWN_HELP,
     "ticker_tail_best10": ColumnHelp(
-        meaning="The average weekly return across this share's best 10% of weeks.",
-        calculation="Mean of the top decile of weekly returns over the Tool C window.",
-        direction="Higher means a fatter upside tail.",
+        meaning=(
+            "This share's average weekly return during GOLD's most extreme UP "
+            "weeks — not during its own best weeks."
+        ),
+        calculation=(
+            "Mean of this share's weekly return over the weeks in gold's top "
+            "tail. The weeks are chosen by what GOLD did; the return is the "
+            "share's own, not a difference against GDX."
+        ),
+        direction="Higher means it captured more when gold spiked.",
+        details=_TAIL_BASIS_DETAIL,
     ),
     "ticker_tail_worst10": ColumnHelp(
-        meaning="The average weekly return across this share's worst 10% of weeks.",
-        calculation="Mean of the bottom decile of weekly returns over the Tool C window.",
-        direction="Closer to zero is better — a shallower downside tail.",
+        meaning=(
+            "This share's average weekly return during GOLD's most extreme DOWN "
+            "weeks — not during its own worst weeks."
+        ),
+        calculation=(
+            "Mean of this share's weekly return over the weeks in gold's bottom "
+            "tail. The weeks are chosen by what GOLD did; the return is the "
+            "share's own, not a difference against GDX."
+        ),
+        direction="Closer to zero is better — it gave up less when gold slid.",
+        details=_TAIL_BASIS_DETAIL,
     ),
     "ticker_lab_history": ColumnHelp(
         meaning=(

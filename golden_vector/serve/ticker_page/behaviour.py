@@ -592,44 +592,108 @@ def render_beta_comparison_panel(
 # Tool C relative record (persisted percentile rows — raw values + evidence)
 # ---------------------------------------------------------------------------
 
-# (metric_key, label, help key, evidence nouns) — evidence nouns are None for
-# metrics that publish no counted-hit evidence.
-_RECORD_METRICS: tuple[tuple[str, str, str, tuple[str, str] | None], ...] = (
-    (
-        "rel_strength_vs_gdx",
-        "Strength vs GDX",
-        "ticker_rel_strength_vs_gdx",
-        None,
+@dataclass(frozen=True)
+class _RecordMetric:
+    """One row of the relative record.
+
+    ``high_is_good`` selects which of the two PERSISTED percentile columns
+    (``pct_high_good`` / ``pct_low_good``) answers "is this good?" for this
+    metric. Serve picks the column; it never computes a rank. The direction is
+    the same one stated in ``column_help``, kept here so the number and the
+    sentence explaining it cannot disagree.
+    """
+
+    metric_key: str
+    label: str
+    help_key: str
+    evidence_nouns: tuple[str, str] | None
+    high_is_good: bool
+
+
+@dataclass(frozen=True)
+class _RecordGroup:
+    """Rows sharing one set of weeks — and therefore one denominator.
+
+    The grouping is the whole point of the table. Every row is conditional on
+    what GOLD did, and rows drawn from different week sets are not comparable
+    with each other. Presenting all six as one flat list is what made two
+    conditional rates over different weeks look like two halves of a total.
+    """
+
+    title: str
+    blurb: str
+    metrics: tuple[_RecordMetric, ...]
+
+
+_RECORD_GROUPS: tuple[_RecordGroup, ...] = (
+    _RecordGroup(
+        title="When gold was weakest",
+        blurb=(
+            "Counted only over gold's weak weeks — so both rows below share the "
+            "same weeks and the same denominator."
+        ),
+        metrics=(
+            _RecordMetric(
+                "rel_weakness_vs_gdx",
+                "Lagged GDX",
+                "ticker_rel_weakness_vs_gdx",
+                None,
+                high_is_good=False,
+            ),
+            _RecordMetric(
+                "downside_hit_rate",
+                "Had a big down week of its own",
+                "ticker_downside_hit_rate",
+                ("large falls", "qualifying weak-gold weeks"),
+                high_is_good=False,
+            ),
+        ),
     ),
-    (
-        "rel_weakness_vs_gdx",
-        "Weakness vs GDX",
-        "ticker_rel_weakness_vs_gdx",
-        None,
+    _RecordGroup(
+        title="When gold was strongest",
+        blurb=(
+            "A different set of weeks from the group above. These rates are not "
+            "the remainder of it and the two groups do not sum to 100%."
+        ),
+        metrics=(
+            _RecordMetric(
+                "rel_strength_vs_gdx",
+                "Beat GDX",
+                "ticker_rel_strength_vs_gdx",
+                None,
+                high_is_good=True,
+            ),
+            _RecordMetric(
+                "upside_hit_rate",
+                "Had a big up week of its own",
+                "ticker_upside_hit_rate",
+                ("large rises", "qualifying strong-gold weeks"),
+                high_is_good=True,
+            ),
+        ),
     ),
-    (
-        "upside_hit_rate",
-        "Big up-week hit rate",
-        "ticker_upside_hit_rate",
-        ("large rises", "qualifying strong-gold weeks"),
-    ),
-    (
-        "downside_hit_rate",
-        "Big down-week hit rate",
-        "ticker_downside_hit_rate",
-        ("large falls", "qualifying weak-gold weeks"),
-    ),
-    (
-        "tail_best10",
-        "Best 10% weeks (average)",
-        "ticker_tail_best10",
-        None,
-    ),
-    (
-        "tail_worst10",
-        "Worst 10% weeks (average)",
-        "ticker_tail_worst10",
-        None,
+    _RecordGroup(
+        title="In gold's most extreme weeks",
+        blurb=(
+            "This share's OWN average weekly return over gold's sharpest weeks — "
+            "not a margin over GDX, so it does not compare with the rates above."
+        ),
+        metrics=(
+            _RecordMetric(
+                "tail_worst10",
+                "Average return when gold slid hardest",
+                "ticker_tail_worst10",
+                None,
+                high_is_good=True,
+            ),
+            _RecordMetric(
+                "tail_best10",
+                "Average return when gold spiked hardest",
+                "ticker_tail_best10",
+                None,
+                high_is_good=True,
+            ),
+        ),
     ),
 )
 
@@ -647,46 +711,77 @@ def _threshold_sentence(app_config: AppConfig | None) -> str:
     )
 
 
+def _universe_standing(row: pd.Series, *, high_is_good: bool) -> str:
+    """Plain-English position in the miner universe, from the PERSISTED percentile.
+
+    The model publishes both directions (``pct_high_good`` / ``pct_low_good``);
+    serve selects the one matching this metric's direction and formats it. No
+    ranking happens here — an ineligible row says so rather than being ranked
+    anyway, which is the rule that degraded data never enters a ranking.
+    """
+
+    if not bool_or_false(row.get("rank_eligible")):
+        reason = clean_string(row.get("rank_exclusion_reason")) or "not rank-eligible"
+        return f"not ranked — {reason}"
+    column = "pct_high_good" if high_is_good else "pct_low_good"
+    percentile = row.get(column)
+    if percentile is None or pd.isna(percentile):
+        return "no percentile published"
+    peers = row.get("eligible_peer_count")
+    peer_text = ""
+    if peers is not None and not pd.isna(peers):
+        peer_text = f" of {int(peers)} ranked miners"
+    return f"better than {float(percentile):.0f}%{peer_text}"
+
+
 def _record_row(
     row: pd.Series | None,
     *,
-    label: str,
-    help_key: str,
-    evidence_nouns: tuple[str, str] | None,
+    metric: _RecordMetric,
     app_config: AppConfig | None,
 ) -> str:
     header = (
-        f"<th scope=\"row\">{escape(label)}"
-        f"{help_icon(label, key=help_key, app_config=app_config)}</th>"
+        f"<th scope=\"row\">{escape(metric.label)}"
+        f"{help_icon(metric.label, key=metric.help_key, app_config=app_config)}</th>"
     )
     if row is None:
         return (
             f"<tr>{header}<td class=\"numeric\">n/a</td>"
+            "<td class=\"hint\">—</td>"
             "<td class=\"hint\">no published row for this metric</td></tr>"
         )
     if not bool_or_false(row.get("metric_available")):
         reason = clean_string(row.get("metric_reason")) or "not available"
         return (
             f"<tr>{header}<td class=\"numeric\">n/a</td>"
+            "<td class=\"hint\">—</td>"
             f"<td class=\"hint\">{escape(reason)}</td></tr>"
         )
     value = _fmt_pct(row.get("raw_value"))
+    standing = _universe_standing(row, high_is_good=metric.high_is_good)
     evidence_bits: list[str] = []
-    if evidence_nouns is not None:
+    if metric.evidence_nouns is not None:
         evidence_bits.append(
             format_hit_evidence(
-                row, hit_noun=evidence_nouns[0], window_noun=evidence_nouns[1]
+                row,
+                hit_noun=metric.evidence_nouns[0],
+                window_noun=metric.evidence_nouns[1],
             )
         )
-    basis = clean_string(row.get("basis")) or ""
-    if basis:
-        evidence_bits.append(basis)
     period_start = row.get("source_period_start")
     if period_start is not None and not pd.isna(period_start):
         evidence_bits.append(format_evidence_period(row))
-    evidence = " · ".join(bit for bit in evidence_bits if bit) or "no evidence published"
+    # The persisted ``basis`` for these metrics is the bare string "tool C
+    # window", which tells the reader nothing the section heading has not
+    # already said. Keep it only when it carries something else, so a row with
+    # real counts is not padded out with filler that looks like evidence.
+    basis = clean_string(row.get("basis")) or ""
+    if basis and basis.strip().lower() != "tool c window":
+        evidence_bits.append(basis)
+    evidence = " · ".join(bit for bit in evidence_bits if bit) or "no counts published"
     return (
         f"<tr>{header}<td class=\"numeric\">{escape(value)}</td>"
+        f"<td class=\"hint\">{escape(standing)}</td>"
         f"<td class=\"hint\">{escape(evidence)}</td></tr>"
     )
 
@@ -726,33 +821,48 @@ def render_relative_record(
             )
             + "</section>"
         )
-    rows_html = "".join(
-        _record_row(
-            data.metric_row(ticker, metric_key=key, finance_source=finance_source),
-            label=label,
-            help_key=help_key,
-            evidence_nouns=nouns,
-            app_config=app_config,
+    body_html = ""
+    for group in _RECORD_GROUPS:
+        rows_html = "".join(
+            _record_row(
+                data.metric_row(
+                    ticker, metric_key=metric.metric_key, finance_source=finance_source
+                ),
+                metric=metric,
+                app_config=app_config,
+            )
+            for metric in group.metrics
         )
-        for key, label, help_key, nouns in _RECORD_METRICS
-    )
+        # A group header row spanning the table keeps the shared-denominator
+        # grouping intact for screen readers and for the plain-table view, which
+        # separate <table>s per group would fragment.
+        body_html += (
+            '<tr class="record-group"><th colspan="4" scope="colgroup">'
+            f"{escape(group.title)}"
+            f'<span class="record-group__blurb">{escape(group.blurb)}</span>'
+            "</th></tr>"
+            f"{rows_html}"
+        )
     table_html = (
-        "<table class=\"compact-table\"><thead><tr>"
+        "<table class=\"compact-table record-table\"><thead><tr>"
         "<th scope=\"col\">Measure</th><th class=\"numeric\" scope=\"col\">Value</th>"
-        "<th scope=\"col\">Evidence and basis</th>"
+        "<th scope=\"col\">Against other miners</th>"
+        "<th scope=\"col\">Counted evidence</th>"
         "</tr></thead>"
-        f"<tbody>{rows_html}</tbody></table>"
+        f"<tbody>{body_html}</tbody></table>"
     )
     threshold = _threshold_sentence(app_config)
     return (
         "<section class=\"panel nested-panel\" id=\"relative-record\">"
-        f"<h3>Relative record vs GDX{explain}</h3>"
-        "<p class=\"hint\">Counted history against the gold-miner ETF — share of weeks it was "
-        "stronger or weaker, how often the big moves landed, and what the tails averaged.</p>"
+        f"<h3>How it behaved in gold's extreme weeks{explain}</h3>"
+        "<p class=\"hint\">Every figure below is conditional on what GOLD did — the weeks are "
+        "picked from gold's own record, then this share is measured over them. Rows inside a "
+        "group share the same weeks, so they compare with each other; rows in different groups "
+        "do not.</p>"
         + table_region(
             table_html,
             region_id="behaviour-relative-record",
-            label="Relative record vs GDX",
+            label="Behaviour in gold's extreme weeks",
         )
         + (f"<p class=\"hint\">{escape(threshold)}</p>" if threshold else "")
         + "</section>"

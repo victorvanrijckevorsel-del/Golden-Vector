@@ -6,7 +6,7 @@ import json
 import math
 from dataclasses import dataclass, replace
 from html import escape
-from typing import Literal
+from typing import Callable, Literal
 
 import pandas as pd
 
@@ -266,16 +266,26 @@ def _build_grouped_beta_bar_svg(
     *,
     groups: list[dict[str, object]],
     title: str | None = None,
+    value_formatter: Callable[[float], str] | None = None,
+    aria_label: str = "Up versus down beta vs benchmarks",
+    empty_message: str = "No beta data available.",
 ) -> str:
     """Grouped bar chart: each group (e.g. Up-Gold / Down-Gold) holds the stock + GDX + GDXJ bars,
     side by side, so the stock's beta reads directly against the ETFs on the SAME window.
 
     ``groups`` is a list of ``{"label": str, "bars": [{"label","value","color"}, ...]}``. Bars carry
-    backend-resolved beta values; this builder only scales them to pixel heights.
+    backend-resolved values; this builder only scales them to pixel heights.
+
+    Despite the name this is metric-agnostic — the beta panel was simply its first
+    caller. ``value_formatter``, ``aria_label`` and ``empty_message`` carry the
+    caller's units and wording, so a percentage comparison reuses the geometry
+    instead of forking a near-identical builder. The defaults keep the beta
+    callers rendering exactly as before.
     """
 
     if not groups:
-        return "<p>No beta data available.</p>"
+        return f"<p>{escape(empty_message)}</p>"
+    format_value = value_formatter or (lambda value: f"{value:,.2f}")
     width = 460
     height = 250
     padding = 26
@@ -288,16 +298,32 @@ def _build_grouped_beta_bar_svg(
         if bar.get("value") is not None
     ]
     if not all_values:
-        return "<p>No beta data available.</p>"
+        return f"<p>{escape(empty_message)}</p>"
     max_abs = max([abs(v) for v in all_values] + [0.25])
     has_negative = any(v < 0 for v in all_values)
-    baseline = plot_bottom if not has_negative else (plot_top + plot_bottom) / 2
+    has_positive = any(v > 0 for v in all_values)
+    # Reserve room under a downward bar for the value label that sits below it,
+    # so it cannot collide with the series labels along the bottom.
+    negative_label_room = 18.0
+    if has_negative and not has_positive:
+        # Every value is negative (a loss comparison, say). Centring the baseline
+        # would leave the whole upper half empty and squeeze the bars into the
+        # bottom, which is what made the severity chart unreadable. Anchor at the
+        # top so the bars use the full canvas.
+        baseline = plot_top
+    elif has_negative:
+        baseline = (plot_top + plot_bottom) / 2
+    else:
+        baseline = plot_bottom
+    up_extent = baseline - plot_top
+    down_extent = max(plot_bottom - baseline - negative_label_room, 1.0)
     bar_w = 30
     gap = 8
     group_centers = [width * (i + 1) / (len(groups) + 1) for i in range(len(groups))]
 
     def bar_height(value: float) -> float:
-        return (abs(value) / max_abs) * (baseline - plot_top if value >= 0 else plot_bottom - baseline)
+        extent = up_extent if value >= 0 else down_extent
+        return (abs(value) / max_abs) * extent
 
     parts = [
         f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" class=\"chart-bg\" rx=\"12\" ry=\"12\" />",
@@ -329,7 +355,7 @@ def _build_grouped_beta_bar_svg(
             )
             value_y = (y - 6) if value >= 0 else (y + bh + 14)
             parts.append(
-                f"<text x=\"{x + bar_w / 2:.1f}\" y=\"{value_y:.1f}\" text-anchor=\"middle\" font-size=\"11\" class=\"chart-value\">{value:,.2f}</text>"
+                f"<text x=\"{x + bar_w / 2:.1f}\" y=\"{value_y:.1f}\" text-anchor=\"middle\" font-size=\"11\" class=\"chart-value\">{escape(format_value(value))}</text>"
             )
             parts.append(
                 f"<text x=\"{x + bar_w / 2:.1f}\" y=\"{height - 26:.1f}\" text-anchor=\"middle\" font-size=\"9.5\" class=\"chart-label-soft\">{label}</text>"
@@ -338,7 +364,7 @@ def _build_grouped_beta_bar_svg(
             f"<text x=\"{center:.1f}\" y=\"{height - 10:.1f}\" text-anchor=\"middle\" font-size=\"12\" class=\"chart-label-strong\">{escape(str(group['label']))}</text>"
         )
     return (
-        f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Up versus down beta vs benchmarks\">"
+        f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"{escape(aria_label)}\">"
         f"{''.join(parts)}"
         "</svg>"
     )

@@ -105,3 +105,30 @@ body[data-page="ticker_detail"] .terminal-density #corporate-finance td.scenario
   font-variant-numeric: tabular-nums lining-nums;
   text-align: end;
 }
+
+/* Relative-record table: rows are grouped by the set of weeks they count, and
+   that grouping is load-bearing rather than decorative. Two conditional rates
+   measured over different weeks were previously stacked in one flat list, which
+   read as two halves of a single total and cannot be. The group header carries
+   the shared denominator so the rows beneath it are comparable with each other
+   and visibly not comparable across groups. */
+.record-table .record-group > th {
+  padding-block: var(--density-gap-compact);
+  border-block-end: 1px solid var(--border);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  text-align: start;
+}
+
+.record-table .record-group:not(:first-child) > th {
+  padding-block-start: calc(var(--density-gap-standard) * 1.25);
+}
+
+.record-group__blurb {
+  display: block;
+  margin-block-start: calc(var(--density-gap-compact) / 3);
+  color: var(--color-text-muted);
+  font-weight: 400;
+  font-size: 0.85em;
+  max-inline-size: 60ch;
+}

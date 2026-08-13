@@ -182,15 +182,19 @@ def _render_tool_c_overview_page(
                     col_name="gold_link",
                     sort_numeric=True,
                 )
+                # Named for the weeks they count, matching the ticker page's
+                # grouping ("When gold was weakest" / "…strongest"). The old
+                # "Down Hit Rate" / "Up Hit Rate" gave the same persisted metric
+                # a third vocabulary and said nothing about the conditioning.
                 + help_th(
-                    "Down Hit Rate",
+                    "Big down week (gold weak)",
                     key="tool_c_down_hit_rate",
                     app_config=app_config,
                     col_name="down_hit",
                     sort_numeric=True,
                 )
                 + help_th(
-                    "Up Hit Rate",
+                    "Big up week (gold strong)",
                     key="tool_c_up_hit_rate",
                     app_config=app_config,
                     col_name="up_hit",

@@ -450,28 +450,23 @@ td.basis, .basis { font-size: 0.78rem; color: var(--ink-soft); }
   margin-top: calc(var(--density-gap-standard) * 1.5);
 }
 
-.downside-comparison {
-  display: grid;
-  gap: var(--density-gap-compact);
-}
-
 .downside-comparison__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--density-gap-standard);
 }
 
-.downside-comparison__bar {
-  display: grid;
-  grid-template-columns: minmax(7rem, 1fr) auto;
-  gap: calc(var(--density-gap-compact) / 2) var(--density-gap-compact);
-  align-items: center;
+/* The comparison is an SVG chart now, not <meter>. `accent-color` never applied
+   to <meter> — that element paints through vendor pseudo-elements — so every
+   bar fell back to the browser's default green, including the bars reporting
+   that this share fell harder than the ETF. Green there stated the opposite of
+   the finding. The chart uses the shared `series-*` paint in charts.css. */
+.downside-comparison__note {
+  margin-block-start: var(--density-gap-compact);
 }
 
-.downside-comparison__bar meter {
-  grid-column: 1 / -1;
-  inline-size: 100%;
-  accent-color: var(--accent);
+.downside-comparison__note h4 {
+  margin-block-end: calc(var(--density-gap-compact) / 2);
 }
 
 @media (max-width: 40rem) {

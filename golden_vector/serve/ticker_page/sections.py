@@ -8,7 +8,7 @@ no arithmetic, no fallback resolution, no eligibility decisions.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from html import escape
 from typing import Any
 from urllib.parse import quote
@@ -19,7 +19,12 @@ from golden_vector.app.ticker_page_state import TickerPageArtifactState
 from golden_vector.common.numeric import bool_or_false
 from golden_vector.common.strings import clean_string
 from golden_vector.contracts.config_models import AppConfig, TICKER_PAGE_CHART_HORIZONS
-from golden_vector.serve.charts import _build_multiline_overlay_svg, _build_scatter_svg
+from golden_vector.serve.charts import (
+    _STOCK_SERIES,
+    _build_grouped_beta_bar_svg,
+    _build_multiline_overlay_svg,
+    _build_scatter_svg,
+)
 from golden_vector.serve.column_help import help_icon
 from golden_vector.serve.format_helpers import id_token
 from golden_vector.serve.ui.components import segmented_control
@@ -759,7 +764,13 @@ def _render_downside_context(
         if artifact_state is not None:
             return _missing_downside_context_notice(ticker)
         return ""
-    rows: list[str] = []
+    # Both periods feed ONE chart per measure, so "is this getting better or
+    # worse?" is answered by looking across a chart rather than by scrolling
+    # between two separate blocks and holding six numbers in your head.
+    scopes: list[
+        tuple[str, Mapping[str, object], Mapping[str, object], Mapping[str, object]]
+    ] = []
+    notes: list[str] = []
     for scope, label in (("full_history", "Full history"), ("recent", "Recent 2 years")):
         stock = indexed.get((scope, "stock"), {})
         gdx = indexed.get((scope, "gdx"), {})
@@ -767,45 +778,53 @@ def _render_downside_context(
         status = clean_string(stock.get("context_status")) or "MISSING"
         if status != "OK":
             reason = clean_string(stock.get("context_reason")) or "Evidence unavailable."
-            rows.append(
-                f'<section class="downside-comparison"><h4>{escape(label)}</h4>'
-                f'<p class="hint">{escape(reason)}</p></section>'
+            notes.append(
+                f'<p class="hint"><strong>{escape(label)}:</strong> {escape(reason)}</p>'
             )
             continue
-        rows.append(
-            '<section class="downside-comparison">'
-            f'<h4>{escape(label)}</h4>'
-            '<div class="downside-comparison__grid">'
-            + _downside_measure(
-                "Large-fall frequency",
-                stock,
-                gdx,
-                peer,
-                field="hit_rate",
-                formatter=_fmt_pct,
-            )
-            + _downside_measure(
-                "Typical loss when a large fall occurred",
-                stock,
-                gdx,
-                peer,
-                field="median_hit_return",
-                formatter=_fmt_pct,
-            )
-            + "</div>"
+        scopes.append((label, stock, gdx, peer))
+        notes.append(
+            f'<div class="downside-comparison__note"><h4>{escape(label)}</h4>'
             + _downside_trend_copy(stock, scope=scope)
-            + "</section>"
+            + "</div>"
         )
+    if not scopes:
+        return (
+            '<div class="cost-downside-context">'
+            "<h3>What the record means</h3>" + "".join(notes) + "</div>"
+        )
+    peer_source = scopes[0][3]
+    charts = (
+        '<div class="downside-comparison__grid">'
+        + _downside_measure_chart(
+            "How often a large fall happened",
+            field="hit_rate",
+            scopes=scopes,
+        )
+        + _downside_measure_chart(
+            "Typical loss when one did",
+            field="median_hit_return",
+            scopes=scopes,
+        )
+        + "</div>"
+    )
     return (
         '<div class="cost-downside-context">'
-        '<h3>What the record means</h3>'
-        '<p class="hint">Frequency says how often a weekly fall beyond the configured cut-off occurred in '
-        "weak-gold weeks. Severity says the median loss on those fall weeks; the "
-        "worst result remains available as context.</p>"
-        '<p class="hint">Eligible-miner medians use each miner\'s own available record, '
-        "so unlike GDX they are not restricted to this stock's exact qualifying weeks. "
-        "The count beside each median is the persisted number of miners with that measure.</p>"
-        + "".join(rows)
+        "<h3>What the record means</h3>"
+        '<p class="hint">Both charts count only gold\'s weak weeks. The left one asks how '
+        "OFTEN this share fell beyond the cut-off; the right one asks how MUCH it lost on "
+        "the weeks it did. A share can fall rarely but brutally, or often but mildly, so "
+        "the two answer different questions and are read separately.</p>"
+        f'<p class="hint">Each chart puts full history beside the recent window, so a '
+        "behaviour that is changing shows up as a difference between the two groups rather "
+        "than staying hidden across two separate blocks. Bars are drawn to a shared scale "
+        "within each chart.</p>"
+        f"{charts}"
+        f'<p class="hint">GDX is measured over this stock\'s exact qualifying weeks, so it '
+        "is a like-for-like comparison. The peer median is not: each miner contributes its "
+        "own available record, which is why it answers &quot;is this typical?&quot; rather "
+        f"than &quot;what happened in these same weeks?&quot;. {_peer_basis_sentence(peer_source)}</p>"
+        + "".join(notes)
         + "</div>"
     )
 
@@ -825,37 +844,81 @@ def _missing_downside_context_notice(ticker: str) -> str:
     )
 
 
-def _downside_measure(
+def _measure_value(source: Mapping[str, object], field: str) -> float | None:
+    value = source.get(field)
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
+
+
+def _downside_measure_chart(
     label: str,
-    stock: Mapping[str, object],
-    gdx: Mapping[str, object],
-    peer: Mapping[str, object],
     *,
     field: str,
-    formatter: Any,
+    scopes: Sequence[tuple[str, Mapping[str, object], Mapping[str, object], Mapping[str, object]]],
 ) -> str:
-    values = (
-        ("Stock", stock.get(field)),
-        ("GDX", gdx.get(field)),
-        (_peer_median_label(peer, field=field), peer.get(field)),
-    )
-    # Ordinary share-price returns cannot fall below -100%. Using that full
-    # truthful domain prevents an unusually severe historical week from being
-    # visually clipped at an arbitrary -50% display limit.
-    bounds = ("0", "1") if field == "hit_rate" else ("-1", "0")
-    bars = "".join(
-        '<div class="downside-comparison__bar">'
-        f'<span>{escape(name)}</span><strong>{escape(formatter(value))}</strong>'
-        + (
-            f'<meter min="{bounds[0]}" max="{bounds[1]}" '
-            f'value="{float(value):.8g}">{escape(formatter(value))}</meter>'
-            if value is not None and not pd.isna(value)
-            else '<span class="hint">No evidence</span>'
+    """One measure, both periods, all three subjects — as a single grouped chart.
+
+    This replaced three ``<meter>`` elements per period. ``<meter>`` was the wrong
+    element twice over: it is styled through vendor pseudo-elements that
+    ``accent-color`` does not reach, so every bar rendered in the browser's
+    default GREEN no matter what the design tokens said — including the bars for
+    "fell harder than the ETF", where green states the opposite of the finding.
+    And splitting the periods into separate blocks hid the comparison that
+    matters most, which is whether the behaviour is changing.
+    """
+
+    groups: list[dict[str, object]] = []
+    for scope_label, stock, gdx, peer in scopes:
+        groups.append(
+            {
+                "label": scope_label,
+                "bars": [
+                    {
+                        "label": "This stock",
+                        "value": _measure_value(stock, field),
+                        "series": _STOCK_SERIES,
+                    },
+                    {
+                        "label": "GDX",
+                        "value": _measure_value(gdx, field),
+                        "series": "gdx",
+                    },
+                    {
+                        "label": "Peer median",
+                        "value": _measure_value(peer, field),
+                        "series": "gdxj",
+                    },
+                ],
+            }
         )
-        + "</div>"
-        for name, value in values
+    chart = _build_grouped_beta_bar_svg(
+        groups=groups,
+        title=label,
+        value_formatter=_fmt_pct,
+        aria_label=f"{label} — this stock against GDX and the eligible-miner median",
+        empty_message="No comparison evidence was published for this measure.",
     )
-    return f'<div class="data-card"><h5 class="data-card__label">{escape(label)}</h5>{bars}</div>'
+    return f'<div class="data-card">{chart}</div>'
+
+
+def _peer_basis_sentence(peer: Mapping[str, object]) -> str:
+    """State the peer-median basis once, or twice only when the two differ.
+
+    Frequency and severity can rest on different numbers of miners, and hiding
+    that would mislabel one of the two comparisons. But when the counts agree —
+    the ordinary case — saying it twice reads as though something differs when
+    nothing does.
+    """
+
+    frequency = _peer_median_label(peer, field="hit_rate")
+    severity = _peer_median_label(peer, field="median_hit_return")
+    if frequency == severity:
+        return f"Both peer medians are the {escape(frequency)}."
+    return (
+        "The two peer medians rest on different numbers of miners — frequency on "
+        f"the {escape(frequency)}, severity on the {escape(severity)}."
+    )
 
 
 def _peer_median_label(peer: Mapping[str, object], *, field: str) -> str:

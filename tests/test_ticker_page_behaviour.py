@@ -103,6 +103,12 @@ def _pct_row(metric_key: str, **overrides) -> dict[str, object]:
         "metric_reason": None,
         "pct_low_good": 61.0,
         "pct_high_good": 39.0,
+        # The real artifact carries both of these on every published row; the
+        # universe standing is only shown for rank-eligible rows, so a fixture
+        # without them silently exercised the exclusion path instead of the
+        # normal one.
+        "rank_eligible": True,
+        "eligible_peer_count": 57,
         "eligible_observation_count": 44,
         "hit_count": 6,
         "source_period_start": pd.Timestamp("2019-01-04"),
@@ -329,9 +335,9 @@ def test_open_by_default_bars_and_rugs_render_from_the_published_window_fit():
 
 def test_relative_record_states_the_exact_counted_evidence():
     html = _render()
-    assert "Relative record vs GDX" in html
-    assert "Big down-week hit rate" in html
-    assert "Big up-week hit rate" in html
+    assert "How it behaved in gold's extreme weeks" in html
+    assert "Had a big down week of its own" in html
+    assert "Had a big up week of its own" in html
     # the SAME evidence wording the cost/downside card uses (one helper)
     assert "6 large falls in 44 qualifying weak-gold weeks" in html
     assert "9 large rises in 43 qualifying strong-gold weeks" in html
@@ -340,13 +346,76 @@ def test_relative_record_states_the_exact_counted_evidence():
     assert "A big down week is a weekly return of -10% or worse" in html
 
 
+def test_relative_record_groups_rows_by_the_weeks_they_count():
+    """The grouping is the correctness fix, not decoration.
+
+    ``rel_strength`` counts gold's strongest weeks and ``rel_weakness`` its
+    weakest — two different denominators. Presented as one flat list they read
+    as two halves of a total and cannot be, so the page must say which weeks
+    each row is drawn from and must warn that the pair does not sum to 100%.
+    """
+
+    html = _render()
+
+    assert "When gold was weakest" in html
+    assert "When gold was strongest" in html
+    assert "In gold&#x27;s most extreme weeks" in html
+    assert "do not sum to 100%" in html
+    # The weakness row must sit under the weak-gold group, not the strong one.
+    weak_group = html.index("When gold was weakest")
+    strong_group = html.index("When gold was strongest")
+    assert weak_group < html.index("Lagged GDX") < strong_group
+    assert strong_group < html.index("Beat GDX")
+
+
+def test_relative_record_reports_the_persisted_universe_percentile():
+    """Serve SELECTS the published percentile for the metric's direction.
+
+    ``pct_high_good`` and ``pct_low_good`` are both persisted; picking the one
+    matching the metric's direction is a lookup, never a rank computed here.
+    A lower down-week hit rate is better, so that row must read the low-good
+    column; beating GDX more often is better, so that row reads the high-good
+    one. Reading the same column for both would silently invert one of them.
+    """
+
+    html = _render()
+
+    assert "better than 61% of 57 ranked miners" in html  # downside: low is good
+    assert "better than 39% of 57 ranked miners" in html  # strength: high is good
+
+
+def test_relative_record_never_ranks_a_rank_ineligible_row():
+    """Degraded data is EXCLUDED from the ranking, not ranked anyway.
+
+    The subject is otherwise healthy — it publishes a value and both percentile
+    columns — so the only reason it must not be ranked is its own eligibility
+    flag. The healthy control row alongside it proves the section still ranks
+    when it should, so this cannot pass by rendering nothing at all.
+    """
+
+    frame = _percentile_frame(
+        _pct_row(
+            "downside_hit_rate",
+            rank_eligible=False,
+            rank_exclusion_reason="stale gold linkage",
+        ),
+        _pct_row("rel_strength_vs_gdx", raw_value=0.58),
+    )
+    html = _render(data=_data(percentiles=frame, research=_full_research()))
+
+    assert "not ranked — stale gold linkage" in html
+    # the healthy control is still ranked
+    assert "better than 39% of 57 ranked miners" in html
+
+
 def test_relative_record_marks_only_the_value_column_as_numeric():
     html = _render()
 
     assert '<th class="numeric" scope="col">Value</th>' in html
     assert '<td class="numeric">58.0%</td>' in html
     assert '<th scope="col">Measure</th>' in html
-    assert '<th scope="col">Evidence and basis</th>' in html
+    assert '<th scope="col">Against other miners</th>' in html
+    assert '<th scope="col">Counted evidence</th>' in html
     assert '<td class="numeric">Period 2019-01-04 to 2026-08-07' not in html
 
 

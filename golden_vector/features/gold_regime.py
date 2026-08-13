@@ -17,6 +17,14 @@ GOLD_REGIME_COLUMNS = [
     "gold_regime_ready",
 ]
 
+#: The rolling quantiles that define a "gold event" week. Named here because the
+#: serve layer describes these week sets to the user in prose ("gold's weakest
+#: fifth of weeks"), and an unnamed 0.20 would leave that sentence as a silent
+#: twin that drifts the moment the quantile changes. Serve reads these; it never
+#: restates the number.
+GOLD_TAIL_QUANTILE = 0.10
+GOLD_QUINTILE_QUANTILE = 0.20
+
 
 def build_gold_regime_frame(
     weekly_returns: pd.DataFrame,
@@ -58,10 +66,10 @@ def build_gold_regime_frame(
         window=rolling_weeks,
         min_periods=min_weeks,
     )
-    worst10 = rolling.quantile(0.10)
-    worst20 = rolling.quantile(0.20)
-    best80 = rolling.quantile(0.80)
-    best90 = rolling.quantile(0.90)
+    worst10 = rolling.quantile(GOLD_TAIL_QUANTILE)
+    worst20 = rolling.quantile(GOLD_QUINTILE_QUANTILE)
+    best80 = rolling.quantile(1.0 - GOLD_QUINTILE_QUANTILE)
+    best90 = rolling.quantile(1.0 - GOLD_TAIL_QUANTILE)
     ready = worst10.notna()
 
     gold["gold_worst10_event"] = ready & gold["gold_log_ret"].le(worst10)
