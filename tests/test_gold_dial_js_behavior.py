@@ -115,6 +115,21 @@ def _expected(payload: dict, metric: str, gold: float) -> str:
     return format_metric(value, METRIC_FORMATS[metric])
 
 
+def _expected_headline(payload: dict, metric: str, gold: float, *, unit: str = "usd") -> str:
+    """The headline CARD's scenario string: the value AND the price it assumes.
+
+    The card stacks the scenario under the real value, so gold-dial.js appends
+    " at $X" for cells marked ``data-headline-scenario``. Guarded values carry
+    no suffix — "Not meaningful — EBITDA ≤ 0 at $2,000" would read as a claim
+    about that price rather than about the denominator.
+    """
+
+    value, guard = mirror_evaluate(payload, metric, gold)
+    if value is None:
+        return guard
+    return f"{format_metric(value, METRIC_FORMATS[metric])} at {format_metric(gold, unit)}"
+
+
 def _scenario_valuetext(gold: float, spot: float = FRACTIONAL_SPOT) -> str:
     """The State-C ``aria-valuetext``: the scenario AND the spot it moved from."""
 
@@ -237,14 +252,25 @@ spotCell.textContent = __PENDING__;
 
 // The scenario column exists ONLY where the server rendered one. With
 // scenario_enabled False, corporate.py emits NO scenario cell, NO card scenario
-// span and NO scenario header at all (_scenario_cell and _moving_table both
+// block and NO scenario header at all (_scenario_cell and _moving_table both
 // return ""), and the line cell's no-JavaScript fallback becomes "Unavailable —
 // see reason above" instead of the needs-JavaScript text (_spot_dial_cell).
 // Building those nodes unconditionally would let assertions describe markup the
 // real page cannot contain.
+//
+// The card scenario is a <p> BLOCK carrying data-headline-scenario="1"
+// (_scenario_cell(..., tag="p", headline=True)); that marker is what makes
+// gold-dial.js append the "at $X" price. The table scenario cell is a plain
+// <td> with no marker, so it must stay unlabelled.
 const scenarioCells = __SCENARIO_ENABLED__ ? [
   new El("td", {"data-metric": "__LINE_METRIC__", "data-basis": "scenario", hidden: "hidden"}),
-  new El("p", {"data-metric": "__CARD_METRIC__", "data-basis": "scenario", hidden: "hidden"})
+  new El("p", {
+    "class": "scenario-cell",
+    "data-metric": "__CARD_METRIC__",
+    "data-basis": "scenario",
+    "data-headline-scenario": "1",
+    hidden: "hidden"
+  })
 ] : [];
 const scenarioCell = scenarioCells[0] || null;
 const cardScenario = scenarioCells[1] || null;
@@ -252,7 +278,8 @@ const scenarioHeads = __SCENARIO_ENABLED__
   ? [new El("th", {"data-scenario-head": "1", hidden: "hidden"})]
   : [];
 const scenarioHead = scenarioHeads[0] || null;
-const cardSpot = new El("p", {"data-headline-spot": "1"});
+// The server's real headline value: <span class="spot-cell" data-headline-spot="1">.
+const cardSpot = new El("span", {"class": "spot-cell", "data-headline-spot": "1"});
 cardSpot.textContent = __CARD_SPOT__;
 
 // One section-level basis replaces the six repeated per-card dates.
@@ -264,7 +291,9 @@ section.querySelectorAll = function (selector) {
   if (selector === '[data-metric][data-basis="spot"]') { return [spotCell]; }
   if (selector === '[data-metric][data-basis="scenario"]') { return scenarioCells; }
   if (selector === "[data-scenario-head]") { return scenarioHeads; }
-  if (selector === "[data-headline-spot]") { return [cardSpot]; }
+  // "[data-headline-spot]" is deliberately NOT modelled: the module no longer
+  // collects the spot headlines, because they stay visible while a scenario is
+  // shown. Re-adding that query would throw here rather than quietly hide them.
   // An unmodelled selector must fail loudly rather than silently return nothing.
   throw new Error("unexpected selector: " + selector);
 };
@@ -438,7 +467,6 @@ const section = new El("section");
 section.querySelectorAll = function (selector) {
   if (selector === '[data-metric][data-basis="scenario"]') { return cells; }
   if (selector === "[data-scenario-head]") { return []; }
-  if (selector === "[data-headline-spot]") { return []; }
   throw new Error("unexpected selector: " + selector);
 };
 
@@ -664,13 +692,22 @@ assert.equal(
 assert.equal(section.attrs["data-scenario-active"], "1");
 assert.equal(reset.disabled, false);
 
-// ONE value per card: the spot headline gives way to the scenario one.
-assert.equal(cardSpot.hidden, true);
-assert.equal(cardSpot.style.display, "none");
+// BOTH values, each labelled: the real one stays put and the scenario appears
+// beneath it carrying the gold price it assumes.
+assert.equal(cardSpot.hidden, false);
+assert.notEqual(cardSpot.style.display, "none");  // never hidden, so never styled
+assert.equal(cardSpot.textContent, {json.dumps(CARD_SPOT_TEXT)});
 assert.equal(cardScenario.hidden, false);
-assert.equal(cardScenario.textContent, {json.dumps(_expected(payload, CARD_METRIC, 4200.0))});
+assert.equal(
+  cardScenario.textContent,
+  {json.dumps(_expected_headline(payload, CARD_METRIC, 4200.0))}
+);
+// ...and the price suffix is the thing that makes stacking them legible, so a
+// bare value in the card slot is a failure even though it is the right number.
+assert.notEqual(cardScenario.textContent, {json.dumps(_expected(payload, CARD_METRIC, 4200.0))});
 
-// The expanded table keeps BOTH, labelled: spot cell untouched, scenario column shown.
+// The expanded table keeps BOTH, labelled by its column: the table scenario
+// cell is UNmarked, so it must NOT pick up the card's price suffix.
 assert.equal(scenarioHead.hidden, false);
 assert.equal(scenarioCell.hidden, false);
 assert.equal(scenarioCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, 4200.0))});
@@ -833,7 +870,14 @@ def test_invalid_scenario_ratios_render_explicit_professional_guards(
     overrides: dict[str, float],
     expected: str,
 ):
-    """Every invalid ratio names the failed denominator, never zero or blank."""
+    """Every invalid ratio names the failed denominator, never zero or blank.
+
+    The guard renders in the card's scenario slot — the same block that would
+    hold the value — while the real spot headline above it stays untouched: a
+    scenario the dial cannot evaluate says nothing about the published number.
+    A guard also takes NO "at $X" suffix, since the reason is about the
+    denominator rather than about the gold price.
+    """
 
     payload = _payload(**overrides)
     body = f"""
@@ -841,7 +885,8 @@ slide({json.dumps(scenario)});
 assert.equal(cardScenario.hidden, false);
 assert.equal(cardScenario.textContent, {json.dumps(expected)});
 assert.equal(cardScenario.attrs["data-unavailable"], "1");
-assert.equal(cardSpot.hidden, true);
+assert.equal(cardSpot.hidden, false);
+assert.equal(cardSpot.textContent, {json.dumps(CARD_SPOT_TEXT)});
 """
     _run(body, payload=payload, card_metric=metric, minimum="0")
 
@@ -866,6 +911,11 @@ def test_manual_return_to_the_baseline_clears_the_scenario_completely():
 slide("4200");
 flush();
 assert.equal(corporateBasis.textContent, {json.dumps(_corporate_basis_scenario(4200.0))});
+// The labelled scenario really was written, so its removal below is a change.
+assert.equal(
+  cardScenario.textContent,
+  {json.dumps(_expected_headline(payload, CARD_METRIC, 4200.0))}
+);
 slide({json.dumps(FRACTIONAL_BASELINE)});
 
 // Byte-exact restoration: the server's wording is captured, never rebuilt.
@@ -878,10 +928,16 @@ assert.equal(section.attrs["data-scenario-active"], "0");
 assert.equal(reset.disabled, true);
 assert.equal(scenarioCell.hidden, true);
 assert.equal(scenarioCell.textContent, "");
+// The scenario slot goes back to the empty state the server shipped: hidden AND
+// emptied, so neither the value nor its "at $X" label can linger under the card.
 assert.equal(cardScenario.hidden, true);
+assert.equal(cardScenario.textContent, "");
+assert.equal(cardScenario.attrs["data-unavailable"], undefined);
 assert.equal(scenarioHead.hidden, true);
+// The real value was never hidden in the first place, and is still the server's.
 assert.equal(cardSpot.hidden, false);
-assert.equal(cardSpot.style.display, "");
+assert.notEqual(cardSpot.style.display, "none");  // never hidden, so never styled
+assert.equal(cardSpot.textContent, {json.dumps(CARD_SPOT_TEXT)});
 assert.equal(output.textContent, {json.dumps(format_metric(FRACTIONAL_SPOT, "usd2"))});
 assert.equal(
   input.attrs["aria-valuetext"],
@@ -980,12 +1036,17 @@ assert.equal(spotCell.textContent, {json.dumps(SERVER_SPOT_TEXT)});
 slide("4300");
 flush();
 assert.equal(section.attrs["data-scenario-active"], "1");
-assert.equal(cardSpot.hidden, true);
+assert.equal(cardSpot.hidden, false);
+assert.equal(
+  cardScenario.textContent,
+  {json.dumps(_expected_headline(payload, CARD_METRIC, 4300.0))}
+);
 assert.equal(reset.disabled, false);
 
 reset.listeners.click();
 assert.equal(input.value, {json.dumps(INTEGER_BASELINE)});
 assert.equal(cardSpot.hidden, false);
+assert.equal(cardScenario.textContent, "");
 assert.equal(reset.disabled, true);
 flush();
 assert.equal(
