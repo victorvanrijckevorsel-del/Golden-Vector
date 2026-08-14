@@ -78,6 +78,7 @@ def assert_every_rug_strip_has_a_data_table(html: str, *, minimum: int = 1) -> i
     strips = _rug_svgs(html)
     assert len(strips) >= minimum, len(strips)
     seen_ids: set[str] = set()
+    seen_names: set[str] = set()
     for end_svg, svg in strips:
         labels = _RUG_LABEL.findall(svg)
         assert labels
@@ -86,11 +87,18 @@ def assert_every_rug_strip_has_a_data_table(html: str, *, minimum: int = 1) -> i
         start = end_svg + tail.index("<details")
         block = html[start : html.index("</details>", start) + len("</details>")]
         assert "<summary>Chart data (table)</summary>" in block
-        assert 'class="table-region"' in block
-        region_id = _re.search(r'class="table-region"[^>]*\bid="([^"]+)"', block)
-        assert region_id is not None, block[:200]
-        assert region_id.group(1) not in seen_ids, f"duplicate id {region_id.group(1)}"
-        seen_ids.add(region_id.group(1))
+        region = _re.search(
+            r'class="table-region"[^>]*\bid="([^"]+)"[^>]*\baria-label="([^"]+)"',
+            block,
+        )
+        assert region is not None, block[:200]
+        region_id, region_name = region.group(1), region.group(2)
+        assert region_id not in seen_ids, f"duplicate id {region_id}"
+        seen_ids.add(region_id)
+        # Two region landmarks with identical NAMES are as bad as duplicate ids
+        # — a screen-reader's landmark list would show indistinguishable twins.
+        assert region_name not in seen_names, f"duplicate region name {region_name}"
+        seen_names.add(region_name)
         # 1:1 with the rug: same tickers, same pre-formatted value text, same order.
         rows = _TABLE_ROW.findall(block)
         assert _row_count(block) == len(labels)

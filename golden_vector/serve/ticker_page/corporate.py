@@ -77,6 +77,10 @@ _STRIP_METRIC_KEYS: frozenset[str] = frozenset(
     }
 )
 
+#: The section's one human name: the H2 heading and the strips' region-landmark
+#: namespace both read it, so they can never drift apart.
+CORPORATE_SECTION_TITLE = "Corporate finance"
+
 #: The one payload id shared by the server (embed) and gold-dial.js (read).
 GOLD_DIAL_PAYLOAD_ID = "gold-dial-payload"
 
@@ -1666,7 +1670,7 @@ def render_corporate_finance_section(
                 if spec.key in _STRIP_METRIC_KEYS
             ],
             section="corporate",
-            section_title="Corporate finance",
+            section_title=CORPORATE_SECTION_TITLE,
         )
         if app_config is not None
         else {}
@@ -1681,9 +1685,9 @@ def render_corporate_finance_section(
     pieces: list[str] = [
         '<section class="panel" id="corporate-finance" data-scenario-active="0">',
         section_heading(
-            "Corporate finance",
+            CORPORATE_SECTION_TITLE,
             help_html=help_icon(
-                "Corporate finance", key="ticker_cf_section", app_config=app_config
+                CORPORATE_SECTION_TITLE, key="ticker_cf_section", app_config=app_config
             ),
         ),
         basis_strip(

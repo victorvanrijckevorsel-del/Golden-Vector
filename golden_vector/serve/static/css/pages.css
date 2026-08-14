@@ -613,7 +613,6 @@ td.basis, .basis { font-size: 0.78rem; color: var(--ink-soft); }
 }
 .sb-metric-strip,
 .cf-metric-strip {
-  display: block;
   min-width: 0;
 }
 .sb-metric-strip svg,

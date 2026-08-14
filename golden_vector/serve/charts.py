@@ -315,15 +315,18 @@ def build_distribution_strip_svg(
         f'<tr><td>{escape(ticker)}</td><td class="numeric">{escape(value_text)}</td></tr>'
         for ticker, value_text, _position in marks
     )
-    # An in-row strip draws no axis text, so the table borrows the metric name the
-    # caller already gave for the aria fallback rather than captioning itself " — ".
-    # ``table_title`` lets a caller that renders the SAME metric in two page
-    # sections (compare AND corporate) give each region landmark a distinct
-    # human name — two regions with identical names are as bad as duplicate ids.
+    # The table's human name: ``table_title`` when the caller renders the SAME
+    # metric in two page sections (compare AND corporate) and each region
+    # landmark needs its own name — two regions with identical names are as bad
+    # as duplicate ids. Else the drawn axis label; the value column is a
+    # defensive last resort so the caption can never open bare.
     table_title = table_title or axis_label or value_column_label
     table_html = (
         "<table>"
-        f"<caption>{escape(table_title)} — every miner in the universe</caption>"
+        # "eligible", not "the universe": degraded/ineligible miners are off the
+        # rug by design, and the table mirrors the rug 1:1 — it must not claim
+        # a completeness the strip deliberately does not have.
+        f"<caption>{escape(table_title)} — every eligible miner</caption>"
         '<thead><tr><th scope="col">Ticker</th>'
         f'<th scope="col" class="numeric">{escape(value_column_label)}</th></tr></thead>'
         f"<tbody>{rows}</tbody></table>"

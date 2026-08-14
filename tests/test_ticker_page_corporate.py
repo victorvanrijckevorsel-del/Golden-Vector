@@ -1614,7 +1614,9 @@ def _strip_rows() -> list[dict]:
 def test_a_catalog_metric_row_carries_its_distribution_strip():
     html = _render(data=_data(percentile_rows=_strip_rows()))
 
-    assert "cf-metric-strip" in html
+    # A DIV wrapper, by name: the strip carries a <details>/<table> disclosure,
+    # which phrasing content (a span) may not legally contain.
+    assert '<div class="cf-metric-strip">' in html
     assert "<title>KGC · 5.00×</title>" in html
     # EV/EBITDA is lower-is-better, so the subject label reads the low-good
     # percentile — the same direction default the Compare section uses.
@@ -1638,46 +1640,35 @@ def test_every_corporate_strip_carries_its_chart_data_table():
 
     count = assert_every_rug_strip_has_a_data_table(html, minimum=2)
     assert count == 2
+    # The REAL call site wires section="corporate" into the table id.
+    assert 'id="chart-data-strip-corporate-ev-ebitda-nem-our"' in html
     # The table is named after the metric AND the section (empty axis label,
     # so the fallback title is all that names it).
     assert (
         "<caption>EV/EBITDA (Corporate finance) — "
-        "every miner in the universe</caption>" in html
+        "every eligible miner</caption>" in html
     )
 
 
 def test_compare_and_corporate_strips_for_one_metric_never_collide():
     """``section``/``section_title`` exist because ``ev_ebitda`` draws in BOTH
-    page sections (detail_page renders them into one document): the two strips
-    must keep their table ids AND their region landmark names distinct —
-    dropping either namespace from the id template must fail here."""
+    page sections, and detail_page renders them into one document. Rendered
+    through the REAL call sites — not hand-fed namespaces — the combined page
+    must keep the two table ids AND the two region landmark names distinct;
+    mis-wiring either section argument fails the shared guard's collision
+    checks."""
 
-    from golden_vector.serve.ticker_page.strips import build_metric_strips
+    from golden_vector.serve.ticker_page.compare import render_compare_section
 
     data = _data(percentile_rows=_strip_rows())
-    specs = [
-        spec
-        for spec in _app_config().ticker_page.score_builder.metrics
-        if spec.key == _STRIP_METRIC
-    ]
-    page = "".join(
-        build_metric_strips(
-            data,
-            ticker="NEM",
-            finance_source="our",
-            metrics=specs,
-            section=section,
-            section_title=title,
-        )[_STRIP_METRIC]
-        for section, title in (
-            ("compare", "Compare on your own terms"),
-            ("corporate", "Corporate finance"),
-        )
-    )
+    page = render_compare_section(
+        data, ticker="NEM", finance_source="our", app_config=_app_config()
+    ) + _render(data=data)
 
     assert 'id="chart-data-strip-compare-ev-ebitda-nem-our"' in page
     assert 'id="chart-data-strip-corporate-ev-ebitda-nem-our"' in page
-    # The shared helper's duplicate-id guard sees both sections at once.
+    # The shared guard sees both sections at once: duplicate ids AND duplicate
+    # region names both fail here.
     assert assert_every_rug_strip_has_a_data_table(page, minimum=2) == 2
     assert "EV/EBITDA (Compare on your own terms) — chart data table" in page
     assert "EV/EBITDA (Corporate finance) — chart data table" in page

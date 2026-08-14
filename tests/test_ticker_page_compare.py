@@ -808,7 +808,9 @@ def _strip_html(app_config, key: str) -> str:
 def test_metric_row_carries_a_strip_naming_every_eligible_miner(app_config):
     row = _strip_html(app_config, STRIP_LOW_GOOD_METRIC)
 
-    assert "sb-metric-strip" in row
+    # A DIV wrapper, by name: the strip carries a <details>/<table> disclosure,
+    # which phrasing content (a span) may not legally contain.
+    assert '<div class="sb-metric-strip">' in row
     # The hover title of one rug tick: ticker + the value in the metric's units.
     assert "<title>KGC · 5.00×</title>" in row
     # Subject marker label: value + the direction-default percentile.
@@ -870,15 +872,18 @@ def test_every_compare_strip_carries_its_chart_data_table(app_config):
     count = assert_every_rug_strip_has_a_data_table(page, minimum=2)
     # Exactly the two metrics with a drawable cohort — nothing extra, nothing lost.
     assert count == 2
+    # The REAL call site wires section="compare" into the table id — the
+    # namespace that keeps this id distinct from corporate's for the same metric.
+    assert 'id="chart-data-strip-compare-ev-ebitda-nem-our"' in page
     # The table is NAMED (caption + region label) after the metric and section;
     # every strip passes an empty axis label, so without the fallback the caption
     # would open with a bare " — " and name nothing.
     assert (
         "<caption>EV/EBITDA (Compare on your own terms) — "
-        "every miner in the universe</caption>" in page
+        "every eligible miner</caption>" in page
     )
     assert "EV/EBITDA (Compare on your own terms) — chart data table" in page
-    assert "<caption> — every miner in the universe</caption>" not in page
+    assert "<caption> — every eligible miner</caption>" not in page
 
 
 def test_strip_assembly_contains_no_arithmetic_at_all():
