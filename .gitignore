@@ -49,3 +49,6 @@ SESSION_HANDOFF.md
 # Visual redesign curated evidence screenshots (Codex Q1 decision 2026-08-10)
 !reviews/codex/milestones/visual_redesign/**/*.png
 !reviews/codex/milestones/platform_redesign/*.png
+
+# Victor personal scratch file - never committed (the rule lives once, here)
+naukri.md
