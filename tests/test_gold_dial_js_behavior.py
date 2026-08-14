@@ -279,9 +279,9 @@ const scenarioHeads = __SCENARIO_ENABLED__
   : [];
 const scenarioHead = scenarioHeads[0] || null;
 // The server's real headline value: <span class="spot-cell" data-headline-spot="1">.
-// It is deliberately NOT reachable from the module (no id, no modelled
-// selector), so it is a canary for "nothing touched it" rather than proof that
-// a reachable node survives; ``spotCell`` carries that second duty below.
+// Unreachable from the module by construction: no id, and the selector it
+// would be found by throws. These assertions are canaries for shim drift; the
+// selector trap in section.querySelectorAll is the real guard.
 const cardSpot = new El("span", {"class": "spot-cell", "data-headline-spot": "1"});
 cardSpot.textContent = __CARD_SPOT__;
 
@@ -291,12 +291,14 @@ corporateBasis.textContent = __CORPORATE_BASIS__;
 
 const section = new El("section");
 section.querySelectorAll = function (selector) {
-  if (selector === '[data-metric][data-basis="spot"]') { return [spotCell]; }
   if (selector === '[data-metric][data-basis="scenario"]') { return scenarioCells; }
   if (selector === "[data-scenario-head]") { return scenarioHeads; }
-  // "[data-headline-spot]" is deliberately NOT modelled: the module no longer
-  // collects the spot headlines, because they stay visible while a scenario is
-  // shown. Re-adding that query would throw here rather than quietly hide them.
+  // THE REAL GUARD for "spot values are never touched": the module makes exactly
+  // these two queries and holds no reference to any spot node, so neither the
+  // table's spot cells ('[data-metric][data-basis="spot"]') nor the card
+  // headlines ("[data-headline-spot]") can be hidden or rewritten. Both are
+  // deliberately unmodelled, so re-introducing either query throws here instead
+  // of quietly reinstating the old hide-the-real-value behaviour.
   // An unmodelled selector must fail loudly rather than silently return nothing.
   throw new Error("unexpected selector: " + selector);
 };
@@ -717,7 +719,9 @@ assert.equal(scenarioHead.hidden, false);
 assert.equal(scenarioCell.hidden, false);
 assert.equal(scenarioCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, 4200.0))});
 assert.equal(spotCell.textContent, {json.dumps(SERVER_SPOT_TEXT)});
-// A spot node the module DOES collect stays visible through the scenario.
+// Canary only — unreachable from the module by construction (see the selector
+// trap in the shim, which is the actual guard). It proves the shim itself has
+// not drifted into handing spot content to the module by another route.
 assert.equal(spotCell.hidden, false);
 assert.equal(scenarioCell.classes["is-updated"], true);
 
@@ -912,10 +916,18 @@ def test_invalid_scenario_ratios_render_explicit_professional_guards(
     ``data-unavailable`` is what CSS paints as unavailable, so leaving it on a
     later VALID number would style a real answer as a failure. Each case
     therefore also proves the marker comes back off — by dialling to a price
-    that recovers the ratio where one exists, and by Reset in every case.
+    that recovers the ratio where one exists, and by Reset FROM A GUARDED STATE
+    in every case (the recovery detour dials back into the guard first).
+
+    The guard is also scoped: the healthy sibling metric in the same section
+    keeps its ordinary value at the very same price, so a guard can never be a
+    section-wide blank.
     """
 
     payload = _payload(**overrides)
+    guard_price = float(scenario)
+    sibling_value, _sibling_guard = mirror_evaluate(payload, LINE_METRIC, guard_price)
+    assert sibling_value is not None, "the sibling metric must stay healthy at the guard price"
     recovered = ""
     if recovery is not None:
         value, _guard = mirror_evaluate(payload, metric, recovery)
@@ -930,6 +942,12 @@ assert.equal(
 );
 assert.equal(cardScenario.attrs["data-unavailable"], undefined);
 assert.equal(cardScenario.hidden, false);
+
+// ...and back into the guard, so the Reset below really does clear a guarded
+// slot rather than an already-clean one.
+slide({json.dumps(scenario)});
+assert.equal(cardScenario.textContent, {json.dumps(expected)});
+assert.equal(cardScenario.attrs["data-unavailable"], "1");
 """
     body = f"""
 slide({json.dumps(scenario)});
@@ -938,6 +956,11 @@ assert.equal(cardScenario.textContent, {json.dumps(expected)});
 assert.equal(cardScenario.attrs["data-unavailable"], "1");
 assert.equal(cardSpot.hidden, false);
 assert.equal(cardSpot.textContent, {json.dumps(CARD_SPOT_TEXT)});
+
+// The guard is scoped to the metric that failed: the healthy sibling in the
+// same section still renders its own value, unmarked, at this same price.
+assert.equal(scenarioCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, guard_price))});
+assert.equal(scenarioCell.attrs["data-unavailable"], undefined);
 {recovered}
 // Reset returns the slot to the empty, unmarked state the server shipped —
 // no lingering reason, and no lingering unavailable styling.
