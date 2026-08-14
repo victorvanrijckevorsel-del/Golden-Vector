@@ -41,10 +41,10 @@ from golden_vector.lab.conditional_dial import BUCKET_LABELS, DEFAULT_DIAL_BUCKE
 from golden_vector.serve.charts import (
     _STOCK_SERIES,
     _benchmark_series,
-    _build_beta_strip_svg,
     _build_dual_bar_svg,
     _build_grouped_beta_bar_svg,
     _build_scatter_svg,
+    build_distribution_strip_svg,
 )
 from golden_vector.serve.column_help import help_icon, help_th
 from golden_vector.serve.format_helpers import (
@@ -489,6 +489,24 @@ def _subject_strip_label(ticker: str, beta: float | None, percentile: float | No
     return f"{ticker} {_fmt_number(beta, decimals=2)} · {_ordinal_percentile(percentile)}"
 
 
+def _beta_strip_marks(universe_marks: Any) -> list[tuple[str, str, float]]:
+    """Adapt the model's ``BetaUniverseMark`` rows to the shared strip's (ticker, text, pos) form.
+
+    Beta's two-decimal presentation lives HERE because the strip builder is metric-agnostic —
+    each caller owns its own units."""
+
+    return [(mark.ticker, f"{mark.beta:,.2f}", float(mark.position)) for mark in universe_marks]
+
+
+def _beta_domain_labels(domain: tuple[float, float] | None) -> tuple[str, str] | None:
+    """Pre-format the strip's end labels; ``None`` domain means no drawable spread."""
+
+    if domain is None:
+        return None
+    low, high = domain
+    return (f"{low:,.2f}", f"{high:,.2f}")
+
+
 def render_beta_comparison_panel(
     comparison: Any,
     *,
@@ -520,10 +538,10 @@ def render_beta_comparison_panel(
     window_label_text = escape(str(comparison.window_label))
     window_label_raw = str(comparison.window_label)
     subject = comparison.subject
-    down_svg = _build_beta_strip_svg(
+    down_svg = build_distribution_strip_svg(
         axis_label=f"Down beta — weeks gold fell ({window_label_raw})",
-        domain=comparison.down_domain,
-        universe_marks=list(comparison.down_universe_marks),
+        domain_labels=_beta_domain_labels(comparison.down_domain),
+        marks=_beta_strip_marks(comparison.down_universe_marks),
         subject_pos=subject.down_pos if subject is not None else None,
         subject_label=_subject_strip_label(
             ticker,
@@ -531,12 +549,13 @@ def render_beta_comparison_panel(
             subject.down_percentile if subject else None,
         ),
         benchmark_positions=[m.down_pos for m in comparison.benchmarks if m.down_pos is not None],
+        value_column_label="Beta",
         data_table_id=f"chart-data-downbeta-{_id_token(ticker)}-{_id_token(window_label_raw)}",
     )
-    up_svg = _build_beta_strip_svg(
+    up_svg = build_distribution_strip_svg(
         axis_label=f"Up beta — weeks gold rose ({window_label_raw})",
-        domain=comparison.up_domain,
-        universe_marks=list(comparison.up_universe_marks),
+        domain_labels=_beta_domain_labels(comparison.up_domain),
+        marks=_beta_strip_marks(comparison.up_universe_marks),
         subject_pos=subject.up_pos if subject is not None else None,
         subject_label=_subject_strip_label(
             ticker,
@@ -544,6 +563,7 @@ def render_beta_comparison_panel(
             subject.up_percentile if subject else None,
         ),
         benchmark_positions=[m.up_pos for m in comparison.benchmarks if m.up_pos is not None],
+        value_column_label="Beta",
         data_table_id=f"chart-data-upbeta-{_id_token(ticker)}-{_id_token(window_label_raw)}",
     )
 

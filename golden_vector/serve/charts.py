@@ -10,7 +10,6 @@ from typing import Callable, Literal
 
 import pandas as pd
 
-from golden_vector.model.benchmark_comparison import BetaUniverseMark
 from golden_vector.serve.format_helpers import _fmt_number
 from golden_vector.serve.ui.tables import table_region
 
@@ -160,31 +159,83 @@ def _chart_data_disclosure(
     )
 
 
-def _build_beta_strip_svg(
+#: Strip geometry per size. ``compact`` is the in-row variant (same padding logic,
+#: proportionally shorter ticks); the standard size reproduces the original beta strip
+#: exactly, so migrated callers render unchanged.
+_STRIP_SIZES = {
+    "standard": {
+        "width": 420,
+        "height": 92,
+        "padding": 40,
+        "track_y": 50,
+        "axis_label_y": 18,
+        "axis_font": 12,
+        "domain_dy": 26,
+        "domain_font": 11,
+        "subject_dy": 21,
+        "subject_font": 11.5,
+        "rug_half": 7,
+        "hit_half": 9,
+        "benchmark_half": 11,
+        "subject_half": 15,
+        "subject_radius": 5,
+    },
+    "compact": {
+        "width": 320,
+        "height": 56,
+        "padding": 28,
+        "track_y": 34,
+        "axis_label_y": 12,
+        "axis_font": 10,
+        "domain_dy": 17,
+        "domain_font": 9.5,
+        "subject_dy": 13,
+        "subject_font": 10,
+        "rug_half": 5,
+        "hit_half": 7,
+        "benchmark_half": 8,
+        "subject_half": 10,
+        "subject_radius": 3.5,
+    },
+}
+
+
+def build_distribution_strip_svg(
     *,
     axis_label: str,
-    domain: tuple[float, float] | None,
-    universe_marks: list[BetaUniverseMark],
+    domain_labels: tuple[str, str] | None,
+    marks: list[tuple[str, str, float]],
     subject_pos: float | None,
     subject_label: str,
-    benchmark_positions: list[float],
+    benchmark_positions: list[float] | tuple[float, ...] = (),
     data_table_id: str | None = None,
+    value_column_label: str = "Value",
+    compact: bool = False,
 ) -> str:
-    """Render a slim "where does this stock rank" strip from BACKEND-resolved positions.
+    """Render a slim "where does this row sit in the universe" strip from BACKEND-resolved positions.
 
-    The full miner universe is drawn as a faint "rug" of ticks (so the distribution is visible);
-    each tick is identifiable on hover (ticker + beta) via an invisible wide hit-area. The stock
-    is the one labelled orange marker, and GDX/GDXJ are small dashed ticks (their exact values
-    live on the grouped Up-vs-Down bar). Every position is a pre-computed 0..1 fraction; this
-    builder only maps it to a pixel.
+    Metric-agnostic: the beta panel was simply its first caller. The universe is drawn as a faint
+    "rug" of ticks (so the distribution is visible); each tick is identifiable on hover
+    ("TICKER · value") via an invisible wide hit-area. The subject is the one labelled marker, and
+    ``benchmark_positions`` adds small dashed context ticks (the behaviour section's GDX/GDXJ,
+    whose exact values live on the grouped Up-vs-Down bar).
+
+    ``domain_labels`` are the pre-formatted end labels and ``marks`` are
+    ``(ticker, value_text, position)`` — the CALLER owns unit formatting, so one builder serves
+    betas, ratios and percentages without a units branch in here. ``domain_labels is None`` means
+    the metric has no drawable spread.
+
+    ``compact`` selects the in-row size (320x56 vs 420x92, see ``_STRIP_SIZES``); geometry is the
+    only difference, every element and class is identical.
     """
 
-    if domain is None:
+    if domain_labels is None:
         return "<p>No comparison data available.</p>"
-    width = 420
-    height = 92
-    padding = 40
-    track_y = 50
+    size = _STRIP_SIZES["compact" if compact else "standard"]
+    width = size["width"]
+    height = size["height"]
+    padding = size["padding"]
+    track_y = size["track_y"]
     span = width - (2 * padding)
 
     # Positions are a trusted backend contract (the model's _position already clamps to 0..1); serve
@@ -193,38 +244,51 @@ def _build_beta_strip_svg(
     def px(pos: float) -> float:
         return padding + (pos * span)
 
-    low, high = domain
+    low, high = domain_labels
     parts = [
         f"<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" class=\"chart-bg\" rx=\"12\" ry=\"12\" />",
-        f"<text x=\"{padding}\" y=\"18\" font-size=\"12\" class=\"chart-label\">{escape(axis_label)}</text>",
-        f"<line x1=\"{padding}\" y1=\"{track_y}\" x2=\"{width - padding}\" y2=\"{track_y}\" class=\"chart-track-line\" stroke-width=\"3\" stroke-linecap=\"round\" />",
-        f"<text x=\"{padding}\" y=\"{track_y + 26}\" font-size=\"11\" class=\"chart-label-minor\">{low:,.2f}</text>",
-        f"<text x=\"{width - padding}\" y=\"{track_y + 26}\" text-anchor=\"end\" font-size=\"11\" class=\"chart-label-minor\">{high:,.2f}</text>",
     ]
-    # Universe rug: one faint tick per scored miner (shows the distribution). Each tick gets an
-    # invisible wide hit-area carrying a <title>, so hovering identifies the miner (ticker + beta)
-    # — a bare 1px tick is far too thin to hover precisely.
-    for mark in universe_marks:
-        x = px(float(mark.position))
-        label = f"{mark.ticker} · {mark.beta:,.2f}"
+    if axis_label:
         parts.append(
-            f"<line x1=\"{x:.1f}\" y1=\"{track_y - 7}\" x2=\"{x:.1f}\" y2=\"{track_y + 7}\" class=\"chart-tick-line\" stroke-width=\"1\" opacity=\"0.7\" />"
-            f"<line class=\"rug-tick\" data-rug=\"{escape(label)}\" x1=\"{x:.1f}\" y1=\"{track_y - 9}\" x2=\"{x:.1f}\" y2=\"{track_y + 9}\" stroke=\"transparent\" stroke-width=\"7\" pointer-events=\"all\">"
+            f"<text x=\"{padding}\" y=\"{size['axis_label_y']}\" font-size=\"{size['axis_font']}\" class=\"chart-label\">{escape(axis_label)}</text>"
+        )
+    parts.extend(
+        [
+            f"<line x1=\"{padding}\" y1=\"{track_y}\" x2=\"{width - padding}\" y2=\"{track_y}\" class=\"chart-track-line\" stroke-width=\"3\" stroke-linecap=\"round\" />",
+            f"<text x=\"{padding}\" y=\"{track_y + size['domain_dy']}\" font-size=\"{size['domain_font']}\" class=\"chart-label-minor\">{escape(low)}</text>",
+            f"<text x=\"{width - padding}\" y=\"{track_y + size['domain_dy']}\" text-anchor=\"end\" font-size=\"{size['domain_font']}\" class=\"chart-label-minor\">{escape(high)}</text>",
+        ]
+    )
+    # Universe rug: one faint tick per scored miner (shows the distribution). Each tick gets an
+    # invisible wide hit-area carrying a <title>, so hovering identifies the miner (ticker + value)
+    # — a bare 1px tick is far too thin to hover precisely.
+    rug_half = size["rug_half"]
+    hit_half = size["hit_half"]
+    for ticker, value_text, position in marks:
+        x = px(float(position))
+        label = f"{ticker} · {value_text}"
+        parts.append(
+            f"<line x1=\"{x:.1f}\" y1=\"{track_y - rug_half}\" x2=\"{x:.1f}\" y2=\"{track_y + rug_half}\" class=\"chart-tick-line\" stroke-width=\"1\" opacity=\"0.7\" />"
+            f"<line class=\"rug-tick\" data-rug=\"{escape(label)}\" x1=\"{x:.1f}\" y1=\"{track_y - hit_half}\" x2=\"{x:.1f}\" y2=\"{track_y + hit_half}\" stroke=\"transparent\" stroke-width=\"7\" pointer-events=\"all\">"
             f"<title>{escape(label)}</title></line>"
         )
-    # GDX/GDXJ context ticks (dashed, unlabelled — values are on the grouped bar).
+    # Context ticks (dashed, unlabelled — their exact values live elsewhere on the page).
+    benchmark_half = size["benchmark_half"]
     for pos in benchmark_positions:
         x = px(float(pos))
         parts.append(
-            f"<line x1=\"{x:.1f}\" y1=\"{track_y - 11}\" x2=\"{x:.1f}\" y2=\"{track_y + 11}\" class=\"chart-marker\" stroke-width=\"2\" stroke-dasharray=\"3 2\" />"
+            f"<line x1=\"{x:.1f}\" y1=\"{track_y - benchmark_half}\" x2=\"{x:.1f}\" y2=\"{track_y + benchmark_half}\" class=\"chart-marker\" stroke-width=\"2\" stroke-dasharray=\"3 2\" />"
         )
-    # The stock: the one labelled marker.
+    # The subject: the one labelled marker.
     if subject_pos is not None:
         x = px(float(subject_pos))
+        subject_half = size["subject_half"]
         parts.append(
-            f"<line x1=\"{x:.1f}\" y1=\"{track_y - 15}\" x2=\"{x:.1f}\" y2=\"{track_y + 15}\" class=\"series-{_STOCK_SERIES}\" stroke-width=\"2\" />"
+            f"<line x1=\"{x:.1f}\" y1=\"{track_y - subject_half}\" x2=\"{x:.1f}\" y2=\"{track_y + subject_half}\" class=\"series-{_STOCK_SERIES}\" stroke-width=\"2\" />"
         )
-        parts.append(f"<circle cx=\"{x:.1f}\" cy=\"{track_y:.1f}\" r=\"5\" class=\"series-{_STOCK_SERIES}\" />")
+        parts.append(
+            f"<circle cx=\"{x:.1f}\" cy=\"{track_y:.1f}\" r=\"{size['subject_radius']}\" class=\"series-{_STOCK_SERIES}\" />"
+        )
         # Keep the label inside the canvas at the extremes.
         anchor = "middle"
         if x < padding + 40:
@@ -232,7 +296,7 @@ def _build_beta_strip_svg(
         elif x > width - padding - 40:
             anchor = "end"
         parts.append(
-            f"<text x=\"{x:.1f}\" y=\"{track_y - 21}\" text-anchor=\"{anchor}\" font-size=\"11.5\" class=\"chart-value\">{escape(subject_label)}</text>"
+            f"<text x=\"{x:.1f}\" y=\"{track_y - size['subject_dy']}\" text-anchor=\"{anchor}\" font-size=\"{size['subject_font']}\" class=\"chart-value\">{escape(subject_label)}</text>"
         )
     svg = (
         f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"{escape(axis_label)} distribution\">"
@@ -241,18 +305,17 @@ def _build_beta_strip_svg(
     )
     if not data_table_id:
         return svg
-    # Text equivalent of the rug tooltips: one row per tick, exactly the ticker + beta the
-    # hover <title> / rug-tooltip.js shows (same f-string as the tick label above).
+    # Text equivalent of the rug tooltips: one row per tick, exactly the ticker + value the
+    # hover <title> / rug-tooltip.js shows (same caller-formatted text as the tick label above).
     rows = "".join(
-        f'<tr><td>{escape(mark.ticker)}</td><td class="numeric">'
-        f"{escape(f'{mark.beta:,.2f}')}</td></tr>"
-        for mark in universe_marks
+        f'<tr><td>{escape(ticker)}</td><td class="numeric">{escape(value_text)}</td></tr>'
+        for ticker, value_text, _position in marks
     )
     table_html = (
         "<table>"
         f"<caption>{escape(axis_label)} — every miner in the universe</caption>"
         '<thead><tr><th scope="col">Ticker</th>'
-        '<th scope="col" class="numeric">Beta</th></tr></thead>'
+        f'<th scope="col" class="numeric">{escape(value_column_label)}</th></tr></thead>'
         f"<tbody>{rows}</tbody></table>"
     )
     return svg + _chart_data_disclosure(

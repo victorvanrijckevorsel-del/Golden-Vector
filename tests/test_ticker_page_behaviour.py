@@ -333,6 +333,35 @@ def test_open_by_default_bars_and_rugs_render_from_the_published_window_fit():
     assert '<td>AEM</td><td class="numeric">0.80</td>' in html
 
 
+def test_beta_strips_survive_the_shared_distribution_builder():
+    """Render-level lock on the migration to ``build_distribution_strip_svg``.
+
+    The generalized builder takes caller-formatted text, so a units regression here would be
+    invisible in the geometry: assert the actual strings the reader sees."""
+
+    comparison = _StubComparison()
+    comparison.benchmarks = (_StubBenchmark(down_pos=0.25, up_pos=0.3),)
+    html = _render(
+        tool_a_detail=_detail_state(benchmark_comparison_by_window={"12M": comparison}),
+    )
+    # axis + domain end labels, two decimals, on both strips
+    assert "Down beta — weeks gold fell (1Y)" in html
+    assert "Up beta — weeks gold rose (1Y)" in html
+    assert '>0.00</text>' in html
+    assert '>2.00</text>' in html
+    # the one labelled subject marker, with its ordinal percentile
+    assert "NEM 1.64 · 77th" in html
+    assert "NEM 1.21 · 62nd" in html
+    # a known rug tick keeps its hover identity (title + data-rug hit-area)
+    assert "<title>AEM · 0.80</title>" in html
+    assert 'data-rug="GOLD · 1.20"' in html
+    # benchmark context ticks are dashed and unlabelled
+    assert 'stroke-dasharray="3 2"' in html
+    # data-table fallback rows mirror the tick labels exactly
+    assert '<td>GOLD</td><td class="numeric">1.20</td>' in html
+    assert '<td>NEM</td><td class="numeric">1.21</td>' in html
+
+
 def test_relative_record_states_the_exact_counted_evidence():
     html = _render()
     assert "How it behaved in gold's extreme weeks" in html
@@ -550,6 +579,25 @@ class _StubMark:
         self.ticker = ticker
         self.beta = beta
         self.position = position
+
+
+class _StubBenchmark:
+    """One GDX/GDXJ context tick (dashed, unlabelled on the strip)."""
+
+    def __init__(
+        self,
+        *,
+        label: str = "GDX",
+        down_pos: float,
+        up_pos: float,
+        down_beta: float = 1.0,
+        up_beta: float = 0.9,
+    ) -> None:
+        self.label = label
+        self.down_pos = down_pos
+        self.up_pos = up_pos
+        self.down_beta = down_beta
+        self.up_beta = up_beta
 
 
 class _StubComparison:
