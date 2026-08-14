@@ -700,6 +700,162 @@ def test_percentile_rounding_keeps_ties_tied(score_config):
     assert margin.loc["AAA", "pct_low_good"] == 100.0
 
 
+def test_strip_geometry_maps_the_pool_onto_the_domain(score_config):
+    """§D1: strip_pos is the row's 0..1 place in the cohort's raw_value span.
+
+    ``margin_pct``/our is a three-peer pool (0.10 / 0.20 / 0.30), so the ends are
+    0.0 and 1.0 and the middle peer must land on exactly 0.5 — a builder that
+    wrote percentiles instead of value positions would give 0.667 here.
+    """
+
+    frame = _percentiles(score_config)
+    margin = frame[
+        (frame["metric_key"] == "margin_pct") & (frame["finance_source"] == "our")
+    ].set_index("ticker")
+
+    assert margin.loc["BBB", "strip_pos"] == pytest.approx(0.0)
+    assert margin.loc["CCC", "strip_pos"] == pytest.approx(0.5)
+    assert margin.loc["AAA", "strip_pos"] == pytest.approx(1.0)
+    assert margin.loc["AAA", "universe_min"] == pytest.approx(0.10)
+    assert margin.loc["AAA", "universe_max"] == pytest.approx(0.30)
+
+    # The domain is a property of the cohort, so it is present even on a row that
+    # is not on the strip (mirrors eligible_peer_count); its position is not.
+    assert not bool(margin.loc["DDD", "metric_available"])
+    assert margin.loc["DDD", "universe_min"] == pytest.approx(0.10)
+    assert margin.loc["DDD", "universe_max"] == pytest.approx(0.30)
+    assert pd.isna(margin.loc["DDD", "strip_pos"])
+
+
+def test_strip_geometry_excludes_ineligible_rows_from_the_domain(score_config):
+    """A degraded row is OFF the strip and cannot stretch its axis.
+
+    The ineligible ticker carries an extreme beta; if it shaped the domain the
+    healthy control's position would collapse toward 0. The subject is otherwise
+    healthy (real value, real cohort) so the test cannot pass by accident.
+    """
+
+    tool_a = pd.DataFrame(
+        [
+            {
+                "ticker": "AAA",
+                "as_of_date": "2026-06-01",
+                "score_eligible": True,
+                "down_beta_core": 1.0,
+                "up_beta_core": 1.5,
+                "asymmetry_ratio_core": 1.5,
+            },
+            {  # healthy control
+                "ticker": "BBB",
+                "as_of_date": "2026-06-01",
+                "score_eligible": True,
+                "down_beta_core": 2.0,
+                "up_beta_core": 3.0,
+                "asymmetry_ratio_core": 1.5,
+            },
+            {  # otherwise healthy, but rank-ineligible
+                "ticker": "EEE",
+                "as_of_date": "2026-06-01",
+                "score_eligible": False,
+                "down_beta_core": 99.0,
+                "up_beta_core": 120.0,
+                "asymmetry_ratio_core": 1.2,
+            },
+        ]
+    )
+    frame = build_score_percentiles(
+        app_config=score_config,
+        tool_a_latest=tool_a,
+        tool_b_latest_by_source={
+            "our": _tool_b_frame({"AAA": 0.30, "BBB": 0.10, "EEE": 0.20}),
+            "yahoo": _tool_b_frame({"AAA": 0.05, "BBB": 0.40, "EEE": 0.20}),
+        },
+        tool_c_latest=pd.DataFrame(),
+        tool_d_latest=_tool_d_frame(),
+    )
+    down = frame[
+        (frame["metric_key"] == "down_beta_core") & (frame["finance_source"] == "our")
+    ].set_index("ticker")
+
+    assert down.loc["AAA", "universe_min"] == pytest.approx(1.0)
+    assert down.loc["AAA", "universe_max"] == pytest.approx(2.0)
+    assert pd.isna(down.loc["EEE", "strip_pos"])
+    assert down.loc["AAA", "strip_pos"] == pytest.approx(0.0)
+    assert down.loc["BBB", "strip_pos"] == pytest.approx(1.0)
+
+
+def test_strip_geometry_ties_and_missing_values(score_config):
+    """Equal values must land on the same tick; an NA row cannot poison the ends."""
+
+    frame = _percentiles(score_config)
+    down = frame[
+        (frame["metric_key"] == "down_beta_core") & (frame["finance_source"] == "our")
+    ].set_index("ticker")
+
+    # AAA/BBB share down_beta_core = 1.0.
+    assert down.loc["AAA", "strip_pos"] == pytest.approx(down.loc["BBB", "strip_pos"])
+    # FFF is pool-eligible but has no value.
+    assert pd.isna(down.loc["FFF", "strip_pos"])
+    assert down.loc["FFF", "universe_min"] == pytest.approx(-0.2)
+    assert down.loc["FFF", "universe_max"] == pytest.approx(1.0)
+
+
+def test_strip_geometry_is_null_without_a_real_spread(score_config):
+    """One value, or none, is not an axis — no strip rather than a fake one."""
+
+    single = build_score_percentiles(
+        app_config=score_config,
+        tool_a_latest=_tool_a_frame(),
+        tool_b_latest_by_source={
+            "our": _tool_b_frame({"AAA": 0.30}),
+            "yahoo": _tool_b_frame({"AAA": 0.05, "BBB": 0.40}),
+        },
+        tool_c_latest=pd.DataFrame(),
+        tool_d_latest=_tool_d_frame(),
+    )
+    margin = single[
+        (single["metric_key"] == "margin_pct") & (single["finance_source"] == "our")
+    ]
+    assert int(margin["eligible_peer_count"].iloc[0]) == 1
+    for column in ("strip_pos", "universe_min", "universe_max"):
+        assert margin[column].isna().all()
+
+    # A two-peer cohort with identical values has a pool but no span.
+    flat = build_score_percentiles(
+        app_config=score_config,
+        tool_a_latest=_tool_a_frame(),
+        tool_b_latest_by_source={
+            "our": _tool_b_frame({"AAA": 0.30, "BBB": 0.30}),
+            "yahoo": _tool_b_frame({"AAA": 0.05, "BBB": 0.40}),
+        },
+        tool_c_latest=pd.DataFrame(),
+        tool_d_latest=_tool_d_frame(),
+    )
+    flat_margin = flat[
+        (flat["metric_key"] == "margin_pct") & (flat["finance_source"] == "our")
+    ]
+    assert int(flat_margin["eligible_peer_count"].iloc[0]) == 2
+    for column in ("strip_pos", "universe_min", "universe_max"):
+        assert flat_margin[column].isna().all()
+
+    # Empty pool: no Tool D rows at all.
+    empty = build_score_percentiles(
+        app_config=score_config,
+        tool_a_latest=_tool_a_frame(),
+        tool_b_latest_by_source={
+            "our": _tool_b_frame({"AAA": 0.30, "BBB": 0.10}),
+            "yahoo": _tool_b_frame({"AAA": 0.05, "BBB": 0.40}),
+        },
+        tool_c_latest=pd.DataFrame(),
+        tool_d_latest=pd.DataFrame(),
+    )
+    survival = empty[empty["metric_key"] == "survival_distance"]
+    assert not survival.empty
+    assert int(survival["eligible_peer_count"].max()) == 0
+    for column in ("strip_pos", "universe_min", "universe_max"):
+        assert survival[column].isna().all()
+
+
 # --------------------------------------------------------------------------
 # 3. performance series
 # --------------------------------------------------------------------------

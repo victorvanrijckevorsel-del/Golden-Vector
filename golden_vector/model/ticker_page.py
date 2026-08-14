@@ -719,6 +719,9 @@ def build_score_percentiles(
                         "source_as_of_date": _as_of_text(record),
                         "pct_high_good": None,
                         "pct_low_good": None,
+                        "strip_pos": None,
+                        "universe_min": None,
+                        "universe_max": None,
                         "metric_available": bool(available),
                         "metric_reason": metric_reason,
                         "rank_eligible": bool(rank_eligible),
@@ -774,6 +777,26 @@ def build_score_percentiles(
                 for offset, position in enumerate(pool_index):
                     metric_rows[position]["pct_high_good"] = float(high.iloc[offset])
                     metric_rows[position]["pct_low_good"] = float(low.iloc[offset])
+
+            # Distribution-strip geometry, over the SAME pool the percentiles use
+            # — one eligibility rule, never a second. A cohort with fewer than two
+            # values, or no spread, has no honest axis: all three columns stay null
+            # and serve draws no strip. Degraded rows are off the strip entirely
+            # (null strip_pos), but still carry the domain so the row can label it.
+            if peer_count >= 2:
+                domain_min = float(pool_values.min())
+                domain_max = float(pool_values.max())
+                if domain_max > domain_min:
+                    span = domain_max - domain_min
+                    for row in metric_rows:
+                        row["universe_min"] = domain_min
+                        row["universe_max"] = domain_max
+                    for position in pool_index:
+                        raw = float(metric_rows[position]["raw_value"])
+                        metric_rows[position]["strip_pos"] = min(
+                            1.0, max(0.0, (raw - domain_min) / span)
+                        )
+
             for row in metric_rows:
                 row["eligible_peer_count"] = peer_count
                 if row["_forced_pct"] is not None:

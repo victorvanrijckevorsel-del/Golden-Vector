@@ -14,7 +14,9 @@ TICKER_PAGE_SCHEMA_VERSIONS: dict[str, int] = {
     # v2 persists the five line-metric values at true spot so the server page
     # is complete and truthful without JavaScript.
     "gold_response": 2,
-    "percentiles": 1,
+    # v2 adds the distribution-strip geometry (strip_pos, universe_min/max) so
+    # serve can draw the cohort rug without computing a single fraction.
+    "percentiles": 2,
     # v2 (C4): actual observation dates (no invented W-FRI labels), one shared
     # anchor rebased to exactly 100, pre-anchor rebased points removed, and the
     # trim/source-date disclosure columns below.
@@ -171,6 +173,12 @@ PERCENTILES_COLUMNS: tuple[str, ...] = (
     "source_as_of_date",
     "pct_high_good",
     "pct_low_good",
+    # Distribution-strip geometry: `strip_pos` is this row's 0..1 position within
+    # the eligible cohort's raw_value span, `universe_min`/`universe_max` are that
+    # span's ends. Serve maps fraction -> pixel and never computes the fraction.
+    "strip_pos",
+    "universe_min",
+    "universe_max",
     "metric_available",
     "metric_reason",
     "rank_eligible",
@@ -393,6 +401,9 @@ PERCENTILES_DTYPES: dict[str, str] = {
     "source_as_of_date": "string",
     "pct_high_good": "float64",
     "pct_low_good": "float64",
+    "strip_pos": "float64",
+    "universe_min": "float64",
+    "universe_max": "float64",
     "metric_available": "boolean",
     "metric_reason": "string",
     "rank_eligible": "boolean",
