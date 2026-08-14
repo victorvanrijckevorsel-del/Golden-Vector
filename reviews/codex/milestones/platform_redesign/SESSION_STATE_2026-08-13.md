@@ -40,11 +40,40 @@ on purpose, never stage it.
   rewritten in place with the nested `gates` schema, sourced from
   `lab/validation.py`. Never append — appending doubles every signal's `n_trials`.
 
+## Update 2026-08-13 evening
+
+Items 1, 2 and 3 are DONE; 5 and 6 are CLOSED by Victor's decisions. Only item 4
+still needs a human. Since this file was written:
+
+- **The scheduler works unattended.** The "first-open" task fired on its own at
+  15:02 London and ran a full refresh INSIDE the US window — the first clean
+  options capture since the data loss, `option_artifact_warnings: []`, and the
+  build published `state: complete`.
+- **That also cleared the "Updated Dec 31" header** without deleting anything:
+  the reader only falls back to the fixtures when the current pointer is
+  incomplete. The 400 files are still there and still a landmine for the next
+  incomplete build (item 4), but the symptom is gone.
+- **Ticker-page behaviour sections rewritten** (`7920fcb`, `866cf81`) after
+  Victor could not read them. Two help texts were factually WRONG — the
+  strength/weakness pair was described as "over the Tool C window" when each
+  counts a different gold quintile, and the tails were described as the share's
+  own best/worst weeks when they are gold's. The `<meter>` bars painted browser-
+  default green (`accent-color` does not reach its vendor pseudo-elements),
+  including on "fell harder than the ETF". Detail in the commit messages.
+- **A self-review of that commit found a regression it had introduced** into the
+  up/down beta chart: equal magnitudes drew unequal bars. Fixed in `866cf81`
+  with `tests/test_grouped_bar_chart.py`, whose guard was verified by
+  reintroducing the fault. Lesson worth keeping: running the tests and looking
+  at the render is not a review — reading the diff back is what caught it.
+
 ## NOT done — pick up here
 
-1. **Merge `dev-vic` → `main`** per the repo workflow (see below; may already be
-   done in the same session this file was written — check `git log main`).
-2. **Options have never captured inside US market hours since the data loss.**
+1. ~~Merge `dev-vic` → `main`.~~ **DONE.** `main` and `dev-vic` are level and
+   pushed. The merge workflow has been run at each milestone since.
+2. ~~Options have never captured inside US market hours since the data loss.~~
+   **DONE 2026-08-13 15:02 London, by the scheduled task, unattended.** The
+   original note is kept below because the window rule still applies to any
+   manual run.
    The 10:34 and 13:00 builds were correctly BLOCKED by the benchmark quality
    gate (`GDX=SPARSE; GDXJ=LOW_LIQUIDITY`) because they ran pre-market. Nothing
    is broken. `market-hours-refresh` carries its own guard and **SKIPS outside
