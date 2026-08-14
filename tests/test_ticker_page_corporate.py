@@ -1298,11 +1298,19 @@ def test_slider_value_attr_lands_on_the_grid_for_every_step_shape():
     assert _slider_value_attr(None, TickerPageDialConfig()) == ""
 
 
-def test_headline_cards_carry_one_spot_value_and_one_hidden_scenario_slot():
-    """The card contract (§4.4): the spot value gold-dial.js hides while a
+def test_headline_cards_show_the_real_value_with_the_scenario_beneath_it():
+    """The card contract, per the mock and Victor 2026-08-14: BOTH numbers.
 
-    scenario is active, plus the empty slot it writes into — never two
-    unlabelled numbers stacked in one card."""
+    The old contract (plan §4.4) hid the spot value whenever a scenario was
+    active, so a card never stacked two *unlabelled* numbers. Victor asked to
+    see the actual and the scenario together, which the mock shows as the real
+    value on top with the scenario under it. The objection is answered by
+    labelling rather than by hiding: the scenario slot is marked
+    ``data-headline-scenario``, which is what makes gold-dial.js append the
+    "at $X" price it assumes. Drop that marker and the card really would show
+    two bare numbers, so it is asserted here.
+    """
+
     html = _render()
     for metric in (
         "margin_usd_per_oz",
@@ -1312,10 +1320,15 @@ def test_headline_cards_carry_one_spot_value_and_one_hidden_scenario_slot():
         "forward_pe",
         "leverage_stressed",
     ):
-        assert f'data-metric="{metric}" data-basis="scenario" hidden></span>' in html, metric
+        # a BLOCK beneath the value, marked so the price suffix is written
+        assert (
+            f'data-metric="{metric}" data-basis="scenario"'
+            ' data-headline-scenario="1" hidden></p>'
+        ) in html, metric
     assert html.count('class="spot-cell" data-headline-spot="1"') == 6
     # the marker exists ONLY on the cards — expanded tables keep both columns
     assert html.count("data-headline-spot") == 6
+    assert html.count('data-headline-scenario="1"') == 6
 
 
 def test_dial_payload_carries_the_artifact_row_and_nothing_computed():

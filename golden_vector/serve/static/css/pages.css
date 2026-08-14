@@ -422,6 +422,16 @@ body[data-page="ticker_detail"] h3 {
    came from where you put the dial", which is exactly what a scenario value is. */
 .scenario-cell { color: var(--accent); font-variant-numeric: tabular-nums; }
 p.scenario-cell { margin: 2px 0 0; font-weight: 600; }
+/* Headline cards stack the scenario UNDER the real value (mock). It has to read
+   as the secondary line, or the card has two numbers competing to be the
+   headline — so it steps down in size while keeping the gold accent that means
+   "this came from where you put the dial". */
+.scenario-cell[data-headline-scenario] {
+  font-size: 0.78em;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: normal;
+}
 .scenario-cell[data-unavailable], td[data-unavailable] {
   color: var(--text-dim);
   font-style: italic;

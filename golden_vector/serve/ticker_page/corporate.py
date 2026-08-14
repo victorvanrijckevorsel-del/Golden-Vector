@@ -917,15 +917,26 @@ def _render_failing_checks(
 
 
 def _scenario_cell(
-    metric: str, *, tag: str = "td", scenario_enabled: bool = True
+    metric: str,
+    *,
+    tag: str = "td",
+    scenario_enabled: bool = True,
+    headline: bool = False,
 ) -> str:
-    """The initially-hidden scenario cell gold-dial.js writes into."""
+    """The initially-hidden scenario cell gold-dial.js writes into.
+
+    ``headline`` marks the card variant, which sits BENEATH the spot value and
+    carries an "at $X" price suffix written by gold-dial.js. The suffix is what
+    makes stacking two numbers safe: the original objection (plan §4.4) was to
+    two *unlabelled* numbers in one card, not to two numbers.
+    """
 
     if not scenario_enabled:
         return ""
+    marker = ' data-headline-scenario="1"' if headline else ""
     return (
         f'<{tag} class="scenario-cell" data-metric="{escape(metric)}" '
-        f'data-basis="scenario" hidden></{tag}>'
+        f'data-basis="scenario"{marker} hidden></{tag}>'
     )
 
 
@@ -1054,7 +1065,14 @@ def _headline_cards(
     app_config: AppConfig | None,
     scenario_enabled: bool,
 ) -> str:
-    """Render six cards with one visible value and no repeated basis text."""
+    """Render six cards showing the real value, with the dial scenario beneath.
+
+    Layout follows the mock: the spot value stays the headline, and once the
+    dial moves, the scenario appears under it in the gold accent, labelled with
+    the price it assumes ("$18.6bn at $3,151"). The spot value is no longer
+    hidden when a scenario is active — Victor asked to see both, and the price
+    suffix answers the duplicate-number objection that had removed one of them.
+    """
 
     cards: list[str] = []
     for metric in _HEADLINE_METRICS:
@@ -1066,8 +1084,9 @@ def _headline_cards(
             f"{escape(format_metric(spot_value, METRIC_FORMATS[metric]))}</span>"
             + _scenario_cell(
                 metric,
-                tag="span",
+                tag="p",
                 scenario_enabled=scenario_enabled,
+                headline=True,
             )
         )
         unavailable = spot_value is None

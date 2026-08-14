@@ -302,11 +302,19 @@
     }
   }
 
-  function writeCell(cell, payload, metric, gold, reducedMotion) {
+  function writeCell(cell, payload, metric, gold, reducedMotion, priceSuffix) {
     var result = evaluate(payload, metric, gold);
     var unit = (payload.formats || {})[metric] || "";
-    cell.textContent =
+    var text =
       result.value === null ? result.reason || "unavailable" : formatMetric(result.value, unit);
+    /* Headline cards stack the scenario under the real value, so the scenario
+     * has to say which gold price it assumes. Without the suffix the card shows
+     * two bare numbers and the reader cannot tell them apart — the exact
+     * objection that had the spot value hidden instead. */
+    if (priceSuffix && result.value !== null) {
+      text += " at " + priceSuffix;
+    }
+    cell.textContent = text;
     if (result.value === null) {
       cell.setAttribute("data-unavailable", "1");
     } else {
@@ -350,9 +358,6 @@
 
     var scenarioCells = section.querySelectorAll('[data-metric][data-basis="scenario"]');
     var scenarioHeads = section.querySelectorAll("[data-scenario-head]");
-    /* The single headline value per card, hidden while a scenario is shown so a
-     * card never stacks two unlabelled numbers (plan §4.4). */
-    var headlineSpotCells = section.querySelectorAll("[data-headline-spot]");
     var basis = document.getElementById(BASIS_ID);
     var corporateBasis = document.getElementById(CORPORATE_BASIS_ID);
     var announceTimer = null;
@@ -426,9 +431,11 @@
 
     function render(moved, gold) {
       var index;
-      for (index = 0; index < headlineSpotCells.length; index += 1) {
-        setHidden(headlineSpotCells[index], moved);
-      }
+      /* The headline spot value STAYS visible while a scenario is shown: the
+       * card reports the real number and the scenario beneath it, each labelled
+       * (mock, and Victor 2026-08-14). It used to be hidden here so a card
+       * never stacked two unlabelled numbers; the scenario now carries its
+       * price, so both can be read at once. */
       for (index = 0; index < scenarioCells.length; index += 1) {
         setHidden(scenarioCells[index], !moved);
         if (moved) {
@@ -437,7 +444,10 @@
             payload,
             scenarioCells[index].getAttribute("data-metric"),
             gold,
-            reducedMotion
+            reducedMotion,
+            scenarioCells[index].hasAttribute("data-headline-scenario")
+              ? formatScenarioPrice(gold)
+              : null
           );
         } else {
           scenarioCells[index].textContent = "";
