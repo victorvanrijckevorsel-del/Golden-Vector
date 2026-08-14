@@ -384,6 +384,10 @@ def test_every_row_states_its_own_denominator():
     assert "44 weak-gold weeks with GDX history" in html
     assert "44 strong-gold weeks with GDX history" in html
     assert "share the same weeks and the same denominator" not in html
+    # Evidence bits are joined and escaped ONCE. Escaping a bit on the way in as
+    # well printed a literal "gold&#x27;s worst weeks" on the page.
+    assert "&amp;#x27;" not in html
+    assert "44 of gold&#x27;s worst weeks averaged" in html
 
 
 def test_relative_record_reports_the_persisted_universe_percentile():

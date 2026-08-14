@@ -786,9 +786,9 @@ def _record_row(
         # hit rate. Printing the count is what makes that legible.
         observations = row.get("eligible_observation_count")
         if observations is not None and not pd.isna(observations):
-            evidence_bits.append(
-                f"{int(observations)} {escape(metric.count_noun)}"
-            )
+            # NOT escaped here: every bit is joined and escaped once at the end.
+            # Escaping twice printed a literal "gold&#x27;s" on the page.
+            evidence_bits.append(f"{int(observations)} {metric.count_noun}")
     period_start = row.get("source_period_start")
     if period_start is not None and not pd.isna(period_start):
         evidence_bits.append(format_evidence_period(row))
