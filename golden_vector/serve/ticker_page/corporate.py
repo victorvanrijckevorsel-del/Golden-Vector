@@ -976,7 +976,7 @@ def _strip_cell(strip_html: str) -> str:
 
     if not strip_html:
         return ""
-    return f'<span class="cf-metric-strip">{strip_html}</span>'
+    return f'<div class="cf-metric-strip">{strip_html}</div>'
 
 
 def _fixed_row(
@@ -1666,6 +1666,7 @@ def render_corporate_finance_section(
                 if spec.key in _STRIP_METRIC_KEYS
             ],
             section="corporate",
+            section_title="Corporate finance",
         )
         if app_config is not None
         else {}

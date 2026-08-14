@@ -1623,11 +1623,64 @@ def test_a_catalog_metric_row_carries_its_distribution_strip():
 
 def test_every_corporate_strip_carries_its_chart_data_table():
     """GV-RD-FINAL-002: rug-tooltip.js deletes the <title> nodes, so the peer
-    ticker+value pairs must ALSO exist as a plain table under every strip."""
+    ticker+value pairs must ALSO exist as a plain table under every strip.
 
-    assert_every_rug_strip_has_a_data_table(
-        _render(data=_data(percentile_rows=_strip_rows()))
+    Two metrics, so the helper's per-strip id-uniqueness guard has a second id
+    to compare against — one strip can never collide with itself."""
+
+    rows = _strip_rows() + [
+        _percentile_row("NEM", raw_value=15.0, strip_pos=0.5, metric_key="forward_pe"),
+        _percentile_row(
+            _STRIP_CONTROL_PEER, raw_value=5.0, strip_pos=0.0, metric_key="forward_pe"
+        ),
+    ]
+    html = _render(data=_data(percentile_rows=rows))
+
+    count = assert_every_rug_strip_has_a_data_table(html, minimum=2)
+    assert count == 2
+    # The table is named after the metric AND the section (empty axis label,
+    # so the fallback title is all that names it).
+    assert (
+        "<caption>EV/EBITDA (Corporate finance) — "
+        "every miner in the universe</caption>" in html
     )
+
+
+def test_compare_and_corporate_strips_for_one_metric_never_collide():
+    """``section``/``section_title`` exist because ``ev_ebitda`` draws in BOTH
+    page sections (detail_page renders them into one document): the two strips
+    must keep their table ids AND their region landmark names distinct —
+    dropping either namespace from the id template must fail here."""
+
+    from golden_vector.serve.ticker_page.strips import build_metric_strips
+
+    data = _data(percentile_rows=_strip_rows())
+    specs = [
+        spec
+        for spec in _app_config().ticker_page.score_builder.metrics
+        if spec.key == _STRIP_METRIC
+    ]
+    page = "".join(
+        build_metric_strips(
+            data,
+            ticker="NEM",
+            finance_source="our",
+            metrics=specs,
+            section=section,
+            section_title=title,
+        )[_STRIP_METRIC]
+        for section, title in (
+            ("compare", "Compare on your own terms"),
+            ("corporate", "Corporate finance"),
+        )
+    )
+
+    assert 'id="chart-data-strip-compare-ev-ebitda-nem-our"' in page
+    assert 'id="chart-data-strip-corporate-ev-ebitda-nem-our"' in page
+    # The shared helper's duplicate-id guard sees both sections at once.
+    assert assert_every_rug_strip_has_a_data_table(page, minimum=2) == 2
+    assert "EV/EBITDA (Compare on your own terms) — chart data table" in page
+    assert "EV/EBITDA (Corporate finance) — chart data table" in page
 
 
 def test_a_degraded_peer_is_absent_from_the_rug_while_the_control_is_drawn():

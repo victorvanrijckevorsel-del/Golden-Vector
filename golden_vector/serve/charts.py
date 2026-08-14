@@ -210,6 +210,7 @@ def build_distribution_strip_svg(
     benchmark_positions: list[float] | tuple[float, ...] = (),
     data_table_id: str | None = None,
     value_column_label: str = "Value",
+    table_title: str | None = None,
     compact: bool = False,
 ) -> str:
     """Render a slim "where does this row sit in the universe" strip from BACKEND-resolved positions.
@@ -316,7 +317,10 @@ def build_distribution_strip_svg(
     )
     # An in-row strip draws no axis text, so the table borrows the metric name the
     # caller already gave for the aria fallback rather than captioning itself " — ".
-    table_title = axis_label or value_column_label
+    # ``table_title`` lets a caller that renders the SAME metric in two page
+    # sections (compare AND corporate) give each region landmark a distinct
+    # human name — two regions with identical names are as bad as duplicate ids.
+    table_title = table_title or axis_label or value_column_label
     table_html = (
         "<table>"
         f"<caption>{escape(table_title)} — every miner in the universe</caption>"

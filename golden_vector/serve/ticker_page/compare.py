@@ -348,7 +348,7 @@ def _metric_row_html(
     # only for an available metric with a drawable domain; an unavailable row
     # already states its reason and gains nothing from an empty axis.
     strip = (
-        f'<span class="sb-metric-strip">{strip_html}</span>'
+        f'<div class="sb-metric-strip">{strip_html}</div>'
         if available and strip_html
         else ""
     )
@@ -566,6 +566,7 @@ def render_compare_section(
         finance_source=finance_source,
         metrics=catalog,
         section="compare",
+        section_title=COMPARE_SECTION_TITLE,
     )
     groups = "".join(
         _category_group_html(

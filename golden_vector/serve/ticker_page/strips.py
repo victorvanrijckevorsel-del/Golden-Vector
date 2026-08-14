@@ -69,6 +69,7 @@ def build_metric_strips(
     finance_source: str,
     metrics: Sequence[ScoreMetricSpec],
     section: str,
+    section_title: str,
     compact: bool = True,
 ) -> dict[str, str]:
     """metric_key -> strip SVG, for every requested metric that HAS a strip.
@@ -83,7 +84,9 @@ def build_metric_strips(
     strips their ``<title>`` nodes — so the peer ticker+value pairs must also
     exist as plain text. ``section`` namespaces the element ids because the same
     metric key (``ev_ebitda`` and friends) is drawn in BOTH the Compare and
-    Corporate sections and duplicate ids are invalid HTML.
+    Corporate sections and duplicate ids are invalid HTML; ``section_title`` is
+    the human half of the same rule — it keeps the two tables' region landmark
+    NAMES distinct, which ids alone do not.
     """
 
     frame = data.percentiles.frame
@@ -160,8 +163,12 @@ def build_metric_strips(
             subject_pos=subject_pos,
             subject_label=subject_label,
             # Names the strip for assistive tech when there is no subject marker
-            # to name it (the builder's aria fallback chain).
+            # to name it (the builder's aria fallback chain), and heads the data
+            # table's value column.
             value_column_label=str(spec.label),
+            # The table's human name; the section keeps compare's and
+            # corporate's landmark for the same metric distinguishable.
+            table_title=f"{spec.label} ({section_title})",
             # Unique + stable per rendered strip: section, metric, subject, source.
             data_table_id=(
                 f"chart-data-strip-{id_token(section)}-{id_token(key)}"

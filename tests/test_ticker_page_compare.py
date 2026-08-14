@@ -867,7 +867,18 @@ def test_every_compare_strip_carries_its_chart_data_table(app_config):
         app_config=app_config,
     )
 
-    assert_every_rug_strip_has_a_data_table(page, minimum=2)
+    count = assert_every_rug_strip_has_a_data_table(page, minimum=2)
+    # Exactly the two metrics with a drawable cohort — nothing extra, nothing lost.
+    assert count == 2
+    # The table is NAMED (caption + region label) after the metric and section;
+    # every strip passes an empty axis label, so without the fallback the caption
+    # would open with a bare " — " and name nothing.
+    assert (
+        "<caption>EV/EBITDA (Compare on your own terms) — "
+        "every miner in the universe</caption>" in page
+    )
+    assert "EV/EBITDA (Compare on your own terms) — chart data table" in page
+    assert "<caption> — every miner in the universe</caption>" not in page
 
 
 def test_strip_assembly_contains_no_arithmetic_at_all():
