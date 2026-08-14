@@ -524,17 +524,15 @@ def test_global_action_and_sidebar_defaults_use_rollout_primitives():
 #: and styling one without deleting its entry here fails too, so the register
 #: can only shrink. Entries are grouped by why they are still here.
 KNOWN_UNSTYLED_CLASSES = {
-    # Score builder: no stylesheet at all — the mock's two gold-headed columns,
-    # weight sliders, diverging contribution bars and scrollable ranked list all
-    # render as browser defaults. Awaiting Victor's scope decision on the
-    # mock-fidelity pass; tracked as one block, not fixed piecemeal.
-    "sb-actions", "sb-bar", "sb-bar-track", "sb-basis", "sb-contribution",
-    "sb-contribution-label", "sb-contribution-value", "sb-contributions",
+    # Score builder CONTROLS: still unstyled — the mock's two gold-headed
+    # columns, weight sliders and metric rows render as browser defaults. A
+    # later lane owns that layout (it adds the distribution strips there).
+    # The result region below the controls IS styled now (pages.css: bars,
+    # contributions, leaderboard), so those classes have left this list.
+    "sb-actions", "sb-basis", "sb-contribution-label",
     "sb-group", "sb-legend", "sb-metric", "sb-metric-basis", "sb-metric-name",
-    "sb-metrics", "sb-note", "sb-rank", "sb-ranked", "sb-score",
-    "sb-stability", "sb-subject", "sb-tied", "sb-ticker", "sb-unavailable",
-    "sb-weight-points", "score-builder-controls", "score-builder-result",
-    "is-subject", "is-unranked",
+    "sb-metrics", "sb-stability", "sb-subject", "sb-ticker", "sb-unavailable",
+    "sb-weight-points", "score-builder-controls",
     # Same pass: table density, disclosure hints and panel treatments the mock
     # specified and the build did not carry over.
     "compact-table", "dial-unavailable", "gold-dial-help", "resilience-basis",

@@ -33,6 +33,11 @@
 //     [data-role="subject-note"]  subject-unranked explanation
 //     [data-role="contributions"] contribution bars (list)
 //     [data-role="ranked-list"]   every miner, ranked then unranked
+//         li[data-ticker][.is-subject]  ranked row, as a leaderboard line:
+//           span.sb-rank  a|span.sb-ticker  span.sb-bar-track > span.sb-bar.rank
+//           span.sb-score  [span.sb-tied]
+//         li.is-unranked[data-ticker]   span.sb-rank ("unranked")
+//           a|span.sb-ticker  span.sb-note   (no bar — there is no score)
 //     [data-role="stability-warning"]
 //     [data-role="live"]          the ONE polite live region
 //
@@ -895,6 +900,16 @@
         rank.textContent = "#" + formatNumber(entry.rank, 0);
         li.appendChild(rank);
         li.appendChild(tickerNode(entry, sb));
+        // Leaderboard bar. display_score is already the 0..100 weighted average
+        // of backend percentiles, so the width IS the score — no arithmetic
+        // here, the same width-as-data pattern the contribution bars use.
+        var track = document.createElement("span");
+        track.className = "sb-bar-track";
+        var fill = document.createElement("span");
+        fill.className = "sb-bar rank";
+        fill.style.width = formatNumber(entry.display_score, 1) + "%";
+        track.appendChild(fill);
+        li.appendChild(track);
         var score = document.createElement("span");
         score.className = "sb-score";
         score.textContent = formatNumber(entry.display_score, 1);

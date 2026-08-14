@@ -484,3 +484,88 @@ td.basis, .basis { font-size: 0.78rem; color: var(--ink-soft); }
     grid-template-columns: 1fr;
   }
 }
+
+/* --- "Compare on your own terms": the score-builder result region -----------
+   The client writes these nodes (score-builder.js DOM contract). Bars carry an
+   inline width because the width is data (the score / the share); every colour
+   and every dimension is here. Scoped to the result region so nothing leaks
+   into the controls above it, which a later lane owns. */
+.score-builder-result .sb-bar-track {
+  display: block;
+  width: 100%;
+  height: 0.625rem;
+  overflow: hidden;
+  background: var(--chart-track);
+  border-radius: var(--radius-control);
+}
+.score-builder-result .sb-bar {
+  display: block;
+  height: 100%;
+  background: var(--neutral);
+  border-radius: inherit;
+}
+.score-builder-result .sb-bar.pos { background: var(--chart-positive); }
+.score-builder-result .sb-bar.neg { background: var(--chart-negative); }
+.score-builder-result .sb-bar.rank { background: var(--accent); }
+
+.score-builder-result .sb-contributions,
+.score-builder-result .sb-ranked {
+  margin: var(--density-gap-standard) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.score-builder-result .sb-contribution {
+  display: grid;
+  grid-template-columns: minmax(6rem, 12rem) minmax(4.5rem, 1fr) auto;
+  gap: var(--density-gap-standard);
+  align-items: center;
+  padding-block: var(--density-table-padding-block);
+  border-block-end: 1px solid var(--line-soft);
+}
+.score-builder-result .sb-contribution-value {
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.score-builder-result .sb-ranked > li {
+  display: grid;
+  grid-template-columns: 3rem minmax(4.5rem, 7rem) minmax(4.5rem, 1fr) auto auto;
+  gap: var(--density-gap-standard);
+  align-items: center;
+  padding-block: var(--density-table-padding-block);
+  padding-inline: var(--density-table-padding-inline);
+  border-block-end: 1px solid var(--line-soft);
+}
+.score-builder-result .sb-ranked .sb-rank {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.score-builder-result .sb-ranked .sb-score {
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+.score-builder-result .sb-ranked .sb-tied {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+}
+.score-builder-result .sb-ranked > li.is-subject {
+  background: var(--active-row-bg);
+  color: var(--ink-strong);
+  font-weight: 600;
+  border-radius: var(--radius-control);
+}
+.score-builder-result .sb-ranked > li.is-subject .sb-rank {
+  color: var(--ink-strong);
+}
+/* Unranked rows have no score, so no bar: the note takes the bar's column and
+   the two right-hand columns collapse. */
+.score-builder-result .sb-ranked > li.is-unranked {
+  grid-template-columns: 3rem minmax(4.5rem, 7rem) 1fr;
+  color: var(--text-dim);
+}
+.score-builder-result .sb-ranked .sb-note {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
