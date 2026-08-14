@@ -608,6 +608,9 @@ class _RecordMetric:
     help_key: str
     evidence_nouns: tuple[str, str] | None
     high_is_good: bool
+    #: What the published observation count counts, for metrics with no
+    #: hit/total split. Unused when ``evidence_nouns`` is set.
+    count_noun: str = "weeks"
 
 
 @dataclass(frozen=True)
@@ -629,8 +632,10 @@ _RECORD_GROUPS: tuple[_RecordGroup, ...] = (
     _RecordGroup(
         title="When gold was weakest",
         blurb=(
-            "Counted only over gold's weak weeks — so both rows below share the "
-            "same weeks and the same denominator."
+            "Both rows are counted over gold's weak weeks. The GDX row can cover "
+            "fewer of them: it also needs GDX to exist, and the ETF only starts "
+            "in 2006, so a share with a longer history is compared over a shorter "
+            "span."
         ),
         metrics=(
             _RecordMetric(
@@ -639,6 +644,7 @@ _RECORD_GROUPS: tuple[_RecordGroup, ...] = (
                 "ticker_rel_weakness_vs_gdx",
                 None,
                 high_is_good=False,
+                count_noun="weak-gold weeks with GDX history",
             ),
             _RecordMetric(
                 "downside_hit_rate",
@@ -653,7 +659,8 @@ _RECORD_GROUPS: tuple[_RecordGroup, ...] = (
         title="When gold was strongest",
         blurb=(
             "A different set of weeks from the group above. These rates are not "
-            "the remainder of it and the two groups do not sum to 100%."
+            "the remainder of it and the two groups do not sum to 100%. As above, "
+            "the GDX row is limited to weeks where the ETF already existed."
         ),
         metrics=(
             _RecordMetric(
@@ -662,6 +669,7 @@ _RECORD_GROUPS: tuple[_RecordGroup, ...] = (
                 "ticker_rel_strength_vs_gdx",
                 None,
                 high_is_good=True,
+                count_noun="strong-gold weeks with GDX history",
             ),
             _RecordMetric(
                 "upside_hit_rate",
@@ -685,6 +693,7 @@ _RECORD_GROUPS: tuple[_RecordGroup, ...] = (
                 "ticker_tail_worst10",
                 None,
                 high_is_good=True,
+                count_noun="of gold's worst weeks averaged",
             ),
             _RecordMetric(
                 "tail_best10",
@@ -692,6 +701,7 @@ _RECORD_GROUPS: tuple[_RecordGroup, ...] = (
                 "ticker_tail_best10",
                 None,
                 high_is_good=True,
+                count_noun="of gold's best weeks averaged",
             ),
         ),
     ),
@@ -768,6 +778,17 @@ def _record_row(
                 window_noun=metric.evidence_nouns[1],
             )
         )
+    else:
+        # No hit/total split for these — the count IS the evidence. It matters
+        # because rows in the same group do not share a denominator: the GDX
+        # comparisons are limited to weeks where the ETF already existed, so a
+        # long-history miner is measured over fewer weeks there than on its own
+        # hit rate. Printing the count is what makes that legible.
+        observations = row.get("eligible_observation_count")
+        if observations is not None and not pd.isna(observations):
+            evidence_bits.append(
+                f"{int(observations)} {escape(metric.count_noun)}"
+            )
     period_start = row.get("source_period_start")
     if period_start is not None and not pd.isna(period_start):
         evidence_bits.append(format_evidence_period(row))
@@ -856,9 +877,10 @@ def render_relative_record(
         "<section class=\"panel nested-panel\" id=\"relative-record\">"
         f"<h3>How it behaved in gold's extreme weeks{explain}</h3>"
         "<p class=\"hint\">Every figure below is conditional on what GOLD did — the weeks are "
-        "picked from gold's own record, then this share is measured over them. Rows inside a "
-        "group share the same weeks, so they compare with each other; rows in different groups "
-        "do not.</p>"
+        "picked from gold's own record, then this share is measured over them. Rows in the same "
+        "group are drawn from the same selection of weeks and belong together; rows in different "
+        "groups answer different questions and do not. Each row states how many weeks it counted, "
+        "because even within a group the denominators can differ.</p>"
         + table_region(
             table_html,
             region_id="behaviour-relative-record",

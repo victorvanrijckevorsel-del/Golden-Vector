@@ -74,6 +74,11 @@ score_builder:
       unit: percent
       basis: 52w
     - key: rel_strength_vs_gdx
+      # The denominator is NOT the same as upside_hit_rate's, even though both
+      # count gold's strong weeks: this one also needs GDX to exist, and the ETF
+      # only starts in 2006. Publishing the count is what makes that visible
+      # instead of leaving the page to claim a shared denominator it cannot have.
+      evidence_count_column: rel_strength_vs_gdx_n
       label: Strength vs GDX
       category: trading
       source_tool: tool_c
@@ -82,6 +87,7 @@ score_builder:
       unit: percent
       basis: tool C window
     - key: rel_weakness_vs_gdx
+      evidence_count_column: rel_weakness_vs_gdx_n
       label: Weakness vs GDX
       category: trading
       source_tool: tool_c
@@ -114,6 +120,9 @@ score_builder:
       unit: percent
       basis: tool C window
     - key: tail_worst10
+      # How many of gold's worst weeks the average is taken over — a mean with
+      # no n behind it is not evidence.
+      evidence_count_column: tail_avg_return_worst10pct_n
       label: Worst 10% weeks
       category: trading
       source_tool: tool_c
@@ -122,6 +131,7 @@ score_builder:
       unit: percent
       basis: tool C window
     - key: tail_best10
+      evidence_count_column: tail_avg_return_best10pct_n
       label: Best 10% weeks
       category: trading
       source_tool: tool_c

@@ -368,6 +368,24 @@ def test_relative_record_groups_rows_by_the_weeks_they_count():
     assert strong_group < html.index("Beat GDX")
 
 
+def test_every_row_states_its_own_denominator():
+    """Rows in one group do NOT necessarily share a denominator.
+
+    Both weak-gold rows count gold's weak weeks, but the GDX comparison also
+    needs GDX to exist and the ETF only starts in 2006 — for NEM that is 212
+    weeks against 259. The page claimed a shared denominator until that was
+    caught, so every row now publishes its own count and the copy no longer
+    promises they match.
+    """
+
+    html = _render()
+
+    assert "no counts published" not in html
+    assert "44 weak-gold weeks with GDX history" in html
+    assert "44 strong-gold weeks with GDX history" in html
+    assert "share the same weeks and the same denominator" not in html
+
+
 def test_relative_record_reports_the_persisted_universe_percentile():
     """Serve SELECTS the published percentile for the metric's direction.
 
