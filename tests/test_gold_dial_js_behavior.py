@@ -279,6 +279,9 @@ const scenarioHeads = __SCENARIO_ENABLED__
   : [];
 const scenarioHead = scenarioHeads[0] || null;
 // The server's real headline value: <span class="spot-cell" data-headline-spot="1">.
+// It is deliberately NOT reachable from the module (no id, no modelled
+// selector), so it is a canary for "nothing touched it" rather than proof that
+// a reachable node survives; ``spotCell`` carries that second duty below.
 const cardSpot = new El("span", {"class": "spot-cell", "data-headline-spot": "1"});
 cardSpot.textContent = __CARD_SPOT__;
 
@@ -695,7 +698,9 @@ assert.equal(reset.disabled, false);
 // BOTH values, each labelled: the real one stays put and the scenario appears
 // beneath it carrying the gold price it assumes.
 assert.equal(cardSpot.hidden, false);
-assert.notEqual(cardSpot.style.display, "none");  // never hidden, so never styled
+// The module never touches this node at all: the shim starts style empty, so
+// "no style was written" is the claim, not merely "not display:none".
+assert.deepEqual(cardSpot.style, {{}});
 assert.equal(cardSpot.textContent, {json.dumps(CARD_SPOT_TEXT)});
 assert.equal(cardScenario.hidden, false);
 assert.equal(
@@ -712,6 +717,8 @@ assert.equal(scenarioHead.hidden, false);
 assert.equal(scenarioCell.hidden, false);
 assert.equal(scenarioCell.textContent, {json.dumps(_expected(payload, LINE_METRIC, 4200.0))});
 assert.equal(spotCell.textContent, {json.dumps(SERVER_SPOT_TEXT)});
+// A spot node the module DOES collect stays visible through the scenario.
+assert.equal(spotCell.hidden, false);
 assert.equal(scenarioCell.classes["is-updated"], true);
 
 assert.equal(output.textContent, "$4,200");
@@ -749,9 +756,17 @@ def test_fractional_step_keeps_the_scenario_price_exact_in_every_user_surface():
         INTEGER_SPOT,
         scenario_unit="usd2",
     )
+    payload = _payload(spot=INTEGER_SPOT)
     body = f"""
 slide("4477.5");
 flush();
+
+// The card's price label follows the SAME derived unit as every other surface:
+// a fractional step means the suffix must read "$4,477.50", not "$4,478".
+assert.equal(
+  cardScenario.textContent,
+  {json.dumps(_expected_headline(payload, CARD_METRIC, scenario_gold, unit="usd2"))}
+);
 
 assert.equal(output.textContent, {json.dumps(scenario_text)});
 assert.equal(
@@ -770,7 +785,7 @@ assert.equal(corporateBasis.textContent, {json.dumps(corporate_basis)});
 """
     _run(
         body,
-        payload=_payload(spot=INTEGER_SPOT),
+        payload=payload,
         value=INTEGER_BASELINE,
         spot=INTEGER_SPOT,
         step="0.5",
@@ -791,9 +806,17 @@ def test_fractional_grid_origin_keeps_scenario_price_exact_with_integer_step():
         FRACTIONAL_SPOT,
         scenario_unit="usd2",
     )
+    payload = _payload(spot=FRACTIONAL_SPOT)
     body = f"""
 slide("4478.5");
 flush();
+
+// A fractional grid ORIGIN is the other route to a fractional price; the card
+// label has to follow it too.
+assert.equal(
+  cardScenario.textContent,
+  {json.dumps(_expected_headline(payload, CARD_METRIC, scenario_gold, unit="usd2"))}
+);
 
 assert.equal(output.textContent, {json.dumps(scenario_text)});
 assert.equal(
@@ -812,7 +835,7 @@ assert.equal(corporateBasis.textContent, {json.dumps(corporate_basis)});
 """
     _run(
         body,
-        payload=_payload(spot=FRACTIONAL_SPOT),
+        payload=payload,
         value="4477.5",
         spot=FRACTIONAL_SPOT,
         minimum="2000.5",
@@ -821,19 +844,23 @@ assert.equal(corporateBasis.textContent, {json.dumps(corporate_basis)});
 
 
 @pytest.mark.parametrize(
-    ("metric", "scenario", "overrides", "expected"),
+    ("metric", "scenario", "overrides", "expected", "recovery"),
     (
         (
             "margin_pct",
             "0",
             {},
             "Not meaningful — gold price ≤ 0",
+            4200.0,
         ),
         (
+            # market cap is fixed, so NO price recovers this one — the guard is
+            # permanent and only the reset path can clear it.
             "aisc_margin_yield",
             "4200",
             {"market_cap_musd": 0.0},
             "Not meaningful — market cap ≤ 0",
+            None,
         ),
         (
             "ev_ebitda",
@@ -843,6 +870,7 @@ assert.equal(corporateBasis.textContent, {json.dumps(corporate_basis)});
                 "line_intercept_forward_ebitda_musd": -5000.0,
             },
             "Not meaningful — EBITDA ≤ 0",
+            6000.0,
         ),
         (
             "leverage_stressed",
@@ -852,6 +880,7 @@ assert.equal(corporateBasis.textContent, {json.dumps(corporate_basis)});
                 "line_intercept_forward_ebitda_musd": -5000.0,
             },
             "Not meaningful — EBITDA ≤ 0",
+            6000.0,
         ),
         (
             "forward_pe",
@@ -861,6 +890,7 @@ assert.equal(corporateBasis.textContent, {json.dumps(corporate_basis)});
                 "line_intercept_forward_eps": -3.0,
             },
             "Not meaningful — EPS ≤ 0",
+            4200.0,
         ),
     ),
 )
@@ -869,6 +899,7 @@ def test_invalid_scenario_ratios_render_explicit_professional_guards(
     scenario: str,
     overrides: dict[str, float],
     expected: str,
+    recovery: float | None,
 ):
     """Every invalid ratio names the failed denominator, never zero or blank.
 
@@ -877,15 +908,43 @@ def test_invalid_scenario_ratios_render_explicit_professional_guards(
     scenario the dial cannot evaluate says nothing about the published number.
     A guard also takes NO "at $X" suffix, since the reason is about the
     denominator rather than about the gold price.
+
+    ``data-unavailable`` is what CSS paints as unavailable, so leaving it on a
+    later VALID number would style a real answer as a failure. Each case
+    therefore also proves the marker comes back off — by dialling to a price
+    that recovers the ratio where one exists, and by Reset in every case.
     """
 
     payload = _payload(**overrides)
+    recovered = ""
+    if recovery is not None:
+        value, _guard = mirror_evaluate(payload, metric, recovery)
+        assert value is not None, f"{metric} at {recovery} is not a recovered case"
+        recovered = f"""
+// Dialling to a price the ratio CAN answer clears the unavailable marker and
+// writes the labelled value — the guard must not stick to the slot.
+slide({json.dumps(format(recovery, ".10g"))});
+assert.equal(
+  cardScenario.textContent,
+  {json.dumps(_expected_headline(payload, metric, recovery))}
+);
+assert.equal(cardScenario.attrs["data-unavailable"], undefined);
+assert.equal(cardScenario.hidden, false);
+"""
     body = f"""
 slide({json.dumps(scenario)});
 assert.equal(cardScenario.hidden, false);
 assert.equal(cardScenario.textContent, {json.dumps(expected)});
 assert.equal(cardScenario.attrs["data-unavailable"], "1");
 assert.equal(cardSpot.hidden, false);
+assert.equal(cardSpot.textContent, {json.dumps(CARD_SPOT_TEXT)});
+{recovered}
+// Reset returns the slot to the empty, unmarked state the server shipped —
+// no lingering reason, and no lingering unavailable styling.
+reset.listeners.click();
+assert.equal(cardScenario.hidden, true);
+assert.equal(cardScenario.textContent, "");
+assert.equal(cardScenario.attrs["data-unavailable"], undefined);
 assert.equal(cardSpot.textContent, {json.dumps(CARD_SPOT_TEXT)});
 """
     _run(body, payload=payload, card_metric=metric, minimum="0")
@@ -936,7 +995,9 @@ assert.equal(cardScenario.attrs["data-unavailable"], undefined);
 assert.equal(scenarioHead.hidden, true);
 // The real value was never hidden in the first place, and is still the server's.
 assert.equal(cardSpot.hidden, false);
-assert.notEqual(cardSpot.style.display, "none");  // never hidden, so never styled
+// The module never touches this node at all: the shim starts style empty, so
+// "no style was written" is the claim, not merely "not display:none".
+assert.deepEqual(cardSpot.style, {{}});
 assert.equal(cardSpot.textContent, {json.dumps(CARD_SPOT_TEXT)});
 assert.equal(output.textContent, {json.dumps(format_metric(FRACTIONAL_SPOT, "usd2"))});
 assert.equal(
@@ -945,6 +1006,7 @@ assert.equal(
 );
 assert.equal(basis.textContent, {json.dumps(_basis_at_rest(FRACTIONAL_SPOT))});
 assert.equal(spotCell.textContent, {json.dumps(SERVER_SPOT_TEXT)});
+assert.equal(spotCell.hidden, false);
 
 // A user action DID happen, so this one is announced.
 flush();
