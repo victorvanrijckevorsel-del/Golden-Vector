@@ -302,21 +302,29 @@ def _build_grouped_beta_bar_svg(
     max_abs = max([abs(v) for v in all_values] + [0.25])
     has_negative = any(v < 0 for v in all_values)
     has_positive = any(v > 0 for v in all_values)
-    # Reserve room under a downward bar for the value label that sits below it,
-    # so it cannot collide with the series labels along the bottom.
-    negative_label_room = 18.0
     if has_negative and not has_positive:
         # Every value is negative (a loss comparison, say). Centring the baseline
         # would leave the whole upper half empty and squeeze the bars into the
         # bottom, which is what made the severity chart unreadable. Anchor at the
-        # top so the bars use the full canvas.
+        # top so the bars use the full canvas, and reserve room beneath the
+        # longest bar for the value label that hangs below it.
+        #
+        # The reservation is SAFE here only because there is no positive side to
+        # be inconsistent with. Applying it when both signs are present would
+        # shorten the downward bars alone, so a +0.5 and a -0.5 would render at
+        # different lengths — a chart that misstates its own data.
         baseline = plot_top
+        up_extent = 0.0
+        down_extent = max(plot_bottom - baseline - 18.0, 1.0)
     elif has_negative:
         baseline = (plot_top + plot_bottom) / 2
+        # Symmetric by construction: equal magnitudes must draw equal lengths.
+        up_extent = baseline - plot_top
+        down_extent = plot_bottom - baseline
     else:
         baseline = plot_bottom
-    up_extent = baseline - plot_top
-    down_extent = max(plot_bottom - baseline - negative_label_room, 1.0)
+        up_extent = baseline - plot_top
+        down_extent = 0.0
     bar_w = 30
     gap = 8
     group_centers = [width * (i + 1) / (len(groups) + 1) for i in range(len(groups))]
