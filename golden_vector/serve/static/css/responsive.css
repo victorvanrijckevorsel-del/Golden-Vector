@@ -168,3 +168,21 @@
     inset: 0;
   }
 }
+
+/* The score-builder metric row is eight columns wide at desk width. Below the
+   tablet breakpoint the controls stay on one line and the strip wraps under
+   them, full width — the alternative is a strip too narrow to read a
+   distribution from. */
+@media (max-width: 47.9375rem) {
+  .score-builder-controls .sb-metric {
+    grid-template-columns: minmax(8rem, 1fr) auto auto auto auto;
+  }
+  .score-builder-controls .sb-metric-basis,
+  .score-builder-controls .sb-unavailable,
+  .sb-metric-strip {
+    grid-column: 1 / -1;
+  }
+  .sb-metric-strip svg {
+    max-width: none;
+  }
+}

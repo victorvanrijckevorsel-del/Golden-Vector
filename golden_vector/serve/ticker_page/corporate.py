@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from html import escape
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 import pandas as pd
 
@@ -42,8 +42,16 @@ from golden_vector.contracts.ticker_page import (
 from golden_vector.screening.verdicts import FORWARD_PE_NON_POSITIVE_CODE
 from golden_vector.serve.column_help import help_icon
 from golden_vector.serve.embed import embed_json_payload
+from golden_vector.serve.format_helpers import (
+    # Re-exported: ``format_metric`` and ``METRIC_UNITS`` now live one level down
+    # (serve/format_helpers.py) so ticker_page/strips.py can format units without
+    # importing this module back. Importers of this module are unaffected.
+    METRIC_UNITS,  # noqa: F401 — re-export: the JS parity test imports it here.
+    format_metric,
+)
 from golden_vector.serve.fundamentals_provenance import FundamentalsStatementPeriod
 from golden_vector.serve.ticker_page.data import TickerPageData
+from golden_vector.serve.ticker_page.strips import build_metric_strips
 from golden_vector.serve.ui.components import (
     basis_strip,
     data_card,
@@ -52,6 +60,22 @@ from golden_vector.serve.ui.components import (
 )
 from golden_vector.serve.ui.status import notice, status_strip
 from golden_vector.serve.ui.tables import table_region
+
+#: Catalog metrics this section also renders a row for — the strips it asks the
+#: percentiles artifact for. Any other catalog key belongs to another section.
+_STRIP_METRIC_KEYS: frozenset[str] = frozenset(
+    {
+        "margin_pct",
+        "aisc_margin_yield",
+        "ev_ebitda",
+        "forward_pe",
+        "leverage_trailing",
+        "aisc",
+        "reserve_life",
+        "survival_distance",
+        "fragility",
+    }
+)
 
 #: The one payload id shared by the server (embed) and gold-dial.js (read).
 GOLD_DIAL_PAYLOAD_ID = "gold-dial-payload"
@@ -330,71 +354,6 @@ def _text(row: Any, column: str) -> str:
     except (TypeError, ValueError):
         pass
     return str(raw).strip()
-
-
-def _grouped(text: str) -> str:
-    """Thousands separators for an already-formatted magnitude string.
-
-    Mirrored character-for-character by ``groupDigits`` in gold-dial.js.
-    """
-
-    whole, _, fraction = text.partition(".")
-    negative = whole.startswith("-")
-    digits = whole[1:] if negative else whole
-    chunks: list[str] = []
-    while len(digits) > 3:
-        chunks.insert(0, digits[-3:])
-        digits = digits[:-3]
-    chunks.insert(0, digits)
-    out = ("-" if negative else "") + ",".join(chunks)
-    return f"{out}.{fraction}" if fraction else out
-
-
-def _currency(magnitude: str, suffix: str = "") -> str:
-    """Place the minus sign OUTSIDE the currency symbol ("-$3,000m").
-
-    Mirrored by ``currency`` in gold-dial.js. Pure string work — a negative
-    magnitude already carries its sign from ``_grouped``.
-    """
-
-    if magnitude.startswith("-"):
-        return "-$" + magnitude[1:] + suffix
-    return "$" + magnitude + suffix
-
-
-#: unit -> formatter. The KEY SET is the unit vocabulary this page speaks, and
-#: ``METRIC_FORMATTERS`` in gold-dial.js holds exactly the same keys with exactly
-#: the same bodies. Keeping it a table rather than an if-chain is what lets
-#: ``METRIC_UNITS`` below be derived instead of hand-maintained — a unit added
-#: here cannot go missing from the vocabulary the JS parity test compares against.
-_METRIC_FORMATTERS: dict[str, Callable[[float], str]] = {
-    "musd": lambda value: _currency(_grouped(f"{value:.0f}"), "m"),
-    "usd2": lambda value: _currency(_grouped(f"{value:.2f}")),
-    "usd_per_oz": lambda value: _currency(_grouped(f"{value:.0f}"), "/oz"),
-    "usd": lambda value: _currency(_grouped(f"{value:.0f}")),
-    "pct": lambda value: f"{value:.1%}",
-    "ratio": lambda value: f"{value:.2f}×",
-    "years": lambda value: f"{value:.1f} years",
-    "oz": lambda value: _grouped(f"{value:.0f}") + " oz",
-    "days": lambda value: f"{value:.0f} days",
-    "percentile": lambda value: _grouped(f"{value:.0f}"),
-}
-
-#: The shared unit vocabulary, derived from the one formatter table.
-METRIC_UNITS: tuple[str, ...] = tuple(_METRIC_FORMATTERS)
-
-
-def format_metric(value: float | None, unit: str) -> str:
-    """The ONE server-side metric formatter — mirrored by ``formatMetric`` in
-    gold-dial.js so a spot cell and a scenario cell can never read differently.
-    """
-
-    if value is None:
-        return "n/a"
-    formatter = _METRIC_FORMATTERS.get(unit)
-    if formatter is None:
-        return _grouped(f"{value:.2f}")
-    return formatter(value)
 
 
 def _cell(row: Any, column: str, unit: str) -> str:
@@ -988,6 +947,7 @@ def _ratio_metric_row(
     app_config: AppConfig | None,
     basis: str,
     scenario_enabled: bool,
+    strip_html: str = "",
 ) -> str:
     label = _METRIC_LABELS[metric]
     column = SPOT_DISPLAY_BY_METRIC[metric]
@@ -995,11 +955,28 @@ def _ratio_metric_row(
         f"<tr{_gold_row_attrs(basis)}>"
         f'<th scope="row">{_gold_marker(basis)}{escape(label)}'
         f"{help_icon(label, key=_METRIC_HELP_KEYS[metric], app_config=app_config)}</th>"
-        f'<td class="spot-cell">{_cell(gold_row, column, METRIC_FORMATS[metric])}</td>'
+        f'<td class="spot-cell">{_cell(gold_row, column, METRIC_FORMATS[metric])}'
+        f"{_strip_cell(strip_html)}</td>"
         + _scenario_cell(metric, scenario_enabled=scenario_enabled)
         + f'<td class="basis">{escape(basis)}</td>'
         "</tr>"
     )
+
+
+def _strip_cell(strip_html: str) -> str:
+    """The distribution strip, under the value it describes.
+
+    Placed inside the existing value cell rather than in a new column: the three
+    tables here share one header row (Metric / Value / Basis) plus the dial's
+    hidden scenario column, and only some rows have a percentiles cohort — a
+    fourth column would be empty on most of them. The strip is a spot-basis
+    cohort and does not move with the gold dial; it sits below the spot value,
+    never in the scenario cell gold-dial.js writes.
+    """
+
+    if not strip_html:
+        return ""
+    return f'<span class="cf-metric-strip">{strip_html}</span>'
 
 
 def _fixed_row(
@@ -1009,13 +986,14 @@ def _fixed_row(
     *,
     help_key: str | None = None,
     app_config: AppConfig | None = None,
+    strip_html: str = "",
 ) -> str:
     explain = (
         help_icon(label, key=help_key, app_config=app_config) if help_key else ""
     )
     return (
         f'<tr><th scope="row">{escape(label)}{explain}</th>'
-        f'<td class="spot-cell">{value_html}</td>'
+        f'<td class="spot-cell">{value_html}{_strip_cell(strip_html)}</td>'
         f'<td class="basis">{escape(basis)}</td></tr>'
     )
 
@@ -1127,6 +1105,7 @@ def _earnings_group(
     app_config: AppConfig | None,
     spot_header: str,
     scenario_enabled: bool,
+    strips: dict[str, str],
 ) -> str:
     rows = "".join(
         _line_metric_row(
@@ -1150,6 +1129,7 @@ def _earnings_group(
         app_config=app_config,
         basis=GOLD_BASIS,
         scenario_enabled=scenario_enabled,
+        strip_html=strips.get("margin_pct", ""),
     )
     rows += _ratio_metric_row(
         "aisc_margin_yield",
@@ -1157,6 +1137,7 @@ def _earnings_group(
         app_config=app_config,
         basis=GOLD_BASIS,
         scenario_enabled=scenario_enabled,
+        strip_html=strips.get("aisc_margin_yield", ""),
     )
     return disclosure(
         escape("Earnings and cash at this gold price")
@@ -1182,6 +1163,7 @@ def _valuation_group(
     app_config: AppConfig | None,
     spot_header: str,
     scenario_enabled: bool,
+    strips: dict[str, str],
 ) -> str:
     fixed = (
         _fixed_row(
@@ -1212,12 +1194,14 @@ def _valuation_group(
         app_config=app_config,
         basis=GOLD_BASIS,
         scenario_enabled=scenario_enabled,
+        strip_html=strips.get("ev_ebitda", ""),
     ) + _ratio_metric_row(
         "forward_pe",
         gold_row,
         app_config=app_config,
         basis=GOLD_BASIS,
         scenario_enabled=scenario_enabled,
+        strip_html=strips.get("forward_pe", ""),
     ) + _ratio_metric_row(
         "leverage_stressed",
         gold_row,
@@ -1247,6 +1231,7 @@ def _balance_sheet_group(
     tool_b_row: Mapping[str, Any],
     *,
     app_config: AppConfig | None,
+    strips: dict[str, str],
 ) -> str:
     rows = (
         _fixed_row(
@@ -1276,6 +1261,7 @@ def _balance_sheet_group(
             _LTM_BASIS,
             help_key="ticker_cf_leverage_trailing",
             app_config=app_config,
+            strip_html=strips.get("leverage_trailing", ""),
         )
         + _fixed_row(
             "AISC",
@@ -1283,6 +1269,7 @@ def _balance_sheet_group(
             _OUR_VIEW_BASIS,
             help_key="tool_b_aisc",
             app_config=app_config,
+            strip_html=strips.get("aisc", ""),
         )
         + _fixed_row(
             "Cash cost",
@@ -1304,6 +1291,7 @@ def _balance_sheet_group(
             _OUR_VIEW_BASIS,
             help_key="tool_b_reserve_life",
             app_config=app_config,
+            strip_html=strips.get("reserve_life", ""),
         )
     )
     return disclosure(
@@ -1363,6 +1351,7 @@ def _resilience_group(
     finance_source: str,
     unavailable_reason: str | None,
     app_config: AppConfig | None,
+    strips: dict[str, str],
 ) -> str:
     title = "Resilience — at what gold price does this break?"
     # Already canonical: the section normalizes once at its entry.
@@ -1441,6 +1430,7 @@ def _resilience_group(
             "how far gold can fall before interest cover breaks",
             help_key="tool_d_survival_distance",
             app_config=app_config,
+            strip_html=strips.get("survival_distance", ""),
         )
         + _fixed_row(
             "EBITDA fragility",
@@ -1448,6 +1438,7 @@ def _resilience_group(
             "EBITDA move per 10% gold move",
             help_key="tool_d_fragility",
             app_config=app_config,
+            strip_html=strips.get("fragility", ""),
         )
         + _fixed_row(
             "Cost-curve position (percentile of your universe)",
@@ -1660,6 +1651,24 @@ def render_corporate_finance_section(
         if spot is not None
         else "Spot gold unavailable"
     ) + (f" as of {spot_date}" if spot_date and spot is not None else "")
+    # Distribution strips for the catalog metrics this section also shows —
+    # ONE percentiles scan for the whole section, from persisted columns only.
+    # Metrics with no percentiles row (or no drawable cohort) are simply absent
+    # and their rows render exactly as before.
+    strips = (
+        build_metric_strips(
+            data,
+            ticker=ticker,
+            finance_source=finance_source,
+            metrics=[
+                spec
+                for spec in app_config.ticker_page.score_builder.metrics
+                if spec.key in _STRIP_METRIC_KEYS
+            ],
+        )
+        if app_config is not None
+        else {}
+    )
     source_label = _finance_source_label(finance_source)
     spot_header = (
         "Reported (spot " + format_metric(spot, "usd") + ")"
@@ -1744,6 +1753,7 @@ def render_corporate_finance_section(
             app_config=app_config,
             spot_header=spot_header,
             scenario_enabled=scenario_enabled,
+            strips=strips,
         )
     )
     pieces.append(
@@ -1752,15 +1762,21 @@ def render_corporate_finance_section(
             app_config=app_config,
             spot_header=spot_header,
             scenario_enabled=scenario_enabled,
+            strips=strips,
         )
     )
-    pieces.append(_balance_sheet_group(gold_row, tool_b_row, app_config=app_config))
+    pieces.append(
+        _balance_sheet_group(
+            gold_row, tool_b_row, app_config=app_config, strips=strips
+        )
+    )
     pieces.append(
         _resilience_group(
             tool_d_row,
             finance_source=finance_source,
             unavailable_reason=tool_d_reason,
             app_config=app_config,
+            strips=strips,
         )
     )
     pieces.append(

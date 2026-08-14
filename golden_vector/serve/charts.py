@@ -298,8 +298,11 @@ def build_distribution_strip_svg(
         parts.append(
             f"<text x=\"{x:.1f}\" y=\"{track_y - size['subject_dy']}\" text-anchor=\"{anchor}\" font-size=\"{size['subject_font']}\" class=\"chart-value\">{escape(subject_label)}</text>"
         )
+    # An in-row strip omits the drawn axis text (its metric is already named in the row), so the
+    # aria name falls back to the subject's own label rather than reading as " distribution".
+    aria_label = axis_label or subject_label or value_column_label
     svg = (
-        f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"{escape(axis_label)} distribution\">"
+        f"<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"{escape(aria_label)} distribution\">"
         f"{''.join(parts)}"
         "</svg>"
     )

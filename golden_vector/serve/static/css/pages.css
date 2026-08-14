@@ -569,3 +569,62 @@ td.basis, .basis { font-size: 0.78rem; color: var(--ink-soft); }
   color: var(--text-dim);
   font-size: 0.85rem;
 }
+
+/* --- "Compare on your own terms": the metric controls -----------------------
+   One row per metric: name, basis, the three controls, then the distribution
+   strip. The strip is the widest, most compressible thing in the row, so it
+   takes the flexible column and the controls keep their intrinsic widths. A
+   metric with no drawable cohort simply has no strip element — the column
+   collapses rather than leaving a gap the eye reads as missing data. */
+.score-builder-controls .sb-group {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-control);
+  padding: var(--density-gap-standard);
+  margin-block-end: var(--density-gap-standard);
+}
+.score-builder-controls .sb-metrics {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.score-builder-controls .sb-metric {
+  display: grid;
+  grid-template-columns:
+    minmax(8rem, 12rem) minmax(6rem, 9rem) auto auto auto minmax(6rem, 8rem)
+    auto minmax(10rem, 1fr);
+  gap: var(--density-gap-standard);
+  align-items: center;
+  padding-block: var(--density-table-padding-block);
+  border-block-end: 1px solid var(--line-soft);
+}
+.score-builder-controls .sb-metric-basis {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+.score-builder-controls .sb-weight-points {
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+/* Last column: the strip on an available metric, the reason on one that is not.
+   They are mutually exclusive by construction, so they share the column. */
+.score-builder-controls .sb-unavailable,
+.score-builder-controls .sb-metric-strip {
+  grid-column: -2 / -1;
+}
+.sb-metric-strip,
+.cf-metric-strip {
+  display: block;
+  min-width: 0;
+}
+.sb-metric-strip svg,
+.cf-metric-strip svg {
+  display: block;
+  width: 100%;
+  max-width: 20rem;
+  height: auto;
+}
+/* Corporate finance: the strip sits under the value it describes, inside the
+   same cell, so the table keeps its three columns. */
+.cf-metric-strip {
+  margin-block-start: var(--density-gap-compact);
+}

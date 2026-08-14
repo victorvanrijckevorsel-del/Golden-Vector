@@ -83,13 +83,24 @@ def _row(
     rank_eligible: bool = True,
     rank_exclusion_reason: object = pd.NA,
     source_as_of_date: object = EARLIER_AS_OF,
+    raw_value: float | None = None,
+    strip_pos: float | None = None,
+    universe_min: float | None = None,
+    universe_max: float | None = None,
 ) -> dict:
+    # Strip geometry defaults to absent, so the payload fixtures below describe
+    # exactly the same cohort they always did and the strip tests build their
+    # own frame with it present.
     return {
         "ticker": ticker,
         "finance_source": finance_source,
         "metric_key": metric_key,
         "pct_high_good": pct_high_good,
         "pct_low_good": pct_low_good,
+        "raw_value": raw_value,
+        "strip_pos": strip_pos,
+        "universe_min": universe_min,
+        "universe_max": universe_max,
         "metric_available": metric_available,
         "metric_reason": metric_reason,
         "rank_eligible": rank_eligible,
@@ -695,6 +706,170 @@ def test_option_vehicle_pages_have_no_comparison(catalog, app_config):
 
     assert 'id="compare"' not in page
     assert 'href="#compare"' not in page
+
+
+# ---------------------------------------------------------------------------
+# distribution strips (plan D3)
+# ---------------------------------------------------------------------------
+
+#: default_high_good is FALSE for this one — its subject label must read the
+#: low-good percentile.
+STRIP_LOW_GOOD_METRIC = "ev_ebitda"
+#: default_high_good is TRUE.
+STRIP_HIGH_GOOD_METRIC = "up_beta_core"
+#: Carries values but no cohort spread, so the artifact publishes no domain.
+STRIP_NO_DOMAIN_METRIC = "reserve_life"
+
+STRIP_CONTROL_PEER = "KGC"
+STRIP_DEGRADED_PEER = "ZZZ"
+
+
+def _strip_row(ticker, key, *, raw_value, strip_pos, **kwargs) -> dict:
+    """A row that is healthy in every respect except what a test overrides."""
+
+    return _row(
+        ticker,
+        key,
+        raw_value=raw_value,
+        strip_pos=strip_pos,
+        universe_min=kwargs.pop("universe_min", 5.0),
+        universe_max=kwargs.pop("universe_max", 25.0),
+        **kwargs,
+    )
+
+
+def _strip_data(rows: list[dict]) -> TickerPageData:
+    empty = TickerPageArtifactState(status="MISSING", reason="not built", frame=pd.DataFrame())
+    return TickerPageData(
+        gold_response=empty,
+        percentiles=TickerPageArtifactState(
+            status="OK", reason=None, frame=pd.DataFrame(rows)
+        ),
+        performance=empty,
+        research_series=empty,
+        fx_attribution=empty,
+    )
+
+
+def _strip_rows() -> list[dict]:
+    """Subject + one healthy control peer + one degraded peer, on two metrics.
+
+    The degraded peer is degraded ONLY by its persisted verdict: it carries a
+    real value and a real ``strip_pos``, so an implementation that ignored
+    ``rank_eligible`` would draw it.
+    """
+
+    rows = [
+        _strip_row(SUBJECT, STRIP_LOW_GOOD_METRIC, raw_value=15.0, strip_pos=0.5,
+                   pct_high_good=30.0, pct_low_good=70.0),
+        _strip_row(STRIP_CONTROL_PEER, STRIP_LOW_GOOD_METRIC, raw_value=5.0, strip_pos=0.0),
+        _strip_row(
+            STRIP_DEGRADED_PEER,
+            STRIP_LOW_GOOD_METRIC,
+            raw_value=25.0,
+            strip_pos=1.0,
+            rank_eligible=False,
+            rank_exclusion_reason="degraded inputs",
+        ),
+        _strip_row(SUBJECT, STRIP_HIGH_GOOD_METRIC, raw_value=15.0, strip_pos=0.5,
+                   pct_high_good=30.0, pct_low_good=70.0),
+        _strip_row(STRIP_CONTROL_PEER, STRIP_HIGH_GOOD_METRIC, raw_value=5.0, strip_pos=0.0),
+    ]
+    # Present, valued, but with no published domain: no strip may be drawn.
+    rows.append(
+        _row(SUBJECT, STRIP_NO_DOMAIN_METRIC, raw_value=22.0, strip_pos=None)
+    )
+    # An unavailable metric row, with its reason.
+    rows.append(
+        _strip_row(
+            SUBJECT,
+            UNAVAILABLE_METRIC,
+            raw_value=0.4,
+            strip_pos=0.4,
+            metric_available=False,
+            metric_reason=UNAVAILABLE_REASON,
+            rank_eligible=False,
+        )
+    )
+    return rows
+
+
+def _strip_html(app_config, key: str) -> str:
+    page = render_compare_section(
+        _strip_data(_strip_rows()),
+        ticker=SUBJECT,
+        finance_source="our",
+        app_config=app_config,
+    )
+    return _metric_row_html(page, key)
+
+
+def test_metric_row_carries_a_strip_naming_every_eligible_miner(app_config):
+    row = _strip_html(app_config, STRIP_LOW_GOOD_METRIC)
+
+    assert "sb-metric-strip" in row
+    # The hover title of one rug tick: ticker + the value in the metric's units.
+    assert "<title>KGC · 5.00×</title>" in row
+    # Subject marker label: value + the direction-default percentile.
+    assert "NEM 15.00× · 70th percentile" in row
+    # Domain ends, formatted with the same unit rule.
+    assert ">5.00×</text>" in row and ">25.00×</text>" in row
+
+
+def test_a_degraded_peer_has_no_tick_while_a_healthy_control_does(app_config):
+    row = _strip_html(app_config, STRIP_LOW_GOOD_METRIC)
+
+    assert f"<title>{STRIP_CONTROL_PEER} · 5.00×</title>" in row
+    assert STRIP_DEGRADED_PEER not in row
+
+
+def test_a_high_good_metric_labels_the_subject_with_the_high_good_percentile(app_config):
+    row = _strip_html(app_config, STRIP_HIGH_GOOD_METRIC)
+
+    assert "NEM 15.00× · 30th percentile" in row
+    assert "70th percentile" not in row
+
+
+def test_no_published_domain_means_no_strip_rather_than_an_invented_axis(app_config):
+    row = _strip_html(app_config, STRIP_NO_DOMAIN_METRIC)
+
+    assert "sb-metric-strip" not in row
+    assert "No comparison data available." not in row
+
+
+def test_an_unavailable_metric_row_keeps_its_reason_and_gains_no_strip(app_config):
+    row = _strip_html(app_config, UNAVAILABLE_METRIC)
+
+    assert "sb-unavailable" in row
+    assert UNAVAILABLE_REASON in row
+    assert "sb-metric-strip" not in row
+
+
+def test_the_in_row_strip_is_named_for_assistive_tech(app_config):
+    """The compact strip draws no axis text, so the SVG name must come from
+    somewhere else — a bare " distribution" names nothing."""
+
+    row = _strip_html(app_config, STRIP_LOW_GOOD_METRIC)
+
+    assert 'aria-label="NEM 15.00× · 70th percentile distribution"' in row
+    assert 'aria-label=" distribution"' not in row
+
+
+def test_strip_assembly_contains_no_arithmetic_at_all():
+    """Same guardrail as compare.py: positions and domains are persisted, so the
+    shared assembly module may not contain a single arithmetic operator."""
+
+    path = Path("golden_vector/serve/ticker_page/strips.py")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    banned = (ast.Mult, ast.Div, ast.FloorDiv, ast.Sub, ast.Pow, ast.Mod, ast.MatMult)
+    offenders = [
+        f"line {node.lineno}: {type(node.op).__name__}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, banned)
+    ]
+    assert not offenders, "arithmetic in serve/ticker_page/strips.py: " + "; ".join(
+        offenders
+    )
 
 
 # ---------------------------------------------------------------------------

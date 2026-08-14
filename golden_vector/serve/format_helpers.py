@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re as _re
 from html import escape
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -318,3 +318,73 @@ def id_token(value: object) -> str:
 
     slug = _re.sub(r"[^A-Za-z0-9]+", "-", str(value)).strip("-").lower()
     return slug or "x"
+
+
+# ---------------------------------------------------------------------------
+# money / unit formatting (the ticker page's ONE convention, mirrored in JS)
+# ---------------------------------------------------------------------------
+
+
+def _grouped(text: str) -> str:
+    """Thousands separators for an already-formatted magnitude string.
+
+    Mirrored character-for-character by ``groupDigits`` in gold-dial.js.
+    """
+
+    whole, _, fraction = text.partition(".")
+    negative = whole.startswith("-")
+    digits = whole[1:] if negative else whole
+    chunks: list[str] = []
+    while len(digits) > 3:
+        chunks.insert(0, digits[-3:])
+        digits = digits[:-3]
+    chunks.insert(0, digits)
+    out = ("-" if negative else "") + ",".join(chunks)
+    return f"{out}.{fraction}" if fraction else out
+
+
+def _currency(magnitude: str, suffix: str = "") -> str:
+    """Place the minus sign OUTSIDE the currency symbol ("-$3,000m").
+
+    Mirrored by ``currency`` in gold-dial.js. Pure string work — a negative
+    magnitude already carries its sign from ``_grouped``.
+    """
+
+    if magnitude.startswith("-"):
+        return "-$" + magnitude[1:] + suffix
+    return "$" + magnitude + suffix
+
+
+#: unit -> formatter. The KEY SET is the unit vocabulary this page speaks, and
+#: ``METRIC_FORMATTERS`` in gold-dial.js holds exactly the same keys with exactly
+#: the same bodies. Keeping it a table rather than an if-chain is what lets
+#: ``METRIC_UNITS`` below be derived instead of hand-maintained — a unit added
+#: here cannot go missing from the vocabulary the JS parity test compares against.
+_METRIC_FORMATTERS: dict[str, Callable[[float], str]] = {
+    "musd": lambda value: _currency(_grouped(f"{value:.0f}"), "m"),
+    "usd2": lambda value: _currency(_grouped(f"{value:.2f}")),
+    "usd_per_oz": lambda value: _currency(_grouped(f"{value:.0f}"), "/oz"),
+    "usd": lambda value: _currency(_grouped(f"{value:.0f}")),
+    "pct": lambda value: f"{value:.1%}",
+    "ratio": lambda value: f"{value:.2f}×",
+    "years": lambda value: f"{value:.1f} years",
+    "oz": lambda value: _grouped(f"{value:.0f}") + " oz",
+    "days": lambda value: f"{value:.0f} days",
+    "percentile": lambda value: _grouped(f"{value:.0f}"),
+}
+
+#: The shared unit vocabulary, derived from the one formatter table.
+METRIC_UNITS: tuple[str, ...] = tuple(_METRIC_FORMATTERS)
+
+
+def format_metric(value: float | None, unit: str) -> str:
+    """The ONE server-side metric formatter — mirrored by ``formatMetric`` in
+    gold-dial.js so a spot cell and a scenario cell can never read differently.
+    """
+
+    if value is None:
+        return "n/a"
+    formatter = _METRIC_FORMATTERS.get(unit)
+    if formatter is None:
+        return _grouped(f"{value:.2f}")
+    return formatter(value)

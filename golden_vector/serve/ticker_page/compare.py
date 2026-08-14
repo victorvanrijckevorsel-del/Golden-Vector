@@ -21,7 +21,9 @@ markup
     Emits exactly the DOM contract frozen in the header of ``score-builder.js``.
     The controls are open by default (requirements §4) and the result region is
     server-rendered in its opt-in state, so the page is honest and complete with
-    JavaScript switched off.
+    JavaScript switched off. Each metric row also carries a distribution strip
+    (``ticker_page/strips.py``) — server-rendered SVG built from persisted strip
+    columns, never payload data: the frozen payload contract does not grow.
 
 The section is labelled "at spot" (H2): these ranks are computed at spot gold
 and the gold dial deliberately does not move them.
@@ -38,6 +40,7 @@ from golden_vector.contracts.config_models import AppConfig, ScoreMetricSpec
 from golden_vector.serve.column_help import help_icon, help_term
 from golden_vector.serve.embed import embed_json_payload
 from golden_vector.serve.ticker_page.data import TickerPageData
+from golden_vector.serve.ticker_page.strips import build_metric_strips
 from golden_vector.serve.ui.components import section_heading
 from golden_vector.serve.ui.status import notice
 from golden_vector.serve.url_helpers import build_page_url
@@ -321,6 +324,7 @@ def _metric_row_html(
     *,
     budget_points: int,
     app_config: AppConfig | None,
+    strip_html: str = "",
 ) -> str:
     key = str(spec.key)
     key_attr = escape(key, quote=True)
@@ -339,6 +343,14 @@ def _metric_row_html(
         f"Which way is good for {label}",
         key="ticker_compare_direction",
         app_config=app_config,
+    )
+    # Where this miner sits in the cohort, on this metric's own axis. Present
+    # only for an available metric with a drawable domain; an unavailable row
+    # already states its reason and gains nothing from an empty axis.
+    strip = (
+        f'<span class="sb-metric-strip">{strip_html}</span>'
+        if available and strip_html
+        else ""
     )
     reason_html = ""
     if not available:
@@ -360,6 +372,7 @@ def _metric_row_html(
         f'aria-label="Weight for {escape(label, quote=True)}">'
         f'<output class="sb-weight-points" data-role="weight-points" '
         f'for="{weight_id}">0</output>'
+        f"{strip}"
         f"{reason_html}"
         "</li>"
     )
@@ -373,6 +386,7 @@ def _category_group_html(
     entries: dict[str, dict[str, Any]],
     budget_points: int,
     app_config: AppConfig | None,
+    strips: dict[str, str],
 ) -> str:
     rows = "".join(
         _metric_row_html(
@@ -380,6 +394,7 @@ def _category_group_html(
             entries[spec.key],
             budget_points=budget_points,
             app_config=app_config,
+            strip_html=strips.get(str(spec.key), ""),
         )
         for spec in catalog
         if str(spec.category) == category
@@ -545,6 +560,12 @@ def render_compare_section(
         + "</p>"
     )
 
+    strips = build_metric_strips(
+        data,
+        ticker=str(payload["subject"]),
+        finance_source=finance_source,
+        metrics=catalog,
+    )
     groups = "".join(
         _category_group_html(
             category,
@@ -553,6 +574,7 @@ def render_compare_section(
             entries=entries,
             budget_points=int(config.budget_points),
             app_config=app_config,
+            strips=strips,
         )
         for category, title in CATEGORY_LABELS
     )

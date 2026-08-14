@@ -524,15 +524,12 @@ def test_global_action_and_sidebar_defaults_use_rollout_primitives():
 #: and styling one without deleting its entry here fails too, so the register
 #: can only shrink. Entries are grouped by why they are still here.
 KNOWN_UNSTYLED_CLASSES = {
-    # Score builder CONTROLS: still unstyled — the mock's two gold-headed
-    # columns, weight sliders and metric rows render as browser defaults. A
-    # later lane owns that layout (it adds the distribution strips there).
-    # The result region below the controls IS styled now (pages.css: bars,
-    # contributions, leaderboard), so those classes have left this list.
+    # Score builder: the result region (bars, contributions, leaderboard) and
+    # the control rows (metric grid + distribution strips) are styled now;
+    # only these small text hooks still render as browser defaults.
     "sb-actions", "sb-basis", "sb-contribution-label",
-    "sb-group", "sb-legend", "sb-metric", "sb-metric-basis", "sb-metric-name",
-    "sb-metrics", "sb-stability", "sb-subject", "sb-ticker", "sb-unavailable",
-    "sb-weight-points", "score-builder-controls",
+    "sb-legend", "sb-metric-name",
+    "sb-stability", "sb-subject", "sb-ticker",
     # Same pass: table density, disclosure hints and panel treatments the mock
     # specified and the build did not carry over.
     "compact-table", "dial-unavailable", "gold-dial-help", "resilience-basis",

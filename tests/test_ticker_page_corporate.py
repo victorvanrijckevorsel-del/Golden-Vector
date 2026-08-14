@@ -107,14 +107,22 @@ def _data(
     *rows: dict[str, object],
     artifact_status: str = "OK",
     artifact_reason: str | None = None,
+    percentile_rows: list[dict[str, object]] | None = None,
 ) -> TickerPageData:
     frame = pd.DataFrame(list(rows) or [_gold_row()])
     blank = TickerPageArtifactState(status="OK", reason=None, frame=pd.DataFrame())
+    percentiles = (
+        TickerPageArtifactState(
+            status="OK", reason=None, frame=pd.DataFrame(percentile_rows)
+        )
+        if percentile_rows
+        else blank
+    )
     return TickerPageData(
         gold_response=TickerPageArtifactState(
             status=artifact_status, reason=artifact_reason, frame=frame
         ),
-        percentiles=blank,
+        percentiles=percentiles,
         performance=blank,
         research_series=blank,
         fx_attribution=blank,
@@ -1555,3 +1563,75 @@ def test_spot_evaluation_reproduces_the_persisted_spot_display_values():
         value, reason = mirror_evaluate(payload, metric, spot)
         assert value is not None, (metric, reason)
         assert abs(value - persisted) <= max(1e-4, abs(persisted) * 1e-4), metric
+
+
+# ---------------------------------------------------------------------------
+# distribution strips (plan D4)
+# ---------------------------------------------------------------------------
+
+#: In the score catalog AND rendered by this section.
+_STRIP_METRIC = "ev_ebitda"
+#: Rendered by this section but with no percentiles row in the fixture below.
+_NO_ROW_METRIC = "reserve_life"
+_STRIP_CONTROL_PEER = "KGC"
+_STRIP_DEGRADED_PEER = "ZZZ"
+
+
+def _percentile_row(ticker: str, *, raw_value, strip_pos, **overrides) -> dict:
+    row: dict[str, object] = {
+        "ticker": ticker,
+        "finance_source": "our",
+        "metric_key": _STRIP_METRIC,
+        "raw_value": raw_value,
+        "strip_pos": strip_pos,
+        "universe_min": 5.0,
+        "universe_max": 25.0,
+        "pct_high_good": 30.0,
+        "pct_low_good": 70.0,
+        "metric_available": True,
+        "rank_eligible": True,
+    }
+    row.update(overrides)
+    return row
+
+
+def _strip_rows() -> list[dict]:
+    """Subject, a healthy control peer, and a peer degraded ONLY by its verdict."""
+
+    return [
+        _percentile_row("NEM", raw_value=15.0, strip_pos=0.5),
+        _percentile_row(_STRIP_CONTROL_PEER, raw_value=5.0, strip_pos=0.0),
+        _percentile_row(
+            _STRIP_DEGRADED_PEER,
+            raw_value=25.0,
+            strip_pos=1.0,
+            rank_eligible=False,
+        ),
+    ]
+
+
+def test_a_catalog_metric_row_carries_its_distribution_strip():
+    html = _render(data=_data(percentile_rows=_strip_rows()))
+
+    assert "cf-metric-strip" in html
+    assert "<title>KGC · 5.00×</title>" in html
+    # EV/EBITDA is lower-is-better, so the subject label reads the low-good
+    # percentile — the same direction default the Compare section uses.
+    assert "NEM 15.00× · 70th percentile" in html
+
+
+def test_a_degraded_peer_is_absent_from_the_rug_while_the_control_is_drawn():
+    html = _render(data=_data(percentile_rows=_strip_rows()))
+
+    assert f"<title>{_STRIP_CONTROL_PEER} · 5.00×</title>" in html
+    assert _STRIP_DEGRADED_PEER not in html
+
+
+def test_a_metric_with_no_percentiles_row_renders_exactly_as_before():
+    with_rows = _render(data=_data(percentile_rows=_strip_rows()))
+    without = _render()
+
+    assert "Reserve life" in with_rows and "Reserve life" in without
+    # Only the one catalog metric with a published cohort gained a strip.
+    assert with_rows.count("cf-metric-strip") == 1
+    assert "cf-metric-strip" not in without
