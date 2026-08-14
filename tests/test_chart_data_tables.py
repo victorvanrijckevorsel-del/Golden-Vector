@@ -8,6 +8,7 @@ row counts must match the chart exactly and no row may be truncated.
 
 from __future__ import annotations
 
+import re as _re
 
 from golden_vector.screening.manual_data import bootstrap_manual_screening_data
 from golden_vector.serve.workspace import create_workspace_app
@@ -31,17 +32,6 @@ def _detail_html(tmp_path) -> str:
     return str(result["body"])
 
 
-def _disclosure_after(html: str, marker: str) -> str:
-    """Return the details block that immediately follows the chart containing ``marker``."""
-    idx = html.index(marker)
-    end_svg = html.index("</svg>", idx) + len("</svg>")
-    tail = html[end_svg:]
-    assert tail.lstrip().startswith("<details"), tail[:120]
-    start = end_svg + tail.index("<details")
-    stop = html.index("</details>", start) + len("</details>")
-    return html[start:stop]
-
-
 def _row_count(block: str) -> int:
     body = block[block.index("<tbody>") : block.index("</tbody>")]
     return body.count("<tr>")
@@ -58,15 +48,58 @@ def _row_count(block: str) -> int:
 # the post-refresh browser gate covers on the real page.
 
 
-def test_rug_strip_tables_match_the_tick_count(tmp_path):
-    html = _detail_html(tmp_path)
-    for axis in ("Down beta", "Up beta"):
-        marker = f'aria-label="{axis}'
-        idx = html.index(marker)
-        svg = html[html.rindex("<svg", 0, idx) : html.index("</svg>", idx)]
-        ticks = svg.count('class="rug-tick"')
-        assert ticks > 0
-        block = _disclosure_after(html, marker)
+_RUG_LABEL = _re.compile(r'class="rug-tick" data-rug="([^"]*)"')
+_TABLE_ROW = _re.compile(r"<tr><td>([^<]*)</td><td class=\"numeric\">([^<]*)</td></tr>")
+
+
+def _rug_svgs(html: str) -> list[tuple[int, str]]:
+    """(end-of-svg offset, svg markup) for EVERY strip on the page that has a rug."""
+
+    found: list[tuple[int, str]] = []
+    cursor = 0
+    while True:
+        start = html.find("<svg", cursor)
+        if start < 0:
+            return found
+        stop = html.index("</svg>", start) + len("</svg>")
+        cursor = stop
+        svg = html[start:stop]
+        if 'class="rug-tick"' in svg:
+            found.append((stop, svg))
+
+
+def assert_every_rug_strip_has_a_data_table(html: str, *, minimum: int = 1) -> int:
+    """Shared invariant (GV-RD-FINAL-002), imported by the section-level tests.
+
+    Strips are DISCOVERED in the markup, never enumerated, so a strip added
+    without a table fails here without anyone remembering to list it.
+    """
+
+    strips = _rug_svgs(html)
+    assert len(strips) >= minimum, len(strips)
+    seen_ids: set[str] = set()
+    for end_svg, svg in strips:
+        labels = _RUG_LABEL.findall(svg)
+        assert labels
+        tail = html[end_svg:]
+        assert tail.lstrip().startswith("<details"), tail[:200]
+        start = end_svg + tail.index("<details")
+        block = html[start : html.index("</details>", start) + len("</details>")]
         assert "<summary>Chart data (table)</summary>" in block
         assert 'class="table-region"' in block
-        assert _row_count(block) == ticks
+        region_id = _re.search(r'class="table-region"[^>]*\bid="([^"]+)"', block)
+        assert region_id is not None, block[:200]
+        assert region_id.group(1) not in seen_ids, f"duplicate id {region_id.group(1)}"
+        seen_ids.add(region_id.group(1))
+        # 1:1 with the rug: same tickers, same pre-formatted value text, same order.
+        rows = _TABLE_ROW.findall(block)
+        assert _row_count(block) == len(labels)
+        assert [f"{ticker} · {value}" for ticker, value in rows] == labels
+    return len(strips)
+
+
+def test_every_rug_strip_on_the_ticker_page_has_a_matching_chart_data_table(tmp_path):
+    # The fixture page publishes the two behaviour beta strips; the compare and
+    # corporate metric strips need a percentiles frame and are held to the SAME
+    # invariant at section level (tests/test_ticker_page_{compare,corporate}.py).
+    assert_every_rug_strip_has_a_data_table(_detail_html(tmp_path), minimum=2)

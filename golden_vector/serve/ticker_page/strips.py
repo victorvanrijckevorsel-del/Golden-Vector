@@ -24,7 +24,7 @@ from golden_vector.common.numeric import bool_or_false, is_missing, optional_fin
 from golden_vector.common.strings import ordinal_percentile
 from golden_vector.contracts.config_models import ScoreMetricSpec
 from golden_vector.serve.charts import build_distribution_strip_svg
-from golden_vector.serve.format_helpers import format_metric
+from golden_vector.serve.format_helpers import format_metric, id_token
 from golden_vector.serve.ticker_page.data import TickerPageData
 
 #: Catalog unit token -> the shared ``format_metric`` unit. The catalog speaks the
@@ -68,6 +68,7 @@ def build_metric_strips(
     ticker: str,
     finance_source: str,
     metrics: Sequence[ScoreMetricSpec],
+    section: str,
     compact: bool = True,
 ) -> dict[str, str]:
     """metric_key -> strip SVG, for every requested metric that HAS a strip.
@@ -77,10 +78,12 @@ def build_metric_strips(
     spread leaves ``universe_min``/``universe_max`` null, and an axis invented
     over a single point would be a lie about the universe.
 
-    ``data_table_id`` is deliberately not passed: these strips sit inside dense
-    control rows and table cells, where a collapsible data table per metric is
-    noise. The per-tick ``<title>`` hover and the section's own numbers remain
-    the text equivalents.
+    Every strip carries its own collapsed "Chart data (table)" disclosure
+    (GV-RD-FINAL-002): the rug ticks are pointer-only — ``rug-tooltip.js`` even
+    strips their ``<title>`` nodes — so the peer ticker+value pairs must also
+    exist as plain text. ``section`` namespaces the element ids because the same
+    metric key (``ev_ebitda`` and friends) is drawn in BOTH the Compare and
+    Corporate sections and duplicate ids are invalid HTML.
     """
 
     frame = data.percentiles.frame
@@ -159,6 +162,11 @@ def build_metric_strips(
             # Names the strip for assistive tech when there is no subject marker
             # to name it (the builder's aria fallback chain).
             value_column_label=str(spec.label),
+            # Unique + stable per rendered strip: section, metric, subject, source.
+            data_table_id=(
+                f"chart-data-strip-{id_token(section)}-{id_token(key)}"
+                f"-{id_token(subject)}-{id_token(finance_source)}"
+            ),
             compact=compact,
         )
     return strips

@@ -623,6 +623,12 @@ td.basis, .basis { font-size: 0.78rem; color: var(--ink-soft); }
   max-width: 20rem;
   height: auto;
 }
+/* GV-RD-FINAL-002: each strip's collapsed data table sits directly under its
+   SVG, at the full width of the cell it shares. */
+.sb-metric-strip .chart-data-details,
+.cf-metric-strip .chart-data-details {
+  margin-block-start: var(--density-gap-compact);
+}
 /* Corporate finance: the strip sits under the value it describes, inside the
    same cell, so the table keeps its three columns. */
 .cf-metric-strip {

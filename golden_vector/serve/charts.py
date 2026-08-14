@@ -314,9 +314,12 @@ def build_distribution_strip_svg(
         f'<tr><td>{escape(ticker)}</td><td class="numeric">{escape(value_text)}</td></tr>'
         for ticker, value_text, _position in marks
     )
+    # An in-row strip draws no axis text, so the table borrows the metric name the
+    # caller already gave for the aria fallback rather than captioning itself " — ".
+    table_title = axis_label or value_column_label
     table_html = (
         "<table>"
-        f"<caption>{escape(axis_label)} — every miner in the universe</caption>"
+        f"<caption>{escape(table_title)} — every miner in the universe</caption>"
         '<thead><tr><th scope="col">Ticker</th>'
         f'<th scope="col" class="numeric">{escape(value_column_label)}</th></tr></thead>'
         f"<tbody>{rows}</tbody></table>"
@@ -324,7 +327,7 @@ def build_distribution_strip_svg(
     return svg + _chart_data_disclosure(
         table_html=table_html,
         region_id=data_table_id,
-        label=f"{axis_label} — chart data table",
+        label=f"{table_title} — chart data table",
     )
 
 

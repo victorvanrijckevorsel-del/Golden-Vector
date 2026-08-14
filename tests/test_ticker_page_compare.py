@@ -25,6 +25,7 @@ from golden_vector.serve.ticker_page import (
     render_compare_section,
 )
 from golden_vector.serve.workspace_state import WorkspaceState
+from tests.test_chart_data_tables import assert_every_rug_strip_has_a_data_table
 
 SUBJECT = "NEM"
 
@@ -853,6 +854,20 @@ def test_the_in_row_strip_is_named_for_assistive_tech(app_config):
 
     assert 'aria-label="NEM 15.00× · 70th percentile distribution"' in row
     assert 'aria-label=" distribution"' not in row
+
+
+def test_every_compare_strip_carries_its_chart_data_table(app_config):
+    """GV-RD-FINAL-002: rug-tooltip.js deletes the <title> nodes, so the peer
+    ticker+value pairs must ALSO exist as a plain table under every strip."""
+
+    page = render_compare_section(
+        _strip_data(_strip_rows()),
+        ticker=SUBJECT,
+        finance_source="our",
+        app_config=app_config,
+    )
+
+    assert_every_rug_strip_has_a_data_table(page, minimum=2)
 
 
 def test_strip_assembly_contains_no_arithmetic_at_all():

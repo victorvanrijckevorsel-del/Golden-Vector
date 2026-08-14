@@ -32,6 +32,7 @@ from golden_vector.contracts.ticker_page import (
 from golden_vector.contracts.tool_d import YAHOO_TOOL_D_REBUILD_REQUIRED_REASON
 from golden_vector.serve.embed import embed_json_payload
 from golden_vector.serve.fundamentals_provenance import FundamentalsStatementPeriod
+from tests.test_chart_data_tables import assert_every_rug_strip_has_a_data_table
 from golden_vector.serve.ticker_page import (
     GOLD_DIAL_PAYLOAD_ID,
     TickerPageData,
@@ -1618,6 +1619,15 @@ def test_a_catalog_metric_row_carries_its_distribution_strip():
     # EV/EBITDA is lower-is-better, so the subject label reads the low-good
     # percentile — the same direction default the Compare section uses.
     assert "NEM 15.00× · 70th percentile" in html
+
+
+def test_every_corporate_strip_carries_its_chart_data_table():
+    """GV-RD-FINAL-002: rug-tooltip.js deletes the <title> nodes, so the peer
+    ticker+value pairs must ALSO exist as a plain table under every strip."""
+
+    assert_every_rug_strip_has_a_data_table(
+        _render(data=_data(percentile_rows=_strip_rows()))
+    )
 
 
 def test_a_degraded_peer_is_absent_from_the_rug_while_the_control_is_drawn():

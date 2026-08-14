@@ -565,6 +565,7 @@ def render_compare_section(
         ticker=str(payload["subject"]),
         finance_source=finance_source,
         metrics=catalog,
+        section="compare",
     )
     groups = "".join(
         _category_group_html(

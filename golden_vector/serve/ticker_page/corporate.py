@@ -1665,6 +1665,7 @@ def render_corporate_finance_section(
                 for spec in app_config.ticker_page.score_builder.metrics
                 if spec.key in _STRIP_METRIC_KEYS
             ],
+            section="corporate",
         )
         if app_config is not None
         else {}
