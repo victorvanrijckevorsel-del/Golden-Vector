@@ -23,6 +23,7 @@ from golden_vector.serve.access_context import visitor_session
 from golden_vector.serve.access_page import access_message, login_page
 from golden_vector.serve.http_helpers import _no_content_response, _serve_static_file
 from golden_vector.serve.visitor_policy import visitor_path_allowed
+from golden_vector.serve.ui.shell import visitor_account
 
 LOGGER = logging.getLogger(__name__)
 MAX_FORM_BYTES = 4096
@@ -183,6 +184,7 @@ class AccessGate:
             return _response(respond, access_message("Page unavailable", "This page is not available with guest access."),
                              status="403 Forbidden")
         context = visitor_session.set(session)
+        display_context = visitor_account.set((session.email, session.csrf))
         try:
             # Materialize while the request context is active, including any
             # generator-based renderer. Never leave it attached to a worker.
@@ -205,6 +207,7 @@ class AccessGate:
             respond(captured["status"], captured["headers"])
             return body
         finally:
+            visitor_account.reset(display_context)
             visitor_session.reset(context)
 
     def _checked_form(self, environ):

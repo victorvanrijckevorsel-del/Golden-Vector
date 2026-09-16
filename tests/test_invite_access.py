@@ -8,7 +8,7 @@ import pytest
 from golden_vector.access.store import AccessStore, EMAIL_ATTEMPTS, RateLimited, SESSION_SECONDS
 from golden_vector.serve.access_context import visitor_session
 from golden_vector.serve.hosted import AccessGate, HostedSettings, create_hosted_app
-from golden_vector.serve.ui.shell import _page_shell
+from golden_vector.serve.ui.shell import _page_shell, visitor_account
 from tests.helpers import call_wsgi_app, build_test_paths
 
 ORIGIN = "https://golden-vector.example.org"
@@ -130,6 +130,7 @@ def test_login_and_research_gate_and_secure_cookies(store):
     assert page["headers"]["Cache-Control"] == "no-store"
     assert page["headers"]["X-Frame-Options"] == "DENY"
     assert visitor_session.get() is None
+    assert visitor_account.get() is None
     # The private/local shell stays unchanged after a visitor request.
     assert 'href="/portfolio"' in _page_shell("Local", "Local")
     store.revoke(EMAIL)
@@ -211,6 +212,7 @@ def test_errors_do_not_disclose_internal_data(store):
     result = _request(app, cookies=cookie)
     assert result["status"].startswith("503")
     assert "private portfolio" not in result["body"] and "/local/path" not in result["body"]
+    assert visitor_account.get() is None
 
 
 def test_real_workspace_retains_research_but_hides_admin_and_notes(tmp_path, monkeypatch):

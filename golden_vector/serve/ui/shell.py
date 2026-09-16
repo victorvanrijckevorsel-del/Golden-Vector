@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from html import escape
-from golden_vector.serve.access_context import visitor_session
+
+# Display-only strings supplied by the request boundary. The UI never imports
+# authentication/storage modules or decides whether credentials are valid.
+visitor_account: ContextVar[tuple[str, str] | None] = ContextVar("visitor_account", default=None)
 
 
 # Grouped navigation (redesign plan section 8.1). Nav ids, hrefs, and labels are
@@ -43,7 +47,7 @@ def _render_nav(active: str) -> str:
     for group_label, links in _NAV_GROUPS:
         items: list[str] = []
         for nav_id, href, label in links:
-            if visitor_session.get() is not None and nav_id == "portfolio":
+            if visitor_account.get() is not None and nav_id == "portfolio":
                 continue
             current = " aria-current=\"page\"" if nav_id == active else ""
             items.append(
@@ -93,13 +97,13 @@ def _page_shell(
         else header_label
     )
     page_attr = escape(resolved_page_id)
-    visitor = visitor_session.get()
+    account = visitor_account.get()
     account_html = (
         '<form method="post" action="/logout" class="visitor-account">'
-        f'<span>{escape(visitor.email)}</span>'
-        f'<input type="hidden" name="csrf" value="{escape(visitor.csrf, quote=True)}">'
+        f'<span>{escape(account[0])}</span>'
+        f'<input type="hidden" name="csrf" value="{escape(account[1], quote=True)}">'
         '<button type="submit">Sign out</button></form>'
-        if visitor is not None else ""
+        if account is not None else ""
     )
     return f"""<!doctype html>
 <html lang="en" class="dark">

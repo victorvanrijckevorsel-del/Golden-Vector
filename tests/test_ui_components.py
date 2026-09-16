@@ -306,7 +306,9 @@ def test_ui_package_imports_stay_presentation_pure():
     import ast
     from pathlib import Path
 
-    allowed_roots = {"__future__", "html", "re"}
+    # Context-local display strings are presentation, not database/model state.
+    # Keep application/storage imports forbidden even for the visitor header.
+    allowed_roots = {"__future__", "html", "re", "contextvars"}
     for path in sorted(Path("golden_vector/serve/ui").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):

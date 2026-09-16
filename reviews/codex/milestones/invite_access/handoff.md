@@ -1,4 +1,4 @@
-# Email-and-code website access — in progress
+# Email-and-code website access — implemented; hosting pending
 
 Requested 2026-09-16: Victor wants guests to enter an email address and a code,
 with the website available independently of his computer. Hosting must be free;
@@ -40,10 +40,12 @@ Starting state: dev-vic, clean working tree. No changes to production data.
   Evidence: `real_workspace_smoke.json`. Temporary demo invites exist only in ignored
   scratch databases, not production access storage. Real-data smoke invite was revoked.
 - Ruff passed on every changed Python module.
-- Full offline suite running; initial collection error was a pre-existing test importing
+- Full offline suite completed; initial collection error was a pre-existing test importing
   the removed `_build_beta_strip_svg`; updated it to the existing shared distribution-strip
   builder, preserving the assertions. The 28 benchmark tests now pass.
-- Full-suite failures still being investigated; do not assume a clean regression result.
+- Full run: **2,559 passed, 5 failed in 1,674.90s**. Fixes were applied while it ran,
+  so its already-collected tests retained the earlier versions. Do not describe this
+  as a single clean full-suite pass.
 - Interim full-suite failures identified: three Candidate Finder scenario test doubles
   rejected the new `read_only` keyword; updated their signatures to match the reader.
   The CSS ownership guard caught the standalone login stylesheet; moved the scoped
@@ -51,6 +53,16 @@ Starting state: dev-vic, clean working tree. No changes to production data.
   All four cases plus the full design-token suite now pass (28 tests). No analytics
   production-code fix or new chart implementation was needed.
 - Final workspace/manual-data/access/scheduler focused run: 159 passed (169.36s).
+- The fifth failure enforced UI presentation purity: the shell imported the access
+  context. It now accepts only request-local display strings in a stdlib ContextVar;
+  the gate populates/resets them, and UI imports of storage/model code remain forbidden.
+- **Final verification: 205 passed in 143.04s**, including all five full-run failures,
+  access and scheduler tests, UI components, design tokens, and the entire workspace
+  route suite. No known remaining failures. Full suite was not repeated after these
+  focused fixes (the first run took almost 28 minutes).
+- Real-research smoke repeated after the final UI change: ten public research/API
+  routes 200, portfolio 403, no guest portfolio link or refresh form. Ruff and
+  `git diff --check` passed. Browser evidence is in `browser_smoke.json`.
 
 Pre-merge inventory (after fetch): `main`, `dev-vic`, `origin/main`, `origin/dev-vic`
 all at 572c10ab16fa6092efc7741bf9eb367d5c3c1b22; ahead/behind 0/0. No local or remote
@@ -61,6 +73,18 @@ for diagnostic comparison; it has no source edits or pending branch work.
 Therefore no active-branch
 touched-file overlaps to reconcile. No analytical artifacts/schema/publication contracts
 changed. Review final diff/status again before commit/integration.
+
+Final pre-merge refresh: origin/main still 572c10a, dev-vic/origin/dev-vic at feature
+commit d110d6a (ahead 1 / behind 0) plus the final UI-boundary fix. Only dev-vic is
+unmerged; no competing feature branch or worktree changes. Detached baseline remains
+clean and contains no local production data. The GitHub origin was independently
+verified PRIVATE with ADMIN permission before pushing source/tests/docs; no actual
+research files, portfolio data, credentials, or production invitations were pushed.
+
+Implementation is cleared for the normal dev-vic → main workflow. Deployment remains
+blocked on the owner's hosting account and the host-specific acceptance checks below.
+An asynchronous question asks whether Oracle's phone/card verification is acceptable;
+there has not yet been a reply. Do not treat the suggested answer as authorization.
 
 Deployment templates: Caddy HTTPS proxy, loopback-only Waitress, web service read-only
 outside access storage, separate optional persistent refresh coordinator using existing
