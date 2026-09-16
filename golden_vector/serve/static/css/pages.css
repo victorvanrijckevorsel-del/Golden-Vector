@@ -633,3 +633,60 @@ td.basis, .basis { font-size: 0.78rem; color: var(--ink-soft); }
 .cf-metric-strip {
   margin-block-start: var(--density-gap-compact);
 }
+/* Invite-only entry uses the same palette and controls as the workspace. */
+.access-body {
+  margin: 0;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(ellipse at top, var(--color-surface-elevated), var(--color-canvas) 65%);
+}
+.access-card {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 440px;
+  padding: 38px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.access-card .access-brand {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  margin: 0 0 6px;
+}
+.access-card .access-kicker { margin: 0 0 40px; color: var(--muted); font-size: 13px; }
+.access-card h1 { font-size: 30px; letter-spacing: -.025em; margin: 0 0 12px; }
+.access-card p { line-height: 1.6; color: var(--muted); }
+.access-card form { display: grid; gap: 10px; margin-top: 26px; }
+.access-card label { font-size: 14px; margin-top: 8px; }
+.access-card input { box-sizing: border-box; width: 100%; padding: 13px 12px; font: inherit; }
+.access-card button {
+  margin-top: 16px;
+  width: 100%;
+  padding: 14px 12px;
+  color: var(--button-ink);
+  background: var(--accent);
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.access-card button span { margin-left: 8px; }
+.access-card a { color: var(--accent); }
+.access-card .access-error {
+  padding: 12px;
+  border: 1px solid var(--flash-error-border);
+  border-radius: 6px;
+  background: var(--flash-error-bg);
+  color: var(--tint-red-ink);
+}
+.access-card .access-footnote { font-size: 12px; margin: 24px 0 0; }
+@media (max-width: 480px) {
+  .access-body { padding: 16px; }
+  .access-body .access-card { padding: 26px; }
+}

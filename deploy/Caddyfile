@@ -1,0 +1,6 @@
+# Replace this placeholder with the real hostname; keep it identical to
+# GV_PUBLIC_ORIGIN's hostname. Only Caddy may expose ports 80/443.
+golden-vector.YOUR_PUBLIC_IP.sslip.io {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8080
+}

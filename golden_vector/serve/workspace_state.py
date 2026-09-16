@@ -34,6 +34,7 @@ from golden_vector.model.structural import (
 from golden_vector.common.windows import ALL_WINDOWS, window_weeks
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.schema import validate_tool_b_output_schema
+from golden_vector.serve.access_context import is_visitor
 
 
 @dataclass(frozen=True)
@@ -163,7 +164,8 @@ def _fresh_state_view(state: WorkspaceState) -> WorkspaceState:
         company_inputs=state.company_inputs.copy(deep=False),
         source_verification=state.source_verification.copy(deep=False),
         reporting_calendar=state.reporting_calendar.copy(deep=False),
-        stock_notes=state.stock_notes.copy(deep=False),
+        stock_notes=(state.stock_notes.iloc[0:0].copy() if is_visitor()
+                     else state.stock_notes.copy(deep=False)),
         latest_tool_a=state.latest_tool_a.copy(deep=False),
         latest_tool_b=state.latest_tool_b.copy(deep=False),
         latest_tool_c=state.latest_tool_c.copy(deep=False),
@@ -199,7 +201,7 @@ def _load_workspace_state(paths: ProjectPaths, tool_b_tickers: list[str]) -> Wor
 def _load_workspace_state_uncached(
     paths: ProjectPaths, tool_b_tickers: list[str]
 ) -> WorkspaceState:
-    loaded = load_manual_screening_data(paths, tickers=tool_b_tickers)
+    loaded = load_manual_screening_data(paths, tickers=tool_b_tickers, read_only=is_visitor())
     model_state_manifest = load_current_model_state_manifest(paths)
     foundation_manifest = read_current_model_json(
         paths,

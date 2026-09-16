@@ -1,0 +1,28 @@
+[Unit]
+Description=Golden Vector background refresh coordinator (opt-in)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=gv-refresh
+Group=gv-data
+WorkingDirectory=/srv/golden-vector/app
+EnvironmentFile=/etc/golden-vector/refresh.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/srv/golden-vector/venv/bin/python -m golden_vector.app.hosted_scheduler
+Restart=on-failure
+RestartSec=60
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/golden-vector/data /srv/golden-vector/app/reviews
+InaccessiblePaths=/srv/golden-vector/data/access
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

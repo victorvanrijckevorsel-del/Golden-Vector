@@ -9,6 +9,7 @@ from golden_vector.app.model_state import (
     summarize_option_freshness,
 )
 from golden_vector.serve.ui.status import notice
+from golden_vector.serve.access_context import is_visitor
 
 
 def render_option_freshness_box(
@@ -61,6 +62,8 @@ def render_model_state_banner(payload: dict[str, object] | None) -> str:
 
     if payload is not None and str(payload.get("state") or "").lower() == "complete":
         return ""
+    if is_visitor():
+        return notice("warning", "Some research data is unavailable or awaiting an update.")
     lines = summarize_model_state_manifest(payload)
     # Plan 10.5 tone mapping (same rule as the Lab and Scorecard pages): danger is
     # reserved for corrupt-class states — a manifest that exists but cannot be

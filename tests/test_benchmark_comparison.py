@@ -12,13 +12,12 @@ import pandas as pd
 import pytest
 
 from golden_vector.model.benchmark_comparison import (
-    BetaUniverseMark,
     _percentile,
     _position,
     resolve_beta_universe_comparison,
     resolve_beta_universe_comparisons_by_window,
 )
-from golden_vector.serve.charts import _build_beta_strip_svg
+from golden_vector.serve.charts import build_distribution_strip_svg
 from golden_vector.serve.ticker_page.behaviour import (
     _ordinal_percentile,
     render_beta_comparison_panel,
@@ -169,14 +168,14 @@ def test_by_window_resolves_every_selectable_window():
 
 
 def test_strip_chart_renders_universe_rug_and_only_labels_the_stock():
-    svg = _build_beta_strip_svg(
+    svg = build_distribution_strip_svg(
         axis_label="Down beta (6-month)",
-        domain=(0.5, 2.0),
-        universe_marks=[
-            BetaUniverseMark("AAA", 0.6, 0.1),
-            BetaUniverseMark("BBB", 1.0, 0.35),
-            BetaUniverseMark("NEM", 1.33, 0.6),
-            BetaUniverseMark("CCC", 1.9, 0.9),
+        domain_labels=("0.50", "2.00"),
+        marks=[
+            ("AAA", "0.60", 0.1),
+            ("BBB", "1.00", 0.35),
+            ("NEM", "1.33", 0.6),
+            ("CCC", "1.90", 0.9),
         ],
         subject_pos=0.6,
         subject_label="SUBJ 1.33 · 60th percentile",
@@ -199,10 +198,10 @@ def test_strip_chart_renders_universe_rug_and_only_labels_the_stock():
 
 
 def test_strip_chart_degrades_without_domain():
-    out = _build_beta_strip_svg(
+    out = build_distribution_strip_svg(
         axis_label="x",
-        domain=None,
-        universe_marks=[],
+        domain_labels=None,
+        marks=[],
         subject_pos=None,
         subject_label="",
         benchmark_positions=[],
@@ -399,6 +398,6 @@ def test_comparison_math_is_not_duplicated_in_the_serve_layer():
     # The strip builder must not clamp, sort, or min/max positions — those are the model's job, and
     # re-clamping in serve would silently hide a backend bug (Codex MEDIUM). Scope the check to that
     # function so the grouped-bar's legitimate value-scaling min/max is not falsely flagged.
-    strip_src = charts.split("def _build_beta_strip_svg", 1)[1].split("\ndef ", 1)[0]
+    strip_src = charts.split("def build_distribution_strip_svg", 1)[1].split("\ndef ", 1)[0]
     for forbidden in ("min(", "max(", "sorted(", ".rank(", "quantile"):
-        assert forbidden not in strip_src, f"_build_beta_strip_svg recomputes position math: {forbidden}"
+        assert forbidden not in strip_src, f"build_distribution_strip_svg recomputes position math: {forbidden}"

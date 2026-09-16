@@ -42,6 +42,7 @@ from golden_vector.serve.http_helpers import (
     _serve_static_file,
 )
 from golden_vector.serve.data_status import build_data_status
+from golden_vector.serve.visitor_policy import visitor_path_allowed
 from golden_vector.serve.detail_panels import (
     _canonical_anchor_window,
     _resolve_active_window,
@@ -149,6 +150,7 @@ def create_workspace_app(
     *,
     app_config: AppConfig,
     tool_b_tickers: list[str],
+    read_only: bool = False,
 ) -> Callable[..., Iterable[bytes]]:
     normalized_tickers = sorted(
         {
@@ -178,6 +180,12 @@ def create_workspace_app(
         path = str(environ.get("PATH_INFO", "/")) or "/"
 
         try:
+            if read_only and (method != "GET" or not visitor_path_allowed(path)):
+                return _html_response(
+                    start_response,
+                    _render_error_page("This page is not available with guest access."),
+                    status="403 Forbidden",
+                )
             if method == "GET" and path.startswith("/static/"):
                 return _serve_static_file(path, start_response)
 
@@ -692,7 +700,7 @@ def create_workspace_app(
                                 app_config,
                             ),
                             show_workspace_panels=not option_vehicle_detail,
-                            show_manual_sections=not option_vehicle_detail,
+                            show_manual_sections=not option_vehicle_detail and not read_only,
                             financials_source=financials_source,
                             query_params=_first_query_values(query),
                             fundamentals_provenance=fundamentals_provenance,

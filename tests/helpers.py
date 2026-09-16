@@ -14,6 +14,7 @@ def call_wsgi_app(
     path: str,
     body: str = "",
     data: dict[str, str] | None = None,
+    environ_overrides: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Invoke a workspace WSGI app in-process and capture the response.
 
@@ -49,6 +50,7 @@ def call_wsgi_app(
         "wsgi.multiprocess": False,
         "wsgi.run_once": False,
     }
+    environ.update(environ_overrides or {})
     body_bytes = b"".join(app(environ, start_response))
     return {
         "status": captured["status"],

@@ -51,6 +51,7 @@ from golden_vector.contracts.tool_d import select_tool_d_source_rows
 from golden_vector.screening.manual_data import load_manual_screening_data
 from golden_vector.screening.schema import validate_tool_b_output_schema
 from golden_vector.screening.manual_store import load_store_tables
+from golden_vector.serve.access_context import is_visitor
 from golden_vector.screening.pipeline import (
     compute_tool_b_in_memory,
     materialize_tool_b_finance_source,
@@ -368,7 +369,7 @@ def _load_candidate_finder_data_uncached(
     )
     tool_c = tool_c_load.frame
     option_data = load_option_trading_data(paths, app_config=app_config)
-    manual_company, _, _, _ = load_store_tables(paths)
+    manual_company, _, _, _ = load_store_tables(paths, read_only=is_visitor())
     manual_hash = _file_sha256(paths.manual_screening_store_path)
     manual_as_of = _manual_as_of(manual_company)
     options_refresh_run_id = _options_refresh_run_id(option_data)
@@ -1386,6 +1387,7 @@ def _compute_scenario_sources(
     )
     manual_data = load_manual_screening_data(
         paths,
+        read_only=is_visitor(),
         tickers=sorted(
             ticker.ticker
             for ticker in app_config.universe.tickers

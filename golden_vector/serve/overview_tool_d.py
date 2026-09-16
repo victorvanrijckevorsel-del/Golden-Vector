@@ -26,6 +26,7 @@ from golden_vector.model.tool_d import (
     tool_d_stress_scenario_presets,
 )
 from golden_vector.screening.manual_data import load_manual_screening_data
+from golden_vector.serve.access_context import is_visitor
 from golden_vector.screening.pipeline import normalize_finance_source
 from golden_vector.screening.schema import ToolBStaleSchemaError, validate_tool_b_output_schema
 from golden_vector.serve.format_helpers import (
@@ -294,6 +295,7 @@ def _compute_scenario_frame(
         raise FileNotFoundError("No current Corporate Finance output exists. Run python main.py refresh.")
     manual_data = load_manual_screening_data(
         paths,
+        read_only=is_visitor(),
         tickers=sorted(
             ticker.ticker
             for ticker in app_config.universe.tickers

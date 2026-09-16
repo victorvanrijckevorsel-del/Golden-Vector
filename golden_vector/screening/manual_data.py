@@ -47,6 +47,7 @@ def load_manual_screening_data(
     paths: ProjectPaths,
     *,
     tickers: list[str],
+    read_only: bool = False,
 ) -> LoadedManualScreeningData:
     if not manual_store_exists(paths):
         raise FileNotFoundError(
@@ -59,7 +60,7 @@ def load_manual_screening_data(
         seeded_tickers=[],
         imported_csv_files=[],
     )
-    return _load_manual_screening_data(paths, sync_result=sync_result)
+    return _load_manual_screening_data(paths, sync_result=sync_result, read_only=read_only)
 
 
 def bootstrap_manual_screening_data(
@@ -80,8 +81,9 @@ def _load_manual_screening_data(
     paths: ProjectPaths,
     *,
     sync_result: ManualStoreSyncResult,
+    read_only: bool = False,
 ) -> LoadedManualScreeningData:
-    company_inputs, source_verification, reporting_calendar, stock_notes = load_store_tables(paths)
+    company_inputs, source_verification, reporting_calendar, stock_notes = load_store_tables(paths, read_only=read_only)
 
     company_inputs = _normalize_company_inputs(company_inputs)
     source_verification = _normalize_source_verification(source_verification)

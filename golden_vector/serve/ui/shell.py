@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import escape
+from golden_vector.serve.access_context import visitor_session
 
 
 # Grouped navigation (redesign plan section 8.1). Nav ids, hrefs, and labels are
@@ -42,10 +43,14 @@ def _render_nav(active: str) -> str:
     for group_label, links in _NAV_GROUPS:
         items: list[str] = []
         for nav_id, href, label in links:
+            if visitor_session.get() is not None and nav_id == "portfolio":
+                continue
             current = " aria-current=\"page\"" if nav_id == active else ""
             items.append(
                 f"<a class=\"nav-link\"{current} href=\"{escape(href)}\">{escape(label)}</a>"
             )
+        if not items:
+            continue
         groups.append(
             "<div class=\"nav-group\">"
             f"<p class=\"nav-group-label\">{escape(group_label)}</p>"
@@ -88,6 +93,14 @@ def _page_shell(
         else header_label
     )
     page_attr = escape(resolved_page_id)
+    visitor = visitor_session.get()
+    account_html = (
+        '<form method="post" action="/logout" class="visitor-account">'
+        f'<span>{escape(visitor.email)}</span>'
+        f'<input type="hidden" name="csrf" value="{escape(visitor.csrf, quote=True)}">'
+        '<button type="submit">Sign out</button></form>'
+        if visitor is not None else ""
+    )
     return f"""<!doctype html>
 <html lang="en" class="dark">
 <head>
@@ -124,6 +137,7 @@ def _page_shell(
         <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="app-sidebar">Menu</button>
         <span class="app-header-title">{escape(resolved_header_label)}</span>
         <span class="app-data-status" data-data-status-endpoint="/api/data-status" data-tone="loading" aria-live="polite" aria-atomic="true">Checking data…</span>
+        {account_html}
       </header>
       <main id="main-content" tabindex="-1">{body}</main>
     </div>

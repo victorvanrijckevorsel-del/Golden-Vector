@@ -1,0 +1,25 @@
+[Unit]
+Description=Golden Vector invite-only website
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=gv-web
+Group=gv-data
+WorkingDirectory=/srv/golden-vector/app
+EnvironmentFile=/etc/golden-vector/website.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/srv/golden-vector/venv/bin/python -m golden_vector.serve.hosted
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/golden-vector/data/access
+
+[Install]
+WantedBy=multi-user.target

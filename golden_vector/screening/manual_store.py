@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import shutil
 import sqlite3
 from dataclasses import dataclass
@@ -157,9 +158,11 @@ def ensure_manual_store(
     )
 
 
-def load_store_tables(paths: ProjectPaths) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def load_store_tables(paths: ProjectPaths, *, read_only: bool = False) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     store_path = paths.manual_screening_store_path
     if not store_path.exists():
+        if read_only:
+            raise FileNotFoundError("Research manual-data store is missing; prepare it before serving visitors.")
         return (
             pd.DataFrame(columns=COMPANY_INPUT_COLUMNS),
             pd.DataFrame(columns=SOURCE_VERIFICATION_COLUMNS),
@@ -167,11 +170,12 @@ def load_store_tables(paths: ProjectPaths) -> tuple[pd.DataFrame, pd.DataFrame, 
             pd.DataFrame(columns=STOCK_NOTE_COLUMNS),
         )
 
-    with _connect(store_path) as connection:
+    with closing(_connect(store_path, read_only=read_only)) as connection:
         # Apply any pending schema migrations (e.g. timestamp columns added in
         # later versions) before reading. _create_schema is idempotent.
-        _create_schema(connection)
-        connection.commit()
+        if not read_only:
+            _create_schema(connection)
+            connection.commit()
         company_inputs = pd.read_sql_query(
             """
             SELECT ticker, production_oz, aisc_usd_per_oz, cash_cost_usd_per_oz,
@@ -537,8 +541,9 @@ def export_store_to_csv(paths: ProjectPaths) -> ManualStoreExportResult:
     )
 
 
-def _connect(store_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(store_path)
+def _connect(store_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
+    connection = (sqlite3.connect(store_path.resolve().as_uri() + "?mode=ro", uri=True)
+                  if read_only else sqlite3.connect(store_path))
     connection.row_factory = sqlite3.Row
     return connection
 

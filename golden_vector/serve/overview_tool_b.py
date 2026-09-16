@@ -17,6 +17,7 @@ from golden_vector.contracts.config_models import AppConfig
 from golden_vector.fundamentals.artifacts import load_official_fundamentals
 from golden_vector.model.tool_d import latest_gold_price_from_history
 from golden_vector.screening.manual_data import load_manual_screening_data
+from golden_vector.serve.access_context import is_visitor
 from golden_vector.screening.pipeline import (
     compute_tool_b_in_memory,
     materialize_tool_b_finance_source,
@@ -516,6 +517,7 @@ def _resolve_tool_b_frame(
         )
         manual_data = load_manual_screening_data(
             paths,
+            read_only=is_visitor(),
             tickers=state.tool_b_tickers,
         )
         official_fundamentals = load_official_fundamentals(paths)

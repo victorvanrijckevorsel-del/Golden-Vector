@@ -1,0 +1,79 @@
+[
+  {
+    "route": "/",
+    "status": "200 OK",
+    "seconds": 0.552,
+    "has_portfolio_link": false,
+    "has_refresh_form": false
+  },
+  {
+    "route": "/tool-a",
+    "status": "200 OK",
+    "seconds": 0.108,
+    "has_portfolio_link": false,
+    "has_refresh_form": false
+  },
+  {
+    "route": "/tool-b",
+    "status": "200 OK",
+    "seconds": 0.028,
+    "has_portfolio_link": false,
+    "has_refresh_form": false
+  },
+  {
+    "route": "/tool-c",
+    "status": "200 OK",
+    "seconds": 0.01,
+    "has_portfolio_link": false,
+    "has_refresh_form": false
+  },
+  {
+    "route": "/tool-d",
+    "status": "200 OK",
+    "seconds": 0.013,
+    "has_portfolio_link": false,
+    "has_refresh_form": false
+  },
+  {
+    "route": "/option-trading",
+    "status": "200 OK",
+    "seconds": 0.102,
+    "has_portfolio_link": false,
+    "has_refresh_form": false
+  },
+  {
+    "route": "/ticker/NEM",
+    "status": "200 OK",
+    "seconds": 1.157,
+    "has_portfolio_link": false,
+    "has_refresh_form": false
+  },
+  {
+    "route": "/lab",
+    "status": "200 OK",
+    "seconds": 0.08,
+    "has_portfolio_link": false,
+    "has_refresh_form": false
+  },
+  {
+    "route": "/scorecard",
+    "status": "200 OK",
+    "seconds": 0.002,
+    "has_portfolio_link": false,
+    "has_refresh_form": false
+  },
+  {
+    "route": "/api/data-status",
+    "status": "200 OK",
+    "seconds": 0.004,
+    "has_portfolio_link": false,
+    "has_refresh_form": false
+  },
+  {
+    "route": "/portfolio",
+    "status": "403 Forbidden",
+    "seconds": 0.001,
+    "has_portfolio_link": false,
+    "has_refresh_form": false
+  }
+]

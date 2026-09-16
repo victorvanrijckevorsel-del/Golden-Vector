@@ -162,3 +162,31 @@ html {
   display: none;
 }
 /* Drawer mode below the desktop breakpoint lives in responsive.css. */
+.visitor-account {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  min-width: 0;
+}
+.visitor-account span {
+  max-width: 13rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+@media (max-width: 63.9375rem) {
+  .visitor-account span { display: none; }
+}
+.visitor-account button {
+  min-height: 44px;
+  padding: 8px 12px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}

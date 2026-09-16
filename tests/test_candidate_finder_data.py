@@ -501,7 +501,7 @@ def test_candidate_finder_scenario_injects_in_memory_tool_b_and_tool_d_without_w
             snapshot_as_of_date="2026-06-01",
         )
 
-    def fake_manual_data(_paths, *, tickers):
+    def fake_manual_data(_paths, *, tickers, read_only=False):
         return SimpleNamespace(company_inputs=pd.DataFrame({"ticker": list(tickers)}))
 
     def fake_tool_b(**kwargs):
@@ -685,7 +685,7 @@ def test_candidate_finder_yahoo_source_failure_does_not_fallback_to_our_view(
     )
     monkeypatch.setattr(
         "golden_vector.serve.candidate_finder_data.load_manual_screening_data",
-        lambda _paths, *, tickers: SimpleNamespace(
+        lambda _paths, *, tickers, read_only=False: SimpleNamespace(
             company_inputs=pd.DataFrame({"ticker": list(tickers)})
         ),
     )
@@ -730,7 +730,7 @@ def test_candidate_finder_scenario_cache_is_keyed_by_gold_price(tmp_path, monkey
     )
     monkeypatch.setattr(
         "golden_vector.serve.candidate_finder_data.load_manual_screening_data",
-        lambda _paths, *, tickers: SimpleNamespace(
+        lambda _paths, *, tickers, read_only=False: SimpleNamespace(
             company_inputs=pd.DataFrame({"ticker": list(tickers)})
         ),
     )
@@ -1496,7 +1496,7 @@ def test_candidate_finder_scenario_threads_official_fundamentals(tmp_path, monke
     )
     monkeypatch.setattr(
         "golden_vector.serve.candidate_finder_data.load_manual_screening_data",
-        lambda _paths, *, tickers: SimpleNamespace(
+        lambda _paths, *, tickers, read_only=False: SimpleNamespace(
             company_inputs=pd.DataFrame({"ticker": list(tickers)})
         ),
     )

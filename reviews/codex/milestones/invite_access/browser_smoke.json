@@ -1,0 +1,15 @@
+{
+  "date": "2026-09-16",
+  "environment": "Local Waitress, generated fixtures, loopback HTTP only",
+  "desktop_viewport": [1365, 900],
+  "mobile_viewport": [390, 844],
+  "login_mobile_horizontal_overflow": false,
+  "research_mobile_horizontal_overflow": false,
+  "email_and_code_login_succeeded": true,
+  "portfolio_navigation_links": 0,
+  "direct_portfolio_status": 403,
+  "sign_out_returned_to_login": true,
+  "javascript_page_errors": [],
+  "production_https_tested": false,
+  "screenshots": "Ignored .scratch/invite-login-{desktop,mobile}.png and invite-research-{desktop,mobile}.png"
+}

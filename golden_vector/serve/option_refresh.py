@@ -432,6 +432,10 @@ def render_option_refresh_control(
     return_to: str,
     action: str = "/refresh",
 ) -> str:
+    from golden_vector.serve.access_context import is_visitor
+
+    if is_visitor():
+        return ""
     disabled = " disabled" if status.status == REFRESH_STATUS_RUNNING else ""
     status_text = _refresh_status_text(status)
     return (
