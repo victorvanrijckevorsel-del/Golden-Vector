@@ -1,8 +1,12 @@
 # Invite-only Golden Vector
 
-Status: application and deployment templates prepared locally. **Not deployed.**
-No hostname, cloud resources, provider credentials, or real invitations have
-been created. Linux service/proxy acceptance checks below must pass on the host.
+Status (2026-09-17): **secure login deployed; research publication not launched.**
+The Oracle server and HTTPS login are running at
+https://golden-vector.141.147.94.215.sslip.io/login.
+No research data or provider credentials have been uploaded, and no real visitor
+invitations have been issued. Research sharing approval, data acceptance, backups
+and availability alerting remain launch gates. See the
+[deployment record](../reviews/codex/milestones/invite_access/oracle_deployment_2026-09-17.md).
 
 ## What visitors get
 
@@ -34,7 +38,8 @@ guarantee of uninterrupted 24/7 service**. Do not generate artificial activity
 to evade the idle policy.
 
 The owner must create the account and complete identity/phone/card verification.
-Do not send card details or passwords in chat. No compatible account is connected.
+Do not send card details or passwords in chat. The owner's Free Tier account is
+now configured in its London home region; it has not been upgraded to paid.
 A hostname such as `golden-vector.<public-ip>.sslip.io` avoids buying a domain;
 the actual hostname depends on the assigned public IP and DNS/certificate checks.
 It is not reserved, and a changed IP changes the address. A free DuckDNS name is
@@ -155,5 +160,6 @@ without enabling the worker; the existing freshness indicator then tells the tru
   backup allocation is within the free account allowance before enabling it.
 - Deploy code without replacing persistent data. Schema compatibility must be
   checked before rollbacks. Never run `git clean` or recursive data deletion.
-- No background refresh, paid provider call, server purchase, DNS registration,
-  firewall change, or deployment is performed by adding these files.
+- These templates do not enable background refresh, authorize provider use,
+  upgrade the cloud account, or register a paid domain. The deployment record
+  identifies the explicitly approved server and firewall changes already made.
