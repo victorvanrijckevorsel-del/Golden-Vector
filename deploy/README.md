@@ -1,12 +1,47 @@
 # Invite-only Golden Vector
 
-Status (2026-09-17): **secure login deployed; research publication not launched.**
-The Oracle server and HTTPS login are running at
+Status (2026-09-17): **invite-only research is deployed and verified.**
+The Oracle server, HTTPS login and research pages are running at
 https://golden-vector.141.147.94.215.sslip.io/login.
-No research data or provider credentials have been uploaded, and no real visitor
-invitations have been issued. Research sharing approval, data acceptance, backups
-and availability alerting remain launch gates. See the
-[deployment record](../reviews/codex/milestones/invite_access/oracle_deployment_2026-09-17.md).
+The owner approved the research-only upload and two separate invitations. The
+published main snapshot was completed on 2026-09-16 at 23:10 UTC. No holdings,
+private notes or provider credentials were uploaded. Automatic refresh remains
+disabled. Lab retains its older August 13 publication; Scorecard has no saved
+results in the source and displays that limitation rather than fabricated results.
+See the [research deployment record](../reviews/codex/milestones/invite_access/research_publication_2026-09-17.md)
+and the earlier [server setup record](../reviews/codex/milestones/invite_access/oracle_deployment_2026-09-17.md).
+
+## Publishing a reviewed saved research snapshot
+
+Run these modules from the repository root with the existing Python environment:
+
+```sh
+python -m deploy.build_research_bundle --source . --destination .scratch/oracle-deploy/research-NEW-ID
+python -m deploy.check_research_bundle --root .scratch/oracle-deploy/research-NEW-ID --config config
+```
+
+The builder refuses an existing destination, unreviewed artifact types, incomplete
+generations, checksum mismatches, or manual inputs changed since publication.
+It reuses the selected immutable research artifacts, creates a new notes-free
+SQLite store, explicitly excludes portfolio artifacts, and records the source
+manifest hash and exclusions. It does not modify the original data or claim a new
+refresh. The benchmark-only GDX/GDXJ artifact is admitted despite its historical
+`output/portfolio/` location; it contains no holdings. Chart compatibility files
+come from that same selected run, never a newer mutable alias.
+
+After checking the archive hash on Oracle, extract into a **new** reviewed release
+directory. Set research ownership `gv-refresh:gv-data`, directories 0750 and files
+0640. Run the checker as `gv-web` using the deployed config before activation.
+`deploy/activate_research_bundle.py` atomically switches `app/data` to the verified
+release and preserves the previous target. Invitations remain separately stored
+at `/srv/golden-vector/data/access`, linked into the release. No original data or
+old release is deleted. The systemd writable path remains the access directory.
+
+Keep the research archive and publication inventory off the VM for recovery.
+`deploy/backup_access.py` creates an exclusive, mode-0600, SQLite-aware backup;
+keep it outside Git with restricted local permissions. A publication-time access
+backup has been restored and checked; recurring backups and external availability
+alerting are not yet configured.
 
 ## What visitors get
 
@@ -63,8 +98,9 @@ the actual research workload must be tested on the selected machine before launc
 | --- | --- |
 | `/srv/golden-vector/app` | Root-owned checkout; not writable by the website |
 | `/srv/golden-vector/venv` | Root-owned Python environment |
-| `/srv/golden-vector/data` | Persistent volume; never replace it during code deployment |
-| `app/data` | Symlink to the persistent data directory, created only in a fresh checkout |
+| `/srv/golden-vector/data/access` | Persistent private invitation/session store |
+| `/srv/golden-vector/releases/<publication>/data` | Verified read-only research snapshot; previous releases retained |
+| `app/data` | Atomic symlink to the active release, with access linked separately |
 | `gv-web` / group `gv-data` | Non-login website account; research read access only |
 | `gv-refresh` / group `gv-data` | Separate non-login data worker; cannot read access credentials |
 | `data/access` | Owned by `gv-web`, mode 0700; SQLite file mode 0600 |
@@ -83,7 +119,8 @@ research-only publication on the server, preserving the current-state manifest,
 its immutable referenced artifacts, and required research/manual inputs. Exclude
 private portfolio/holdings and stock notes. Do not edit a manifest to hide missing
 inputs or upload API keys. Approve any hosted provider calls and confirm data-sharing
-rights separately before running an initial refresh. No data has been uploaded.
+rights separately before running an initial refresh. The explicitly approved saved
+research publication described above does not enable provider calls.
 
 ## Start the website once the account and research data are ready
 
@@ -152,9 +189,11 @@ without enabling the worker; the existing freshness indicator then tells the tru
   and reboot the VM: valid sessions should survive, services should return.
 - Verify all research routes against the real read-only service filesystem. A
   missing artifact or schema mismatch must fail visibly, not show synthetic data.
-- Establish private backups and an external availability alert before relying on
-  the site. Neither has been configured yet. Include the access DB, coherent
-  research generation, and append-only history. Use an SQLite-aware backup or
+- Establish recurring private backups and an external availability alert before
+  relying on the site. A publication-time research/archive and access DB recovery
+  copy is verified; recurring backups and alerts remain outstanding. Include the
+  access DB and coherent hosted research generation. Keep the local append-only
+  history separately backed up; it is not copied wholesale to the website. Use an SQLite-aware backup or
   stop writers briefly; never copy an actively changing SQLite file by itself.
   Keep an independent copy off this VM and test restoration. Verify any cloud
   backup allocation is within the free account allowance before enabling it.

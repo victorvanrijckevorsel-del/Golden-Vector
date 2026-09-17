@@ -1,5 +1,9 @@
 # Oracle login deployment — 2026-09-17
 
+Historical setup record. The research snapshot and two real invitations were
+subsequently deployed; see [research publication](research_publication_2026-09-17.md)
+for the current state. The initial launch boundary below describes this earlier phase.
+
 ## Outcome and launch boundary
 
 The code-only visitor login is deployed at
